@@ -5,10 +5,14 @@ import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 
 import {
   addDomain,
+  archiveClient,
   createClient,
+  listClientUsers,
   listClients,
   listDomains,
   removeDomain,
+  setUserActive,
+  type AdminUserRow,
   type ClientSummary,
   type DomainRow,
 } from "@/lib/admin/client";
@@ -114,7 +118,7 @@ export function ManagementView(): JSX.Element {
         <ul className="flex flex-col gap-4">
           {clients.map((c) => (
             <li key={c.id}>
-              <ClientRow client={c} />
+              <ClientRow client={c} onArchived={() => void reload()} />
             </li>
           ))}
         </ul>
@@ -123,11 +127,128 @@ export function ManagementView(): JSX.Element {
   );
 }
 
-function ClientRow({ client }: { client: ClientSummary }): JSX.Element {
+/**
+ * Issue 3: users inside a tenant, with deactivate/reactivate.
+ *
+ * Deactivation — not deletion — is the removal primitive: sign-in refuses an
+ * inactive account, so access stops immediately while the rows the user
+ * authored (assessments, messages, audit entries) stay intact and the action
+ * stays reversible. Deactivated users therefore remain listed, labelled, with
+ * a Reactivate control; hiding them would make the action one-way from the UI.
+ */
+function UserList({ clientId }: { clientId: string }): JSX.Element {
+  const [users, setUsers] = React.useState<AdminUserRow[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [busyId, setBusyId] = React.useState<string | null>(null);
+
+  const reloadSeq = React.useRef(0);
+  const reload = React.useCallback(async () => {
+    const seq = ++reloadSeq.current;
+    try {
+      const next = await listClientUsers(clientId);
+      if (seq === reloadSeq.current) setUsers(next);
+      else
+        console.debug(
+          `[ManagementView] discarded stale users reload (seq ${seq}, latest ${reloadSeq.current})`,
+        );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load users.");
+    }
+  }, [clientId]);
+
+  React.useEffect(() => {
+    void (async () => {
+      await reload();
+    })();
+  }, [reload]);
+
+  async function onToggle(u: AdminUserRow): Promise<void> {
+    setBusyId(u.id);
+    setError(null);
+    try {
+      await setUserActive(u.id, !u.is_active);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update user.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wider text-ink-tertiary">
+        Users
+      </p>
+      {users === null ? (
+        <p className="mt-1 text-sm text-ink-tertiary">Loading…</p>
+      ) : users.length === 0 ? (
+        <p className="mt-1 text-sm text-ink-secondary">
+          No users have registered against this client yet.
+        </p>
+      ) : (
+        <ul className="mt-1 flex flex-col gap-1">
+          {users.map((u) => (
+            <li
+              key={u.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border-subtle bg-surface-sunken px-3 py-2 text-sm"
+            >
+              <span className="min-w-0">
+                <span className="font-medium text-ink-primary">{u.email}</span>
+                {u.display_name ? (
+                  <span className="text-ink-tertiary"> · {u.display_name}</span>
+                ) : null}
+                {!u.is_active ? (
+                  <span className="ml-2 rounded bg-status-warning-bg px-1.5 py-0.5 text-xs font-semibold text-status-warning-fg">
+                    Deactivated
+                  </span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                onClick={() => void onToggle(u)}
+                disabled={busyId === u.id}
+                className={
+                  "shrink-0 rounded-md border px-3 py-1 text-xs font-semibold disabled:opacity-60 " +
+                  (u.is_active
+                    ? "border-status-danger-border text-status-danger-fg hover:bg-status-danger-bg"
+                    : "border-border bg-surface-card text-ink-primary hover:bg-surface-sunken")
+                }
+              >
+                {busyId === u.id
+                  ? "Saving…"
+                  : u.is_active
+                    ? "Deactivate"
+                    : "Reactivate"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error ? (
+        <p className="mt-1 text-sm text-status-danger-fg" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ClientRow({
+  client,
+  onArchived,
+}: {
+  client: ClientSummary;
+  onArchived: () => void;
+}): JSX.Element {
   const [domains, setDomains] = React.useState<DomainRow[] | null>(null);
   const [newDomain, setNewDomain] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  // Archive is destructive-looking and cross-tenant, so it is gated behind an
+  // explicit confirm step rather than a single click. No window.confirm(): a
+  // native modal dialog blocks the page and cannot be styled or tested well.
+  const [confirmingArchive, setConfirmingArchive] = React.useState(false);
 
   // Same stale-fetch guard as the parent: the add-domain form renders before
   // the mount reload resolves, so an add can race the mount listDomains(). Only
@@ -183,10 +304,61 @@ function ClientRow({ client }: { client: ClientSummary }): JSX.Element {
     }
   }
 
+  async function onArchive(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await archiveClient(client.id);
+      setConfirmingArchive(false);
+      onArchived();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to archive client.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{client.legal_name}</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>{client.legal_name}</CardTitle>
+          {confirmingArchive ? (
+            <span className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-ink-secondary">
+                Archive {client.legal_name}? Its data is kept and this can be
+                undone.
+              </span>
+              <button
+                type="button"
+                onClick={() => void onArchive()}
+                disabled={busy}
+                className="rounded-md bg-status-danger-fg px-3 py-1 text-xs font-semibold text-ink-on-accent disabled:opacity-60"
+              >
+                {busy ? "Archiving…" : "Yes, archive"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingArchive(false)}
+                disabled={busy}
+                className="rounded-md border border-border bg-surface-card px-3 py-1 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingArchive(true)}
+              aria-label={`Archive ${client.legal_name}`}
+              className="rounded-md border border-status-danger-border px-3 py-1 text-xs font-semibold text-status-danger-fg hover:bg-status-danger-bg"
+            >
+              Archive client
+            </button>
+          )}
+        </div>
       </CardHeader>
       <CardBody className="flex flex-col gap-3">
         <div>
@@ -237,6 +409,7 @@ function ClientRow({ client }: { client: ClientSummary }): JSX.Element {
             Add domain
           </button>
         </form>
+        <UserList clientId={client.id} />
         {error ? (
           <p className="text-sm text-status-danger-fg" role="alert">
             {error}

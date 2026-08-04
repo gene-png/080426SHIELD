@@ -11,7 +11,7 @@ import { NextResponse } from "next/server";
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   const session = await auth();
   const bearer = session?.accessToken;
   if (!bearer) {
@@ -20,8 +20,14 @@ export async function GET(): Promise<NextResponse> {
       { status: 401 },
     );
   }
+  // Issue 3: archived tenants are hidden upstream unless explicitly requested.
+  const includeArchived =
+    new URL(request.url).searchParams.get("include_archived") === "true";
+  const path = includeArchived
+    ? "/admin/clients?include_archived=true"
+    : "/admin/clients";
   try {
-    const result = await apiFetch<unknown>("/admin/clients", {
+    const result = await apiFetch<unknown>(path, {
       bearer,
       clientId: "",
     });

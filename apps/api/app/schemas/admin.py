@@ -104,10 +104,48 @@ class AdminClientSummary(BaseModel):
     size_band: str | None
     intake_completed_at: datetime | None
     created_at: datetime
+    # Issue 3: NULL means active. Present so the Management UI can label an
+    # archived tenant instead of silently hiding it when include_archived=true.
+    archived_at: datetime | None = None
+    # Issue 7: counts that let the intake-queue org index show, per row, how
+    # much work is waiting without a second request per organization.
+    open_request_count: int = 0
+    total_request_count: int = 0
 
 
 class AdminClientListResponse(BaseModel):
     clients: list[AdminClientSummary]
+
+
+class AdminUserRow(BaseModel):
+    """One user inside a tenant, for the Management UI's user list (issue 3)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    email: EmailStr
+    display_name: str | None
+    title: str | None
+    role: UserRole
+    is_active: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+
+class AdminUserListResponse(BaseModel):
+    users: list[AdminUserRow]
+
+
+class AdminUserPatchRequest(BaseModel):
+    """Deactivate / reactivate a user (issue 3).
+
+    Deactivation is the removal primitive: routes/auth.py already refuses
+    sign-in for ``is_active=False``, so flipping this locks the account out
+    immediately while retaining every row the user authored. Reversible by
+    design — there is no hard user delete.
+    """
+
+    is_active: bool
 
 
 class AdminClientCreateRequest(BaseModel):
