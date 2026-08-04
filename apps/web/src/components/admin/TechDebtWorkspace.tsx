@@ -32,7 +32,6 @@ import type {
   OverlapAnalysis,
 } from "@/lib/tech_debt/types";
 
-import { AiStatusBanner } from "./AiStatusBanner";
 import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
 import { DiscardDraftButton } from "./DiscardDraftButton";
@@ -236,7 +235,6 @@ export function TechDebtWorkspace({
 
   return (
     <div className="flex flex-col gap-6">
-      <AiStatusBanner />
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">

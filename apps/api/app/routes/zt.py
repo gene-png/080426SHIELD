@@ -349,8 +349,10 @@ def get_interview_questionnaire(
     )
 
 
-def _llm_dep() -> LLMClient:
-    return LLMClient.from_settings()
+def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
+    """Issue 2: build from the DB so a key an admin pasted at runtime is
+    honoured on the very next Run-AI, with no redeploy."""
+    return LLMClient.from_db(db)
 
 
 @dataclass(frozen=True)

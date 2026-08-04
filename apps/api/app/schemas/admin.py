@@ -25,6 +25,17 @@ class AdminServiceDetail(BaseModel):
     client_id: uuid.UUID
 
 
+class AdminLlmKeyRequest(BaseModel):
+    """An API key pasted by an admin (issue 2).
+
+    `provider` defaults to the configured `SHIELD_LLM_PROVIDER` so the common
+    case is a single field. The key itself is never echoed back.
+    """
+
+    api_key: str
+    provider: str | None = None
+
+
 class AdminAiStatus(BaseModel):
     """AI pipeline readiness. Never includes the API key itself."""
 
@@ -33,6 +44,12 @@ class AdminAiStatus(BaseModel):
     model: str
     ready: bool
     detail: str
+    # Issue 2: whether this deployment can accept a pasted key at runtime, and
+    # where the current key came from ("database" | "environment" | "none").
+    # The UI uses these to decide whether to offer "Load a key", and to reset
+    # its "I acknowledged offline mode" flag when the key changes.
+    can_configure: bool = False
+    key_source: str = "none"
 
 
 class AdminUserSummary(BaseModel):

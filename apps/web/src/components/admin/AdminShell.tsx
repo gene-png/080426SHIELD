@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { AiStatusBanner } from "@/components/admin/AiStatusBanner";
 import { SignOutButton } from "@/components/site/SignOutButton";
 import { SkipToContent } from "@/components/site/SkipToContent";
 
@@ -107,6 +108,11 @@ export function AdminShell({
             tabIndex={-1}
             className="mx-auto w-full max-w-6xl px-6 py-8 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
           >
+            {/* Issue 2: shell-level so the warning is visible on every admin
+                page including the landing one, not just one workspace. */}
+            <div className="mb-6 empty:mb-0">
+              <AiStatusBanner />
+            </div>
             {children}
           </main>
         </div>

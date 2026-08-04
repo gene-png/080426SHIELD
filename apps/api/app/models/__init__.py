@@ -29,6 +29,7 @@ from app.models.csf_profile import CsfDimensionScore, CsfGapAction
 from app.models.deliverable import Deliverable
 from app.models.email_token import EmailToken, EmailTokenPurpose
 from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
+from app.models.llm_credential import LlmCredential
 from app.models.message import Message
 from app.models.notification import Notification
 from app.models.questionnaire import Question
@@ -67,6 +68,7 @@ __all__ = [
     "LLMCall",
     "LLMCallMode",
     "LLMCallStatus",
+    "LlmCredential",
     "Message",
     "Notification",
     "Question",

@@ -393,7 +393,29 @@ class VertexProvider:
         return _parse_generate_content(resp.json())
 
 
-def _build_provider(settings: Settings) -> LLMProvider:
+def _build_provider(settings: Settings, runtime_key: str | None = None) -> LLMProvider:
+    """Pick the provider adapter for this call.
+
+    ``runtime_key`` (issue 2) is a key an admin pasted through
+    ``POST /admin/llm-key``, resolved from the keystore by the caller. Its
+    presence forces the LIVE adapter even when ``SHIELD_LLM_MODE`` is
+    ``fixture``: loading a key is the admin explicitly asking for live AI, and
+    silently continuing to serve canned fixtures after they did that would be
+    the exact "looks like it worked but didn't" failure this feature removes.
+    Without a runtime key, behaviour is unchanged.
+    """
+    if runtime_key:
+        if settings.shield_llm_provider == "anthropic":
+            return AnthropicProvider(model=settings.shield_llm_model, api_key=runtime_key)
+        if settings.shield_llm_provider == "openai":
+            return OpenAIProvider(model=settings.shield_llm_model, api_key=runtime_key)
+        if settings.shield_llm_provider == "gemini":
+            return GeminiProvider(model=settings.shield_llm_model, api_key=runtime_key)
+        raise RuntimeError(
+            f"A runtime API key is stored but provider {settings.shield_llm_provider!r} "
+            "has no key-based adapter (vertex uses ADC). Remove the stored key or "
+            "switch SHIELD_LLM_PROVIDER."
+        )
     if settings.shield_llm_mode == "fixture":
         # Fixture mode serves deterministic, demo-plausible canned responses so
         # the whole stack is exercisable OFFLINE (T6b / DECISIONS D-017). The
@@ -446,6 +468,21 @@ class LLMClient:
     def from_settings(cls, settings: Settings | None = None) -> LLMClient:
         s = settings or get_settings()
         return cls(_build_provider(s), s)
+
+    @classmethod
+    def from_db(cls, db: Session, settings: Settings | None = None) -> LLMClient:
+        """Build a client honouring a key stored at runtime (issue 2).
+
+        Routes use this instead of `from_settings` so an admin pasting a key
+        takes effect on the very next Run-AI, with no redeploy and no process
+        restart. Falls back to the environment-configured behaviour when no key
+        has been stored.
+        """
+        s = settings or get_settings()
+        from app.ai import keystore
+
+        stored = keystore.load_key(db, provider=s.shield_llm_provider, settings=s)
+        return cls(_build_provider(s, runtime_key=stored), s)
 
     def invoke(
         self,

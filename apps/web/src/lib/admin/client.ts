@@ -61,6 +61,44 @@ export interface ClientSummary {
   total_request_count: number;
 }
 
+/** Issue 2: AI readiness plus where the provider key came from. */
+export interface AiStatus {
+  mode: string;
+  provider: string;
+  model: string;
+  ready: boolean;
+  detail: string;
+  can_configure: boolean;
+  key_source: "database" | "environment" | "none";
+}
+
+export async function fetchAiStatus(): Promise<AiStatus> {
+  const res = await fetch("/api/proxy/admin/ai-status", { cache: "no-store" });
+  if (!res.ok) throw new Error(await _detail(res));
+  return (await res.json()) as AiStatus;
+}
+
+/**
+ * Issue 2: store a pasted provider key. The API validates it against the
+ * provider BEFORE storing, so a rejected key throws with the provider's reason
+ * and nothing is saved.
+ */
+export async function setLlmKey(apiKey: string): Promise<AiStatus> {
+  const res = await fetch("/api/proxy/admin/llm-key", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  if (!res.ok) throw new Error(await _detail(res));
+  return (await res.json()) as AiStatus;
+}
+
+/** Issue 2: remove the stored key. AI drops back to offline responses. */
+export async function removeLlmKey(): Promise<void> {
+  const res = await fetch("/api/proxy/admin/llm-key", { method: "DELETE" });
+  if (!res.ok) throw new Error(await _detail(res));
+}
+
 /** Issue 3: one user inside a tenant, for the Management user list. */
 export interface AdminUserRow {
   id: string;
