@@ -15,6 +15,7 @@ import {
   ValueLoopCard,
   type ValueSummary,
 } from "@/components/home/ValueLoopCard";
+import { dashboardPathFor } from "@/lib/dashboards/routes";
 import {
   ASSESSMENT_SERVICE_TYPES,
   SERVICE_LABELS,
@@ -90,6 +91,31 @@ function phaseFor(
         ? { label: "Report ready", tone: "success" }
         : { label: "Getting started", tone: "neutral" };
   }
+}
+
+/**
+ * Where a service card goes when clicked. Mirrors the card's own phase so the
+ * destination always matches the status the client just read (Navigation_Spec
+ * §12: no card is a dead end, and no link lands somewhere unrelated):
+ *
+ *   report ready  → that service's dashboard, or /documents if it has none
+ *   in progress   → the self-assessment questionnaire to resume
+ *   anything else → /assessments, the list this service came from
+ */
+function serviceHref(
+  e: AssessmentResponse,
+  hasReleasedDeliverable: boolean,
+): string {
+  if (hasReleasedDeliverable) {
+    return dashboardPathFor(e.service_type, e.service_id) ?? "/documents";
+  }
+  if (
+    ASSESSMENT_SERVICE_TYPES.includes(e.service_type) &&
+    e.assessment_status === "draft"
+  ) {
+    return `/self-assessment/${e.service_id}?type=${e.service_type}`;
+  }
+  return "/assessments";
 }
 
 export function HomeDashboard({
@@ -218,22 +244,28 @@ export function HomeDashboard({
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {engagements.map((e) => {
-              const phase = phaseFor(e, releasedServiceIds.has(e.service_id));
+              const released = releasedServiceIds.has(e.service_id);
+              const phase = phaseFor(e, released);
               return (
                 <li key={e.service_id}>
-                  <Card>
-                    <CardBody className="flex flex-col gap-2">
-                      <p className="text-sm font-semibold text-ink-primary">
-                        {e.title}
-                      </p>
-                      <p className="text-xs text-ink-secondary">
-                        {SERVICE_LABELS[e.service_type]}
-                      </p>
-                      <StatusPill tone={phase.tone} withDot>
-                        {phase.label}
-                      </StatusPill>
-                    </CardBody>
-                  </Card>
+                  <Link
+                    href={serviceHref(e, released)}
+                    className="block h-full rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+                  >
+                    <Card className="h-full transition-colors hover:border-brand-500">
+                      <CardBody className="flex flex-col gap-2">
+                        <p className="text-sm font-semibold text-ink-primary">
+                          {e.title}
+                        </p>
+                        <p className="text-xs text-ink-secondary">
+                          {SERVICE_LABELS[e.service_type]}
+                        </p>
+                        <StatusPill tone={phase.tone} withDot>
+                          {phase.label}
+                        </StatusPill>
+                      </CardBody>
+                    </Card>
+                  </Link>
                 </li>
               );
             })}

@@ -20,7 +20,6 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: "Intake Queue", href: "/admin/queue" },
-  { label: "Active Work", href: "/admin/active" },
   { label: "Risk Register", href: "/admin/risk-register" },
   { label: "Messages", href: "/admin/messages" },
   { label: "Audit", href: "/admin/audit" },
@@ -106,7 +105,7 @@ export function AdminShell({
           <main
             id="main-content"
             tabIndex={-1}
-            className="mx-auto w-full max-w-6xl px-6 py-8 outline-hidden"
+            className="mx-auto w-full max-w-6xl px-6 py-8 outline-hidden focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
           >
             {children}
           </main>

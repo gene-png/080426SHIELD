@@ -5,6 +5,7 @@ import {
   type DataTableColumn,
 } from "@shield/design-system";
 
+import { dashboardPathFor } from "@/lib/dashboards/routes";
 import { SERVICE_LABELS, type ServiceType } from "@/lib/intake/types";
 
 import type { JSX } from "react";
@@ -65,19 +66,9 @@ interface DownloadLink {
   label: string;
 }
 
-/** The client dashboard route for a service kind, or null if none exists yet. */
-function dashboardPathFor(d: ClientDeliverable): string | null {
-  switch (d.service_kind) {
-    case "attack_coverage":
-      return `/dashboards/attack/${d.service_id}`;
-    case "zero_trust_cisa":
-    case "zero_trust_dod":
-      return `/dashboards/zt/${d.service_id}`;
-    case "tech_debt":
-      return `/dashboards/tech-debt/${d.service_id}`;
-    default:
-      return null;
-  }
+/** The client dashboard route for a deliverable, or null if none exists yet. */
+function dashboardPathForDeliverable(d: ClientDeliverable): string | null {
+  return dashboardPathFor(d.service_kind, d.service_id);
 }
 
 function downloadsFor(d: ClientDeliverable): DownloadLink[] {
@@ -163,7 +154,7 @@ export function DocumentsList({
         if (links.length === 0) {
           return <span className="text-xs text-ink-tertiary">—</span>;
         }
-        const dashboardPath = dashboardPathFor(d);
+        const dashboardPath = dashboardPathForDeliverable(d);
         return (
           <div className="flex flex-wrap gap-2">
             {dashboardPath ? (
