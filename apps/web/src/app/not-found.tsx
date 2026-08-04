@@ -15,7 +15,7 @@ export default function NotFound(): JSX.Element {
       <main
         id="main-content"
         tabIndex={-1}
-        className="mx-auto flex max-w-3xl flex-col px-6 py-24 outline-hidden focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+        className="mx-auto flex max-w-3xl flex-col px-6 py-24 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
       >
         <p className="text-sm font-semibold uppercase tracking-wider text-ink-tertiary">
           Error 404

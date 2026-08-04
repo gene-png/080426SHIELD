@@ -73,7 +73,7 @@ export default async function DocumentsPage(): Promise<JSX.Element> {
       <main
         id="main-content"
         tabIndex={-1}
-        className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 outline-hidden focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+        className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
       >
         <div>
           <h1 className="text-2xl font-semibold text-ink-primary">Documents</h1>
