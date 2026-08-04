@@ -1,0 +1,157 @@
+{
+  "realm": "shield",
+  "displayName": "SHIELD by Kentro",
+  "displayNameHtml": "<strong>SHIELD</strong> <span class='by-kentro'>by Kentro</span>",
+  "enabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "verifyEmail": false,
+  "rememberMe": false,
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "permanentLockout": false,
+  "passwordPolicy": "length(12) and notUsername(undefined) and notEmail(undefined)",
+  "sslRequired": "external",
+  "accessTokenLifespan": 900,
+  "refreshTokenMaxReuse": 0,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 86400,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en"],
+  "defaultLocale": "en",
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Kentro consultant operating the engagement.",
+        "composite": false
+      },
+      {
+        "name": "client",
+        "description": "Client user (engagement-side).",
+        "composite": false
+      }
+    ]
+  },
+  "defaultRole": {
+    "name": "client",
+    "composite": false,
+    "clientRole": false,
+    "containerId": "shield"
+  },
+  "clients": [
+    {
+      "clientId": "shield-web",
+      "name": "SHIELD Web (Next.js)",
+      "rootUrl": "http://localhost:3000",
+      "baseUrl": "/",
+      "redirectUris": [
+        "http://localhost:3000/api/auth/callback/keycloak",
+        "http://localhost:3000/*",
+        "http://localhost:3001/api/auth/callback/keycloak",
+        "http://localhost:3001/*"
+      ],
+      "webOrigins": ["http://localhost:3000", "http://localhost:3001"],
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-shield-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "shield-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "shield-api",
+      "name": "SHIELD API (FastAPI)",
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "dev-admin@shield.local",
+      "email": "dev-admin@shield.local",
+      "firstName": "Dev",
+      "lastName": "Admin",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": ["admin"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "DevAdminPass2026!",
+          "temporary": true
+        }
+      ]
+    },
+    {
+      "username": "admin@kentro.example",
+      "email": "admin@kentro.example",
+      "firstName": "Kentro",
+      "lastName": "Consultant",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": ["admin"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "DemoPass!2026",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "nolocal@atlas.example",
+      "email": "nolocal@atlas.example",
+      "firstName": "No",
+      "lastName": "LocalAccount",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": ["client"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "DemoPass!2026",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

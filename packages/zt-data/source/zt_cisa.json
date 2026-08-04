@@ -1,0 +1,221 @@
+{
+  "framework_key": "zt-cisa",
+  "framework": "cisa_ztmm_2_0",
+  "framework_label": "CISA ZTMM 2.0",
+  "source_file": "SHIELDv2_CISA_ZT_Questionnaire.docx",
+  "maturity_levels": ["traditional", "initial", "advanced", "optimal"],
+  "questions": [
+    {
+      "external_id": "Z-Q1",
+      "section_name": "Identity",
+      "order_index": 1,
+      "stem": "Walk me through how identities are managed for the people who access this system, from when someone joins until the moment they leave, including how you confirm who they are at sign-in.",
+      "cues": [
+        "Are user identities centralized in one identity provider (Entra ID, Okta, ICAM)?",
+        "Is MFA universal, or only for privileged users? Which factors?",
+        "How quickly is access revoked when someone leaves; is it HR-automated?",
+        "Have you moved past passwords to phishing-resistant credentials (FIDO2, CAC/PIV)?",
+        "Are sign-in decisions context-aware (location, device, behavior)?",
+        "How do you handle external collaborators (contractors, federated partners)?"
+      ],
+      "framework_activities": [
+        "Authentication",
+        "Identity Stores",
+        "Access Management",
+        "Identity Risk Assessments"
+      ]
+    },
+    {
+      "external_id": "Z-Q2",
+      "section_name": "Identity",
+      "order_index": 2,
+      "stem": "Tell me how you manage privileged access for this system, the admin accounts, service accounts, and elevated permissions that could do the most damage if misused.",
+      "cues": [
+        "Do you use a PAM tool with vaulting and check-out?",
+        "Is admin access just-in-time, or standing?",
+        "How do you monitor privileged sessions; UEBA on admin activity?",
+        "How do you handle break-glass / emergency access?",
+        "Are admin sessions recorded for audit?",
+        "How are non-person identities (service accounts, application identities) governed?"
+      ],
+      "framework_activities": [
+        "Authentication",
+        "Identity Risk Assessments",
+        "Access Management"
+      ]
+    },
+    {
+      "external_id": "Z-Q3",
+      "section_name": "Devices",
+      "order_index": 3,
+      "stem": "Walk me through how you know what devices are accessing this system, and how you decide which ones are healthy enough to be allowed in.",
+      "cues": [
+        "What is your authoritative device inventory; how is it kept current?",
+        "How do you discover unknown or unauthorized devices?",
+        "Do you have EDR/XDR agent coverage on every endpoint?",
+        "Are devices required to meet compliance baselines before access?",
+        "How are BYOD, mobile, IoT, OT handled?",
+        "Is device posture re-evaluated continuously, or only at sign-in?"
+      ],
+      "framework_activities": [
+        "Policy Enforcement & Compliance Monitoring",
+        "Asset & Supply Chain Risk Management",
+        "Resource Access"
+      ]
+    },
+    {
+      "external_id": "Z-Q4",
+      "section_name": "Devices",
+      "order_index": 4,
+      "stem": "Tell me how you continuously evaluate device health and respond to device-based threats.",
+      "cues": [
+        "How frequently is device posture re-checked (every session, every minute, continuously)?",
+        "Does a compromised device automatically lose access?",
+        "How do you detect and respond to malware on endpoints?",
+        "Are mobile devices protected to the same standard as workstations?",
+        "What is your vulnerability scanning cadence?",
+        "Do you have visibility into containerized workloads as devices?"
+      ],
+      "framework_activities": ["Threat Protection", "Resource Access"]
+    },
+    {
+      "external_id": "Z-Q5",
+      "section_name": "Networks",
+      "order_index": 5,
+      "stem": "Walk me through how this system's network is segmented and how traffic moving across it is protected.",
+      "cues": [
+        "Is the network flat or segmented; what granularity?",
+        "Do you have micro-segmentation; at what level (per-application, per-workload)?",
+        "Is east-west traffic encrypted?",
+        "What about traffic to and from cloud workloads?",
+        "Do you inspect encrypted traffic (TLS decryption)?",
+        "Are there air-gapped or physically isolated segments?"
+      ],
+      "framework_activities": [
+        "Network Segmentation",
+        "Network Traffic Management",
+        "Traffic Encryption"
+      ]
+    },
+    {
+      "external_id": "Z-Q6",
+      "section_name": "Networks",
+      "order_index": 6,
+      "stem": "Tell me about your network's resilience and how you maintain visibility across it.",
+      "cues": [
+        "What protections against DDoS?",
+        "How redundant is your network; failover paths?",
+        "Do you have deep packet inspection or encrypted traffic analytics?",
+        "How do you detect lateral movement or unusual east-west patterns?",
+        "What is your visibility into cloud and hybrid flows?",
+        "Are flows logged in enough detail for forensics?"
+      ],
+      "framework_activities": ["Network Resilience", "Visibility & Analytics"]
+    },
+    {
+      "external_id": "Z-Q7",
+      "section_name": "Applications & Workloads",
+      "order_index": 7,
+      "stem": "Walk me through how you control which applications people can use and what they can do inside each application.",
+      "cues": [
+        "Do users sign on once via SSO, or separately to each app?",
+        "Is application access role-based, attribute-based, or context-aware?",
+        "How is API access authorized (keys, mutual TLS, OAuth scopes)?",
+        "Do you have an authoritative inventory of applications in use?",
+        "How are SaaS and shadow-IT applications handled?",
+        "Are access decisions audited at the application level?"
+      ],
+      "framework_activities": [
+        "Application Access",
+        "Application Threat Protection"
+      ]
+    },
+    {
+      "external_id": "Z-Q8",
+      "section_name": "Applications & Workloads",
+      "order_index": 8,
+      "stem": "Tell me about how applications get from idea to production, and how security is built into that pipeline.",
+      "cues": [
+        "Is the SDLC documented with security testing?",
+        "What runs in CI (SAST, SCA, secrets scanning, container image scanning)?",
+        "Is infrastructure-as-code scanned for misconfigurations?",
+        "Do you vet third-party libraries before allowing them?",
+        "How are production vulnerabilities patched, and on what cadence?",
+        "Is an SBOM tracked?"
+      ],
+      "framework_activities": [
+        "Accessible Applications",
+        "Secure Application Development & Deployment",
+        "Application Security Testing"
+      ]
+    },
+    {
+      "external_id": "Z-Q9",
+      "section_name": "Data",
+      "order_index": 9,
+      "stem": "Give me the picture of your data, what you have, where it lives, how sensitive it is, and how you keep track of all that as it changes.",
+      "cues": [
+        "Do you have an authoritative inventory of where sensitive data is stored?",
+        "What classification scheme (public, sensitive, controlled)?",
+        "Is data tagged at creation, or does it require human classification?",
+        "How do you discover sensitive data in unexpected places (files, email, chat)?",
+        "What is your data retention and disposal practice?",
+        "Where does sensitive data physically reside (on-prem, cloud, mission partners)?"
+      ],
+      "framework_activities": [
+        "Data Inventory Management",
+        "Data Categorization",
+        "Data Availability"
+      ]
+    },
+    {
+      "external_id": "Z-Q10",
+      "section_name": "Data",
+      "order_index": 10,
+      "stem": "Tell me how you protect data once you know where it is, and how you detect when something is wrong with how it is being accessed.",
+      "cues": [
+        "How is data access decided (file permissions, group-based, attribute-based)?",
+        "Do you have DLP tools, and at which layer (endpoint, network, cloud)?",
+        "Is sensitive data encrypted at rest, in transit, in use?",
+        "Who manages encryption keys; are they rotated automatically?",
+        "Do you monitor for unusual data access (bulk exports, off-hours, unexpected locations)?",
+        "Are there data-rights-management tools that follow the data outside the perimeter?"
+      ],
+      "framework_activities": [
+        "Data Access",
+        "Data Encryption",
+        "Visibility & Analytics"
+      ]
+    },
+    {
+      "external_id": "Z-Q11",
+      "section_name": "Visibility & Analytics",
+      "order_index": 11,
+      "stem": "Walk me through what telemetry you collect, what you watch, and how you turn that into actionable detection.",
+      "cues": [
+        "What sources feed your SIEM/XDR (endpoints, network, cloud, identity, apps)?",
+        "How long is telemetry retained; sufficient for forensics?",
+        "Do you have a documented detection use-case library?",
+        "How are alerts prioritized; who triages them?",
+        "Do you have proactive threat hunting beyond reactive alerts?",
+        "Are detections improved over time (red-team feedback, post-incident lessons)?"
+      ],
+      "framework_activities": ["Visibility & Analytics"]
+    },
+    {
+      "external_id": "Z-Q12",
+      "section_name": "Automation & Orchestration",
+      "order_index": 12,
+      "stem": "Tell me how automation supports security operations for this system, what is automated today, what is manual, and where you are heading.",
+      "cues": [
+        "Do you have a SOAR platform; which playbooks are automated end-to-end?",
+        "Can your stack automatically respond (isolate device, disable user, block IP)?",
+        "How integrated are your tools (shared signals, or silos)?",
+        "Are AI/ML models used for detection or response decisions?",
+        "How is the automation itself monitored for correctness?",
+        "What is your human-in-the-loop policy for high-impact automated actions?"
+      ],
+      "framework_activities": ["Automation & Orchestration", "Governance"]
+    }
+  ]
+}

@@ -1,0 +1,246 @@
+﻿{
+    "sprint":  "sprint-3-audit-correctness",
+    "cron_job_id":  null,
+    "cron_schedule":  "*/10 * * * *",
+    "checkpoint_cadence":  4,
+    "checkpoint_count":  0,
+    "last_checkpoint_at":  0,
+    "working_dir":  "c:\\Users\\DavidCatarious\\GitProjects\\SHIELD062626",
+    "expected_gh_user":  "SpearheadAnalytica",
+    "branch":  "fix/audit-correctness-sprint-3",
+    "sprint_doc":  "SPRINT_3.md",
+    "current_task_id":  null,
+    "started_at":  null,
+    "halt":  {
+                 "active":  false,
+                 "reason":  null
+             },
+    "scratch":  "Sprint 3 queue seeded 2026-07-08 from the deep repo audit (docs/audits/2026-07-08-repo-audit.md). NOT YET LAUNCHED. Read the SPRINT_3.md launch checklist first. LAUNCHER: working_dir and expected_gh_user in this file are MACHINE-LOCAL - after copying this staged queue to .claude/sprint-queue.json, set working_dir to YOUR absolute repo path and expected_gh_user to YOUR GitHub login (the account git pushes as). No expected_gcloud_config: this project has no GCP surface, loop-sprint.md preflight 0.6 self-skips. ENVIRONMENT: see ONBOARDING.md for zero-to-loop machine setup (Docker Desktop, Node LTS, gh, e2e deps). If port 3000 is taken on your box, set WEB_PORT in the root .env (gitignored) - e2e resolves it automatically via e2e/helpers/baseUrl.ts; canonical/CI stays :3000. If gh\u0027s active account silently flips (multi-account keyrings), run \u0027gh auth switch --user \u003cyour-login\u003e\u0027 before gh writes. Prior sprint: sprint-2 11/11 done, merged as PR #19; lessons in CONTEXT.md.",
+    "gates":  [
+                  "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" \u0026\u0026 cd \"$(git rev-parse --show-toplevel)\" \u0026\u0026 docker compose exec -T api pytest -m unit -q",
+                  "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" \u0026\u0026 cd \"$(git rev-parse --show-toplevel)\" \u0026\u0026 docker compose exec -T web sh -lc \"cd /app \u0026\u0026 pnpm -F web exec tsc --noEmit\"",
+                  "cd \"$(git rev-parse --show-toplevel)\" \u0026\u0026 NODE_DIR=$(ls -d \"$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS\"*/node-v*-win-x64 2\u003e/dev/null | head -1) \u0026\u0026 export PATH=\"$PATH:$NODE_DIR\" \u0026\u0026 npx -y prettier@3.9.4 --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\""
+              ],
+    "notes_global":  "e2e on the HOST via the winget node.exe + e2e/node_modules/@playwright/test/cli.js (plain npx playwright tries a global install); base URL resolved from root .env WEB_PORT by e2e/helpers/baseUrl.ts (this box :3001, canonical/CI :3000). Full suite ~17-23min; known flake = dev-server cold-compile timeout, isolated re-run clears it. Docker CLI needs the PATH export per shell. After ANY apps/web or packages/* source edit: docker compose up -d --force-recreate web BEFORE e2e (Windows bind-mount hot-reload does not fire). New python module under app/ needs docker compose restart api. After editing apps/web/package.json: reinstall INSIDE the web container. pytest: run detached, poll for PYTEST_EXIT=. NEW THIS SPRINT: the third gate (host prettier format:check, lockfile-pinned 3.9.4) is mandatory before every commit - CI enforces it and the sprint-2 loop shipped unformatted files. Seed idempotent: docker compose exec -T api python scripts/seed_demo.py. Logins admin@kentro.example / client@atlas.example, DemoPass!2026; spec-created users need unique timestamped emails. LLM is fixture-mode, offline, deterministic (D-017). Resolve seeded ids ONLY via e2e/helpers/ids.ts. Playwright gotchas: getByRole name matching is SUBSTRING; click()+waitForResponse not check() on auto-save; assert post-Run-AI state after page.reload(); no body click before first Tab in skip-link tests.",
+    "tasks":  [
+                  {
+                      "id":  "T0",
+                      "title":  "Fix CSF live-mode Run-AI: prompt/parser schema + payload grounding + contract test",
+                      "status":  "pending",
+                      "depends_on":  [
+
+                                     ],
+                      "risk":  "medium",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/api/app/ai/jobs.py",
+                                             "apps/api/app/routes/csf.py",
+                                             "apps/api/app/ai/fixtures.py",
+                                             "apps/api/tests/unit/test_csf_run_ai.py",
+                                             "apps/api/tests/unit/test_csf_ai_contract.py"
+                                         ],
+                      "verify":  [
+                                     "pytest -m unit green including new contract tests",
+                                     "contract test parses a prompt-schema-compliant response and asserts changes \u003e 0",
+                                     "payload test asserts interview answers/evidence present in the job payload",
+                                     "full e2e green (s3/s5/s7 exercise fixture Run-AI)"
+                                 ],
+                      "notes":  "Audit critical find. (a) _CSF_SCORE_PROMPT (app/ai/jobs.py:41-54) says return {\"subcategories\":[...]} but the route parses data.get(\"scores\",[]) keyed tier+subcategory_code (routes/csf.py:1099-1128) - live mode silently discards a compliant response. Align them (fixture shape is fine; update the prompt). (b) csf_score payload sends only tier/subcategory codes, no interview answers/evidence, though the prompt claims they\u0027re supplied - copy ZT\u0027s approach (routes/zt.py:398-400); payload goes through the redactor as designed. Keep D-017 fixture determinism. FAIL LOUDLY: consider logging a warning when a run-AI response parses to zero changes."
+                  },
+                  {
+                      "id":  "T1",
+                      "title":  "Port T7 draft-exists guard to attack + ZT (+ tech_debt if applicable) mint routes",
+                      "status":  "pending",
+                      "depends_on":  [
+
+                                     ],
+                      "risk":  "medium",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/api/app/routes/attack.py",
+                                             "apps/api/app/routes/zt.py",
+                                             "apps/api/tests/unit/test_attack_draft_guard.py",
+                                             "apps/api/tests/unit/test_zt_draft_guard.py",
+                                             "e2e/smoke/s5-attack.spec.ts",
+                                             "e2e/smoke/s6-zt.spec.ts",
+                                             "e2e/smoke/s11-staleness.spec.ts"
+                                         ],
+                      "verify":  [
+                                     "unit tests: exists-\u003e200 same id, not-exists-\u003e201 v1, closed-then-mint-\u003e201 v+1, for both routes",
+                                     "full e2e green - s5/s6/s11 mint via page.request.post and must handle the reuse response"
+                                 ],
+                      "notes":  "Pattern source: routes/csf.py:364-381 + tests/unit/test_csf_draft_guard.py (T7, sprint 2). attack mint (routes/attack.py:~243) pre-seeds ~600 coverage rows per version - the worst offender. zt mint at routes/zt.py:~471 (~87 rows). Check tech_debt for the same prior.version+1 pattern and guard it too if present. Follow s7\u0027s close-then-mint approach from T7 where specs need a genuinely fresh draft (fixture Run-AI is idempotent per assessment so reuse is deterministic)."
+                  },
+                  {
+                      "id":  "T2",
+                      "title":  "Auth compensating controls: forced re-auth + refresh rotation, dead flags fail loudly, docs corrected",
+                      "status":  "pending",
+                      "depends_on":  [
+
+                                     ],
+                      "risk":  "medium",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/api/app/routes/auth.py",
+                                             "apps/api/app/security/jwt.py",
+                                             "apps/api/app/config.py",
+                                             "apps/api/app/main.py",
+                                             "apps/api/tests/unit/test_auth_reauth.py",
+                                             "apps/web/src",
+                                             "README.md",
+                                             "BUILD_REPORT.md"
+                                         ],
+                      "verify":  [
+                                     "unit: refresh past shield_forced_reauth_seconds -\u003e typed 401 reason=reauth_required",
+                                     "unit: refresh rotation - reused old refresh token rejected",
+                                     "unit: startup with shield_auth_require_mfa=true raises a clear configuration error",
+                                     "full e2e green (specs sign in fresh; defaults must not trip them)",
+                                     "README/BUILD_REPORT describe only controls that exist"
+                                 ],
+                      "notes":  "README.md:137 + BUILD_REPORT A07 claim daily forced re-auth + 30-min idle timeout; neither is enforced (config.py:70-71 flags referenced nowhere; routes/auth.py:315-333 refresh re-issues indefinitely). Implement: original-auth-time claim honored at /auth/refresh (typed 401 reason=reauth_required past shield_forced_reauth_seconds, default 24h); rotation via jti denylist in Redis or rotating-pair check (coordinate with T3\u0027s Redis usage - shared helper welcome); dead MFA/email-verify flags (config.py:58-59) raise at startup if set true (flows don\u0027t exist - pretending is a fail-loudly violation); web handles reauth_required with friendly copy + redirect to sign-in. The 30-min refresh TTL IS effectively the idle timeout - document it as such rather than invent new machinery. D-016 typed-error envelope throughout. Append a DECISIONS entry for the chosen posture."
+                  },
+                  {
+                      "id":  "T3",
+                      "title":  "Rate limiting on auth + run-AI routes (Redis)",
+                      "status":  "pending",
+                      "depends_on":  [
+
+                                     ],
+                      "risk":  "medium",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/api/app/security/rate_limit.py",
+                                             "apps/api/app/routes/auth.py",
+                                             "apps/api/app/routes/csf.py",
+                                             "apps/api/app/routes/zt.py",
+                                             "apps/api/app/routes/attack.py",
+                                             "apps/api/app/routes/risk.py",
+                                             "apps/api/app/routes/tech_debt.py",
+                                             "apps/api/app/config.py",
+                                             "apps/api/tests/unit/test_rate_limit.py"
+                                         ],
+                      "verify":  [
+                                     "unit: exceeding the window -\u003e typed 429 reason=rate_limited with Retry-After",
+                                     "unit: Redis unavailable -\u003e request allowed + loud structlog warning (fail-open, tested)",
+                                     "full e2e green (limits generous enough for the serialized suite)"
+                                 ],
+                      "notes":  "Redis is composed and idle (D-015 Part F placeholder note). New module app/security/rate_limit.py: fixed-window per-IP + per-account on /auth/login + /auth/register; per-client on the five run-AI endpoints. Config-driven limits with e2e-safe defaults (document numbers in the commit body). D-016 typed 429. Fail-open on Redis outage with a loud warning - an infra blip must not brick auth - and unit-test that path. NEW python module -\u003e docker compose restart api. Tests run SQLite/no-Redis: the limiter must be dependency-injectable/fakeable."
+                  },
+                  {
+                      "id":  "T4",
+                      "title":  "Spec 15.5 filename convention for CSF Playbook + Risk Register exports",
+                      "status":  "pending",
+                      "depends_on":  [
+
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/api/app/routes/csf.py",
+                                             "apps/api/app/routes/risk.py",
+                                             "apps/api/tests/unit/test_deliverable_filenames.py",
+                                             "e2e/smoke/s7-csf-playbook.spec.ts",
+                                             "e2e/smoke/s8-risk-register.spec.ts"
+                                         ],
+                      "verify":  [
+                                     "unit: exported filenames carry Company_Name + Service_Name + MMDDYY (+ version suffix)",
+                                     "e2e s7 + s8 green with updated name assertions"
+                                 ],
+                      "notes":  "Master Spec 15.5 says EVERY download link complies. deliverable_filename() (apps/api/app/tech_debt/filename.py) already serves the four service deliverable routes. CSF Playbook 5-file export (routes/csf.py:~1202-1259, CSF_Playbook_v{n}*) and Risk Register (routes/risk.py:~332-356, Risk_Register_v{n}.*) bypass it. Route through the helper, preserve version suffixes. s7/s8 assert artifact names - update them (they delta-assert; verify exact matching mode first)."
+                  },
+                  {
+                      "id":  "T5",
+                      "title":  "llm_calls tenant attribution (client_id, additive migration)",
+                      "status":  "pending",
+                      "depends_on":  [
+
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/api/app/models/llm_call.py",
+                                             "apps/api/alembic/versions",
+                                             "apps/api/app/ai/engine.py",
+                                             "apps/api/app/ai/llm.py",
+                                             "apps/api/app/routes/risk.py",
+                                             "apps/api/tests/unit/test_llm_call_attribution.py"
+                                         ],
+                      "verify":  [
+                                     "unit: a run-AI call writes an llm_calls row with client_id set, on all five purposes",
+                                     "migration is batch_alter_table / SQLite-safe; old rows parse unchanged (C0)"
+                                 ],
+                      "notes":  "Audit 3b minor: llm_calls has only nullable service_id (models/llm_call.py:45) and risk-synthesis passes no service_id (routes/risk.py:206-216) - the biggest cross-assessment egress payload is the least attributable. Add nullable client_id, thread from the five call sites (tech_debt/extract.py:186, routes/attack.py:488, routes/csf.py:~1099, routes/risk.py:206, routes/zt.py:391); give risk at least the client. Additive only - C0 pattern."
+                  },
+                  {
+                      "id":  "T6",
+                      "title":  "Docs truth pass: architecture.md rewrite, README, DECISIONS dedupe, reviewer purge, ops docs",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T2",
+                                         "T3",
+                                         "T5"
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "docs/architecture.md",
+                                             "README.md",
+                                             "CHANGELOG.md",
+                                             "DECISIONS.md",
+                                             "docs/operations.md",
+                                             "docs/development.md",
+                                             "apps/api/app/routes/admin.py",
+                                             "apps/api/app/dependencies.py",
+                                             "apps/api/app/security/jwt.py",
+                                             "apps/api/app/schemas/auth.py",
+                                             "apps/api/app/routes/intake.py",
+                                             "reference-docs"
+                                         ],
+                      "verify":  [
+                                     "grep -ri reviewer apps/api/app returns zero hits in docstrings/summaries (tests may keep historical mentions with a comment)",
+                                     "architecture.md describes multi-tenant/no-worker/audit_entries/no-unredact reality",
+                                     "no duplicate D-NNN headings in DECISIONS.md",
+                                     "pytest + tsc green (docstring edits touch python files)"
+                                 ],
+                      "notes":  "Every audit section-2 finding. architecture.md is the worst offender (single-tenant claim, Celery worker, audit_events, redactor.unredact). README: tenancy, phantom runbooks/terraform (say planned or remove), real test matrix, current e2e counts. CHANGELOG: dedupe the two [3.0.0] headings. DECISIONS: append-only - add an erratum entry renumbering the SECOND D-015 (Part F, line ~134) and an entry recording D-005/D-006 supersession (reviewer + release flow removed by Work Order A1/A3; note sprint-5 may reintroduce release-to-client deliberately). Purge \u0027(admin/reviewer)\u0027 from OpenAPI summaries (routes/admin.py:144,197 - visible at :8000/docs) and stale docstrings (dependencies.py:9,97,115; security/jwt.py:12; schemas/auth.py:52; routes/intake.py:15). operations.md/development.md: no worker/Celery/Prometheus fiction; Redis\u0027s real job is now T3\u0027s rate limiting. reference-docs: commit the v2 Work Order if David supplied it, else a README noting Parts A-F live in DECISIONS + code; record the spec\u0027s 108-vs-implemented-106 subcategory discrepancy. Depends on T2/T3/T5 so it documents what actually shipped."
+                  },
+                  {
+                      "id":  "T7",
+                      "title":  "Loop hygiene + wrap-up: prettier gate documented, SMOKE_TEST sync, full gates, CONTEXT snapshot",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T0",
+                                         "T1",
+                                         "T2",
+                                         "T3",
+                                         "T4",
+                                         "T5",
+                                         "T6"
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "CLAUDE.md",
+                                             "SMOKE_TEST.md",
+                                             "CHANGELOG.md",
+                                             "CONTEXT.md"
+                                         ],
+                      "verify":  [
+                                     "full e2e suite green",
+                                     "pytest -m unit green",
+                                     "web tsc green",
+                                     "prettier --check clean repo-wide",
+                                     "CONTEXT.md overwritten with end-of-sprint snapshot"
+                                 ],
+                      "notes":  "Add the prettier format:check command to CLAUDE.md\u0027s real-commands section (lockfile-pinned version; the sprint-2 loop shipped unformatted files that only CI caught). SMOKE_TEST: note that section 14 (live-AI) is now meaningful post-T0 - do NOT check it, it needs David\u0027s live run with ANTHROPIC_API_KEY. CHANGELOG entry for sprint 3. CONTEXT.md: end-of-sprint snapshot in the established format (task-\u003ecommit table, machine-local facts, deferred list: framework majors Sprint 4, client features Sprint 5, terraform/DR needs-David)."
+                  }
+              ]
+}

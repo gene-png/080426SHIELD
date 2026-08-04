@@ -1,0 +1,209 @@
+{
+    "sprint": "sprint-8-browser-proof",
+    "cron_job_id": null,
+    "cron_schedule": "*/10 * * * *",
+    "checkpoint_cadence": 4,
+    "checkpoint_count": 0,
+    "last_checkpoint_at": 0,
+    "working_dir": "<SET-FOR-YOUR-BOX: absolute repo path>",
+    "expected_gh_user": "<SET-FOR-YOUR-BOX: your write-enabled gh account>",
+    "branch": "feat/browser-proof-sprint-8",
+    "sprint_doc": "SPRINT_8.md",
+    "current_task_id": null,
+    "started_at": null,
+    "halt": {
+        "active": false,
+        "reason": null
+    },
+    "scratch": "Sprint 8 queue seeded 2026-07-16 after Sprint 7 merged (PR #36, v3.4.0). NOT YET LAUNCHED - the human dev launching this sprint runs /loop-sprint-cron THEMSELVES; agents never start the loop. THEME: PROVE IT IN THE BROWSER - convert human-eyeball SMOKE debt into committed green specs + the last mint-route fix. Plan Codex-reviewed 2026-07-16 (ship-with-changes, findings folded into SPRINT_8.md). Version at close 3.4.1 (tag/CHANGELOG only - do NOT touch package manifests). No live-AI or cloud credentials needed - fixture mode + MailHog throughout. Email delivery is ON by default in dev compose since Sprint 7 T3; REQUIRE_MFA and REQUIRE_EMAIL_VERIFY stay FALSE (flipping either breaks existing e2e sign-ins). T1 (tech-debt guard) DELIBERATELY re-contracts test_extract_versions_subsequent_lists - call it out in the commit body, never silently weaken. T4 adds a TOTP dep to e2e/package.json -> npm ci inside e2e/ on the HOST (host-run harness, no container rebuild). New specs: s22 release-notify, s23 auth-pages, s24 mfa (parts A+B), s25 admin-health + an s17 empty-state assertion. MailHog assertions ALWAYS unique timestamped recipient + expected subject (registration also mails the same address - first-message-wins races). SIX gates unchanged. ruff==0.15.20/black==26.5.1 pinned + known-first-party=['app'] in ROOT pyproject - do not remove. gh auth switch before gh writes.",
+    "gates": [
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api pytest -m unit -q",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web exec tsc --noEmit\"",
+        "cd \"$(git rev-parse --show-toplevel)\" && NODE_DIR=$(ls -d \"$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS\"*/node-v*-win-x64 2>/dev/null | head -1) && export PATH=\"$PATH:$NODE_DIR\" && npx -y prettier@3.9.5 --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api sh -lc \"cd /app && ruff check --no-cache . && black --check .\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web test\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web lint\""
+    ],
+    "notes_global": "e2e on the HOST via the winget node.exe + e2e/node_modules/@playwright/test/cli.js; base URL from root .env WEB_PORT via e2e/helpers/baseUrl.ts (Dave's box :3001, canonical/CI :3000). Poll long gates (pytest, e2e) in the FOREGROUND to the end of the iteration in sub-9-minute bursts - NEVER park on background monitors (bit us 4x in Sprint 6). Docker CLI needs the PATH export per shell. After ANY apps/web or packages/* edit: docker compose up -d --force-recreate web BEFORE e2e (T1 is api-only; T2-T6 should need no web source edits - if one does, the dance applies). After e2e/package.json changes (T4 TOTP dep): npm ci inside e2e/ on the HOST - the e2e harness is not containerized. New python module under app/ needs docker compose restart api; NEVER restart api mid-pytest (SIGKILL 137). Seed idempotent: docker compose exec -T api python scripts/seed_demo.py. Logins admin@kentro.example / client@atlas.example, DemoPass!2026; spec-created users need unique timestamped emails. MailHog: SMTP :1025 / API+UI :8025, delivery ON by default in dev compose (Sprint 7 T3); every mail assertion matches recipient + expected subject via e2e/helpers/mailhog.ts (T0) - registration also mails the same recipient, first-message-wins races. Auth.js v5: MFA sign-in signal is signIn(...).code === 'mfa_required', NOT .error; specs drive the UI, never call signIn() directly. LLM fixture-mode default (D-017) - no live env needed this sprint. Tenant enforcement: require_*_in_tenant 404s (never 403); resolve seeded ids ONLY via e2e/helpers/ids.ts. Playwright gotchas: getByRole name matching is SUBSTRING; click()+waitForResponse not check() on auto-save; assert post-Run-AI state after page.reload(); no body click before first Tab in skip-link tests.",
+    "tasks": [
+        {
+            "id": "T0",
+            "title": "Shared MailHog helper (e2e/helpers/mailhog.ts)",
+            "risk": "low",
+            "depends_on": [],
+            "expected_paths": [
+                "e2e/helpers/mailhog.ts",
+                "e2e/smoke/s21-email-verify.spec.ts"
+            ],
+            "verify": [
+                "MAILHOG_API/fetch/extractToken extracted from s21 (s21-email-verify.spec.ts:19-52) into e2e/helpers/mailhog.ts beside auth/baseUrl/ids helpers",
+                "search polls by recipient PLUS expected subject (registration also emails the recipient - first-message-wins races); quoted-printable collapse + token= regex kept in extractToken",
+                "s21 consumes the helper, zero behavior change; s21 green standalone AND full suite green"
+            ],
+            "notes": "See SPRINT_8.md T0. Pure refactor + one capability upgrade (subject matching). Codex review finding 7.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T1",
+            "title": "Tech-debt extract draft-exists guard (idempotent 200, no re-extract)",
+            "risk": "medium",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/app/routes/tech_debt.py",
+                "apps/api/tests/unit/test_tech_debt_routes.py"
+            ],
+            "verify": [
+                "guard placed AFTER service/artifact validation but BEFORE extract_capabilities() (tech_debt.py:168) - a second POST while a draft is open must NOT invoke the LLM (Codex blocker: guarding at the old mint site line 194 still fires the call)",
+                "draft open -> log techdebt_reused_open_draft, return existing draft untouched, idempotent 200 via Response param overriding declared 201 (byte-for-byte the csf.py:366-390 shape); NO re-extraction, NO clear-and-repopulate (consultant edits at tech_debt.py:264-328 must survive)",
+                "test_extract_versions_subsequent_lists DELIBERATELY re-contracted (was: consecutive POSTs mint v1->v2) - rewrite to prove versioning across the APPROVED/RELEASED boundary; say so in the commit body",
+                "new contracts: (1) second POST with open draft -> 200 same id/version/items; (2) provider invoked exactly once, no second llm_calls row; (3) no second capability_list.extracted audit row; (4) latest APPROVED/RELEASED -> next version 201; (5) different artifact_id with open draft -> still returns existing draft",
+                "no new D-number (applies existing CSF/attack/zt pattern); ruff/black/pytest -m unit green"
+            ],
+            "notes": "See SPRINT_8.md T1. TDD-first: write the failing contracts, watch them fail, then guard. attack.py:258-273 and zt.py:539-554 are the already-ported siblings for reference.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T2",
+            "title": "s22-release-notify.spec.ts - release notification visible in MailHog (SMOKE 29)",
+            "risk": "medium",
+            "depends_on": [
+                "T0"
+            ],
+            "expected_paths": [
+                "e2e/smoke/s22-release-notify.spec.ts",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "spec creates an ISOLATED tenant + unique-email client user (s17 pattern) - proves recipient selection, not just that some mail exists",
+                "finalize + release a CSF deliverable (releaseCsfDeliverable shape from s18-home.spec.ts:84; finalize sequence per s17-documents.spec.ts:134)",
+                "MailHog assertion via T0 helper: recipient + subject 'Your {service_label} deliverable is ready' (sender.py:101), body carries the /documents link",
+                "SMOKE_TEST 29 checked with the spec filename (may land in T7 wrap-up); full suite green"
+            ],
+            "notes": "See SPRINT_8.md T2. Codex findings 7/8: unique recipient + subject match are mandatory; do not reuse the shared seed's released rows.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T3",
+            "title": "s23-auth-pages.spec.ts - verify/forgot/reset pages driven in the browser",
+            "risk": "medium",
+            "depends_on": [
+                "T0"
+            ],
+            "expected_paths": [
+                "e2e/smoke/s23-auth-pages.spec.ts",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "register unique-email user -> verification token via extractToken -> /verify-email consumes it in the PAGE UI -> success state asserted",
+                "/forgot-password requests a reset -> reset token from MailHog -> /reset-password completes in the UI -> sign-in with the NEW password succeeds",
+                "s21 untouched (API-path proof stands); SMOKE 24/25 web-page eyeball items converted to spec-backed checks (annotate in T7)",
+                "full suite green"
+            ],
+            "notes": "See SPRINT_8.md T3. Pages: apps/web/src/app/{verify-email,forgot-password,reset-password}/page.tsx.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T4",
+            "title": "s24-mfa.spec.ts part A - enrollment UI + TOTP sign-in",
+            "risk": "high",
+            "depends_on": [],
+            "expected_paths": [
+                "e2e/package.json",
+                "e2e/package-lock.json",
+                "e2e/smoke/s24-mfa.spec.ts"
+            ],
+            "verify": [
+                "TOTP generator dep (otpauth or equivalent) added to e2e/package.json; npm ci inside e2e/ on the host",
+                "fresh spec-created user enrolls on /account: secret captured from the UI (MfaEnrollment.tsx:126), confirm with a GENERATED code (enrollment requires valid TOTP - MfaEnrollment.tsx:39-78, no recovery-only shortcut exists), recovery codes asserted shown once",
+                "sign out -> sign in driving the UI TOTP second step (SignInForm.tsx, Auth.js v5 result.code signal) with a fresh generated code -> authenticated landing asserted",
+                "SHIELD_AUTH_REQUIRE_MFA stays default-off; spec's own user keeps the serialized shared-DB suite untouched; full suite green"
+            ],
+            "notes": "See SPRINT_8.md T4. Highest-risk task. Clock-window: generate the code immediately before submit; if flaky at window edges, otpauth exposes the remaining-seconds calc - wait for a fresh window rather than retrying blind.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T5",
+            "title": "s24-mfa.spec.ts part B - recovery-code sign-in + single-use rejection",
+            "risk": "medium",
+            "depends_on": [
+                "T4"
+            ],
+            "expected_paths": [
+                "e2e/smoke/s24-mfa.spec.ts",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "self-contained test with its OWN fresh user (enroll via the same UI flow, capture recovery codes, sign out) - no cross-test state with part A",
+                "sign in with ONE recovery code in the TOTP field (SignInForm.tsx:104-119; placeholder '6-digit code or recovery code' at :114) -> success asserted",
+                "sign out, SAME code again -> rejection asserted (single-use consumed)",
+                "T4+T5 together retire the manual MFA walkthrough (SMOKE MFA eyeball item - annotate in T7); full suite green"
+            ],
+            "notes": "See SPRINT_8.md T5. Split from T4 per Codex finding 6: enrollment/TOTP and recovery redemption are distinct failure seams; keep each independently green.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T6",
+            "title": "s25-admin-health.spec.ts + /documents empty-state assertion",
+            "risk": "low",
+            "depends_on": [],
+            "expected_paths": [
+                "e2e/smoke/s25-admin-health.spec.ts",
+                "e2e/smoke/s17-documents.spec.ts",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "s25: admin sign-in -> /admin/health -> full-matrix all-green operator view asserted against the healthy dev stack",
+                "s17 gains an empty-state assertion in its isolated tenant BEFORE the release step (/documents no-released-deliverables state, no-dead-ends rule, SMOKE_TEST.md:228) - near-zero marginal cost, tenant already exists there",
+                "both SMOKE items annotated with spec filenames (may land in T7); full suite green"
+            ],
+            "notes": "See SPRINT_8.md T6. The empty-state item was a Codex review find (finding 10).",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T7",
+            "title": "Wrap-up: SMOKE annotations, CHANGELOG 3.4.1, full gates, CONTEXT snapshot",
+            "risk": "low",
+            "depends_on": [
+                "T0",
+                "T1",
+                "T2",
+                "T3",
+                "T4",
+                "T5",
+                "T6"
+            ],
+            "expected_paths": [
+                "SMOKE_TEST.md",
+                "CHANGELOG.md",
+                "CONTEXT.md",
+                "BUILD_REPORT.md",
+                "context/"
+            ],
+            "verify": [
+                "SMOKE_TEST: 29 (s22), verify/forgot/reset pages (s23), MFA UI (s24), /admin/health (s25), /documents empty state (s17) - each box checked ONLY with its spec filename (honesty convention)",
+                "boxes that stay UNCHECKED stay unchecked: unit-proven backend invariants (16 release deny paths, 20 preview internals, 21 audit filters) and the end-of-file sign-off boxes - nothing this sprint proves them in a browser (note this in the PR body)",
+                "CHANGELOG [3.4.1] per-task entries with commits (tag/CHANGELOG only - package manifests untouched); BUILD_REPORT synced (gate results at HEAD, e2e spec files 21 -> 25)",
+                "CONTEXT.md overwritten with end-of-sprint snapshot; the LAUNCHING dev's own context/<name>.md refreshed (owner-only rule - NEVER write another dev's context file)",
+                "FULL exit gate set green (all six) + full e2e"
+            ],
+            "notes": "See SPRINT_8.md T7. Carry the deferred list forward: Keycloak SSO, demo-reset/hosted-demo automation, section-10 export eyeballs, ESLint 10, postcss moderate, terraform/FedRAMP/other adapters, tech-debt replace-draft affordance.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        }
+    ]
+}

@@ -1,0 +1,311 @@
+{
+    "sprint": "sprint-5-client-value-loop",
+    "cron_job_id": null,
+    "cron_schedule": "*/10 * * * *",
+    "checkpoint_cadence": 4,
+    "checkpoint_count": 0,
+    "last_checkpoint_at": 0,
+    "working_dir": "c:\\Users\\DavidCatarious\\GitProjects\\SHIELD062626",
+    "expected_gh_user": "SpearheadAnalytica",
+    "branch": "feat/client-value-loop-sprint-5",
+    "sprint_doc": "SPRINT_5.md",
+    "current_task_id": null,
+    "started_at": null,
+    "halt": {
+        "active": false,
+        "reason": null
+    },
+    "scratch": "Sprint 5 queue seeded 2026-07-10 after Sprint 4 merged (PR #28). NOT YET LAUNCHED. Read the SPRINT_5.md launch checklist first. LAUNCHER: set working_dir + expected_gh_user for YOUR box after copying this staged queue to .claude/sprint-queue.json. Theme: CLIENT VALUE LOOP - deliverable release-to-client (T1 backend D-025 + T2 /documents), /home dashboard (T3) + value-loop card (T4, spec 2.5 - DETERMINISTIC aggregation, no LLM), CSF POA&M step (T5), redaction preview (T6), /admin/audit viewer (T7), vitest harness + reqSeq tests (T8), react-hooks v6 adoption (T9), wrap-up (T10). T0 FIRST: prettier 3.9.5 pin sync (supersedes dependabot PR #29 - after T0 lands, gate strings in THIS file's gates array must say 3.9.5). CRITICAL SPEC RULES: release rule spec 12 - client NEVER sees drafts/AI output until explicit release; 6.4 /home hides scoring math and audit internals; value card = code computes, nulls render pending, never fake numbers. Migrations 0028 (release fields) + 0029 (csf_gap_actions) MUST be additive batch_alter_table (C0). Deliverable model docstring says no client release path - T1 changes that BY DESIGN (D-025); update the docstring. Sprint-4 lessons: poll gates in FOREGROUND to end of iteration, never park on background monitors; never pnpm build in web container during e2e (shared .next); force-recreate web after web/packages edits; never restart api mid-pytest (137); new python module under app/ needs docker compose restart api (T6 adds routes - if a new module file, restart).",
+    "gates": [
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api pytest -m unit -q",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web exec tsc --noEmit\"",
+        "cd \"$(git rev-parse --show-toplevel)\" && NODE_DIR=$(ls -d \"$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS\"*/node-v*-win-x64 2>/dev/null | head -1) && export PATH=\"$PATH:$NODE_DIR\" && npx -y prettier@3.9.5 --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api sh -lc \"cd /app && ruff check --no-cache . && black --check .\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web test\""
+    ],
+    "notes_global": "T0 MUST update the prettier gate above to 3.9.5 in the RUNTIME queue (and this staged file) when the lockfile bumps - gate version equals lockfile version, always. T8 MUST append the web vitest gate to the RUNTIME gates array once the harness lands (same pattern as sprint-4 T0). e2e on the HOST via the winget node.exe + e2e/node_modules/@playwright/test/cli.js; base URL from root .env WEB_PORT via e2e/helpers/baseUrl.ts (this box :3001, canonical/CI :3000). Full suite ~17-23min; known flake = dev-server cold-compile timeout, isolated re-run clears it. Docker CLI needs the PATH export per shell. After ANY apps/web or packages/* source edit: docker compose up -d --force-recreate web BEFORE e2e. After editing apps/web/package.json (T8 adds vitest): reinstall INSIDE the web container. New python module under app/ needs docker compose restart api; NEVER restart api while an in-container pytest is running (SIGKILL 137). pytest: run detached, poll for PYTEST_EXIT= synchronously within the iteration - NEVER park on background monitors. Host prettier gate mandatory before every commit. Seed idempotent: docker compose exec -T api python scripts/seed_demo.py. Logins admin@kentro.example / client@atlas.example, DemoPass!2026; spec-created users need unique timestamped emails. LLM fixture-mode offline deterministic (D-017); T6 preview must NOT create llm_calls rows. Tenant enforcement: require_*_in_tenant 404s (never 403) on mismatch; client users pinned by user.client_id, admins select via X-Client-Id. Resolve seeded ids ONLY via e2e/helpers/ids.ts. Playwright gotchas: getByRole name matching is SUBSTRING; click()+waitForResponse not check() on auto-save (T5 editor!); assert post-Run-AI state after page.reload(); no body click before first Tab in skip-link tests.",
+    "tasks": [
+        {
+            "id": "T0",
+            "title": "Prettier 3.9.5 pin sync (supersedes dependabot PR #29)",
+            "status": "pending",
+            "depends_on": [],
+            "risk": "low",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "package.json",
+                "pnpm-lock.yaml",
+                "CLAUDE.md",
+                "CONTEXT.md",
+                ".claude/sprint-queue.sprint-5.json"
+            ],
+            "verify": [
+                "npx -y prettier@3.9.5 --check on the repo glob exits 0",
+                "grep for 3.9.4 finds zero live references (CHANGELOG history lines excepted)",
+                "runtime .claude/sprint-queue.json prettier gate string says 3.9.5"
+            ],
+            "notes": "See SPRINT_5.md T0. Dependabot PR #29 bumps root package.json prettier 3.9.4->3.9.5 but cannot sync the FOUR gate pins: CLAUDE.md real-commands, CONTEXT.md machine-local facts, runtime queue gates array, this staged queue's gates array. Land the same dep bump on the sprint branch + sync every pin in one commit. Dave closes #29 as superseded after this lands (launch checklist item 5). Lesson: a format gate that diverges from the lockfile ships red CI (Sprint 2)."
+        },
+        {
+            "id": "T1",
+            "title": "Deliverable release flow backend: released_at/by, release route, client list, artifact access (D-025)",
+            "status": "pending",
+            "depends_on": [
+                "T0"
+            ],
+            "risk": "high",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/api/app/models/deliverable.py",
+                "apps/api/alembic/versions",
+                "apps/api/app/routes",
+                "apps/api/app/schemas",
+                "apps/api/tests/unit",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "unit: release route requires finalized (typed 409 not_finalized), idempotent 200 on re-release with loud log, audit row *.deliverable.released written",
+                "unit: client list returns ONLY released deliverables of the caller's tenant; unreleased and cross-tenant are absent (404 pattern, never 403)",
+                "unit: artifact download allow/deny matrix - client CAN fetch artifacts of released own-tenant deliverables, CANNOT fetch unreleased / cross-tenant / non-deliverable artifacts",
+                "migration 0028 additive + SQLite-safe (batch_alter_table); old rows parse as unreleased (C0)",
+                "DECISIONS gains D-025 (verify next free D-number) framing this as a NEW admin-only release action, not a D-005/D-006 revival (D-023)"
+            ],
+            "notes": "See SPRINT_5.md T1. Spec 12 release rule (Master Spec :1805): released = consultant explicitly released; until then client sees nothing. Model docstring (models/deliverable.py:7-9) currently says NO client release path and migration 0015 DROPPED released_to_client_at - reintroduction is deliberate (D-023 anticipated it as a new decision). Add released_at + released_by nullable (0028). Release routes per service (csf/zt/attack/tech_debt) can share one helper - the four finalize routes are already shape-identical (csf.py:1411, zt.py:1044, attack.py:738, tech_debt.py:559). Client read route GET /clients/{cid}/deliverables tenant-enforced via require_*_in_tenant (tenant.py - deliverables have no client_id; tenancy via parent service, tenant.py:110-121). D-016 typed errors throughout. TDD: contract tests first."
+        },
+        {
+            "id": "T2",
+            "title": "/documents client page: WHAT YOU'VE RECEIVED table with downloads (spec 6.7)",
+            "status": "pending",
+            "depends_on": [
+                "T1"
+            ],
+            "risk": "medium",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/web/src/app",
+                "apps/web/src/components",
+                "e2e"
+            ],
+            "verify": [
+                "e2e: admin finalizes+releases via API, client sign-in sees the row (service, title, version, released date, status badge), download link responds 200 with a spec-15.5 filename",
+                "e2e: unreleased deliverable does NOT appear for the client",
+                "empty state renders per the no-dead-ends rule (spec 12)",
+                "web tsc + eslint + build green"
+            ],
+            "notes": "See SPRINT_5.md T2. Spec 6.7 (Master Spec :1115): table of every deliverable released to the client, PDF/XLSX (+DOCX where present) links, badges Final / Superseded (superseded_by set = Superseded). Client nav gains Documents; admin nav unchanged. Proxy routes follow the existing app/api/proxy pattern (Next 15 async params - params are Promises). Force-recreate web before e2e."
+        },
+        {
+            "id": "T3",
+            "title": "/home client dashboard shell (spec 6.4): hero, service grid, waiting-on-you",
+            "status": "pending",
+            "depends_on": [
+                "T1"
+            ],
+            "risk": "medium",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/web/src/app",
+                "apps/web/src/components",
+                "apps/api/app/routes",
+                "apps/api/tests/unit",
+                "e2e"
+            ],
+            "verify": [
+                "e2e: client with a released deliverable sees the HERO band (report ready + View/Download); client without sees next-step guidance instead - both states covered",
+                "e2e: signed-in client hitting / lands on /home; admin still lands on /admin",
+                "page shows NO scoring math, NO audit internals, NO raw AI output (spec 6.4)",
+                "unit tests for any new aggregate endpoint the grid needs; web gates green"
+            ],
+            "notes": "See SPRINT_5.md T3. Spec 6.4 (Master Spec :1000): greeting, hero only-if-ready, per-service status grid (from existing assessment/service status - NO new scoring), what's-waiting-on-you (open self-assessments, unread messages), recent activity. There is NO /home today - app/page.tsx is marketing only; add the authenticated client landing + redirect. Keep data fetching server-side where possible; any client component with mount fetches follows the reqSeq guard pattern (T8 tests define the shape)."
+        },
+        {
+            "id": "T4",
+            "title": "Cross-service value-loop card (spec 2.5): deterministic aggregation endpoint + card",
+            "status": "pending",
+            "depends_on": [
+                "T3"
+            ],
+            "risk": "medium",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/api/app/routes",
+                "apps/api/app/schemas",
+                "apps/api/tests/unit",
+                "apps/web/src/components",
+                "e2e"
+            ],
+            "verify": [
+                "unit: aggregation correct with full data, partial data (nulls for missing services), and no data - never fake numbers, pending renders for nulls",
+                "unit: NO llm_calls row, NO LLM import in the aggregation path (AI suggests, code computes)",
+                "unit: tenant-enforced (client pinned, admin via X-Client-Id, cross-tenant 404)",
+                "e2e: card renders on /home with seeded data"
+            ],
+            "notes": "See SPRINT_5.md T4. Spec 2.5 (Master Spec :314) - the cross-service value loop: Tech Debt savings + ZT gaps + ATT&CK uncovered techniques + CSF gaps into one executive summary card. GET /clients/{cid}/value-summary reads ALREADY-COMPUTED engine outputs (approved/released assessments only - respect the spec-12 visibility rule for what feeds a CLIENT-visible number). Pure deterministic aggregation; if a service has no qualifying data its slot is null and the card renders 'pending'."
+        },
+        {
+            "id": "T5",
+            "title": "CSF POA&M step: csf_gap_actions fields, CRUD, gap-analysis editor, XLSX action-plan sheet (spec 6/8 step 10)",
+            "status": "pending",
+            "depends_on": [
+                "T0"
+            ],
+            "risk": "medium",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/api/app/models",
+                "apps/api/alembic/versions",
+                "apps/api/app/routes/csf.py",
+                "apps/api/app/schemas",
+                "apps/api/app/csf/playbook_export.py",
+                "apps/api/tests/unit",
+                "apps/web/src/components/admin/csf",
+                "e2e"
+            ],
+            "verify": [
+                "unit: default priority comes from gap_priority() (csf/playbook.py:177), priority_override wins where set - engine untouched otherwise",
+                "unit: CRUD contract tests (admin-only, D-016 typed errors); migration 0029 additive/SQLite-safe, old assessments parse with zero actions (C0)",
+                "unit: playbook XLSX gains the action-plan sheet with characterization/owner/deadline/resources/success_criteria/poam_ref",
+                "e2e: edit an action item in the gap-analysis view, page.reload(), values survive (auto-save via click()+waitForResponse, NOT check())"
+            ],
+            "notes": "See SPRINT_5.md T5. Spec step 10 (Master Spec :1345 admin gap-analysis, :1346 CSF flow): per-gap Characterize (accept/mitigate/transfer/avoid) / Prioritize (P1-P3) / Action items (owner, deadline, resources, success criteria) / POA&M linkage. New csf_gap_actions table keyed (assessment_id, subcategory_code), all fields nullable. Scoring engine (playbook.py) is NOT modified - only read for defaults. This extends the existing playbook XLSX (playbook_export.py:render_xlsx:33), NOT a new 15.5 deliverable kind. FedRAMP POA&M template export stays out of scope (spec 16)."
+        },
+        {
+            "id": "T6",
+            "title": "Redaction preview gate: POST /ai/preview + pre-Run-AI preview UI (audit 4c #3)",
+            "status": "pending",
+            "depends_on": [
+                "T0"
+            ],
+            "risk": "low",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/api/app/routes",
+                "apps/api/app/schemas",
+                "apps/api/tests/unit",
+                "apps/web/src/components/admin",
+                "e2e"
+            ],
+            "verify": [
+                "unit: preview output equals redact_payload() of the same payload run-ai would build for identical state; removed_counts match",
+                "unit: preview creates NO llm_calls row and triggers NO egress (no provider construction); admin-only; AI rate limiter applies",
+                "e2e: open preview from a Run-AI surface, see redacted payload + counts, then run AI successfully"
+            ],
+            "notes": "See SPRINT_5.md T6. redact_payload is pure (ai/redact.py:250, returns (cleaned, removed_counts) - counts only). Reuse each service's existing run-ai payload builder so preview and egress can never diverge - factor the builder out if currently inline (refactor, no behavior change, tests lock equivalence). Preview is an OFFERED gate not a forced modal. If this adds a new python module file: docker compose restart api."
+        },
+        {
+            "id": "T7",
+            "title": "/admin/audit viewer: audit_entries + llm_calls read routes and two-tab UI (audit 4c #4)",
+            "status": "pending",
+            "depends_on": [
+                "T0"
+            ],
+            "risk": "low",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/api/app/routes/admin.py",
+                "apps/api/app/schemas/admin.py",
+                "apps/api/tests/unit",
+                "apps/web/src/app/admin",
+                "apps/web/src/components/admin",
+                "e2e"
+            ],
+            "verify": [
+                "unit: pagination (cursor desc) + each filter (action prefix, target_type, actor, correlation_id, date range / client_id, purpose, provider, status) contract-tested; client role gets 403 (admin_required)",
+                "unit: llm_calls response exposes only audit-safe fields (no api keys - error_message safety was locked in Sprint 4)",
+                "e2e: an audited action performed in-test appears in the Activity tab; AI calls tab lists fixture-mode rows; correlation-id click-through links the tabs",
+                "UI is strictly read-only (append-only store, no mutation affordances)"
+            ],
+            "notes": "See SPRINT_5.md T7. audit_entries (models/audit_entry.py:26 - append-only, PG trigger + before_flush guard) and llm_calls (models/llm_call.py:42) have 42 write sites and ZERO read surface (audit doc 4b). Routes join routes/admin.py (admin_required like ai_status :458). Keep queries indexed-friendly (at/id cursor); no OFFSET pagination."
+        },
+        {
+            "id": "T8",
+            "title": "Web unit-test harness: vitest + testing-library, reqSeq guard tests, CI + queue gate",
+            "status": "pending",
+            "depends_on": [
+                "T0"
+            ],
+            "risk": "medium",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/web/package.json",
+                "pnpm-lock.yaml",
+                "apps/web/vitest.config.ts",
+                "apps/web/src",
+                ".github/workflows/ci.yml",
+                ".claude/sprint-queue.sprint-5.json"
+            ],
+            "verify": [
+                "pnpm -F web test runs deterministically in-container (mocked fetch, no network) and exits 0",
+                "guard tests: stale response arriving after a newer request does NOT write state; fetch errors surface to the error state (both CsfPlaybookPanel and MessageThread)",
+                "CI web job runs the test script; runtime queue gates array gains the in-container web test gate",
+                "a deliberately broken guard (scratch mutation) makes the test fail - proves the test bites"
+            ],
+            "notes": "See SPRINT_5.md T8. apps/web has NO test framework (only root e2e/). vitest + @testing-library/react + jsdom, minimal config (no snapshots, no coverage thresholds). Guards: admin/csf/CsfPlaybookPanel.tsx:131 and messages/MessageThread.tsx. After package.json edit: reinstall INSIDE the web container, force-recreate before any e2e. Append the gate to the RUNTIME .claude/sprint-queue.json gates array AND document here (sprint-4 T0 pattern)."
+        },
+        {
+            "id": "T9",
+            "title": "Adopt the 14 react-hooks v6 rules: enable all, fix every violation",
+            "status": "pending",
+            "depends_on": [
+                "T8"
+            ],
+            "risk": "medium",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "apps/web/eslint.config.js",
+                "apps/web/src",
+                "packages/design-system/src",
+                "e2e"
+            ],
+            "verify": [
+                "eslint . exits 0 with ALL 14 react-hooks v6 rules enabled (target zero rules off; any exception documented rule-by-rule in the commit body)",
+                "web tsc + build green; vitest green",
+                "full e2e green (behavioral edits to shared components)"
+            ],
+            "notes": "See SPRINT_5.md T9. Sprint-4 T3 disabled 14 react-hooks v6 rules (set-state-in-effect, purity, etc.) for strict parity - flagged ~15 components then; re-run for the true current list. Fixes in the mount-fetch family may use the reqSeq guard pattern (T8's tests define it) but do NOT add speculative guards where no rule fires - the broader sweep is Sprint 6. This is a deliberate lint tightening, not a regression hunt."
+        },
+        {
+            "id": "T10",
+            "title": "Wrap-up: SMOKE_TEST new sections, CHANGELOG 3.2.0, D-025 verify, full gates, CONTEXT snapshot",
+            "status": "pending",
+            "depends_on": [
+                "T1",
+                "T2",
+                "T3",
+                "T4",
+                "T5",
+                "T6",
+                "T7",
+                "T8",
+                "T9"
+            ],
+            "risk": "low",
+            "attempts": 0,
+            "commit": null,
+            "expected_paths": [
+                "SMOKE_TEST.md",
+                "CHANGELOG.md",
+                "CONTEXT.md",
+                "BUILD_REPORT.md",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "SMOKE_TEST sections for release flow, /documents, /home + value card, POA&M editing, redaction preview, audit viewer - each checked ONLY with a green committed spec annotated by filename",
+                "CHANGELOG [3.2.0] per-task entries with commits; BUILD_REPORT synced",
+                "FULL gate set green: full e2e, pytest -m unit, tsc, prettier 3.9.5, in-container ruff/black, web vitest (T8 gate)",
+                "CONTEXT.md overwritten with the end-of-sprint snapshot (task->commit table, machine-local facts, deferred, lessons)"
+            ],
+            "notes": "See SPRINT_5.md T10. Honesty convention: a SMOKE_TEST box is checked ONLY if a green committed spec proves it. Deferred list must carry forward: ESLint 10 (upstream), reqSeq sweep remainder, MFA/email-verify (D-020), infra needs-David, SMOKE_TEST 14 live-AI if still unrun."
+        }
+    ]
+}

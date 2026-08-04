@@ -1,0 +1,225 @@
+{
+    "sprint":  "sprint-4-majors-providers",
+    "cron_job_id":  null,
+    "cron_schedule":  "*/10 * * * *",
+    "checkpoint_cadence":  4,
+    "checkpoint_count":  0,
+    "last_checkpoint_at":  0,
+    "working_dir":  "c:\\Users\\DavidCatarious\\GitProjects\\SHIELD062626",
+    "expected_gh_user":  "SpearheadAnalytica",
+    "branch":  "feat/majors-providers-sprint-4",
+    "sprint_doc":  "SPRINT_4.md",
+    "current_task_id":  null,
+    "started_at":  null,
+    "halt":  {
+                 "active":  false,
+                 "reason":  null
+             },
+    "scratch":  "Sprint 4 queue seeded 2026-07-09 after Sprint 3 merged (PR #26). NOT YET LAUNCHED. Read the SPRINT_4.md launch checklist first. LAUNCHER: set working_dir + expected_gh_user for YOUR box after copying this staged queue to .claude/sprint-queue.json. Two themes: D-018 framework majors (Next 15/React 19/Tailwind 4/ESLint 10/Node 22, then audit-to-zero) and multi-provider LLM (OpenAI + Gemini adapters behind the existing _build_provider seam in app/ai/llm.py — redaction/llm_calls/client_id all live above the seam and are untouched). T0 FIRST: lint-gate CI parity (in-container ruff/black must see the ROOT pyproject config — sprint-3 shipped 6 ruff errors CI caught because the api container only mounts apps/api; fixed manually as 753d765). KNOWN RISK in T1: next-auth 4.24.x peer-deps next 12-14; if Next 15 genuinely requires the Auth.js v5 migration, HALT with diagnosis (Dave decision). If David's pending SMOKE_TEST 14 live-AI run surfaces defects, append them to this queue as new tasks. Sprint-3 lessons: never restart api mid-pytest (SIGKILL 137); poll gates synchronously to the end of the iteration, never park on background monitors; after apps/web/package.json edits reinstall INSIDE the web container then force-recreate web before e2e.",
+    "gates":  [
+                  "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api pytest -m unit -q",
+                  "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web exec tsc --noEmit\"",
+                  "cd \"$(git rev-parse --show-toplevel)\" && NODE_DIR=$(ls -d \"$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS\"*/node-v*-win-x64 2>/dev/null | head -1) && export PATH=\"$PATH:$NODE_DIR\" && npx -y prettier@3.9.4 --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+                  "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api sh -lc \"cd /app && ruff check --no-cache . && black --check .\""
+              ],
+    "notes_global":  "T0 MUST append the in-container ruff/black gate (root-config parity) to THIS gates array in the runtime queue once the compose mount lands — until then run it manually per SPRINT_4.md T0. e2e on the HOST via the winget node.exe + e2e/node_modules/@playwright/test/cli.js; base URL from root .env WEB_PORT via e2e/helpers/baseUrl.ts (this box :3001, canonical/CI :3000). Full suite ~17-23min; known flake = dev-server cold-compile timeout, isolated re-run clears it. Docker CLI needs the PATH export per shell. After ANY apps/web or packages/* source edit: docker compose up -d --force-recreate web BEFORE e2e. After editing apps/web/package.json: reinstall INSIDE the web container (framework bumps = every T1-T4 task). New python module under app/ needs docker compose restart api; NEVER restart api while an in-container pytest is running (SIGKILL 137). pytest: run detached, poll for PYTEST_EXIT= synchronously within the iteration. Host prettier 3.9.4 gate mandatory before every commit. Seed idempotent: docker compose exec -T api python scripts/seed_demo.py. Logins admin@kentro.example / client@atlas.example, DemoPass!2026; spec-created users need unique timestamped emails. LLM fixture-mode offline deterministic (D-017) — T6 adapters must not change that default. Resolve seeded ids ONLY via e2e/helpers/ids.ts. Playwright gotchas: getByRole name matching is SUBSTRING; click()+waitForResponse not check() on auto-save; assert post-Run-AI state after page.reload(); no body click before first Tab in skip-link tests.",
+    "tasks":  [
+                  {
+                      "id":  "T0",
+                      "title":  "Lint-gate CI parity: in-container ruff/black see the ROOT pyproject config",
+                      "status":  "pending",
+                      "depends_on":  [],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "docker-compose.yml",
+                                             "CLAUDE.md",
+                                             ".claude/sprint-queue.sprint-4.json"
+                                         ],
+                      "verify":  [
+                                     "in-container 'ruff check --no-cache .' from /app flags a deliberately seeded I001 violation (then remove the seed)",
+                                     "in-container ruff + black report identical findings to CI's ruff/black on the same tree (zero on main)",
+                                     "runtime queue gates array now contains the ruff/black gate"
+                                 ],
+                      "notes":  "See SPRINT_4.md T0. Sprint-3 CI failure root cause: CI runs ruff/black from a full checkout (config discovery walks up to ROOT pyproject.toml [tool.ruff]); the api container mounts only apps/api so in-container runs used defaults and missed I001/UP037 (fixed manually 753d765). PREFERRED: read-only compose mount of ./pyproject.toml at /pyproject.toml in the api service (parent dir of /app - discovery finds it naturally). Use --no-cache or a writable RUFF_CACHE_DIR (container /app may be read-only-ish for /.ruff_cache - permission error seen 2026-07-09). Add the gate to the RUNTIME .claude/sprint-queue.json gates array AND document in this staged queue + CLAUDE.md real-commands. docker compose restart api after the compose edit."
+                  },
+                  {
+                      "id":  "T1",
+                      "title":  "Next 15 + React 19 (with codemods; HALT if next-auth forces the v5 migration)",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T0"
+                                     ],
+                      "risk":  "high",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/web/package.json",
+                                             "pnpm-lock.yaml",
+                                             "apps/web/next.config.js",
+                                             "apps/web/src"
+                                         ],
+                      "verify":  [
+                                     "docker compose exec -T web sh -lc \"cd /app && pnpm -F web build\" exits 0",
+                                     "full e2e suite green on the new stack",
+                                     "pnpm audit no longer reports the next<15.5.16 advisories"
+                                 ],
+                      "notes":  "See SPRINT_4.md T1. Bump next/react/react-dom/@types/react/@types/react-dom/eslint-config-next together; run npx @next/codemod@latest. Review: async request APIs (cookies()/headers() in app/api/proxy/* routes), fetch/route-handler caching default changes (app relies on dynamic rendering - verify each proxy route), next.config renames. KNOWN RISK: next-auth 4.24.x peer-deps next 12-14. Verify runtime behavior EARLY (sign-in flow, session callback, middleware); if Next 15 genuinely requires Auth.js v5, HALT with a written diagnosis - that migration is a Dave decision, not a loop decision. Reinstall in web container + force-recreate before e2e. The FULL e2e suite is the point of this gate."
+                  },
+                  {
+                      "id":  "T2",
+                      "title":  "Tailwind 4 migration (CSS-first config; design-system tokens survive)",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T1"
+                                     ],
+                      "risk":  "medium",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/web/package.json",
+                                             "pnpm-lock.yaml",
+                                             "apps/web/tailwind.config.ts",
+                                             "apps/web/postcss.config.js",
+                                             "apps/web/src",
+                                             "packages/design-system"
+                                         ],
+                      "verify":  [
+                                     "full e2e green including s16 axe sweep (asserts the --ink-tertiary contrast fix survives)",
+                                     "grep sweep for renamed/removed utilities across apps/web/src and packages/ comes back clean",
+                                     "in-container pnpm -F web build exits 0"
+                                 ],
+                      "notes":  "See SPRINT_4.md T2. Tailwind 4 = CSS-first (@theme replaces most of tailwind.config), new @tailwindcss/postcss plugin, utility renames (shadow-sm family etc.). packages/design-system/src/tokens.css custom properties must survive - s16 axe asserts contrast. Use the official upgrade tool (npx @tailwindcss/upgrade) then hand-verify. Design-system CSS is bind-mounted via ./packages - force-recreate web to apply."
+                  },
+                  {
+                      "id":  "T3",
+                      "title":  "ESLint 10 flat config",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T1"
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/web/package.json",
+                                             "pnpm-lock.yaml",
+                                             "apps/web/eslint.config.js",
+                                             ".github/workflows/ci.yml"
+                                         ],
+                      "verify":  [
+                                     "pnpm -F web exec eslint . exits 0 in-container",
+                                     "rule parity checked via eslint --print-config diff on a representative file; intentional changes documented in the commit body",
+                                     "CI web job green on the PR run (or proven-equivalent local execution documented)"
+                                 ],
+                      "notes":  "See SPRINT_4.md T3. eslintrc removed in ESLint 10 - migrate to eslint.config.js flat config using eslint-config-next's flat export (bumped in T1). Delete the old .eslintrc*; keep prettier compatibility. No silent rule losses."
+                  },
+                  {
+                      "id":  "T4",
+                      "title":  "Node 22 (Dockerfile stages, compose image, engines, CI, ONBOARDING)",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T1",
+                                         "T2",
+                                         "T3"
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/web/Dockerfile",
+                                             "docker-compose.yml",
+                                             "apps/web/package.json",
+                                             ".github/workflows/ci.yml",
+                                             "ONBOARDING.md"
+                                         ],
+                      "verify":  [
+                                     "docker compose build web succeeds on node:22; stack healthy after up -d",
+                                     "full e2e green on the rebuilt stack",
+                                     "CI setup-node versions bumped consistently"
+                                 ],
+                      "notes":  "See SPRINT_4.md T4. node:20-bookworm-slim -> node:22-bookworm-slim in the three Dockerfile stages; node:20-bookworm in docker-compose.yml; engines field in web package.json; CI setup-node; ONBOARDING host-Node note. Deliberately AFTER T1-T3 so Node failures aren't confounded with framework breakage."
+                  },
+                  {
+                      "id":  "T5",
+                      "title":  "Dependency audit to zero (root pnpm + e2e npm; overrides for dev transitives)",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T1",
+                                         "T4"
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "package.json",
+                                             "pnpm-lock.yaml",
+                                             "e2e/package.json",
+                                             "e2e/package-lock.json",
+                                             ".github/dependabot.yml"
+                                         ],
+                      "verify":  [
+                                     "pnpm audit --audit-level high at root: 0 critical, 0 high",
+                                     "npm audit inside e2e/: 0 critical, 0 high",
+                                     "deliberately-open moderate/low findings documented in the commit body"
+                                 ],
+                      "notes":  "See SPRINT_4.md T5. The 17 root findings at sprint-3 close were next<15.5.16 (resolved by T1) plus js-yaml/postcss/uuid dev transitives - targeted bumps or root pnpm.overrides. Review dependabot.yml: majors STAY suppressed (D-018 posture; this sprint is the planned major execution, not a policy change)."
+                  },
+                  {
+                      "id":  "T6",
+                      "title":  "Multi-provider LLM egress: OpenAI + Gemini adapters (httpx-thin, redaction untouched)",
+                      "status":  "pending",
+                      "depends_on":  [],
+                      "risk":  "medium",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "apps/api/app/ai/llm.py",
+                                             "apps/api/app/config.py",
+                                             "apps/api/tests/unit/test_llm_providers.py",
+                                             "README.md",
+                                             "docs/architecture.md",
+                                             "SMOKE_TEST.md",
+                                             "DECISIONS.md"
+                                         ],
+                      "verify":  [
+                                     "unit: SHIELD_LLM_PROVIDER=openai and =gemini build working adapters; request shape + response parsing + token counts covered via monkeypatched httpx; NO live calls",
+                                     "unit: missing key for the selected provider -> loud RuntimeError at construction (same idiom as Anthropic); azure_openai/bedrock/local -> loud not-implemented",
+                                     "unit: HTTP error -> llm_calls row status=failed (mirrors existing Anthropic failure test)",
+                                     "fixture mode remains the default and byte-identical deterministic (D-017 tests untouched and green)",
+                                     "pytest -m unit green; docs show the provider matrix; DECISIONS entry appended (verify next free D-number, D-024 expected)"
+                                 ],
+                      "notes":  "See SPRINT_4.md T6. The seam exists: config.py already types shield_llm_provider incl. openai/gemini; llm.py:_build_provider raises loudly for them today; llm_calls already records provider+model+client_id. Adapters translate prompt+payload -> provider REST API -> text; EVERYTHING else (redaction, audit row, client_id, AI-suggests-code-computes) lives above the seam - do not move it. Prefer thin httpx adapters (httpx already a dep; OpenAI chat/completions + Gemini generateContent are simple REST for our use); if an SDK is genuinely cleaner, lazy-import like AnthropicProvider so fixture/test paths never load it. New settings openai_api_key + gemini_api_key (empty default). shield_llm_model stays the single model knob (document gpt-*/gemini-* examples). SMOKE_TEST 14 rewritten provider-agnostic. No new python module file expected (adapters live in llm.py) - if you DO add one, docker compose restart api."
+                  },
+                  {
+                      "id":  "T7",
+                      "title":  "Wrap-up: SMOKE_TEST sync, CHANGELOG 3.1.0, full gates, CONTEXT snapshot",
+                      "status":  "pending",
+                      "depends_on":  [
+                                         "T0",
+                                         "T1",
+                                         "T2",
+                                         "T3",
+                                         "T4",
+                                         "T5",
+                                         "T6"
+                                     ],
+                      "risk":  "low",
+                      "attempts":  0,
+                      "commit":  null,
+                      "expected_paths":  [
+                                             "SMOKE_TEST.md",
+                                             "CHANGELOG.md",
+                                             "CONTEXT.md",
+                                             "BUILD_REPORT.md"
+                                         ],
+                      "verify":  [
+                                     "FULL gate set green: full e2e, pytest -m unit, tsc, prettier, in-container ruff/black (T0 gate)",
+                                     "CHANGELOG [3.1.0] per-task entries; BUILD_REPORT A06 row reflects the zero-audit state",
+                                     "CONTEXT.md overwritten with the end-of-sprint snapshot"
+                                 ],
+                      "notes":  "See SPRINT_4.md T7. Majors justify the 3.1.0 minor bump. SMOKE_TEST: verify the T6 provider-agnostic 14 wording landed; sync anything T1-T4 changed in UI-visible behavior. CONTEXT.md follows the sprint-3 snapshot format (task->commit table, machine-local facts, deferred, lessons)."
+                  }
+              ]
+}

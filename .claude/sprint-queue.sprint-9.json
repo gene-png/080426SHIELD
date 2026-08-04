@@ -1,0 +1,356 @@
+{
+    "sprint": "sprint-9-activate-the-seam",
+    "cron_job_id": null,
+    "cron_schedule": "*/10 * * * *",
+    "checkpoint_cadence": 4,
+    "checkpoint_count": 0,
+    "last_checkpoint_at": 0,
+    "working_dir": "<SET-FOR-YOUR-BOX: absolute repo path>",
+    "expected_gh_user": "<SET-FOR-YOUR-BOX: your write-enabled gh account>",
+    "branch": "feat/sso-discard-demo-sprint-9",
+    "sprint_doc": "SPRINT_9.md",
+    "current_task_id": null,
+    "started_at": null,
+    "halt": {
+        "active": false,
+        "reason": null
+    },
+    "scratch": "Sprint 9 queue seeded 2026-07-21 after Sprint 8 merged (PR #42, v3.4.1). NOT YET LAUNCHED - the human dev launching this sprint runs /loop-sprint-cron THEMSELVES; agents never start the loop. THEME: ACTIVATE THE SEAM - hybrid Keycloak OIDC exchange (flag-gated default OFF), discard-draft affordance across all four services, demo/export automation. Version at close 3.5.0 (tag/CHANGELOG only - do NOT touch package manifests). Decisions land in-task: D-031 discard (T0), D-032 hybrid OIDC (T4), D-033 opt-in destructive automation (T8). One migration: 0032_user_keycloak_sub (T4, additive, batch_alter_table). SHIELD_AUTH_OIDC_ENABLED stays FALSE for the default suite - flipped only inside T6 hand-verify / T7 opt-in e2e, then RESTORED and one credentials sign-in re-proven. REQUIRE_MFA / REQUIRE_EMAIL_VERIFY stay FALSE as always. T2 adds pypdf to api dev deps -> docker compose build api (plain restart won't install it - the Sprint 7 google-auth lesson). T8's demo-reset run is DESTRUCTIVE (down -v): scheduled late, reseed + verify /ready + one sign-in afterward, never run it in any other task. Realm-export edits (T5) need a keycloak-data volume wipe to re-import. Every new spec self-skips by default: s26 needs E2E_OIDC=1, demo-journey needs SHIELD_DEMO_SMOKE=1 - prove the skip (suite count unchanged) before writing assertions. SIX gates unchanged. ruff==0.15.20/black==26.5.1 pinned + known-first-party=['app'] in ROOT pyproject - do not remove. gh auth switch before gh writes.",
+    "gates": [
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api pytest -m unit -q",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web exec tsc --noEmit\"",
+        "cd \"$(git rev-parse --show-toplevel)\" && NODE_DIR=$(ls -d \"$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS\"*/node-v*-win-x64 2>/dev/null | head -1) && export PATH=\"$PATH:$NODE_DIR\" && npx -y prettier@3.9.5 --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api sh -lc \"cd /app && ruff check --no-cache . && black --check .\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web test\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web lint\""
+    ],
+    "notes_global": "e2e on the HOST via the winget node.exe + e2e/node_modules/@playwright/test/cli.js; base URL from root .env WEB_PORT via e2e/helpers/baseUrl.ts (Dave's box :3001, canonical/CI :3000). Poll long gates (pytest, e2e) in the FOREGROUND to the end of the iteration in sub-9-minute bursts - NEVER park on background monitors. Docker CLI needs the PATH export per shell. After ANY apps/web or packages/* edit: docker compose up -d --force-recreate web BEFORE e2e (T1 and T6 touch web). New python module under app/ (T4: app/security/oidc.py + app/routes/oidc.py) needs docker compose restart api; NEVER restart api mid-pytest (SIGKILL 137). pyproject change (T2 pypdf) needs docker compose build api. Migration 0032 (T4): docker compose exec -T api alembic upgrade head before any e2e that signs in. Flipping SHIELD_AUTH_OIDC_ENABLED requires docker compose up -d --force-recreate api web (web reads it at provider registration, api at boot readiness) - always restore flag-off and re-prove one credentials sign-in before ending the task. Keycloak realm re-import: docker compose stop keycloak && docker volume rm <project>_keycloak-data && docker compose up -d keycloak. Seed idempotent: docker compose exec -T api python scripts/seed_demo.py. Logins admin@kentro.example / client@atlas.example, DemoPass!2026; spec-created users need unique timestamped emails. Auth.js v5: MFA sign-in signal is signIn(...).code === 'mfa_required', NOT .error; specs drive the UI, never call signIn() directly. LLM fixture-mode default (D-017) - no live env needed this sprint. Tenant enforcement: require_*_in_tenant 404s (never 403); resolve seeded ids ONLY via e2e/helpers/ids.ts. Playwright gotchas: getByRole name matching is SUBSTRING; click()+waitForResponse not check() on auto-save; assert post-Run-AI state after page.reload(); no body click before first Tab in skip-link tests; full-suite e2e is overload-prone on this box - per-spec STANDALONE re-run is the flake arbiter.",
+    "tasks": [
+        {
+            "id": "T0",
+            "title": "Backend discard endpoints x4 + DISCARDED status + version-numbering fix (D-031)",
+            "risk": "medium-high",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/app/models/capability.py",
+                "apps/api/app/models/csf_assessment.py",
+                "apps/api/app/models/attack_assessment.py",
+                "apps/api/app/models/zt_assessment.py",
+                "apps/api/app/routes/tech_debt.py",
+                "apps/api/app/routes/csf.py",
+                "apps/api/app/routes/attack.py",
+                "apps/api/app/routes/zt.py",
+                "apps/api/app/routes/risk.py",
+                "apps/api/app/routes/intake.py",
+                "apps/api/tests/unit/test_discard_draft.py",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "TDD-first in new tests/unit/test_discard_draft.py (copy the app_client fixture shape from test_attack_draft_guard.py) - watch each contract fail before implementing",
+                "POST .../{id}/discard per service (tech-debt/capability-lists, csf|attack|zt/assessments), mirroring each approve sibling's layout/RBAC (_admin_required): DRAFT -> 200 status='discarded' + ONE audit row (capability_list.discarded / csf|attack|zt.assessment.discarded, details incl. version + item/answer counts + answered_count for csf/zt); re-discard -> idempotent 200, NO second audit row; SUBMITTED (csf/zt) -> 409 typed {reason:'not_discardable'}; APPROVED/RELEASED -> 409; client role -> 403; unknown/cross-tenant id -> 404",
+                "DISCARDED added to all four status enums - these are native_enum=False String(16) columns with NO CHECK constraint (verified vs migration 0009), so NO migration; 'discarded' added nowhere else",
+                "VERSION TRAP regression: _latest_* helpers (tech_debt.py:121, csf.py:185, attack.py:141, zt.py:175) gain status != DISCARDED (covers reuse guard + GET latest + all consumers); the mint next-version computation (tech_debt.py:222, csf.py:391, attack.py:274, zt.py:555) switches to select(func.max(version)) WITHOUT the filter. Test: v1 approved -> v2 draft -> discard v2 -> mint = v3, no IntegrityError, on the alembic-upgraded SQLite fixture so (service_id, version) unique is real",
+                "after discard: GET latest 404s (or returns the prior approved version where one exists) and the create/extract POST mints a FRESH version 201 instead of the 200-reuse",
+                "tech-debt: intake artifacts SURVIVE discard; re-extract with the same artifact_id succeeds and fires the LLM seam exactly once",
+                "HIDDEN LATEST CONSUMERS (Codex blocker/should-fix): risk.py's own _latest() (risk.py:65-78) feeding _gate()/_gather_findings() (:125-162) must skip DISCARDED - regressions: finalized v1 + discarded v2 -> synthesis reads v1; discarded-only service does NOT unlock the gate. intake.py engagement cards (:299-306, :326) report 'latest non-discarded' - discarded-only and finalized-v1/discarded-v2 cases tested",
+                "CHILD MUTATIONS reject a discarded parent (Codex should-fix): audit every by-row-ID mutation + AI-run guard across the four services (e.g. zt.py:639-652, attack.py:480-487) - rule becomes 'parent in its editable state(s)', not 'not approved/released'; stale-tab PATCH-after-discard tests x4",
+                "CONCURRENCY CONTRACT (Codex blocker): discard write is a conditional UPDATE ... WHERE status='draft' (rows-affected drives 200/idempotent/409) so two transactions can't both observe DRAFT; child writers' parent-state guards make a racing client PATCH or AI run lose LOUDLY (typed 409); an AI run that loaded a DRAFT parent re-checks status before committing; discard-then-stale-write contract tests per service",
+                "client-touched csf/zt DRAFTS are discardable (Dave's call - the UI warns, T1); success-path logs techdebt_discarded_draft / csf_assessment_discarded / attack_assessment_discarded / zt_assessment_discarded",
+                "D-031 appended to DECISIONS.md incl. the conditional-update concurrency contract; pytest -m unit + ruff/black green"
+            ],
+            "notes": "See SPRINT_9.md T0. The version trap is the task's landmine - getting it wrong is an IntegrityError on the first re-extract after discarding a non-v1 draft.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T1",
+            "title": "Web discard UI: 4 proxies, client fns, shared DiscardDraftButton + confirm Modal",
+            "risk": "medium",
+            "depends_on": [
+                "T0"
+            ],
+            "expected_paths": [
+                "apps/web/src/app/api/proxy/tech-debt/capability-lists/[id]/discard/route.ts",
+                "apps/web/src/app/api/proxy/csf/assessments/[id]/discard/route.ts",
+                "apps/web/src/app/api/proxy/attack/assessments/[id]/discard/route.ts",
+                "apps/web/src/app/api/proxy/zt/assessments/[id]/discard/route.ts",
+                "apps/web/src/lib/tech_debt/client.ts",
+                "apps/web/src/lib/csf/client.ts",
+                "apps/web/src/lib/attack/client.ts",
+                "apps/web/src/lib/zt/client.ts",
+                "apps/web/src/components/admin/DiscardDraftButton.tsx",
+                "apps/web/src/components/admin/DiscardDraftButton.test.tsx",
+                "apps/web/src/components/admin/TechDebtWorkspace.tsx"
+            ],
+            "verify": [
+                "TDD-first vitest: DiscardDraftButton renders only for status==='draft', opens the design-system Modal, confirm invokes the callback, cancel does not; one workspace test proves the answered-count warning line renders in the CSF dialog copy",
+                "four proxy routes copied from the sibling approve/route.ts shape; discard*() client fns in all four libs; 'discarded' added to the web status type unions",
+                "shared DiscardDraftButton (the app's FIRST destructive-confirm dialog) consumed by TechDebtWorkspace + AttackWorkspace + CsfWorkspace + ZtWorkspace beside Approve/Start; dialog copy states destruction per service (tech-debt N items, attack N scored techniques, csf/zt 'N answers, including client-entered data') computed from the already-fetched grid - no new endpoint",
+                "bump the workspace reqSeq counter before the post-discard refetch so a stale in-flight latest cannot resurrect the discarded draft; after discard the workspace shows its existing empty/upload state and extract/start is live again",
+                "docker compose up -d --force-recreate web after edits; tsc + vitest + eslint + prettier green"
+            ],
+            "notes": "See SPRINT_9.md T1. Reuse packages/design-system Modal - no new dialog primitive.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T2",
+            "title": "Export-content unit assertions (pypdf + python-docx readers); SMOKE section 10 re-pointed, section 19 closed",
+            "risk": "low-medium",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/pyproject.toml",
+                "apps/api/tests/unit/test_playbook_export_content.py",
+                "apps/api/tests/unit/test_exporters.py",
+                "apps/api/tests/unit/test_csf_exporters.py",
+                "apps/api/tests/unit/test_attack_exporters.py",
+                "apps/api/tests/unit/test_zt_exporters.py",
+                "apps/api/tests/unit/test_risk_register.py",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "pypdf>=5 added to [project.optional-dependencies].dev ONLY (test dep, not runtime; imported ONLY in test files, never app/); docker compose build api before running in-container pytest",
+                "TDD-first: new test_playbook_export_content.py drives the five pure renderers in app/csf/playbook_export.py with constructed enterprise_rows/tier_profiles/gap_actions - the SMOKE section-19 contract: Action Plan sheet exists with the expected header set, priority defaults from gap_priority(), priority_override WINS",
+                "playbook exec/full PDF via pypdf.PdfReader: concatenated extract_text() contains client name + document title + at least one CSF function name + one known gap value - match distinctive SUBSTRINGS, never exact layout (reportlab text extraction is whitespace-mangled)",
+                "playbook exec/full DOCX via docx.Document(BytesIO(raw)): heading text + scorecard table headers + one known maturity cell value (colors/shading are NOT assertable - values only)",
+                "per-service exporters (tech_debt/csf/attack/zt render_pdf) upgraded from %PDF- magic-only to title + client name + one known row value; risk register PDF/DOCX get title + one known entry (XLSX already content-tested - leave as-is)",
+                "SMOKE section 10: five eyeball boxes re-pointed to the proving test filenames + exactly ONE explicitly-manual line kept ('visual aesthetics: colors, spacing, page-breaks'); section 19's deferred Action-Plan box checked with the new test filename",
+                "pytest -m unit + ruff/black green; existing exporter tests untouched-or-extended, never weakened"
+            ],
+            "notes": "See SPRINT_9.md T2. Independent of everything - good interleave while T1 waits on web recreate.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T3",
+            "title": "e2e: retire the approve-first dance (s4/s5/s11) + UI discard proof; SMOKE section 31",
+            "risk": "low-medium",
+            "depends_on": [
+                "T1"
+            ],
+            "expected_paths": [
+                "e2e/smoke/s4-techdebt.spec.ts",
+                "e2e/smoke/s5-attack.spec.ts",
+                "e2e/smoke/s11-staleness.spec.ts",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "the three approve-any-open-draft preambles (s4-techdebt.spec.ts:58-76, s5-attack.spec.ts openFreshDraft:42-78, s11-staleness.spec.ts:53-57) replaced with a discard POST via the proxy; behavior coverage AFTER the preamble stays byte-identical - the changed>0 / 'AI 60%' assertions are untouched, never weakened",
+                "one spec (s4 or s5) additionally drives the UI affordance once: draft open -> click Discard draft -> Modal -> confirm -> workspace empty state -> fresh mint follows (the browser proof for SMOKE section 31)",
+                "new SMOKE section 31 boxes checked ONLY with green committed spec filenames; the 409-on-SUBMITTED contract cites test_discard_draft.py",
+                "docker compose up -d --force-recreate web first (T1 touched web); FULL host e2e suite green - overload flakes arbitrated by per-spec standalone re-runs per the box convention"
+            ],
+            "notes": "See SPRINT_9.md T3. Each edited spec must also pass standalone x2.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T4",
+            "title": "Backend OIDC: flag + oidc_readiness, JWKS verifier, POST /auth/oidc/exchange, migration 0032 (D-032)",
+            "risk": "medium",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/app/config.py",
+                "apps/api/app/security/oidc.py",
+                "apps/api/app/routes/oidc.py",
+                "apps/api/app/main.py",
+                "apps/api/app/schemas/auth.py",
+                "apps/api/app/models/user.py",
+                "apps/api/alembic/versions/0032_user_keycloak_sub.py",
+                "apps/api/tests/unit/test_oidc_exchange.py",
+                "apps/api/tests/unit/test_config.py",
+                ".env.example",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "TDD-first test_oidc_exchange.py: in-test RSA keypair signs Keycloak-shaped tokens, monkeypatched app.security.oidc._fetch_jwks returns the matching JWKS - watch the full rejection matrix fail before the route exists",
+                "SHIELD_AUTH_OIDC_ENABLED default False; oidc_readiness() mirrors live_llm_readiness() (config-shape only, NO network at boot - api has no depends_on keycloak and must not crash-loop on cold compose up): flag on requires non-empty http(s) keycloak_issuer + new keycloak_jwks_url setting + keycloak_audience + keycloak_client_id, else loud boot RuntimeError (test_config.py cases)",
+                "app/security/oidc.py: module-level JWKS cache {kid: jwk} + fetched-at, 300s TTL, threading.Lock, httpx GET 5s timeout, EXACTLY ONE forced refetch on unknown kid; raw fetch isolated in _fetch_jwks() for monkeypatching; NO new dependency (python-jose[cryptography] + httpx already ship)",
+                "POST /auth/oidc/exchange in new app/routes/oidc.py (registered in main.py) takes {keycloak_access_token} (the ACCESS token - it carries aud=shield-api via the realm mapper), returns {user, tokens}; typed dict-detail failures: 403 oidc_disabled / 401 oidc_token_invalid (RS256-only algorithms list = alg-confusion guard; iss=keycloak_issuer, aud=keycloak_audience, require exp/iat/sub; ALSO azp claim must equal keycloak_client_id - Codex finding: aud names the resource server, not the requesting client; test a correctly signed token minted to a DIFFERENT client is rejected) / 503 oidc_jwks_unavailable (names URL + flag) / 401 oidc_claims_missing / 403 oidc_email_unverified / 403 oidc_no_local_account (NO JIT provisioning; match by normalized verified email) / 403 oidc_user_inactive / 403 oidc_sub_mismatch",
+                "TOFU: users.keycloak_sub NULL -> stamped on first exchange (log oidc.sub_bound); set-and-different -> 403. Migration 0032: String(64) nullable UNIQUE via batch_alter_table, additive; alembic upgrade head clean in the api container",
+                "success reuses _issue_pair + _register_successful_login (promote to a shared helper only if ruff fights the private import): pair passes verify_token (HS256 iss=shield-api), /auth/refresh rotates it, lockout counters cleared, last_login_at stamped; a token claiming roles:['admin'] for a local client-role user mints CLIENT tokens (DB role authoritative); local lockout NOT consulted; local email_verified_at NOT stamped",
+                "flag default OFF: the entire pre-existing unit suite passes untouched; D-032 appended to DECISIONS.md; docker compose restart api after adding the new modules; pytest -m unit + ruff/black green"
+            ],
+            "notes": "See SPRINT_9.md T4. Keycloak tokens are NEVER accepted as API bearers - the exchange is the only door.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T5",
+            "title": "Infra: KC_HOSTNAME dual-horizon, realm drift fixes, env plumbing, real /ready probe",
+            "risk": "medium",
+            "depends_on": [
+                "T4"
+            ],
+            "expected_paths": [
+                "docker-compose.yml",
+                "docker-compose.demo.yml",
+                "infra/keycloak/shield-realm.json",
+                "apps/api/app/routes/health.py",
+                "apps/api/tests/unit/test_readiness.py",
+                ".env.example"
+            ],
+            "verify": [
+                "TDD-first test_readiness.py: flag off -> keycloak 'dormant'/required=false (existing tests re-anchored, not weakened; detail names the flag); flag on + probe ok -> 'ok'; flag on + fetch raising -> 'down' AND ready stays true (keycloak NEVER gates readiness - credentials login keeps the app serviceable during a Keycloak outage)",
+                "compose keycloak service: KC_HOSTNAME=http://localhost:8080 + KC_HOSTNAME_BACKCHANNEL_DYNAMIC='true' (one canonical iss for browser AND containers; backchannel token/JWKS endpoints stay container-reachable); api-env gains SHIELD_AUTH_OIDC_ENABLED:-false + KEYCLOAK_JWKS_URL; web-env gains SHIELD_AUTH_OIDC_ENABLED:-false + KEYCLOAK_INTERNAL_ISSUER=http://keycloak:8080/realms/shield; KEYCLOAK_ISSUER default flipped to http://localhost:8080/realms/shield in compose + .env.example + config.py; docker-compose.demo.yml's web-env KEYCLOAK_ISSUER aligned too (Codex finding - the demo overlay would silently undo the flip); hand-check: docker compose -f docker-compose.yml -f docker-compose.demo.yml config shows the pinned issuer on api AND web",
+                "realm export: reviewer role REMOVED (D-023 drift); permanent verified users added - admin@kentro.example / DemoPass!2026 (realmRoles ['admin'], temporary:false, emailVerified:true; T7's identity) and nolocal@atlas.example / DemoPass!2026 (negative path); redirect URIs + webOrigins gain http://localhost:3001/* ; pkce.code.challenge.method S256 retained; dev-admin@shield.local kept",
+                "hand-verify documented in the task log AFTER a keycloak volume wipe (stop keycloak, docker volume rm <project>_keycloak-data, up -d keycloak): browser GET localhost:8080/realms/shield/.well-known/openid-configuration shows issuer http://localhost:8080/realms/shield; docker compose exec api curl of the same path via keycloak:8080 shows the SAME pinned issuer with a keycloak:8080 token_endpoint",
+                "HealthMatrix.tsx untouched (already renders ok/down/dormant); s25-admin-health green standalone; six gates green"
+            ],
+            "notes": "See SPRINT_9.md T5. The environmental linchpin - T6 debugging depends on this stack being demonstrably dual-horizon.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T6",
+            "title": "Web OIDC: conditional Keycloak provider, jwt-callback exchange branch, sign-in button, failure guard",
+            "risk": "high",
+            "depends_on": [
+                "T4",
+                "T5"
+            ],
+            "expected_paths": [
+                "apps/web/src/lib/auth/oidc.ts",
+                "apps/web/src/lib/auth/oidc.test.ts",
+                "apps/web/src/lib/auth/options.ts",
+                "apps/web/src/lib/auth/errors.ts",
+                "apps/web/src/components/auth/KeycloakSignInButton.tsx",
+                "apps/web/src/components/auth/KeycloakSignInButton.test.tsx",
+                "apps/web/src/components/auth/SessionExpiryGuard.tsx",
+                "apps/web/src/app/sign-in/page.tsx"
+            ],
+            "verify": [
+                "TDD-first vitest: rewriteKeycloakUrl rewrite/passthrough table; isOidcEnabled truth table; KeycloakSignInButton renders + calls mocked signIn('keycloak'); SessionExpiryGuard signs out to /sign-in?reason=oidc_exchange_failed on OIDC_EXCHANGE_ERROR",
+                "START WITH A MINIMAL AUTH-CODE SPIKE (Codex finding): prove redirect -> Keycloak form -> callback -> token round trip with the secret-less client BEFORE wiring the full callback branch, so the beta-sensitivity verdict lands in the first hour",
+                "providers: [Credentials, ...(isOidcEnabled() ? [keycloak] : [])] - flag off means the provider does NOT exist; keycloak config: public client + PKCE (checks ['pkce','state'], client.token_endpoint_auth_method 'none', customFetch = keycloakFetch rewriting only the public->internal issuer prefix for container-side discovery). PRE-APPROVED FALLBACK if next-auth 5.0.0-beta.31 fights the secret-less client, defined COMPLETELY (Codex finding): realm export publicClient:false + clientAuthenticatorType:'client-secret' + dev secret (dev-realm-only; documented gitleaks allowlist entry if flagged); KEYCLOAK_CLIENT_SECRET plumbed through BASE and DEMO compose; confidential-token-exchange e2e proof - document the flip in the commit body. Do NOT bump the next-auth beta in this task",
+                "jwt callback: keycloak branch ordered BEFORE the credentials if(user) seed (OIDC initial sign-in also carries a profile user); on success seed token.{role,accessToken,refreshToken,accessExpiresAt} from POST /auth/oidc/exchange with account.access_token - shape IDENTICAL to the credentials path so downstream expiry/refresh/session logic is untouched; on ApiError log the typed reason server-side and set token.error = OIDC_EXCHANGE_ERROR (new constant in lib/auth/errors.ts)",
+                "sign-in page: server component reads isOidcEnabled(), conditionally renders KeycloakSignInButton separated from the credentials form + a loud banner for reason=oidc_exchange_failed beside the existing session_expired one; flag off -> button absent, page byte-identical",
+                "THE HARDEST PROMISE - flag OFF is a BEHAVIORAL no-op (Codex rewording): provider absent, ZERO Keycloak discovery/JWKS network requests (vitest trap for unexpected fetches), every credential surface unchanged; full default e2e suite green + existing SignInForm/MFA vitest suites pass unchanged (options.ts is load-bearing for all ~24 credential specs)",
+                "PRODUCTION BUILD SURVIVES (Codex finding): in-container pnpm -F web build green - provider registration/env handling can typecheck clean and still die at Next build/start; mandatory for THIS task, not a new global gate",
+                "hand-verify with the flag flipped on BOTH containers (docker compose up -d --force-recreate api web), then RESTORED: admin@kentro.example full browser round trip lands authenticated with working API pages; nolocal@atlas.example lands on the loud banner; credentials + TOTP MFA sign-in re-verified working WITH the flag on (hybrid coexistence); after restore, one credentials sign-in re-proven",
+                "six gates green (tsc / vitest / eslint / prettier especially); docker compose up -d --force-recreate web before any e2e"
+            ],
+            "notes": "See SPRINT_9.md T6. THE sprint's highest-risk task - beta-version-sensitive at three points (secret-less client, customFetch, callback error semantics). One variable at a time; the fallback is pre-approved, not a halt condition.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T7",
+            "title": "Opt-in e2e s26-oidc-login.spec.ts + SMOKE OIDC section",
+            "risk": "medium",
+            "depends_on": [
+                "T4",
+                "T5",
+                "T6"
+            ],
+            "expected_paths": [
+                "e2e/smoke/s26-oidc-login.spec.ts",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "spec self-skips unless E2E_OIDC=1 (test.skip at top) - prove the skip FIRST: default suite count unchanged, suite green flag-off",
+                "flip procedure documented in the spec header + SMOKE: SHIELD_AUTH_OIDC_ENABLED=true in .env, docker compose up -d --force-recreate api web, keycloak volume wipe if the realm export changed since import, E2E_OIDC=1 npx playwright test s26",
+                "positive path: /sign-in -> 'Sign in with Keycloak' -> Keycloak form on localhost:8080 (#username/#password, admin@kentro.example / DemoPass!2026) -> authenticated app landing -> an API-backed page renders (backend tokens proven end-to-end)",
+                "negative path: nolocal@atlas.example -> /sign-in?reason=oidc_exchange_failed with the loud banner visible",
+                "spec green x2 on the flag-on stack, THEN the full default suite re-run green on the RESTORED flag-off stack (restoration proven, not assumed)",
+                "SMOKE gains the OIDC section: spec-backed boxes with filenames + the volume-wipe gotcha + the flip/restore operator note"
+            ],
+            "notes": "See SPRINT_9.md T7. Keycloak's login form is not our UI - use resilient selectors (#username/#password are Keycloak's stable ids).",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T8",
+            "title": "Demo-reset --demo mode + opt-in demo-journey spec (SMOKE section 26, D-033)",
+            "risk": "medium",
+            "depends_on": [
+                "T5"
+            ],
+            "expected_paths": [
+                "scripts/demo-reset.sh",
+                "scripts/demo-reset.ps1",
+                "e2e/demo/demo-journey.spec.ts",
+                "SMOKE_TEST.md",
+                "README.md",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "spec skeleton FIRST with the self-skip guard (SHIELD_DEMO_SMOKE=1) - prove it skips in a default npx playwright test run (suite count unchanged) before writing assertions",
+                "demo-reset.sh --demo / demo-reset.ps1 -Demo (sh/ps1 PARITY): the flag appends '-f docker-compose.yml -f docker-compose.demo.yml' to every compose invocation; the step sequence (down -v, up -d --build, /ready full-matrix poll, seed_demo.py, web wait, creds banner) is otherwise identical; PLAIN invocation still drives the base compose only (prove both); --demo documented in README.md:106-132",
+                "FIX THE SILENT WEB WAIT (Codex finding): today the web poll gives up after 120s and prints success anyway (demo-reset.sh:68-75) - make the timeout FAIL LOUDLY (non-zero exit) and dump docker compose logs web on the way out; sh/ps1 parity",
+                "demo-journey.spec.ts asserts the post-reset journey: /ready full-matrix green; /sign-in serves 200 WITH CSP headers (prod-build proof); UI sign-in as admin@kentro.example AND client@atlas.example; client /home shows the released-report hero; a seeded /documents deliverable downloads 200 non-zero bytes",
+                "DESTRUCTIVE local proving run, scheduled late for this reason: bash scripts/demo-reset.sh --demo once, then SHIELD_DEMO_SMOKE=1 npx playwright test demo/ green; AFTERWARD reseed/verify the dev stack (/ready green + one credentials sign-in) before ending the task",
+                "SMOKE section 26 checked with the spec filename, box text updated to exactly what ran green; D-033 appended (destructive automation is opt-in-gated: reset specs self-skip, destructive scripts never run implicitly, CI isolation is the only unattended venue)",
+                "prettier green (ts + md); no container-code changes expected"
+            ],
+            "notes": "See SPRINT_9.md T8. NEVER run demo-reset outside this task's proving step.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T9",
+            "title": "CI demo job (SMOKE section 27, runs on every PR)",
+            "risk": "medium",
+            "depends_on": [
+                "T5",
+                "T8"
+            ],
+            "expected_paths": [
+                ".github/workflows/ci.yml",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "new 'demo' job on its own runner (isolated - its down -v cannot hurt the e2e job; NO .env needed, compose defaults suffice - Codex confirmed): log docker compose version FIRST and fail loudly below 2.24 (the !reset floor) -> bash scripts/demo-reset.sh --demo -> shield-web:demo builds -> seed runs inside the script -> cd e2e && npm ci && npx playwright install --with-deps chromium && SHIELD_DEMO_SMOKE=1 npx playwright test demo/ -> ALWAYS-RUN diagnostics (docker compose ps + logs dump, the e2e job's fail-loud pattern ci.yml:140-150) + upload playwright artifacts if: always(); timeout ~25 min; triggers match the e2e job (every PR - Dave's call)",
+                "PROVING ARTIFACT: the job green on this sprint branch's PR run, verified via gh run view and cited in the task log (CI-only feedback loop - every fix costs a push; batch YAML fixes)",
+                "SMOKE section 27 checked with the spec filename + job name; yamllint-clean per existing workflow style; prettier green"
+            ],
+            "notes": "See SPRINT_9.md T9. Depends on T8's spec + script AND on the sprint branch's compose changes (T5) being merged into the branch already - which task ordering guarantees.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T10",
+            "title": "Wrap-up: SMOKE annotations, CHANGELOG 3.5.0, full gates, CONTEXT snapshot",
+            "risk": "low",
+            "depends_on": [
+                "T0",
+                "T1",
+                "T2",
+                "T3",
+                "T4",
+                "T5",
+                "T6",
+                "T7",
+                "T8",
+                "T9"
+            ],
+            "expected_paths": [
+                "SMOKE_TEST.md",
+                "CHANGELOG.md",
+                "CONTEXT.md",
+                "BUILD_REPORT.md",
+                "context/"
+            ],
+            "verify": [
+                "SMOKE final pass: section 10 re-pointed + one manual aesthetics line, sections 19/26/27/31 + the OIDC section - every box checked ONLY with its proving spec/test filename (honesty convention); ineligible boxes stay unchecked with the eligibility note carried to the PR body",
+                "CHANGELOG [3.5.0] per-task entries with commits (tag/CHANGELOG only - package manifests untouched); BUILD_REPORT synced (gate results at HEAD, e2e spec count, new flags D-031/D-032/D-033, migration 0032)",
+                "CONTEXT.md overwritten with the end-of-sprint snapshot; the LAUNCHING dev's own context/<name>.md refreshed (owner-only rule - NEVER write another dev's context file)",
+                "FULL exit gate set green (all six) + full e2e on a quiet box (per-spec standalone re-run is the flake arbiter); verify the dev stack is seeded and flag-off before the final run"
+            ],
+            "notes": "See SPRINT_9.md T10. Carry the deferred list forward: full token federation / JIT provisioning, un-discard, email_verified_at stamping, section-10 aesthetics line, ESLint 10, postcss moderate, terraform/FedRAMP/other adapters.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        }
+    ]
+}

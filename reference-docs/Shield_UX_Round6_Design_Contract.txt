@@ -1,0 +1,288 @@
+Create a modern enterprise government-grade web platform that blends Microsoft Fluent design principles, USWDS accessibility standards, and modern operational dashboard UX patterns commonly seen in Azure Portal, Microsoft Defender XDR, and Datadog.
+
+The platform must feel:
+
+professional
+trustworthy
+mission-focused
+operationally mature
+accessible
+scalable
+data-driven
+calm and uncluttered
+
+Avoid flashy startup aesthetics, cyberpunk styling, excessive animations, neon colors, gaming UI patterns, or overly artistic layouts.
+
+The design should support three distinct user experiences while maintaining one cohesive design language:
+
+Public / External Experience
+Operational Dashboard Experience
+Executive Leadership Experience
+
+GLOBAL DESIGN REQUIREMENTS
+
+Design Language:
+
+Microsoft Fluent-inspired UI styling
+USWDS structure and accessibility principles
+Modern enterprise SaaS polish
+IBM Carbon-style information hierarchy
+Modular card-based layouts
+Clean spacing and alignment
+Consistent typography scale
+Minimal but modern visual styling
+
+Visual Tone:
+
+Calm
+Clean
+Structured
+Efficient
+Professional
+Trustworthy
+Government-grade
+Enterprise operational
+
+Color Palette:
+
+Neutral enterprise palette
+Soft whites, grays, navy, muted blues
+Minimal accent colors
+Accessible contrast ratios
+Avoid saturated colors except for alerts/status indicators
+
+Typography:
+
+Large readable headings
+Clean sans-serif typography
+Strong hierarchy
+Operational readability first
+Executive clarity second
+
+Accessibility:
+
+WCAG 2.1 AA compliant
+Keyboard navigable
+Screen-reader friendly
+High contrast support
+Responsive design
+Mobile-friendly public pages
+Accessibility-first forms and navigation
+
+LAYOUT STRUCTURE
+
+PUBLIC / EXTERNAL EXPERIENCE
+
+Purpose:
+Build trust, improve accessibility, simplify workflows, and present a professional government/enterprise experience.
+
+Style Inspiration:
+
+USWDS
+Microsoft public portals
+Federal digital service sites
+
+UX Characteristics:
+
+Large readable typography
+Simple navigation
+Guided workflows
+Clear call-to-actions
+Minimal cognitive load
+Accessible forms
+Step-by-step process flows
+Strong information hierarchy
+Mobile responsive
+
+Components:
+
+Hero section
+Mission statement area
+Service cards
+Resource center
+Event/news sections
+Contact/help workflows
+Search functionality
+Footer with compliance/accessibility links
+
+Avoid:
+
+Dense telemetry
+Complex dashboards
+Excessive widgets
+Technical jargon on landing pages
+
+OPERATIONAL DASHBOARD EXPERIENCE
+
+Purpose:
+Support analysts, operators, administrators, and cyber/security personnel with efficient workflows and high-density operational data.
+
+Style Inspiration:
+
+Azure Portal
+Microsoft Defender XDR
+Datadog
+Modern SOC dashboards
+
+UX Characteristics:
+
+Left-side persistent navigation
+Modular dashboard widgets
+Telemetry-focused layouts
+High information density
+Fast scanning capability
+Real-time status indicators
+Minimal clicks to key actions
+Contextual side panels
+Drill-down workflows
+Persistent filtering/search
+Dark/light mode support
+
+Components:
+
+SOC dashboards
+Alert queues
+Incident panels
+Telemetry charts
+Threat indicators
+Asset visibility tables
+System health widgets
+Workflow automation panels
+Timeline investigations
+Search and filtering systems
+
+Dashboard Design:
+
+Prioritize clarity over aesthetics
+Show critical alerts first
+Use progressive disclosure
+Surface trends and anomalies
+Use cards and modular sections
+Support multi-role operational workflows
+
+Avoid:
+
+Clutter
+Over-animation
+Excessive whitespace
+Consumer-style layouts
+Decorative-only graphics
+
+EXECUTIVE LEADERSHIP EXPERIENCE
+
+Purpose:
+Provide leadership with strategic visibility, KPIs, risk summaries, mission status, and drill-down insights without overwhelming detail.
+
+Style Inspiration:
+
+Executive analytics platforms
+Modern KPI dashboards
+Minimalist enterprise reporting systems
+
+UX Characteristics:
+
+Minimalist layouts
+Larger typography
+Fewer widgets
+High-level summaries
+Visual clarity
+Strategic insights
+Trend-focused reporting
+Drill-down capability into operational data
+Decision-focused presentation
+
+Components:
+
+KPI cards
+Risk scoring
+Compliance status
+Mission readiness indicators
+Budget/resource summaries
+Trend charts
+Executive alerts
+Program status summaries
+Heatmaps
+Drill-down analytics
+
+Dashboard Design:
+
+Emphasize readability
+Prioritize the most important metrics
+Avoid technical overload
+Present actionable insights
+Keep layouts spacious and intentional
+
+INTERACTION REQUIREMENTS
+
+Navigation:
+
+Persistent left navigation for operational areas
+Top navigation for public pages
+Breadcrumb support
+Contextual navigation
+Role-based navigation visibility
+
+Animations:
+
+Minimal and purposeful
+Smooth transitions only
+No distracting motion
+Enterprise-grade restraint
+
+Data Visualization:
+
+Clean charts
+Clear legends
+Operational readability
+Accessible colors
+Avoid chart clutter
+Prioritize trend analysis
+
+COMPONENT STYLE REQUIREMENTS
+
+Cards:
+
+Soft shadows
+Rounded corners
+Clear headers
+Modular structure
+
+Tables:
+
+Enterprise-grade dense tables
+Sorting/filtering
+Sticky headers
+Searchable
+Operational readability
+
+Forms:
+
+USWDS-inspired accessibility
+Inline validation
+Step guidance
+Clear error states
+
+OVERALL GOAL
+
+The final experience should feel like:
+“A modern federal enterprise operations platform used by government leadership, operational cyber teams, administrators, and external stakeholders.”
+
+The platform should combine:
+
+the trust and accessibility of USWDS
+the operational efficiency of Azure Portal and Defender XDR
+the telemetry and dashboard maturity of Datadog
+the polish of modern enterprise SaaS
+the professionalism of a federal mission system
+
+The result should feel:
+
+modern
+highly usable
+operationally mature
+scalable
+mission-focused
+accessible
+data-driven
+executive-ready
+production-grade

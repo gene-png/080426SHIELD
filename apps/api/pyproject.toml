@@ -1,0 +1,95 @@
+[project]
+name = "shield-api"
+version = "3.0.0"
+description = "SHIELD by Kentro v3.0 - FastAPI backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+    "pydantic[email]>=2.9",
+    "pydantic-settings>=2.5",
+    "sqlalchemy>=2.0.35",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
+    "redis>=5.1",
+    "celery>=5.4",
+    "argon2-cffi>=23.1",
+    "python-jose[cryptography]>=3.3",
+    "httpx>=0.27",
+    "structlog>=24.4",
+    "boto3>=1.35",
+    # Anthropic Claude SDK — the live-AI egress path (app/ai/llm.py
+    # AnthropicProvider lazy-imports `from anthropic import Anthropic`). A real
+    # runtime dependency as of Sprint 6 (D-026); the 2026-07-12 smoke proved the
+    # redaction/llm_calls contract against a live claude-sonnet-5 call. The
+    # openai/gemini adapters are thin httpx clients and need no SDK.
+    "anthropic>=0.40,<1",
+    # Google auth for the Vertex AI egress path (app/ai/llm.py VertexProvider,
+    # Sprint 7 D-029): Application Default Credentials -> bearer token, NO static
+    # API key. Lazy-imported on the live path; the live-mode boot preflight
+    # (config.py) checks importability + ADC resolvability. Rebuild the api image
+    # after adding this — a plain restart does not install it.
+    # The [requests] extra pulls in `requests`, which google-auth's token-refresh
+    # transport (google.auth.transport.requests.Request) hard-requires — without
+    # it the FIRST live token refresh raises ImportError (the keyless unit test
+    # mocks _bearer_token, so it never exercised the real transport; caught by the
+    # T1 live sweep 2026-07-15).
+    "google-auth[requests]>=2,<3",
+    # Deliverable rendering (app/*/exporters.py): PDF via reportlab, XLSX via
+    # openpyxl. Imported lazily inside the finalize endpoints, so a missing
+    # declaration only surfaces as a 500 when a deliverable is rendered.
+    "reportlab>=4.2",
+    "openpyxl>=3.1",
+    # Used by apps/api/scripts/extract_csf_questionnaires.py to parse the
+    # Kentro Step 1.x interview .docx files into packages/csf-data/source/*.json.
+    "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    # Lint/format pinned to known-good ranges: CI installs fresh, and a new
+    # tool release can re-flag a previously clean repo with rules the diff
+    # never touched. Bump deliberately, with a format pass if needed.
+    # NOTE: ruff/black only see the ROOT pyproject's [tool.*] config when the
+    # full repo is checked out — the api container mounts only apps/api, so
+    # in-container runs use tool defaults and disagree with CI.
+    # PINNED EXACTLY (Sprint 5) for reproducibility so the loop's in-container
+    # tools and CI resolve identical versions. (The PR #31 gate divergence was
+    # NOT a version drift — it was ruff isort auto-detecting `app` as
+    # first-party in the container but third-party on CI; that is fixed
+    # separately by known-first-party=["app"] in the ROOT pyproject's
+    # [tool.ruff.lint.isort]. The exact pins are belt-and-suspenders.)
+    # Bump deliberately with a format pass, never float.
+    "ruff==0.15.22",
+    "black==26.5.1",
+    "mypy>=1.11",
+    "bandit[toml]>=1.7",
+    # Test-only: parse rendered PDF bytes back to text so the export-content
+    # tests assert real content (client name / title / a known row value), not
+    # just the %PDF- magic. Imported ONLY in tests/unit/*, never in app/.
+    # Rebuild the api image after adding this — a plain restart does not install
+    # it (the Sprint 7 google-auth lesson).
+    "pypdf>=5",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: fast in-process tests",
+    "integration: tests that hit a real database",
+    "live: opt-in tests that make a REAL provider call — EXCLUDED from the default '-m unit' gate and from CI (which runs 'pytest -m unit tests/unit'); skipped unless SHIELD_LLM_MODE=live and a provider key are present (Sprint 6 T1 / D-026)",
+]
+asyncio_mode = "auto"
+addopts = "-ra -q"

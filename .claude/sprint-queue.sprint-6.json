@@ -1,0 +1,328 @@
+{
+    "sprint": "sprint-6-real-demo",
+    "cron_job_id": null,
+    "cron_schedule": "*/10 * * * *",
+    "checkpoint_cadence": 4,
+    "checkpoint_count": 0,
+    "last_checkpoint_at": 0,
+    "working_dir": "<SET-FOR-YOUR-BOX: absolute repo path>",
+    "expected_gh_user": "<SET-FOR-YOUR-BOX: your write-enabled gh account>",
+    "branch": "feat/real-demo-sprint-6",
+    "sprint_doc": "SPRINT_6.md",
+    "current_task_id": null,
+    "started_at": null,
+    "halt": {
+        "active": false,
+        "reason": null
+    },
+    "scratch": "Sprint 6 queue seeded 2026-07-12 after Sprint 5 merged (PR #31, v3.2.0). NOT YET LAUNCHED - read SPRINT_6.md launch checklist. HANDOFF: set working_dir + expected_gh_user for YOUR box after copying this staged queue to .claude/sprint-queue.json. THEME: MAKE IT REAL (all-real demo hardening). 2026-07-12 live smoke PROVED the Anthropic path works (claude-sonnet-5, redaction real, llm_calls correct) - the only live-AI blockers are the missing anthropic dep + stale model default + no boot preflight (all T0). Other real gaps: seeded-deliverable download 410 (T2 storage parity), MFA/email stubs (T4/T5), DB-only /ready (T3). CRITICAL: ruff/black pinned exactly + known-first-party=['app'] in ROOT pyproject - do NOT remove (PR #31 gate divergence). gh active account silently flips to EMU read-only - gh auth switch before writes. Migrations 0030 (MFA)/0031 (email) additive batch_alter_table (C0). REBUILD api image after T0 adds the anthropic dep. Live tasks (T1/T7) are opt-in - skipped without a key so loop/CI stay green. Cloud/terraform OUT of scope (Dave's decision).",
+    "gates": [
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api pytest -m unit -q",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web exec tsc --noEmit\"",
+        "cd \"$(git rev-parse --show-toplevel)\" && NODE_DIR=$(ls -d \"$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS\"*/node-v*-win-x64 2>/dev/null | head -1) && export PATH=\"$PATH:$NODE_DIR\" && npx -y prettier@3.9.5 --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api sh -lc \"cd /app && ruff check --no-cache . && black --check .\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web test\""
+    ],
+    "tasks": [
+        {
+            "id": "T0",
+            "title": "Live-AI enablement: declare anthropic dep, fix stale model default, boot preflight (D-026)",
+            "risk": "high",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/pyproject.toml",
+                "docker-compose.yml",
+                "apps/api/app/config.py",
+                "apps/api/app/main.py",
+                "apps/api/app/routes/admin.py",
+                "apps/api/tests/unit",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "anthropic added to apps/api deps; `docker compose build api` then in-container `python -c 'import anthropic'` succeeds",
+                "default model no longer claude-opus-4-7 (config.py + docker-compose.yml) - use claude-sonnet-5 (smoke-validated)",
+                "assert_safe_for_runtime fails loudly in live mode when provider key missing OR SDK not importable OR model is a placeholder; fixture unaffected",
+                "unit: live+missing-key raises at boot; live+valid boots; fixture unaffected",
+                "DECISIONS gains D-026"
+            ],
+            "notes": "See SPRINT_6.md T0. 2026-07-12 live smoke PROVED the path works (claude-sonnet-5, 2.6s, redaction stripped {client_org:2,name:2,email:2}, llm_calls row correct, no PII). ONLY blockers: (1) anthropic SDK not declared (apps/api/pyproject.toml:6-30) - adapter lazy-imports at app/ai/llm.py:121 -> ImportError on first call; (2) stale default model claude-opus-4-7 (config.py:53 + docker-compose.yml:17) invalid -> 404; (3) no boot preflight (assert_safe_for_runtime config.py:101, called main.py:41). Mirror _build_provider branch logic (llm.py:265). Optionally extend GET /admin/ai-status (routes/admin.py:490, checks key only :513). REBUILD api image after adding the dep.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T1",
+            "title": "Live-AI integration test (opt-in) + SMOKE_TEST section 14 codification",
+            "risk": "medium",
+            "depends_on": [
+                "T0"
+            ],
+            "expected_paths": [
+                "apps/api/pyproject.toml",
+                "apps/api/tests",
+                "apps/api/scripts",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "new @pytest.mark.live marker registered and EXCLUDED from -m unit and CI; skips without SHIELD_LLM_MODE=live + key",
+                "with a key: one real CSF run-ai asserts provider/model/mode=live/status=completed/tokens/redacted_counts + no PII + no error",
+                "scripts/smoke_live_ai.py reproduces the 2026-07-12 manual smoke in one command",
+                "SMOKE_TEST section 14 annotated as validated by the opt-in spec + documented procedure (NOT falsely checked as CI-green)"
+            ],
+            "notes": "See SPRINT_6.md T1. Egress seam LLMClient.invoke (app/ai/llm.py:313). Manual smoke used a csf.narrative payload with deliberate PII (org 'Atlas Corporation', 'Jane Doe', an email) + client_org_name + name_hints. Keep the live marker out of the default gate so loop/CI stay green keyless.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T2",
+            "title": "Seed -> storage parity: fix seeded-deliverable 410 (seed writes via get_storage)",
+            "risk": "medium",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/scripts/seed_demo.py",
+                "apps/api/app/tech_debt/extract.py",
+                "e2e"
+            ],
+            "verify": [
+                "seed_demo.py obtains its backend from get_storage() (not direct LocalFilesystemStorage) so it writes where the API reads (MinIO under compose)",
+                "tech_debt/extract.py:88 local-path shortcut uses the storage protocol uniformly (or documents why safe)",
+                "e2e: after down -v + reseed, client downloads a SEEDED released deliverable -> 200 with the section-15.5 filename (today 410)",
+                "existing e2e still green"
+            ],
+            "notes": "See SPRINT_6.md T2. get_storage() factory app/storage/factory.py:18 picks S3/MinIO vs local from s3_endpoint_url. Seed writes local unconditionally: seed_demo.py:746 (import :89, STORAGE_ROOT :120). API reads via get_storage(): routes/artifacts.py:238 -> 410 on FileNotFoundError (:239-243). StorageBackend protocol identical (storage/base.py:23). createbuckets (docker-compose.yml:91) makes the bucket first. s17 spec currently finalizes fresh to dodge the 410 - relax after fix.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T3",
+            "title": "Full dependency-health readiness endpoint + operator view",
+            "risk": "low",
+            "depends_on": [
+                "T0"
+            ],
+            "expected_paths": [
+                "apps/api/app/routes/health.py",
+                "apps/api/tests/unit",
+                "apps/web/src"
+            ],
+            "verify": [
+                "/ready reports a per-dependency matrix: db, redis, minio, keycloak (mark dormant), LLM readiness (reuse T0 preflight logic)",
+                "any down dependency flips ready=false and names the offender; /health liveness stays cheap",
+                "web operator view renders the matrix (extend /admin or /admin/ai-status proxy)",
+                "unit: each check present; simulated-down dependency flips ready=false with offender named"
+            ],
+            "notes": "See SPRINT_6.md T3. Today /ready (routes/health.py:47) is DB-only (SELECT 1). LLM signal in /admin/ai-status (routes/admin.py:485, admin-only). Compose healthchecks: db :48 redis :62 minio :79 keycloak :121.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T4",
+            "title": "Real TOTP MFA: enroll/verify/login-challenge + recovery codes (D-027)",
+            "risk": "high",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/alembic/versions",
+                "apps/api/app/models",
+                "apps/api/app/routes/auth.py",
+                "apps/api/app/config.py",
+                "apps/api/app/schemas",
+                "apps/api/tests/unit",
+                "apps/web/src",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "migration 0030 additive/SQLite-safe: users.mfa_totp_secret (encrypted, nullable) + user_recovery_codes table; old users parse unchanged (C0)",
+                "/auth/mfa/enroll returns otpauth provisioning URI+secret; /auth/mfa/verify confirms + issues recovery codes; login issues short-lived mfa_pending when mfa_enrolled, completed by /auth/mfa/verify-login",
+                "boot-refusal at config.py:115 removed; shield_auth_require_mfa GATES enforcement not boot",
+                "web: sign-in MFA step + account enrollment page (net-new)",
+                "DECISIONS D-027",
+                "TDD: enroll->verify->login-with-TOTP; wrong/expired rejected; recovery-code login; flag-off = no challenge",
+                "verify endpoints rate-limited"
+            ],
+            "notes": "See SPRINT_6.md T4. Auth is custom HS256 JWT (app/security/jwt.py) wrapped by NextAuth Credentials (web/src/lib/auth/options.ts:94). User already has mfa_enrolled (models/user.py:52). login routes/auth.py:294, _issue_pair :338. Only sign-in/sign-up web pages exist. Keycloak stays dormant.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T5",
+            "title": "Real email verification + password reset via SMTP/MailHog (D-028)",
+            "risk": "high",
+            "depends_on": [
+                "T4"
+            ],
+            "expected_paths": [
+                "apps/api/alembic/versions",
+                "apps/api/app/routes/auth.py",
+                "apps/api/app/config.py",
+                "apps/api/app/email",
+                "apps/api/app/schemas",
+                "apps/api/tests/unit",
+                "apps/web/src",
+                "e2e",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "SMTP sender gated by shield_email_delivery_enabled (config.py:62; settings :94-96; MailHog docker-compose.yml:135); fails loudly if enabled without host config",
+                "migration 0031 additive/SQLite-safe: verification + reset token table (hash, purpose, expiry, used-at)",
+                "register (auth.py:263) sends verification email; /auth/verify-email sets email_verified_at (models/user.py:53); resend; /auth/forgot-password + /auth/reset-password; single-use + expiry + no enumeration",
+                "boot-refusal at config.py:120 removed; shield_auth_require_email_verify gates login enforcement",
+                "web: verify-email/forgot-password/reset-password pages (net-new)",
+                "e2e via MailHog API fetches the token and completes the flow",
+                "DECISIONS D-028"
+            ],
+            "notes": "See SPRINT_6.md T5. Sequence AFTER T4 (both edit routes/auth.py). If a new app/email module is added, docker compose restart api.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T6",
+            "title": "OpenAI reasoning-model param: max_tokens -> max_completion_tokens",
+            "risk": "low",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/app/ai/llm.py",
+                "apps/api/tests/unit/test_llm_providers.py"
+            ],
+            "verify": [
+                "OpenAI adapter sends the correct token-limit key per model family (max_completion_tokens for reasoning/responses models) instead of legacy max_tokens at llm.py:184 (const :150)",
+                "test_llm_providers.py:164 updated accordingly",
+                "pytest -m unit green (httpx monkeypatched; no live key needed)"
+            ],
+            "notes": "See SPRINT_6.md T6. Deferred item from Sprint 4 D-024; real in code, untracked. Anthropic max_tokens=4096 (llm.py:131) is correct and stays.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T7",
+            "title": "Live-AI parity sweep across all five purposes (opt-in)",
+            "risk": "medium",
+            "depends_on": [
+                "T0",
+                "T1",
+                "T6"
+            ],
+            "expected_paths": [
+                "apps/api/tests",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "with a key, each purpose runs live once and passes redaction + llm_calls + response-parse: csf_score, zt_score, mitre_map, risk_synthesize, tech_debt_extract",
+                "real-response parse issues fixed per adapter",
+                "T1 opt-in harness extended to all five (skipped keyless); per-purpose results documented in SMOKE_TEST"
+            ],
+            "notes": "See SPRINT_6.md T7. Entries: csf routes/csf.py:1330, zt routes/zt.py:406, attack routes/attack.py:517, risk routes/risk.py:192 (/register/generate, client-scoped), tech-debt routes/tech_debt.py:150 (artifact-based, purpose extract.capabilities, no preview). All -> run_job -> LLMClient.invoke (ai/engine.py:83,97).",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T8",
+            "title": "Demo data realism + one-command reset script",
+            "risk": "medium",
+            "depends_on": [
+                "T2",
+                "T3"
+            ],
+            "expected_paths": [
+                "apps/api/scripts/seed_demo.py",
+                "scripts",
+                "README.md",
+                "ONBOARDING.md",
+                "e2e"
+            ],
+            "verify": [
+                "Atlas tenant is a coherent end-to-end story: all 4 services completed + risk register + released deliverables that DOWNLOAD (needs T2)",
+                "scripts/demo-reset.(ps1|sh): down -v -> up -d --build -> wait /ready (full matrix) -> seed -> print URLs+creds; documented",
+                "after reset the demo journey renders on /home + /documents with downloadable reports; /ready all-green"
+            ],
+            "notes": "See SPRINT_6.md T8. Canonical bring-up scripts/dev-up.ps1 (seeds via seed_demo.py). Reset today = down -v then re-up. Seed idempotent (skips if admin/service exists).",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T9",
+            "title": "Hosted-demo compose (web prod build) - NO cloud/terraform",
+            "risk": "medium",
+            "depends_on": [],
+            "expected_paths": [
+                "docker-compose.demo.yml",
+                "README.md",
+                "ONBOARDING.md"
+            ],
+            "verify": [
+                "docker-compose.demo.yml (or profile) runs web as a production build (not next dev), fixture-by-default with live only when a key is supplied, one-command bring-up",
+                "builds and serves web+api against the real services locally",
+                "cloud/terraform explicitly NOT touched"
+            ],
+            "notes": "See SPRINT_6.md T9. Only docker-compose.yml exists today. infra/terraform stays a stub - gated on Dave's cloud/account/region decisions.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T10",
+            "title": "Security + audit pass (new auth surfaces)",
+            "risk": "medium",
+            "depends_on": [
+                "T4",
+                "T5"
+            ],
+            "expected_paths": [
+                "apps/api",
+                "apps/web",
+                "e2e"
+            ],
+            "verify": [
+                "pnpm audit (root) + npm audit (e2e/) + pip-audit + bandit + gitleaks clean or documented",
+                "NO secret/key committed this sprint (live tasks use gitignored .env only)",
+                "new auth surfaces (MFA enroll/verify, email verify, reset) reviewed for OWASP: rate-limiting, token expiry+single-use, no enumeration, no secret in logs/llm_calls"
+            ],
+            "notes": "See SPRINT_6.md T10. bandit is a CI gate not in the loop gates array - run it explicitly: docker compose exec -T api sh -lc 'bandit -q -c /pyproject.toml -r app'.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T11",
+            "title": "Wrap-up: SMOKE_TEST, CHANGELOG 3.3.0, DECISIONS, CONTEXT snapshot, exit gates",
+            "risk": "low",
+            "depends_on": [
+                "T0",
+                "T1",
+                "T2",
+                "T3",
+                "T4",
+                "T5",
+                "T6",
+                "T7",
+                "T8",
+                "T9",
+                "T10"
+            ],
+            "expected_paths": [
+                "SMOKE_TEST.md",
+                "CHANGELOG.md",
+                "DECISIONS.md",
+                "CONTEXT.md"
+            ],
+            "verify": [
+                "SMOKE_TEST: section 14 checked via T1 opt-in spec + documented run; new sections for MFA, email verify/reset, full-matrix health, live-purpose sweep - checked ONLY where a green committed spec proves it (opt-in live specs annotated CI-skipped-without-key)",
+                "CHANGELOG [3.3.0] per-task entries with commits",
+                "DECISIONS D-026/D-027/D-028 present",
+                "full exit gate set green: full e2e, pytest -m unit, web tsc, web vitest, prettier 3.9.5, in-container ruff/black",
+                "CONTEXT.md overwritten with end-of-sprint snapshot (Sprint-5 format)"
+            ],
+            "notes": "See SPRINT_6.md T11.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        }
+    ]
+}

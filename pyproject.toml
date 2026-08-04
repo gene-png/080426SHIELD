@@ -1,0 +1,59 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "node_modules", "reference-docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "C4", "SIM"]
+# TCH (type-checking-block) deliberately omitted: SQLAlchemy 2's
+# Mapped[uuid.UUID] / Mapped[datetime] annotations need their referent
+# types resolvable at runtime, which conflicts with moving stdlib imports
+# into TYPE_CHECKING blocks.
+ignore = ["S101"]  # assert in tests is fine
+
+[tool.ruff.lint.isort]
+# Declare the api package first-party EXPLICITLY. Ruff otherwise auto-detects
+# first-party from the filesystem, which diverges by environment: the api
+# container mounts apps/api at /app so a top-level `app` dir exists and ruff
+# treats `app` as first-party, but CI runs from apps/api with the config at the
+# repo root where no top-level `app` dir exists, so ruff treats it as
+# third-party. That split let test_llm_providers.py pass the in-container ruff
+# gate while failing CI's identical ruff (PR #31). An explicit known-first-party
+# makes classification layout-independent so the loop gate and CI agree.
+known-first-party = ["app"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S107", "E501"]  # hardcoded creds + long signatures OK in tests
+"**/alembic/env.py" = ["E402"]  # late import is intentional (registers models against metadata)
+"**/alembic/versions/**" = ["E501", "S608"]  # migration headers exceed 100 chars; raw-SQL data migrations are intentional
+"**/scripts/**" = ["E501", "S105", "S106", "S108", "S608"]  # dev/seed scripts: demo creds, /tmp paths, and raw SQL are fine
+"**/csf/catalog.py" = ["E501"]  # NIST CSF 2.0 outcome statements are prose that exceeds 100 chars
+"**/zt/catalog.py" = ["E501"]   # CISA ZTMM + DoD ZTRA outcome statements are prose that exceeds 100 chars
+"**/attack/catalog.py" = ["E501"]  # MITRE ATT&CK matrix is wide reference data; tactic-alias comments exceed 100 chars
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+exclude = ["reference-docs", ".venv", "node_modules"]
+
+[tool.pytest.ini_options]
+testpaths = ["apps/api/tests"]
+markers = [
+    "unit: fast in-process tests",
+    "integration: tests that hit a real database",
+    "e2e: end-to-end via running services",
+]
+addopts = "-ra -q"
+
+[tool.bandit]
+exclude_dirs = ["reference-docs", ".venv", "node_modules", "tests"]
+# B108: dev-only "/tmp" storage fallback (prod always sets s3_endpoint_url).
+# B310: urlopen on URLs our own StorageBackend signs. Both are documented at the
+# call sites (app/storage/factory.py, app/tech_debt/extract.py) with ruff noqa.
+skips = ["B108", "B310"]

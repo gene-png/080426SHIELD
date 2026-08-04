@@ -1,0 +1,198 @@
+{
+    "sprint": "sprint-7-gcp-vertex",
+    "cron_job_id": null,
+    "cron_schedule": "*/10 * * * *",
+    "checkpoint_cadence": 4,
+    "checkpoint_count": 0,
+    "last_checkpoint_at": 0,
+    "working_dir": "<SET-FOR-YOUR-BOX: absolute repo path>",
+    "expected_gh_user": "<SET-FOR-YOUR-BOX: your write-enabled gh account>",
+    "branch": "feat/gcp-vertex-sprint-7",
+    "sprint_doc": "SPRINT_7.md",
+    "current_task_id": null,
+    "started_at": null,
+    "halt": {
+        "active": false,
+        "reason": null
+    },
+    "scratch": "Sprint 7 queue seeded 2026-07-13 after Sprint 6 merged (PR #33, v3.3.0). NOT YET LAUNCHED - read SPRINT_7.md launch checklist. THEME: GCP LIVE PATH + CLOSE THE CLIENT LOOP. Dave's GCP posture = Vertex AI via ADC, NO static API keys (inherited from kentro-cloud-modernization); feasibility PROVEN 2026-07-13 (direct generateContent to us-central1-aiplatform / kentro-cloudmod-dev / gemini-2.5-flash with local ADC -> HTTP 200). T0 adds google-auth dep -> REBUILD api image. Infra decision (Dave 2026-07-13): LOCAL CONTAINERS FOR NOW, no terraform/cloud deploy. Live tasks (T1) opt-in - self-skip without SHIELD_LLM_MODE=live so loop/CI stay green. T3 flips SHIELD_EMAIL_DELIVERY_ENABLED=true in dev compose (require_email_verify STAYS false - flipping it breaks all e2e sign-ins). T5 (Auth.js v5) is the riskiest task - run LAST of the feature tasks, full e2e before commit. SIX gates now (web eslint added mid-Sprint-6). CRITICAL: ruff==0.15.20/black==26.5.1 pinned + known-first-party=['app'] in ROOT pyproject - do not remove. gh auth switch before gh writes. Never commit credentials/ADC; token never in logs/error_message.",
+    "gates": [
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api pytest -m unit -q",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web exec tsc --noEmit\"",
+        "cd \"$(git rev-parse --show-toplevel)\" && NODE_DIR=$(ls -d \"$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS\"*/node-v*-win-x64 2>/dev/null | head -1) && export PATH=\"$PATH:$NODE_DIR\" && npx -y prettier@3.9.5 --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T api sh -lc \"cd /app && ruff check --no-cache . && black --check .\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web test\"",
+        "export PATH=\"$PATH:/c/Program Files/Docker/Docker/resources/bin\" && cd \"$(git rev-parse --show-toplevel)\" && docker compose exec -T web sh -lc \"cd /app && pnpm -F web lint\""
+    ],
+    "notes_global": "e2e on the HOST via the winget node.exe + e2e/node_modules/@playwright/test/cli.js; base URL from root .env WEB_PORT via e2e/helpers/baseUrl.ts (Dave's box :3001, canonical/CI :3000). Poll long gates (pytest, e2e) in the FOREGROUND to the end of the iteration in sub-9-minute bursts - NEVER park on background monitors (bit us 4x in Sprint 6). Docker CLI needs the PATH export per shell. After ANY apps/web or packages/* edit: docker compose up -d --force-recreate web BEFORE e2e. After apps/api/pyproject.toml dep changes (T0 google-auth): docker compose build api && docker compose up -d api - a plain restart does NOT install deps. New python module under app/ needs docker compose restart api; NEVER restart api mid-pytest (SIGKILL 137). After apps/web/package.json changes (T5 next-auth v5): reinstall INSIDE the web container. Seed idempotent: docker compose exec -T api python scripts/seed_demo.py. Logins admin@kentro.example / client@atlas.example, DemoPass!2026; spec-created users need unique timestamped emails. LLM fixture-mode default (D-017). Live env (gitignored .env, revert after validation): SHIELD_LLM_MODE=live SHIELD_LLM_PROVIDER=vertex SHIELD_LLM_MODEL=gemini-2.5-flash GCP_PROJECT_ID=kentro-cloudmod-dev GCP_REGION=us-central1; ADC via bind-mounted gcloud config dir, GOOGLE_APPLICATION_CREDENTIALS pointing at the mounted file - never committed, never in the image, token never in logs or llm_calls.error_message (mirror the Gemini key-in-header lesson, llm.py:231). Tenant enforcement: require_*_in_tenant 404s (never 403); resolve seeded ids ONLY via e2e/helpers/ids.ts. Playwright gotchas: getByRole name matching is SUBSTRING; click()+waitForResponse not check() on auto-save; assert post-Run-AI state after page.reload(); no body click before first Tab in skip-link tests.",
+    "tasks": [
+        {
+            "id": "T0",
+            "title": "Vertex AI provider adapter via ADC (D-029)",
+            "risk": "high",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/pyproject.toml",
+                "apps/api/app/config.py",
+                "apps/api/app/ai/llm.py",
+                "docker-compose.yml",
+                "apps/api/tests/unit",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "google-auth added to apps/api deps; api image rebuilt; in-container `python -c 'import google.auth'` succeeds",
+                "vertex in LLMProvider literal; VertexProvider hits {region}-aiplatform.googleapis.com generateContent with Bearer ADC token; shared body-build/parse factored with GeminiProvider (no duplication)",
+                "bearer token NEVER in logs, llm_calls.error_message, or exception text (unit test locks it - mirror gemini key-in-header lesson)",
+                "live_llm_readiness: vertex requires gcp_project_id + google-auth importable + ADC resolvable, loud RuntimeError at boot otherwise; fixture unaffected; /admin/ai-status + /ready inherit",
+                "compose bind-mounts host gcloud dir read-only + GOOGLE_APPLICATION_CREDENTIALS set; ADC never copied into repo or image",
+                "DECISIONS gains D-029"
+            ],
+            "notes": "See SPRINT_7.md T0. Feasibility proven 2026-07-13: direct curl with ADC token to us-central1-aiplatform / kentro-cloudmod-dev / gemini-2.5-flash -> HTTP 200, correct response. Request/response schema identical to GeminiProvider (generateContent) - factor shared helpers. google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform']), refresh lazily. Windows host gcloud dir is %APPDATA%/gcloud - compose var with sensible default, document the quirk.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T1",
+            "title": "GCP live validation sweep (opt-in) + SMOKE_TEST 14 GCP annotation",
+            "risk": "medium",
+            "depends_on": [
+                "T0"
+            ],
+            "expected_paths": [
+                "apps/api/tests/live",
+                "apps/api/scripts/smoke_live_ai.py",
+                "SMOKE_TEST.md"
+            ],
+            "verify": [
+                "tests/live + smoke_live_ai.py provider-agnostic (no anthropic-only assertions block vertex)",
+                "with .env vertex/gemini-2.5-flash live: smoke passes AND pytest -m live 5-purpose sweep passes (llm_calls provider=vertex/mode=live/status=completed/tokens, exact redacted_counts, no raw PII, response parses)",
+                "SMOKE_TEST 14/14.1 annotated GCP-validated with date + provider/model; honesty convention (opt-in spec is the proof, CI-skip noted)",
+                ".env reverted to fixture afterward; keyless run self-skips clean (exit 0)"
+            ],
+            "notes": "See SPRINT_7.md T1. Requires host gcloud ADC (launch checklist item 5). This is the sprint's is-it-real payoff: five real Vertex calls through the redaction seam.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T2",
+            "title": "Client release notification email (D-030)",
+            "risk": "medium",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/api/app/deliverable_release.py",
+                "apps/api/app/email",
+                "apps/api/tests/unit",
+                "e2e",
+                "DECISIONS.md"
+            ],
+            "verify": [
+                "unit: release with delivery on emails exactly the tenant's active client-role users (cross-tenant users never included); content carries service, title/version, web_base_url/documents link",
+                "unit: delivery off -> release proceeds exactly as v3.3.0, loud skip log; SMTP failure -> loud log, release NOT rolled back",
+                "e2e (after T3): release in-test -> notification visible in MailHog",
+                "DECISIONS gains D-030 (best-effort notify, release is source of truth)"
+            ],
+            "notes": "See SPRINT_7.md T2. Sprint 5 deferred this pending a real sender; Sprint 6 T5 shipped app/email/sender.py. Wire into the SHARED release helper so all four services + risk register notify identically.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T3",
+            "title": "Enable email delivery in dev/CI compose (MailHog on by default)",
+            "risk": "low",
+            "depends_on": [],
+            "expected_paths": [
+                "docker-compose.yml",
+                "e2e",
+                ".github/workflows/ci.yml"
+            ],
+            "verify": [
+                "SHIELD_EMAIL_DELIVERY_ENABLED=true (smtp->mailhog) in dev compose; SHIELD_AUTH_REQUIRE_EMAIL_VERIFY stays false (flipping it breaks every e2e sign-in)",
+                "s21 RUNS (not skips) locally and in CI; full e2e suite still green (sweep for registration-sends-nothing assumptions)",
+                "SMOKE_TEST 25 gets its green committed box (may land in T6 wrap-up)"
+            ],
+            "notes": "See SPRINT_7.md T3. MailHog is per-run disposable; s21 isolates by unique timestamped emails - keep that pattern for any new mail assertions.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T4",
+            "title": "reqSeq guard sweep remainder (Sprint 5 carry-over)",
+            "risk": "medium",
+            "depends_on": [],
+            "expected_paths": [
+                "apps/web/src/components",
+                "apps/web/src"
+            ],
+            "verify": [
+                "remaining mount-fetch-then-mutate components swept; reqSeq guard applied ONLY where a stale response can clobber newer state (justify each edit in the commit body, no speculative guards)",
+                "vitest guards added for the two highest-traffic newly-guarded components (deferred-promise pattern, each proven to bite)",
+                "full web gate set green; e2e unaffected"
+            ],
+            "notes": "See SPRINT_7.md T4. Sprint 5 T9 fixed only what the 14 react-hooks rules flagged; the admin workspaces/panels outside MessageThread/CsfPlaybookPanel are the known remainder.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T5",
+            "title": "Auth.js (next-auth) v5 migration - clears uuid moderate",
+            "risk": "high",
+            "depends_on": [
+                "T2",
+                "T3",
+                "T4"
+            ],
+            "expected_paths": [
+                "apps/web/package.json",
+                "pnpm-lock.yaml",
+                "apps/web/src",
+                "BUILD_REPORT.md"
+            ],
+            "verify": [
+                "next-auth v4 -> Auth.js v5: auth.ts config export, middleware/route handlers, getServerSession->auth() call sites, credentials providers (password + Sprint-6 totp exchange) re-wired",
+                "behavior-identical: s0/s1 + MFA sign-in e2e pass unchanged; FULL e2e suite green before commit",
+                "pnpm audit: uuid moderate GONE (only postcss moderate remains); BUILD_REPORT audit posture updated",
+                "after package.json change: reinstall INSIDE web container, force-recreate before e2e"
+            ],
+            "notes": "See SPRINT_7.md T5. Riskiest task - depends_on T2/T3/T4 so it runs LAST of the feature tasks. Auth touches everything; do not weaken a single auth test to get green.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        },
+        {
+            "id": "T6",
+            "title": "Wrap-up: SMOKE_TEST updates, CHANGELOG 3.4.0, full gates, CONTEXT snapshot",
+            "risk": "low",
+            "depends_on": [
+                "T0",
+                "T1",
+                "T2",
+                "T3",
+                "T4",
+                "T5"
+            ],
+            "expected_paths": [
+                "SMOKE_TEST.md",
+                "CHANGELOG.md",
+                "CONTEXT.md",
+                "BUILD_REPORT.md",
+                "DECISIONS.md",
+                "context/dave.md"
+            ],
+            "verify": [
+                "SMOKE_TEST: 14 GCP annotation, 25 checked via now-running s21, new 29 release-notification section - boxes only with green committed specs (honesty convention)",
+                "CHANGELOG [3.4.0] per-task entries with commits; BUILD_REPORT synced (Vertex in provider matrix, post-T5 audit posture)",
+                "DECISIONS D-029/D-030 verified landed",
+                "FULL exit gate set green (all six) + full e2e; CONTEXT.md overwritten with end-of-sprint snapshot; context/dave.md refreshed"
+            ],
+            "notes": "See SPRINT_7.md T6. Carry the deferred list forward: cloud/terraform (Dave: local containers for now), Keycloak, azure/bedrock/local adapters, ESLint 10, postcss moderate, MFA manual walkthrough.",
+            "status": "pending",
+            "attempts": 0,
+            "commit": null
+        }
+    ]
+}

@@ -1,0 +1,62 @@
+{
+  "name": "SHIELD v2 Dev",
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "moby": false,
+      "installDockerBuildx": true,
+      "version": "latest",
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "remoteUser": "appuser",
+  "containerUser": "appuser",
+  "updateRemoteUserUID": true,
+  "workspaceFolder": "/workspaces/SHIELDV2-051826v2",
+  "mounts": [
+    "source=${localWorkspaceFolderBasename}-pnpm-store,target=/home/appuser/.local/share/pnpm,type=volume"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+  "forwardPorts": [3000, 8000, 8080, 9000, 9001, 8025, 5432, 6379],
+  "portsAttributes": {
+    "3000": { "label": "Web (Next.js)" },
+    "8000": { "label": "API (FastAPI)" },
+    "8080": { "label": "Keycloak" },
+    "9000": { "label": "MinIO S3" },
+    "9001": { "label": "MinIO Console" },
+    "8025": { "label": "MailHog UI" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll.ruff": "explicit"
+        },
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        },
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,60 @@
+# SHIELD hosted-demo override (Sprint 6 T9).
+#
+# Runs the web app as a PRODUCTION Next.js standalone build
+# (apps/web/Dockerfile) instead of the `next dev` server the base
+# docker-compose.yml uses for local iteration. Everything else (db, redis,
+# minio, keycloak, mailhog, api, createbuckets) is inherited UNCHANGED from
+# docker-compose.yml, so this file only redefines the `web` service — no infra
+# duplication, no drift.
+#
+# One-command bring-up (from the repo root):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+#
+# Fixture-by-default: the api's SHIELD_LLM_MODE defaults to `fixture` (inherited
+# unchanged from docker-compose.yml), so the demo is fully offline and touches
+# no provider. Live AI engages ONLY when you supply ANTHROPIC_API_KEY *and* set
+# SHIELD_LLM_MODE=live in a root .env before bring-up — the T0 boot preflight
+# (assert_safe_for_runtime) then validates the key/model or fails LOUDLY at
+# start rather than on first request.
+#
+# For a real shared demo host set NEXTAUTH_SECRET (openssl rand -hex 32) and
+# NEXTAUTH_URL (the host's public URL) in .env; the defaults below only keep the
+# local one-command bring-up frictionless.
+#
+# NOTE: the web production image uses Next's standalone output, whose copy step
+# uses symlinks that fail on a Windows host filesystem but succeed inside the
+# Linux build container — so always let Docker build it (never `pnpm build` on
+# a Windows host).
+
+services:
+  web:
+    # Build the production image from the repo root (the pnpm workspace +
+    # packages/* are needed). Tagging it replaces the inherited
+    # `image: node:22-bookworm` scalar so our build isn't mis-tagged as the
+    # base dev image.
+    image: shield-web:demo
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    # Drop the base dev bind-mounts + node_modules volumes: they would shadow
+    # the baked-in standalone bundle at /app/apps/web with raw source and break
+    # the prod runtime. `!reset` clears the inherited list (Compose >= 2.24;
+    # this host runs v5.x). Merging (the default) would append, not replace.
+    volumes: !reset []
+    # The image CMD already runs the standalone server; replace the base dev
+    # command (corepack + pnpm install + pnpm dev) so it can't leak in via merge.
+    command: ["node", "apps/web/server.js"]
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev-only-replace}
+      API_BASE_URL: http://api:8000
+      # Aligned with the base compose web env (Sprint 9 T5, Codex finding): this
+      # override independently sets the web Keycloak vars, so without these three
+      # the demo overlay would silently undo the split-horizon issuer flip.
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8080/realms/shield}
+      KEYCLOAK_INTERNAL_ISSUER: ${KEYCLOAK_INTERNAL_ISSUER:-http://keycloak:8080/realms/shield}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-shield-web}
+      SHIELD_AUTH_OIDC_ENABLED: ${SHIELD_AUTH_OIDC_ENABLED:-false}

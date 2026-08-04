@@ -1,0 +1,286 @@
+name: shield-v2
+
+x-api-env: &api-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://shield:shield@db:5432/shield}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  S3_BUCKET: ${S3_BUCKET:-shield-artifacts}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-shield-minio}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-shield-minio-secret}
+  S3_KMS_KEY_ID: ${S3_KMS_KEY_ID:-dev-stub-key}
+  # Split-horizon (Sprint 9 T5): KEYCLOAK_ISSUER is the CANONICAL browser-facing
+  # issuer the api pins as `iss` (matches KC_HOSTNAME on the keycloak service).
+  # KEYCLOAK_JWKS_URL is the CONTAINER-reachable fetch endpoint the api hits for
+  # signing keys — a different horizon on purpose. Flag off by default (D-032):
+  # no exchange door, no Keycloak network.
+  KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8080/realms/shield}
+  KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-http://keycloak:8080/realms/shield/protocol/openid-connect/certs}
+  KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-shield-api}
+  KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-shield-web}
+  SHIELD_AUTH_OIDC_ENABLED: ${SHIELD_AUTH_OIDC_ENABLED:-false}
+  SHIELD_LLM_PROVIDER: ${SHIELD_LLM_PROVIDER:-anthropic}
+  SHIELD_LLM_MODEL: ${SHIELD_LLM_MODEL:-claude-sonnet-5}
+  SHIELD_LLM_MODE: ${SHIELD_LLM_MODE:-fixture}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  # Vertex AI via Application Default Credentials (D-029) — NO static API key.
+  # GOOGLE_APPLICATION_CREDENTIALS points at the ADC file inside the read-only
+  # gcloud config bind-mount (see the api service volumes). GCP_PROJECT_ID is
+  # empty by default so fixture mode never needs it; set it (plus
+  # SHIELD_LLM_PROVIDER=vertex) in .env to flip to live Vertex.
+  GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+  GCP_REGION: ${GCP_REGION:-us-central1}
+  GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/gcloud/application_default_credentials.json}
+  SHIELD_AUTH_REQUIRE_MFA: ${SHIELD_AUTH_REQUIRE_MFA:-false}
+  # REQUIRE_EMAIL_VERIFY stays false ON PURPOSE: flipping it to true makes every
+  # unverified login (all seeded + spec-created e2e users) a typed 403, breaking
+  # the whole e2e sign-in surface. Enforcement is a deploy-time choice, not a dev
+  # default (D-028 / CLAUDE.md). Do NOT couple it to delivery below.
+  SHIELD_AUTH_REQUIRE_EMAIL_VERIFY: ${SHIELD_AUTH_REQUIRE_EMAIL_VERIFY:-false}
+  # ON by default in dev/CI (Sprint 7 T3): the email loop is REAL in every
+  # dev/e2e run so registration/verify/reset actually deliver to MailHog and the
+  # s21 spec runs (not skips). SMTP_HOST defaults to the mailhog service below,
+  # so boot never refuses (config.py guards empty-host). Verification is NOT
+  # enforced (see REQUIRE_EMAIL_VERIFY above), so unverified sign-in still works.
+  SHIELD_EMAIL_DELIVERY_ENABLED: ${SHIELD_EMAIL_DELIVERY_ENABLED:-true}
+  SHIELD_REDACTION_MODE: ${SHIELD_REDACTION_MODE:-strict}
+  JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-900}
+  JWT_REFRESH_TTL_SECONDS: ${JWT_REFRESH_TTL_SECONDS:-1800}
+  SHIELD_ACCOUNT_LOCKOUT_MAX_ATTEMPTS: ${SHIELD_ACCOUNT_LOCKOUT_MAX_ATTEMPTS:-10}
+  SHIELD_ACCOUNT_LOCKOUT_WINDOW_SECONDS: ${SHIELD_ACCOUNT_LOCKOUT_WINDOW_SECONDS:-900}
+  SHIELD_IDLE_TIMEOUT_SECONDS: ${SHIELD_IDLE_TIMEOUT_SECONDS:-1800}
+  SHIELD_FORCED_REAUTH_SECONDS: ${SHIELD_FORCED_REAUTH_SECONDS:-86400}
+  SMTP_HOST: ${SMTP_HOST:-mailhog}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_FROM: ${SMTP_FROM:-no-reply@shield.local}
+  # Base URL baked into emailed verification/reset links. Boxes that move web
+  # off :3000 (WEB_PORT in .env) must set this too or emailed links 404.
+  WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+  # The api container only mounts ./apps/api at /app, so the zt-data seed files
+  # (repo packages/zt-data) are not reachable by walk-up. Mount them read-only
+  # (see the api service volumes) and point the unit test at them explicitly.
+  SHIELD_ZT_DATA_DIR: ${SHIELD_ZT_DATA_DIR:-/packages/zt-data/source}
+
+services:
+  db:
+    restart: unless-stopped
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shield
+      POSTGRES_PASSWORD: shield
+      POSTGRES_DB: shield
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shield"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  redis:
+    restart: unless-stopped
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "6379:6379"
+
+  minio:
+    restart: unless-stopped
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-shield-minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-shield-minio-secret}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  # One-shot: create the artifacts bucket. MinIO does not auto-create buckets
+  # and S3Storage assumes it already exists, so without this the first upload
+  # fails with NoSuchBucket -> 500. Idempotent (--ignore-existing); exits 0.
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-shield-minio}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-shield-minio-secret}
+      S3_BUCKET: ${S3_BUCKET:-shield-artifacts}
+    entrypoint:
+      - sh
+      - -c
+      - >
+        mc alias set local http://minio:9000 "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" &&
+        mc mb --ignore-existing "local/$$S3_BUCKET" &&
+        echo "bucket $$S3_BUCKET ready"
+
+  keycloak:
+    restart: unless-stopped
+    image: quay.io/keycloak/keycloak:25.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+      # Split-horizon fix (Sprint 9 T5, KC 25 hostname-v2). ONE canonical `iss`
+      # (http://localhost:8080/realms/shield) regardless of which interface
+      # served the request, so a browser-minted token and a container-minted
+      # token carry the same issuer the api pins. BACKCHANNEL_DYNAMIC keeps the
+      # token/JWKS endpoints container-reachable (keycloak:8080) for server-side
+      # callers, so the api fetches JWKS via KEYCLOAK_JWKS_URL without a rewrite.
+      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:8080}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+      - keycloak-data:/opt/keycloak/data
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # KC 25 serves /health on the management port (9000), not 8080. Use HTTP/1.0
+      # so the server closes the connection and `cat` returns instead of blocking
+      # on keep-alive until the probe times out.
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  mailhog:
+    restart: unless-stopped
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  api:
+    restart: unless-stopped
+    build:
+      context: ./apps/api
+    environment:
+      <<: *api-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/api:/app
+      # Root pyproject.toml mounted at /app's parent (/) so in-container
+      # ruff/black config discovery walks up and finds [tool.ruff]/[tool.black]
+      # — CI parity. The api build context is only ./apps/api, whose
+      # pyproject.toml has no [tool.*] tables, so both tools skip it (modern
+      # ruff/black only treat a pyproject.toml as config root when it carries
+      # their own [tool.*] section) and continue up to /pyproject.toml.
+      # See CLAUDE.md "Real commands" + SPRINT_4.md T0.
+      - ./pyproject.toml:/pyproject.toml:ro
+      # zt-data seed corpus, read-only, for the questionnaire contract test
+      # (SHIELD_ZT_DATA_DIR points here). Not part of the app runtime.
+      - ./packages/zt-data:/packages/zt-data:ro
+      # Host gcloud config, READ-ONLY, so the Vertex provider can use this box's
+      # Application Default Credentials without any API key or committed secret
+      # (D-029). Default is the canonical Linux ADC dir ($HOME/.config/gcloud) —
+      # compose expands $HOME, so it is an absolute path that Docker auto-creates
+      # (empty, harmless) on a runner that has no gcloud, keeping fixture-mode CI
+      # green without polluting the repo tree. On THIS Windows box set
+      # GCLOUD_CONFIG_DIR in the gitignored .env to %APPDATA%\gcloud (Git-Bash
+      # form: /c/Users/<you>/AppData/Roaming/gcloud). GOOGLE_APPLICATION_CREDENTIALS
+      # (api-env) points at the ADC file inside this mount. Credentials are NEVER
+      # copied into the repo or the image — the mount is the only path in.
+      - ${GCLOUD_CONFIG_DIR:-$HOME/.config/gcloud}:/gcloud:ro
+    # Apply pending migrations before serving so a newly-added revision can't
+    # leave the persistent db volume behind the (hot-reloaded) model code.
+    # Dev convenience only - in prod, migrations run as a discrete deploy step,
+    # not in the app container, to avoid replicas racing each other.
+    command:
+      - sh
+      - -c
+      - >
+        alembic upgrade head &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # NOTE (Work Order F): AI runs are SYNCHRONOUS. The run-ai endpoints invoke the
+  # LLM inline via app.ai.engine.run_job, so there is no Celery worker / queue.
+  # `redis` remains available for future rate-limiting or async work but has no
+  # consumer today. See DECISIONS.md.
+
+  web:
+    restart: unless-stopped
+    image: node:22-bookworm
+    working_dir: /app
+    environment:
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev-only-replace}
+      API_BASE_URL: http://api:8000
+      # KEYCLOAK_ISSUER is the CANONICAL browser-facing issuer (what the sign-in
+      # redirect and PKCE flow use); KEYCLOAK_INTERNAL_ISSUER is the
+      # container-reachable prefix Auth.js rewrites discovery to at request time
+      # (Sprint 9 T5/T6). Flag off by default (D-032) — the provider is absent.
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8080/realms/shield}
+      KEYCLOAK_INTERNAL_ISSUER: ${KEYCLOAK_INTERNAL_ISSUER:-http://keycloak:8080/realms/shield}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-shield-web}
+      SHIELD_AUTH_OIDC_ENABLED: ${SHIELD_AUTH_OIDC_ENABLED:-false}
+    depends_on:
+      - api
+    ports:
+      # Host port is machine-local config (.env WEB_PORT) so a dev box whose
+      # :3000 is taken can rebind without touching committed defaults. When
+      # overriding, set NEXTAUTH_URL to the same port; host-run e2e follows
+      # WEB_PORT automatically (e2e/helpers/baseUrl.ts). CI stays on 3000.
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - ./apps/web:/app/apps/web
+      - ./packages:/app/packages
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      # pnpm hoists the real packages into the workspace-root node_modules/.pnpm
+      # store; both this and the per-app dir must persist or symlinks dangle on
+      # recreate.
+      - node-modules-root:/app/node_modules
+      - node-modules-web:/app/apps/web/node_modules
+    # First boot installs deps into the volumes; later boots skip the install
+    # (the next binary is already present) and start the dev server directly.
+    command:
+      - sh
+      - -c
+      - >
+        corepack enable >/dev/null 2>&1;
+        corepack prepare pnpm@9.12.0 --activate >/dev/null 2>&1;
+        cd /app;
+        [ -f apps/web/node_modules/next/dist/bin/next ] || pnpm install;
+        exec pnpm -F web dev
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  keycloak-data:
+  node-modules-root:
+  node-modules-web:

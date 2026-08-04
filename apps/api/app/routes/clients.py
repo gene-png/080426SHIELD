@@ -1,0 +1,882 @@
+"""Client-portal read routes (Sprint 5).
+
+The client-facing surface for released deliverables (Master Spec §6.7, §12).
+Tenant-enforced: the `{client_id}` in the path must match the caller's resolved
+tenant (client-role users are pinned; platform admins select via X-Client-Id),
+and a mismatch 404s — never 403 — so one tenant can't probe another's ids.
+
+Only RELEASED deliverables are ever returned here (§12 release rule): a client
+sees nothing until a consultant explicitly releases the finalized deliverable.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.attack.analytics import compute as attack_compute
+from app.attack.catalog import all_codes as attack_all_codes
+from app.attack.catalog import tactic_by_id as attack_tactic_by_id
+from app.attack.catalog import technique_by_id as attack_technique_by_id
+from app.csf.gap import analyze as csf_analyze_gaps
+from app.db.session import get_db
+from app.dependencies import current_client, current_user
+from app.logging import get_logger
+from app.models.artifact import Artifact
+from app.models.attack_assessment import (
+    AttackAssessment,
+    AttackAssessmentStatus,
+    AttackCoverage,
+)
+from app.models.capability import (
+    CapabilityDisposition,
+    CapabilityItem,
+    CapabilityList,
+    CapabilityListStatus,
+)
+from app.models.client import Client
+from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
+from app.models.deliverable import Deliverable
+from app.models.risk_register import RiskEntry, RiskRegister
+from app.models.service import Service, ServiceKind
+from app.models.user import User
+from app.models.zt_assessment import (
+    ZtAnswer,
+    ZtAssessment,
+    ZtAssessmentStatus,
+    ZtFramework,
+)
+from app.risk.engine import (
+    Impact,
+    Likelihood,
+    RecommendedAction,
+    RiskAxis,
+    RiskTier,
+    action_counts,
+    axis_counts,
+    matrix_counts,
+    tier_counts,
+)
+from app.schemas.clients import (
+    AttackDashboardResponse,
+    AttackDashboardRollup,
+    AttackDashboardTechnique,
+    AttackTacticCoverage,
+    ClientDeliverableListResponse,
+    ClientDeliverableResponse,
+    RiskDashboardEntry,
+    RiskDashboardResponse,
+    RiskMatrixCell,
+    TechDebtCategorySpend,
+    TechDebtDashboardResponse,
+    TechDebtItem,
+    TechDebtRedundancy,
+    ValueSummaryResponse,
+    ZtDashboardResponse,
+    ZtPillarDashboard,
+)
+from app.zt.catalog import capability_by_code as zt_capability_by_code
+from app.zt.maturity import ZtFrameworkCode
+from app.zt.maturity import stage_label as zt_stage_label
+from app.zt.scoring import analyze_gaps as zt_analyze_gaps
+from app.zt.scoring import compute as zt_compute
+
+router = APIRouter(prefix="/clients", tags=["clients"])
+
+_log = get_logger(__name__)
+
+
+def _artifact_title(db: Session, artifact_id: uuid.UUID | None) -> str | None:
+    if artifact_id is None:
+        return None
+    art = db.get(Artifact, artifact_id)
+    return art.title if art else None
+
+
+@router.get(
+    "/{client_id}/deliverables",
+    response_model=ClientDeliverableListResponse,
+    summary="Released deliverables for the client (client + admin)",
+)
+def list_client_deliverables(
+    client_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ClientDeliverableListResponse:
+    # Tenant enforcement: the path id must be the caller's resolved tenant.
+    # 404 (never 403) so we don't confirm another tenant's client id exists.
+    if client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found.",
+        )
+
+    rows = (
+        db.execute(
+            select(Deliverable, Service)
+            .join(Service, Service.id == Deliverable.service_id)
+            .where(
+                Service.client_id == client.id,
+                Deliverable.released_at.is_not(None),
+            )
+            .order_by(Deliverable.released_at.desc())
+        )
+        .tuples()
+        .all()
+    )
+    _log.info(
+        "client.deliverables.listed",
+        client_id=str(client.id),
+        actor_user_id=str(user.id),
+        count=len(rows),
+    )
+
+    items = [
+        ClientDeliverableResponse(
+            id=deliv.id,
+            service_id=deliv.service_id,
+            service_kind=svc.kind,
+            service_title=svc.title,
+            title=deliv.title,
+            summary=deliv.summary,
+            version=deliv.version,
+            released_at=deliv.released_at,
+            superseded=deliv.superseded_by is not None,
+            pdf_artifact_id=deliv.pdf_artifact_id,
+            xlsx_artifact_id=deliv.xlsx_artifact_id,
+            docx_artifact_id=deliv.docx_artifact_id,
+            pdf_filename=_artifact_title(db, deliv.pdf_artifact_id),
+            xlsx_filename=_artifact_title(db, deliv.xlsx_artifact_id),
+            docx_filename=_artifact_title(db, deliv.docx_artifact_id),
+        )
+        for deliv, svc in rows
+    ]
+    return ClientDeliverableListResponse(items=items)
+
+
+# ---------------------------------------------------------------------------
+# Cross-service value loop (Master Spec §2.5)
+#
+# "AI suggests, code computes." Every number below is recomputed by a pure
+# deterministic engine over the frozen post-release answer rows — never an LLM
+# call. A service only feeds the client-visible summary once it has a RELEASED
+# deliverable (§12): a service without one contributes null (the card renders
+# "pending"), so a pre-release number can never leak.
+# ---------------------------------------------------------------------------
+
+
+def _latest_finalized(db: Session, model, service_id: uuid.UUID, statuses):
+    """The highest-version FINALIZED (status in `statuses`) row of `model` for a
+    service.
+
+    Only finalized (approved/released) assessments feed the client-visible value
+    summary. A released deliverable's assessment is APPROVED/RELEASED; a
+    re-assessment opened AFTER release is a new higher-version DRAFT. Filtering to
+    finalized statuses keeps the summary pinned to released work so a post-release
+    draft can never leak its in-progress numbers to the client (§12)."""
+    return db.execute(
+        select(model)
+        .where(model.service_id == service_id, model.status.in_(statuses))
+        .order_by(model.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _released_service_ids_by_kind(
+    db: Session, client_id: uuid.UUID
+) -> dict[ServiceKind, list[uuid.UUID]]:
+    """Distinct service ids that have at least one RELEASED deliverable, grouped
+    by service kind. This is the §12 visibility gate for the value summary."""
+    rows = (
+        db.execute(
+            select(Service.id, Service.kind)
+            .join(Deliverable, Deliverable.service_id == Service.id)
+            .where(
+                Service.client_id == client_id,
+                Deliverable.released_at.is_not(None),
+            )
+            .distinct()
+        )
+        .tuples()
+        .all()
+    )
+    out: dict[ServiceKind, list[uuid.UUID]] = {}
+    for sid, kind in rows:
+        out.setdefault(kind, []).append(sid)
+    return out
+
+
+def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+    if not service_ids:
+        return None
+    total = 0
+    found = False
+    for sid in service_ids:
+        a = _latest_finalized(
+            db,
+            CsfAssessment,
+            sid,
+            (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED),
+        )
+        if a is None:
+            continue
+        found = True
+        rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
+        answers: dict[str, int | None] = {r.subcategory_code: r.maturity_tier for r in rows}
+        total += csf_analyze_gaps(answers).total_gap_count
+    return total if found else None
+
+
+def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+    if not service_ids:
+        return None
+    total = 0
+    found = False
+    for sid in service_ids:
+        a = _latest_finalized(
+            db,
+            ZtAssessment,
+            sid,
+            (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
+        )
+        if a is None:
+            continue
+        found = True
+        fw = (
+            ZtFrameworkCode.CISA_ZTMM_2_0
+            if a.framework == ZtFramework.CISA_ZTMM_2_0
+            else ZtFrameworkCode.DOD_ZTRA
+        )
+        rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
+        answers: dict[str, int | None] = {r.capability_code: r.maturity_stage for r in rows}
+        targets: dict[str, int | None] = {r.capability_code: r.target_stage for r in rows}
+        total += zt_analyze_gaps(fw, answers, targets=targets).total_gap_count
+    return total if found else None
+
+
+def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+    if not service_ids:
+        return None
+    total = 0
+    found = False
+    for sid in service_ids:
+        a = _latest_finalized(
+            db,
+            AttackAssessment,
+            sid,
+            (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
+        )
+        if a is None:
+            continue
+        found = True
+        rows = (
+            db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
+            .scalars()
+            .all()
+        )
+        coverage_map: dict[str, str | None] = {r.technique_code: r.status for r in rows}
+        total += attack_compute(coverage_map).gap
+    return total if found else None
+
+
+def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> tuple[float, bool] | None:
+    """(annual savings, cost_known). Savings = sum of annual cost over CUT
+    capabilities; cost_known is False when any CUT item lacked a cost (so the
+    figure is a floor). Mirrors routes/tech_debt.py:consolidation_plan_summary."""
+    if not service_ids:
+        return None
+    total = 0.0
+    cost_known = True
+    found = False
+    for sid in service_ids:
+        cl = _latest_finalized(
+            db,
+            CapabilityList,
+            sid,
+            (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
+        )
+        if cl is None:
+            continue
+        found = True
+        items = (
+            db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cl.id))
+            .scalars()
+            .all()
+        )
+        for it in items:
+            if it.disposition == CapabilityDisposition.CUT:
+                if it.annual_cost_usd is None:
+                    cost_known = False
+                else:
+                    total += float(it.annual_cost_usd)
+    if not found:
+        return None
+    return (total, cost_known)
+
+
+@router.get(
+    "/{client_id}/value-summary",
+    response_model=ValueSummaryResponse,
+    summary="Cross-service executive value summary (client + admin)",
+)
+def value_summary(
+    client_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ValueSummaryResponse:
+    # Tenant enforcement mirrors the deliverables route: 404 (never 403) so one
+    # tenant can't confirm another's id exists.
+    if client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found.",
+        )
+
+    by_kind = _released_service_ids_by_kind(db, client.id)
+    td = _tech_debt_savings(db, by_kind.get(ServiceKind.TECH_DEBT, []))
+    zt_ids = by_kind.get(ServiceKind.ZERO_TRUST_CISA, []) + by_kind.get(
+        ServiceKind.ZERO_TRUST_DOD, []
+    )
+    zt_gaps = _zt_gap_total(db, zt_ids)
+    attack_uncovered = _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
+    csf_gaps = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
+
+    savings = td[0] if td is not None else None
+    cost_known = td[1] if td is not None else True
+    has_any = any(v is not None for v in (savings, zt_gaps, attack_uncovered, csf_gaps))
+
+    _log.info(
+        "client.value_summary.computed",
+        client_id=str(client.id),
+        actor_user_id=str(user.id),
+        has_any_data=has_any,
+    )
+    return ValueSummaryResponse(
+        tech_debt_savings_usd=savings,
+        tech_debt_savings_cost_known=cost_known,
+        zt_gap_count=zt_gaps,
+        attack_uncovered_count=attack_uncovered,
+        csf_gap_count=csf_gaps,
+        has_any_data=has_any,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Client-facing executive dashboards (D-035)
+#
+# Interactive per-service dashboards the client views AFTER release. Like the
+# value summary, every number is recomputed by the deterministic engine over the
+# released assessment's frozen rows — no LLM. Reached only when the service has a
+# RELEASED deliverable (§12), gated via the same `_released_service_ids_by_kind`.
+# ---------------------------------------------------------------------------
+
+
+def _latest_released_deliverable(db: Session, service_id: uuid.UUID) -> Deliverable | None:
+    """The most recently released deliverable for a service (for released_at +
+    version), or None if the service has never released one."""
+    return db.execute(
+        select(Deliverable)
+        .where(
+            Deliverable.service_id == service_id,
+            Deliverable.released_at.is_not(None),
+        )
+        .order_by(Deliverable.released_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+@router.get(
+    "/{client_id}/attack/{service_id}/dashboard",
+    response_model=AttackDashboardResponse,
+    summary="Released ATT&CK coverage dashboard for the client (client + admin)",
+)
+def attack_dashboard(
+    client_id: uuid.UUID,
+    service_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackDashboardResponse:
+    """Coverage rollup + per-technique matrix for a released ATT&CK service.
+
+    Tenant-enforced (404, never 403). Release-gated on the deliverable (NOT the
+    assessment status), so it is visible exactly when the downloadable report is.
+    """
+    if client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    released_attack_ids = _released_service_ids_by_kind(db, client.id).get(
+        ServiceKind.ATTACK_COVERAGE, []
+    )
+    if service_id not in released_attack_ids:
+        # Typed 404 (D-016): the dashboard exists only once a deliverable is
+        # released. 404 (not 403) keeps parity with the tenant-not-found path.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released ATT&CK coverage report for this service yet.",
+            },
+        )
+
+    svc = db.get(Service, service_id)
+    deliv = _latest_released_deliverable(db, service_id)
+    assessment = _latest_finalized(
+        db,
+        AttackAssessment,
+        service_id,
+        (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
+    )
+    if svc is None or deliv is None or assessment is None:
+        # A released deliverable implies a finalized assessment; if that invariant
+        # is broken, fail loudly rather than serve an empty dashboard.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released ATT&CK coverage report for this service yet.",
+            },
+        )
+
+    valid = attack_all_codes()
+    rows = (
+        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
+        .scalars()
+        .all()
+    )
+    coverage_map: dict[str, str | None] = {
+        r.technique_code: r.status for r in rows if r.technique_code in valid
+    }
+    rollup = attack_compute(coverage_map)
+
+    techniques: list[AttackDashboardTechnique] = []
+    for r in rows:
+        if r.status is None or r.technique_code not in valid:
+            continue
+        tech = attack_technique_by_id(r.technique_code)
+        tactic_name = attack_tactic_by_id(tech.tactics[0]).name if tech.tactics else ""
+        techniques.append(
+            AttackDashboardTechnique(
+                code=tech.id,
+                name=tech.name,
+                tactic_name=tactic_name,
+                status=r.status,
+                detection_tools=list(r.detection_tools or []),
+                prevention_tools=list(r.prevention_tools or []),
+                response_tools=list(r.response_tools or []),
+                rationale=r.rationale,
+            )
+        )
+    techniques.sort(key=lambda t: t.code)
+
+    _log.info(
+        "client.attack_dashboard.built",
+        client_id=str(client.id),
+        service_id=str(service_id),
+        actor_user_id=str(user.id),
+        evaluated=len(techniques),
+        coverage_pct=rollup.coverage_pct,
+    )
+
+    return AttackDashboardResponse(
+        service_id=service_id,
+        service_title=svc.title,
+        released_at=deliv.released_at,
+        deliverable_version=deliv.version,
+        rollup=AttackDashboardRollup(
+            total_evaluated=rollup.covered + rollup.partial + rollup.gap,
+            covered=rollup.covered,
+            partial=rollup.partial,
+            gap=rollup.gap,
+            not_applicable=rollup.not_applicable,
+            coverage_pct=rollup.coverage_pct,
+            by_tactic=[
+                AttackTacticCoverage(
+                    tactic_id=tc.tactic_id,
+                    tactic_name=tc.tactic_name,
+                    covered=tc.covered,
+                    partial=tc.partial,
+                    gap=tc.gap,
+                    not_applicable=tc.not_applicable,
+                    unscored=tc.unscored,
+                    coverage_pct=tc.coverage_pct,
+                )
+                for tc in rollup.by_tactic
+            ],
+        ),
+        techniques=techniques,
+    )
+
+
+_ZT_FRAMEWORK_LABELS = {
+    ZtFrameworkCode.CISA_ZTMM_2_0: "CISA ZTMM 2.0",
+    ZtFrameworkCode.DOD_ZTRA: "DoD ZTRA",
+}
+
+
+def _zt_pillar_label(average_stage: float | None, fw: ZtFrameworkCode) -> str:
+    if average_stage is None:
+        return "Unscored"
+    return zt_stage_label(round(average_stage), fw)
+
+
+@router.get(
+    "/{client_id}/zt/{service_id}/dashboard",
+    response_model=ZtDashboardResponse,
+    summary="Released Zero Trust maturity dashboard for the client (client + admin)",
+)
+def zt_dashboard(
+    client_id: uuid.UUID,
+    service_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ZtDashboardResponse:
+    """Current-vs-target per-pillar maturity for a released Zero Trust service.
+
+    Release-gated on the deliverable (either ZT framework kind), tenant-enforced.
+    """
+    if client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    by_kind = _released_service_ids_by_kind(db, client.id)
+    released_zt_ids = by_kind.get(ServiceKind.ZERO_TRUST_CISA, []) + by_kind.get(
+        ServiceKind.ZERO_TRUST_DOD, []
+    )
+    if service_id not in released_zt_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released Zero Trust report for this service yet.",
+            },
+        )
+
+    svc = db.get(Service, service_id)
+    deliv = _latest_released_deliverable(db, service_id)
+    assessment = _latest_finalized(
+        db,
+        ZtAssessment,
+        service_id,
+        (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
+    )
+    if svc is None or deliv is None or assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released Zero Trust report for this service yet.",
+            },
+        )
+
+    fw = (
+        ZtFrameworkCode.CISA_ZTMM_2_0
+        if assessment.framework == ZtFramework.CISA_ZTMM_2_0
+        else ZtFrameworkCode.DOD_ZTRA
+    )
+    rows = (
+        db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == assessment.id)).scalars().all()
+    )
+    answers: dict[str, int | None] = {r.capability_code: r.maturity_stage for r in rows}
+    targets: dict[str, int | None] = {r.capability_code: r.target_stage for r in rows}
+
+    current = zt_compute(fw, answers)
+    target = zt_compute(fw, targets)
+    target_by_code = {p.pillar_code: p for p in target.by_pillar}
+
+    pillars: list[ZtPillarDashboard] = []
+    for pc in current.by_pillar:
+        tp = target_by_code.get(pc.pillar_code)
+        cur_pct = pc.maturity_pct
+        tgt_pct = tp.maturity_pct if tp is not None else None
+        gap = round(max(0.0, (tgt_pct or 0.0) - (cur_pct or 0.0)), 1)
+        weakest = [zt_capability_by_code(code).name for code in pc.weakest_capability_codes]
+        pillars.append(
+            ZtPillarDashboard(
+                code=pc.pillar_code,
+                name=pc.pillar_name,
+                capability_count=pc.capability_count,
+                answered_count=pc.answered_count,
+                current_pct=cur_pct,
+                current_label=_zt_pillar_label(pc.average_stage, fw),
+                target_pct=tgt_pct,
+                target_label=_zt_pillar_label(tp.average_stage, fw) if tp else "Unscored",
+                gap_pct=gap,
+                weakest=weakest,
+            )
+        )
+
+    largest = max(pillars, key=lambda p: p.gap_pct, default=None)
+
+    _log.info(
+        "client.zt_dashboard.built",
+        client_id=str(client.id),
+        service_id=str(service_id),
+        actor_user_id=str(user.id),
+        framework=fw.value,
+        current_pct=current.maturity_pct,
+    )
+
+    return ZtDashboardResponse(
+        service_id=service_id,
+        service_title=svc.title,
+        released_at=deliv.released_at,
+        deliverable_version=deliv.version,
+        framework=fw.value,
+        framework_label=_ZT_FRAMEWORK_LABELS.get(fw, fw.value),
+        current_label=current.overall_stage_label,
+        current_pct=current.maturity_pct,
+        target_label=target.overall_stage_label,
+        target_pct=target.maturity_pct,
+        largest_gap_pillar=largest.name if largest else None,
+        largest_gap_pct=largest.gap_pct if largest else 0.0,
+        pillars=pillars,
+    )
+
+
+_UNCATEGORIZED = "Uncategorized"
+
+
+def _td_item(it: CapabilityItem) -> TechDebtItem:
+    return TechDebtItem(
+        name=it.name,
+        vendor=it.vendor,
+        category=it.category,
+        function=it.function,
+        annual_cost_usd=(float(it.annual_cost_usd) if it.annual_cost_usd is not None else None),
+        license_count=it.license_count,
+        disposition=(it.disposition.value if it.disposition is not None else None),
+        notes=it.notes,
+    )
+
+
+@router.get(
+    "/{client_id}/tech-debt/{service_id}/dashboard",
+    response_model=TechDebtDashboardResponse,
+    summary="Released software-portfolio dashboard for the client (client + admin)",
+)
+def tech_debt_dashboard(
+    client_id: uuid.UUID,
+    service_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TechDebtDashboardResponse:
+    """Software-portfolio spend / sprawl / redundancy / savings for a released
+    Tech Debt service. Release-gated on the deliverable, tenant-enforced."""
+    if client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    released_ids = _released_service_ids_by_kind(db, client.id).get(ServiceKind.TECH_DEBT, [])
+    if service_id not in released_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released Tech Debt report for this service yet.",
+            },
+        )
+
+    svc = db.get(Service, service_id)
+    deliv = _latest_released_deliverable(db, service_id)
+    cl = _latest_finalized(
+        db,
+        CapabilityList,
+        service_id,
+        (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
+    )
+    if svc is None or deliv is None or cl is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released Tech Debt report for this service yet.",
+            },
+        )
+
+    items = (
+        db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cl.id))
+        .scalars()
+        .all()
+    )
+
+    annual_spend = 0.0
+    savings = 0.0
+    savings_cost_known = True
+    # category -> {"total": float, "count": int, "items": [CapabilityItem]}
+    by_cat: dict[str, dict] = {}
+    for it in items:
+        cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None else 0.0
+        annual_spend += cost
+        if it.disposition == CapabilityDisposition.CUT:
+            if it.annual_cost_usd is None:
+                savings_cost_known = False
+            else:
+                savings += cost
+        cat = it.category or _UNCATEGORIZED
+        bucket = by_cat.setdefault(cat, {"total": 0.0, "count": 0, "items": []})
+        bucket["total"] += cost
+        bucket["count"] += 1
+        bucket["items"].append(it)
+
+    spend_by_category = [
+        TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
+        for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["total"], reverse=True)
+    ]
+    sprawl_by_category = [
+        TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
+        for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
+        if b["count"] > 1
+    ]
+    redundancies = [
+        TechDebtRedundancy(
+            category=cat,
+            count=b["count"],
+            savings_usd=round(
+                sum(
+                    float(i.annual_cost_usd)
+                    for i in b["items"]
+                    if i.disposition == CapabilityDisposition.CUT and i.annual_cost_usd is not None
+                ),
+                2,
+            ),
+            items=[_td_item(i) for i in b["items"]],
+        )
+        for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
+        if b["count"] > 1
+    ]
+
+    _log.info(
+        "client.tech_debt_dashboard.built",
+        client_id=str(client.id),
+        service_id=str(service_id),
+        actor_user_id=str(user.id),
+        applications=len(items),
+        savings=savings,
+    )
+
+    return TechDebtDashboardResponse(
+        service_id=service_id,
+        service_title=svc.title,
+        released_at=deliv.released_at,
+        deliverable_version=deliv.version,
+        total_applications=len(items),
+        annual_spend_usd=round(annual_spend, 2),
+        identified_savings_usd=round(savings, 2),
+        savings_cost_known=savings_cost_known,
+        redundant_category_count=len(sprawl_by_category),
+        spend_by_category=spend_by_category,
+        sprawl_by_category=sprawl_by_category,
+        redundancies=redundancies,
+        items=[_td_item(i) for i in items],
+    )
+
+
+def _safe_enum(enum_cls, value):
+    if value is None:
+        return None
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return None
+
+
+@router.get(
+    "/{client_id}/risk/dashboard",
+    response_model=RiskDashboardResponse,
+    summary="Finalized Risk Register dashboard for the client (client + admin)",
+)
+def risk_dashboard(
+    client_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> RiskDashboardResponse:
+    """The synthesized 5x5 Risk Register for the client. Client-level (not
+    per-service); gated on the register being FINALIZED (exported), tenant-scoped.
+    """
+    if client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    reg = db.execute(
+        select(RiskRegister)
+        .where(RiskRegister.client_id == client.id)
+        .order_by(RiskRegister.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if reg is None or reg.finalized_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No finalized Risk Register for your organization yet.",
+            },
+        )
+
+    entries = (
+        db.execute(
+            select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
+        )
+        .scalars()
+        .all()
+    )
+
+    pairs: list[tuple[Likelihood, Impact]] = []
+    for e in entries:
+        lk = _safe_enum(Likelihood, e.likelihood)
+        im = _safe_enum(Impact, e.impact)
+        if lk is not None and im is not None:
+            pairs.append((lk, im))
+    matrix = matrix_counts(pairs)
+
+    tiers = [t for t in (_safe_enum(RiskTier, e.tier) for e in entries) if t is not None]
+    axes = [a for a in (_safe_enum(RiskAxis, e.axis) for e in entries) if a is not None]
+    actions = [
+        a for a in (_safe_enum(RecommendedAction, e.recommended_action) for e in entries) if a
+    ]
+    tc = tier_counts(tiers)
+
+    _log.info(
+        "client.risk_dashboard.built",
+        client_id=str(client.id),
+        actor_user_id=str(user.id),
+        entries=len(entries),
+    )
+
+    return RiskDashboardResponse(
+        client_id=client.id,
+        released_at=reg.finalized_at,
+        version=reg.version,
+        total_entries=len(entries),
+        critical_count=tc.get(RiskTier.CRITICAL.value, 0),
+        high_count=tc.get(RiskTier.HIGH.value, 0),
+        tier_counts=tc,
+        axis_counts=axis_counts(axes),
+        action_counts=action_counts(actions),
+        matrix=[
+            RiskMatrixCell(
+                likelihood=cell.likelihood,
+                impact=cell.impact,
+                tier=cell.tier,
+                count=cell.count,
+            )
+            for cell in matrix
+        ],
+        entries=[
+            RiskDashboardEntry(
+                title=e.title,
+                axis=e.axis,
+                likelihood=e.likelihood,
+                impact=e.impact,
+                tier=e.tier,
+                recommended_action=e.recommended_action,
+            )
+            for e in entries
+        ],
+    )

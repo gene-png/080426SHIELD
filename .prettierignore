@@ -1,0 +1,33 @@
+# Lock files - managed by the package manager.
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+node_modules/
+
+# Reference docs - leave whitespace alone.
+reference-docs/
+
+# Generated
+*.tsbuildinfo
+next-env.d.ts
+
+# Coverage / artifacts
+coverage/
+test-results/
+playwright-report/
+
+# Agent-maintained working docs - rewritten constantly by Claude sessions;
+# prettier reflow adds churn and CI noise, not value. Code stays covered.
+.claude/
+CLAUDE.md
+CONTEXT.md
+DELIVERY_PLAN.md
+SMOKE_TEST.md
+SPRINT_*.md
+context/

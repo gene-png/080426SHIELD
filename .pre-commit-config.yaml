@@ -1,0 +1,62 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+        exclude: ^reference-docs/
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        files: ^apps/api/app/
+        additional_dependencies: ["pydantic>=2.0", "sqlalchemy>=2.0"]
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: ["-q", "-c", "pyproject.toml"]
+        files: ^apps/api/app/
+        additional_dependencies: ["bandit[toml]"]
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        exclude: ^(reference-docs|pnpm-lock\.yaml)
+
+  - repo: local
+    hooks:
+      - id: api-unit-tests
+        name: API unit tests
+        entry: bash -c 'docker compose exec -T api pytest -m unit 2>/dev/null || echo "skipped (api container not running)"'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

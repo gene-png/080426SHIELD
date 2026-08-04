@@ -1,0 +1,406 @@
+{
+  "framework_key": "csf-tier-moderate",
+  "tier": "moderate",
+  "tier_label": "MODERATE",
+  "source_file": "Step 1.2 Interview Questionnaire MODERATE (1).docx",
+  "maturity_levels": [
+    "tier1-partial",
+    "tier2-risk-informed",
+    "tier3-repeatable",
+    "tier4-adaptive"
+  ],
+  "maturity_descriptions": {
+    "tier1-partial": "Cybersecurity is reactive and ad-hoc. Risk decisions aren't tied to a documented strategy and awareness is limited.",
+    "tier2-risk-informed": "Risk decisions are informed by management but not consistently applied across the organization.",
+    "tier3-repeatable": "Formal policies are in place and practiced consistently. The organization adapts to changes in threat and tech.",
+    "tier4-adaptive": "Cybersecurity practices adapt continuously from lessons learned and predictive indicators; integrated into the org's culture."
+  },
+  "sections": [
+    {
+      "section_id": "1",
+      "section_name": "Governance & Oversight",
+      "question_count": 1
+    },
+    {
+      "section_id": "2",
+      "section_name": "Risk Management",
+      "question_count": 1
+    },
+    {
+      "section_id": "3",
+      "section_name": "Supply Chain & Third-Party Risk",
+      "question_count": 1
+    },
+    {
+      "section_id": "4",
+      "section_name": "Asset & Inventory Management",
+      "question_count": 1
+    },
+    {
+      "section_id": "5",
+      "section_name": "Access Control & Identity Management",
+      "question_count": 1
+    },
+    {
+      "section_id": "6",
+      "section_name": "Data Protection",
+      "question_count": 1
+    },
+    {
+      "section_id": "7",
+      "section_name": "Configuration & Platform Security",
+      "question_count": 1
+    },
+    {
+      "section_id": "8",
+      "section_name": "Training & Awareness",
+      "question_count": 1
+    },
+    {
+      "section_id": "9",
+      "section_name": "Monitoring & Detection",
+      "question_count": 1
+    },
+    {
+      "section_id": "10",
+      "section_name": "Incident Response",
+      "question_count": 1
+    },
+    {
+      "section_id": "11",
+      "section_name": "Recovery & Continuity",
+      "question_count": 1
+    },
+    {
+      "section_id": "12",
+      "section_name": "Continuous Improvement",
+      "question_count": 1
+    }
+  ],
+  "questions": [
+    {
+      "external_id": "CSF-1-1",
+      "section_id": "1",
+      "section_name": "Governance & Oversight",
+      "order_in_section": 1,
+      "order_index": 1,
+      "stem": "Tell me about how cybersecurity is governed and overseen for this system. Who is accountable, what policies are in place, and how does leadership stay informed about whether things are working?",
+      "cues": [
+        "▸ Who has formal ownership of the cybersecurity risk for this system? Is that role documented?",
+        "▸ How are cybersecurity roles and responsibilities communicated to staff supporting the system?",
+        "▸ Is there a documented cybersecurity policy that covers this system? When was it last updated?",
+        "▸ How does leadership review whether the cybersecurity approach is working — briefings, dashboards, scorecards?",
+        "▸ When a review identifies something that needs to change, what happens next?",
+        "▸ Are there legal, regulatory, or privacy obligations that affect how this system is secured?"
+      ],
+      "dimensions": "Governance → Policy & Process → Monitoring",
+      "csf_subcategories": [
+        "GV.OC-01",
+        "GV.OC-02",
+        "GV.OC-03",
+        "GV.OC-04",
+        "GV.OC-05",
+        "GV.RR-01",
+        "GV.RR-02",
+        "GV.RR-03",
+        "GV.PO-01",
+        "GV.PO-02",
+        "GV.OV-01",
+        "GV.OV-02",
+        "GV.OV-03"
+      ],
+      "implementation_groups": ["1", "2", "3"]
+    },
+    {
+      "external_id": "CSF-2-1",
+      "section_id": "2",
+      "section_name": "Risk Management",
+      "order_in_section": 1,
+      "order_index": 2,
+      "stem": "How does the organization identify and manage cybersecurity risks for this system? Walk me through the process from identifying a risk to deciding what to do about it.",
+      "cues": [
+        "▸ Is there a documented risk management strategy that covers this system? Does it define acceptable risk levels?",
+        "▸ How are risks identified — scanning, assessments, threat intelligence, operational experience?",
+        "▸ Is there a standard method for scoring and prioritizing risks (e.g., risk register, CVSS)?",
+        "▸ How are risk decisions made — who decides whether to accept, mitigate, or transfer a risk?",
+        "▸ How does cyber risk for this system feed into the enterprise risk management process?",
+        "▸ How are changes and exceptions tracked and assessed for risk impact?",
+        "▸ Are opportunities (positive risks) ever considered alongside threats?"
+      ],
+      "dimensions": "Governance → Policy & Process → Implementation → Monitoring",
+      "csf_subcategories": [
+        "GV.RM-01",
+        "GV.RM-02",
+        "GV.RM-03",
+        "GV.RM-04",
+        "GV.RM-05",
+        "GV.RM-06",
+        "GV.RM-07",
+        "ID.RA-01",
+        "ID.RA-02",
+        "ID.RA-03",
+        "ID.RA-04",
+        "ID.RA-05",
+        "ID.RA-06",
+        "ID.RA-07",
+        "ID.RA-08"
+      ],
+      "implementation_groups": ["2", "11", "12", "14", "15"]
+    },
+    {
+      "external_id": "CSF-3-1",
+      "section_id": "3",
+      "section_name": "Supply Chain & Third-Party Risk",
+      "order_in_section": 1,
+      "order_index": 3,
+      "stem": "Does this system rely on any external vendors, cloud services, or third-party products? If so, tell me how those relationships are managed from a cybersecurity perspective.",
+      "cues": [
+        "▸ Is there a supply chain risk management program or strategy? Who owns it?",
+        "▸ How are vendors evaluated before a contract or relationship is established?",
+        "▸ Are cybersecurity requirements included in contracts with third parties?",
+        "▸ Are suppliers prioritized by how critical they are to the system?",
+        "▸ Once a vendor is onboarded, how is their risk monitored over time?",
+        "▸ Would you know how to engage your suppliers during an incident?"
+      ],
+      "dimensions": "Governance → Policy & Process → Implementation",
+      "csf_subcategories": [
+        "GV.SC-01",
+        "GV.SC-02",
+        "GV.SC-03",
+        "GV.SC-04",
+        "GV.SC-05",
+        "GV.SC-06",
+        "GV.SC-07",
+        "GV.SC-08",
+        "GV.SC-09",
+        "GV.SC-10",
+        "ID.RA-09",
+        "ID.RA-10"
+      ],
+      "implementation_groups": ["5"]
+    },
+    {
+      "external_id": "CSF-4-1",
+      "section_id": "4",
+      "section_name": "Asset & Inventory Management",
+      "order_in_section": 1,
+      "order_index": 4,
+      "stem": "Give me the picture of how assets are tracked for this system. Do you know what hardware, software, data, and services make up the system, and how confident are you that the list is accurate?",
+      "cues": [
+        "▸ Is there a maintained inventory of hardware and software? Where does it live?",
+        "▸ Are network connections and data flows documented — do you have diagrams?",
+        "▸ Do you track what data the system processes and where it resides?",
+        "▸ Are assets prioritized based on how critical they are to the mission?",
+        "▸ How are assets managed through their lifecycle — from acquisition to decommissioning?"
+      ],
+      "dimensions": "Policy & Process → Implementation → Monitoring",
+      "csf_subcategories": [
+        "ID.AM-01",
+        "ID.AM-02",
+        "ID.AM-03",
+        "ID.AM-04",
+        "ID.AM-05",
+        "ID.AM-07",
+        "ID.AM-08"
+      ],
+      "implementation_groups": ["7", "8", "9", "10"]
+    },
+    {
+      "external_id": "CSF-5-1",
+      "section_id": "5",
+      "section_name": "Access Control & Identity Management",
+      "order_in_section": 1,
+      "order_index": 5,
+      "stem": "Walk me through how people get access to this system and how you make sure only the right people have the right level of access. Cover both regular users and privileged accounts.",
+      "cues": [
+        "▸ Is there a formal process for granting and removing access? How quickly is access removed when someone leaves or changes roles?",
+        "▸ Is multi-factor authentication enforced for all users? Are there any exceptions?",
+        "▸ How are privileged accounts handled — is there a separate, stricter process?",
+        "▸ Are access permissions based on least privilege? How often are access reviews conducted?",
+        "▸ Is physical access to the system’s infrastructure managed?"
+      ],
+      "dimensions": "Policy & Process → Implementation → Monitoring",
+      "csf_subcategories": [
+        "PR.AA-01",
+        "PR.AA-02",
+        "PR.AA-03",
+        "PR.AA-04",
+        "PR.AA-05",
+        "PR.AA-06"
+      ],
+      "implementation_groups": ["17", "18", "19"]
+    },
+    {
+      "external_id": "CSF-6-1",
+      "section_id": "6",
+      "section_name": "Data Protection",
+      "order_in_section": 1,
+      "order_index": 6,
+      "stem": "How is data protected on this system — whether it’s stored, being transmitted, or actively in use? And how do you handle backups?",
+      "cues": [
+        "▸ Is data encrypted at rest and in transit? Are there any unencrypted connections?",
+        "▸ How is data protected while it’s being actively processed or viewed?",
+        "▸ Are there any data loss prevention controls in place?",
+        "▸ Are backups performed regularly? Are they tested, and where are they stored?"
+      ],
+      "dimensions": "Policy & Process → Implementation",
+      "csf_subcategories": ["PR.DS-01", "PR.DS-02", "PR.DS-10", "PR.DS-11"],
+      "implementation_groups": ["21", "22", "33"]
+    },
+    {
+      "external_id": "CSF-7-1",
+      "section_id": "7",
+      "section_name": "Configuration & Platform Security",
+      "order_in_section": 1,
+      "order_index": 7,
+      "stem": "Tell me about how this system is kept secure at the platform level — how it’s configured, patched, hardened, and protected from both logical and environmental threats.",
+      "cues": [
+        "▸ Are there documented baseline configurations (STIGs, CIS benchmarks)? How are they maintained?",
+        "▸ What’s the patching cadence? How are critical or emergency patches handled?",
+        "▸ How do you prevent unauthorized software from being installed or executed?",
+        "▸ Are audit logs enabled and protected? What’s the retention period?",
+        "▸ Is the network segmented or otherwise protected from unauthorized access?",
+        "▸ Is there resilience built in for adverse situations — failover, redundancy, capacity planning?"
+      ],
+      "dimensions": "Policy & Process → Implementation → Monitoring",
+      "csf_subcategories": [
+        "PR.PS-01",
+        "PR.PS-02",
+        "PR.PS-03",
+        "PR.PS-04",
+        "PR.PS-05",
+        "PR.PS-06",
+        "PR.IR-01",
+        "PR.IR-02",
+        "PR.IR-03",
+        "PR.IR-04"
+      ],
+      "implementation_groups": ["14", "15", "33"]
+    },
+    {
+      "external_id": "CSF-8-1",
+      "section_id": "8",
+      "section_name": "Training & Awareness",
+      "order_in_section": 1,
+      "order_index": 8,
+      "stem": "How does the organization make sure that people who use or support this system have the cybersecurity knowledge they need?",
+      "cues": [
+        "▸ Is there a security awareness training program? How is completion tracked?",
+        "▸ Is there role-based or specialized training for security staff and administrators?",
+        "▸ How often is training updated? Is effectiveness measured in any way?"
+      ],
+      "dimensions": "Policy & Process → Implementation",
+      "csf_subcategories": ["PR.AT-01", "PR.AT-02", "GV.RR-04"],
+      "implementation_groups": ["24"]
+    },
+    {
+      "external_id": "CSF-9-1",
+      "section_id": "9",
+      "section_name": "Monitoring & Detection",
+      "order_in_section": 1,
+      "order_index": 9,
+      "stem": "How is this system monitored for security events? Walk me from what’s watching the system to how an alert gets to the right person and how you determine if something is really an incident.",
+      "cues": [
+        "▸ Is the system connected to a SOC or SIEM? What tools are used for monitoring?",
+        "▸ Are the network, user activity, and computing environment all being monitored?",
+        "▸ How are alerts generated and triaged? Who sees them first?",
+        "▸ How do you pull together information from multiple sources to understand what’s happening?",
+        "▸ What criteria determine when an event becomes a declared incident?"
+      ],
+      "dimensions": "Policy & Process → Implementation → Monitoring",
+      "csf_subcategories": [
+        "DE.CM-01",
+        "DE.CM-02",
+        "DE.CM-03",
+        "DE.CM-06",
+        "DE.CM-09",
+        "DE.AE-01",
+        "DE.AE-02",
+        "DE.AE-03",
+        "DE.AE-04",
+        "DE.AE-05",
+        "DE.AE-06",
+        "DE.AE-07",
+        "DE.AE-08"
+      ],
+      "implementation_groups": ["26", "27", "28", "30"]
+    },
+    {
+      "external_id": "CSF-10-1",
+      "section_id": "10",
+      "section_name": "Incident Response",
+      "order_in_section": 1,
+      "order_index": 10,
+      "stem": "If a security incident happened on this system, what would the response look like? Walk me through detection, triage, containment, and who gets notified.",
+      "cues": [
+        "▸ Is there an incident response plan that covers this system? When was it last tested?",
+        "▸ How are incidents triaged, categorized, and prioritized?",
+        "▸ What’s the escalation path — when does it go to leadership or external parties?",
+        "▸ How are incidents contained and eradicated?",
+        "▸ How are stakeholders notified — internally and externally?",
+        "▸ Are lessons learned captured after incidents and fed back into the plan?"
+      ],
+      "dimensions": "Policy & Process → Implementation → Monitoring",
+      "csf_subcategories": [
+        "RS.MA-01",
+        "RS.MA-02",
+        "RS.MA-03",
+        "RS.MA-04",
+        "RS.MA-05",
+        "RS.AN-03",
+        "RS.AN-06",
+        "RS.AN-07",
+        "RS.AN-08",
+        "RS.CO-02",
+        "RS.CO-03",
+        "RS.MI-01",
+        "RS.MI-02"
+      ],
+      "implementation_groups": ["30", "31"]
+    },
+    {
+      "external_id": "CSF-11-1",
+      "section_id": "11",
+      "section_name": "Recovery & Continuity",
+      "order_in_section": 1,
+      "order_index": 11,
+      "stem": "If this system went down, how would you bring it back? Tell me about the recovery plan, the priorities, and how you’d confirm everything is working normally again.",
+      "cues": [
+        "▸ Is there a disaster recovery or continuity plan? When was it last tested?",
+        "▸ How are recovery actions prioritized — what comes back first?",
+        "▸ Are backups verified for integrity before restoration?",
+        "▸ How do you confirm the system is clean and operating normally after recovery?",
+        "▸ How is recovery progress communicated to stakeholders?"
+      ],
+      "dimensions": "Policy & Process → Implementation",
+      "csf_subcategories": [
+        "RC.RP-01",
+        "RC.RP-02",
+        "RC.RP-03",
+        "RC.RP-04",
+        "RC.RP-05",
+        "RC.RP-06",
+        "RC.CO-03",
+        "RC.CO-04"
+      ],
+      "implementation_groups": ["33", "34"]
+    },
+    {
+      "external_id": "CSF-12-1",
+      "section_id": "12",
+      "section_name": "Continuous Improvement",
+      "order_in_section": 1,
+      "order_index": 12,
+      "stem": "How does the organization learn from what happens and improve the security posture of this system over time?",
+      "cues": [
+        "▸ Are improvements identified from audits, assessments, or evaluations?",
+        "▸ Are improvements identified from security tests and exercises?",
+        "▸ Are cybersecurity plans updated based on lessons learned from incidents or operations?",
+        "▸ Is there a way to track improvement actions to completion?"
+      ],
+      "dimensions": "Monitoring → Continuous Improvement",
+      "csf_subcategories": ["ID.IM-01", "ID.IM-02", "ID.IM-03", "ID.IM-04"],
+      "implementation_groups": ["1", "12", "26", "30", "31", "34"]
+    }
+  ]
+}

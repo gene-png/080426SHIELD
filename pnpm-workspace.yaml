@@ -1,0 +1,7 @@
+packages:
+  - apps/web
+  - packages/*
+  # e2e is deliberately NOT a pnpm workspace package: it is a standalone npm
+  # package (own package-lock.json), host-run against the Docker stack.
+  # Listing it here makes root `pnpm install --frozen-lockfile` demand its
+  # specs in pnpm-lock.yaml, which npm-managed e2e/ never updates.

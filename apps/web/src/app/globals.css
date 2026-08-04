@@ -1,0 +1,28 @@
+@import "@shield/design-system/tokens.css";
+@import "tailwindcss";
+@config "../../tailwind.config.ts";
+
+@layer base {
+  /* Tailwind 4 changed the default border color from gray-200 to
+     currentColor. Restore the Round-6 token default so bare `border`
+     utilities keep their intended subtle look (matches v3 behaviour). */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--border-default);
+  }
+
+  html {
+    color-scheme: light;
+  }
+  body {
+    @apply bg-surface-canvas text-ink-primary antialiased;
+    font-family: var(--font-sans);
+  }
+  :focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+}

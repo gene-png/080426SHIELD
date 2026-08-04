@@ -1,0 +1,2517 @@
+================================================================================
+SHIELD by Kentro - v2.0 PLATFORM SPECIFICATION
+Fresh-start developer guide
+================================================================================
+
+Document:   SHIELDv2 Master Specification
+Prepared:   May 18, 2026
+For:        The developer team building v2.0 from scratch
+Status:     Greenfield - v1 code is NOT being reused
+
+This document tells the developer everything they need to know to build a
+modern, enterprise-grade SHIELD platform from a clean slate. It locks in
+the architectural decisions, defines the three services the platform
+delivers, specifies the page hierarchy and process flow for each role,
+walks through the CSF 2.0 / CISA ZTMM / DoD ZT / MITRE ATT&CK
+methodologies, and lays out the build sequence.
+
+Read this end-to-end before writing any code. Companion files in this
+folder:
+
+  - SHIELDv2_Design_Mockup.html             - visual mockup of key pages
+  - SHIELDv2_CISA_ZT_Questionnaire.docx     - intake questions for CISA ZTMM
+  - SHIELDv2_DoD_ZT_Questionnaire.docx      - intake questions for DoD ZT
+  - SHIELDv2_README.docx                    - one-page summary tying it together
+
+The CSF 2.0 toolkit is already in this folder (Step 1.1 / 1.2 / 1.3
+questionnaires, Step 2.x working profiles, Step 3.1 gap analysis,
+Step 3.2.1 enterprise profile, the playbook). The platform automates that
+toolkit.
+
+
+================================================================================
+0. WHAT IS SHIELD, IN ONE PARAGRAPH
+================================================================================
+
+SHIELD by Kentro is an operational cybersecurity assessment platform that
+runs the full lifecycle of a Kentro consulting engagement - from client
+self-signup, through service-specific intake questionnaires, through
+consultant-driven analysis with AI assistance, all the way to executive
+deliverables that clients can defend to their leadership and to their
+auditors. The platform supports three service lines: Technical Debt,
+Zero Trust (CISA ZTMM 2.0 and DoD Zero Trust Reference Architecture),
+NIST CSF 2.0 (full Kentro CSF 2.0 Implementation Playbook methodology),
+and MITRE ATT&CK coverage mapping. Every output is consultant-authored,
+audit-defensible, and exportable as a polished PDF or XLSX deliverable.
+
+
+================================================================================
+1. LOCKED DECISIONS (these have been confirmed by Eugene)
+================================================================================
+
+  Tech stack:           Modern SPA - Next.js 14+ (App Router) + React +
+                        TypeScript + Tailwind CSS + shadcn/ui components.
+                        Backend: FastAPI (Python) for the API and worker
+                        services. Database: PostgreSQL 16. Cache/queue:
+                        Redis. Object storage: S3-compatible (AWS S3 in
+                        GovCloud or Azure Blob in Gov).
+
+  Hosting:              FedRAMP Moderate or High target. AWS GovCloud
+                        (preferred) or Azure Government. No third-party
+                        CDNs - everything self-hosted. No public-CDN
+                        Tailwind/shadcn either; everything bundled.
+
+  AI usage:             AI-augmented with mandatory PII redaction.
+                        Provider is the developer's choice for v1 -
+                        commercial Anthropic Claude, OpenAI, Azure
+                        OpenAI, AWS Bedrock, Google Gemini, or any
+                        other are all on the table. Eugene has
+                        explicitly accepted the risk that the v1
+                        LLM provider may NOT be FedRAMP-authorized
+                        and that LLM data egress may therefore leave
+                        the FedRAMP boundary. PII redaction (see
+                        Section 12) is still mandatory as the
+                        primary control. Provider can be tightened
+                        to FedRAMP-only in a later release without
+                        application changes (it's an environment
+                        variable). AI proposes drafts; consultant
+                        always has final editorial control.
+
+  CSF methodology:      Full 10-step methodology from the CSF 2.0
+                        Implementation Playbook. Tiered working profiles
+                        (HIGH / MODERATE / LOW), 5-dimension scoring per
+                        subcategory, weighted-floor roll-up to the
+                        Enterprise Profile, IG metric alignment, gap
+                        analysis with P1/P2/P3 prioritization, action
+                        plan with POA&M linkage.
+
+  Branding:             "SHIELD by Kentro." Wordmark "SHIELD" with a
+                        small "by Kentro" subline. Header/footer carry
+                        the Kentro mark.
+
+  Roles:                Three roles - Admin (Kentro consultant), Reviewer
+                        (Kentro auditor, read-only), Client (customer-
+                        side user). The Client role includes executive-
+                        style operational views by default - dashboards
+                        lead with the findings a leader needs to defend
+                        the engagement, not technical drill-down detail.
+                        Technical detail is reachable but progressive.
+
+  Tenancy:              Single-tenant - one SHIELD deployment per client
+                        organization. Each deployment is its own FedRAMP
+                        boundary. Kentro consultants connect into each
+                        client's deployment to do their work (federated
+                        OIDC against Kentro's IdP). No cross-tenant
+                        analytics; cross-engagement insights happen in
+                        Kentro's internal tooling, not in SHIELD.
+
+  Things to keep from v1:
+                        The login/signup screen visual language and the
+                        registration flow (the conversational tone, the
+                        step-by-step pace, the auto-save behavior). Take
+                        these as your starting point and improve from
+                        there.
+
+  Authentication scope for v1:
+                        MFA and email verification are DEFERRED for v1.
+                        Client signup uses email + password only. Eugene
+                        has explicitly accepted the risk. The auth code
+                        path keeps MFA enrollment and email verification
+                        as commented-out / disabled steps so they can be
+                        re-enabled in a later release with a feature
+                        flag rather than a code change. See section 4.5
+                        and section 6.1 for the implementation pattern.
+
+  Intake "I'm not sure" path:
+                        The intake wizard's service-selection step
+                        offers four service options PLUS a fifth option:
+                        "I'm not sure - request a call with a consultant."
+                        Picking the fifth option short-circuits the
+                        wizard, collects a minimal "what's prompting
+                        this" plus contact preference, and creates a
+                        consultation request in the admin queue. See
+                        section 6.2 step I1.
+
+  Deliverable filename convention:
+                        Every download link the platform generates uses
+                        this filename format:
+                          {Company_Name}_{Service_Name}{MMDDYY}.{ext}
+                        Date is the deployment server's current date in
+                        MMDDYY (e.g., 051826 for May 18, 2026). Spaces
+                        in the company and service names become
+                        underscores; non-alphanumeric characters are
+                        stripped. Examples:
+                          Nexus_Federal_Solutions_Tech_Debt_Review051826.pdf
+                          Atlas_Defense_Solutions_CSF_2_0_Assessment051826.xlsx
+                          Federal_Demo_Agency_Attack_Surface_Coverage051826.pdf
+                        See section 16 for the full filename slugification
+                        rules and edge cases.
+
+
+================================================================================
+2. THE FOUR SERVICES (what SHIELD does)
+================================================================================
+
+A client engagement with SHIELD always picks one or more services from
+the four offered. The service choice drives the entire experience -
+what questions they are asked at signup, what dashboards they see, what
+deliverables they receive, what artifacts they are asked to provide.
+
+Each service produces ONE primary executive deliverable plus supporting
+artifacts. All deliverables are exportable as PDF (executive) and XLSX
+(working).
+
+--------------------------------------------------------------------------------
+2.1  Service: Technical Debt Review
+--------------------------------------------------------------------------------
+
+  Purpose:        Identify overlapping, redundant, and shadow-IT
+                  cybersecurity tooling. Recommend consolidation. Quantify
+                  the savings opportunity.
+
+  Primary input:  Client's software / capability inventory (Excel
+                  spreadsheet or list of tools in use). SHIELD's AI helps
+                  extract this from unstructured uploads (invoices,
+                  contracts, screenshots) but the consultant approves the
+                  final list.
+
+  Methodology:    Categorize every tool (SIEM, EDR, NAC, etc.). Group by
+                  function. Identify duplicates. Calculate total annual
+                  spend per category. Highlight consolidation candidates
+                  with estimated savings. Cross-reference with
+                  organizational risk profile (do the duplicates exist
+                  for redundancy reasons, or accidentally?). Map savings
+                  to potential reinvestment in Zero Trust or ATT&CK gaps.
+
+  Executive deliverable:
+                  "Tech Debt Report" - 8-12 page PDF with:
+                  - Executive summary (one page)
+                  - Total spend, total identified savings, top 3
+                    consolidation recommendations
+                  - Category-by-category overlap table
+                  - Cross-service bridge: "Here's where the savings could
+                    fund Zero Trust gap closure or ATT&CK coverage"
+
+  Working artifacts:
+                  - Capability list (XLSX)
+                  - Overlap analysis worksheet (XLSX)
+                  - Final recommended consolidation plan (XLSX)
+
+--------------------------------------------------------------------------------
+2.2  Service: Zero Trust Assessment
+--------------------------------------------------------------------------------
+
+  Purpose:        Assess the client's Zero Trust maturity against either
+                  the CISA ZTMM 2.0 or the DoD Zero Trust Reference
+                  Architecture. Build a roadmap from current state to
+                  target maturity.
+
+  Sub-frameworks: Client picks ONE at intake:
+                  - CISA Zero Trust Maturity Model 2.0
+                      (federal civilian, state, local government,
+                      critical infrastructure)
+                  - DoD Zero Trust Reference Architecture
+                      (DoD components, defense contractors, anyone with
+                      CMMC or DoD ZT contract obligations)
+
+  Primary input:  Service-specific Zero Trust questionnaire completed by
+                  the client during intake. Questionnaire is open-ended
+                  ("Walk me through how your users authenticate to this
+                  system") with prompts. Plus optional supporting evidence
+                  uploads.
+
+  Methodology:    For each pillar (5 for CISA, 7 for DoD), score current
+                  maturity and target maturity. Identify gaps. Sequence
+                  remediation. Map gaps to specific MITRE ATT&CK
+                  techniques that the gaps leave exposed (cross-service
+                  bridge to Attack Surface mapping).
+
+  Executive deliverable:
+                  "Zero Trust Posture Report" - 10-15 page PDF with:
+                  - Executive summary (one page, big number cards per
+                    pillar)
+                  - Pillar-by-pillar current vs. target with narrative
+                  - Top 5 gaps and recommended remediation
+                  - 12-month roadmap
+
+  Working artifacts:
+                  - Completed questionnaire (Word, mirrors the CSF
+                    questionnaire format)
+                  - Per-pillar scoring worksheet (XLSX)
+                  - Gap and roadmap worksheet (XLSX)
+
+--------------------------------------------------------------------------------
+2.3  Service: NIST CSF 2.0 Assessment
+--------------------------------------------------------------------------------
+
+  Purpose:        Run a full CSF 2.0 assessment using the Kentro
+                  methodology (see Section 8 of this doc for the full
+                  implementation of the Playbook).
+
+  Primary input:  System inventory categorized by FIPS 199 impact (HIGH,
+                  MODERATE, LOW). Interview questionnaires per tier
+                  (Step 1.1 / 1.2 / 1.3 from the existing toolkit, now
+                  in-app forms). Supporting artifacts per the artifact
+                  tracker.
+
+  Methodology:    The Kentro CSF 2.0 Implementation Playbook, end-to-end.
+                  Tier working profiles, 5-dimension scoring per
+                  subcategory, weighted-floor roll-up to Enterprise
+                  Profile, IG metric alignment, gap analysis, action
+                  plan. See Section 8.
+
+  Executive deliverable:
+                  "CSF 2.0 Enterprise Profile and Action Plan" - 20-30
+                  page PDF with:
+                  - Executive summary (1-2 pages)
+                  - Function-by-function maturity heatmap
+                  - Tier-by-tier breakdown
+                  - Gap analysis with priorities
+                  - Action plan with owners and dates
+                  - Methodology appendix
+
+  Working artifacts:
+                  - Three Tier Working Profiles (HIGH / MOD / LOW) - XLSX
+                  - Enterprise Profile - XLSX (the "Step 3.2.1" file
+                    shape)
+                  - Gap Analysis with priorities - XLSX
+                  - Action plan - XLSX or in-app
+                  - Artifact tracker - in-app
+
+--------------------------------------------------------------------------------
+2.4  Service: MITRE ATT&CK Coverage Mapping
+--------------------------------------------------------------------------------
+
+  Purpose:        Map the client's existing security tooling against the
+                  MITRE ATT&CK Enterprise matrix. Identify techniques the
+                  client cannot detect, prevent, or respond to.
+
+  Primary input:  Capability list from a Tech Debt engagement (re-used)
+                  OR a freshly uploaded capability list. Optionally cross-
+                  referenced with Zero Trust gap findings.
+
+  Methodology:    For each ATT&CK technique, cross-walk the client's
+                  capability list to determine detection / prevention /
+                  response coverage. Score Covered / Partial / Uncovered.
+                  Identify top blind spots. Tie blind spots back to Tech
+                  Debt savings and Zero Trust gaps for a unified
+                  recommendation.
+
+  Executive deliverable:
+                  "Attack Surface Coverage Report" - 8-15 page PDF with:
+                  - Executive summary with three big number cards
+                    (Covered / Partial / Uncovered)
+                  - Top 5 blind spots in plain English
+                  - Tactic-by-tactic coverage heatmap
+                  - Recommendation paragraph that bridges to Tech Debt
+                    savings and Zero Trust roadmap
+
+  Working artifacts:
+                  - Per-technique findings (XLSX)
+                  - Methodology appendix (XLSX)
+
+--------------------------------------------------------------------------------
+2.5  The cross-service value loop
+--------------------------------------------------------------------------------
+
+When a client engages on more than one service, SHIELD synthesizes:
+
+  Tech Debt savings           ->   redirected funding pool
+  Zero Trust gaps             ->   prioritized capability investments
+  ATT&CK uncovered techniques ->   detection / prevention / response shortlist
+  CSF maturity gaps           ->   compliance framing for the spend
+
+The Executive Summary on the client home shows: "Your team identified
+$X in waste; we found Y critical gaps; here's the recommendation to
+close them." This is the highest-value page in the entire platform.
+
+
+================================================================================
+3. ROLES AND PERMISSIONS
+================================================================================
+
+Three roles. Single-tenant deployment, so all users in a deployment
+belong to one client organization (or are Kentro consultants connected
+in).
+
+--------------------------------------------------------------------------------
+3.1  Admin (Kentro consultant)
+--------------------------------------------------------------------------------
+
+Who:        A Kentro consultant. There may be one or several active on
+            any deployment depending on engagement size. Connected via
+            federated OIDC against Kentro's IdP, not the deployment's
+            client IdP.
+
+Can:        Everything except permanently delete data (purge requires a
+            second admin's approval). Create / archive projects, run
+            analyses, score, approve, finalize deliverables, audit, view
+            and edit any client artifact, write to the message thread,
+            invite reviewers.
+
+Cannot:     See data in other client deployments (single-tenant
+            isolation). Modify the immutable audit log. Modify a
+            deliverable that has been client-released without creating
+            a new version.
+
+--------------------------------------------------------------------------------
+3.2  Reviewer (Kentro auditor / observer)
+--------------------------------------------------------------------------------
+
+Who:        A senior Kentro auditor or a third-party reviewer (e.g., the
+            IG team during an FY review). Connected via federated OIDC.
+
+Can:        Read everything in the deployment. Walk the audit chain on
+            any subcategory or finding. Add review notes (separate from
+            consultant's notes). Approve / decline an admin's final
+            deliverable.
+
+Cannot:     Modify scoring, edit questionnaire answers, run new analyses,
+            send messages to the client, change any data. Read-only
+            across the working surfaces with the exception of review
+            notes.
+
+--------------------------------------------------------------------------------
+3.3  Client (customer-side user)
+--------------------------------------------------------------------------------
+
+Who:        Anyone at the client organization invited to or self-
+            registered for this deployment. May be the CISO, the ISSO,
+            a CFO, an analyst, an executive. The client side covers
+            both POC and executive readers - the dashboards lead with
+            executive-grade summaries and progressively reveal detail.
+
+Can:        Complete intake. Upload documents. Answer questionnaires.
+            Send messages to the consultant. View their org's
+            deliverables. View their org's dashboards. Invite a
+            colleague (with a self-imposed cap, e.g., 10 users per
+            deployment for client side).
+
+Cannot:     See or affect scoring math (read-only on results until the
+            consultant releases). See consultant working notes or
+            review notes. See raw AI output before consultant approval
+            (no "Inspect output" JSON dumps). Reach the admin queue, the
+            audit log, or the job/internals pages.
+
+Client experience principles (this is critical):
+
+  - Lead with the finding, not the methodology.
+  - Show the number first, the explanation second, the drill-down third.
+  - Never expose 5-dimension scoring, IG metric alignment, weighted-
+    floor decision rules, or other methodology internals to the client.
+    Those are consultant tools. The client sees "Maturity: Level 3 ->
+    Target: Level 4" with one sentence of plain English.
+  - Operational and executive views first. Technical and tactical
+    detail behind a "Show me how this was calculated" link.
+  - Reading time matters. Every primary client page should be
+    skimmable in under 90 seconds.
+
+
+================================================================================
+4. ARCHITECTURE & TECH STACK
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  Frontend
+--------------------------------------------------------------------------------
+
+  Framework:      Next.js 14+ (App Router, Server Components where
+                  appropriate, Client Components for interactive surfaces)
+  Language:       TypeScript (strict)
+  Styling:        Tailwind CSS (self-hosted; no Tailwind CDN)
+  UI components:  shadcn/ui (copied into the repo, NOT installed from
+                  a CDN - per FedRAMP self-hosting requirements)
+  Charts:         Recharts or Tremor (self-hosted)
+  Forms:          React Hook Form + Zod
+  State:          React Server Components for read paths;
+                  TanStack Query for client-side mutations
+  Auth (SPA side):
+                  Next-Auth with OIDC adapter, or auth-js with custom
+                  OIDC provider; calls Keycloak (or chosen IdP) for
+                  tokens; SHIELD API validates JWTs.
+  Routing:        File-based via Next.js App Router
+  Accessibility:  WCAG 2.1 AA mandatory. All components keyboard
+                  navigable. Color contrast verified at build time.
+
+--------------------------------------------------------------------------------
+4.2  Backend
+--------------------------------------------------------------------------------
+
+  Framework:      FastAPI (Python 3.12+)
+  ORM:            SQLAlchemy 2.x with Alembic migrations
+  Validation:     Pydantic v2
+  Auth:           OIDC token validation; role mapping from IdP claims
+                  to internal Role enum
+  Worker:         Celery or RQ for async jobs (Redis-backed)
+  Logging:        Structured JSON logs to stdout, shipped to the
+                  deployment's SIEM/log aggregator
+  Error handling: No stack traces ever returned to the user. Global
+                  exception handler returns generic friendly error
+                  with a correlation ID; admins can look up the real
+                  error in logs by correlation ID.
+
+--------------------------------------------------------------------------------
+4.3  Data layer
+--------------------------------------------------------------------------------
+
+  Primary DB:     PostgreSQL 16
+  Schema:         One schema per deployment (single-tenant); no row-level
+                  client_id scoping is needed because the deployment IS
+                  the boundary. Belt-and-suspenders: still keep a
+                  client_id column on every row for audit clarity and in
+                  case multi-tenancy ever becomes a requirement.
+  Cache:          Redis (queue + ephemeral cache only; nothing
+                  persistent)
+  Object storage: S3-compatible (artifact files, generated PDFs/XLSX,
+                  evidence uploads). Server-side encryption with
+                  customer-managed keys (CMK).
+  Audit:          Append-only audit_entries table with Postgres trigger
+                  that rejects UPDATE/DELETE. Every state change writes
+                  an audit row.
+
+--------------------------------------------------------------------------------
+4.4  AI / automated analysis
+--------------------------------------------------------------------------------
+
+  Provider:       Developer's choice for v1. Configured via environment
+                  variable, NOT hardcoded - this is the single most
+                  important architectural rule for this section, because
+                  the provider choice WILL change in later releases.
+                  Acceptable v1 options:
+                    - Anthropic Claude API (commercial, fastest path)
+                    - OpenAI API (commercial)
+                    - Azure OpenAI (commercial or Government tier)
+                    - AWS Bedrock (commercial or GovCloud when Claude
+                      lands there)
+                    - Google Gemini (commercial)
+                    - Self-hosted open-weight model (e.g. Llama 3.1
+                      70B / 405B on GPU) - heaviest to operate, but
+                      keeps data inside the boundary
+                  Eugene has accepted the risk that a v1 commercial
+                  provider may NOT be FedRAMP-authorized and that
+                  redacted payloads will egress to a non-FedRAMP
+                  endpoint. This is a deliberate v1 trade-off for
+                  velocity; the platform must be able to flip to a
+                  FedRAMP-authorized provider via configuration alone
+                  in a later release.
+
+                  Required regardless of provider:
+                    - All LLM API keys stored in a secrets manager,
+                      never in code or in .env committed to source.
+                    - Outbound LLM API calls go through a single
+                      egress proxy / service module so the entire
+                      surface can be audited and (in future) blocked
+                      or redirected.
+                    - Every LLM call logs the provider, model, prompt
+                      version, input token count, output token count,
+                      and the redaction summary to the llm_calls
+                      table.
+
+  Pattern:        Asynchronous job pipeline. Web request enqueues; worker
+                  runs the analysis; client polls for status; admin
+                  approves the AI's draft before it becomes part of the
+                  deliverable.
+
+  Redaction:      MANDATORY. Every payload that leaves the deployment
+                  for the LLM API passes through the redactor:
+                    - email addresses
+                    - phone numbers
+                    - personal names (best-effort, not perfect)
+                    - street addresses
+                    - the client's own organization name (replaced with
+                      [CLIENT])
+                    - common federal identifiers (SSN, EIN, CAGE, contract
+                      numbers)
+                    - signature blocks
+                  The redaction layer records what was stripped in the
+                  artifact's lineage so the audit log can prove redaction
+                  ran. See Section 12.
+
+  Output policy:  AI output is ALWAYS marked as a draft and never
+                  rendered to a client until a consultant has explicitly
+                  approved it. No "inspect raw JSON" boxes anywhere. AI
+                  output is rendered as readable content (tables,
+                  formatted text, charts) - never as <pre> blocks.
+
+--------------------------------------------------------------------------------
+4.5  Authentication and identity
+--------------------------------------------------------------------------------
+
+  IdP:            Keycloak (default; per-deployment). The client's IT
+                  team can federate against their own IdP (Entra ID,
+                  Okta, PIV/CAC) via standard OIDC connectors.
+  Roles:          Mapped from IdP claims. Kentro consultants log in
+                  through Kentro's IdP, federated against the deployment.
+
+  MFA (DEFERRED for v1):
+                  Email + password only for v1. Eugene has explicitly
+                  accepted the risk. Implementation requirements:
+                    - The Keycloak realm config MUST include the MFA
+                      flow definition and the email-verification flow
+                      definition - but both flows are DISABLED via
+                      feature flag for v1.
+                    - The codebase should reference MFA-required and
+                      email-verified as token claims, but skip the
+                      enforcement checks when the feature flag says
+                      v1-auth-light is on.
+                    - The /sign-in screen and /sign-up screen have
+                      hooks where the MFA-enrollment and email-verify
+                      step components would mount; for v1 those
+                      components return null but the routes exist.
+                    - The feature flag SHIELD_AUTH_REQUIRE_MFA defaults
+                      to false in v1. Flipping it to true (and
+                      SHIELD_AUTH_REQUIRE_EMAIL_VERIFY to true) in a
+                      future release re-activates both flows with no
+                      code change.
+                    - Admin and Reviewer users connecting through
+                      Kentro's IdP are still subject to whatever MFA
+                      Kentro's IdP enforces; SHIELD does not loosen
+                      THAT side of the auth (an admin's own IdP rules
+                      apply at sign-in regardless of SHIELD's flag).
+
+  Session:        Short-lived JWTs (15 min) + refresh token. Idle timeout
+                  30 min. Forced re-auth daily.
+
+  Onboarding (v1 flow with MFA + email-verify deferred):
+                  1. Client visits /sign-up.
+                  2. Provides display name, email, password (with
+                     strength meter). Accepts Terms.
+                  3. Account is created. No verification email; no MFA
+                     enrollment. The user is signed in immediately
+                     and lands on /intake.
+                  4. The first user becomes the deployment's Primary
+                     POC (a flag on User, not an admin promotion).
+                  5. A Kentro consultant connects to the deployment
+                     and begins work.
+
+  Onboarding (future flow when v1.x ships with auth tightened):
+                  ============================================================
+                  The same /sign-up route adds steps S2 (email verify)
+                  and S3 (MFA enroll) per section 6.1 before reaching
+                  /intake. No data model changes - the User table
+                  already has mfa_enrolled and email_verified_at
+                  columns; v1 just leaves them NULL.
+                  ============================================================
+
+  Invitations:    Client users can invite colleagues via email-token
+                  flow. Tokens are single-use, hashed in storage, 7-day
+                  expiry. (NOTE: in v1 with email-verify off, the
+                  invitation token itself is still emailed - that's
+                  the only email the platform sends in v1.)
+
+
+================================================================================
+5. PAGE HIERARCHY BY ROLE
+================================================================================
+
+Below is the full sitemap for each role. Routes shown are illustrative
+(/client/..., /admin/..., /reviewer/...); the developer can finalize
+naming.
+
+--------------------------------------------------------------------------------
+5.1  Client page hierarchy
+--------------------------------------------------------------------------------
+
+PUBLIC (unauthenticated):
+    /                                  Marketing/landing - "Welcome to
+                                        SHIELD by Kentro." Brief
+                                        description of the three services,
+                                        compliance posture, sign-in /
+                                        sign-up CTAs. USWDS-grade clean.
+    /sign-in                           Login (keep current visual style).
+    /sign-up                           Self-registration (keep current
+                                        process - improved per panel
+                                        review).
+    /accept-invite/<token>             Colleague invitation acceptance.
+    /help                              Help / FAQ / contact.
+    /legal/privacy                     Privacy notice.
+    /legal/accessibility               Section 508 / WCAG statement.
+
+AUTHENTICATED CLIENT (after sign-in):
+    /home                              Client dashboard - the most
+                                        important client page. Executive-
+                                        grade summary of the current
+                                        engagement. See section 6.4.
+    /services                          Status across the three services.
+    /services/tech-debt                Tech Debt service detail.
+    /services/zero-trust               Zero Trust service detail.
+    /services/csf                      CSF service detail.
+    /services/attack-surface           ATT&CK Coverage service detail.
+    /intake                            (only visible while intake is in
+                                        progress) The signup-driven
+                                        questionnaire wizard - see
+                                        Section 6.2.
+    /documents                         All documents the client has
+                                        uploaded plus deliverables ready
+                                        for them. Section 6.7.
+    /documents/<id>                    Single document or deliverable.
+    /messages                          Conversation thread with the
+                                        consultant. Section 6.8.
+    /messages/<thread>                 Individual thread.
+    /team                              Manage colleagues invited to the
+                                        deployment. Section 6.9.
+    /settings                          User profile and preferences.
+                                        Section 6.10.
+    /sign-out                          Sign out.
+
+Total: 14 unique client pages. Every page has a consistent left nav and
+a top utility bar (notifications, user menu). The intake wizard
+temporarily takes over the chrome until intake is complete.
+
+--------------------------------------------------------------------------------
+5.2  Admin page hierarchy (Kentro consultant)
+--------------------------------------------------------------------------------
+
+The admin sits inside the same deployment as the client (single-tenant),
+so the URL is the same domain. Admins land on /admin/queue after sign-
+in. Admins also have access to the read-only client views (to verify
+what the client sees).
+
+    /admin/queue                       The daily triage view. Three
+                                        buckets: New / Waiting on us /
+                                        Active. Section 7.1.
+    /admin/client                      Client profile (this deployment's
+                                        client org). Section 7.2.
+    /admin/services                    Services overview (status per
+                                        service the client engaged on).
+    /admin/services/tech-debt          Tech Debt workspace - run the
+                                        analysis. Section 7.3.
+    /admin/services/zero-trust         Zero Trust workspace - score the
+                                        questionnaire, build the
+                                        roadmap. Section 7.4.
+    /admin/services/csf                CSF workspace - the full Playbook
+                                        implementation. Section 7.5.
+                                        Sub-pages:
+                                        /admin/services/csf/scope
+                                        /admin/services/csf/systems
+                                        /admin/services/csf/artifacts
+                                        /admin/services/csf/profile/high
+                                        /admin/services/csf/profile/moderate
+                                        /admin/services/csf/profile/low
+                                        /admin/services/csf/enterprise-profile
+                                        /admin/services/csf/gap-analysis
+                                        /admin/services/csf/action-plan
+    /admin/services/attack-surface     ATT&CK workspace. Section 7.6.
+    /admin/documents                   All documents in this deployment
+                                        (client uploads + consultant
+                                        artifacts + deliverables).
+    /admin/documents/<id>              Single document detail.
+    /admin/deliverables                Manage deliverable releases.
+    /admin/messages                    All threads.
+    /admin/audit                       Append-only audit log.
+    /admin/activity                    Async jobs - running, failed,
+                                        recently complete. (Not in client
+                                        nav. Operational tool.)
+    /admin/team                        Manage Kentro users on this
+                                        deployment (invite reviewer,
+                                        add admin).
+    /admin/settings                    Deployment-level settings
+                                        (LLM endpoint, redaction config,
+                                        retention policy, branding).
+
+Total: ~25 admin pages.
+
+--------------------------------------------------------------------------------
+5.3  Reviewer page hierarchy
+--------------------------------------------------------------------------------
+
+Reviewer sees everything Admin sees minus the action buttons. Plus one
+unique surface:
+
+    /reviewer/home                     Reviewer dashboard - "Walks
+                                        waiting for you" and assigned
+                                        engagements.
+    /reviewer/walk/<service>           Audit walk surface for a service.
+                                        For CSF, this shows per-
+                                        subcategory: client claim ->
+                                        evidence -> consultant assessment
+                                        -> gap -> remediation. For ZT,
+                                        same shape per pillar.
+    /reviewer/audit                    Read-only audit log.
+    /reviewer/notes                    Reviewer's own notes (separate
+                                        from admin's notes).
+
+Plus read-only versions of every /admin/* page. Action buttons replaced
+by "Approve" / "Decline" with reason fields where applicable.
+
+
+================================================================================
+6. CLIENT PROCESS FLOW (end to end)
+================================================================================
+
+This is the happy path. Walk through this whole section before any
+client-side code is written.
+
+--------------------------------------------------------------------------------
+6.1  Sign-up (registration)
+--------------------------------------------------------------------------------
+
+Step S1 - Account creation (v1 active)
+    Single-page form. Display name, email, password (with strength
+    meter), password confirmation, accept Terms checkbox. Submit.
+    Account is created. User is signed in immediately. Goes directly
+    to Step S4.
+
+# ===========================================================================
+# Step S2 - Email verification        DEFERRED FOR v1 (commented out below)
+# ===========================================================================
+# When SHIELD_AUTH_REQUIRE_EMAIL_VERIFY is true (future release):
+#   - System sends verification email on Step S1 submit.
+#   - User clicks link in email. Lands at /verify/<token>. Confirms email.
+#   - User.email_verified_at is set on success.
+#   - Without verification, user cannot reach /intake.
+# In v1, this step is skipped entirely. The /verify/<token> route still
+# exists and works if someone reaches it (e.g., a future invitation
+# flow uses it), but no email is sent during signup.
+# ===========================================================================
+
+# ===========================================================================
+# Step S3 - MFA enrollment            DEFERRED FOR v1 (commented out below)
+# ===========================================================================
+# When SHIELD_AUTH_REQUIRE_MFA is true (future release):
+#   - User chooses factor (TOTP app, hardware key, SMS-as-backup).
+#   - Confirms enrollment.
+#   - User.mfa_enrolled is set on success.
+#   - Without enrollment, user cannot complete signup.
+# In v1, this step is skipped entirely. The /mfa/enroll route exists
+# but is not reached during the default signup flow.
+# ===========================================================================
+
+Step S4 - Welcome screen
+    "Welcome to SHIELD by Kentro." One short paragraph. Big "Let's get
+    started" button. Goes to intake.
+
+Risk note for v1: Eugene has accepted the risk of email + password
+only authentication (no MFA, no email verification) for v1. The
+chosen compensating controls are: short JWT lifetimes, idle-session
+timeout, daily forced re-auth, password strength enforcement, account
+lockout after N failed attempts (recommend 10 in 15 minutes), and
+audit log entries on every authentication event. The auth-light
+posture is reversible by feature flag - no schema or route changes
+required to re-enable MFA and email verification later.
+
+--------------------------------------------------------------------------------
+6.2  Intake wizard (service-driven)
+--------------------------------------------------------------------------------
+
+The intake wizard ALWAYS proceeds in this order:
+
+Step I1 - Pick your services
+    Five options. The first four are services you can select in any
+    combination; the fifth is a short-circuit out of the wizard.
+
+        [ ] Technical Debt Review
+        [ ] Zero Trust Assessment
+        [ ] NIST CSF 2.0 Assessment
+        [ ] MITRE ATT&CK Coverage Mapping
+        [ ] I'm not sure - request a call with a consultant
+
+    Each of the four services has a one-paragraph plain-English
+    description and a small "What's this?" expand for more detail.
+
+    The fifth option ("I'm not sure") is a radio-style mutually-
+    exclusive choice: if the user checks it, the four service
+    checkboxes deselect and disable. The button label changes from
+    "Continue ->" to "Request a call ->". Submitting this option
+    takes the user to a short consultation-request form (Step I1B
+    below) and skips the rest of the intake wizard entirely.
+
+    PROGRESS: Step 1 of N where N depends on selections (N=6 if any
+    of the four services are picked; N=2 if "I'm not sure" is picked).
+
+Step I1B - Consultation request (only reached if "I'm not sure" was picked)
+    Short, friendly form. Just enough for a consultant to call back
+    intelligently:
+        Your role / title              (text)
+        Organization name              (text)
+        What's prompting this?         (textarea, 3-4 lines)
+                                       Helper text: "An audit deadline?
+                                       A board ask? A recent incident?
+                                       Tell us as much or as little as
+                                       you'd like."
+        Best way to reach you          (radio: phone / email / scheduled call)
+        Phone (if phone or scheduled)  (text, optional)
+        Preferred time window          (text, optional)
+        Anything else we should know   (textarea, optional)
+    Submit button: "Send my request".
+
+    On submit:
+        - Create a ConsultationRequest row with all the above fields.
+        - Fire admin notification: "<Name> from <Org> requested a
+          consultation call." Link to the request in admin queue.
+        - Land on a thank-you screen: "Got it. A consultant will reach
+          out within 1 business day to talk through what's right for
+          you." Optional calendar widget if integrated.
+        - Skip the rest of the intake wizard. The user's account
+          exists, but they're parked in a "consultation-pending"
+          state on their home dashboard until a consultant scopes
+          their engagement.
+
+    Returning to the wizard later:
+        - The user's home dashboard shows: "Your consultation request
+          is being reviewed. Need to update anything? [Edit request]
+          or [Choose services anyway]."
+        - "Choose services anyway" re-enters the wizard at Step I1
+          with the consultation request preserved as context.
+
+Step I2 - About your organization
+    Universal fields all clients answer:
+        Legal name (with autocomplete from D&B / SAM.gov if available)
+        DBA / common name
+        Website (optional)
+        Organization size (1-50 / 51-500 / 501-5000 / 5000+)
+        Industry (dropdown)
+        Address (street, city, state, ZIP, country)
+
+    Primary POC:
+        Name (defaults to authenticated user's display name)
+        Title
+        Email (defaults to authenticated user's email, editable)
+        Phone
+
+    Why you're here:
+        One open-ended textarea: "What's prompting this engagement?"
+        Examples shown: audit deadline, board request, contract
+        requirement.
+
+    Compliance deadline (if any): optional date picker.
+
+Step I3 - System scope (CSF and ZT only)
+    Shown only if CSF or Zero Trust was selected.
+
+    For CSF:
+        List your in-scope systems. For each:
+            System name
+            CSAM System ID (if federal)
+            FIPS 199 categorization (HIGH / MODERATE / LOW)
+            System owner name + title
+            ISSO name + title
+            System description (one sentence)
+            Hosting (on-prem / FedRAMP cloud / commercial cloud)
+            Authorization status (ATO / ATO-C / DATO / Pending)
+            ATO expiration date
+            Open POA&Ms count (total / High-Critical)
+        Client can add as many systems as they have. Each row is a
+        complete card with all fields. The systems define the CSF tier
+        profiles that get generated.
+
+    For Zero Trust (if CISA selected):
+        One system / environment they want assessed against CISA ZTMM.
+        Same shape as CSF (without the FIPS 199 since CISA is impact-
+        agnostic for ZT scoring).
+
+    For Zero Trust (if DoD selected):
+        One system / environment they want assessed against DoD ZT.
+        Same shape as CSF plus:
+            CAGE code
+            Highest impact level (CUI / Confidential / Secret-equivalent)
+            Mission program supported (if applicable)
+
+Step I4 - Service-specific questionnaires
+    Shown once per service selected. If client picked CSF, Zero Trust,
+    and Tech Debt, they'll do three questionnaires here back-to-back.
+
+    Tech Debt:
+        No questionnaire - just upload capability inventory in I5.
+
+    CSF:
+        Three questionnaires triggered, ONE PER FIPS 199 TIER they
+        have systems in. If they have only HIGH systems, only the HIGH
+        questionnaire (Step 1.1 from the existing reference toolkit) is
+        shown. If they have HIGH and MODERATE systems, two
+        questionnaires. The platform serves the right one per tier.
+        15 questions for HIGH (108 subcategories covered)
+        12 questions for MODERATE (108 subcategories covered)
+        8 questions for LOW (108 subcategories covered)
+
+    Zero Trust (CISA):
+        The CISA ZT questionnaire (see companion doc). 12 questions
+        across 5 pillars + 3 cross-cutting capabilities. Each question
+        has "where are you today" and "where do you want to be" answers.
+
+    Zero Trust (DoD):
+        The DoD ZT questionnaire (see companion doc). 12 questions
+        across 7 pillars. Same shape.
+
+    MITRE ATT&CK:
+        No questionnaire - mapping is derived from the capability list.
+        If Tech Debt is also selected, ATT&CK uses the same capability
+        list. If ATT&CK is selected alone, prompt to upload capability
+        list in I5.
+
+    All questionnaires:
+        - Section-tabbed navigation (one tab per pillar / function).
+        - Progress bar at top.
+        - Auto-save on blur (every field, every change).
+        - "Save & finish later" link visible at all times.
+        - Resume capability if they leave.
+        - "Things to think about" expandable hint panel per question.
+        - Inline evidence upload per question.
+        - "Not applicable" toggle per question with reason field.
+        - All copy in plain English. Spec citations hidden from the
+          client (consultant-internal only).
+
+Step I5 - Upload artifacts
+    Drag-and-drop zone. Multi-file. PII redaction notice prominently
+    displayed: "Before our automated analysis runs, we automatically
+    remove personal contact information." Each file: optional
+    category tag (Inventory / Policy / Network diagram / Other).
+
+    Tech Debt clients are prompted specifically: "Upload your software
+    inventory or licensing list."
+
+    CSF clients are shown the 16-document checklist (from Step 1.1
+    questionnaire). Each row: [Have it] / [Requested] / [Doesn't
+    exist] / [N/A]. If they have it, drop it.
+
+Step I6 - Confirm and submit
+    Summary screen:
+        - Services selected (icons)
+        - System count
+        - Questionnaire status (X of Y questions answered, sections
+          incomplete listed)
+        - Documents uploaded count
+        - Estimated kickoff time ("Your consultant will reach out
+          within 1 business day")
+        - Big "Submit" button.
+
+    On submit:
+        - Mark intake complete.
+        - Fire admin notification (this MUST work - was a bug in v1).
+        - Create the project records for each selected service.
+        - Route the client to /home.
+
+--------------------------------------------------------------------------------
+6.3  After submit
+--------------------------------------------------------------------------------
+
+  Within 1 business day:
+        The Kentro consultant attaches to the deployment, opens
+        /admin/queue, sees the new client at the top of "New leads,"
+        opens the client detail, reviews the intake, and reaches out
+        to schedule kickoff.
+
+  Returning client:
+        Lands on /home (the client dashboard). Sees status across all
+        services. Sees any action waiting on them. Sees recent activity
+        and recent messages.
+
+--------------------------------------------------------------------------------
+6.4  Client dashboard (/home) - executive-grade
+--------------------------------------------------------------------------------
+
+This is the most important client page. Lead with executive findings,
+not technical detail. Layout (top to bottom):
+
+  1.  Greeting + last-checked timestamp:
+        "Welcome back, John. Last update from your consultant:
+         2 days ago."
+
+  2.  HERO BAND (only if at least one deliverable is ready):
+        Large card. "Your Tech Debt Report is ready." One sentence
+        of the headline finding. [View report] [Download PDF].
+
+  3.  STATUS GRID - one card per selected service:
+        Tech Debt card:
+          Status pill ("In progress" / "Under review" / "Ready" /
+          "Complete")
+          One-line headline ("Reviewing your inventory of 87 tools")
+          Big number ("$420K identified so far" if any)
+          Next action ("Your consultant will reach out about consolidation
+          findings")
+          [Open service detail]
+        Zero Trust card: same shape.
+        CSF card: same shape, may show maturity heatmap thumbnail.
+        ATT&CK card: same shape, may show covered/partial/uncovered
+        thumbnail.
+
+  4.  WHAT'S WAITING ON YOU:
+        A bulleted list of actionable items.
+        "Finish your CSF HIGH questionnaire (2 sections remaining)"
+        "Upload your network architecture diagram"
+        "Approve the consultant's draft of your Zero Trust roadmap"
+        Each links to the relevant page.
+
+  5.  RECENT ACTIVITY:
+        Last 5 audit events relevant to the client. Plain English.
+        "Maria approved the consolidation recommendations" / "Your
+        consultant scheduled a kickoff for May 22"
+
+  6.  RECENT MESSAGES:
+        Last 3 message threads with a "View all" link.
+
+What this page does NOT show:
+  - 5-dimension scoring math
+  - Working profile spreadsheets
+  - Audit log internals
+  - Raw AI output
+  - Stage names like "extraction_review" or "ai_extraction"
+
+The client never needs to know how the sausage was made.
+
+--------------------------------------------------------------------------------
+6.5  Service detail page (executive style)
+--------------------------------------------------------------------------------
+
+When a client clicks into a service from the home dashboard:
+
+  Top:        Service name (e.g. "Zero Trust Assessment - CISA ZTMM 2.0")
+              Status pill
+              Consultant assigned + photo + email link
+
+  Headline:   One big number or sentence. "You are currently at CISA
+              Initial maturity overall. Your target is Advanced by Q4."
+
+  Middle:     Pillar-by-pillar (or category-by-category) summary with
+              current vs. target. Visualization (radar chart for ZT,
+              heatmap for CSF, bar chart for Tech Debt overlap, big
+              number cards for ATT&CK).
+
+  Action:     "What's next" callout. "Your consultant is drafting the
+              roadmap. Estimated ready date: May 25." OR "Awaiting
+              your questionnaire completion - 2 sections remaining
+              [Continue]."
+
+  Bottom:     "Show me how this is calculated" expandable. Methodology
+              summary in 2-3 paragraphs. Plain English.
+
+  Footer:     "Download draft snapshot" if applicable, "View
+              deliverable" if released.
+
+--------------------------------------------------------------------------------
+6.6  Client questionnaire UI
+--------------------------------------------------------------------------------
+
+Three things from the v1 review must be true:
+
+  1. Section navigation. Tabs across the top: one per pillar /
+     function / category. Clicking jumps to that section. Currently-
+     viewed section is highlighted. Progress bar above shows overall
+     completion percentage. Each tab shows a checkmark when its
+     questions are answered.
+
+  2. Auto-save on blur. Every field saves on tab-away. Visible
+     "Saved 2 seconds ago" indicator. Network failure surfaces a
+     persistent toast.
+
+  3. Resume. Closing the browser and coming back lands on the same
+     section, same scroll position.
+
+Question card layout:
+
+  Question stem (large, bold).
+  "Things to think about" expandable panel with the cues.
+  Two side-by-side answer panels (for ZT and CSF):
+      "Where are you today" -> maturity dropdown + freeform text +
+                                evidence upload
+      "Where do you want to be" -> maturity dropdown + freeform text +
+                                    rationale
+  "Not applicable" toggle with reason.
+
+For Tech Debt: there's no questionnaire (capability list upload only).
+For ATT&CK: there's no questionnaire either.
+
+--------------------------------------------------------------------------------
+6.7  Documents and deliverables
+--------------------------------------------------------------------------------
+
+  /documents shows two stacks:
+
+  WHAT YOU'VE SHARED:
+        Table of every document the client has uploaded. Columns:
+        title, category, date, status ("Received" / "In review by
+        consultant" / "In use on <service>"). Delete-within-24-hours
+        affordance.
+
+  WHAT YOU'VE RECEIVED:
+        Table of every deliverable the consultant has released to
+        the client. Columns: title, service, finalized date, version,
+        download links (PDF + XLSX). Visible status badge ("Final" /
+        "Draft for your review" / "Superseded by v2").
+
+--------------------------------------------------------------------------------
+6.8  Messages
+--------------------------------------------------------------------------------
+
+Lightweight thread. One general thread plus optional per-service
+threads. The client and the consultant can post. No attachments inside
+messages (uploads go through /documents). Messages render as readable
+text - never Markdown source, never raw HTML. Audit log entries fire on
+every message post.
+
+--------------------------------------------------------------------------------
+6.9  Team
+--------------------------------------------------------------------------------
+
+  Invite a colleague:
+        Email, optional message. System sends an invite token, hashed,
+        7-day expiry. Invitee follows link, authenticates, joins this
+        deployment as Client role.
+
+  Manage existing colleagues:
+        List of users with status (active / invited / revoked).
+        Revoke access. Promote to "executive viewer" (optional flag
+        that hides the questionnaire access and shows only dashboards
+        and deliverables).
+
+--------------------------------------------------------------------------------
+6.10 Settings
+--------------------------------------------------------------------------------
+
+  Profile: name, title, phone, timezone, notification preferences.
+  Account: change password, manage MFA.
+  Notifications: email or in-app only; digest frequency.
+
+Title and phone live ON THE USER PROFILE, not on the Client record's
+"Primary POC" fields. The Primary POC field is a foreign key to a User.
+Updating the user profile updates the POC display. This was a v1 bug
+(profile and POC were separate stores). Don't repeat it.
+
+
+================================================================================
+7. ADMIN WORKSPACE - PROCESS FLOW
+================================================================================
+
+--------------------------------------------------------------------------------
+7.1  Admin queue (/admin/queue)
+--------------------------------------------------------------------------------
+
+The consultant's daily landing page. Replaces the v1 "Home" with three-
+card directory. Three sections:
+
+  NEW LEADS (clients who completed intake but no consultant has
+              attached yet):
+        For each: client name, intake completed timestamp, services
+        selected, "Open intake summary" button.
+
+  WAITING ON US (active engagements where the next action is on the
+                  consultant):
+        For each: client name, current service, what's needed
+        ("Score current state on Identity pillar"), waiting since
+        timestamp, "Open" button.
+
+  ACTIVE (engagements in progress, waiting on client or in-flight
+          analysis):
+        Lower-priority list. Same shape.
+
+Also:
+  FAILED JOBS BANNER (if any background jobs failed):
+        Persistent banner at top of queue. "3 jobs failed - review."
+        Click goes to /admin/activity.
+
+  ALERTS BANNER (if any compliance deadlines are within 30 days):
+        "Compliance deadline for <client>: ATO renewal due 2026-08-15
+         (45 days)."
+
+Timestamps everywhere. Local time per Section 11.5.
+
+--------------------------------------------------------------------------------
+7.2  Admin client profile (/admin/client)
+--------------------------------------------------------------------------------
+
+Single-tenant means this page describes THIS deployment's client. All
+the intake info, contact details, address, services selected, plus a
+status grid like the client home (mirroring what the client sees, with
+admin annotations).
+
+Editable inline by admin:
+  - Industry (if not collected at intake)
+  - Internal notes / tags
+  - Service assignments (which consultant is on which service)
+
+--------------------------------------------------------------------------------
+7.3  Tech Debt admin workspace (/admin/services/tech-debt)
+--------------------------------------------------------------------------------
+
+Four-step vertical flow on one page:
+
+  Step 1 - What the client gave us:
+          Cards/list of uploaded inventory files. "Run automated review"
+          button per file. Status pill per file (Pending / Reading /
+          Reviewed / Approved).
+
+  Step 2 - Initial reading (AI extraction):
+          Editable table of products. Columns: name, vendor, category,
+          function, annual cost, license count, notes. Inline row edit,
+          add/remove. Each row shows AI confidence pill (if AI flagged
+          uncertainty) - admin can override.
+          "Approve and continue" button - locks the extraction.
+
+  Step 3 - Overlap and waste analysis:
+          HTML dashboard rendered from the approved extraction.
+          - Number cards: total spend, total overlap categories,
+            estimated annual savings.
+          - Card per overlap finding ("4 endpoint security tools - keep
+            one, save $XX/yr").
+          - Bar chart of redundant categories.
+          - "Export to XLSX" / "Export to PDF" / "Mark as draft for
+            client" buttons.
+
+  Step 4 - Final consolidation plan:
+          Approved version of the overlap analysis. Editable narrative
+          field where the consultant adds the recommendation. "Release
+          to client" button - this is the deliverable.
+
+  Sidebar:
+          Chat with the AI. Ask questions about the findings. Each
+          question generates an answer rendered as readable Markdown.
+          Per-exchange "Add to final plan" button.
+
+NO <pre>JSON</pre> blocks. Anywhere. Ever.
+
+--------------------------------------------------------------------------------
+7.4  Zero Trust admin workspace (/admin/services/zero-trust)
+--------------------------------------------------------------------------------
+
+Pillar-tabbed layout. Top tabs: one per pillar (5 for CISA, 7 for DoD).
+Plus a "Summary" tab at the leftmost position.
+
+Summary tab:
+        Radar chart of current vs. target maturity across pillars.
+        Top 5 gaps as cards. Roadmap timeline.
+
+Per-pillar tab:
+        The client's questionnaire answer for this pillar (read-only,
+        with evidence file attached). The consultant's scoring panel:
+        current maturity level + target maturity level + rationale +
+        gap description + recommendation. Save button.
+        AI button: "Help me score this" - sends the (redacted) answer
+        to the LLM and gets a proposed score the consultant reviews
+        and approves or overrides.
+
+Deliverable buttons:
+        "Generate Zero Trust Posture Report" - builds the PDF.
+        "Generate working XLSX" - builds the per-pillar scoring sheet.
+        "Mark as draft for client" / "Release to client."
+
+--------------------------------------------------------------------------------
+7.5  CSF admin workspace (/admin/services/csf) - the Playbook automation
+--------------------------------------------------------------------------------
+
+This is the biggest workspace. It implements the 10-step Playbook end-
+to-end. Sub-navigation matches the Playbook steps:
+
+  /admin/services/csf
+        Landing page. Project status, current step, links to all sub-
+        pages, "what's next" card.
+
+  /admin/services/csf/scope
+        Step 1 + 4 of the Playbook. Profile architecture decision
+        (tiered HIGH/MOD/LOW + Enterprise, or alternative).
+        Inclusions/exclusions for the 108 subcategories (Column C in
+        the Working Profile). For each subcategory: Yes/No, optional
+        rationale. Bulk import from CSV.
+
+  /admin/services/csf/systems
+        Step 2 of the Playbook. System inventory. Each row is a system
+        with name, CSAM ID, FIPS 199 tier, owner, ISSO. Originates
+        from intake but admin can edit.
+
+  /admin/services/csf/artifacts
+        Step 3 + ongoing. Artifact tracker (replaces the existing
+        XLSX). Status per artifact per system: Requested / Received /
+        N/A / Pending. Filter by system or by category. Audit-friendly.
+
+  /admin/services/csf/profile/high
+        Tier Working Profile for HIGH systems. Implements
+        Step 2.1 from the existing reference toolkit, in-app.
+        Per subcategory:
+          - ID, description, in-scope flag, scope rationale
+          - What we found (consultant narrative)
+          - Evidence (file references)
+          - 5-dimension scoring (G / P / I / M / C, each 0-2)
+          - Auto-calculated total (0-10) + maturity level (1-5)
+          - IG metric alignment displayed for context
+          - "Draft" toggle (Step 7 reconciliation moves it off draft)
+          - Per-row notes
+        Filters: by function, by category, by IG alignment, by status.
+        Bulk actions: lock tier, export to XLSX (Step 2.1 file shape).
+
+  /admin/services/csf/profile/moderate
+        Same shape as HIGH for MODERATE.
+
+  /admin/services/csf/profile/low
+        Same shape for LOW.
+
+  /admin/services/csf/enterprise-profile
+        Step 8 of the Playbook. Rolled-up Enterprise Profile from the
+        three tier profiles. Implements the weighted-floor decision
+        rules (Rules 1-6 from Gap Analysis Methodology). Per
+        subcategory: enterprise narrative, enterprise score (auto-
+        rolled), target score (admin enters per Step 9), gap flag,
+        tier driver/roll-up rule documentation.
+        Export: the Step 3.2.1 Enterprise Profile XLSX.
+
+  /admin/services/csf/gap-analysis
+        Step 10 + Gap Analysis Methodology. List of every subcategory
+        flagged GAP. Per gap:
+          - Characterize (what's missing, what caused it)
+          - Prioritize (P1/P2/P3 with the framework from the
+            methodology doc)
+          - Action items (owner, deadline, resources, success criteria)
+          - POA&M linkage
+        Export to XLSX and to the action plan deliverable.
+
+  /admin/services/csf/action-plan
+        Action plan view across all gaps. Grouped by initiative.
+        Timeline visualization. Export to PDF (executive) and XLSX.
+
+Across the CSF workspace:
+  - Section-tabbed UI per pillar/function for any long list.
+  - Bulk import / export of every key sheet (the existing reference
+    XLSX files are the import/export shape).
+  - Evidence file linkage on every subcategory.
+  - The Reference Data tab from the existing XLSXes lives in-app as a
+    contextual side panel - when the consultant is on a subcategory,
+    the right panel shows IG metric ref, alignment, FISMA domain,
+    interview question family, question summary. So the consultant
+    never has to flip files.
+
+--------------------------------------------------------------------------------
+7.6  ATT&CK admin workspace (/admin/services/attack-surface)
+--------------------------------------------------------------------------------
+
+  Capability list (input - re-uses Tech Debt's approved list, or
+  uploaded fresh).
+
+  Technique catalog: the full MITRE ATT&CK Enterprise matrix (vendored;
+  refresh quarterly). Filters by tactic.
+
+  Coverage view: tabbed by tactic. Per technique:
+        - ID, name, description
+        - Coverage status: Covered / Partial / Uncovered
+        - Detection capabilities (which tools from the capability list)
+        - Prevention capabilities
+        - Response capabilities
+        - Rationale (consultant authored, AI-assisted)
+        - Confidence pill
+
+  Summary view: three big number cards + top 5 blind spots + cross-
+  service bridge ("This funds X in Tech Debt savings...").
+
+  Deliverable: "Generate Coverage Report" - PDF + XLSX (3 sheets:
+  Summary, Findings, Methodology).
+
+
+================================================================================
+8. CSF 2.0 METHODOLOGY IMPLEMENTATION (the Playbook in code)
+================================================================================
+
+The CSF 2.0 Implementation Playbook is in this folder. The Working
+Profile, Reference Data, Enterprise Profile, Gap Analysis docs are the
+authoritative source. The platform MUST implement these faithfully.
+
+Key concepts to encode:
+
+  Function:           5 functions (GOVERN, IDENTIFY, PROTECT, DETECT,
+                      RESPOND, RECOVER). PLUS the 6th: GOVERN is the
+                      CSF 2.0 addition.
+
+  Category:           Sub-groupings within each function (e.g. GV.OC =
+                      Organizational Context within GOVERN).
+
+  Subcategory:        108 leaf items (GV.OC-01, GV.OC-02, ...). Every
+                      scoring/scoping decision happens at this level.
+
+  Tier profile:       Working Profile scoped to a FIPS 199 tier. One per
+                      tier the client uses (HIGH and/or MODERATE and/or
+                      LOW). All have the same 108 subcategory rows.
+
+  Enterprise profile: Synthesized rollup of all tier profiles. One
+                      per client engagement.
+
+  5-dimension score:  Per subcategory per tier:
+                          Governance               0-2
+                          Policy & Process         0-2
+                          Implementation           0-2
+                          Monitoring & Measurement 0-2
+                          Continuous Improvement   0-2
+                      Total: 0-10. Mapped to Maturity Level 1-5:
+                          0-2  -> Level 1 (Ad hoc)
+                          3-5  -> Level 2 (Repeatable)
+                          6-7  -> Level 3 (Defined)
+                          8-9  -> Level 4 (Managed)
+                          10   -> Level 5 (Optimized)
+
+  Evidence rule:      If evidence cannot be produced, Implementation
+                      cannot exceed 1 AND total maturity cannot exceed
+                      Level 2. Encode as a validation rule.
+
+  IG metric metadata: Per subcategory: which IG metric(s) it maps to,
+                      Core vs. Supplemental, Primary vs. Supporting
+                      alignment. This data ships in the Reference Data
+                      tab of the existing XLSX. Import once into the
+                      database.
+
+  Weighted-floor roll-up (Step 8 / Gap Analysis Methodology):
+                      The Enterprise score for each subcategory is
+                      computed from the tier scores using these rules
+                      in order (first matching rule wins):
+                        1. All tiers same score -> that score
+                        2. Primary alignment to a Core metric AND any
+                           tier has a gap -> strict floor (lowest score)
+                        3. HIGH tier is the lowest scorer -> HIGH's score
+                        4. MODERATE is lowest, HIGH higher -> MOD's score
+                        5. Only LOW is lowest AND subcategory is
+                           Supporting-aligned or Supplemental -> HIGH/MOD
+                           score with documented exception
+                        6. Mixed otherwise -> lower score + reasoning
+
+                      Rule 2 always overrides Rule 5.
+
+  Gap detection:      Current < Target -> GAP. Otherwise OK.
+
+  Gap prioritization: P1: Core metric + HIGH tier + multi-system gap
+                      P2: Core metric OR HIGH tier
+                      P3: All other gaps
+
+  Action plan:        Per gap: owner, deadline, resources, success
+                      criteria, group by initiative.
+
+Export shapes:
+        Tier Working Profile -> Step 2.1 / 2.2 / 2.3 XLSX (existing
+                                shape from the reference toolkit)
+        Enterprise Profile   -> Step 3.2.1 XLSX
+        Gap Analysis        -> custom XLSX matching the methodology doc
+
+Cross-reference:
+        Every CSF subcategory should be cross-referenceable to a Zero
+        Trust pillar AND a MITRE ATT&CK tactic, so the value loop can
+        be computed at the deployment level.
+
+
+================================================================================
+9. CISA AND DOD ZERO TRUST METHODOLOGY
+================================================================================
+
+See companion files for the actual questionnaires:
+    SHIELDv2_CISA_ZT_Questionnaire.docx
+    SHIELDv2_DoD_ZT_Questionnaire.docx
+
+Both follow the same structure as the CSF Step 1.1 / 1.2 / 1.3
+questionnaires (open-ended interview questions, things-to-think-about
+cues, mappings to framework activities).
+
+--------------------------------------------------------------------------------
+9.1  CISA ZTMM 2.0 - structure
+--------------------------------------------------------------------------------
+
+  Pillars (5):    Identity, Devices, Networks, Applications & Workloads,
+                  Data
+
+  Cross-cutting (3):
+                  Visibility & Analytics, Automation & Orchestration,
+                  Governance
+
+  Maturity:       Traditional / Initial / Advanced / Optimal per pillar
+                  per capability function
+
+  Functions per pillar:
+                  Per CISA ZTMM 2.0 - between 5 and 9 functions per
+                  pillar. Each function has a different focus
+                  (authentication, identity stores, access management,
+                  etc.).
+
+  Scoring:        Per function, per pillar: current maturity + target
+                  maturity. Aggregate to pillar score. Aggregate across
+                  pillars for overall posture.
+
+  Gap:            Current < Target per function.
+
+  Cross-reference to CSF: each ZTMM function maps to one or more CSF
+  subcategories. The value loop view shows both.
+
+--------------------------------------------------------------------------------
+9.2  DoD ZT Reference Architecture - structure
+--------------------------------------------------------------------------------
+
+  Pillars (7):    User, Device, Network/Environment, Application/Workload,
+                  Data, Visibility & Analytics, Automation & Orchestration
+
+  Phases:         Target phase (45 activities) / Advanced phase (107
+                  activities) - 152 activities total
+
+  Scoring:        Per activity: implemented (Yes / Partial / No / Planned)
+                  Per pillar: % of Target activities implemented; %
+                  of Advanced activities implemented
+
+  Gap:            Any Target activity not Yes is a gap. Advanced
+                  activities are next-phase recommendations.
+
+  Cross-reference: each DoD ZT activity maps to one or more CSF
+  subcategories.
+
+
+================================================================================
+10. MITRE ATT&CK COVERAGE METHODOLOGY
+================================================================================
+
+Approach:
+
+  Catalog:        Vendor the MITRE ATT&CK Enterprise matrix. Refresh
+                  quarterly. ~600+ techniques and sub-techniques.
+
+  Filter:         Out-of-the-box, score against a curated subset of
+                  ~33-40 techniques most relevant to the client's
+                  industry/posture. Configurable per engagement to
+                  expand to the full matrix.
+
+  Mapping:        For each technique:
+                      Detection: which tools from the capability list
+                                 can detect this technique
+                      Prevention: which tools can prevent it
+                      Response: which tools can respond to it
+                  Tool-to-technique mapping starts from a curated DB
+                  (vendor MITRE Engenuity ATT&CK Evaluations, NIST
+                  CSF crosswalks, vendor detection libraries) and is
+                  refined per engagement by the consultant.
+
+  Coverage scoring:
+                      Covered: detection AND prevention AND response
+                                all present
+                      Partial: one or two of the three present
+                      Uncovered: none present
+
+  Top blind spots: Plain English explanation per uncovered technique,
+                   why it matters, recommended remediation.
+
+  Cross-service:   Uncovered techniques bridge to Zero Trust gaps and
+                   Tech Debt savings. The deliverable includes the
+                   value-loop bridge paragraph.
+
+
+================================================================================
+11. DATA MODEL (high level)
+================================================================================
+
+Tables (PostgreSQL):
+
+  users               id, email, password_hash, role enum
+                      (admin/reviewer/client), display_name, title,
+                      phone, timezone, is_active, mfa_enrolled,
+                      created_at, last_login_at
+
+  user_invitations    id, email, token_hash, invited_by, expires_at,
+                      accepted_at, revoked_at
+
+  client              id (singleton in single-tenant), legal_name,
+                      dba_name, website, size_band, industry,
+                      address_line1, address_line2, city, state,
+                      postal_code, country, primary_poc_user_id (FK),
+                      prompting_context, intake_completed_at,
+                      service_interests array
+
+  service             id, type enum (tech_debt/zero_trust/csf/
+                      attack_surface), framework enum (for ZT:
+                      cisa_ztmm/dod_zt), status, created_at,
+                      released_at
+
+  systems             id, name, csam_id, fips_categorization, owner_name,
+                      owner_title, isso_name, isso_title, description,
+                      hosting, ato_status, ato_expiration_date,
+                      poams_total, poams_high_critical
+
+  questionnaire_responses
+                      id, service_id, system_id (nullable for non-
+                      system-scoped questionnaires), question_id,
+                      current_state_text, current_state_score,
+                      target_state_score, target_state_notes, not_applicable,
+                      not_applicable_reason, evidence_artifact_ids
+                      (json), last_updated_at, last_updated_by, locked_at,
+                      locked_by, extra (jsonb for future)
+
+  csf_subcategories   id (e.g. GV.OC-01), function, category,
+                      description, ig_metrics (jsonb), alignment,
+                      fisma_domain, interview_topic_family,
+                      question_summary
+                      Static reference data; loaded once from CSV.
+
+  csf_tier_profile_entries
+                      id, service_id, tier (HIGH/MODERATE/LOW),
+                      subcategory_id, in_scope, in_scope_rationale,
+                      narrative, evidence_artifact_ids, dim_g, dim_p,
+                      dim_i, dim_m, dim_c, total_auto, maturity_level_auto,
+                      target_maturity, gap_auto, notes, status (draft/
+                      locked), last_updated_at, last_updated_by
+
+  csf_enterprise_entries
+                      id, service_id, subcategory_id, narrative,
+                      evidence_artifact_ids, dim_g, dim_p, dim_i, dim_m,
+                      dim_c, total_auto, current_maturity_auto,
+                      target_maturity, gap_auto, tier_driver_rule (which
+                      roll-up rule fired), notes
+
+  gaps                id, service_id, subcategory_or_pillar_id,
+                      framework enum, characterization, priority (P1/P2/P3),
+                      tier_driver, owner_user_id, deadline,
+                      resources_needed, success_criteria, poam_ref,
+                      initiative_group, status, created_at
+
+  capability_list     id, service_id, version, status (draft/approved/
+                      released), approved_at, approved_by, items
+                      (separate table)
+
+  capability_items    id, capability_list_id, name, vendor, category,
+                      function, annual_cost_usd, license_count, notes,
+                      confidence_pct (AI flag), source_artifact_id
+
+  attack_techniques   id (T-number), name, tactic, description,
+                      data_sources, platforms, vendored_at
+                      Static reference; refresh quarterly.
+
+  attack_findings     id, service_id, technique_id, coverage_status,
+                      detection_tools (json), prevention_tools,
+                      response_tools, rationale, confidence_pct,
+                      last_updated_at, last_updated_by
+
+  artifacts           id, title, file_storage_key, mime_type, size_bytes,
+                      sha256, lineage (jsonb), origin (client_upload/
+                      automated_draft/consultant_approved), stage,
+                      uploaded_by, uploaded_at, archived_at,
+                      archived_by, purged_at, purged_by
+
+  artifact_redactions id, artifact_id, redacted_payload_id,
+                      redacted_items (json: count of each PII type
+                      removed), llm_call_id
+
+  llm_calls           id, service_id, purpose, prompt_version, model,
+                      mode (real/fixture), input_tokens, output_tokens,
+                      duration_ms, status (queued/running/completed/
+                      failed), error_message, response_artifact_id,
+                      requested_by, requested_at, completed_at
+
+  deliverables        id, service_id, title, summary, version,
+                      pdf_artifact_id, xlsx_artifact_id, finalized_at,
+                      finalized_by, released_to_client_at,
+                      superseded_by
+
+  messages            id, thread_key (general/<service_type>),
+                      author_user_id, body_text, created_at,
+                      read_by (json {user_id: timestamp})
+
+  notifications       id, user_id, event_type, title, body, link,
+                      created_at, read_at
+
+  audit_entries       id, at, actor_user_id, action, target_type,
+                      target_id, details (jsonb), correlation_id
+
+  service_requests    id, service_type, requested_by, notes, deadline,
+                      requested_at, fulfilled_service_id, declined_at,
+                      declined_reason
+
+Append-only DB trigger on audit_entries (Postgres). Origin immutability
+trigger on artifacts.
+
+--------------------------------------------------------------------------------
+11.1  Single-tenant data isolation
+--------------------------------------------------------------------------------
+
+Because each deployment is its own client boundary, every query is
+inherently scoped. BUT - keep a client_id column on every row anyway,
+populated with the deployment's singleton client.id. This:
+  - Makes audit logs and exports unambiguous about which client.
+  - Lets future multi-tenant ambitions land without a schema migration.
+  - Protects against a hypothetical "cross-tenant" leak in a future
+    refactor.
+
+--------------------------------------------------------------------------------
+11.2  Local time rendering
+--------------------------------------------------------------------------------
+
+Store every timestamp in UTC. Render in the viewer's local time using
+their User.timezone preference. Use <time datetime="...">2026-05-18T13:00:00Z
+</time> elements + a small JS converter. The audit log shows BOTH local
+and the raw UTC in its detail view (so compliance auditors can compare
+across regions / DST).
+
+
+================================================================================
+12. AI USAGE AND PII REDACTION
+================================================================================
+
+Every LLM call MUST pass through the redactor before leaving the
+deployment.
+
+IMPORTANT CONTEXT FOR v1: Eugene has explicitly chosen to allow a
+non-FedRAMP-authorized commercial LLM provider (Anthropic, OpenAI,
+etc.) for v1. This makes the redaction layer the PRIMARY data
+protection control - not a defense-in-depth layer. Treat the
+redactor as a security boundary, not a cosmetic step. Specifically:
+
+  - The redactor MUST have automated test coverage on every PII
+    pattern (emails, phones, addresses, names, identifiers,
+    signature blocks) with realistic adversarial test cases.
+  - The redactor's output MUST be inspected by a human (the
+    consultant) before a payload first reaches the LLM in any new
+    engagement. The first call per service for each new client
+    enters a "review" state where the consultant approves the
+    redacted payload preview before it ships.
+  - If the redactor encounters content it cannot confidently
+    redact (e.g. an unstructured PDF in a non-English language),
+    the system MUST refuse to send to the LLM and surface a
+    consultant action: "We couldn't confirm this document is safe
+    to redact. Review manually before automated analysis runs."
+  - Every payload that egresses to a non-FedRAMP endpoint is
+    audited (audit row, llm_calls row, redaction summary).
+  - The deployment's threat model documents the residual risk and
+    the redactor's role as primary mitigation.
+
+--------------------------------------------------------------------------------
+12.1  Redactor module (shield_ai/redact.py)
+--------------------------------------------------------------------------------
+
+  Function:           redact_for_ai(text) -> (cleaned_text, removed_dict)
+  Function:           redact_payload(obj) -> (cleaned_obj, removed_dict)
+
+  Strips (at minimum):
+    - Email addresses
+    - Phone numbers (US and international formats)
+    - Personal names (best-effort, with a curated names dictionary)
+    - Street addresses (with "Suite/Floor/PO Box" heuristics)
+    - The client's own org name (replaced with [CLIENT])
+    - SSNs, EINs, CAGE codes, contract numbers (regex)
+    - Signature blocks ("Sincerely," "Regards," "Best,")
+
+  Modes:              strict (everything above) / standard (above minus
+                      org name and address) / off (engineering only,
+                      never in production)
+
+  Output:             removed_dict logs the count of each PII type
+                      stripped. This goes into the artifact lineage
+                      and the llm_calls table.
+
+--------------------------------------------------------------------------------
+12.2  Client disclosure
+--------------------------------------------------------------------------------
+
+On every workspace screen that runs automated analysis, a short
+disclosure block:
+
+  "Before we run the automated analysis, we automatically remove
+   personal contact information - names, email addresses, phone
+   numbers, and street addresses - from anything we send the analyzer.
+   The names of products and vendors are kept so the analysis can
+   work. You can see what was removed on each result's details page."
+
+--------------------------------------------------------------------------------
+12.3  AI output handling
+--------------------------------------------------------------------------------
+
+  - Render AI output as readable content (tables, formatted text,
+    charts). Never as <pre> JSON dumps.
+  - Always label as "Automated draft" until a consultant approves.
+  - Consultant has explicit "Approve and use" action. Logged in audit.
+  - Approved drafts become "Consultant approved" artifacts.
+  - Released to client = consultant explicitly released. Until then,
+    the client never sees the AI output or the draft.
+
+
+================================================================================
+13. DESIGN SYSTEM AND VISUAL LANGUAGE
+================================================================================
+
+The authoritative design contract is the file:
+
+  Shield UX fix round 6 full design update for 2.0.txt
+
+The mockup (SHIELDv2_Design_Mockup.html) is a concrete application of that
+contract for nine key screens. If the mockup and the round 6 doc ever
+conflict, the round 6 doc wins.
+
+--------------------------------------------------------------------------------
+13.1  Design philosophy
+--------------------------------------------------------------------------------
+
+  Goal:               "A modern federal enterprise operations platform used
+                      by government leadership, operational cyber teams,
+                      administrators, and external stakeholders."
+
+                      Trust and accessibility of USWDS, operational
+                      efficiency of Azure Portal and Defender XDR, telemetry
+                      maturity of Datadog, polish of modern enterprise SaaS,
+                      professionalism of a federal mission system.
+
+  Influences:         Microsoft Fluent (cards, depth, motion restraint)
+                      USWDS (accessibility baseline, form patterns,
+                             structure)
+                      IBM Carbon (data table density, type scale,
+                                  information hierarchy)
+                      Azure Portal (left nav, workspace concept,
+                                    operational tone)
+                      Microsoft Defender XDR (executive summary cards,
+                                              status pills, action prompts)
+                      Datadog (telemetry layouts, dashboard density,
+                              filter / search persistence)
+
+  Tone:               Calm. Clean. Structured. Efficient. Professional.
+                      Trustworthy. Government-grade. Enterprise operational.
+
+                      Not flashy. Not startup. Not cyberpunk. No neon. No
+                      gaming UI. No consumer-style decorative motion. No
+                      excessive animation. No decorative-only graphics.
+
+  Adjective target:   modern, highly usable, operationally mature, scalable,
+                      mission-focused, accessible, data-driven, executive-
+                      ready, production-grade.
+
+--------------------------------------------------------------------------------
+13.2  Color palette
+--------------------------------------------------------------------------------
+
+  Primary blue:       #1B3A5B  (deep navy - SHIELD anchor color)
+  Primary blue alt:   #005EA2  (USWDS gov blue - matches v1's chrome)
+  Accent green:       #2E7D32  (good / approved / covered)
+  Accent amber:       #F57C00  (warning / partial / partially-covered)
+  Accent red:         #C62828  (bad / uncovered / urgent)
+  Neutral 50:         #F8FAFC
+  Neutral 100:        #F1F5F9
+  Neutral 200:        #E2E8F0
+  Neutral 300:        #CBD5E1
+  Neutral 600:        #475569
+  Neutral 700:        #334155
+  Neutral 900:        #0F172A
+  Background:         #F8FAFC
+  Surface (card):     #FFFFFF
+  Surface alt:        #F1F5F9
+  Border:             #E2E8F0
+
+  Status colors are ONLY used for status. No decorative color.
+
+--------------------------------------------------------------------------------
+13.3  Typography
+--------------------------------------------------------------------------------
+
+  Family:             Inter or IBM Plex Sans (both self-hosted). Source
+                      Sans Pro from v1 is also acceptable.
+
+  Scale (8px base):
+    Display:          36px / 600
+    H1 (page):        28px / 700
+    H2 (section):     22px / 600
+    H3 (card):        18px / 600
+    Body:             14px / 400, 1.5 line-height
+    Body small:       13px / 400
+    Caption:          12px / 500, slightly tinted
+
+  Numbers in cards:   Tabular-numerals enabled. Larger weight (display
+                      48-64px / 700) for headline KPIs.
+
+--------------------------------------------------------------------------------
+13.4  Spacing system
+--------------------------------------------------------------------------------
+
+  4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 / 96 px. No off-system values.
+  Use Tailwind's default spacing scale (0.25rem increments). Cards have
+  24px internal padding by default; tighter cards (data tables) get 16px.
+
+--------------------------------------------------------------------------------
+13.5  Component patterns (shadcn/ui based)
+--------------------------------------------------------------------------------
+
+  Card:               Soft shadow, 8px border-radius, white surface.
+                      Optional left accent border (3-4px) for important
+                      cards. Header + body + optional footer.
+
+  Status pill:        Inline rounded pill. Six colors:
+                      gray (neutral), blue (informational), green
+                      (good/covered/approved), amber (warning/partial),
+                      red (alert/uncovered/urgent), purple (in-review).
+
+  Number card:        Big number (display weight), descriptor label
+                      below, optional trend arrow + percentage, optional
+                      sparkline.
+
+  Data table:         Sticky header. Sortable columns. Sticky first
+                      column for wide tables. Inline edit with explicit
+                      save (no inline-as-you-type). Column resize
+                      handles. Row selection with checkbox column.
+
+  Navigation:         Left rail (persistent) for authenticated views.
+                      Top bar for public/marketing pages. Nav grouping:
+                      Operational (Queue, Inbox) / Services (Tech Debt,
+                      Zero Trust, CSF, ATT&CK) / System (Audit,
+                      Activity, Settings).
+
+  Toast:              Auto-dismissing corner toast for save confirmations,
+                      action results, low-priority info. Persistent for
+                      errors.
+
+  Modal:              Used sparingly. Confirmation for destructive
+                      actions only. NOT used for forms (use dedicated
+                      pages or slide-over panels).
+
+  Slide-over panel:   Right-side drawer for contextual detail (e.g.
+                      clicking a queue item opens a slide-over with the
+                      client preview).
+
+  Empty state:        Friendly icon + one-paragraph description + clear
+                      primary action button. Never just "(no data)."
+
+--------------------------------------------------------------------------------
+13.6  Accessibility
+--------------------------------------------------------------------------------
+
+  WCAG 2.1 AA mandatory. Specifically:
+    - All interactive elements keyboard navigable with visible focus
+    - Color contrast ratio >= 4.5:1 for body text, >= 3:1 for large
+      text, >= 3:1 for UI components
+    - Form fields all have associated labels (no placeholder-only)
+    - Error messages associated with fields via aria-describedby
+    - Live regions announce async updates (toast notifications)
+    - Skip-to-main-content link on every page
+    - Heading hierarchy strict (h1 -> h2 -> h3 with no skips)
+    - Screen reader pass before any release
+
+  Automated checks in CI: axe-core or Pa11y on every key page.
+
+--------------------------------------------------------------------------------
+13.7  Three experiences in one design language
+--------------------------------------------------------------------------------
+
+The same design system serves three distinct audiences. The visual language
+stays consistent; the layout density, navigation pattern, and content depth
+shift per audience.
+
+  PUBLIC / EXTERNAL EXPERIENCE
+    Style anchors:    USWDS, Microsoft public portals, federal digital
+                      service sites.
+    Purpose:          Build trust, improve accessibility, simplify
+                      workflows, present a professional government /
+                      enterprise experience.
+    UX:               Large readable typography. Simple top navigation.
+                      Guided workflows. Clear primary CTAs. Minimal
+                      cognitive load. Accessible forms. Step-by-step
+                      process flows. Strong information hierarchy. Mobile
+                      responsive.
+    Components:       Hero section, mission statement, service cards,
+                      resource center, event / news sections, contact /
+                      help workflows, search, footer with compliance /
+                      accessibility links.
+    Forbidden here:   Dense telemetry, complex dashboards, excessive
+                      widgets, technical jargon on landing pages.
+    Applies to:       Marketing pages, public signup, public-facing
+                      service descriptions, intake wizard public surface,
+                      help / resource pages.
+
+  OPERATIONAL DASHBOARD EXPERIENCE
+    Style anchors:    Azure Portal, Microsoft Defender XDR, Datadog,
+                      modern SOC dashboards.
+    Purpose:          Support analysts, operators, administrators, and
+                      cyber / security personnel with efficient workflows
+                      and high-density operational data.
+    UX:               Persistent left-side navigation. Modular dashboard
+                      widgets. Telemetry-focused layouts. High information
+                      density. Fast scanning. Real-time status indicators.
+                      Minimal clicks to key actions. Contextual side
+                      panels. Drill-down workflows. Persistent filtering
+                      and search. Dark / light mode support.
+    Components:       Alert queues, incident panels, telemetry charts,
+                      threat indicators, asset visibility tables, system
+                      health widgets, workflow automation panels, timeline
+                      investigations, search and filtering systems.
+    Layout rules:     Clarity over aesthetics. Critical alerts surface
+                      first. Progressive disclosure. Trends and anomalies
+                      visible at a glance. Modular cards. Multi-role
+                      workflows supported.
+    Forbidden here:   Clutter. Over-animation. Excessive whitespace.
+                      Consumer-style layouts. Decorative-only graphics.
+    Applies to:       Admin queue, admin client profile, all admin
+                      service workspaces (Tech Debt, Zero Trust, CSF,
+                      ATT&CK), reviewer surfaces.
+
+  EXECUTIVE LEADERSHIP EXPERIENCE
+    Style anchors:    Executive analytics platforms, modern KPI
+                      dashboards, minimalist enterprise reporting.
+    Purpose:          Provide leadership with strategic visibility, KPIs,
+                      risk summaries, mission status, and drill-down
+                      insights without overwhelming detail.
+    UX:               Minimalist layouts. Larger typography. Fewer
+                      widgets. High-level summaries. Visual clarity.
+                      Strategic insights. Trend-focused reporting. Drill-
+                      down capability into operational data. Decision-
+                      focused presentation.
+    Components:       KPI cards, risk scoring, compliance status, mission
+                      readiness indicators, budget / resource summaries,
+                      trend charts, executive alerts, program status
+                      summaries, heatmaps, drill-down analytics.
+    Layout rules:     Emphasize readability. Prioritize the most
+                      important metrics. Avoid technical overload.
+                      Actionable insights. Spacious, intentional layouts.
+    Applies to:       Client /home dashboard, client service detail
+                      pages, executive findings views, board-ready
+                      exports.
+
+  Cross-audience rule: One design language across all three. Same
+  typography scale, same color palette, same status pill grammar, same
+  card shapes. The audience changes density and depth, not visual
+  identity.
+
+--------------------------------------------------------------------------------
+13.8  Visual restraint and forbidden patterns
+--------------------------------------------------------------------------------
+
+Listed explicitly so the build cannot drift:
+
+  - NO cyberpunk, neon, hacker, matrix, or synthwave aesthetics.
+  - NO gaming UI patterns. No XP bars, no achievement badges, no
+    leaderboards, no mascots.
+  - NO consumer-style hero illustrations as ornament on operational
+    or executive screens.
+  - NO saturated color used decoratively. Saturated colors are
+    reserved for status (success / warning / error / info / in-review).
+  - NO emoji as functional UI affordances.
+  - NO over-animation. No looping motion. No parallax. No bouncing.
+    Transitions are smooth and brief (<= 200ms) or absent.
+  - NO chart clutter. No 3D charts. No drop-shadowed bars. No
+    gratuitous gridlines. Avoid pie charts unless 2-3 segments and
+    clearly labeled.
+  - NO dense telemetry on public / external pages.
+  - NO technical jargon on landing pages or executive views.
+  - NO operationally empty dashboard. Every dashboard surfaces
+    something useful on first paint (a queue count, an upcoming
+    deadline, a recently completed item, an empty state with a clear
+    next action).
+  - NO product copy that says "Claude," "the AI," or names the LLM.
+    Refer to platform analysis features as "automated analysis,"
+    "SHIELD analysis," or "the analysis engine."
+
+================================================================================
+14. WHAT NOT TO REPEAT FROM v1
+================================================================================
+
+These are the v1 mistakes the v2 build must avoid:
+
+  1.  NEVER expose internal slug values to users. No "extraction_review",
+      no "Zero_trust intake", no "ai_extraction". Every enum has a
+      display-label map applied at the API layer or template render
+      layer.
+
+  2.  NEVER render raw JSON in user UI. AI output, lineage data, audit
+      details all render as readable content. <pre>JSON</pre> is
+      forbidden in any user-facing template.
+
+  3.  NEVER expose stack traces to end users. Global exception handler
+      returns generic message + correlation ID. Werkzeug-style debugger
+      is disabled in any environment accessible to end users (CI
+      enforcement: refuse to start if DEBUG=True and bound to non-
+      localhost).
+
+  4.  NEVER ask for the same data twice. User profile (title, phone)
+      lives ON User; the Primary POC FK points to a User. Settings and
+      intake share the same fields.
+
+  5.  NEVER pre-populate a form with a single field's value for every
+      column (the v1 "Acme Co everywhere" bug). Every save handler
+      validates that field assignments come from the matching form key,
+      not from any single object reference.
+
+  6.  NEVER fire a service selection without creating ALL the
+      corresponding project records. If client picks Zero Trust AND
+      ATT&CK, the handler creates both projects (or both ServiceRequest
+      records under the alternative pattern - pick one and stay
+      consistent).
+
+  7.  NEVER skip the admin notification on new client signup. Wire
+      every high-priority event (new signup, intake complete, message
+      from client, failed job) to the notification dispatcher.
+
+  8.  NEVER leave the dashboard operationally empty. Every client home
+      and every admin queue must answer "what should I do next?" without
+      requiring drill-down.
+
+  9.  NEVER use the native file input for document upload. Always
+      drag-and-drop zone with visual feedback, file list, per-file
+      progress, file type hints.
+
+ 10.  NEVER design questionnaires as a single massive scroll. Section
+      tabs, progress bar, auto-save, resume capability are mandatory.
+
+ 11.  NEVER leave a queue or list without timestamps. "Waiting since"
+      is operationally critical.
+
+ 12.  NEVER let the notification bell point to / (it must reach a
+      working notifications page or be hidden until one exists).
+
+
+================================================================================
+15. BUILD PHASES
+================================================================================
+
+Six phases. Each independently mergeable and demoable.
+
+--------------------------------------------------------------------------------
+Phase 1 - Foundation (Week 1-3)
+--------------------------------------------------------------------------------
+
+  - Repo scaffolding: Next.js frontend + FastAPI backend + Postgres +
+    Redis + S3 dev containers (docker compose).
+  - Auth: Keycloak deployed, OIDC connector configured, three-role
+    mapping established.
+  - Data model: every table in Section 11.
+  - Migration framework: Alembic for backend.
+  - CI: lint, type-check, automated accessibility check on a sample
+    page.
+  - Logging and error handling: global exception handler, structured
+    JSON logs, no stack traces to user.
+  - Audit log infrastructure: append-only DB trigger; spine.audit
+    helper that every state-changing route uses.
+  - Design system: tokens.css, base components (Card, StatusPill,
+    NumberCard, DataTable, Toast, Modal, SlideOver, EmptyState) - all
+    shadcn-derived, all self-hosted.
+  - Login + signup screens (preserve current visual style; fix the
+    bottom-border-only fields, polygonal background, password
+    strength meter, etc., per panel review).
+
+Acceptance:
+  [ ] User can self-register, verify email, enroll MFA, sign in.
+  [ ] Three roles distinguishable (admin / reviewer / client).
+  [ ] Audit log records every login.
+  [ ] No stack trace surfaces to user under any forced error.
+
+--------------------------------------------------------------------------------
+Phase 2 - Intake (Week 4-5)
+--------------------------------------------------------------------------------
+
+  - Intake wizard six-step flow with numbered progress.
+  - Pre-fill from authenticated session everywhere possible (email,
+    display name).
+  - Service selection drives downstream pages.
+  - Section-tabbed questionnaire renderer (shared component for CSF,
+    ZT, future frameworks).
+  - Auto-save on blur with visible "saved 2 seconds ago" indicator.
+  - Document upload with drag-drop, redaction disclosure.
+  - Admin notification fires on intake submit.
+  - All copy in plain English per the language glossary.
+
+Acceptance:
+  [ ] A new client can complete intake end-to-end without seeing any
+      internal vocabulary, raw JSON, or stack trace.
+  [ ] Submitting intake reflects correctly in the admin queue with
+      the new-lead timestamp.
+  [ ] All intake data round-trips correctly: client enters X, admin
+      reads X (no v1 data-binding leak).
+
+--------------------------------------------------------------------------------
+Phase 3 - Tech Debt service end-to-end (Week 6-7)
+--------------------------------------------------------------------------------
+
+  - Capability list ingest (Excel upload + AI extraction with redaction).
+  - Editable extraction table (not JSON textarea).
+  - Overlap analysis dashboard rendering.
+  - Final consolidation plan workflow.
+  - PDF + XLSX exporters for the deliverable.
+  - Client view of the released deliverable.
+
+Acceptance:
+  [ ] Admin can take a client inventory file from upload through to
+      released PDF deliverable without leaving SHIELD.
+  [ ] Client sees the deliverable when released, and only then.
+
+--------------------------------------------------------------------------------
+Phase 4 - CSF service end-to-end (Week 8-12)
+--------------------------------------------------------------------------------
+
+  - Implement Step 1-10 of the Playbook in app.
+  - Tier Working Profiles (HIGH/MOD/LOW) with 5-dimension scoring.
+  - Enterprise Profile with weighted-floor roll-up rules.
+  - Gap Analysis with P1/P2/P3 prioritization.
+  - Action Plan view.
+  - Import / export the existing reference XLSX shapes.
+  - Reference Data side panel (per subcategory IG metric context).
+  - Reviewer audit walk surface.
+
+Acceptance:
+  [ ] Admin can run a full CSF assessment in-app, end-to-end, against
+      a client with HIGH + MODERATE + LOW systems.
+  [ ] Roll-up math matches the methodology document for every test
+      case.
+  [ ] Enterprise Profile XLSX export matches the Step 3.2.1 shape
+      byte-equivalent.
+
+--------------------------------------------------------------------------------
+Phase 5 - Zero Trust + ATT&CK services (Week 13-15)
+--------------------------------------------------------------------------------
+
+  - CISA ZTMM and DoD ZT questionnaire implementations.
+  - Scoring per pillar with current vs. target.
+  - Roadmap timeline view.
+  - MITRE ATT&CK coverage workspace.
+  - Cross-service value-loop view on /home.
+
+Acceptance:
+  [ ] Both ZT frameworks fully assessed end-to-end.
+  [ ] ATT&CK coverage report generated from approved capability list.
+  [ ] Client home shows the value-loop synthesis when multiple
+      services are active.
+
+--------------------------------------------------------------------------------
+Phase 6 - Polish and harden (Week 16-17)
+--------------------------------------------------------------------------------
+
+  - Performance pass (lazy-load, code-split, image opt).
+  - Accessibility audit (third-party preferred).
+  - Security audit (third-party).
+  - Penetration test.
+  - Documentation: admin guide, client guide, API docs.
+  - FedRAMP package preparation (SSP, SAR, POA&M templates).
+
+Acceptance:
+  [ ] WCAG 2.1 AA verified externally.
+  [ ] No HIGH or CRITICAL findings from security audit.
+  [ ] FedRAMP package draft ready for sponsor review.
+
+
+================================================================================
+15.5 DELIVERABLE FILENAME CONVENTION (applies to every download link)
+================================================================================
+
+Every file the platform makes available for download (PDF report,
+XLSX export, evidence package, audit-walk export, etc.) MUST follow
+this filename convention:
+
+    {Company_Name}_{Service_Name}{MMDDYY}.{extension}
+
+Where:
+    {Company_Name}    The client organization's legal name,
+                      slugified (see below).
+    {Service_Name}    The service the deliverable is from,
+                      slugified.
+    {MMDDYY}          The deployment server's current date in
+                      MMDDYY (month-day-year, two digits each).
+                      Example: 051826 for May 18, 2026.
+    {extension}       The file extension: pdf, xlsx, docx, zip, csv.
+
+There is NO underscore between the Service_Name and the date - the
+date concatenates directly to the service name. This matches the
+example Eugene provided: Company_Name_Service_Name051826.
+
+Slugification rules (apply identically to Company_Name and Service_Name):
+    1.  Trim leading and trailing whitespace.
+    2.  Replace any sequence of whitespace characters with a single
+        underscore.
+    3.  Strip any character that is not [A-Z], [a-z], [0-9], or
+        underscore. (So "Acme, Inc." becomes "Acme_Inc", not
+        "Acme,_Inc".)
+    4.  Collapse runs of underscores to a single underscore.
+    5.  Trim leading and trailing underscores.
+    6.  Preserve case as entered (do NOT lowercase).
+    7.  If the result is empty after slugification (edge case),
+        substitute "Unknown".
+
+Service name slugs (the canonical strings to use):
+    Tech Debt Review                 ->   Tech_Debt_Review
+    Zero Trust Assessment (CISA)     ->   Zero_Trust_Assessment_CISA
+    Zero Trust Assessment (DoD)      ->   Zero_Trust_Assessment_DoD
+    NIST CSF 2.0 Assessment          ->   NIST_CSF_2_0_Assessment
+    MITRE ATT&CK Coverage            ->   MITRE_ATTACK_Coverage
+    Consultation Request             ->   Consultation_Request
+    Multi-Service Engagement Summary ->   Engagement_Summary
+
+Examples (assuming a deployment server date of 2026-05-18):
+    Nexus Federal Solutions Inc.    Tech Debt Review (PDF)
+        -> Nexus_Federal_Solutions_Inc_Tech_Debt_Review051826.pdf
+
+    Atlas Defense Solutions         NIST CSF 2.0 Assessment (XLSX)
+        -> Atlas_Defense_Solutions_NIST_CSF_2_0_Assessment051826.xlsx
+
+    Federal Demo Agency             MITRE ATT&CK Coverage (PDF)
+        -> Federal_Demo_Agency_MITRE_ATTACK_Coverage051826.pdf
+
+    Federal Demo Agency             Zero Trust Assessment - CISA (PDF)
+        -> Federal_Demo_Agency_Zero_Trust_Assessment_CISA051826.pdf
+
+Edge case rules:
+    a) Versioning: if a deliverable is re-released on the same day,
+       append "_v2", "_v3", etc. BEFORE the date:
+            Nexus_Federal_Solutions_Inc_Tech_Debt_Review_v2_051826.pdf
+       Wait - re-reading Eugene's spec: the format is exactly
+       Company_Name_Service_Name051826 with the date glued to the
+       service name. To preserve that, put the version AFTER the date
+       but BEFORE the extension:
+            Nexus_Federal_Solutions_Inc_Tech_Debt_Review051826_v2.pdf
+
+    b) Bundles: a multi-service deliverable bundle (a single ZIP
+       containing multiple service deliverables) uses
+       "Engagement_Summary" as the service slug:
+            Nexus_Federal_Solutions_Inc_Engagement_Summary051826.zip
+
+    c) Working artifacts (admin-only intermediate files, not client-
+       facing): prefix with "WORKING_" before the company name:
+            WORKING_Nexus_Federal_Solutions_Inc_Tech_Debt_Review051826.xlsx
+       These are tagged in the UI as internal-only and never surface
+       on the client's Documents page.
+
+    d) Time zone: the date is computed from the deployment server's
+       local time at the moment the download URL is requested. NOT
+       the time the underlying deliverable was finalized. This keeps
+       the filename predictable from the user's perspective ("the file
+       I download today has today's date in the name") even if the
+       underlying deliverable was finalized last week.
+
+    e) Filename length cap: if Company_Name + Service_Name exceeds
+       200 characters total (rare but possible for long government
+       agency names), truncate Company_Name to 150 characters and
+       Service_Name to 50 characters before concatenation. Always
+       preserve the full date and extension.
+
+Implementation:
+    - Centralize the filename-build function in one module (e.g.
+      shieldv2_api/services/filename.py). Every download route calls
+      this single function. NEVER inline filename construction in
+      route handlers.
+    - Unit test the slugifier against the company-name test cases in
+      this folder's mock-data set: "Nexus Federal Solutions Inc.",
+      "Atlas Defense Solutions, Inc.", "Federal Demo Agency", plus
+      pathological cases like "Acme & Co., LLC", "U.S. Department of
+      Anything", and "ABC123Org".
+
+
+================================================================================
+16. FILE / FOLDER LAYOUT (for the developer)
+================================================================================
+
+  /shieldv2
+    /apps
+      /web              Next.js app (frontend)
+        /app            App Router
+          /(public)     Public landing, sign-in, sign-up
+          /(client)     Client authenticated routes
+          /(admin)      Admin authenticated routes
+          /(reviewer)   Reviewer authenticated routes
+        /components     Shared UI components
+        /lib            Client-side utilities
+        /styles         Tailwind config, tokens
+      /api              FastAPI backend
+        /shieldv2_api
+          /routers      One per resource (clients, services, csf,
+                        zt, attack, etc.)
+          /models       SQLAlchemy models
+          /schemas      Pydantic schemas
+          /services     Business logic
+          /ai           AI client, redactor, prompts
+          /workers      Celery tasks
+          /spine        Audit, access control, labels
+    /packages
+      /design-system    Shared tokens, copy strings, label maps
+      /csf-data         Reference data for 108 subcategories,
+                        IG metrics, alignment - imported from existing
+                        Reference Data tab
+      /attack-data      Vendored MITRE ATT&CK catalog
+    /infra
+      /docker           Dev compose
+      /terraform        IaC for FedRAMP deployments
+      /keycloak         Realm import
+    /docs
+      /developer        This spec lives here
+      /admin            Admin user guide
+      /client           Client user guide
+
+
+================================================================================
+17. OPEN QUESTIONS / DECISIONS FOR EUGENE
+================================================================================
+
+These are second-tier decisions where the recommended option is listed
+first. If any need to flip, talk to Eugene before coding.
+
+Q1. Marketing landing page at /:
+    Recommended: simple but polished one-pager describing SHIELD and
+    Kentro, with sign-in / sign-up CTAs.
+    Alternative: redirect / to /sign-in.
+
+Q2. Self-registration vs. invite-only:
+    Recommended: self-registration allowed (preserves the v1 process
+    Eugene wants to keep). First user to register becomes the
+    deployment's Primary POC. A Kentro consultant verifies and attaches.
+    Alternative: invite-only - the Kentro consultant pre-creates the
+    first client user.
+
+Q3. Reviewer assignment model:
+    Recommended: any admin in the deployment can attach a reviewer.
+    Reviewer assignments are deployment-wide (a reviewer sees all
+    services in this deployment, not service-by-service).
+    Alternative: per-service reviewer assignment.
+
+Q4. Deliverable approval flow:
+    Recommended: admin marks deliverable "final"; reviewer (if any)
+    approves; admin releases to client.
+    Alternative: admin releases directly to client (no reviewer in the
+    flow). Many engagements won't have a reviewer.
+
+Q5. ATT&CK technique scope:
+    Recommended: out-of-the-box, score against a curated 33-40 most-
+    relevant techniques. Admin can expand to full matrix per
+    engagement.
+    Alternative: always full matrix (600+ items - heavy questionnaire).
+
+Q6. AI provider for v1:
+    Eugene's decision: developer's choice. Risk of non-FedRAMP egress
+    explicitly accepted. PII redaction (Section 12) is the primary
+    control.
+    Recommended for v1: Anthropic Claude API (commercial). Fastest
+    path; best output quality for the kinds of analytic prompts the
+    platform will use; cleanest API for the redacted-payload pattern.
+    Alternative for v1: OpenAI API or Azure OpenAI.
+    Future tightening: configurable to FedRAMP-authorized provider
+    (Azure OpenAI Gov, AWS Bedrock-with-Claude in GovCloud) via env
+    variable when the deployment needs to assert FedRAMP boundary
+    posture. No application changes required.
+
+Q7. Languages and locale:
+    Recommended: English only at v1.0. Build the platform i18n-aware
+    (no hardcoded strings; locale-keyed message files) but ship with
+    English locale only. Add languages in v1.x if needed.
+
+
+================================================================================
+18. ACCEPTANCE CRITERIA (the platform is done when...)
+================================================================================
+
+Client experience:
+  [ ] A new client can sign up, complete intake (any combination
+      of the four services, including the "I'm not sure" path), and
+      reach a meaningful home dashboard in under 30 minutes.
+      (Email verification and MFA enrollment are feature-flagged and
+      DEFERRED for v1 per Section 1 Locked Decisions.)
+  [ ] Every page the client sees uses plain English. No raw enum
+      values. No spec citations. No internal slug labels.
+  [ ] Every analytic output the client sees renders as a dashboard
+      or formatted content, not a JSON dump.
+  [ ] Auto-save works on every form field in every wizard / questionnaire.
+  [ ] Notifications fire reliably and link to the right page.
+
+Admin experience:
+  [ ] The admin queue surfaces all new clients, all waiting actions,
+      and all failed jobs without a refresh.
+  [ ] The CSF workspace implements all 10 steps of the Playbook
+      faithfully.
+  [ ] The Zero Trust workspaces (CISA and DoD) implement the
+      questionnaires and the scoring methodology faithfully.
+  [ ] The Tech Debt workspace renders the capability list as an
+      editable table and the overlap analysis as a real dashboard.
+  [ ] The ATT&CK workspace produces the Coverage Report deliverable.
+  [ ] Every deliverable is exportable as PDF and XLSX.
+
+Reviewer experience:
+  [ ] The reviewer can walk the audit chain on every subcategory or
+      pillar and record review notes.
+  [ ] The reviewer can approve or decline a final deliverable.
+
+Architecture:
+  [ ] Single-tenant deployment with deployment-level data isolation.
+  [ ] OIDC federation works against an arbitrary IdP.
+  [ ] PII redaction is wired to every LLM call. Audit log proves
+      it ran.
+  [ ] WCAG 2.1 AA passes external audit.
+  [ ] No HIGH or CRITICAL security audit findings.
+
+Reliability:
+  [ ] No stack trace ever surfaces to the end user under any forced
+      error.
+  [ ] All async jobs have status, retries, and failure notifications.
+  [ ] All state changes write an audit row.
+
+
+================================================================================
+END OF SHIELDv2 MASTER SPECIFICATION
+================================================================================

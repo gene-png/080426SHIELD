@@ -1,0 +1,48 @@
+# Dependency updates (Work Order F — harden and ship).
+#
+# Policy (D-018): major-version upgrades of npm dependencies are sprint-planned,
+# never auto-PR'd — the framework stack moves as one deliberate, e2e-netted
+# upgrade bundle. Sprint 4 EXECUTED that bundle (Next 15, React 19, Tailwind 4,
+# ESLint 9 flat config, Node 22); the D-018 suppression posture is UNCHANGED —
+# the next framework majors (Next 16, and ESLint 10 once eslint-plugin-react
+# ships support) stay sprint-planned, not auto-PR'd. Dependabot therefore only
+# files minor/patch npm PRs, grouped weekly. Security advisories that would
+# require a major are still visible via the non-blocking `pnpm audit` /
+# `pip-audit` CI steps.
+version: 2
+updates:
+  # Python API dependencies.
+  - package-ecosystem: "pip"
+    directory: "/apps/api"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "python"]
+    groups:
+      pip-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # JavaScript/TypeScript (pnpm workspace at the repo root).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "javascript"]
+    ignore:
+      # Majors are sprint-planned (D-018); minor/patch only via Dependabot.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions used by the CI workflow.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "ci"]
+    groups:
+      github-actions:
+        patterns: ["*"]

@@ -1,0 +1,36 @@
+# Root build-context ignore for the web production image (apps/web/Dockerfile,
+# built from the repo root). The Dockerfile runs `pnpm install --frozen-lockfile`
+# inside the image, so the host's node_modules must NOT be copied — pnpm's
+# symlink farm both bloats the context and makes BuildKit reject dangling
+# symlinks (e.g. packages/*/node_modules/@types/*). Keep this list tight:
+# everything the build needs (lockfile, package.json, apps/web + packages
+# source) is preserved.
+
+# Dependencies (reinstalled inside the image)
+**/node_modules
+
+# Build outputs / caches
+**/.next
+**/dist
+**/.turbo
+**/.ruff_cache
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+apps/web/coverage
+
+# VCS + local env + editor
+.git
+.gitignore
+**/.env
+**/.env.*
+.vscode
+.idea
+
+# e2e artifacts and reports (not needed by the web build)
+e2e/artifacts
+e2e/test-results
+e2e/playwright-report
+
+# Docs/logs that don't affect the build
+*.log

@@ -1,0 +1,1632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SHIELD by Kentro - v2.0 Design Mockup</title>
+<style>
+  :root {
+    --navy: #1B3A5B;
+    --gov-blue: #005EA2;
+    --green: #2E7D32;
+    --amber: #F57C00;
+    --red: #C62828;
+    --purple: #6F42C1;
+    --n50: #F8FAFC;
+    --n100: #F1F5F9;
+    --n200: #E2E8F0;
+    --n300: #CBD5E1;
+    --n500: #64748B;
+    --n600: #475569;
+    --n700: #334155;
+    --n900: #0F172A;
+    --surface: #FFFFFF;
+    --bg: #F8FAFC;
+    --border: #E2E8F0;
+    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 2px 4px rgba(15, 23, 42, 0.03);
+    --shadow-hover: 0 4px 12px rgba(15, 23, 42, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Source Sans Pro", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--n900);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  h1, h2, h3, h4 { margin: 0; font-weight: 600; }
+  h1 { font-size: 28px; font-weight: 700; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 18px; }
+  h4 { font-size: 16px; }
+  a { color: var(--gov-blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  /* ---------- mockup page nav ---------- */
+  .mockup-nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    background: var(--n900); color: white;
+    padding: 12px 24px; font-size: 13px;
+    display: flex; align-items: center; gap: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  }
+  .mockup-nav strong { color: white; }
+  .mockup-nav a { color: #cbd5e1; }
+  .mockup-nav a:hover { color: white; }
+  .mockup-section {
+    padding-top: 64px;
+    margin-bottom: 80px;
+  }
+  .mockup-section-label {
+    background: var(--navy); color: white;
+    padding: 14px 24px;
+    margin: 0 -24px;
+    font-size: 14px; font-weight: 600;
+    letter-spacing: 0.5px; text-transform: uppercase;
+    border-left: 4px solid var(--gov-blue);
+  }
+  .mockup-frame {
+    margin: 16px 24px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: var(--shadow-card);
+  }
+  .mockup-caption {
+    background: white;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--n600);
+  }
+  .mockup-caption strong { color: var(--n900); }
+  /* ---------- generic chrome ---------- */
+  .app-shell { display: flex; min-height: 720px; background: white; }
+  .left-rail {
+    width: 240px;
+    background: var(--n900);
+    color: #cbd5e1;
+    flex-shrink: 0;
+    padding: 0;
+  }
+  .left-rail-logo {
+    padding: 20px 24px;
+    border-bottom: 1px solid #1e293b;
+  }
+  .left-rail-logo .brand {
+    font-size: 20px; font-weight: 700; color: white;
+    letter-spacing: 0.5px;
+  }
+  .left-rail-logo .sub {
+    font-size: 11px; color: #94a3b8;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .nav-group { padding: 16px 0; }
+  .nav-group-label {
+    padding: 4px 24px;
+    font-size: 10px; font-weight: 700;
+    color: #64748b; letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 24px;
+    color: #cbd5e1; font-size: 14px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+  }
+  .nav-item:hover { background: #1e293b; color: white; }
+  .nav-item.active {
+    background: #1e293b;
+    color: white;
+    border-left-color: var(--gov-blue);
+    font-weight: 500;
+  }
+  .nav-item .ic { width: 18px; height: 18px; opacity: 0.8; }
+  .right-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .top-bar {
+    height: 56px;
+    background: white;
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .top-bar .crumbs { color: var(--n500); font-size: 13px; }
+  .top-bar .crumbs strong { color: var(--n900); }
+  .top-bar .util {
+    display: flex; align-items: center; gap: 16px;
+    color: var(--n600);
+  }
+  .top-bar .util .bell {
+    width: 36px; height: 36px;
+    border-radius: 18px; background: var(--n100);
+    display: flex; align-items: center; justify-content: center;
+    position: relative; cursor: pointer;
+  }
+  .top-bar .util .bell .dot {
+    position: absolute; top: 8px; right: 8px;
+    width: 8px; height: 8px; border-radius: 4px;
+    background: var(--red); border: 2px solid white;
+  }
+  .top-bar .util .avatar {
+    width: 36px; height: 36px; border-radius: 18px;
+    background: var(--gov-blue); color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 14px;
+  }
+  .content {
+    flex: 1; overflow: auto; padding: 24px;
+    background: var(--bg);
+  }
+  .page-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .page-header .meta {
+    color: var(--n500); font-size: 13px;
+    margin-top: 4px;
+  }
+  /* ---------- shared components ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    box-shadow: var(--shadow-card);
+  }
+  .card-accent {
+    border-left: 4px solid var(--gov-blue);
+  }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .card-header h3 { margin: 0; }
+  .pill {
+    display: inline-flex; align-items: center;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px; font-weight: 600;
+    line-height: 1.4;
+  }
+  .pill-gray { background: var(--n100); color: var(--n700); }
+  .pill-blue { background: #DBEAFE; color: #1E40AF; }
+  .pill-green { background: #DCFCE7; color: #166534; }
+  .pill-amber { background: #FEF3C7; color: #92400E; }
+  .pill-red { background: #FEE2E2; color: #991B1B; }
+  .pill-purple { background: #EDE9FE; color: #5B21B6; }
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .number-card .num {
+    font-size: 48px; font-weight: 700;
+    line-height: 1; letter-spacing: -1px;
+    font-variant-numeric: tabular-nums;
+  }
+  .number-card .num-sub {
+    font-size: 13px; color: var(--n500);
+    margin-top: 6px;
+  }
+  .number-card.good .num { color: var(--green); }
+  .number-card.warn .num { color: var(--amber); }
+  .number-card.bad .num { color: var(--red); }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 12px; font-size: 12px; font-weight: 600; color: var(--n600); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+  td { padding: 12px; border-bottom: 1px solid var(--n100); font-size: 14px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #FAFCFE; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 14px; font-weight: 500;
+    border: 1px solid transparent;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn-primary { background: var(--gov-blue); color: white; border-color: var(--gov-blue); }
+  .btn-primary:hover { background: #004a85; text-decoration: none; }
+  .btn-secondary { background: white; color: var(--gov-blue); border-color: var(--gov-blue); }
+  .btn-ghost { background: transparent; color: var(--n600); border-color: transparent; }
+  .btn-ghost:hover { background: var(--n100); }
+  .input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--n300);
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+    font-family: inherit;
+  }
+  .input:focus {
+    outline: 2px solid var(--gov-blue);
+    outline-offset: 0;
+    border-color: var(--gov-blue);
+  }
+  .label {
+    display: block;
+    font-size: 13px; font-weight: 500;
+    color: var(--n700);
+    margin-bottom: 6px;
+  }
+  .label .req { color: var(--red); }
+  .helper { font-size: 12px; color: var(--n500); margin-top: 4px; }
+  .progress {
+    height: 4px; background: var(--n100); border-radius: 2px;
+    overflow: hidden; margin: 12px 0;
+  }
+  .progress-bar { height: 100%; background: var(--gov-blue); border-radius: 2px; }
+  /* ---------- login ---------- */
+  .login-stage {
+    background: linear-gradient(135deg, #0F172A 0%, #1B3A5B 100%);
+    min-height: 720px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 48px;
+  }
+  .login-card {
+    background: white;
+    border-radius: 12px;
+    padding: 48px;
+    width: 100%; max-width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+  .login-brand {
+    text-align: center; margin-bottom: 32px;
+  }
+  .login-brand .mark {
+    font-size: 28px; font-weight: 700; letter-spacing: 1px;
+    color: var(--navy);
+  }
+  .login-brand .by {
+    font-size: 12px; color: var(--n500);
+    letter-spacing: 2px; text-transform: uppercase;
+    margin-top: 4px;
+  }
+  .login-form { display: flex; flex-direction: column; gap: 16px; }
+  .login-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+  .login-footer {
+    text-align: center;
+    margin-top: 24px;
+    font-size: 13px;
+    color: var(--n500);
+  }
+  /* ---------- intake wizard ---------- */
+  .wizard-stage {
+    background: var(--bg);
+    min-height: 720px;
+    padding: 48px;
+    display: flex; align-items: flex-start; justify-content: center;
+  }
+  .wizard-card {
+    background: white;
+    border-radius: 12px;
+    padding: 48px;
+    width: 100%; max-width: 720px;
+    box-shadow: var(--shadow-card);
+    border-left: 4px solid var(--gov-blue);
+  }
+  .wizard-header {
+    margin-bottom: 28px;
+  }
+  .wizard-step {
+    font-size: 11px; font-weight: 700;
+    color: var(--gov-blue); letter-spacing: 2px; text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .wizard-progress {
+    display: flex; gap: 6px;
+    margin-top: 16px;
+  }
+  .wizard-progress-seg {
+    flex: 1; height: 4px;
+    background: var(--n200); border-radius: 2px;
+  }
+  .wizard-progress-seg.active { background: var(--gov-blue); }
+  .wizard-progress-seg.done { background: var(--green); }
+  .service-card {
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex; align-items: flex-start; gap: 16px;
+  }
+  .service-card:hover {
+    border-color: var(--gov-blue);
+    box-shadow: var(--shadow-hover);
+  }
+  .service-card.selected {
+    border-color: var(--gov-blue);
+    background: #F0F7FF;
+  }
+  .service-card .check {
+    width: 24px; height: 24px; border-radius: 4px;
+    border: 2px solid var(--n300);
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: white;
+  }
+  .service-card.selected .check {
+    background: var(--gov-blue);
+    border-color: var(--gov-blue);
+    color: white;
+  }
+  .service-card h3 { margin-bottom: 4px; }
+  .service-card p { margin: 0; color: var(--n600); font-size: 13px; }
+  /* ---------- dashboard ---------- */
+  .hero-card {
+    background: linear-gradient(135deg, var(--gov-blue) 0%, var(--navy) 100%);
+    color: white;
+    border-radius: 8px;
+    padding: 24px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .hero-card h2 { color: white; margin-bottom: 4px; }
+  .hero-card p { margin: 0; color: rgba(255,255,255,0.85); font-size: 14px; }
+  .hero-card .btn-primary {
+    background: white; color: var(--gov-blue);
+    border-color: white;
+  }
+  .service-status-card {
+    display: flex; flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: var(--shadow-card);
+    transition: all 0.15s ease;
+    cursor: pointer;
+  }
+  .service-status-card:hover {
+    box-shadow: var(--shadow-hover);
+    border-color: var(--gov-blue);
+  }
+  .service-status-card .top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .service-status-card h4 { margin: 0; font-size: 15px; }
+  .service-status-card .big-num {
+    font-size: 28px; font-weight: 700; color: var(--navy);
+    font-variant-numeric: tabular-nums; line-height: 1;
+    margin: 8px 0;
+  }
+  .service-status-card .one-liner {
+    color: var(--n600); font-size: 13px;
+    margin-bottom: 16px;
+  }
+  .service-status-card .action {
+    color: var(--gov-blue); font-size: 13px; font-weight: 500;
+    margin-top: auto;
+  }
+  /* ---------- queue ---------- */
+  .queue-section { margin-bottom: 28px; }
+  .queue-section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .queue-section-header h3 { margin: 0; }
+  .queue-section-header .count {
+    background: var(--n100); color: var(--n700);
+    padding: 2px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 600;
+    margin-left: 8px;
+  }
+  .queue-row {
+    display: grid; grid-template-columns: 2fr 2fr 1.5fr 1.5fr auto;
+    gap: 20px;
+    padding: 16px 20px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    align-items: center;
+    transition: all 0.1s ease;
+  }
+  .queue-row:hover {
+    border-color: var(--gov-blue);
+    box-shadow: var(--shadow-card);
+  }
+  .queue-row .client-name { font-weight: 600; }
+  .queue-row .client-sub { font-size: 13px; color: var(--n500); margin-top: 2px; }
+  .queue-row .meta { font-size: 13px; color: var(--n600); }
+  /* ---------- questionnaire ---------- */
+  .q-shell {
+    display: flex; min-height: 600px;
+    background: white;
+  }
+  .q-side {
+    width: 260px;
+    background: var(--n50);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+  }
+  .q-side h4 {
+    padding: 0 24px 12px;
+    color: var(--n600);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .q-side-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 24px;
+    font-size: 14px;
+    color: var(--n700);
+    cursor: pointer;
+    border-left: 3px solid transparent;
+  }
+  .q-side-item:hover { background: var(--n100); }
+  .q-side-item.active {
+    background: white;
+    border-left-color: var(--gov-blue);
+    color: var(--n900);
+    font-weight: 500;
+  }
+  .q-side-item.done { color: var(--n500); }
+  .q-side-item.done::after {
+    content: "✓"; color: var(--green); margin-left: auto; font-weight: 600;
+  }
+  .q-side-item.active::after {
+    content: "•"; color: var(--gov-blue); margin-left: auto; font-size: 18px;
+  }
+  .q-body {
+    flex: 1; padding: 32px;
+    overflow: auto;
+  }
+  .q-body .section-title { margin-bottom: 24px; }
+  .q-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .q-card .stem { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 6px; }
+  .q-card .cues-toggle {
+    color: var(--gov-blue); font-size: 13px; cursor: pointer;
+    margin-bottom: 16px; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .q-card .panels {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin-top: 12px;
+  }
+  .q-card .panel {
+    background: var(--n50);
+    border-radius: 6px; padding: 16px;
+  }
+  .q-card .panel .panel-h {
+    font-size: 12px; font-weight: 700;
+    color: var(--n600); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 10px;
+  }
+  .q-card .panel select.input, .q-card .panel textarea.input {
+    margin-bottom: 8px;
+  }
+  .q-card .panel textarea.input {
+    min-height: 60px; resize: vertical;
+  }
+  .q-card .footer-row {
+    display: flex; align-items: center; gap: 16px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--n100);
+    font-size: 13px;
+    color: var(--n600);
+  }
+  .q-card .footer-row .savedind { color: var(--green); }
+  /* ---------- chips ---------- */
+  .chip {
+    display: inline-flex; padding: 2px 8px;
+    background: var(--n100); color: var(--n700);
+    border-radius: 4px; font-size: 11px; font-weight: 500;
+    margin-right: 4px;
+  }
+  /* ---------- findings dashboard ---------- */
+  .heat-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+  }
+  .heat-cell {
+    aspect-ratio: 1;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600;
+    color: white;
+  }
+  .heat-cell.l1 { background: #FCA5A5; }
+  .heat-cell.l2 { background: #FCD34D; color: #78350F; }
+  .heat-cell.l3 { background: #86EFAC; color: #14532D; }
+  .heat-cell.l4 { background: #4ADE80; color: white; }
+  .heat-cell.l5 { background: var(--green); }
+  /* ---------- footer ---------- */
+  .doc-foot {
+    background: var(--n900);
+    color: #94a3b8;
+    padding: 32px 24px;
+    text-align: center;
+    font-size: 13px;
+  }
+  .doc-foot strong { color: white; }
+</style>
+</head>
+<body>
+
+<nav class="mockup-nav">
+  <strong>SHIELD by Kentro v2.0 Mockup</strong>
+  <a href="#login">Login</a>
+  <a href="#signup">Sign up</a>
+  <a href="#intake">Intake wizard</a>
+  <a href="#dashboard">Client dashboard</a>
+  <a href="#service">Service detail</a>
+  <a href="#questionnaire">Questionnaire</a>
+  <a href="#admin-queue">Admin queue</a>
+  <a href="#admin-csf">Admin CSF</a>
+  <a href="#findings">Findings dashboard</a>
+</nav>
+
+<!-- ============================================================ -->
+<!-- 1. LOGIN -->
+<!-- ============================================================ -->
+
+<section id="login" class="mockup-section">
+  <div class="mockup-section-label">1. Login Screen</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Login</strong> - Preserves the visual language Eugene wants to keep from v1; cleaner background gradient
+      (navy depth, no polygonal pattern), proper accessible form fields with full borders, password strength meter.
+    </div>
+    <div class="login-stage">
+      <div class="login-card">
+        <div class="login-brand">
+          <div class="mark">SHIELD</div>
+          <div class="by">by Kentro</div>
+        </div>
+        <form class="login-form" onsubmit="event.preventDefault()">
+          <div>
+            <label class="label" for="email">Email address</label>
+            <input class="input" id="email" type="email" placeholder="you@yourorg.gov">
+          </div>
+          <div>
+            <label class="label" for="pw">Password</label>
+            <input class="input" id="pw" type="password" placeholder="••••••••">
+            <div class="helper">Minimum 12 characters. Mix of letters, numbers, symbols.</div>
+          </div>
+          <div class="login-row">
+            <label><input type="checkbox"> Remember me</label>
+            <a href="#">Forgot password?</a>
+          </div>
+          <button class="btn btn-primary" style="justify-content: center; padding: 12px;">Sign in</button>
+        </form>
+        <div class="login-footer">
+          New here? <a href="#signup">Create an account</a>
+          <div style="margin-top: 12px;">
+            <a href="#">Sign in with your organization (SSO)</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 2. SIGN-UP WIZARD - STEP 1 -->
+<!-- ============================================================ -->
+
+<section id="signup" class="mockup-section">
+  <div class="mockup-section-label">2. Sign-up wizard - account creation</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Sign up</strong> - v1 single-screen registration (email + password only). MFA and email
+      verification are deferred and re-enable via feature flag in a later release - the flow is designed
+      to expand back to a 3-step wizard when those are turned on. After submit, the user goes straight
+      to the intake wizard.
+    </div>
+    <div class="wizard-stage">
+      <div class="wizard-card">
+        <div class="wizard-header">
+          <div class="wizard-step">Create your account</div>
+          <h1>Tell us who you are</h1>
+          <p style="color: var(--n600); margin-top: 8px;">We'll set you up in one screen. No email verification or extra security setup required for now.</p>
+        </div>
+        <form onsubmit="event.preventDefault()">
+          <div style="margin-bottom: 16px;">
+            <label class="label" for="su-name">Your name <span class="req">*</span></label>
+            <input class="input" id="su-name" type="text" placeholder="John Doe">
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label class="label" for="su-email">Work email <span class="req">*</span></label>
+            <input class="input" id="su-email" type="email" placeholder="john.doe@youragency.gov">
+            <div class="helper">We'll send a verification link here. This becomes your sign-in.</div>
+          </div>
+          <div style="margin-bottom: 24px;">
+            <label class="label" for="su-pw">Choose a password <span class="req">*</span></label>
+            <input class="input" id="su-pw" type="password">
+            <div class="progress" style="margin: 8px 0;">
+              <div class="progress-bar" style="width: 65%; background: var(--amber);"></div>
+            </div>
+            <div class="helper">Good. Add a number or symbol to make it strong.</div>
+          </div>
+          <div style="margin-bottom: 24px;">
+            <label style="display: flex; gap: 8px; font-size: 13px; color: var(--n700);">
+              <input type="checkbox">
+              I agree to the <a href="#">Terms</a> and <a href="#">Privacy Notice</a>.
+            </label>
+          </div>
+          <div style="display: flex; gap: 12px; justify-content: flex-end;">
+            <button class="btn btn-ghost">Cancel</button>
+            <button class="btn btn-primary">Continue →</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 3. INTAKE WIZARD - SERVICE SELECTION -->
+<!-- ============================================================ -->
+
+<section id="intake" class="mockup-section">
+  <div class="mockup-section-label">3. Intake wizard - service selection</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Intake step 1 of 6</strong> - Service selection. The wizard is consistently numbered from
+      the first screen (not "FIRST TIME ON SHIELD" then "STEP 2 OF 4" like v1). Each card is independently
+      selectable. The wizard's downstream steps adapt to what's picked here.
+    </div>
+    <div class="wizard-stage">
+      <div class="wizard-card" style="max-width: 760px;">
+        <div class="wizard-header">
+          <div class="wizard-step">Get set up · Step 1 of 6</div>
+          <h1>What can we help with?</h1>
+          <p style="color: var(--n600); margin-top: 8px;">Pick one or more services. Your consultant will tailor the rest of the setup to what you choose.</p>
+          <div class="wizard-progress">
+            <div class="wizard-progress-seg active"></div>
+            <div class="wizard-progress-seg"></div>
+            <div class="wizard-progress-seg"></div>
+            <div class="wizard-progress-seg"></div>
+            <div class="wizard-progress-seg"></div>
+            <div class="wizard-progress-seg"></div>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="service-card selected">
+            <div class="check">✓</div>
+            <div>
+              <h3>Tech Debt Review</h3>
+              <p>Find software and licenses you're paying for twice. Identify consolidation opportunities and quantify the savings.</p>
+            </div>
+          </div>
+          <div class="service-card selected">
+            <div class="check">✓</div>
+            <div>
+              <h3>Zero Trust Assessment</h3>
+              <p>Measure your Zero Trust maturity. Pick CISA ZTMM 2.0 (federal civilian) or DoD Zero Trust (defense). Build the roadmap.</p>
+            </div>
+          </div>
+          <div class="service-card">
+            <div class="check"></div>
+            <div>
+              <h3>NIST CSF 2.0 Assessment</h3>
+              <p>Full CSF 2.0 assessment with tiered system profiles, gap analysis, and an action plan. Audit-defensible.</p>
+            </div>
+          </div>
+          <div class="service-card">
+            <div class="check"></div>
+            <div>
+              <h3>MITRE ATT&CK Coverage Mapping</h3>
+              <p>Map your security tools against the MITRE ATT&CK matrix. Identify techniques you can't detect, prevent, or respond to.</p>
+            </div>
+          </div>
+          <div style="border-top: 1px solid var(--border); margin: 16px 0; padding-top: 16px; font-size: 12px; color: var(--n500); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">
+            Or, if you'd rather talk first
+          </div>
+          <div class="service-card" style="border-style: dashed; border-color: var(--gov-blue); background: #F8FBFF;">
+            <div class="check" style="border-radius: 50%; border-style: solid;"></div>
+            <div>
+              <h3>I'm not sure - request a call with a consultant</h3>
+              <p>Tell us a bit about what's prompting you to look at this and we'll set up a quick call to figure out which services fit your situation. You can still pick services later.</p>
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 12px; justify-content: space-between; margin-top: 32px;">
+          <button class="btn btn-ghost">← Back</button>
+          <button class="btn btn-primary">Continue →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 4. CLIENT DASHBOARD (HOME) - the most important client page -->
+<!-- ============================================================ -->
+
+<section id="dashboard" class="mockup-section">
+  <div class="mockup-section-label">4. Client home dashboard - executive-grade summary</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Client home</strong> - Leads with executive-style operational findings, not technical drill-down detail.
+      Answers "where do I stand right now?" without making the user click into a subpage. Hero card surfaces any
+      ready deliverables; service cards show status + headline number + next action.
+    </div>
+    <div class="app-shell">
+      <aside class="left-rail">
+        <div class="left-rail-logo">
+          <div class="brand">SHIELD</div>
+          <div class="sub">by Kentro</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Overview</div>
+          <div class="nav-item active">⌂ Home</div>
+          <div class="nav-item">⚙ My services</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Engagements</div>
+          <div class="nav-item">📁 Documents</div>
+          <div class="nav-item">📦 Deliverables</div>
+          <div class="nav-item">💬 Messages</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Account</div>
+          <div class="nav-item">👥 Team</div>
+          <div class="nav-item">⚙ Settings</div>
+        </div>
+      </aside>
+      <div class="right-area">
+        <header class="top-bar">
+          <div class="crumbs">Home</div>
+          <div class="util">
+            <div style="font-size: 13px; color: var(--n600);">Nexus Federal Solutions Inc.</div>
+            <div class="bell">🔔<span class="dot"></span></div>
+            <div class="avatar">JD</div>
+          </div>
+        </header>
+        <div class="content">
+          <div class="page-header">
+            <div>
+              <h1>Welcome back, John</h1>
+              <div class="meta">Last update from your consultant: 2 days ago (Maria Whitfield)</div>
+            </div>
+            <button class="btn btn-secondary">View activity</button>
+          </div>
+
+          <div class="hero-card" style="margin-bottom: 24px;">
+            <div>
+              <h2>Your Tech Debt Report is ready for review</h2>
+              <p>We identified $420,000 in annual savings across 8 overlapping tool categories. Estimated 22-minute read.</p>
+            </div>
+            <button class="btn btn-primary">View report →</button>
+          </div>
+
+          <h3 style="margin-bottom: 12px; color: var(--n700);">Your services</h3>
+          <div class="grid grid-3" style="margin-bottom: 24px;">
+            <div class="service-status-card">
+              <div class="top">
+                <h4>Tech Debt Review</h4>
+                <span class="pill pill-green">Ready</span>
+              </div>
+              <div class="big-num">$420K</div>
+              <div class="one-liner">in identified annual savings</div>
+              <div class="action">View final report →</div>
+            </div>
+            <div class="service-status-card">
+              <div class="top">
+                <h4>Zero Trust Assessment</h4>
+                <span class="pill pill-amber">Action needed</span>
+              </div>
+              <div class="big-num">2 of 5</div>
+              <div class="one-liner">questionnaire sections complete</div>
+              <div class="action">Continue questionnaire →</div>
+            </div>
+            <div class="service-status-card">
+              <div class="top">
+                <h4>Attack Surface Mapping</h4>
+                <span class="pill pill-blue">In review</span>
+              </div>
+              <div class="big-num">23/40</div>
+              <div class="one-liner">techniques scored so far</div>
+              <div class="action">View progress →</div>
+            </div>
+          </div>
+
+          <div class="grid grid-2">
+            <div class="card">
+              <div class="card-header">
+                <h3>Waiting on you</h3>
+                <span class="pill pill-amber">3 items</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div style="padding: 12px; background: #FEF3C7; border-left: 3px solid var(--amber); border-radius: 4px;">
+                  <div style="font-weight: 600; font-size: 14px;">Finish your CISA ZTMM questionnaire</div>
+                  <div style="font-size: 13px; color: var(--n600); margin-top: 2px;">3 sections remaining · Auto-saved 1 hour ago</div>
+                </div>
+                <div style="padding: 12px; background: #FEF3C7; border-left: 3px solid var(--amber); border-radius: 4px;">
+                  <div style="font-weight: 600; font-size: 14px;">Upload your network architecture diagram</div>
+                  <div style="font-size: 13px; color: var(--n600); margin-top: 2px;">Requested for the ATT&CK coverage analysis</div>
+                </div>
+                <div style="padding: 12px; background: #DBEAFE; border-left: 3px solid var(--gov-blue); border-radius: 4px;">
+                  <div style="font-weight: 600; font-size: 14px;">Review and approve the Tech Debt consolidation plan</div>
+                  <div style="font-size: 13px; color: var(--n600); margin-top: 2px;">Maria released it for your sign-off on May 15</div>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <h3>Recent activity</h3>
+                <a href="#" style="font-size: 13px;">View all</a>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 14px;">
+                <div style="display: flex; gap: 12px;">
+                  <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--green); margin-top: 6px; flex-shrink: 0;"></div>
+                  <div>
+                    <div style="font-size: 14px;">Maria approved the consolidation recommendations</div>
+                    <div style="font-size: 12px; color: var(--n500);">2 hours ago</div>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 12px;">
+                  <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--gov-blue); margin-top: 6px; flex-shrink: 0;"></div>
+                  <div>
+                    <div style="font-size: 14px;">Your kickoff call is scheduled for May 22 at 10:00 AM ET</div>
+                    <div style="font-size: 12px; color: var(--n500);">Yesterday</div>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 12px;">
+                  <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--purple); margin-top: 6px; flex-shrink: 0;"></div>
+                  <div>
+                    <div style="font-size: 14px;">3 new documents added to your library</div>
+                    <div style="font-size: 12px; color: var(--n500);">3 days ago</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 5. SERVICE DETAIL (executive view) -->
+<!-- ============================================================ -->
+
+<section id="service" class="mockup-section">
+  <div class="mockup-section-label">5. Service detail - Zero Trust (executive view)</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Service detail - executive style</strong> - When the client clicks into a service, they get a clean
+      executive summary: maturity radar, pillar-by-pillar status, top gaps, next steps. Methodology and detail are
+      reachable but progressive disclosure.
+    </div>
+    <div class="app-shell">
+      <aside class="left-rail">
+        <div class="left-rail-logo">
+          <div class="brand">SHIELD</div>
+          <div class="sub">by Kentro</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Overview</div>
+          <div class="nav-item">⌂ Home</div>
+          <div class="nav-item active">⚙ My services</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Engagements</div>
+          <div class="nav-item">📁 Documents</div>
+          <div class="nav-item">📦 Deliverables</div>
+          <div class="nav-item">💬 Messages</div>
+        </div>
+      </aside>
+      <div class="right-area">
+        <header class="top-bar">
+          <div class="crumbs">Home · My services · <strong>Zero Trust Assessment</strong></div>
+          <div class="util">
+            <div class="bell">🔔</div>
+            <div class="avatar">JD</div>
+          </div>
+        </header>
+        <div class="content">
+          <div class="page-header">
+            <div>
+              <h1>Zero Trust Assessment</h1>
+              <div class="meta">CISA ZTMM 2.0 · Consultant: Maria Whitfield · Started May 5, 2026</div>
+            </div>
+            <span class="pill pill-amber">Action needed</span>
+          </div>
+
+          <div class="card card-accent" style="margin-bottom: 24px;">
+            <div style="display: flex; gap: 32px; align-items: center;">
+              <div style="flex: 1;">
+                <h2 style="margin-bottom: 8px;">You are currently at Initial maturity overall.</h2>
+                <p style="color: var(--n600); margin: 0; font-size: 15px;">Your target is Advanced across all five pillars by end of FY27. Two pillars (Identity, Devices) are tracking well; three pillars need investment.</p>
+              </div>
+              <div style="display: flex; gap: 16px;">
+                <div style="text-align: center;">
+                  <div style="font-size: 36px; font-weight: 700; color: var(--amber); line-height: 1;">2.4</div>
+                  <div style="font-size: 11px; color: var(--n500); margin-top: 4px;">CURRENT</div>
+                </div>
+                <div style="font-size: 32px; color: var(--n300); align-self: center;">→</div>
+                <div style="text-align: center;">
+                  <div style="font-size: 36px; font-weight: 700; color: var(--green); line-height: 1;">3.6</div>
+                  <div style="font-size: 11px; color: var(--n500); margin-top: 4px;">TARGET</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-2">
+            <div class="card">
+              <h3 style="margin-bottom: 16px;">Pillar maturity</h3>
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="font-size: 14px; font-weight: 500;">Identity</span>
+                    <span style="font-size: 13px; color: var(--n600);">Advanced · target Optimal</span>
+                  </div>
+                  <div style="height: 8px; background: var(--n100); border-radius: 4px; overflow: hidden;">
+                    <div style="width: 75%; height: 100%; background: var(--green);"></div>
+                  </div>
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="font-size: 14px; font-weight: 500;">Devices</span>
+                    <span style="font-size: 13px; color: var(--n600);">Advanced · target Optimal</span>
+                  </div>
+                  <div style="height: 8px; background: var(--n100); border-radius: 4px; overflow: hidden;">
+                    <div style="width: 65%; height: 100%; background: var(--green);"></div>
+                  </div>
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="font-size: 14px; font-weight: 500;">Networks</span>
+                    <span style="font-size: 13px; color: var(--n600);">Initial · target Advanced</span>
+                  </div>
+                  <div style="height: 8px; background: var(--n100); border-radius: 4px; overflow: hidden;">
+                    <div style="width: 40%; height: 100%; background: var(--amber);"></div>
+                  </div>
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="font-size: 14px; font-weight: 500;">Applications &amp; Workloads</span>
+                    <span style="font-size: 13px; color: var(--n600);">Initial · target Advanced</span>
+                  </div>
+                  <div style="height: 8px; background: var(--n100); border-radius: 4px; overflow: hidden;">
+                    <div style="width: 35%; height: 100%; background: var(--amber);"></div>
+                  </div>
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="font-size: 14px; font-weight: 500;">Data</span>
+                    <span style="font-size: 13px; color: var(--n600);">Traditional · target Advanced</span>
+                  </div>
+                  <div style="height: 8px; background: var(--n100); border-radius: 4px; overflow: hidden;">
+                    <div style="width: 20%; height: 100%; background: var(--red);"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3 style="margin-bottom: 16px;">Top gaps to address</h3>
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div style="display: flex; gap: 12px; padding: 12px; background: #FEE2E2; border-radius: 6px;">
+                  <span class="pill pill-red" style="height: fit-content;">P1</span>
+                  <div>
+                    <div style="font-weight: 600; font-size: 14px;">Encrypted east-west traffic visibility</div>
+                    <div style="font-size: 13px; color: var(--n700); margin-top: 2px;">Data pillar · Estimated effort: 6 months · Bridges to ATT&CK T1573</div>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 12px; padding: 12px; background: #FEF3C7; border-radius: 6px;">
+                  <span class="pill pill-amber" style="height: fit-content;">P2</span>
+                  <div>
+                    <div style="font-weight: 600; font-size: 14px;">Micro-segmentation in cloud environments</div>
+                    <div style="font-size: 13px; color: var(--n700); margin-top: 2px;">Networks pillar · Estimated effort: 9 months · Funding from Tech Debt savings available</div>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 12px; padding: 12px; background: #FEF3C7; border-radius: 6px;">
+                  <span class="pill pill-amber" style="height: fit-content;">P2</span>
+                  <div>
+                    <div style="font-weight: 600; font-size: 14px;">DLP coverage on unstructured data</div>
+                    <div style="font-size: 13px; color: var(--n700); margin-top: 2px;">Data pillar · Estimated effort: 4 months</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+              <h3>What's next</h3>
+            </div>
+            <div style="display: flex; gap: 16px; align-items: center; padding: 16px; background: #DBEAFE; border-radius: 6px;">
+              <div style="flex: 1;">
+                <div style="font-weight: 600; margin-bottom: 4px;">Finish your CISA ZTMM questionnaire so we can complete the gap analysis.</div>
+                <div style="font-size: 13px; color: var(--n700);">3 of 8 sections remaining. Auto-saved 1 hour ago. Estimated 15 minutes to complete.</div>
+              </div>
+              <button class="btn btn-primary">Continue →</button>
+            </div>
+          </div>
+
+          <div style="margin-top: 16px; text-align: right;">
+            <a href="#" style="font-size: 13px; color: var(--n600);">▸ Show me how this is calculated</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 6. QUESTIONNAIRE (with section nav) -->
+<!-- ============================================================ -->
+
+<section id="questionnaire" class="mockup-section">
+  <div class="mockup-section-label">6. Questionnaire - section-tabbed, auto-saving, resumable</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Client questionnaire</strong> - Section nav on the left (one section per pillar/function),
+      progress visible at all times, auto-save indicator on every card. The question pair pattern
+      (current state / target state) plus the things-to-think-about cues panel. No spec citations visible.
+    </div>
+    <div class="app-shell">
+      <aside class="left-rail">
+        <div class="left-rail-logo">
+          <div class="brand">SHIELD</div>
+          <div class="sub">by Kentro</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Overview</div>
+          <div class="nav-item">⌂ Home</div>
+          <div class="nav-item active">⚙ My services</div>
+        </div>
+      </aside>
+      <div class="right-area">
+        <header class="top-bar">
+          <div class="crumbs">Home · Services · Zero Trust · <strong>Questionnaire</strong></div>
+          <div class="util">
+            <span class="pill pill-green" style="font-size: 11px;">Saved 2 seconds ago</span>
+            <div class="bell">🔔</div>
+            <div class="avatar">JD</div>
+          </div>
+        </header>
+        <div class="content" style="padding: 0;">
+          <div style="background: white; padding: 20px 24px; border-bottom: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <div>
+                <h1 style="font-size: 22px;">CISA ZTMM 2.0 Questionnaire</h1>
+                <div style="font-size: 13px; color: var(--n600);">Section 3 of 8 · About 12 minutes remaining</div>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-ghost">Save &amp; finish later</button>
+                <button class="btn btn-secondary">Next section →</button>
+              </div>
+            </div>
+            <div class="progress"><div class="progress-bar" style="width: 37%;"></div></div>
+          </div>
+
+          <div class="q-shell">
+            <aside class="q-side">
+              <h4>Pillars</h4>
+              <div class="q-side-item done">1. Identity</div>
+              <div class="q-side-item done">2. Devices</div>
+              <div class="q-side-item active">3. Networks</div>
+              <div class="q-side-item">4. Applications &amp; Workloads</div>
+              <div class="q-side-item">5. Data</div>
+              <h4 style="margin-top: 16px;">Cross-cutting</h4>
+              <div class="q-side-item">6. Visibility &amp; Analytics</div>
+              <div class="q-side-item">7. Automation &amp; Orchestration</div>
+              <div class="q-side-item">8. Governance</div>
+            </aside>
+
+            <div class="q-body">
+              <h2 class="section-title">Networks · 2 questions</h2>
+
+              <div class="q-card">
+                <div class="stem">Walk us through how your network is segmented and how traffic moving across it is protected.</div>
+                <div style="margin-bottom: 12px;">
+                  <span class="chip">Network Segmentation</span>
+                  <span class="chip">Traffic Encryption</span>
+                  <span class="chip">Network Traffic Management</span>
+                </div>
+                <a href="#" class="cues-toggle">▾ Things to think about (6)</a>
+                <div class="panels">
+                  <div class="panel">
+                    <div class="panel-h">Where you are today</div>
+                    <select class="input">
+                      <option>Initial</option>
+                      <option>Traditional</option>
+                      <option selected>Initial</option>
+                      <option>Advanced</option>
+                      <option>Optimal</option>
+                    </select>
+                    <textarea class="input" placeholder="Describe today's reality">We have macro-segmentation between dev/test/prod and between the CUI enclave and corporate IT. East-west traffic within prod is mostly in the clear. No micro-segmentation in AWS GovCloud yet.</textarea>
+                  </div>
+                  <div class="panel">
+                    <div class="panel-h">Where you want to be</div>
+                    <select class="input">
+                      <option>Advanced</option>
+                      <option>Traditional</option>
+                      <option>Initial</option>
+                      <option selected>Advanced</option>
+                      <option>Optimal</option>
+                    </select>
+                    <textarea class="input" placeholder="Describe the target">Service-mesh-enforced mTLS for every workload. ETA across all environments. Reduce flat-network legacy zones to zero by FY27.</textarea>
+                  </div>
+                </div>
+                <div class="footer-row">
+                  <span class="savedind">✓ Saved 2 seconds ago</span>
+                  <span>·</span>
+                  <a href="#">+ Attach evidence</a>
+                  <span>·</span>
+                  <label><input type="checkbox"> Not applicable</label>
+                </div>
+              </div>
+
+              <div class="q-card">
+                <div class="stem">Tell us about your network's resilience and how you maintain visibility across it.</div>
+                <div style="margin-bottom: 12px;">
+                  <span class="chip">Network Resilience</span>
+                  <span class="chip">Visibility &amp; Analytics</span>
+                </div>
+                <a href="#" class="cues-toggle">▸ Things to think about (5)</a>
+                <div class="panels">
+                  <div class="panel">
+                    <div class="panel-h">Where you are today</div>
+                    <select class="input">
+                      <option>Select...</option>
+                    </select>
+                    <textarea class="input" placeholder="Describe today's reality"></textarea>
+                  </div>
+                  <div class="panel">
+                    <div class="panel-h">Where you want to be</div>
+                    <select class="input">
+                      <option>Select...</option>
+                    </select>
+                    <textarea class="input" placeholder="Describe the target"></textarea>
+                  </div>
+                </div>
+                <div class="footer-row">
+                  <span style="color: var(--n500);">Not yet started</span>
+                  <span>·</span>
+                  <a href="#">+ Attach evidence</a>
+                  <span>·</span>
+                  <label><input type="checkbox"> Not applicable</label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 7. ADMIN QUEUE -->
+<!-- ============================================================ -->
+
+<section id="admin-queue" class="mockup-section">
+  <div class="mockup-section-label">7. Admin queue - the consultant's daily landing</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Admin queue</strong> - "Who needs you next." New leads / Waiting on us / Active. Timestamps on every
+      row. Failed-jobs banner at top if any. Single-tenant deployment so the queue is one client at a time -
+      this is the consultant's per-deployment landing.
+    </div>
+    <div class="app-shell">
+      <aside class="left-rail">
+        <div class="left-rail-logo">
+          <div class="brand">SHIELD</div>
+          <div class="sub">by Kentro</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Operational</div>
+          <div class="nav-item active">📋 Queue</div>
+          <div class="nav-item">💬 Messages</div>
+          <div class="nav-item">🏢 Client</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Services</div>
+          <div class="nav-item">📊 Tech Debt</div>
+          <div class="nav-item">🛡 Zero Trust</div>
+          <div class="nav-item">📑 CSF 2.0</div>
+          <div class="nav-item">🎯 ATT&amp;CK</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">System</div>
+          <div class="nav-item">📁 Documents</div>
+          <div class="nav-item">📦 Deliverables</div>
+          <div class="nav-item">⚡ Activity</div>
+          <div class="nav-item">📜 Audit</div>
+          <div class="nav-item">⚙ Settings</div>
+        </div>
+      </aside>
+      <div class="right-area">
+        <header class="top-bar">
+          <div class="crumbs"><strong>Queue</strong></div>
+          <div class="util">
+            <span class="pill pill-purple">ADMIN · Maria Whitfield (Kentro)</span>
+            <div class="bell">🔔<span class="dot"></span></div>
+            <div class="avatar" style="background: var(--purple);">MW</div>
+          </div>
+        </header>
+        <div class="content">
+          <div style="background: #FEE2E2; border-left: 4px solid var(--red); padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <strong style="color: var(--red);">⚠ 2 background jobs failed</strong>
+              <span style="color: var(--n700); margin-left: 8px;">ATT&amp;CK coverage analysis (Nexus FederalSolutions) and CSF profile rollup (Atlas Defense).</span>
+            </div>
+            <a href="#" style="color: var(--red); font-weight: 500;">Review →</a>
+          </div>
+
+          <div class="page-header">
+            <div>
+              <h1>Queue</h1>
+              <div class="meta">Who needs you next · Showing engagements at Nexus Federal Solutions Inc.</div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-ghost">Refresh</button>
+              <button class="btn btn-secondary">Filters</button>
+            </div>
+          </div>
+
+          <div class="queue-section">
+            <div class="queue-section-header">
+              <h3>New leads <span class="count">1</span></h3>
+              <span style="font-size: 13px; color: var(--n500);">Clients who completed intake but no consultant has attached yet</span>
+            </div>
+            <div class="queue-row">
+              <div>
+                <div class="client-name">Nexus Federal Solutions Inc.</div>
+                <div class="client-sub">John Doe, CISO · john.doe@shieldops.gov</div>
+              </div>
+              <div class="meta">Zero Trust (CISA), Attack Surface</div>
+              <div class="meta">Completed intake <strong>3 hours ago</strong></div>
+              <div><span class="pill pill-blue">Needs kickoff</span></div>
+              <button class="btn btn-primary">Open</button>
+            </div>
+          </div>
+
+          <div class="queue-section">
+            <div class="queue-section-header">
+              <h3>Waiting on us <span class="count">3</span></h3>
+              <span style="font-size: 13px; color: var(--n500);">Next action is on the consultant</span>
+            </div>
+            <div class="queue-row">
+              <div>
+                <div class="client-name">Nexus Federal Solutions Inc.</div>
+                <div class="client-sub">Tech Debt overlap analysis</div>
+              </div>
+              <div class="meta">Score the consolidation findings</div>
+              <div class="meta">Waiting <strong>1 day</strong></div>
+              <div><span class="pill pill-amber">Action needed</span></div>
+              <button class="btn btn-primary">Open</button>
+            </div>
+            <div class="queue-row">
+              <div>
+                <div class="client-name">Nexus Federal Solutions Inc.</div>
+                <div class="client-sub">CSF 2.0 - HIGH tier scoring</div>
+              </div>
+              <div class="meta">Reconcile interview findings for 18 systems</div>
+              <div class="meta">Waiting <strong>2 days</strong></div>
+              <div><span class="pill pill-amber">Action needed</span></div>
+              <button class="btn btn-primary">Open</button>
+            </div>
+            <div class="queue-row">
+              <div>
+                <div class="client-name">Nexus Federal Solutions Inc.</div>
+                <div class="client-sub">2 new messages from John Doe</div>
+              </div>
+              <div class="meta">"Following up on the kickoff call..."</div>
+              <div class="meta">Waiting <strong>5 hours</strong></div>
+              <div><span class="pill pill-blue">New message</span></div>
+              <button class="btn btn-secondary">Reply</button>
+            </div>
+          </div>
+
+          <div class="queue-section">
+            <div class="queue-section-header">
+              <h3>Active <span class="count">2</span></h3>
+              <span style="font-size: 13px; color: var(--n500);">Engagements in flight; waiting on client or running</span>
+            </div>
+            <div class="queue-row">
+              <div>
+                <div class="client-name">Nexus Federal Solutions Inc.</div>
+                <div class="client-sub">CISA ZTMM questionnaire</div>
+              </div>
+              <div class="meta">Client at 3 of 8 sections complete</div>
+              <div class="meta">Last activity <strong>1 hour ago</strong></div>
+              <div><span class="pill pill-purple">In progress</span></div>
+              <button class="btn btn-ghost">View</button>
+            </div>
+            <div class="queue-row">
+              <div>
+                <div class="client-name">Nexus Federal Solutions Inc.</div>
+                <div class="client-sub">ATT&CK coverage analysis</div>
+              </div>
+              <div class="meta">Background job running (est. 6 min)</div>
+              <div class="meta">Started <strong>4 min ago</strong></div>
+              <div><span class="pill pill-blue">Running</span></div>
+              <button class="btn btn-ghost">View</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 8. ADMIN CSF WORKSPACE -->
+<!-- ============================================================ -->
+
+<section id="admin-csf" class="mockup-section">
+  <div class="mockup-section-label">8. Admin CSF workspace - 5-dimension scoring + reference panel</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Admin CSF workspace</strong> - Tier-tabbed (HIGH/MODERATE/LOW/Enterprise), per-function side
+      navigation, per-subcategory 5-dimension scoring panel, the Reference Data tab from the existing toolkit
+      now lives in-app as a contextual right panel.
+    </div>
+    <div class="app-shell">
+      <aside class="left-rail">
+        <div class="left-rail-logo">
+          <div class="brand">SHIELD</div>
+          <div class="sub">by Kentro</div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Services</div>
+          <div class="nav-item">📊 Tech Debt</div>
+          <div class="nav-item">🛡 Zero Trust</div>
+          <div class="nav-item active">📑 CSF 2.0</div>
+          <div class="nav-item">🎯 ATT&amp;CK</div>
+        </div>
+      </aside>
+      <div class="right-area">
+        <header class="top-bar">
+          <div class="crumbs">Services · CSF 2.0 · <strong>Working Profile</strong></div>
+          <div class="util">
+            <div class="bell">🔔</div>
+            <div class="avatar" style="background: var(--purple);">MW</div>
+          </div>
+        </header>
+        <div style="background: white; padding: 16px 24px; border-bottom: 1px solid var(--border);">
+          <div style="display: flex; gap: 24px;">
+            <a href="#" style="padding-bottom: 12px; font-weight: 500;">Scope</a>
+            <a href="#" style="padding-bottom: 12px; font-weight: 500;">Systems</a>
+            <a href="#" style="padding-bottom: 12px; font-weight: 500;">Artifacts</a>
+            <a href="#" style="padding-bottom: 12px; border-bottom: 2px solid var(--gov-blue); color: var(--gov-blue); font-weight: 600;">Working Profile</a>
+            <a href="#" style="padding-bottom: 12px; font-weight: 500;">Enterprise Profile</a>
+            <a href="#" style="padding-bottom: 12px; font-weight: 500;">Gap Analysis</a>
+            <a href="#" style="padding-bottom: 12px; font-weight: 500;">Action Plan</a>
+          </div>
+        </div>
+        <div style="background: var(--n50); padding: 12px 24px; border-bottom: 1px solid var(--border); display: flex; gap: 8px;">
+          <button class="btn btn-secondary" style="background: var(--red); color: white; border-color: var(--red);">HIGH (18 systems)</button>
+          <button class="btn btn-ghost">MODERATE (7 systems)</button>
+          <button class="btn btn-ghost">LOW (1 system)</button>
+          <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+            <span class="pill pill-gray">62 of 108 subcategories scored</span>
+            <button class="btn btn-secondary">Export XLSX</button>
+          </div>
+        </div>
+        <div style="display: flex; min-height: 480px;">
+          <aside style="width: 220px; background: white; border-right: 1px solid var(--border); padding: 16px 0;">
+            <div style="padding: 0 16px 8px; font-size: 11px; font-weight: 700; color: var(--n500); text-transform: uppercase; letter-spacing: 1px;">Functions</div>
+            <div style="padding: 8px 16px; cursor: pointer; background: var(--n100); border-left: 3px solid var(--gov-blue); font-weight: 500;">GOVERN (32)</div>
+            <div style="padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent;">IDENTIFY (21)</div>
+            <div style="padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent;">PROTECT (22)</div>
+            <div style="padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent;">DETECT (11)</div>
+            <div style="padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent;">RESPOND (13)</div>
+            <div style="padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent;">RECOVER (9)</div>
+          </aside>
+
+          <div style="flex: 1; padding: 24px; overflow: auto;">
+            <h2 style="margin-bottom: 16px;">GOVERN · Organizational Context (GV.OC)</h2>
+
+            <div class="card" style="margin-bottom: 16px;">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                    <strong style="font-size: 15px;">GV.OC-01</strong>
+                    <span class="pill pill-blue">In scope</span>
+                    <span class="pill pill-gray">Primary alignment · Core IG</span>
+                  </div>
+                  <div style="font-size: 14px; color: var(--n700);">The organizational mission is understood and informs cybersecurity risk management.</div>
+                </div>
+                <span class="pill pill-amber">Draft</span>
+              </div>
+
+              <label class="label">What we found</label>
+              <textarea class="input" style="min-height: 60px; margin-bottom: 12px;">Mission documented in SSP §1.2 and the Office Strategic Plan FY26. ISSO Whitfield is the named accountable party. Mission is reviewed annually at the program-level governance meeting.</textarea>
+
+              <div class="grid" style="grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 16px 0;">
+                <div style="text-align: center;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 4px;">GOVERNANCE</div>
+                  <select class="input" style="text-align: center; font-weight: 600;"><option>2</option></select>
+                </div>
+                <div style="text-align: center;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 4px;">POLICY</div>
+                  <select class="input" style="text-align: center; font-weight: 600;"><option>2</option></select>
+                </div>
+                <div style="text-align: center;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 4px;">IMPLEMENT.</div>
+                  <select class="input" style="text-align: center; font-weight: 600;"><option>1</option></select>
+                </div>
+                <div style="text-align: center;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 4px;">MONITORING</div>
+                  <select class="input" style="text-align: center; font-weight: 600;"><option>1</option></select>
+                </div>
+                <div style="text-align: center;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 4px;">CONT. IMPR.</div>
+                  <select class="input" style="text-align: center; font-weight: 600;"><option>1</option></select>
+                </div>
+              </div>
+
+              <div style="background: var(--n50); padding: 12px 16px; border-radius: 6px; display: flex; gap: 24px; align-items: center;">
+                <div>
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 2px;">TOTAL</div>
+                  <div style="font-size: 20px; font-weight: 700;">7 / 10</div>
+                </div>
+                <div>
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 2px;">CURRENT MATURITY</div>
+                  <div style="font-size: 20px; font-weight: 700; color: var(--green);">Level 3 - Defined</div>
+                </div>
+                <div>
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 2px;">TARGET</div>
+                  <select class="input" style="font-weight: 600;"><option>Level 4 - Managed</option></select>
+                </div>
+                <div>
+                  <div style="font-size: 11px; font-weight: 700; color: var(--n600); margin-bottom: 2px;">GAP</div>
+                  <div><span class="pill pill-amber">Gap</span></div>
+                </div>
+                <div style="margin-left: auto; display: flex; gap: 8px;">
+                  <button class="btn btn-ghost">📎 3 evidence files</button>
+                  <button class="btn btn-secondary">Save as draft</button>
+                  <button class="btn btn-primary">Lock</button>
+                </div>
+              </div>
+            </div>
+
+            <div style="text-align: center; color: var(--n500); padding: 16px;">+ 31 more GOVERN subcategories</div>
+          </div>
+
+          <aside style="width: 280px; background: #FAFCFE; border-left: 1px solid var(--border); padding: 20px;">
+            <h4 style="margin-bottom: 12px; color: var(--n700); font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">Reference data</h4>
+            <div style="font-size: 13px; color: var(--n700); margin-bottom: 16px;">
+              <strong style="display: block; color: var(--n900); margin-bottom: 4px;">Interview question family</strong>
+              Governance, Leadership &amp; Oversight (H-Q1)
+            </div>
+            <div style="font-size: 13px; color: var(--n700); margin-bottom: 16px;">
+              <strong style="display: block; color: var(--n900); margin-bottom: 4px;">FISMA domain</strong>
+              Cybersecurity Governance
+            </div>
+            <div style="font-size: 13px; color: var(--n700); margin-bottom: 16px;">
+              <strong style="display: block; color: var(--n900); margin-bottom: 4px;">IG metric</strong>
+              #1 Cybersecurity Profiles (Supplemental, Primary alignment)
+            </div>
+            <div style="font-size: 13px; color: var(--n700); margin-bottom: 16px; padding: 12px; background: #FEF3C7; border-radius: 6px;">
+              <strong style="display: block; margin-bottom: 4px; color: #92400E;">Evidence rule</strong>
+              No evidence -> Implementation can't exceed 1 and maturity can't exceed Level 2. This is a hard rule.
+            </div>
+            <div style="font-size: 13px; color: var(--n700);">
+              <strong style="display: block; color: var(--n900); margin-bottom: 4px;">Cross-reference</strong>
+              Maps to CISA ZTMM "Governance" cross-cutting capability and DoD ZT pillar 7 activities.
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 9. FINDINGS DASHBOARD (deliverable) -->
+<!-- ============================================================ -->
+
+<section id="findings" class="mockup-section">
+  <div class="mockup-section-label">9. Findings dashboard - ATT&CK Coverage Report (executive view)</div>
+  <div class="mockup-frame">
+    <div class="mockup-caption">
+      <strong>Findings dashboard</strong> - The executive deliverable view as the client sees it. Three big number
+      cards lead. Blind spots in plain English. The cross-service value-loop bridge ("This funds X in Tech Debt
+      savings...") makes the platform's promise concrete. Technical drill-down is collapsed.
+    </div>
+    <div class="app-shell">
+      <aside class="left-rail">
+        <div class="left-rail-logo">
+          <div class="brand">SHIELD</div>
+          <div class="sub">by Kentro</div>
+        </div>
+      </aside>
+      <div class="right-area">
+        <header class="top-bar">
+          <div class="crumbs">Services · Attack Surface · <strong>Coverage Report</strong></div>
+          <div class="util">
+            <button class="btn btn-secondary">⬇ PDF</button>
+            <button class="btn btn-secondary">⬇ XLSX</button>
+            <div class="avatar">JD</div>
+          </div>
+        </header>
+        <div class="content">
+          <div class="card card-accent" style="margin-bottom: 24px;">
+            <div style="font-size: 11px; color: var(--gov-blue); font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;">Headline</div>
+            <h1 style="font-size: 24px; line-height: 1.3;">Of 37 attack techniques we evaluated, 16 are fully covered. The 7 you can't see at all cluster in container and serverless workloads - a critical gap given your FY27 Kubernetes modernization.</h1>
+          </div>
+
+          <div class="grid grid-3" style="margin-bottom: 24px;">
+            <div class="card number-card good" style="text-align: center;">
+              <div class="num">16</div>
+              <div style="font-weight: 600; margin-top: 8px;">Fully covered</div>
+              <div class="num-sub">Detection + Prevention + Response all present</div>
+            </div>
+            <div class="card number-card warn" style="text-align: center;">
+              <div class="num">14</div>
+              <div style="font-weight: 600; margin-top: 8px;">Partially covered</div>
+              <div class="num-sub">One or two of the three layers present</div>
+            </div>
+            <div class="card number-card bad" style="text-align: center;">
+              <div class="num">7</div>
+              <div style="font-weight: 600; margin-top: 8px;">Uncovered</div>
+              <div class="num-sub">No meaningful detection, prevention, or response</div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 24px;">
+            <h3 style="margin-bottom: 16px;">What you are blind to today</h3>
+            <div class="grid grid-3">
+              <div style="padding: 16px; background: #FEE2E2; border-radius: 6px;">
+                <div style="font-size: 11px; font-weight: 700; color: var(--red); margin-bottom: 4px;">T1611 · Privilege Escalation</div>
+                <div style="font-weight: 600; margin-bottom: 6px;">Escape to Host (container escape)</div>
+                <div style="font-size: 13px; color: var(--n700);">No specific container-escape detection. Critical given the FY27 Kubernetes modernization push.</div>
+              </div>
+              <div style="padding: 16px; background: #FEE2E2; border-radius: 6px;">
+                <div style="font-size: 11px; font-weight: 700; color: var(--red); margin-bottom: 4px;">T1610 · Execution</div>
+                <div style="font-weight: 600; margin-bottom: 6px;">Deploy Container</div>
+                <div style="font-size: 13px; color: var(--n700);">Container runtime deployment as a TTP is not specifically monitored. Recommend Falco or equivalent runtime security.</div>
+              </div>
+              <div style="padding: 16px; background: #FEE2E2; border-radius: 6px;">
+                <div style="font-size: 11px; font-weight: 700; color: var(--red); margin-bottom: 4px;">T1648 · Execution</div>
+                <div style="font-weight: 600; margin-bottom: 6px;">Serverless Execution</div>
+                <div style="font-size: 13px; color: var(--n700);">Lambda usage in AWS GovCloud is growing but TTP-level detection is minimal. Integrate CloudTrail with Splunk.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card card-accent" style="background: #F0F7FF; border-color: var(--gov-blue);">
+            <h3 style="margin-bottom: 8px; color: var(--gov-blue);">The recommendation</h3>
+            <p style="margin: 0; color: var(--n700); font-size: 15px; line-height: 1.6;">
+              Each uncovered technique is a candidate for either a new detection / prevention / response capability,
+              or a documented acceptance of risk. The good news: the Tech Debt review we delivered last month
+              identified <strong>$420,000 in annual savings</strong> from consolidating overlapping endpoint, SIEM, and
+              email security tools. Three of the top uncovered techniques (T1611, T1610, T1648) can be closed with
+              a runtime-security investment in the $80-120K range. The CISA ZTMM gap in your Data pillar
+              (encrypted-traffic visibility) can be addressed by the same investment area. We recommend
+              redirecting the consolidation savings here. Your consultant has prepared a 12-month roadmap to discuss
+              at the next review.
+            </p>
+          </div>
+
+          <div style="margin-top: 24px; text-align: center;">
+            <a href="#" style="font-size: 13px; color: var(--n600);">▸ Show me the per-technique drill-down (33 covered/partial findings)</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="doc-foot">
+  <strong>SHIELD by Kentro - v2.0 Design Mockup</strong><br>
+  Companion to SHIELDv2_Master_Spec.txt - prepared May 18, 2026
+</footer>
+
+</body>
+</html>
