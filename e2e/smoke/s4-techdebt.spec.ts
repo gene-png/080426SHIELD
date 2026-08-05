@@ -1,6 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 import { atlasServiceId } from "../helpers/ids";
 
 /**
@@ -36,6 +37,41 @@ const INVENTORY_CSV =
   "Splunk Enterprise,Splunk,SIEM,200000,100\n" +
   "Okta,Okta,IAM,60000,500\n" +
   "Tenable Nessus,Tenable,VulnScan,40000,50\n";
+
+/**
+ * Upload the inventory and run the extraction.
+ *
+ * Uploading used to auto-extract. Since the offline Run-AI guard landed, that
+ * auto-run is suppressed while AI is offline and unacknowledged — an upload
+ * that silently produced canned output was the exact problem the guard exists
+ * to fix, and there was no click there to intercept. The file is listed
+ * instead, and the guarded "Extract from this" button is the way in.
+ */
+async function uploadAndExtract(page: Page): Promise<void> {
+  const extractDone = page.waitForResponse(
+    (r) =>
+      r.url().includes("/capability-lists/extract") &&
+      r.request().method() === "POST",
+    { timeout: 120000 },
+  );
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: "inventory.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(INVENTORY_CSV),
+    });
+  // Offline: the upload lists the file; extraction is an explicit click.
+  const extractBtn = page
+    .getByRole("button", { name: "Extract from this" })
+    .first();
+  if (await extractBtn.isVisible().catch(() => false)) {
+    await extractBtn.click();
+    await acknowledgeOfflineAi(page);
+  }
+  await extractDone;
+}
 
 test("tech-debt extract builds the dashboard, and editing a cell clears the AI-confidence badge", async ({
   page,
@@ -77,23 +113,7 @@ test("tech-debt extract builds the dashboard, and editing a cell clears the AI-c
     }
   }
 
-  // Upload the inventory via the hidden Dropzone file input. The upload triggers
-  // a fixture-mode extraction that mints a fresh draft capability list.
-  const extractDone = page.waitForResponse(
-    (r) =>
-      r.url().includes("/capability-lists/extract") &&
-      r.request().method() === "POST",
-    { timeout: 120000 },
-  );
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: "inventory.csv",
-      mimeType: "text/csv",
-      buffer: Buffer.from(INVENTORY_CSV),
-    });
-  await extractDone;
+  await uploadAndExtract(page);
 
   // The extraction produced a fresh editable draft (never "Released vN").
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
@@ -167,21 +187,7 @@ test("Discard draft throws the open draft away and re-enables a fresh extraction
     }
   }
 
-  const firstExtract = page.waitForResponse(
-    (r) =>
-      r.url().includes("/capability-lists/extract") &&
-      r.request().method() === "POST",
-    { timeout: 120000 },
-  );
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: "inventory.csv",
-      mimeType: "text/csv",
-      buffer: Buffer.from(INVENTORY_CSV),
-    });
-  await firstExtract;
+  await uploadAndExtract(page);
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
 
   // Cancel is a no-op: open the Modal, dismiss it, the draft survives intact.

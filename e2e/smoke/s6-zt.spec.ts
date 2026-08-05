@@ -28,7 +28,9 @@ async function openFreshDraft(page: Page): Promise<void> {
   await page.goto(`/admin/services/${ztDodServiceId}/zero-trust-dod`);
   await expect(
     page.getByRole("heading", {
-      name: "Zero Trust Assessment — DoD Reference Architecture",
+      // Renamed in the UX #22 naming pass: one public name per service,
+      // taken from SERVICE_LABELS.
+      name: "Zero Trust Assessment (DoD ZTRA)",
     }),
   ).toBeVisible({ timeout: 30000 });
 
