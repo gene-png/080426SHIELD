@@ -49,3 +49,10 @@ class Client(UUIDPKMixin, TimestampMixin, Base):
     # Master Spec §11: set when the intake wizard is submitted. Used by the
     # admin queue to surface new leads.
     intake_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Issue 3: set by DELETE /admin/clients/{cid}. An archived tenant drops out
+    # of the platform client list and the intake queue org index but keeps every
+    # row it owns — removal is reversible and never destroys the audit trail.
+    # NULL means active (the C0 additive pattern: pre-migration rows parse
+    # unchanged).
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

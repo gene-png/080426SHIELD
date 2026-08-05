@@ -48,6 +48,23 @@ class MfaRequiredError extends CredentialsSignin {
   code = "mfa_required";
 }
 
+/**
+ * A backend 403 that carries a typed `reason` the sign-in form should explain
+ * rather than flatten into "Invalid email or password." (issue 3).
+ *
+ * Deactivating a user is only useful if the person hitting the wall learns WHY
+ * — a generic credentials error sends them to reset a password that is not the
+ * problem. Rides the same v5 mechanism as MfaRequiredError: the `code` reaches
+ * the form as `result.code`.
+ */
+class TypedSignInRefusal extends CredentialsSignin {
+  code: string;
+  constructor(code: string) {
+    super();
+    this.code = code;
+  }
+}
+
 /** Mirrors the backend TokenPairResponse returned by POST /auth/refresh, which
  * always yields a full (non-null) pair — unlike /auth/login, which can return
  * an MFA challenge instead. */
@@ -238,6 +255,16 @@ export const authConfig: NextAuthConfig = {
           ) {
             // Wrong password / locked / wrong-or-expired MFA code → generic.
             return null;
+          }
+          if (err instanceof ApiError && err.status === 403) {
+            // Credentials were CORRECT but a policy gate refused the login
+            // (deactivated account, unverified email). Carry the typed reason
+            // to the form so it can explain the actual blocker instead of
+            // implying the password was wrong.
+            const reason = reasonOf(err.payload);
+            if (reason) {
+              throw new TypedSignInRefusal(reason);
+            }
           }
           throw err;
         }

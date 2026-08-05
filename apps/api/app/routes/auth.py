@@ -519,6 +519,27 @@ def login(
     if needs_rehash:
         user.password_hash = hash_password(body.password)
 
+    # Deactivated-account gate (issue 3). `User.is_active` was already honoured
+    # by the refresh, MFA-verify, and password-reset flows, but NOT here — so an
+    # admin deactivating a user did not actually stop them signing in. Checked
+    # AFTER the password verify, deliberately: refusing earlier would turn the
+    # endpoint into an oracle telling an unauthenticated caller which accounts
+    # exist and are disabled (OWASP A07), the same reason the "no such user"
+    # branch is deferred above.
+    if not user.is_active:
+        db.commit()
+        log.info("auth.login_blocked_inactive", user_id=str(user.id))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "reason": "account_deactivated",
+                "message": (
+                    "This account has been deactivated. Contact your SHIELD "
+                    "administrator if you think this is a mistake."
+                ),
+            },
+        )
+
     # Email verification gate (Sprint 6 T5, D-028). When the flag is on, a user
     # whose address is not yet verified cannot complete login (nor start the MFA
     # step). Do NOT reset the lockout counters here: login is not complete, and

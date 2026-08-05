@@ -97,6 +97,12 @@ class FixtureProvider:
         return fn(payload)
 
 
+# Anthropic terminal reasons that mean "the model said everything it meant to".
+# Anything else (max_tokens, refusal, pause_turn, …) leaves a partial body that
+# must never be parsed as if it were complete.
+_ANTHROPIC_CLEAN_STOP_REASONS = frozenset({"end_turn", "stop_sequence"})
+
+
 class AnthropicProvider:
     """Live Anthropic Claude provider.
 
@@ -127,9 +133,20 @@ class AnthropicProvider:
         client = self._ensure_client()
         # Payload is sent as JSON inside the user message. The redactor has
         # already run upstream, so this content is safe to egress.
-        msg = client.messages.create(
+        # STREAMED, not a blocking create(). With the cap at 8192 a single
+        # non-streaming request for zt_score ran long enough that Anthropic
+        # dropped it — `APIConnectionError: Server disconnected without sending
+        # a response` (2026-08-05 live run), which left the workspace spinning
+        # forever. Streaming holds the connection open and
+        # `get_final_message()` returns the same assembled Message, so the
+        # stop_reason guard and token accounting below are unchanged.
+        with client.messages.stream(
             model=self.model,
-            max_tokens=4096,
+            # Shared with the generateContent + OpenAI adapters. This was a
+            # hardcoded 4096 until the 2026-08-04 live run, where zt_score
+            # overran it and came back truncated mid-string (see the guard
+            # below). One cap now governs every provider.
+            max_tokens=_MAX_OUTPUT_TOKENS,
             messages=[
                 {
                     "role": "user",
@@ -139,7 +156,20 @@ class AnthropicProvider:
                     ],
                 }
             ],
-        )
+        ) as stream:
+            msg = stream.get_final_message()
+        # FAIL LOUDLY on a non-clean finish, mirroring _parse_generate_content.
+        # A truncated draft ("max_tokens") is NOT a partial success: handing it
+        # to the engine's json.loads produces an opaque JSONDecodeError, a 500,
+        # and — because the 500 rolls the request transaction back — no
+        # llm_calls row at all. Raising here names the real cause instead.
+        stop_reason = getattr(msg, "stop_reason", None)
+        if stop_reason is not None and stop_reason not in _ANTHROPIC_CLEAN_STOP_REASONS:
+            raise RuntimeError(
+                f"Anthropic did not finish cleanly (stop_reason={stop_reason}). "
+                "The response is incomplete and was NOT parsed; if this is "
+                "max_tokens, the draft exceeded the output budget."
+            )
         # `msg.content` is a list of blocks; gather the text blocks.
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         input_tokens = getattr(getattr(msg, "usage", None), "input_tokens", None)
@@ -393,7 +423,29 @@ class VertexProvider:
         return _parse_generate_content(resp.json())
 
 
-def _build_provider(settings: Settings) -> LLMProvider:
+def _build_provider(settings: Settings, runtime_key: str | None = None) -> LLMProvider:
+    """Pick the provider adapter for this call.
+
+    ``runtime_key`` (issue 2) is a key an admin pasted through
+    ``POST /admin/llm-key``, resolved from the keystore by the caller. Its
+    presence forces the LIVE adapter even when ``SHIELD_LLM_MODE`` is
+    ``fixture``: loading a key is the admin explicitly asking for live AI, and
+    silently continuing to serve canned fixtures after they did that would be
+    the exact "looks like it worked but didn't" failure this feature removes.
+    Without a runtime key, behaviour is unchanged.
+    """
+    if runtime_key:
+        if settings.shield_llm_provider == "anthropic":
+            return AnthropicProvider(model=settings.shield_llm_model, api_key=runtime_key)
+        if settings.shield_llm_provider == "openai":
+            return OpenAIProvider(model=settings.shield_llm_model, api_key=runtime_key)
+        if settings.shield_llm_provider == "gemini":
+            return GeminiProvider(model=settings.shield_llm_model, api_key=runtime_key)
+        raise RuntimeError(
+            f"A runtime API key is stored but provider {settings.shield_llm_provider!r} "
+            "has no key-based adapter (vertex uses ADC). Remove the stored key or "
+            "switch SHIELD_LLM_PROVIDER."
+        )
     if settings.shield_llm_mode == "fixture":
         # Fixture mode serves deterministic, demo-plausible canned responses so
         # the whole stack is exercisable OFFLINE (T6b / DECISIONS D-017). The
@@ -447,6 +499,21 @@ class LLMClient:
         s = settings or get_settings()
         return cls(_build_provider(s), s)
 
+    @classmethod
+    def from_db(cls, db: Session, settings: Settings | None = None) -> LLMClient:
+        """Build a client honouring a key stored at runtime (issue 2).
+
+        Routes use this instead of `from_settings` so an admin pasting a key
+        takes effect on the very next Run-AI, with no redeploy and no process
+        restart. Falls back to the environment-configured behaviour when no key
+        has been stored.
+        """
+        s = settings or get_settings()
+        from app.ai import keystore
+
+        stored = keystore.load_key(db, provider=s.shield_llm_provider, settings=s)
+        return cls(_build_provider(s, runtime_key=stored), s)
+
     def invoke(
         self,
         db: Session,
@@ -471,8 +538,15 @@ class LLMClient:
             name_hints=name_hints,
         )
 
+        # Describe the PROVIDER that is about to be called, never the
+        # environment variable. `_build_provider` promotes a runtime key
+        # (D-037) to a live adapter while SHIELD_LLM_MODE can still read
+        # "fixture", so deriving this from settings recorded real Anthropic
+        # egress as FIXTURE — found in the 2026-08-04 live run. `llm_calls` is
+        # the egress evidence for a FedRAMP-targeted deployment; it must not
+        # claim that no external call happened when one did.
         call_mode: LLMCallMode = (
-            LLMCallMode.FIXTURE if self._settings.shield_llm_mode == "fixture" else LLMCallMode.LIVE
+            LLMCallMode.FIXTURE if self.provider.name == "fixture" else LLMCallMode.LIVE
         )
 
         row = LLMCall(

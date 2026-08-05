@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
+
+import { apiFetch } from "@/lib/api";
 
 import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 
@@ -39,13 +42,32 @@ export default async function SelfAssessmentPage(props: {
   const searchParams = await props.searchParams;
   const params = await props.params;
   const session = await auth();
-  const type = searchParams.type ?? "";
+  let type = searchParams.type ?? "";
   if (!session) {
     const cb = encodeURIComponent(
       `/self-assessment/${params.serviceId}?type=${type}`,
     );
     redirect(`/sign-in?callbackUrl=${cb}`);
   }
+
+  // UX finding 12: without ?type= this page dead-ended, even though the service
+  // record identifies the assessment. Every in-app link passes the param, so
+  // this path is reached by bookmarked, copied or emailed URLs — no user error.
+  // Resolve it from the client's own assessments before giving up.
+  let resolvedType = type;
+  if (!COPY[resolvedType] && session.accessToken) {
+    try {
+      const assessments = await apiFetch<
+        Array<{ service_id: string; service_type: string }>
+      >("/intake/engagements", { bearer: session.accessToken });
+      resolvedType =
+        assessments.find((a) => a.service_id === params.serviceId)
+          ?.service_type ?? resolvedType;
+    } catch {
+      // Fall through to the recovery card below — never a hard failure.
+    }
+  }
+  type = resolvedType;
 
   const copy = COPY[type];
 
@@ -77,13 +99,20 @@ export default async function SelfAssessmentPage(props: {
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>Open this from your intake confirmation</CardTitle>
+              <CardTitle>We couldn&apos;t open that assessment</CardTitle>
             </CardHeader>
-            <CardBody>
+            <CardBody className="flex flex-col items-start gap-3">
               <p className="text-sm text-ink-secondary">
-                We couldn&apos;t tell which assessment to load. Head back to
-                your intake confirmation and pick a self-assessment to start.
+                This link doesn&apos;t match an assessment on your account. It
+                may have been completed, or it may belong to a different
+                organization.
               </p>
+              <Link
+                href="/assessments"
+                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600"
+              >
+                Go to your assessments
+              </Link>
             </CardBody>
           </Card>
         )}

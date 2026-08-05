@@ -25,6 +25,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
+import { formatDateOnly } from "@/lib/dates";
 
 type ServiceRequestRow = AdminIntakeQueueResponse["service_requests"][number];
 
@@ -171,10 +172,7 @@ function ServiceRequestCard({
         <dl>
           {row("Email", s.requested_by.email)}
           {target ? row("Client target", target) : null}
-          {row(
-            "Target deadline",
-            s.deadline ? new Date(s.deadline).toLocaleDateString() : null,
-          )}
+          {row("Target deadline", formatDateOnly(s.deadline))}
           {row("Notes", s.notes)}
         </dl>
 
@@ -252,19 +250,26 @@ function ServiceRequestCard({
   );
 }
 
-export function IntakeQueue(): JSX.Element {
+/**
+ * One organization's intake queue (issue 7).
+ *
+ * `clientId` scopes every section to that tenant. It is required by the route
+ * that renders this: opening the queue unscoped is what made it show the
+ * most-recently-created tenant's profile above every tenant's work.
+ */
+export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const [state, setState] = React.useState<AdminIntakeQueueResponse | null>(
     null,
   );
   const [error, setError] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
-    fetchIntakeQueue()
+    fetchIntakeQueue(clientId)
       .then(setState)
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load."),
       );
-  }, []);
+  }, [clientId]);
 
   React.useEffect(() => {
     load();
@@ -299,13 +304,19 @@ export function IntakeQueue(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-6">
+      <Link
+        href="/admin/queue"
+        className="text-sm font-medium text-brand-600 hover:text-brand-500"
+      >
+        ← All organizations
+      </Link>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
             Admin
           </p>
           <h1 className="text-3xl font-semibold text-ink-primary">
-            Intake queue
+            {hasIntake ? c.legal_name : "Intake queue"}
           </h1>
           <p className="max-w-prose text-sm text-ink-secondary">
             The queue reflects exactly what the client entered during intake.

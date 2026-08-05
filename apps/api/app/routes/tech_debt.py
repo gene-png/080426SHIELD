@@ -35,12 +35,15 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
 from app.schemas.tech_debt import (
+    CapabilityComponentsRequest,
     CapabilityItemPatch,
     CapabilityItemResponse,
     CapabilityListResponse,
     ConsolidationPlanSummary,
     DeliverableResponse,
+    ExcludedRowResponse,
     ExtractRequest,
+    IncludeExcludedRowRequest,
     OverlapAnalysisResponse,
     OverlapBucketResponse,
     ServiceCreateRequest,
@@ -76,8 +79,10 @@ _log = get_logger(__name__)
 # Module-level slot for tests + production. Tests inject a FixtureProvider-
 # backed client via FastAPI dependency overrides; production gets the
 # settings-built client lazily.
-def _llm_dep() -> LLMClient:
-    return LLMClient.from_settings()
+def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
+    """Issue 2: build from the DB so a key an admin pasted at runtime is
+    honoured on the very next Run-AI, with no redeploy."""
+    return LLMClient.from_db(db)
 
 
 @router.post(
@@ -162,6 +167,19 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
         items=[CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items],
         approved_at=cap_list.approved_at,
         approved_by=cap_list.approved_by,
+        # This serializer builds the response field-by-field, so anything added
+        # to the model MUST be added here too or it silently reads as null —
+        # the same shape of bug as the released_at/released_to_client_at
+        # mismatch that made the release control look broken.
+        source_rows_total=cap_list.source_rows_total,
+        excluded_rows=[
+            ExcludedRowResponse(
+                index=int(r.get("index", -1)),
+                summary=str(r.get("summary", "")),
+                confirmed=bool(r.get("confirmed", False)),
+            )
+            for r in (cap_list.excluded_rows or [])
+        ],
     )
 
 
@@ -242,7 +260,17 @@ def extract_capability_list(
     # Determine next version off the true max (discarded rows still hold their
     # version under the unique constraint - D-031 version trap).
     next_version = _max_list_version(db, svc.id) + 1
-    cap_list = CapabilityList(service_id=svc.id, version=next_version)
+    cap_list = CapabilityList(
+        service_id=svc.id,
+        version=next_version,
+        # Persisted so the disclosure survives a page reload: the workspace
+        # re-fetches the list on every load, and a warning that vanishes on
+        # refresh is no warning (UX finding 4).
+        source_rows_total=result.reconciliation.received,
+        excluded_rows=[
+            {"index": e.index, "summary": e.summary} for e in result.reconciliation.excluded_rows
+        ],
+    )
     db.add(cap_list)
     db.flush()
 
@@ -307,6 +335,241 @@ def latest_capability_list(
             detail="Capability lists are admin-only until release.",
         )
     return _serialize_list_with_items(db, cap_list)
+
+
+def _editable_list_or_404(db: Session, list_id: uuid.UUID, client: Client) -> CapabilityList:
+    """Fetch a capability list in this tenant that is still open to edits."""
+    cap_list = db.get(CapabilityList, list_id)
+    if cap_list is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability list not found.",
+        )
+    svc = db.get(Service, cap_list.service_id)
+    if svc is None or svc.client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability list not found.",
+        )
+    if cap_list.status in (
+        CapabilityListStatus.RELEASED,
+        CapabilityListStatus.DISCARDED,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This capability list has been released and is locked."
+                if cap_list.status == CapabilityListStatus.RELEASED
+                else "This capability list has been discarded."
+            ),
+        )
+    return cap_list
+
+
+def _excluded_entry_or_404(cap_list: CapabilityList, row_index: int) -> dict:
+    for entry in cap_list.excluded_rows or []:
+        if int(entry.get("index", -1)) == row_index:
+            return entry
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="That row is not in this list's excluded rows.",
+    )
+
+
+@router.post(
+    "/capability-lists/{list_id}/excluded-rows/{row_index}/include",
+    response_model=CapabilityListResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Include a row the extraction skipped (admin)",
+)
+def include_excluded_row(
+    list_id: uuid.UUID,
+    row_index: int,
+    body: IncludeExcludedRowRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Recover a row the extractor wrongly skipped (UX finding 4).
+
+    Disclosure told the consultant nine rows were dropped; this is how they act
+    on it. The consultant supplies the values — the raw row is free text the
+    extractor already declined to interpret, so re-parsing it here would be
+    guessing at exactly the point a human has stepped in.
+    """
+    cap_list = _editable_list_or_404(db, list_id, client)
+    entry = _excluded_entry_or_404(cap_list, row_index)
+
+    item = CapabilityItem(
+        capability_list_id=cap_list.id,
+        name=body.name,
+        vendor=body.vendor,
+        category=body.category,
+        function=body.function,
+        annual_cost_usd=body.annual_cost_usd,
+        license_count=body.license_count,
+        notes=body.notes,
+        # Human-added, so it carries no AI confidence badge.
+        confidence_pct=None,
+    )
+    db.add(item)
+    # It is no longer excluded: dropping it keeps `received = included +
+    # excluded` true, which is the whole point of the reconciliation.
+    cap_list.excluded_rows = [
+        e for e in (cap_list.excluded_rows or []) if int(e.get("index", -1)) != row_index
+    ]
+    audit(
+        db,
+        action="capability_list.excluded_row_included",
+        target_type="capability_list",
+        target_id=cap_list.id,
+        actor_user_id=user.id,
+        details={"row_index": row_index, "name": body.name, "summary": entry.get("summary")},
+    )
+    db.commit()
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
+
+
+@router.post(
+    "/capability-lists/{list_id}/excluded-rows/{row_index}/confirm",
+    response_model=CapabilityListResponse,
+    summary="Confirm a row was correctly excluded (admin)",
+)
+def confirm_excluded_row(
+    list_id: uuid.UUID,
+    row_index: int,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Acknowledge an exclusion as correct.
+
+    The row STAYS listed — the reconciliation has to keep telling the truth
+    about what was uploaded — but the workspace can stop flagging it as
+    outstanding.
+    """
+    cap_list = _editable_list_or_404(db, list_id, client)
+    _excluded_entry_or_404(cap_list, row_index)
+
+    # Rebuild the list: a JSON column mutated in place is not seen as dirty.
+    cap_list.excluded_rows = [
+        (
+            {**e, "confirmed": True}
+            if int(e.get("index", -1)) == row_index
+            else {"confirmed": False, **e}
+        )
+        for e in (cap_list.excluded_rows or [])
+    ]
+    audit(
+        db,
+        action="capability_list.excluded_row_confirmed",
+        target_type="capability_list",
+        target_id=cap_list.id,
+        actor_user_id=user.id,
+        details={"row_index": row_index},
+    )
+    db.commit()
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
+
+
+@router.post(
+    "/capability-items/{item_id}/components",
+    response_model=CapabilityListResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Name the capabilities inside a bundled licence (admin)",
+)
+def add_capability_components(
+    item_id: uuid.UUID,
+    body: CapabilityComponentsRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Expand one bundled row into the capabilities it contains.
+
+    UX finding 5 / E2E F-6: "Microsoft 365 E5" extracted as a single $294,120
+    line, so the Defender / Entra components that overlap the client's separately
+    licensed CrowdStrike, Proofpoint and Okta were invisible to redundancy
+    analysis and to the ATT&CK tool mapping.
+
+    The CONSULTANT names the components. The model is never asked what is inside
+    a bundle — that would be fabricated detail, which is exactly what the AI seam
+    exists to prevent.
+
+    Components carry no cost: the parent keeps the whole licence value, so
+    decomposing can never inflate the portfolio total.
+    """
+    item = db.get(CapabilityItem, item_id)
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability item not found.",
+        )
+    cap_list = db.get(CapabilityList, item.capability_list_id)
+    if cap_list is not None:
+        svc = db.get(Service, cap_list.service_id)
+        if svc is None or svc.client_id != client.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Capability item not found.",
+            )
+    if cap_list is not None and cap_list.status in (
+        CapabilityListStatus.RELEASED,
+        CapabilityListStatus.DISCARDED,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This capability list has been released and is locked."
+                if cap_list.status == CapabilityListStatus.RELEASED
+                else "This capability list has been discarded."
+            ),
+        )
+    # One level only: a component of a component has no real-world counterpart
+    # here and would make the cost story ambiguous.
+    if item.parent_item_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "component_cannot_be_split",
+                "message": (
+                    "This is already a component of a bundle. Split the bundle "
+                    "itself, not one of its parts."
+                ),
+            },
+        )
+
+    for comp in body.components:
+        db.add(
+            CapabilityItem(
+                capability_list_id=item.capability_list_id,
+                parent_item_id=item.id,
+                name=comp.name,
+                vendor=item.vendor,
+                category=comp.category,
+                function=comp.function,
+                # No cost: the parent holds the licence value.
+                annual_cost_usd=None,
+                license_count=None,
+                notes=comp.notes,
+                # Human-named, so no AI confidence badge.
+                confidence_pct=None,
+                source_artifact_id=item.source_artifact_id,
+            )
+        )
+    audit(
+        db,
+        action="capability_item.components_added",
+        target_type="capability_item",
+        target_id=item.id,
+        actor_user_id=user.id,
+        details={"count": len(body.components)},
+    )
+    db.commit()
+    db.refresh(item)
+    return _serialize_list_with_items(db, db.get(CapabilityList, item.capability_list_id))
 
 
 @router.patch(

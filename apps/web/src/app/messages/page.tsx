@@ -19,7 +19,7 @@ export default function MessagesPage(): JSX.Element {
       <main
         id="main-content"
         tabIndex={-1}
-        className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10 outline-hidden"
+        className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
       >
         <div>
           <h1 className="text-2xl font-semibold text-ink-primary">Messages</h1>

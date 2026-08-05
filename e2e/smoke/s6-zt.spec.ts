@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 6 (T6): the Zero Trust (DoD ZTRA) admin workspace.
@@ -174,6 +175,7 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
     { timeout: 60000 },
   );
   await page.getByRole("button", { name: "Run AI" }).click();
+  await acknowledgeOfflineAi(page);
   const runBody = (await (await runDone).json()) as {
     changed: Array<{
       capability_code: string;

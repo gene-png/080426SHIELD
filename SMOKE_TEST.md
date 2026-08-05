@@ -120,9 +120,11 @@ which no test can assert, stays a human check (the last box).
 ## 12. Navigation / a11y / no-dead-ends (C6, F)
 
 - [ ] Every admin + client page has top-nav; **no 404s** clicking around.
-- [x] **Tab** from page load → first focusable is **"Skip to content"**; activating it jumps to `#main-content` (test on admin + on `/account`, `/messages`, `/assessments`). (s12-a11y-nav.spec.ts — asserts hash becomes `#main-content` AND focus lands ON the landmark; the final-audit pass added `tabindex="-1"` to every `<main id=main-content>` per WAI-ARIA skip-link practice)
+- [x] **Tab** from page load → first focusable is **"Skip to content"**; activating it jumps to `#main-content`, and the landmark shows a **visible** focus ring (test on admin + on `/account`, `/messages`, `/assessments`). (s12-a11y-nav.spec.ts — asserts hash becomes `#main-content`, focus lands ON the landmark, AND the landmark renders a non-zero outline width; the final-audit pass added `tabindex="-1"` to every `<main id=main-content>` per WAI-ARIA skip-link practice, and the seven-issue pass removed the `outline-hidden` class that was cancelling the ring — see §33)
 - [x] Keyboard-navigate a workspace (radios, selects, buttons all reachable/operable). (s12-a11y-nav.spec.ts — CSF radio Space-to-answer + submit button enabled, plus arrow-key roving-tabindex on the TierPicker radiogroup (ArrowRight moves focus + follows `tabindex`, wraps at the ends) added in S2 T6; `select` controls are not keyboard-driven by the spec)
 - [x] Each terminal state has an onward link (no dead ends). (s12-notfound.spec.ts — 404 recovery links asserted; the admin not-authorized state renders onward links via `admin/layout.tsx` with its copy asserted in s13; other terminal states are not enumerated)
+- [x] Every `/home` service card is clickable and lands on a real destination for its own phase (report-ready → dashboard or `/documents`, in-progress → the self-assessment, otherwise `/assessments`). (s31-home-service-links.spec.ts — the cards were previously bare, unlinked `Card`s: a client could see a service and had no way to open it. See §33.)
+- [x] `/admin/active` is gone from the nav and redirects to `/admin/queue` — no stub page with a single "go elsewhere" button. (s35-active-redirect.spec.ts. See §33.)
 
 > **a11y roving-tabindex — FIXED in S2 T6** (`137727b`; asserted green by
 > s12-a11y-nav.spec.ts): `TierPicker` / `ZtStagePicker` now implement WAI-ARIA
@@ -407,6 +409,44 @@ untouched.
 3. Only if `infra/keycloak/shield-realm.json` changed since it was last imported, wipe the keycloak volume so the new realm re-imports: `docker compose stop keycloak && docker volume rm shield-v2_keycloak-data && docker compose up -d keycloak`.
 4. `E2E_OIDC=1 npx playwright test smoke/s26-oidc-login.spec.ts`.
 5. Restore: remove the flag line, `docker compose up -d --force-recreate api web`, then re-run the default suite to confirm the credentials path still signs in.
+
+## 33. Navigation dead ends removed (seven-issue pass, issues 1 / 5 / 6)
+
+Three surfaces rendered but could not be acted on. See also §12.
+
+- [x] **`/home` service cards are links.** Every card on the client home dashboard navigates, routed by that card's own phase — report-ready to the service dashboard (or `/documents` for a kind with no dashboard), in-progress to the self-assessment, everything else to `/assessments`. Clicking a "Report ready" card lands on a dashboard that actually renders, not the not-available fallback. (s31-home-service-links.spec.ts; unit: HomeDashboard.test.tsx "every service card must be a link". `dashboardPathFor()` in `lib/dashboards/routes.ts` is the single source of truth, shared with `/documents`.)
+- [x] **`/admin/active` no longer dead-ends.** The nav entry points at `/admin/queue`; the old route redirects there so bookmarks still work, and "Active Work" is gone from the admin nav. (s35-active-redirect.spec.ts)
+- [x] **The skip-to-content link produces a visible change.** The link always moved focus correctly; the ring was cancelled by `outline-hidden` on all 8 `<main id="main-content">` shells, so on a short page nothing appeared to happen. The class is removed and the rendered outline width is now asserted, not just the focus move. (s12-a11y-nav.spec.ts)
+
+## 34. Client + user removal (seven-issue pass, issue 3 — D-036)
+
+Removal is **soft** throughout, following the `archive_service` precedent:
+archiving a tenant stamps `client.archived_at` (migration 0033) and retains every
+assessment, deliverable and audit row.
+
+- [x] Archive a client from the admin console → it disappears from the client list and the intake org index; its data is retained. (s33-admin-remove.spec.ts; test_admin_removal.py)
+- [x] List a tenant's users and deactivate / reactivate one. (s33-admin-remove.spec.ts; test_admin_removal.py)
+- [x] Deactivating yourself is refused with a typed D-016 error (locking yourself out of the only admin console is unrecoverable from the UI). (test_admin_removal.py)
+- [x] A **deactivated user cannot sign in** — `/auth/login` now checks `is_active` (it did not before; refresh/MFA/reset did, so deactivation was a lie), the check sits after the password verify so the endpoint is not an account-existence oracle, and the sign-in form says "this account has been deactivated" rather than implying a bad password. (test_admin_removal.py; s33-admin-remove.spec.ts)
+- [x] Deactivation kills an existing session — `active_refresh_jti` is cleared, so the user does not ride a valid refresh token to expiry. (test_admin_removal.py)
+
+## 35. Intake queue is an index of organizations (seven-issue pass, issue 7)
+
+- [x] `/admin/queue` lists **every** organization with pending intake, each row carrying its awaiting-review count — it previously opened onto whichever tenant was created most recently and rendered that as the page header. (s32-admin-org-index.spec.ts)
+- [x] `/admin/queue/[clientId]` shows one org's intake detail above its own pending work, using the API's existing `client_id` filter. (s32-admin-org-index.spec.ts)
+
+## 36. Runtime AI key + release control (seven-issue pass, issues 2 / 4 — D-037, D-038)
+
+- [x] An admin can paste, replace and remove a provider API key on `/admin/management`; the key is **validated against the provider before it is stored**, so a typo is refused with the provider's own reason instead of silently taking AI offline. (test_admin_llm_key.py; s34-llm-key.spec.ts)
+- [x] The stored key is encrypted at rest (Fernet, migration 0034), is never returned by any endpoint, never logged, and never lands in an audit `details` blob. (test_admin_llm_key.py asserts each)
+- [x] A stored key takes effect on the next Run AI with **no restart**, and overrides `SHIELD_LLM_MODE=fixture`. (test_admin_llm_key.py)
+- [x] The "AI is offline" banner renders on **every** admin page (it previously rendered on one of five workspaces) and links to the fix. (s34-llm-key.spec.ts)
+- [x] While AI is offline, the first Run AI click warns that output will be canned and offers "Load a key" / "Continue offline"; removing the key re-warns on the very next Run AI in the same session. (RunAiGuard.test.tsx — 7 unit tests, including re-warn-after-removal and the two race cases below. `s34`'s browser assertion runs whenever the ATT&CK workspace is editable and self-skips when the seeded assessment is already released, so whether it exercises the dialog depends on DB state.)
+- [x] A Run AI click made **before** the AI-status request resolves is held until the answer arrives — it never produces canned output unwarned. The first implementation failed open on an unresolved status, so under load the guard silently ran and wrote 1646 fields; found by the first full-suite run of `s34` (it had only ever been run standalone, where it skipped). (RunAiGuard.test.tsx "does NOT run when clicked before the status has loaded" + "honours a deferred click when the status turns out to be live"; `s34-llm-key.spec.ts` clicks eagerly on purpose to keep the regression pinned.)
+- [x] A genuine AI-status **outage** still fails open — an unreachable status endpoint must not stop an admin working. That is a different case from "not asked yet", and the two are now distinct states. (RunAiGuard.test.tsx "fails open when the status endpoint is unavailable")
+- [x] An admin can **release** a finalized deliverable from the workspace card, and the card reflects the released state afterwards. Before this, nothing in the product could release anything, so the client dashboards' release gate (D-035) was unsatisfiable and no client could ever see a dashboard. (s36-release-and-preview.spec.ts, self-seeding a finalized-but-unreleased service)
+- [x] An admin can open a service dashboard **before** release (preview), reaching it on a cold URL with no active-client cookie; the payload is identical to what the client will see apart from a `released` flag. (s36-release-and-preview.spec.ts; backend test asserts preview == client view)
+- [ ] Live path: paste a **real** provider key through the UI and confirm a Run AI produces live (non-fixture) output. Needs a human with a real key — the automated coverage stops at the validation contract with a substituted validator (§14 remains the live-AI section).
 
 ---
 

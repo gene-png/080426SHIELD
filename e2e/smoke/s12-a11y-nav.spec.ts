@@ -82,6 +82,31 @@ async function assertSkipLinkAndNav(page: Page, path: string): Promise<void> {
     })
     .toBe("main-content");
 
+  // Issue 5: focus moving is necessary but not sufficient — a SIGHTED keyboard
+  // user needs to see that it moved. Every shell previously carried
+  // `outline-hidden` on <main>, which sets `outline-style: none` and cancelled
+  // the focus ring, so on a short page activation looked like nothing happened
+  // and the link read as broken. Assert a real, visible ring renders.
+  const ring = await page.evaluate(() => {
+    const main = document.getElementById("main-content");
+    if (!main) return null;
+    const cs = getComputedStyle(main);
+    return {
+      style: cs.outlineStyle,
+      width: cs.outlineWidth,
+      matchesFocus: main.matches(":focus"),
+    };
+  });
+  expect(ring?.matchesFocus, `${path}: main matches :focus`).toBe(true);
+  expect(
+    ring?.style,
+    `${path}: focused main renders a visible outline (not 'none')`,
+  ).not.toBe("none");
+  expect(
+    parseFloat(ring?.width ?? "0"),
+    `${path}: focus ring has non-zero width`,
+  ).toBeGreaterThan(0);
+
   // When the landmark holds a focusable control, the next Tab moves focus INTO
   // it (proving the nav was actually skipped). Some shells render a main with no
   // focusable descendant yet (e.g. an empty/loading admin queue), so gate this

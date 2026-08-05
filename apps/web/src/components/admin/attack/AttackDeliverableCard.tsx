@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import * as React from "react";
 
 import {
@@ -13,6 +14,7 @@ import {
 import {
   AttackProxyError,
   finalizeAttackDeliverable,
+  releaseAttackDeliverable,
 } from "@/lib/attack/client";
 import type {
   AttackAssessmentStatus,
@@ -56,7 +58,9 @@ export function AttackDeliverableCard({
   deliverable,
   onChange,
 }: AttackDeliverableCardProps): JSX.Element {
-  const [busy, setBusy] = React.useState<"finalize" | null>(null);
+  const [busy, setBusy] = React.useState<"finalize" | "release" | null>(null);
+  const [confirmingRelease, setConfirmingRelease] = React.useState(false);
+  const released = Boolean(deliverable?.released_at);
   const [error, setError] = React.useState<string | null>(null);
 
   const canFinalize =
@@ -67,6 +71,26 @@ export function AttackDeliverableCard({
     setError(null);
     try {
       const next = await finalizeAttackDeliverable(serviceId);
+      onChange(next);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Issue 4: release the finalized deliverable to the client. `releaseAttackDeliverable`
+   * already existed with ZERO callers, so nothing in the product could satisfy
+   * the client dashboard's release gate until this was wired up.
+   */
+  async function onRelease(): Promise<void> {
+    if (!deliverable) return;
+    setBusy("release");
+    setError(null);
+    try {
+      const next = await releaseAttackDeliverable(deliverable.id);
+      setConfirmingRelease(false);
       onChange(next);
     } catch (err) {
       setError(describeError(err));
@@ -89,11 +113,15 @@ export function AttackDeliverableCard({
         <div className="flex flex-wrap items-center gap-2">
           {deliverable ? (
             <>
-              <StatusPill tone="info" withDot>
-                {`Finalized v${deliverable.version}`}
+              <StatusPill tone={released ? "success" : "info"} withDot>
+                {released
+                  ? `Released v${deliverable.version}`
+                  : `Finalized v${deliverable.version}`}
               </StatusPill>
               <span className="text-xs text-ink-tertiary">
-                Finalized {fmtTime(deliverable.finalized_at)}
+                {released
+                  ? `Released ${fmtTime(deliverable.released_at)}`
+                  : `Finalized ${fmtTime(deliverable.finalized_at)}`}
               </span>
             </>
           ) : (
@@ -128,6 +156,16 @@ export function AttackDeliverableCard({
           </ul>
         ) : null}
 
+        {/* Issue 4: the admin's own view of the dashboard, live as soon as
+            the deliverable is finalized — before release. */}
+        {deliverable ? (
+          <Link
+            href={`/dashboards/attack/${serviceId}`}
+            className="w-fit rounded-md border border-border bg-surface-card px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken"
+          >
+            View dashboard{released ? "" : " (preview)"} →
+          </Link>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -145,6 +183,43 @@ export function AttackDeliverableCard({
             <span className="text-xs text-ink-tertiary">
               Approve the assessment to enable finalize.
             </span>
+          ) : null}
+
+          {/* Issue 4: release to the client — the moment they can first see
+              this work, so it sits behind an explicit confirm. */}
+          {deliverable && !released ? (
+            confirmingRelease ? (
+              <span className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-ink-secondary">
+                  Release v{deliverable.version} to the client?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void onRelease()}
+                  disabled={busy !== null}
+                  className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-ink-on-accent disabled:opacity-60"
+                >
+                  {busy === "release" ? "Releasing…" : "Yes, release"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingRelease(false)}
+                  disabled={busy !== null}
+                  className="rounded-md border border-border bg-surface-card px-3 py-1.5 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"
+                >
+                  Cancel
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingRelease(true)}
+                disabled={busy !== null}
+                className="rounded-md border border-brand-500 px-4 py-2 text-sm font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-60"
+              >
+                Release to client
+              </button>
+            )
           ) : null}
         </div>
 

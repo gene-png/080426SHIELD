@@ -84,6 +84,15 @@ export function ZtSelfAssessment({
     });
   }, [catalog, answersByCode]);
 
+  // UX finding 13: pillar-level progress alone did not tell the client how much
+  // of the assessment remained. Capability-level counts drive "24 of 37".
+  const answeredTotal = pillarStats.reduce((n, s) => n + s.answered, 0);
+  const capabilityTotal = pillarStats.reduce((n, s) => n + s.total, 0);
+  const answeredPct = capabilityTotal
+    ? Math.round((answeredTotal / capabilityTotal) * 100)
+    : 0;
+  const firstUnansweredIdx = pillarStats.findIndex((s) => s.answered < s.total);
+
   const everyPillarStarted =
     pillarStats.length > 0 && pillarStats.every((s) => s.answered > 0);
   const pillarsComplete = pillarStats.filter(
@@ -242,9 +251,24 @@ export function ZtSelfAssessment({
                 }}
               />
             </div>
-            <p className="mt-1 text-xs text-ink-tertiary">
-              {pillarsComplete} of {pillars.length} pillars fully answered
-            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <p className="text-xs text-ink-tertiary">
+                <span className="font-semibold text-ink-secondary">
+                  {answeredTotal} of {capabilityTotal} answered
+                </span>{" "}
+                ({answeredPct}%) · {pillarsComplete} of {pillars.length} pillars
+                fully answered
+              </p>
+              {firstUnansweredIdx >= 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setPillarIdx(firstUnansweredIdx)}
+                  className="text-xs font-medium text-brand-600 underline hover:text-brand-700"
+                >
+                  Review unanswered items
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {/* Pillar stepper: shows every pillar + its completion at a glance */}
@@ -259,6 +283,12 @@ export function ZtSelfAssessment({
                     type="button"
                     onClick={() => setPillarIdx(i)}
                     aria-current={isCurrent ? "step" : undefined}
+                    // UX finding 14: the tabs showed bare abbreviations (ID, DV,
+                    // NW …). The full name is now visible, and the accessible
+                    // name also carries progress so screen-reader users get the
+                    // same at-a-glance completion the badge gives sighted users.
+                    aria-label={`${s.code} ${s.name} — ${s.answered} of ${s.total} answered`}
+                    title={`${s.code} · ${s.name}`}
                     className={cn(
                       "flex items-center gap-1 rounded-pill border px-2.5 py-1 text-xs font-medium transition-colors",
                       isCurrent
@@ -279,7 +309,10 @@ export function ZtSelfAssessment({
                     >
                       {done ? "✓" : i + 1}
                     </span>
-                    {s.code}
+                    <span aria-hidden>
+                      <span className="font-semibold">{s.code}</span>
+                      <span className="ml-1 hidden sm:inline">{s.name}</span>
+                    </span>
                   </button>
                 </li>
               );

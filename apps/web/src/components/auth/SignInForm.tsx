@@ -45,6 +45,24 @@ export function SignInForm(): JSX.Element {
         setPending(false);
         return;
       }
+      // A typed policy refusal (issue 3): the credentials were right but a gate
+      // blocked the login. Say which one — "Invalid email or password" would
+      // send the user off to reset a password that is not the problem.
+      const REFUSALS: Record<string, string> = {
+        // UX finding 21: the copy told the user to contact an administrator but
+        // gave them no way to do it. The route is deliberately generic — it must
+        // not reveal who the tenant's admins are. Mirrors the
+        // accessibility@kentro.local convention on /accessibility.
+        account_deactivated:
+          "This account has been deactivated. Contact your SHIELD administrator if you think this is a mistake, or email support@kentro.local for help.",
+        email_not_verified:
+          "Please verify your email address before signing in. Check your inbox for the confirmation link.",
+      };
+      if (result?.code && REFUSALS[result.code]) {
+        setError(REFUSALS[result.code]);
+        setPending(false);
+        return;
+      }
       if (!result || result.error) {
         setError(
           mfaRequired

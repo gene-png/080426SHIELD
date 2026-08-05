@@ -37,6 +37,13 @@ async def _handle_http_exception(request: Request, exc: HTTPException) -> JSONRe
         reason = detail.get("reason")
         if reason is not None:
             error["reason"] = reason
+        # Carry any further typed fields the route attached. Without this the
+        # envelope silently dropped everything except reason/message — e.g.
+        # `charged_likely` on an AI failure, which the UI needs in order to tell
+        # the admin whether a retry may cost money a second time.
+        for key, value in detail.items():
+            if key not in {"message", "reason"} and key not in error:
+                error[key] = value
     else:
         error["message"] = detail
     # Preserve response headers the route attached to the exception (e.g. a

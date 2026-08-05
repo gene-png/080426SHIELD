@@ -19,10 +19,13 @@ def get_storage() -> StorageBackend:
     settings = get_settings()
     endpoint = settings.s3_endpoint_url
     if not endpoint or endpoint.startswith("file://"):
+        # Dev-only fallback; production always sets s3_endpoint_url. Needs BOTH
+        # markers: ruff's `noqa: S108` does not suppress bandit, which flags the
+        # same literal as B108 and fails the CI-only bandit gate on its own.
         root = (
             endpoint.removeprefix("file://")
             if endpoint
-            else "/tmp/shield-artifacts"  # noqa: S108 - dev-only fallback; production always sets s3_endpoint_url
+            else "/tmp/shield-artifacts"  # noqa: S108  # nosec B108
         )
         return LocalFilesystemStorage(root)
 

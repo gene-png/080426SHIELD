@@ -13,6 +13,8 @@ import {
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 
+import { RunAiGuard } from "@/components/admin/RunAiGuard";
+
 import type { JSX } from "react";
 
 const SPREADSHEET_MIME = new Set([
@@ -122,14 +124,20 @@ export function IntakeDocumentsPanel({
                     Download
                   </a>
                   {isInventory(a) ? (
-                    <button
-                      type="button"
-                      onClick={() => onExtract(a.id)}
-                      disabled={extracting}
-                      className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {extracting ? "Extracting…" : "Extract from this"}
-                    </button>
+                    /* Issue 2: extraction is an AI job — warn before canned
+                       output when no key is loaded. */
+                    <RunAiGuard onProceed={() => onExtract(a.id)}>
+                      {({ onClick }) => (
+                        <button
+                          type="button"
+                          onClick={onClick}
+                          disabled={extracting}
+                          className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {extracting ? "Extracting…" : "Extract from this"}
+                        </button>
+                      )}
+                    </RunAiGuard>
                   ) : (
                     <StatusPill tone="neutral">Not an inventory</StatusPill>
                   )}

@@ -6,7 +6,7 @@ import { EnsureActiveClient } from "@/components/admin/EnsureActiveClient";
 import type { JSX } from "react";
 
 export const metadata: Metadata = {
-  title: "NIST CSF 2.0 service",
+  title: "NIST CSF 2.0 Assessment",
 };
 
 export default async function CsfServicePage(props: {

@@ -39,6 +39,7 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
+import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
 import { ZtDeliverableCard } from "./ZtDeliverableCard";
 import { ZtGapList } from "./ZtGapList";
@@ -437,16 +438,24 @@ export function ZtWorkspace({
                 this framework&apos;s scale) plus per-pillar narratives. Locked
                 rows are left untouched.
               </p>
-              <div>
-                <button
-                  type="button"
-                  onClick={() => void onRunAi()}
-                  disabled={busy !== null || readOnly}
-                  className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {busy === "run" ? "Running…" : "Run AI"}
-                </button>
-              </div>
+              {/* Issue 2: warn before producing canned output when no key is
+                  loaded. The guard shipped on the ATT&CK workspace only, so a
+                  fixture run here silently overwrote a real client
+                  self-assessment in the 2026-08-04 review. */}
+              <RunAiGuard onProceed={() => void onRunAi()}>
+                {({ onClick }) => (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={onClick}
+                      disabled={busy !== null || readOnly}
+                      className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {busy === "run" ? "Running…" : "Run AI"}
+                    </button>
+                  </div>
+                )}
+              </RunAiGuard>
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
               {runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">
@@ -466,6 +475,22 @@ export function ZtWorkspace({
                     ? "y"
                     : "ies"}
                   .
+                </p>
+              ) : null}
+              {runResult?.preserved_client_answers ? (
+                /* The skip must be visible, not silent: offline output is never
+                   written over answers the client submitted. */
+                <p
+                  className="text-sm text-status-warning-fg"
+                  aria-live="polite"
+                >
+                  {runResult.preserved_client_answers} client-submitted answer
+                  {runResult.preserved_client_answers === 1
+                    ? " was"
+                    : "s were"}{" "}
+                  left untouched — offline output is never written over the
+                  client&apos;s own responses. Load an API key to run real
+                  analysis over them.
                 </p>
               ) : null}
             </CardBody>

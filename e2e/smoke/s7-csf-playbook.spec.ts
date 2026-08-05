@@ -5,6 +5,7 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 7 (T7): the NIST CSF 2.0 full Playbook (Work Order D4).
@@ -162,20 +163,26 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   const runBtn = page.getByRole("button", { name: "Run AI (csf_score)" });
   await expect(seedBtn.or(runBtn)).toBeVisible({ timeout: 30000 });
   if (await seedBtn.isVisible()) {
+    // Seeding writes 318 Working-Profile rows (106 subcategories x 3 tiers).
+    // 90s cleared it locally but timed out on the CI runner on BOTH the initial
+    // attempt and the retry (2026-08-05, PR #5), and the follow-on assertion
+    // then read 0 subcategories because the seed had never landed. This is CI
+    // being slower, not a product change — the request itself is unchanged.
+    const SEED_TIMEOUT = 180000;
     const seeded = page.waitForResponse(
       (r) =>
         r.url().includes("/csf/services/") &&
         r.url().includes("/profiles/seed") &&
         r.request().method() === "POST" &&
         r.ok(),
-      { timeout: 90000 },
+      { timeout: SEED_TIMEOUT },
     );
     const enterpriseLoaded = page.waitForResponse(
       (r) =>
         r.url().includes("/enterprise-profile") &&
         r.request().method() === "GET" &&
         r.ok(),
-      { timeout: 90000 },
+      { timeout: SEED_TIMEOUT },
     );
     await seedBtn.click();
     await seeded;
@@ -232,6 +239,8 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   );
   await expect(runBtn).toBeVisible({ timeout: 30000 });
   await runBtn.click();
+  // The offline guard intercepts the first click when no key is loaded.
+  await acknowledgeOfflineAi(page);
   const runBody = (await (await runDone).json()) as {
     changed: Array<{ tier: string; subcategory_code: string; field: string }>;
   };

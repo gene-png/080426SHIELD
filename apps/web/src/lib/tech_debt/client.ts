@@ -32,11 +32,15 @@ async function jsonRequest<T>(
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
+    // Read the body ONCE, then try to parse it. Calling res.json() and then
+    // res.text() on failure throws "body stream already read", which masked a
+    // real 404 behind a confusing error while this path was unwired (issue 4).
+    const raw = await res.text();
     let payload: unknown;
     try {
-      payload = await res.json();
+      payload = JSON.parse(raw);
     } catch {
-      payload = await res.text();
+      payload = raw;
     }
     throw new TechDebtProxyError(res.status, payload);
   }
@@ -100,6 +104,59 @@ export async function patchCapabilityItem(
       method: "PATCH",
       body: patch,
     },
+  );
+}
+
+export interface CapabilityComponentInput {
+  name: string;
+  category?: string;
+  function?: string;
+  notes?: string;
+}
+
+/**
+ * Expand a bundled licence into the capabilities it contains (UX finding 5).
+ * Components carry no cost — the parent keeps the licence value — so splitting
+ * a bundle can never inflate the portfolio total.
+ */
+export async function addCapabilityComponents(
+  itemId: string,
+  components: CapabilityComponentInput[],
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-items/${itemId}/components`,
+    { method: "POST", body: { components } },
+  );
+}
+
+export interface IncludeExcludedRowInput {
+  name: string;
+  vendor?: string;
+  category?: string;
+  function?: string;
+  annual_cost_usd?: number;
+}
+
+/** Pull a wrongly-excluded upload row back in as a real capability. */
+export async function includeExcludedRow(
+  listId: string,
+  rowIndex: number,
+  input: IncludeExcludedRowInput,
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/excluded-rows/${rowIndex}/include`,
+    { method: "POST", body: input },
+  );
+}
+
+/** Acknowledge that a row was correctly excluded. It stays listed. */
+export async function confirmExcludedRow(
+  listId: string,
+  rowIndex: number,
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/excluded-rows/${rowIndex}/confirm`,
+    { method: "POST" },
   );
 }
 

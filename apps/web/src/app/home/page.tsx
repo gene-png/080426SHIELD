@@ -94,7 +94,7 @@ export default async function HomePage(): Promise<JSX.Element> {
       <main
         id="main-content"
         tabIndex={-1}
-        className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 outline-hidden"
+        className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
       >
         <HomeDashboard
           greetingName={greetingName}

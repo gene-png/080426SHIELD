@@ -10,7 +10,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
@@ -171,3 +171,87 @@ def test_zt_run_ai_skips_locked(app_client) -> None:
     row = next(x for x in r.json()["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] is None
     assert all(ch["capability_code"] != code for ch in r.json()["changed"])
+
+
+# --------------------------------------------------------------------------- #
+# Fixture output must never overwrite what a client submitted.
+#
+# The 2026-08-04 review pressed Run AI on a Zero Trust workspace with no API key
+# loaded. Fixture mode returned canned demo values and wrote them straight over
+# a real client self-assessment: average maturity fell 2.14 -> 1.49 and the
+# Identity pillar 3.00 -> 1. `locked` did not help — it records a consultant's
+# choice, not provenance — so migration 0035 added `answer_source`.
+# --------------------------------------------------------------------------- #
+
+
+def _submitted_self_assessment(c, h, svc_id: str) -> tuple[str, str]:
+    """Answer one capability as the client and submit. Returns (code, answer id)."""
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    ans = a.json()["answers"][0]
+    code, ans_id = ans["capability_code"], ans["id"]
+    c.patch(f"/zt/answers/{ans_id}", headers=h, json={"maturity_stage": 3})
+    submitted = c.post(
+        f"/zt/services/{svc_id}/self-assessment/submit",
+        headers=h,
+        json={"target_stage": 3},
+    )
+    assert submitted.status_code == 200, submitted.text
+    return code, ans_id
+
+
+@pytest.mark.unit
+def test_fixture_run_ai_leaves_client_submitted_answers_untouched(app_client) -> None:
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    code, _ = _submitted_self_assessment(c, h, svc_id)
+
+    # Fixture provider = offline demo output.
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 1, "target": 2}]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = next(x for x in body["answers"] if x["capability_code"] == code)
+    assert row["maturity_stage"] == 3, "canned output overwrote a client-submitted answer"
+    assert all(ch["capability_code"] != code for ch in body["changed"])
+    # The skip is reported, not silent.
+    assert body["preserved_client_answers"] == 1
+
+
+@pytest.mark.unit
+def test_submit_stamps_client_provenance(app_client) -> None:
+    c, _ = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    code, ans_id = _submitted_self_assessment(c, h, svc_id)
+
+    from app.models.zt_assessment import ZtAnswer
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        row = check.execute(select(ZtAnswer).where(ZtAnswer.capability_code == code)).scalar_one()
+        assert row.answer_source == "client"
+
+
+@pytest.mark.unit
+def test_live_run_ai_may_update_client_answers(app_client, monkeypatch) -> None:
+    """A LIVE run drafting over a client's self-assessment is the consultant
+    workflow — the diff is shown for review. Only fixture output is refused."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    code, _ = _submitted_self_assessment(c, h, svc_id)
+
+    # Present the same canned response as if it came from a real provider.
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 1, "target": 2}]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    row = next(x for x in body["answers"] if x["capability_code"] == code)
+    assert row["maturity_stage"] == 1
+    assert body["preserved_client_answers"] == 0

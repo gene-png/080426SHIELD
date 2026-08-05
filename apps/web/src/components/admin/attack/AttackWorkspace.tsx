@@ -38,6 +38,7 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
+import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
@@ -404,16 +405,22 @@ export function AttackWorkspace({
                 capability list. Locked rows are left untouched; you stay in
                 control of the final call.
               </p>
-              <div>
-                <button
-                  type="button"
-                  onClick={() => void onRunAi()}
-                  disabled={busy !== null || readOnly}
-                  className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {busy === "run" ? "Running…" : "Run AI"}
-                </button>
-              </div>
+              {/* Issue 2: warn before producing canned output when no key is
+                  loaded. Passes straight through when AI is live. */}
+              <RunAiGuard onProceed={() => void onRunAi()}>
+                {({ onClick }) => (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={onClick}
+                      disabled={busy !== null || readOnly}
+                      className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {busy === "run" ? "Running…" : "Run AI"}
+                    </button>
+                  </div>
+                )}
+              </RunAiGuard>
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
               {runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">

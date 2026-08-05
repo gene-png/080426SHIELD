@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.engine import run_job
+from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.attack.catalog import all_codes as attack_all_codes
 from app.audit import audit
@@ -58,8 +59,10 @@ router = APIRouter(prefix="/risk", tags=["risk-register"])
 _admin_required = Depends(require_role(UserRole.ADMIN))
 
 
-def _llm_dep() -> LLMClient:
-    return LLMClient.from_settings()
+def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
+    """Issue 2: build from the DB so a key an admin pasted at runtime is
+    honoured on the very next Run-AI, with no redeploy."""
+    return LLMClient.from_db(db)
 
 
 def _latest(db: Session, model, client_id: uuid.UUID, *, active_only: bool = False):
@@ -214,19 +217,21 @@ def generate(
 
     findings, valid_techniques, valid_controls = _gather_findings(db, cid)
     client_org = None if client.legal_name == "(pending intake)" else client.legal_name
-    result = run_job(
-        db,
-        llm,
-        "risk_synthesize",
-        inputs={
-            "findings": findings,
-            "valid_techniques": sorted(valid_techniques),
-            "valid_controls": sorted(valid_controls),
-        },
-        requested_by=admin.id,
-        client_id=cid,
-        client_org_name=client_org,
-    )
+    # A provider failure here must stay typed and leave an llm_calls row.
+    with ai_call_boundary(db, llm, purpose="risk_synthesize"):
+        result = run_job(
+            db,
+            llm,
+            "risk_synthesize",
+            inputs={
+                "findings": findings,
+                "valid_techniques": sorted(valid_techniques),
+                "valid_controls": sorted(valid_controls),
+            },
+            requested_by=admin.id,
+            client_id=cid,
+            client_org_name=client_org,
+        )
     data = result.data if isinstance(result.data, dict) else {}
 
     # New version; supersede the prior current one.

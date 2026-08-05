@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { AiStatusBanner } from "@/components/admin/AiStatusBanner";
 import { SignOutButton } from "@/components/site/SignOutButton";
 import { SkipToContent } from "@/components/site/SkipToContent";
 
@@ -20,7 +21,6 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: "Intake Queue", href: "/admin/queue" },
-  { label: "Active Work", href: "/admin/active" },
   { label: "Risk Register", href: "/admin/risk-register" },
   { label: "Messages", href: "/admin/messages" },
   { label: "Audit", href: "/admin/audit" },
@@ -106,8 +106,13 @@ export function AdminShell({
           <main
             id="main-content"
             tabIndex={-1}
-            className="mx-auto w-full max-w-6xl px-6 py-8 outline-hidden"
+            className="mx-auto w-full max-w-6xl px-6 py-8 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
           >
+            {/* Issue 2: shell-level so the warning is visible on every admin
+                page including the landing one, not just one workspace. */}
+            <div className="mb-6 empty:mb-0">
+              <AiStatusBanner />
+            </div>
             {children}
           </main>
         </div>

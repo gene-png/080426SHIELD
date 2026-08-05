@@ -52,6 +52,37 @@ class CapabilityItemResponse(BaseModel):
     disposition_rationale: str | None
     consolidation_target_id: uuid.UUID | None
     locked: bool = False
+    # Set on a component named inside a bundled licence (migration 0037).
+    parent_item_id: uuid.UUID | None = None
+
+
+class ExcludedRowResponse(BaseModel):
+    """One uploaded row that produced no capability."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    index: int
+    summary: str
+    # A consultant has reviewed this exclusion and agrees with it. The row stays
+    # listed either way — the reconciliation must remain honest — but the
+    # workspace can stop flagging it as needing attention.
+    confirmed: bool = False
+
+
+class IncludeExcludedRowRequest(BaseModel):
+    """Pull a wrongly-excluded row back in as a real capability.
+
+    The consultant supplies the values; nothing is inferred from the raw row,
+    which is free text the extractor already declined to interpret.
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    vendor: str | None = Field(default=None, max_length=255)
+    category: str | None = Field(default=None, max_length=128)
+    function: str | None = Field(default=None, max_length=255)
+    annual_cost_usd: float | None = None
+    license_count: int | None = None
+    notes: str | None = None
 
 
 class CapabilityListResponse(BaseModel):
@@ -64,6 +95,30 @@ class CapabilityListResponse(BaseModel):
     items: list[CapabilityItemResponse]
     approved_at: datetime | None
     approved_by: uuid.UUID | None
+    # Reconciliation of the source upload against what was extracted (0036).
+    # NULL on lists created before the column existed — the UI renders no claim
+    # rather than implying a complete inventory.
+    source_rows_total: int | None = None
+    excluded_rows: list[ExcludedRowResponse] = []
+
+
+class CapabilityComponentInput(BaseModel):
+    """One capability a consultant says is included in a bundled licence."""
+
+    name: str = Field(min_length=1, max_length=255)
+    category: str | None = Field(default=None, max_length=128)
+    function: str | None = Field(default=None, max_length=255)
+    notes: str | None = None
+
+
+class CapabilityComponentsRequest(BaseModel):
+    """Name what a bundle contains.
+
+    At least one component: an empty request would silently do nothing, and the
+    caller would have no way to tell that from success.
+    """
+
+    components: list[CapabilityComponentInput] = Field(min_length=1)
 
 
 class CapabilityItemPatch(BaseModel):

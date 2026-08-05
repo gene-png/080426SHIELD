@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.ai import keystore
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
@@ -48,13 +50,19 @@ from app.schemas.admin import (
     AdminIntakeQueueResponse,
     AdminLlmCallRow,
     AdminLlmCallsResponse,
+    AdminLlmKeyRequest,
     AdminServiceDetail,
     AdminServiceRequestRow,
+    AdminUserListResponse,
+    AdminUserPatchRequest,
+    AdminUserRow,
     AdminUserSummary,
     FulfillServiceRequestResponse,
 )
 from app.schemas.intake import ClientProfileResponse
 from app.security.email_domains import domain_of, is_generic_provider, is_reserved_domain
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -119,7 +127,10 @@ def intake_queue(
             )
     else:
         client = db.execute(
-            select(Client).order_by(Client.created_at.desc()).limit(1)
+            select(Client)
+            .where(Client.archived_at.is_(None))
+            .order_by(Client.created_at.desc())
+            .limit(1)
         ).scalar_one_or_none()
 
     sr_stmt = select(ServiceRequest, User).join(User, ServiceRequest.requested_by == User.id)
@@ -179,11 +190,47 @@ def intake_queue(
 def list_clients(
     _admin: Annotated[User, _admin_required],
     db: Annotated[Session, Depends(get_db)],
+    include_archived: bool = False,
 ) -> AdminClientListResponse:
-    rows = db.execute(select(Client).order_by(Client.created_at.desc())).scalars().all()
-    return AdminClientListResponse(
-        clients=[AdminClientSummary.model_validate(r, from_attributes=True) for r in rows]
+    """Every tenant, newest first, with per-tenant request counts.
+
+    Archived tenants (issue 3) are hidden unless ``include_archived`` is set,
+    so the Management list and the intake-queue org index show live work by
+    default without losing the ability to audit or restore an archived row.
+
+    The counts (issue 7) drive the org index: each row advertises how many
+    service requests are still awaiting review, so an admin can see where the
+    work is without opening every organization in turn.
+    """
+    stmt = select(Client).order_by(Client.created_at.desc())
+    if not include_archived:
+        stmt = stmt.where(Client.archived_at.is_(None))
+    rows = db.execute(stmt).scalars().all()
+
+    # One grouped query for all tenants rather than N per-row counts.
+    total_by_client: dict[uuid.UUID, int] = dict(
+        db.execute(
+            select(ServiceRequest.client_id, func.count()).group_by(ServiceRequest.client_id)
+        ).all()
     )
+    open_by_client: dict[uuid.UUID, int] = dict(
+        db.execute(
+            select(ServiceRequest.client_id, func.count())
+            .where(
+                ServiceRequest.fulfilled_service_id.is_(None),
+                ServiceRequest.declined_at.is_(None),
+            )
+            .group_by(ServiceRequest.client_id)
+        ).all()
+    )
+
+    summaries: list[AdminClientSummary] = []
+    for r in rows:
+        summary = AdminClientSummary.model_validate(r, from_attributes=True)
+        summary.total_request_count = total_by_client.get(r.id, 0)
+        summary.open_request_count = open_by_client.get(r.id, 0)
+        summaries.append(summary)
+    return AdminClientListResponse(clients=summaries)
 
 
 @router.post(
@@ -362,6 +409,133 @@ def remove_client_domain(
 
 
 @router.delete(
+    "/clients/{cid}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Archive (remove) a client tenant (admin, issue 3)",
+)
+def archive_client(
+    cid: uuid.UUID,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Soft-remove a tenant by archiving it.
+
+    Mirrors ``archive_service``: the row and everything referencing it —
+    assessments, deliverables, messages, and the append-only audit trail —
+    are retained per policy, and the tenant simply drops out of the client
+    list and the intake-queue org index. Reversible; there is no hard delete
+    for a tenant, because destroying one would punch holes in the audit log
+    and any risk register that references it.
+    """
+    client = db.get(Client, cid)
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+    if client.archived_at is not None:
+        # Already archived — idempotent, but say so rather than pretend work
+        # happened.
+        logger.info("admin.client_archive.noop client_id=%s", cid)
+        return None
+    client.archived_at = datetime.now(UTC)
+    audit(
+        db,
+        action="client.archived",
+        target_type="client",
+        target_id=client.id,
+        actor_user_id=admin.id,
+        details={"legal_name": client.legal_name},
+    )
+    db.commit()
+    logger.info("admin.client_archived client_id=%s by=%s", cid, admin.id)
+    return None
+
+
+@router.get(
+    "/clients/{cid}/users",
+    response_model=AdminUserListResponse,
+    summary="List a client's users (admin, issue 3)",
+)
+def list_client_users(
+    cid: uuid.UUID,
+    _admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminUserListResponse:
+    """Every user pinned to this tenant, so the Management UI can show who has
+    access and deactivate an account. Includes deactivated users (labelled via
+    ``is_active``) — hiding them would make a deactivation impossible to undo
+    from the UI."""
+    client = db.get(Client, cid)
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+    rows = (
+        db.execute(select(User).where(User.client_id == cid).order_by(User.created_at.desc()))
+        .scalars()
+        .all()
+    )
+    logger.info("admin.client_users.listed client_id=%s count=%d", cid, len(rows))
+    return AdminUserListResponse(
+        users=[AdminUserRow.model_validate(r, from_attributes=True) for r in rows]
+    )
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=AdminUserRow,
+    summary="Deactivate or reactivate a user (admin, issue 3)",
+)
+def patch_user(
+    user_id: uuid.UUID,
+    body: AdminUserPatchRequest,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminUserRow:
+    """Flip ``is_active``. Deactivation is the user-removal primitive: sign-in
+    already refuses an inactive account (routes/auth.py), so the account is
+    locked out immediately while every row it authored is retained.
+
+    Refuses self-deactivation loudly — an admin locking themselves out of the
+    only admin console is not recoverable through the UI.
+    """
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    if target.id == admin.id and not body.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "reason": "cannot_deactivate_self",
+                "message": ("You can't deactivate your own account — ask another admin to do it."),
+            },
+        )
+    if target.is_active == body.is_active:
+        logger.info("admin.user_patch.noop user_id=%s is_active=%s", user_id, body.is_active)
+        return AdminUserRow.model_validate(target, from_attributes=True)
+
+    target.is_active = body.is_active
+    if not body.is_active:
+        # Kill the live session too: without this the user keeps a valid
+        # refresh token until it expires, so "deactivated" would be a lie for
+        # anyone already signed in.
+        target.active_refresh_jti = None
+    audit(
+        db,
+        action="user.deactivated" if not body.is_active else "user.reactivated",
+        target_type="user",
+        target_id=target.id,
+        actor_user_id=admin.id,
+        details={"email": target.email, "client_id": str(target.client_id or "")},
+    )
+    db.commit()
+    db.refresh(target)
+    logger.info(
+        "admin.user_%s user_id=%s by=%s",
+        "deactivated" if not body.is_active else "reactivated",
+        user_id,
+        admin.id,
+    )
+    return AdminUserRow.model_validate(target, from_attributes=True)
+
+
+@router.delete(
     "/services/{service_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Archive (remove) a service (admin)",
@@ -487,40 +661,177 @@ def get_service(
     response_model=AdminAiStatus,
     summary="AI pipeline readiness (admin)",
 )
-def ai_status(_admin: Annotated[User, _admin_required]) -> AdminAiStatus:
+def ai_status(
+    _admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminAiStatus:
     """Report whether AI features will actually run a live call.
 
-    `ready` is true only when a real provider call will be made. Fixture mode
-    (and live mode missing its key) report ready=false with a reason. The API
+    `ready` is true only when a real provider call will be made. Fixture mode,
+    and live mode missing its key, report ready=false with a reason. The API
     key itself is never returned.
+
+    Issue 2: a key stored through POST /admin/llm-key counts as configured even
+    when the process booted in fixture mode with no environment key — the whole
+    point is that an admin can bring AI online without a redeploy. `key_source`
+    tells the UI where the current key came from so it can offer the right
+    action (and reset its "offline acknowledged" flag when that changes).
     """
     s = get_settings()
-    mode = s.shield_llm_mode
-    provider = s.shield_llm_provider
-    model = s.shield_llm_model
-
-    if mode != "live":
-        return AdminAiStatus(
-            mode=mode,
-            provider=provider,
-            model=model,
-            ready=False,
-            detail=(
-                "Running in fixture mode — AI features are disabled. Set "
-                "SHIELD_LLM_MODE=live and ANTHROPIC_API_KEY to enable."
-            ),
-        )
-    # Reuse the single source of truth the boot preflight enforces (D-026):
-    # key present, SDK importable (anthropic), and a real (non-placeholder)
-    # model. The API key itself is never returned.
-    ready, detail = s.live_llm_readiness()
+    ready, detail, source = _ai_readiness(db, s)
     return AdminAiStatus(
-        mode=mode,
-        provider=provider,
-        model=model,
+        mode=s.shield_llm_mode,
+        provider=s.shield_llm_provider,
+        model=s.shield_llm_model,
         ready=ready,
         detail=detail,
+        can_configure=True,
+        key_source=source,
     )
+
+
+def _ai_readiness(db: Session, s) -> tuple[bool, str, str]:
+    """Whether a live call will succeed, why not, and where the key came from.
+
+    `Settings.live_llm_readiness()` (the boot preflight, D-026) only ever looks
+    at the environment, so it cannot see a key pasted at runtime. Rather than
+    patch around its message strings, this re-checks the same preconditions
+    against the effective key: key present, an adapter exists, the SDK is
+    importable, and the model id is real.
+    """
+    from app.config import _KNOWN_PLACEHOLDER_MODELS, _anthropic_sdk_importable
+
+    provider = s.shield_llm_provider
+    source = keystore.key_source(db, provider=provider, settings=s)
+
+    if source == "none":
+        return (
+            False,
+            (
+                "No API key is loaded — AI steps will generate offline (fixture) "
+                "responses. Load a key to enable live AI."
+            ),
+            source,
+        )
+
+    if provider not in ("anthropic", "openai", "gemini"):
+        return (
+            False,
+            (
+                f"A key is loaded but provider {provider!r} has no runtime adapter — "
+                "use anthropic, openai, or gemini."
+            ),
+            source,
+        )
+    if provider == "anthropic" and not _anthropic_sdk_importable():
+        return (
+            False,
+            "A key is loaded but the 'anthropic' SDK is not importable in the api image.",
+            source,
+        )
+    model = s.shield_llm_model.strip()
+    if not model or model in _KNOWN_PLACEHOLDER_MODELS:
+        return (
+            False,
+            (
+                f"A key is loaded, but SHIELD_LLM_MODEL={s.shield_llm_model!r} is not a "
+                "usable model id — set a current model id and restart the api."
+            ),
+            source,
+        )
+    return True, f"Live AI configured ({provider}/{model}).", source
+
+
+@router.post(
+    "/llm-key",
+    response_model=AdminAiStatus,
+    summary="Store the provider API key (admin, issue 2)",
+)
+def set_llm_key(
+    body: AdminLlmKeyRequest,
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+    validate: Annotated[keystore.KeyValidator, Depends(keystore.get_key_validator)],
+) -> AdminAiStatus:
+    """Validate a pasted key against the provider, then store it encrypted.
+
+    Validation happens FIRST and a rejected key is never written: storing an
+    unverified key would take AI offline silently, which is exactly the failure
+    this feature exists to remove. The key is never echoed back, never logged,
+    and never recorded in the audit `details` blob.
+    """
+    s = get_settings()
+    provider = (body.provider or s.shield_llm_provider).strip()
+    api_key = body.api_key.strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"reason": "llm_key_empty", "message": "Paste an API key first."},
+        )
+
+    ok, why = validate(provider, s.shield_llm_model, api_key)
+    if not ok:
+        logger.info("admin.llm_key.rejected provider=%s by=%s", provider, admin.id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"reason": "llm_key_rejected", "message": why},
+        )
+
+    keystore.store_key(db, provider=provider, api_key=api_key, actor_user_id=admin.id, settings=s)
+    audit(
+        db,
+        action="llm.key_set",
+        target_type="llm_credential",
+        target_id=None,
+        actor_user_id=admin.id,
+        # Provider only — never the key, not even a prefix.
+        details={"provider": provider},
+    )
+    db.commit()
+    logger.info("admin.llm_key.stored provider=%s by=%s", provider, admin.id)
+
+    ready, detail, source = _ai_readiness(db, s)
+    return AdminAiStatus(
+        mode=s.shield_llm_mode,
+        provider=s.shield_llm_provider,
+        model=s.shield_llm_model,
+        ready=ready,
+        detail=detail,
+        can_configure=True,
+        key_source=source,
+    )
+
+
+@router.delete(
+    "/llm-key",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove the stored provider API key (admin, issue 2)",
+)
+def remove_llm_key(
+    admin: Annotated[User, _admin_required],
+    db: Annotated[Session, Depends(get_db)],
+    provider: str | None = None,
+) -> None:
+    """Delete the stored key. AI drops back to offline (fixture) responses.
+
+    Idempotent — removing a key that isn't there is not an error, but it is
+    logged as a no-op rather than reported as work that happened.
+    """
+    s = get_settings()
+    target = (provider or s.shield_llm_provider).strip()
+    removed = keystore.delete_key(db, provider=target)
+    if removed:
+        audit(
+            db,
+            action="llm.key_removed",
+            target_type="llm_credential",
+            target_id=None,
+            actor_user_id=admin.id,
+            details={"provider": target},
+        )
+    db.commit()
+    logger.info("admin.llm_key.removed provider=%s removed=%s by=%s", target, removed, admin.id)
+    return None
 
 
 @router.get(

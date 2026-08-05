@@ -948,3 +948,151 @@ The mockups' curated prose (per-pillar narrative, roadmaps, reduction plans,
 governance/executive-summary sections) is intentionally NOT reproduced — every
 figure is engine-derived, no fabricated narrative (AI narrative deferred). NIST
 CSF has no mockup and no dashboard yet.
+
+## D-036 — Tenant and user removal is soft, and login honours `is_active`
+
+**Decision (seven-issue pass, issues 3 + 7).** The admin console can now remove a
+client tenant and deactivate a user, and both are **soft** removals following the
+existing `archive_service` precedent — never a hard delete:
+
+    DELETE /admin/clients/{cid}        archive a tenant (all data retained)
+    GET    /admin/clients/{cid}/users  list a tenant's users
+    PATCH  /admin/users/{uid}          deactivate / reactivate a user
+
+Archiving stamps a new nullable `client.archived_at` (migration 0033, additive
+and SQLite-safe per the C0 pattern) and drops the tenant from the client list and
+the intake org index, while assessments, deliverables and the audit trail stay
+intact. Consultant-led engagements are the reason: a removed tenant's assessment
+history is exactly what must survive removal.
+
+Two supporting choices:
+
+1. **Self-deactivation is refused** with a typed D-016 error. Locking yourself out
+   of the only admin console is unrecoverable from the UI, so the API refuses
+   rather than letting the click succeed.
+2. **`/auth/login` now checks `User.is_active`** — it did not before. Refresh,
+   MFA-verify and password-reset all honoured the flag, so a deactivated user
+   could still sign in with a password: deactivation was a lie. The gate sits
+   **after** the password verify (placing it before would make the endpoint an
+   account-existence oracle), and deactivating also clears `active_refresh_jti`
+   so an already signed-in user loses their session instead of riding a valid
+   refresh token to expiry. The typed reason propagates through NextAuth so the
+   sign-in form says "this account has been deactivated" rather than implying a
+   bad password.
+
+**Issue 7, same pass.** `/admin/queue` opened onto exactly ONE organization: the
+API returns every tenant's requests but sets `client` to the most recently created
+tenant (its own docstring calls that advisory), and the UI rendered it as the page
+header. The queue is now an **index of organizations**; `/admin/queue/[clientId]`
+shows one org's intake detail above its own pending work, using the `client_id`
+filter the API already supported. Row counts come from one grouped query.
+
+**Ref:** `apps/api/app/routes/admin.py`, `apps/api/app/routes/auth.py`,
+`apps/api/app/models/client.py`, `apps/api/app/schemas/admin.py`,
+`apps/api/alembic/versions/0033_client_archived_at.py`,
+`apps/api/tests/unit/test_admin_removal.py`;
+`apps/web/src/components/admin/IntakeOrgIndex.tsx`,
+`apps/web/src/components/admin/IntakeQueue.tsx`,
+`apps/web/src/lib/admin/client.ts`, `apps/web/src/lib/auth/options.ts`,
+`apps/web/src/components/auth/SignInForm.tsx`;
+`e2e/smoke/s32-admin-org-index.spec.ts`, `e2e/smoke/s33-admin-remove.spec.ts`.
+Extends D-016 (typed errors).
+
+## D-037 — Provider API keys are managed at runtime, and a stored key beats fixture mode
+
+**Decision (seven-issue pass, issue 2).** An admin can paste, replace and remove a
+provider API key from the Management page. Before this, the only key path was an
+environment variable read once at boot through the `lru_cache`d `get_settings()`,
+so switching AI on meant a redeploy — and the "AI is offline" warning rendered on
+exactly one of five workspaces, so an admin could accept canned fixture output
+believing it was real analysis.
+
+    POST   /admin/llm-key   validate against the provider, THEN store
+    DELETE /admin/llm-key   remove it; AI drops back to offline responses
+    GET    /admin/ai-status now also reports can_configure + key_source
+
+Five choices worth recording:
+
+1. **Validate before writing.** `live_validate_key()` makes the smallest real
+   provider call (one output token). A typo is refused with the provider's own
+   reason instead of silently taking AI offline — FAIL LOUDLY at the moment the
+   admin can still fix it. Providers with no cheap probe yet (openai, gemini,
+   vertex) say so explicitly rather than pretending the key was checked.
+2. **A stored key overrides `SHIELD_LLM_MODE=fixture`.** Pasting a key is an
+   explicit request for live AI; continuing to serve fixtures afterwards is
+   exactly the silent-success failure this removes.
+3. **Database beats environment**, so removal through the UI is a real removal and
+   not a quiet fallback to whatever the container booted with.
+4. **Fernet encryption derived from `JWT_SIGNING_SECRET`** (migration 0034, new
+   table) rather than a second secret an operator could forget to set. Rotating
+   that secret makes stored keys undecryptable — reported as "no key" and logged
+   loudly, so the admin re-pastes instead of every Run-AI dying on an opaque 401.
+   The key is never returned by any endpoint, never logged, and never placed in an
+   audit `details` blob; tests assert each.
+5. **The offline warning is now unavoidable.** `AiStatusBanner` moved into the
+   admin shell (every admin page, and it links to the fix), and `RunAiGuard` wraps
+   Run AI: while offline the first click explains the output will be canned and
+   offers "Load a key" / "Continue offline". The acknowledgement is keyed on the
+   current config, so removing the key makes the very next Run AI warn again in
+   the same session.
+6. **"Still loading" is not "unavailable."** The guard's first cut failed open
+   whenever `status` was `null` — a value that means both "not asked yet" and
+   "status endpoint down". Under full-suite load a Run AI click beat the status
+   fetch and the guard silently ran, writing 1646 fields of canned output with no
+   warning: the exact failure the component exists to prevent. `useAiStatus` now
+   exposes an explicit `phase` (`loading` / `loaded` / `error`), a click during
+   `loading` is HELD until the answer arrives, and only a real outage still fails
+   open (an outage must not stop an admin working). A safety control that
+   degrades to silence under load is not a safety control.
+
+Also corrected here: `.env` pinned `SHIELD_LLM_MODEL=claude-opus-4-7`, which the
+code itself lists in `_KNOWN_PLACEHOLDER_MODELS` — live AI would have refused to
+boot even with a valid key.
+
+**Ref:** `apps/api/app/ai/keystore.py`, `apps/api/app/ai/llm.py`,
+`apps/api/app/models/llm_credential.py`,
+`apps/api/alembic/versions/0034_llm_credential.py`,
+`apps/api/app/routes/admin.py` (and each workspace's `_llm_dep`),
+`apps/api/tests/unit/test_admin_llm_key.py`;
+`apps/web/src/components/admin/LlmKeyPanel.tsx`,
+`apps/web/src/components/admin/RunAiGuard.tsx`,
+`apps/web/src/components/admin/AiStatusBanner.tsx`,
+`apps/web/src/lib/admin/aiStatus.ts`; `e2e/smoke/s34-llm-key.spec.ts`.
+Extends D-017 (fixture mode), D-024/D-026/D-029 (live providers).
+
+## D-038 — Releasing a deliverable is a real control, and admins preview pre-release
+
+**Decision (seven-issue pass, issue 4).** D-035 gated the client dashboards on a
+**released** deliverable, but nothing in the product could release one — Finalize
+produced a PDF and an XLSX and stopped. The gate was therefore unsatisfiable and
+no client could ever see a dashboard. Three defects sat in that path, each hidden
+by the next: the `release*Deliverable()` web-client functions had zero callers;
+the `/api/proxy/{svc}/deliverables/{id}/release` Next routes they POST to did not
+exist; and the TS `Deliverable` types declared `released_to_client_at` where the
+API serializes `released_at`, so the card's released state was false even after a
+successful release. All three are fixed for zt, attack, csf and tech-debt.
+
+1. **Admins preview before release, through the same builder.** One shared
+   `_dashboard_deliverable()` resolver serves all four service dashboards: clients
+   get released-only (D-035 unchanged), admins additionally get merely-finalized.
+   Both roles then run the **same** builder — that is what stops the preview and
+   the client view from drifting, and a test asserts the two payloads are
+   identical apart from a new `released` flag. That flag defaults `True`, so every
+   existing consumer is unaffected (the C0 additive pattern).
+2. **Admins resolve the tenant by falling back to the service's owner.** The
+   dashboard pages resolved the client from `/auth/me` then the active-client
+   cookie; a platform admin on a cold URL has neither, which produced an unhandled
+   API 400 and a Next server-exception page. `resolveDashboardClientId()` falls
+   back to the owning tenant and the fetch sends `X-Client-Id`.
+3. **`jsonRequest` reads the response body once.** Its error path called
+   `res.json()` and then `res.text()`, which throws "body stream already read" and
+   masked the real 404 behind a confusing error. Fixed in all six client libs, not
+   only the ones this issue touched.
+
+**Ref:** `apps/api/app/routes/clients.py` (`_dashboard_deliverable`),
+`apps/api/app/schemas/clients.py`, `apps/api/tests/unit/test_zt_dashboard.py`;
+the four `apps/web/src/app/api/proxy/<svc>/deliverables/[id]/release/route.ts`,
+the four admin `*DeliverableCard.tsx`,
+`apps/web/src/lib/dashboards/resolveClient.ts`, the six `lib/*/client.ts` and
+four `lib/*/types.ts`; `e2e/smoke/s36-release-and-preview.spec.ts`.
+Completes D-035.

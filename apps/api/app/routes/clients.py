@@ -12,6 +12,7 @@ sees nothing until a consultant explicitly releases the finalized deliverable.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -43,7 +44,7 @@ from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentSta
 from app.models.deliverable import Deliverable
 from app.models.risk_register import RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.zt_assessment import (
     ZtAnswer,
     ZtAssessment,
@@ -391,6 +392,65 @@ def _latest_released_deliverable(db: Session, service_id: uuid.UUID) -> Delivera
     ).scalar_one_or_none()
 
 
+def _latest_finalized_deliverable(db: Session, service_id: uuid.UUID) -> Deliverable | None:
+    """The most recent finalized deliverable, released or not (issue 4).
+
+    Backs the ADMIN PREVIEW: after AI processing and finalize, the analyst can
+    see the dashboard the client will get, before deciding to release it.
+    """
+    return db.execute(
+        select(Deliverable)
+        .where(
+            Deliverable.service_id == service_id,
+            Deliverable.finalized_at.is_not(None),
+        )
+        .order_by(Deliverable.finalized_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _dashboard_deliverable(
+    db: Session,
+    *,
+    service_id: uuid.UUID,
+    user: User,
+    released_service_ids: list[uuid.UUID],
+) -> tuple[Deliverable, bool] | None:
+    """Resolve the deliverable a dashboard should render, and whether it is released.
+
+    Issue 4 — the visibility rule for every service dashboard, in one place:
+
+      * **Client**: released only. Unchanged from D-035; a client must never
+        see figures an analyst has not signed off.
+      * **Admin**: released, or merely FINALIZED. Previously an admin had no
+        way to see the dashboard at all — finalize produced a PDF and an XLSX
+        and nothing else — so they released it to the client sight-unseen.
+
+    Returns ``(deliverable, is_released)``, or ``None`` when the caller may not
+    see a dashboard yet. Both roles then run the SAME builder below, which is
+    what stops the admin preview and the client view from ever drifting.
+    """
+    if service_id in released_service_ids:
+        deliv = _latest_released_deliverable(db, service_id)
+        if deliv is not None:
+            return deliv, True
+    if user.role == UserRole.ADMIN:
+        deliv = _latest_finalized_deliverable(db, service_id)
+        if deliv is not None:
+            return deliv, False
+    return None
+
+
+def _dashboard_stamp(deliv: Deliverable, is_released: bool) -> datetime:
+    """The timestamp a dashboard header shows.
+
+    Released: when the client got it. Admin preview: when it was finalized —
+    the response's `released` flag says which, so the UI can label a preview
+    as a preview rather than implying the client can already see it.
+    """
+    return deliv.released_at if is_released and deliv.released_at else deliv.finalized_at
+
+
 @router.get(
     "/{client_id}/attack/{service_id}/dashboard",
     response_model=AttackDashboardResponse,
@@ -414,9 +474,13 @@ def attack_dashboard(
     released_attack_ids = _released_service_ids_by_kind(db, client.id).get(
         ServiceKind.ATTACK_COVERAGE, []
     )
-    if service_id not in released_attack_ids:
+    resolved = _dashboard_deliverable(
+        db, service_id=service_id, user=user, released_service_ids=released_attack_ids
+    )
+    if resolved is None:
         # Typed 404 (D-016): the dashboard exists only once a deliverable is
-        # released. 404 (not 403) keeps parity with the tenant-not-found path.
+        # released (or, for an admin, finalized). 404 (not 403) keeps parity
+        # with the tenant-not-found path.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -424,18 +488,18 @@ def attack_dashboard(
                 "message": "No released ATT&CK coverage report for this service yet.",
             },
         )
+    deliv, is_released = resolved
 
     svc = db.get(Service, service_id)
-    deliv = _latest_released_deliverable(db, service_id)
     assessment = _latest_finalized(
         db,
         AttackAssessment,
         service_id,
         (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
     )
-    if svc is None or deliv is None or assessment is None:
-        # A released deliverable implies a finalized assessment; if that invariant
-        # is broken, fail loudly rather than serve an empty dashboard.
+    if svc is None or assessment is None:
+        # A finalized deliverable implies a finalized assessment; if that
+        # invariant is broken, fail loudly rather than serve an empty dashboard.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -487,7 +551,8 @@ def attack_dashboard(
     return AttackDashboardResponse(
         service_id=service_id,
         service_title=svc.title,
-        released_at=deliv.released_at,
+        released_at=_dashboard_stamp(deliv, is_released),
+        released=is_released,
         deliverable_version=deliv.version,
         rollup=AttackDashboardRollup(
             total_evaluated=rollup.covered + rollup.partial + rollup.gap,
@@ -549,7 +614,10 @@ def zt_dashboard(
     released_zt_ids = by_kind.get(ServiceKind.ZERO_TRUST_CISA, []) + by_kind.get(
         ServiceKind.ZERO_TRUST_DOD, []
     )
-    if service_id not in released_zt_ids:
+    resolved = _dashboard_deliverable(
+        db, service_id=service_id, user=user, released_service_ids=released_zt_ids
+    )
+    if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -557,16 +625,16 @@ def zt_dashboard(
                 "message": "No released Zero Trust report for this service yet.",
             },
         )
+    deliv, is_released = resolved
 
     svc = db.get(Service, service_id)
-    deliv = _latest_released_deliverable(db, service_id)
     assessment = _latest_finalized(
         db,
         ZtAssessment,
         service_id,
         (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
     )
-    if svc is None or deliv is None or assessment is None:
+    if svc is None or assessment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -626,7 +694,8 @@ def zt_dashboard(
     return ZtDashboardResponse(
         service_id=service_id,
         service_title=svc.title,
-        released_at=deliv.released_at,
+        released_at=_dashboard_stamp(deliv, is_released),
+        released=is_released,
         deliverable_version=deliv.version,
         framework=fw.value,
         framework_label=_ZT_FRAMEWORK_LABELS.get(fw, fw.value),
@@ -674,7 +743,10 @@ def tech_debt_dashboard(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
 
     released_ids = _released_service_ids_by_kind(db, client.id).get(ServiceKind.TECH_DEBT, [])
-    if service_id not in released_ids:
+    resolved = _dashboard_deliverable(
+        db, service_id=service_id, user=user, released_service_ids=released_ids
+    )
+    if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -682,16 +754,16 @@ def tech_debt_dashboard(
                 "message": "No released Tech Debt report for this service yet.",
             },
         )
+    deliv, is_released = resolved
 
     svc = db.get(Service, service_id)
-    deliv = _latest_released_deliverable(db, service_id)
     cl = _latest_finalized(
         db,
         CapabilityList,
         service_id,
         (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
     )
-    if svc is None or deliv is None or cl is None:
+    if svc is None or cl is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -764,7 +836,8 @@ def tech_debt_dashboard(
     return TechDebtDashboardResponse(
         service_id=service_id,
         service_title=svc.title,
-        released_at=deliv.released_at,
+        released_at=_dashboard_stamp(deliv, is_released),
+        released=is_released,
         deliverable_version=deliv.version,
         total_applications=len(items),
         annual_spend_usd=round(annual_spend, 2),

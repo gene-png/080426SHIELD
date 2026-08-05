@@ -38,8 +38,8 @@ export function Step2Organization({
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-ink-secondary">
-        Tell us about your organization. Fields save automatically when you tab
-        away.
+        Tell us about your organization. Text fields save when you tab away;
+        choices save as soon as you pick them.
       </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field id="legal_name" label="Legal name" required>
@@ -75,6 +75,13 @@ export function Step2Organization({
           <select
             id="size_band"
             defaultValue={c?.size_band ?? ""}
+            // UX finding 10: this was the ONLY control on the wizard that saved
+            // on blur alone, while the step-5 selects save on change. A picked
+            // value that never blurs was silently lost. Selects commit on
+            // change; the blur handler stays as a belt-and-braces catch.
+            onChange={(e) =>
+              saveField("size_band", e.target.value || undefined)
+            }
             onBlur={(e) => saveField("size_band", e.target.value || undefined)}
             className={selectClasses}
           >

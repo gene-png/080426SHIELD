@@ -76,6 +76,10 @@ export function HealthMatrix(): JSX.Element {
     <div className="space-y-4">
       <div
         role="status"
+        // Named because the admin shell's AiStatusBanner is also role="status"
+        // on every admin page — without a name, "the page's status element" is
+        // ambiguous for both assistive tech and tests.
+        aria-label="Overall readiness"
         className={
           "flex items-center gap-3 rounded-md border px-4 py-3 text-sm font-semibold " +
           (data.ready

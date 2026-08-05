@@ -6,7 +6,7 @@ import { EnsureActiveClient } from "@/components/admin/EnsureActiveClient";
 import type { JSX } from "react";
 
 export const metadata: Metadata = {
-  title: "MITRE ATT&CK Coverage service",
+  title: "MITRE ATT&CK Coverage Mapping",
 };
 
 export default async function AttackCoverageServicePage(props: {
@@ -17,7 +17,7 @@ export default async function AttackCoverageServicePage(props: {
     <EnsureActiveClient serviceId={params.id}>
       <AttackWorkspace
         serviceId={params.id}
-        serviceTitle="MITRE ATT&CK Coverage"
+        serviceTitle="MITRE ATT&CK Coverage Mapping"
       />
     </EnsureActiveClient>
   );
