@@ -957,3 +957,133 @@ def test_extract_response_discloses_excluded_rows(app_client) -> None:
     assert again.status_code == 200, again.text
     assert again.json()["source_rows_total"] == 4
     assert len(again.json()["excluded_rows"]) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Bundle decomposition (UX finding 5 / E2E F-6).
+#
+# "Microsoft 365 E5" extracted as one $294,120 line. It contains Defender for
+# Endpoint, Defender for Office 365 and Entra ID P2, and the same client
+# separately licenses CrowdStrike, Proofpoint and Okta — so three of the five
+# redundancies planted in the 2026-08-04 test inventory were invisible.
+#
+# A consultant names the components; the model is never asked what is inside a
+# bundle. The parent keeps the whole cost, so decomposing can never inflate the
+# portfolio total.
+# --------------------------------------------------------------------------- #
+
+
+def _list_with_one_item(c, bearer: str, provider, name: str, cost: float) -> tuple[str, str]:
+    """Extract a one-row list and return (service_id, item_id)."""
+
+    def fake(payload):
+        return LLMResponse(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "name": name,
+                            "vendor": "Microsoft",
+                            "category": "Productivity and Security Suite",
+                            "function": "Bundled licence",
+                            "annual_cost_usd": cost,
+                            "license_count": 430,
+                            "notes": None,
+                            "confidence_pct": 70,
+                            "source_row_index": 0,
+                        }
+                    ]
+                }
+            )
+        )
+
+    provider.register("extract.capabilities", fake)
+    sr = c.post(
+        "/tech-debt/services",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"kind": "tech_debt", "title": "Bundle"},
+    )
+    svc_id = sr.json()["id"]
+    artifact_id = _upload_csv(c, bearer, "inv.csv", b"Tool,Cost\nMicrosoft 365 E5,294120\n")
+    r = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"artifact_id": artifact_id},
+    )
+    assert r.status_code == 201, r.text
+    return svc_id, r.json()["items"][0]["id"]
+
+
+@pytest.mark.unit
+def test_bundle_expands_into_named_components(app_client) -> None:
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "bundle-admin@example.com")["tokens"]["access_token"]
+    svc_id, item_id = _list_with_one_item(c, bearer, provider, "Microsoft 365 E5", 294120)
+
+    r = c.post(
+        f"/tech-debt/capability-items/{item_id}/components",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={
+            "components": [
+                {"name": "Microsoft Defender for Endpoint", "category": "EDR"},
+                {"name": "Microsoft Entra ID P2", "category": "IAM"},
+            ]
+        },
+    )
+    assert r.status_code == 201, r.text
+    items = r.json()["items"]
+
+    parent = next(i for i in items if i["id"] == item_id)
+    children = [i for i in items if i.get("parent_item_id") == item_id]
+    assert len(children) == 2
+    assert {ch["name"] for ch in children} == {
+        "Microsoft Defender for Endpoint",
+        "Microsoft Entra ID P2",
+    }
+
+    # The parent keeps the whole licence value; components carry none, so the
+    # portfolio total cannot be inflated by decomposing a bundle.
+    assert float(parent["annual_cost_usd"]) == 294120.0
+    assert all(ch["annual_cost_usd"] is None for ch in children)
+    # Components inherit the parent's source reference.
+    assert all(ch["source_artifact_id"] == parent["source_artifact_id"] for ch in children)
+    # They are human-named, not an AI guess.
+    assert all(ch["confidence_pct"] is None for ch in children)
+
+
+@pytest.mark.unit
+def test_components_are_rejected_on_a_component(app_client) -> None:
+    """One level only. Nesting bundles inside bundles has no real-world
+    counterpart here and would make the cost story ambiguous."""
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "bundle-admin2@example.com")["tokens"]["access_token"]
+    _svc, item_id = _list_with_one_item(c, bearer, provider, "Microsoft 365 E5", 294120)
+
+    first = c.post(
+        f"/tech-debt/capability-items/{item_id}/components",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"components": [{"name": "Microsoft Intune", "category": "MDM"}]},
+    )
+    child_id = next(i["id"] for i in first.json()["items"] if i.get("parent_item_id") == item_id)
+
+    r = c.post(
+        f"/tech-debt/capability-items/{child_id}/components",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"components": [{"name": "Nested", "category": "X"}]},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "component_cannot_be_split"
+
+
+@pytest.mark.unit
+def test_components_require_at_least_one_name(app_client) -> None:
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "bundle-admin3@example.com")["tokens"]["access_token"]
+    _svc, item_id = _list_with_one_item(c, bearer, provider, "Microsoft 365 E5", 294120)
+
+    r = c.post(
+        f"/tech-debt/capability-items/{item_id}/components",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"components": []},
+    )
+    assert r.status_code == 422, r.text

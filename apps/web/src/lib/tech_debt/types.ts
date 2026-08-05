@@ -27,6 +27,8 @@ export interface ServiceResponse {
 }
 
 export interface CapabilityItem {
+  /** Set when this row is a component named inside a bundled licence. */
+  parent_item_id?: string | null;
   id: string;
   capability_list_id: string;
   name: string;

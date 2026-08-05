@@ -35,6 +35,7 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
 from app.schemas.tech_debt import (
+    CapabilityComponentsRequest,
     CapabilityItemPatch,
     CapabilityItemResponse,
     CapabilityListResponse,
@@ -329,6 +330,104 @@ def latest_capability_list(
             detail="Capability lists are admin-only until release.",
         )
     return _serialize_list_with_items(db, cap_list)
+
+
+@router.post(
+    "/capability-items/{item_id}/components",
+    response_model=CapabilityListResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Name the capabilities inside a bundled licence (admin)",
+)
+def add_capability_components(
+    item_id: uuid.UUID,
+    body: CapabilityComponentsRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Expand one bundled row into the capabilities it contains.
+
+    UX finding 5 / E2E F-6: "Microsoft 365 E5" extracted as a single $294,120
+    line, so the Defender / Entra components that overlap the client's separately
+    licensed CrowdStrike, Proofpoint and Okta were invisible to redundancy
+    analysis and to the ATT&CK tool mapping.
+
+    The CONSULTANT names the components. The model is never asked what is inside
+    a bundle — that would be fabricated detail, which is exactly what the AI seam
+    exists to prevent.
+
+    Components carry no cost: the parent keeps the whole licence value, so
+    decomposing can never inflate the portfolio total.
+    """
+    item = db.get(CapabilityItem, item_id)
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability item not found.",
+        )
+    cap_list = db.get(CapabilityList, item.capability_list_id)
+    if cap_list is not None:
+        svc = db.get(Service, cap_list.service_id)
+        if svc is None or svc.client_id != client.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Capability item not found.",
+            )
+    if cap_list is not None and cap_list.status in (
+        CapabilityListStatus.RELEASED,
+        CapabilityListStatus.DISCARDED,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This capability list has been released and is locked."
+                if cap_list.status == CapabilityListStatus.RELEASED
+                else "This capability list has been discarded."
+            ),
+        )
+    # One level only: a component of a component has no real-world counterpart
+    # here and would make the cost story ambiguous.
+    if item.parent_item_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "component_cannot_be_split",
+                "message": (
+                    "This is already a component of a bundle. Split the bundle "
+                    "itself, not one of its parts."
+                ),
+            },
+        )
+
+    for comp in body.components:
+        db.add(
+            CapabilityItem(
+                capability_list_id=item.capability_list_id,
+                parent_item_id=item.id,
+                name=comp.name,
+                vendor=item.vendor,
+                category=comp.category,
+                function=comp.function,
+                # No cost: the parent holds the licence value.
+                annual_cost_usd=None,
+                license_count=None,
+                notes=comp.notes,
+                # Human-named, so no AI confidence badge.
+                confidence_pct=None,
+                source_artifact_id=item.source_artifact_id,
+            )
+        )
+    audit(
+        db,
+        action="capability_item.components_added",
+        target_type="capability_item",
+        target_id=item.id,
+        actor_user_id=user.id,
+        details={"count": len(body.components)},
+    )
+    db.commit()
+    db.refresh(item)
+    return _serialize_list_with_items(db, db.get(CapabilityList, item.capability_list_id))
 
 
 @router.patch(

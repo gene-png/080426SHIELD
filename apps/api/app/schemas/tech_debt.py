@@ -52,6 +52,8 @@ class CapabilityItemResponse(BaseModel):
     disposition_rationale: str | None
     consolidation_target_id: uuid.UUID | None
     locked: bool = False
+    # Set on a component named inside a bundled licence (migration 0037).
+    parent_item_id: uuid.UUID | None = None
 
 
 class ExcludedRowResponse(BaseModel):
@@ -78,6 +80,25 @@ class CapabilityListResponse(BaseModel):
     # rather than implying a complete inventory.
     source_rows_total: int | None = None
     excluded_rows: list[ExcludedRowResponse] = []
+
+
+class CapabilityComponentInput(BaseModel):
+    """One capability a consultant says is included in a bundled licence."""
+
+    name: str = Field(min_length=1, max_length=255)
+    category: str | None = Field(default=None, max_length=128)
+    function: str | None = Field(default=None, max_length=255)
+    notes: str | None = None
+
+
+class CapabilityComponentsRequest(BaseModel):
+    """Name what a bundle contains.
+
+    At least one component: an empty request would silently do nothing, and the
+    caller would have no way to tell that from success.
+    """
+
+    components: list[CapabilityComponentInput] = Field(min_length=1)
 
 
 class CapabilityItemPatch(BaseModel):

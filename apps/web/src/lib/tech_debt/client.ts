@@ -107,6 +107,28 @@ export async function patchCapabilityItem(
   );
 }
 
+export interface CapabilityComponentInput {
+  name: string;
+  category?: string;
+  function?: string;
+  notes?: string;
+}
+
+/**
+ * Expand a bundled licence into the capabilities it contains (UX finding 5).
+ * Components carry no cost — the parent keeps the licence value — so splitting
+ * a bundle can never inflate the portfolio total.
+ */
+export async function addCapabilityComponents(
+  itemId: string,
+  components: CapabilityComponentInput[],
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-items/${itemId}/components`,
+    { method: "POST", body: { components } },
+  );
+}
+
 export async function approveCapabilityList(
   listId: string,
 ): Promise<CapabilityList> {

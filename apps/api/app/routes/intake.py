@@ -40,9 +40,9 @@ from app.provisioning import (
     provision_self_assessment_service,
 )
 from app.schemas.intake import (
-    IntakeContactResponse,
     EngagementCreateRequest,
     EngagementResponse,
+    IntakeContactResponse,
     IntakePatchRequest,
     IntakeStateResponse,
     IntakeSubmitRequest,

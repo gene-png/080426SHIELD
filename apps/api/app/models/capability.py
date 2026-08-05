@@ -116,6 +116,14 @@ class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("artifacts.id", ondelete="SET NULL")
     )
 
+    # Bundle decomposition (migration 0037). NULL for a top-level capability;
+    # set on a component named by a consultant inside a bundled licence such as
+    # Microsoft 365 E5. A component carries no cost of its own — the parent
+    # keeps the whole licence value — so splitting never inflates the total.
+    parent_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("capability_items.id", ondelete="CASCADE")
+    )
+
     # Consolidation-plan verdict (Phase 3 stage 7). None = undecided.
     disposition: Mapped[CapabilityDisposition | None] = mapped_column(
         SAEnum(

@@ -14,8 +14,10 @@ import {
 
 import { Dropzone } from "@/components/intake/Dropzone";
 import { hasAcknowledgedOffline, useAiStatus } from "@/lib/admin/aiStatus";
+import { splitLines } from "@/lib/text";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
+  addCapabilityComponents,
   approveCapabilityList,
   discardCapabilityList,
   extractCapabilities,
@@ -62,6 +64,7 @@ export function TechDebtWorkspace({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
+  const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
   const [approving, setApproving] = React.useState(false);
   const [discarding, setDiscarding] = React.useState(false);
@@ -132,6 +135,41 @@ export function TechDebtWorkspace({
       await refresh();
     })();
   }, [refresh]);
+
+  /**
+   * UX finding 5: a bundled licence such as Microsoft 365 E5 extracted as one
+   * line, hiding the Defender / Entra capabilities that overlap separately
+   * licensed tools. The CONSULTANT names what is inside — the model is never
+   * asked, because inventing bundle contents is exactly the fabricated detail
+   * the AI seam exists to prevent.
+   */
+  async function onSplitBundle(item: CapabilityItem): Promise<void> {
+    const raw = window.prompt(
+      `What does "${item.name}" include?
+
+One capability per line, e.g.
+Microsoft Defender for Endpoint
+Microsoft Entra ID P2
+
+Components carry no cost of their own — this licence keeps its full value.`,
+      "",
+    );
+    if (raw === null) return;
+    const names = splitLines(raw);
+    if (names.length === 0) return;
+    setSplitError(null);
+    try {
+      const next = await addCapabilityComponents(
+        item.id,
+        names.map((name) => ({ name })),
+      );
+      setList(next);
+    } catch (err) {
+      setSplitError(
+        err instanceof Error ? err.message : "Couldn't add components.",
+      );
+    }
+  }
 
   async function runExtraction(artifactId: string): Promise<void> {
     setExtracting(true);
@@ -443,7 +481,13 @@ export function TechDebtWorkspace({
             items={list.items}
             onItemUpdate={onItemUpdate}
             readOnly={readOnly}
+            onSplitBundle={readOnly ? undefined : onSplitBundle}
           />
+          {splitError ? (
+            <p className="text-sm text-status-danger-fg" role="alert">
+              {splitError}
+            </p>
+          ) : null}
         </section>
       ) : (
         <EmptyState

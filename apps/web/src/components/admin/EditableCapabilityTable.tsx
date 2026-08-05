@@ -17,6 +17,11 @@ import type { JSX } from "react";
 export interface EditableCapabilityTableProps {
   items: CapabilityItem[];
   onItemUpdate: (next: CapabilityItem) => void;
+  /**
+   * Name the capabilities inside a bundled licence (UX finding 5). Omitted on
+   * read-only lists.
+   */
+  onSplitBundle?: (item: CapabilityItem) => void;
   /** When true (released list), inputs render read-only. */
   readOnly?: boolean;
 }
@@ -46,9 +51,25 @@ function parseInt32(raw: string): number | null {
 export function EditableCapabilityTable({
   items,
   onItemUpdate,
+  onSplitBundle,
   readOnly = false,
 }: EditableCapabilityTableProps): JSX.Element {
   const [saveState, setSaveState] = React.useState<SaveStateById>({});
+
+  // Each bundle is immediately followed by the components named inside it, so
+  // the relationship is readable without a tree widget (UX finding 5).
+  const ordered = React.useMemo(() => {
+    const children = new Map<string, CapabilityItem[]>();
+    for (const it of items) {
+      if (!it.parent_item_id) continue;
+      const list = children.get(it.parent_item_id) ?? [];
+      list.push(it);
+      children.set(it.parent_item_id, list);
+    }
+    return items
+      .filter((it) => !it.parent_item_id)
+      .flatMap((parent) => [parent, ...(children.get(parent.id) ?? [])]);
+  }, [items]);
 
   async function save(
     item: CapabilityItem,
@@ -138,8 +159,9 @@ export function EditableCapabilityTable({
               </td>
             </tr>
           ) : (
-            items.map((item) => {
+            ordered.map((item) => {
               const state = saveState[item.id] ?? "idle";
+              const isComponent = Boolean(item.parent_item_id);
               return (
                 <tr
                   key={item.id}
@@ -148,6 +170,7 @@ export function EditableCapabilityTable({
                     item.confidence_pct !== null &&
                       item.confidence_pct < 70 &&
                       "bg-status-warning-bg/30",
+                    isComponent && "bg-surface-sunken/40",
                   )}
                 >
                   <td className="border-b border-border-subtle px-3 py-2 align-top">
@@ -170,6 +193,19 @@ export function EditableCapabilityTable({
                         <span className="text-xs text-status-danger-fg">
                           Save failed
                         </span>
+                      ) : null}
+                      {isComponent ? (
+                        <span className="text-xs text-ink-tertiary">
+                          in bundle
+                        </span>
+                      ) : onSplitBundle ? (
+                        <button
+                          type="button"
+                          onClick={() => onSplitBundle(item)}
+                          className="text-left text-xs font-medium text-brand-600 underline hover:text-brand-700"
+                        >
+                          Split bundle…
+                        </button>
                       ) : null}
                     </div>
                   </td>
