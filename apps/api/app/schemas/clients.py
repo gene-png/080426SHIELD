@@ -106,6 +106,10 @@ class AttackDashboardResponse(BaseModel):
     service_id: uuid.UUID
     service_title: str
     released_at: datetime
+    # Issue 4: False when an ADMIN is previewing a finalized-but-unreleased
+    # dashboard. Clients only ever receive True (their gate is unchanged), so
+    # the default keeps every existing consumer working.
+    released: bool = True
     deliverable_version: int
     rollup: AttackDashboardRollup
     techniques: list[AttackDashboardTechnique]
@@ -135,6 +139,10 @@ class ZtDashboardResponse(BaseModel):
     service_id: uuid.UUID
     service_title: str
     released_at: datetime
+    # Issue 4: False when an ADMIN is previewing a finalized-but-unreleased
+    # dashboard. Clients only ever receive True (their gate is unchanged), so
+    # the default keeps every existing consumer working.
+    released: bool = True
     deliverable_version: int
     framework: str  # "cisa_ztmm_2_0" | "dod_ztra"
     framework_label: str
@@ -185,6 +193,10 @@ class TechDebtDashboardResponse(BaseModel):
     service_id: uuid.UUID
     service_title: str
     released_at: datetime
+    # Issue 4: False when an ADMIN is previewing a finalized-but-unreleased
+    # dashboard. Clients only ever receive True (their gate is unchanged), so
+    # the default keeps every existing consumer working.
+    released: bool = True
     deliverable_version: int
     total_applications: int
     annual_spend_usd: float
@@ -222,6 +234,10 @@ class RiskDashboardResponse(BaseModel):
 
     client_id: uuid.UUID
     released_at: datetime  # register.finalized_at
+    # Issue 4: False when an ADMIN is previewing a finalized-but-unreleased
+    # dashboard. Clients only ever receive True (their gate is unchanged), so
+    # the default keeps every existing consumer working.
+    released: bool = True
     version: int
     total_entries: int
     critical_count: int

@@ -40,11 +40,15 @@ async function jsonRequest<T>(
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
+    // Read the body ONCE, then try to parse it. Calling res.json() and then
+    // res.text() on failure throws "body stream already read", which masked a
+    // real 404 behind a confusing error while this path was unwired (issue 4).
+    const raw = await res.text();
     let payload: unknown;
     try {
-      payload = await res.json();
+      payload = JSON.parse(raw);
     } catch {
-      payload = await res.text();
+      payload = raw;
     }
     throw new CsfProxyError(res.status, payload);
   }

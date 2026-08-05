@@ -1,21 +1,16 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { TechDebtDashboard } from "@/components/dashboards/techDebt/TechDebtDashboard";
-import { ACTIVE_CLIENT_COOKIE, ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
+import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
 import type { TechDebtDashboardData } from "@/lib/dashboards/techDebt";
 
 import type { JSX } from "react";
 
 export const metadata: Metadata = { title: "Software Portfolio Dashboard" };
-
-interface MeResponse {
-  role: "admin" | "client";
-  client_id: string | null;
-}
 
 export default async function TechDebtDashboardPage({
   params,
@@ -29,14 +24,9 @@ export default async function TechDebtDashboardPage({
   }
   const token = session.accessToken;
 
-  const me = await apiFetch<MeResponse>("/auth/me", {
-    bearer: token,
-    clientId: "",
-  });
-  let clientId = me.client_id ?? undefined;
-  if (!clientId) {
-    clientId = (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value ?? undefined;
-  }
+  // Issue 4: admins reaching this from a deliverable card may have no active
+  // client cookie yet; the resolver falls back to the service's owning tenant.
+  const clientId = await resolveDashboardClientId(token, serviceId);
 
   let data: TechDebtDashboardData | null = null;
   let notReleased = false;
@@ -44,7 +34,7 @@ export default async function TechDebtDashboardPage({
     try {
       data = await apiFetch<TechDebtDashboardData>(
         `/clients/${clientId}/tech-debt/${serviceId}/dashboard`,
-        { bearer: token },
+        { bearer: token, clientId },
       );
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {

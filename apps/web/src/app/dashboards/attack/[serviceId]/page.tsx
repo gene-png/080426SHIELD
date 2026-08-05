@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AttackDashboard } from "@/components/dashboards/attack/AttackDashboard";
-import { ACTIVE_CLIENT_COOKIE, ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
+import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
 import type { AttackDashboardData } from "@/lib/dashboards/attack";
 
@@ -13,11 +13,6 @@ import type { JSX } from "react";
 export const metadata: Metadata = { title: "ATT&CK Coverage Dashboard" };
 
 /** Minimal slice of GET /auth/me used to resolve the caller's tenant. */
-interface MeResponse {
-  role: "admin" | "client";
-  client_id: string | null;
-}
-
 export default async function AttackDashboardPage({
   params,
 }: {
@@ -32,14 +27,9 @@ export default async function AttackDashboardPage({
 
   // Resolve the tenant exactly like /documents: client users are pinned; a
   // platform admin uses the active-client cookie (forwarded as X-Client-Id).
-  const me = await apiFetch<MeResponse>("/auth/me", {
-    bearer: token,
-    clientId: "",
-  });
-  let clientId = me.client_id ?? undefined;
-  if (!clientId) {
-    clientId = (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value ?? undefined;
-  }
+  // Issue 4: admins reaching this from a deliverable card may have no active
+  // client cookie yet; the resolver falls back to the service's owning tenant.
+  const clientId = await resolveDashboardClientId(token, serviceId);
 
   let data: AttackDashboardData | null = null;
   let notReleased = false;
@@ -47,7 +37,7 @@ export default async function AttackDashboardPage({
     try {
       data = await apiFetch<AttackDashboardData>(
         `/clients/${clientId}/attack/${serviceId}/dashboard`,
-        { bearer: token },
+        { bearer: token, clientId },
       );
     } catch (err) {
       // 404 = no released report for this service yet (or wrong tenant). Show a

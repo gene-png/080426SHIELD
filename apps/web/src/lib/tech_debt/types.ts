@@ -120,6 +120,12 @@ export interface Deliverable {
   xlsx_filename: string | null;
   finalized_at: string | null;
   finalized_by: string | null;
-  released_to_client_at: string | null;
+  /**
+   * Issue 4: the API serializes this as `released_at` (see
+   * app/schemas/*.py). The old name `released_to_client_at` never matched
+   * any response field, so it was always undefined — harmless only
+   * because nothing read it until the Release control was wired up.
+   */
+  released_at: string | null;
   superseded_by: string | null;
 }
