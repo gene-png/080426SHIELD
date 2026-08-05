@@ -1087,3 +1087,129 @@ def test_components_require_at_least_one_name(app_client) -> None:
         json={"components": []},
     )
     assert r.status_code == 422, r.text
+
+
+# --------------------------------------------------------------------------- #
+# Review queue for excluded rows (UX finding 4, second half).
+#
+# Disclosure alone tells a consultant that nine rows were dropped; it does not
+# let them do anything about it. A row wrongly skipped by the extractor has to
+# be recoverable, and a row correctly skipped should be dismissible so the
+# warning stops nagging.
+# --------------------------------------------------------------------------- #
+
+
+def _list_with_exclusions(c, bearer: str, provider) -> tuple[str, str]:
+    """Extract 4 rows -> 2 capabilities. Returns (service_id, list_id)."""
+
+    def fake(payload):
+        return LLMResponse(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "name": "Wiz",
+                            "vendor": None,
+                            "category": "CNAPP",
+                            "function": None,
+                            "annual_cost_usd": 350000,
+                            "license_count": None,
+                            "notes": None,
+                            "confidence_pct": 90,
+                            "source_row_index": 0,
+                        },
+                        {
+                            "name": "Splunk",
+                            "vendor": None,
+                            "category": "SIEM",
+                            "function": None,
+                            "annual_cost_usd": 480000,
+                            "license_count": None,
+                            "notes": None,
+                            "confidence_pct": 90,
+                            "source_row_index": 2,
+                        },
+                    ]
+                }
+            )
+        )
+
+    provider.register("extract.capabilities", fake)
+    sr = c.post(
+        "/tech-debt/services",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"kind": "tech_debt", "title": "Queue"},
+    )
+    svc_id = sr.json()["id"]
+    csv = (
+        b"Tool,Vendor,Annual Cost\n"
+        b"Wiz,Wiz Inc,350000\n"
+        b"Claroty xDome,Claroty,133000\n"
+        b"Splunk,Splunk,480000\n"
+        b"Workday HCM,Workday,81700\n"
+    )
+    artifact_id = _upload_csv(c, bearer, "inv.csv", csv)
+    r = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"artifact_id": artifact_id},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert [e["index"] for e in body["excluded_rows"]] == [1, 3]
+    return svc_id, body["id"]
+
+
+@pytest.mark.unit
+def test_excluded_row_can_be_included_as_a_capability(app_client) -> None:
+    """Claroty xDome is OT security — the extractor skipped it, the consultant
+    knows better and pulls it back in."""
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "queue-admin@example.com")["tokens"]["access_token"]
+    _svc, list_id = _list_with_exclusions(c, bearer, provider)
+
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/excluded-rows/1/include",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"name": "Claroty xDome", "category": "OT Security", "annual_cost_usd": 133000},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    added = next(i for i in body["items"] if i["name"] == "Claroty xDome")
+    assert added["category"] == "OT Security"
+    assert float(added["annual_cost_usd"]) == 133000.0
+    # Human-added, so no AI confidence badge.
+    assert added["confidence_pct"] is None
+    # It is no longer excluded, and the remaining exclusion is untouched.
+    assert [e["index"] for e in body["excluded_rows"]] == [3]
+
+
+@pytest.mark.unit
+def test_excluded_row_can_be_confirmed_as_correctly_excluded(app_client) -> None:
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "queue-admin2@example.com")["tokens"]["access_token"]
+    _svc, list_id = _list_with_exclusions(c, bearer, provider)
+
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/excluded-rows/3/confirm",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    rows = {e["index"]: e for e in r.json()["excluded_rows"]}
+    # Still listed — the reconciliation must stay honest — but acknowledged.
+    assert rows[3]["confirmed"] is True
+    assert rows[1]["confirmed"] is False
+
+
+@pytest.mark.unit
+def test_unknown_excluded_row_index_is_rejected(app_client) -> None:
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "queue-admin3@example.com")["tokens"]["access_token"]
+    _svc, list_id = _list_with_exclusions(c, bearer, provider)
+
+    r = c.post(
+        f"/tech-debt/capability-lists/{list_id}/excluded-rows/99/confirm",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 404, r.text

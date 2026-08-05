@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 5 (T6): the MITRE ATT&CK Coverage admin workspace.
@@ -89,6 +90,8 @@ async function runAi(page: Page): Promise<RunAiBody> {
     { timeout: 60000 },
   );
   await page.getByRole("button", { name: "Run AI" }).click();
+  // The offline guard intercepts the first click when no key is loaded.
+  await acknowledgeOfflineAi(page);
   return (await (await runDone).json()) as RunAiBody;
 }
 

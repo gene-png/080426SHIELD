@@ -18,6 +18,8 @@ import { splitLines } from "@/lib/text";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
   addCapabilityComponents,
+  confirmExcludedRow,
+  includeExcludedRow,
   approveCapabilityList,
   discardCapabilityList,
   extractCapabilities,
@@ -29,6 +31,7 @@ import {
 } from "@/lib/tech_debt/client";
 import type {
   CapabilityItem,
+  ExcludedRow,
   CapabilityList,
   ConsolidationPlanSummary,
   Deliverable,
@@ -143,6 +146,51 @@ export function TechDebtWorkspace({
    * asked, because inventing bundle contents is exactly the fabricated detail
    * the AI seam exists to prevent.
    */
+  /**
+   * UX finding 4 (second half): disclosure alone told the consultant nine rows
+   * were dropped without letting them do anything about it. A row the extractor
+   * wrongly skipped is recoverable; one it correctly skipped can be
+   * acknowledged so it stops reading as outstanding.
+   */
+  async function onIncludeRow(row: ExcludedRow): Promise<void> {
+    if (!list) return;
+    const name = window.prompt(
+      `Include this row as a capability?
+
+${row.summary}
+
+Name it:`,
+      "",
+    );
+    if (name === null || !name.trim()) return;
+    const category = window.prompt("Category (optional):", "") ?? undefined;
+    setSplitError(null);
+    try {
+      setList(
+        await includeExcludedRow(list.id, row.index, {
+          name: name.trim(),
+          category: category?.trim() || undefined,
+        }),
+      );
+    } catch (err) {
+      setSplitError(
+        err instanceof Error ? err.message : "Couldn't include that row.",
+      );
+    }
+  }
+
+  async function onConfirmRow(row: ExcludedRow): Promise<void> {
+    if (!list) return;
+    setSplitError(null);
+    try {
+      setList(await confirmExcludedRow(list.id, row.index));
+    } catch (err) {
+      setSplitError(
+        err instanceof Error ? err.message : "Couldn't confirm that row.",
+      );
+    }
+  }
+
   async function onSplitBundle(item: CapabilityItem): Promise<void> {
     const raw = window.prompt(
       `What does "${item.name}" include?
@@ -459,12 +507,34 @@ Components carry no cost of their own — this licence keeps its full value.`,
                     {list.excluded_rows.map((row) => (
                       <li
                         key={row.index}
-                        className="text-xs text-ink-secondary"
+                        className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary"
                       >
                         <span className="font-mono text-ink-tertiary">
                           row {row.index + 1}
-                        </span>{" "}
-                        {row.summary}
+                        </span>
+                        <span className="min-w-0 flex-1">{row.summary}</span>
+                        {row.confirmed ? (
+                          <span className="text-status-success-fg">
+                            ✓ correctly excluded
+                          </span>
+                        ) : readOnly ? null : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void onIncludeRow(row)}
+                              className="font-medium text-brand-600 underline hover:text-brand-700"
+                            >
+                              Include…
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void onConfirmRow(row)}
+                              className="text-ink-tertiary underline hover:text-ink-secondary"
+                            >
+                              Correctly excluded
+                            </button>
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>

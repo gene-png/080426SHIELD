@@ -63,6 +63,26 @@ class ExcludedRowResponse(BaseModel):
 
     index: int
     summary: str
+    # A consultant has reviewed this exclusion and agrees with it. The row stays
+    # listed either way — the reconciliation must remain honest — but the
+    # workspace can stop flagging it as needing attention.
+    confirmed: bool = False
+
+
+class IncludeExcludedRowRequest(BaseModel):
+    """Pull a wrongly-excluded row back in as a real capability.
+
+    The consultant supplies the values; nothing is inferred from the raw row,
+    which is free text the extractor already declined to interpret.
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    vendor: str | None = Field(default=None, max_length=255)
+    category: str | None = Field(default=None, max_length=128)
+    function: str | None = Field(default=None, max_length=255)
+    annual_cost_usd: float | None = None
+    license_count: int | None = None
+    notes: str | None = None
 
 
 class CapabilityListResponse(BaseModel):

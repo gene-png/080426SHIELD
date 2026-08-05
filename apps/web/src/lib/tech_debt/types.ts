@@ -48,6 +48,8 @@ export interface CapabilityItem {
 export interface ExcludedRow {
   index: number;
   summary: string;
+  /** A consultant reviewed this exclusion and agrees with it. */
+  confirmed?: boolean;
 }
 
 export interface CapabilityList {

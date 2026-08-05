@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 11 (T8): the C3 "documents are stale" nudge.
@@ -79,6 +80,8 @@ async function runAi(page: Page): Promise<void> {
     { timeout: 90000 },
   );
   await page.getByRole("button", { name: "Run AI" }).click();
+  // The offline guard intercepts the first click when no key is loaded.
+  await acknowledgeOfflineAi(page);
   await runDone;
 }
 

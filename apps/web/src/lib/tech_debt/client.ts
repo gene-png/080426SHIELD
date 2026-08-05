@@ -129,6 +129,37 @@ export async function addCapabilityComponents(
   );
 }
 
+export interface IncludeExcludedRowInput {
+  name: string;
+  vendor?: string;
+  category?: string;
+  function?: string;
+  annual_cost_usd?: number;
+}
+
+/** Pull a wrongly-excluded upload row back in as a real capability. */
+export async function includeExcludedRow(
+  listId: string,
+  rowIndex: number,
+  input: IncludeExcludedRowInput,
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/excluded-rows/${rowIndex}/include`,
+    { method: "POST", body: input },
+  );
+}
+
+/** Acknowledge that a row was correctly excluded. It stays listed. */
+export async function confirmExcludedRow(
+  listId: string,
+  rowIndex: number,
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/excluded-rows/${rowIndex}/confirm`,
+    { method: "POST" },
+  );
+}
+
 export async function approveCapabilityList(
   listId: string,
 ): Promise<CapabilityList> {

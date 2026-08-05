@@ -43,6 +43,7 @@ from app.schemas.tech_debt import (
     DeliverableResponse,
     ExcludedRowResponse,
     ExtractRequest,
+    IncludeExcludedRowRequest,
     OverlapAnalysisResponse,
     OverlapBucketResponse,
     ServiceCreateRequest,
@@ -172,7 +173,11 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
         # mismatch that made the release control look broken.
         source_rows_total=cap_list.source_rows_total,
         excluded_rows=[
-            ExcludedRowResponse(index=int(r.get("index", -1)), summary=str(r.get("summary", "")))
+            ExcludedRowResponse(
+                index=int(r.get("index", -1)),
+                summary=str(r.get("summary", "")),
+                confirmed=bool(r.get("confirmed", False)),
+            )
             for r in (cap_list.excluded_rows or [])
         ],
     )
@@ -329,6 +334,143 @@ def latest_capability_list(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Capability lists are admin-only until release.",
         )
+    return _serialize_list_with_items(db, cap_list)
+
+
+def _editable_list_or_404(db: Session, list_id: uuid.UUID, client: Client) -> CapabilityList:
+    """Fetch a capability list in this tenant that is still open to edits."""
+    cap_list = db.get(CapabilityList, list_id)
+    if cap_list is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability list not found.",
+        )
+    svc = db.get(Service, cap_list.service_id)
+    if svc is None or svc.client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability list not found.",
+        )
+    if cap_list.status in (
+        CapabilityListStatus.RELEASED,
+        CapabilityListStatus.DISCARDED,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This capability list has been released and is locked."
+                if cap_list.status == CapabilityListStatus.RELEASED
+                else "This capability list has been discarded."
+            ),
+        )
+    return cap_list
+
+
+def _excluded_entry_or_404(cap_list: CapabilityList, row_index: int) -> dict:
+    for entry in cap_list.excluded_rows or []:
+        if int(entry.get("index", -1)) == row_index:
+            return entry
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="That row is not in this list's excluded rows.",
+    )
+
+
+@router.post(
+    "/capability-lists/{list_id}/excluded-rows/{row_index}/include",
+    response_model=CapabilityListResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Include a row the extraction skipped (admin)",
+)
+def include_excluded_row(
+    list_id: uuid.UUID,
+    row_index: int,
+    body: IncludeExcludedRowRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Recover a row the extractor wrongly skipped (UX finding 4).
+
+    Disclosure told the consultant nine rows were dropped; this is how they act
+    on it. The consultant supplies the values — the raw row is free text the
+    extractor already declined to interpret, so re-parsing it here would be
+    guessing at exactly the point a human has stepped in.
+    """
+    cap_list = _editable_list_or_404(db, list_id, client)
+    entry = _excluded_entry_or_404(cap_list, row_index)
+
+    item = CapabilityItem(
+        capability_list_id=cap_list.id,
+        name=body.name,
+        vendor=body.vendor,
+        category=body.category,
+        function=body.function,
+        annual_cost_usd=body.annual_cost_usd,
+        license_count=body.license_count,
+        notes=body.notes,
+        # Human-added, so it carries no AI confidence badge.
+        confidence_pct=None,
+    )
+    db.add(item)
+    # It is no longer excluded: dropping it keeps `received = included +
+    # excluded` true, which is the whole point of the reconciliation.
+    cap_list.excluded_rows = [
+        e for e in (cap_list.excluded_rows or []) if int(e.get("index", -1)) != row_index
+    ]
+    audit(
+        db,
+        action="capability_list.excluded_row_included",
+        target_type="capability_list",
+        target_id=cap_list.id,
+        actor_user_id=user.id,
+        details={"row_index": row_index, "name": body.name, "summary": entry.get("summary")},
+    )
+    db.commit()
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
+
+
+@router.post(
+    "/capability-lists/{list_id}/excluded-rows/{row_index}/confirm",
+    response_model=CapabilityListResponse,
+    summary="Confirm a row was correctly excluded (admin)",
+)
+def confirm_excluded_row(
+    list_id: uuid.UUID,
+    row_index: int,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Acknowledge an exclusion as correct.
+
+    The row STAYS listed — the reconciliation has to keep telling the truth
+    about what was uploaded — but the workspace can stop flagging it as
+    outstanding.
+    """
+    cap_list = _editable_list_or_404(db, list_id, client)
+    _excluded_entry_or_404(cap_list, row_index)
+
+    # Rebuild the list: a JSON column mutated in place is not seen as dirty.
+    cap_list.excluded_rows = [
+        (
+            {**e, "confirmed": True}
+            if int(e.get("index", -1)) == row_index
+            else {"confirmed": False, **e}
+        )
+        for e in (cap_list.excluded_rows or [])
+    ]
+    audit(
+        db,
+        action="capability_list.excluded_row_confirmed",
+        target_type="capability_list",
+        target_id=cap_list.id,
+        actor_user_id=user.id,
+        details={"row_index": row_index},
+    )
+    db.commit()
+    db.refresh(cap_list)
     return _serialize_list_with_items(db, cap_list)
 
 

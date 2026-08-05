@@ -5,6 +5,7 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 7 (T7): the NIST CSF 2.0 full Playbook (Work Order D4).
@@ -232,6 +233,8 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   );
   await expect(runBtn).toBeVisible({ timeout: 30000 });
   await runBtn.click();
+  // The offline guard intercepts the first click when no key is loaded.
+  await acknowledgeOfflineAi(page);
   const runBody = (await (await runDone).json()) as {
     changed: Array<{ tier: string; subcategory_code: string; field: string }>;
   };
