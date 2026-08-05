@@ -557,20 +557,44 @@ class _FakeAnthropicMessage:
         self.usage = type("Usage", (), {"input_tokens": 11, "output_tokens": 22})()
 
 
+class _FakeStreamManager:
+    """Stands in for `client.messages.stream(...)`, which is a context manager
+    yielding a stream whose `get_final_message()` returns the assembled reply."""
+
+    def __init__(self, message: _FakeAnthropicMessage) -> None:
+        self._message = message
+
+    def __enter__(self) -> _FakeStreamManager:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def get_final_message(self) -> _FakeAnthropicMessage:
+        return self._message
+
+
 class _FakeAnthropicClient:
     def __init__(self, text: str, stop_reason: str | None) -> None:
         self._text = text
         self._stop_reason = stop_reason
         self.last_kwargs: dict = {}
-        self.messages = type(
-            "Messages",
-            (),
-            {"create": lambda _self, **kw: self._create(**kw)},
-        )()
+        self.stream_calls = 0
+        self.create_calls = 0
+        outer = self
 
-    def _create(self, **kwargs):
-        self.last_kwargs = kwargs
-        return _FakeAnthropicMessage(self._text, self._stop_reason)
+        class _Messages:
+            def stream(self, **kw):
+                outer.stream_calls += 1
+                outer.last_kwargs = kw
+                return _FakeStreamManager(_FakeAnthropicMessage(outer._text, outer._stop_reason))
+
+            def create(self, **kw):
+                outer.create_calls += 1
+                outer.last_kwargs = kw
+                return _FakeAnthropicMessage(outer._text, outer._stop_reason)
+
+        self.messages = _Messages()
 
 
 def _anthropic_with(monkeypatch, text: str, stop_reason: str | None):
@@ -693,3 +717,23 @@ def test_fixture_provider_records_mode_fixture_even_when_env_says_live(db_factor
         row = db.execute(select(LLMCall)).scalar_one()
         assert row.provider == "fixture"
         assert row.mode == LLMCallMode.FIXTURE
+
+
+@pytest.mark.unit
+def test_anthropic_streams_instead_of_blocking_on_one_response(monkeypatch) -> None:
+    """Long jobs must use the streaming API.
+
+    With the output cap raised to 8192, a non-streaming zt_score request ran
+    long enough that Anthropic dropped the connection —
+    `APIConnectionError: Server disconnected without sending a response`
+    (2026-08-05 live run). Streaming keeps the connection active and returns the
+    same assembled message, so the stop_reason guard below is unaffected.
+    """
+    provider, fake = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
+    resp = provider.complete("Draft it.", {"k": "v"})
+
+    assert fake.stream_calls == 1, "the adapter must stream"
+    assert fake.create_calls == 0, "a blocking create() is what got disconnected"
+    assert resp.content == '{"ok": true}'
+    assert resp.input_tokens == 11
+    assert resp.output_tokens == 22

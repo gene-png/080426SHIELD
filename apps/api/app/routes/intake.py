@@ -40,6 +40,7 @@ from app.provisioning import (
     provision_self_assessment_service,
 )
 from app.schemas.intake import (
+    IntakeContactResponse,
     EngagementCreateRequest,
     EngagementResponse,
     IntakePatchRequest,
@@ -122,6 +123,7 @@ def read_intake(
         client=client,
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
+        contact=IntakeContactResponse.model_validate(user, from_attributes=True),
     )
 
 
@@ -170,6 +172,7 @@ def patch_intake(
         client=client,
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
+        contact=IntakeContactResponse.model_validate(user, from_attributes=True),
     )
 
 
@@ -286,6 +289,7 @@ def submit_intake(
         client=client,
         service_requests=list(all_requests),
         intake_completed_at=client.intake_completed_at,
+        contact=IntakeContactResponse.model_validate(user, from_attributes=True),
     )
 
 

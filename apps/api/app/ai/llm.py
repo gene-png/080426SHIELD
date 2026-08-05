@@ -133,7 +133,14 @@ class AnthropicProvider:
         client = self._ensure_client()
         # Payload is sent as JSON inside the user message. The redactor has
         # already run upstream, so this content is safe to egress.
-        msg = client.messages.create(
+        # STREAMED, not a blocking create(). With the cap at 8192 a single
+        # non-streaming request for zt_score ran long enough that Anthropic
+        # dropped it — `APIConnectionError: Server disconnected without sending
+        # a response` (2026-08-05 live run), which left the workspace spinning
+        # forever. Streaming holds the connection open and
+        # `get_final_message()` returns the same assembled Message, so the
+        # stop_reason guard and token accounting below are unchanged.
+        with client.messages.stream(
             model=self.model,
             # Shared with the generateContent + OpenAI adapters. This was a
             # hardcoded 4096 until the 2026-08-04 live run, where zt_score
@@ -149,7 +156,8 @@ class AnthropicProvider:
                     ],
                 }
             ],
-        )
+        ) as stream:
+            msg = stream.get_final_message()
         # FAIL LOUDLY on a non-clean finish, mirroring _parse_generate_content.
         # A truncated draft ("max_tokens") is NOT a partial success: handing it
         # to the engine's json.loads produces an opaque JSONDecodeError, a 500,

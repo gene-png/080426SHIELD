@@ -53,7 +53,7 @@ test("tech-debt extract builds the dashboard, and editing a cell clears the AI-c
   // renders its header — and it must render before the API calls below so the
   // active-client cookie is set and the proxy requests are tenant-scoped.
   await expect(
-    page.getByRole("heading", { name: "Tech Debt Review" }),
+    page.getByRole("heading", { name: "Technical Debt Review" }),
   ).toBeVisible({ timeout: 30000 });
 
   // Discard any open draft first. Sprint 8 T1 (tech_debt.py:184) added a
@@ -149,7 +149,7 @@ test("Discard draft throws the open draft away and re-enables a fresh extraction
   const techDebtServiceId = await atlasServiceId(page, "tech_debt");
   await page.goto(`/admin/services/${techDebtServiceId}/tech-debt`);
   await expect(
-    page.getByRole("heading", { name: "Tech Debt Review" }),
+    page.getByRole("heading", { name: "Technical Debt Review" }),
   ).toBeVisible({ timeout: 30000 });
 
   // Discard any stale open draft, then upload to mint a fresh draft we can throw

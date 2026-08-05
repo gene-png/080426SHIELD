@@ -140,6 +140,10 @@ function UserList({ clientId }: { clientId: string }): JSX.Element {
   const [users, setUsers] = React.useState<AdminUserRow[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  // UX finding 20: deactivating signs the user out immediately and blocks the
+  // next login, but it was a single unguarded click while archive and
+  // key-removal both confirm. Reactivation is not destructive and stays direct.
+  const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
 
   const reloadSeq = React.useRef(0);
   const reload = React.useCallback(async () => {
@@ -167,6 +171,7 @@ function UserList({ clientId }: { clientId: string }): JSX.Element {
     setError(null);
     try {
       await setUserActive(u.id, !u.is_active);
+      setConfirmingId(null);
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update user.");
@@ -204,23 +209,51 @@ function UserList({ clientId }: { clientId: string }): JSX.Element {
                   </span>
                 ) : null}
               </span>
-              <button
-                type="button"
-                onClick={() => void onToggle(u)}
-                disabled={busyId === u.id}
-                className={
-                  "shrink-0 rounded-md border px-3 py-1 text-xs font-semibold disabled:opacity-60 " +
-                  (u.is_active
-                    ? "border-status-danger-border text-status-danger-fg hover:bg-status-danger-bg"
-                    : "border-border bg-surface-card text-ink-primary hover:bg-surface-sunken")
-                }
-              >
-                {busyId === u.id
-                  ? "Saving…"
-                  : u.is_active
-                    ? "Deactivate"
-                    : "Reactivate"}
-              </button>
+              {u.is_active && confirmingId === u.id ? (
+                <span className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
+                  <span className="text-ink-secondary">
+                    Deactivate {u.email}? They are signed out immediately and
+                    cannot sign in again. Their data is kept and you can
+                    reactivate them.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void onToggle(u)}
+                    disabled={busyId === u.id}
+                    className="rounded-md bg-status-danger-fg px-3 py-1 text-xs font-semibold text-ink-on-accent disabled:opacity-60"
+                  >
+                    {busyId === u.id ? "Deactivating…" : "Yes, deactivate"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingId(null)}
+                    disabled={busyId === u.id}
+                    className="rounded-md border border-border bg-surface-card px-3 py-1 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"
+                  >
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    u.is_active ? setConfirmingId(u.id) : void onToggle(u)
+                  }
+                  disabled={busyId === u.id}
+                  className={
+                    "shrink-0 rounded-md border px-3 py-1 text-xs font-semibold disabled:opacity-60 " +
+                    (u.is_active
+                      ? "border-status-danger-border text-status-danger-fg hover:bg-status-danger-bg"
+                      : "border-border bg-surface-card text-ink-primary hover:bg-surface-sunken")
+                  }
+                >
+                  {busyId === u.id
+                    ? "Saving…"
+                    : u.is_active
+                      ? "Deactivate"
+                      : "Reactivate"}
+                </button>
+              )}
             </li>
           ))}
         </ul>

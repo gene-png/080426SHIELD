@@ -1,4 +1,6 @@
 "use client";
+import * as React from "react";
+
 import { StatusPill } from "@shield/design-system";
 
 import {
@@ -14,6 +16,7 @@ import {
 
 import type { JSX } from "react";
 import { formatDateOnly } from "@/lib/dates";
+import { listArtifacts, type ArtifactSummary } from "@/lib/intake/artifacts";
 
 /** Human-readable summary of the client-set targets for a service, if any. */
 function targetSummary(
@@ -74,6 +77,27 @@ export function Step6Review({
   onSubmit,
 }: Step6ReviewProps): JSX.Element {
   const c = state.client;
+  const contact = state.contact;
+
+  // UX finding 3: the review step never showed the uploaded evidence, so a
+  // client could not confirm the attachment made it before submitting.
+  const [artifacts, setArtifacts] = React.useState<ArtifactSummary[] | null>(
+    null,
+  );
+  React.useEffect(() => {
+    let cancelled = false;
+    listArtifacts()
+      .then((res) => {
+        if (!cancelled) setArtifacts(res.items ?? []);
+      })
+      .catch(() => {
+        // Non-blocking: the list is confirmation, not a submit gate.
+        if (!cancelled) setArtifacts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const picks = (c?.service_interests ?? []) as ServiceType[];
   const legalName =
     c?.legal_name && c.legal_name !== "(pending intake)" ? c.legal_name : null;
@@ -93,6 +117,59 @@ export function Step6Review({
           recent version.
         </div>
       ) : null}
+
+      {/* UX finding 3: the review step showed Organization, Services and
+          Systems but never the contact, so a client could not check the POC
+          details before committing the intake. */}
+      <section
+        aria-labelledby="review-contact"
+        className="rounded-md border border-border-subtle bg-surface-card p-4"
+      >
+        <h3
+          id="review-contact"
+          className="text-sm font-semibold uppercase tracking-wider text-ink-tertiary"
+        >
+          Primary contact
+        </h3>
+        <dl className="mt-2">
+          {row("Full name", contact?.display_name)}
+          {row("Email", contact?.email)}
+          {row("Title", contact?.title)}
+          {row("Phone", contact?.phone)}
+          {row("Time zone", contact?.timezone)}
+        </dl>
+      </section>
+
+      <section
+        aria-labelledby="review-files"
+        className="rounded-md border border-border-subtle bg-surface-card p-4"
+      >
+        <h3
+          id="review-files"
+          className="text-sm font-semibold uppercase tracking-wider text-ink-tertiary"
+        >
+          Uploaded evidence
+        </h3>
+        {artifacts === null ? (
+          <p className="mt-2 text-sm text-ink-tertiary">Loading…</p>
+        ) : artifacts.length === 0 ? (
+          <p className="mt-2 text-sm text-ink-tertiary">
+            No documents uploaded. You can still submit — a consultant will ask
+            for what they need.
+          </p>
+        ) : (
+          <ul className="mt-2 flex flex-col gap-1">
+            {artifacts.map((a) => (
+              <li key={a.id} className="text-sm text-ink-primary">
+                {a.title}{" "}
+                <span className="text-xs text-ink-tertiary">
+                  ({(a.size_bytes / 1024).toFixed(1)} KB · uploaded)
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section
         aria-labelledby="review-org"
