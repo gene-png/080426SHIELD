@@ -54,6 +54,15 @@ class CapabilityItemResponse(BaseModel):
     locked: bool = False
 
 
+class ExcludedRowResponse(BaseModel):
+    """One uploaded row that produced no capability."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    index: int
+    summary: str
+
+
 class CapabilityListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -64,6 +73,11 @@ class CapabilityListResponse(BaseModel):
     items: list[CapabilityItemResponse]
     approved_at: datetime | None
     approved_by: uuid.UUID | None
+    # Reconciliation of the source upload against what was extracted (0036).
+    # NULL on lists created before the column existed — the UI renders no claim
+    # rather than implying a complete inventory.
+    source_rows_total: int | None = None
+    excluded_rows: list[ExcludedRowResponse] = []
 
 
 class CapabilityItemPatch(BaseModel):

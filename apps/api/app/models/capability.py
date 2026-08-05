@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     ForeignKey,
     Integer,
@@ -77,6 +78,16 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+
+    # Reconciliation of the upload against what was extracted (migration 0036).
+    # The prompt keeps only security capabilities and skips the rest; without
+    # these the workspace presented the survivors as the whole inventory.
+    # NULL on pre-0036 lists, which render no claim at all.
+    source_rows_total: Mapped[int | None] = mapped_column(Integer)
+    # [{index, summary}] for rows that produced no capability. Empty when the
+    # provider did not attribute every item to a source row — the counts stay
+    # honest and the naming is withheld rather than guessed.
+    excluded_rows: Mapped[list | None] = mapped_column(JSON)
 
 
 class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):

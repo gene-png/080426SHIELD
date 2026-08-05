@@ -391,6 +391,54 @@ export function TechDebtWorkspace({
               />
             </div>
           </header>
+
+          {/* UX finding 4: the extraction keeps only security capabilities and
+              skips the rest. Reporting the survivors as the portfolio hid 45%
+              of the uploaded spend in the 2026-08-04 review. Say what was left
+              out, and what it was. */}
+          {typeof list.source_rows_total === "number" &&
+          list.source_rows_total > list.items.length ? (
+            <div
+              className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
+              role="status"
+              aria-label="Extraction reconciliation"
+            >
+              <p className="font-semibold text-status-warning-fg">
+                {list.source_rows_total} rows received · {list.items.length}{" "}
+                included · {list.source_rows_total - list.items.length} excluded
+              </p>
+              <p className="mt-1 text-ink-secondary">
+                Totals below cover the included security tooling only, not the
+                whole upload.
+              </p>
+              {list.excluded_rows && list.excluded_rows.length > 0 ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
+                    Show the {list.excluded_rows.length} excluded row
+                    {list.excluded_rows.length === 1 ? "" : "s"}
+                  </summary>
+                  <ul className="mt-2 flex flex-col gap-1">
+                    {list.excluded_rows.map((row) => (
+                      <li
+                        key={row.index}
+                        className="text-xs text-ink-secondary"
+                      >
+                        <span className="font-mono text-ink-tertiary">
+                          row {row.index + 1}
+                        </span>{" "}
+                        {row.summary}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : (
+                <p className="mt-1 text-xs text-ink-tertiary">
+                  The provider did not attribute every capability to a source
+                  row, so the excluded rows can&apos;t be listed individually.
+                </p>
+              )}
+            </div>
+          ) : null}
           <EditableCapabilityTable
             items={list.items}
             onItemUpdate={onItemUpdate}

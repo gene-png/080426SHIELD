@@ -864,3 +864,96 @@ def test_latest_deliverable_404_when_none(app_client) -> None:
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Extraction reconciliation reaches the client (UX finding 4 / E2E F-5).
+#
+# The workspace reported "12 capabilities · $891,796" for a 21-row, $1,634,236
+# upload with no hint that nine rows were excluded. The counts are computed in
+# code and persisted; this pins that they actually reach the response — the
+# serializer builds it field-by-field, so a new model column silently reads as
+# null unless it is added there too (the same shape as the released_at bug).
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_extract_response_discloses_excluded_rows(app_client) -> None:
+    c, _TestSession, provider = app_client
+    bearer = _register(c, "recon-admin@example.com")["tokens"]["access_token"]
+
+    def fake(payload):
+        # Four rows in, two security capabilities out — rows 1 and 3 are the
+        # kind of business tooling the prompt deliberately skips.
+        return LLMResponse(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "name": "Wiz",
+                            "vendor": "Wiz Inc",
+                            "category": "CNAPP",
+                            "function": "Cloud posture",
+                            "annual_cost_usd": 350000,
+                            "license_count": None,
+                            "notes": None,
+                            "confidence_pct": 92,
+                            "source_row_index": 0,
+                        },
+                        {
+                            "name": "Splunk",
+                            "vendor": "Splunk",
+                            "category": "SIEM",
+                            "function": "Log analytics",
+                            "annual_cost_usd": 480000,
+                            "license_count": None,
+                            "notes": None,
+                            "confidence_pct": 88,
+                            "source_row_index": 2,
+                        },
+                    ]
+                }
+            )
+        )
+
+    provider.register("extract.capabilities", fake)
+
+    sr = c.post(
+        "/tech-debt/services",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"kind": "tech_debt", "title": "Reconciliation"},
+    )
+    svc_id = sr.json()["id"]
+    csv = (
+        b"Tool,Vendor,Annual Cost\n"
+        b"Wiz,Wiz Inc,350000\n"
+        b"SAP S4HANA,SAP,252000\n"
+        b"Splunk,Splunk,480000\n"
+        b"Workday HCM,Workday,81700\n"
+    )
+    artifact_id = _upload_csv(c, bearer, "inventory.csv", csv)
+
+    r = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"artifact_id": artifact_id},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    assert body["source_rows_total"] == 4
+    assert len(body["items"]) == 2
+    excluded = body["excluded_rows"]
+    assert [e["index"] for e in excluded] == [1, 3]
+    assert "SAP S4HANA" in excluded[0]["summary"]
+    assert "Workday HCM" in excluded[1]["summary"]
+
+    # It must SURVIVE a reload — the workspace refetches on every load, and a
+    # disclosure that vanishes on refresh is no disclosure.
+    again = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["source_rows_total"] == 4
+    assert len(again.json()["excluded_rows"]) == 2

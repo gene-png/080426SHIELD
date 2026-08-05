@@ -40,6 +40,7 @@ from app.schemas.tech_debt import (
     CapabilityListResponse,
     ConsolidationPlanSummary,
     DeliverableResponse,
+    ExcludedRowResponse,
     ExtractRequest,
     OverlapAnalysisResponse,
     OverlapBucketResponse,
@@ -164,6 +165,15 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
         items=[CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items],
         approved_at=cap_list.approved_at,
         approved_by=cap_list.approved_by,
+        # This serializer builds the response field-by-field, so anything added
+        # to the model MUST be added here too or it silently reads as null —
+        # the same shape of bug as the released_at/released_to_client_at
+        # mismatch that made the release control look broken.
+        source_rows_total=cap_list.source_rows_total,
+        excluded_rows=[
+            ExcludedRowResponse(index=int(r.get("index", -1)), summary=str(r.get("summary", "")))
+            for r in (cap_list.excluded_rows or [])
+        ],
     )
 
 
@@ -244,7 +254,17 @@ def extract_capability_list(
     # Determine next version off the true max (discarded rows still hold their
     # version under the unique constraint - D-031 version trap).
     next_version = _max_list_version(db, svc.id) + 1
-    cap_list = CapabilityList(service_id=svc.id, version=next_version)
+    cap_list = CapabilityList(
+        service_id=svc.id,
+        version=next_version,
+        # Persisted so the disclosure survives a page reload: the workspace
+        # re-fetches the list on every load, and a warning that vanishes on
+        # refresh is no warning (UX finding 4).
+        source_rows_total=result.reconciliation.received,
+        excluded_rows=[
+            {"index": e.index, "summary": e.summary} for e in result.reconciliation.excluded_rows
+        ],
+    )
     db.add(cap_list)
     db.flush()
 

@@ -43,6 +43,11 @@ export interface CapabilityItem {
   consolidation_target_id: string | null;
 }
 
+export interface ExcludedRow {
+  index: number;
+  summary: string;
+}
+
 export interface CapabilityList {
   id: string;
   service_id: string;
@@ -51,6 +56,10 @@ export interface CapabilityList {
   items: CapabilityItem[];
   approved_at: string | null;
   approved_by: string | null;
+  /** Rows in the source upload. Null on lists extracted before 0036. */
+  source_rows_total?: number | null;
+  /** Uploaded rows that produced no capability. Empty when unattributable. */
+  excluded_rows?: ExcludedRow[];
 }
 
 export interface CapabilityItemPatch {
