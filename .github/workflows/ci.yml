@@ -117,7 +117,15 @@ jobs:
   e2e:
     name: E2E (Playwright smoke suite)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30 was not enough once the suite reached 73 tests: the 2026-08-05 run on
+    # PR #5 was terminated at 30m18s with Playwright still going (no assertion
+    # failures — the job simply ran out of budget), while the same suite takes
+    # ~37 min locally. The specs share one seeded database and run
+    # `workers: 1` deliberately, so wall-clock scales with the spec count and
+    # will keep growing. Sharding is the real fix and needs per-shard database
+    # isolation; until then this ceiling has to clear a full serial run with
+    # headroom for a slow runner.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
 
