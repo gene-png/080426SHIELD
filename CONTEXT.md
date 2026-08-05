@@ -1,8 +1,11 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-07-22 (Sprint 9 "activate the seam" complete on
-`feat/sso-discard-demo-sprint-9`, targeting `v3.5.0`, PR not yet opened; Sprint 8
-"prove it in the browser" merged as PR #42, `v3.4.1`). This file describes the
+_Last updated: 2026-08-04 (seven-issue fix pass on `fix/seven-issue-pass`,
+targeting `v3.8.0` — see the section at the end of "Current state"). NOTE: this
+repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
+`main` carrying the working tree through `v3.7.0`; the PR numbers cited in the
+sprint history below belong to the upstream repo, not to this one. This file
+describes the
 project as of the branch it sits on and is updated ONLY as part of a PR. Durable
 facts and environment gotchas live in `CLAUDE.md`; personal in-flight status
 lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
@@ -143,6 +146,36 @@ unique, additive/SQLite-safe, C0). New DECISIONS: **D-031** (draft discard as an
 admin-only soft-delete state transition), **D-032** (hybrid Keycloak SSO as a
 flag-gated exchange, never a bearer), **D-033** (destructive-by-design automation
 is opt-in-gated).
+
+- **Seven-issue fix pass ON ITS BRANCH** (`fix/seven-issue-pass`, targeting
+  `v3.8.0`): seven reported issues in four phases. Three were the same class of
+  defect — a surface that renders but cannot be acted on. The client `/home`
+  service cards were unlinked `Card`s, so a client could see a service and had no
+  way to open it; `/admin/active` was a stub whose body was one "go elsewhere"
+  button; and the skip-to-content link moved focus correctly but showed nothing,
+  because `outline-hidden` on all 8 `main#main-content` shells cancels the ring
+  that `focus:outline-2` sets up. The headline defect is issue 4: **nothing in the
+  product could release a deliverable**, so the D-035 client dashboards' release
+  gate was unsatisfiable and no client could ever see a dashboard — three stacked
+  bugs (a client function with zero callers, a missing Next proxy route, and a TS
+  field name that never matched the API's `released_at`). Admin removal
+  (soft-archive a tenant, deactivate a user) and a runtime provider-API-key panel
+  round out the pass. Two additive migrations, **0033** (`client.archived_at`) and
+  **0034** (`llm_credentials`). New DECISIONS: **D-036** (soft removal + `/auth/login`
+  now honours `is_active`), **D-037** (runtime keys, validate-then-store, DB beats
+  env), **D-038** (release control + admin pre-release preview through the shared
+  builder).
+
+### Seven-issue pass: issue → commit
+
+| Issue | What shipped | Commit |
+| --- | --- | --- |
+| 1, 5, 6 | `/home` service cards are links routed by phase (`dashboardPathFor()` as the one source of truth, shared with `/documents`); `/admin/active` redirects to the queue and leaves the nav; skip-link focus ring made visible | `c6eb34a` |
+| 1, 5, 6 | Follow-up after in-browser verification: `outline-hidden` was cancelling the ring the first commit added — removed from all 8 shells; specs `s31`, `s35`, extended `s12` | `eaaa060` |
+| 3, 7 | `DELETE /admin/clients/{cid}` (soft archive, migration 0033), tenant user list, `PATCH /admin/users/{uid}`; `/auth/login` `is_active` gate + refresh-jti clear; `/admin/queue` as an org index with `/admin/queue/[clientId]`; `test_admin_removal.py`, `s32`, `s33` | `a54cfb0` |
+| — | Bandit `# nosec` marker CI needed on the dev artifact path | `6ad9cfb` |
+| 2 | `POST`/`DELETE /admin/llm-key` (validate against the provider, then store Fernet-encrypted, migration 0034); `AiStatusBanner` moved into the admin shell; `LlmKeyPanel`; `RunAiGuard`; `.env` placeholder model corrected; `test_admin_llm_key.py`, `RunAiGuard.test.tsx`, `s34` | `006f571` |
+| 4 | Release wired end to end for all four services (callers + 4 proxy routes + `released_at` type fix), admin pre-release preview via the shared `_dashboard_deliverable()` resolver, `resolveDashboardClientId()` for cold admin URLs, single-body-read fix in all six client libs; `s36` | `c601d32` |
 
 ## Machine-local facts (this box)
 

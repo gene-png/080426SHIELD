@@ -31,7 +31,3 @@ DELIVERY_PLAN.md
 SMOKE_TEST.md
 SPRINT_*.md
 context/
-
-# Quarantined files awaiting deletion sign-off. Preserved verbatim so they can
-# be restored byte-for-byte; formatting them would defeat that.
-Review for Deletion/

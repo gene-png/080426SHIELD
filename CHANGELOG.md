@@ -7,6 +7,118 @@ All notable changes to SHIELD by Kentro v2.0. Format roughly follows [Keep a Cha
 > (smoke sweep) is now `[3.0.1]` and Sprint 2 (findings burn-down, formerly
 > `[3.0.1]`) is now `[3.0.2]`. No tags existed for the collided numbers.
 
+## [3.8.0] · Seven-issue pass — navigation, removal, runtime AI keys, release control · 2026-08-04
+
+Seven reported issues, fixed in four phases on `fix/seven-issue-pass`. Three of
+them turned out to be the same class of defect: a surface that renders but cannot
+be acted on. New decisions **D-036**, **D-037**, **D-038**; migrations **0033**
+and **0034**, both additive and SQLite-safe (C0).
+
+### Navigation dead ends (issues 1, 5, 6)
+
+- **`/home` service cards are links.** A client could see a service on their home
+  dashboard and had no way to open it — the card rendered as a bare `Card`. Every
+  card now routes by its own phase: report-ready → the service dashboard (or
+  `/documents` for a kind that has none), in-progress → the self-assessment,
+  everything else → `/assessments`. `dashboardPathFor()` in
+  `lib/dashboards/routes.ts` is the single source of truth, and `/documents` was
+  re-pointed at it rather than keeping a second copy of the same switch.
+- **`/admin/active` was a stub** whose whole body was a paragraph and a "Go to the
+  intake queue" button. The nav entry points at the queue directly; the route
+  survives as a redirect so existing bookmarks still land somewhere useful.
+- **The skip-to-content link now shows a visible focus ring.** The link itself was
+  never broken (every shell renders `<main id="main-content" tabIndex={-1}>` and
+  `s12` already asserted the focus move), but all 8 shells carried
+  `outline-hidden`, which sets `outline-style: none` and cancels the ring even
+  though `focus:outline-2` applies its width — so on a short page, activation
+  produced no visible change and read as dead. The class is removed rather than
+  layered over, and `s12` now pins a non-zero rendered outline width.
+
+### Client and user removal, intake by organization (issues 3, 7 — D-036)
+
+- **`DELETE /admin/clients/{cid}`** archives a tenant (new nullable
+  `client.archived_at`, migration 0033) — a soft removal following the
+  `archive_service` precedent. Assessments, deliverables and the audit trail are
+  retained; the tenant leaves the client list and the org index.
+- **`GET /admin/clients/{cid}/users`** and **`PATCH /admin/users/{uid}`** list and
+  deactivate/reactivate users. Self-deactivation is refused with a typed D-016
+  error, and deactivating clears `active_refresh_jti` so an existing session dies
+  immediately instead of riding a valid refresh token to expiry.
+- **Fixed while testing the above: `/auth/login` never checked `User.is_active`.**
+  Refresh, MFA-verify and password-reset all honoured the flag, so a deactivated
+  user could still sign in with their password. The gate sits after the password
+  verify (before it, the endpoint would be an account-existence oracle) and the
+  typed reason reaches the sign-in form as "this account has been deactivated".
+- **`/admin/queue` is now an index of organizations.** It previously opened onto a
+  single org — the API returns every tenant's requests but sets `client` to the
+  most recently created tenant (advisory, per its own docstring) and the UI
+  rendered that as the page header. `/admin/queue/[clientId]` shows one org's
+  intake detail above its own pending work; awaiting-review counts come from a
+  single grouped query.
+
+### Runtime AI key management (issue 2 — D-037)
+
+- **`POST` / `DELETE /admin/llm-key`** let an admin paste, replace and remove a
+  provider key from Management. The key is **validated against the provider before
+  it is stored**, so a typo is refused with the provider's own reason instead of
+  silently taking AI offline. It is stored Fernet-encrypted (migration 0034, new
+  table), never returned by any endpoint, never logged, never in an audit blob —
+  each asserted by tests.
+- **A stored key overrides `SHIELD_LLM_MODE=fixture`** and takes effect on the
+  next Run AI with no restart (every workspace's `_llm_dep` builds from the DB).
+  Pasting a key is an explicit request for live AI; serving fixtures afterwards
+  would be exactly the silent success this removes.
+- **The offline warning is now unavoidable.** `AiStatusBanner` moved into the admin
+  shell (it previously rendered on one of five workspaces) and links to the fix;
+  `RunAiGuard` makes the first offline Run AI click explain that output will be
+  canned, offering "Load a key" or "Continue offline". The acknowledgement is keyed
+  on the current config, so removing a key re-warns in the same session.
+- Also corrected: `.env` pinned `SHIELD_LLM_MODEL=claude-opus-4-7`, a value the
+  code itself lists as a known placeholder — live AI would have refused to boot
+  even with a valid key.
+- **The guard no longer fails open while its own status request is in flight.**
+  The first cut branched on `status === null`, which means both "not asked yet"
+  and "endpoint down"; under load a Run AI click beat the fetch and silently
+  wrote 1646 fields of canned output with no warning at all. `useAiStatus` now
+  reports a `phase` (`loading` / `loaded` / `error`), a click during `loading` is
+  held until the answer arrives, and only a genuine outage still fails open. Two
+  unit tests pin it; `s34` clicks eagerly on purpose to keep the race covered.
+- `/admin/health`'s overall badge gained `aria-label="Overall readiness"`. Moving
+  `AiStatusBanner` into the admin shell put a second `role="status"` on that
+  page, which made "the page's status element" ambiguous for assistive tech and
+  broke `s25`'s locator.
+
+### Release control + admin pre-release preview (issue 4 — D-038)
+
+- **Deliverables can actually be released.** Finalize produced a PDF and an XLSX
+  and nothing else, so the client dashboards' release gate (D-035) could never be
+  satisfied and **no client could ever see a dashboard**. Three defects were
+  stacked in that path: the `release*Deliverable()` client functions had zero
+  callers; the `/api/proxy/{svc}/deliverables/{id}/release` routes they POST to
+  did not exist; and the TS types declared `released_to_client_at` where the API
+  serializes `released_at`, so the released state stayed false after a successful
+  release. Fixed for zt, attack, csf and tech-debt.
+- **Admins preview a dashboard before releasing it.** One shared
+  `_dashboard_deliverable()` resolver serves all four services: clients get
+  released-only (unchanged), admins also get merely-finalized, and both then run
+  the _same_ builder — a test asserts the payloads are identical apart from a new
+  `released` flag (default `True`, so existing consumers are unaffected).
+- **Platform admins can open a dashboard on a cold URL.** The pages resolved the
+  tenant from `/auth/me` then the active-client cookie, and an admin has neither —
+  producing an API 400 and a Next server-exception page.
+  `resolveDashboardClientId()` falls back to the service's owning tenant and the
+  fetch sends `X-Client-Id`.
+- **Latent bug fixed in all six web client libs:** `jsonRequest`'s error path called
+  `res.json()` then `res.text()`, which throws "body stream already read" and
+  masked the real error behind a confusing one.
+
+Tests: `test_admin_removal.py` (8), `test_admin_llm_key.py` (9), 3 new dashboard
+preview cases, `HomeDashboard.test.tsx` (3), `RunAiGuard.test.tsx` (5), and six
+new e2e specs — `s31-home-service-links`, `s32-admin-org-index`,
+`s33-admin-remove`, `s34-llm-key`, `s35-active-redirect`,
+`s36-release-and-preview` — plus an extended `s12-a11y-nav`. Minor bump: new
+user-facing surfaces and endpoints, all additive.
+
 ## [3.7.0] · Client-facing executive dashboards (all four services) · 2026-08-03
 
 A released service now produces an interactive **client-facing executive

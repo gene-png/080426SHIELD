@@ -95,6 +95,23 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   `click()` + `waitForResponse`); assert post-Run-AI state after
   `page.reload()` (StrictMode double-load race); no body click before the
   first Tab in skip-link tests.
+- Tailwind `outline-hidden` sets `outline-style: none` and CANCELS a focus
+  ring even when `focus:outline-2` / `focus:outline-brand-500` also apply —
+  the width and colour land, the style does not. Remove the class; don't
+  layer over it. A11y assertions should pin the *rendered* outline width, not
+  just that focus moved (a focus move with no visible change reads as dead).
+- A spec that self-skips on a data precondition is UNTESTED, not passing. `s34`'s
+  Run-AI-guard test skipped every standalone run (the seeded service was
+  released, so the button was disabled) and hid a real fail-open defect until the
+  first full-suite run. When a `test.skip(...)` guards a spec, check how often it
+  actually fires before trusting the green.
+- A React hook that returns `null` for BOTH "still loading" and "request failed"
+  makes its callers conflate the two. Anything gating on that null fails open the
+  moment the box is slow — expose an explicit phase instead.
+- A `fetch` Response body can be read ONCE. An error path that tries
+  `res.json()` and then falls back to `res.text()` throws "body stream
+  already read" and masks the real status — this hid a 404 behind a confusing
+  error in all six `lib/*/client.ts` wrappers until the 2026-08-04 fix pass.
 - Demo stack: web :3000, API docs :8000/docs, Keycloak :8080, MinIO :9001,
   MailHog :8025. Logins: `admin@kentro.example` / `DemoPass!2026` (Kentro
   consultant), `client@atlas.example` / `DemoPass!2026` (Atlas tenant).
