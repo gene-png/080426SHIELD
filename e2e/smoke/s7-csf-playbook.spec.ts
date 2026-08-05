@@ -177,11 +177,27 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
         r.ok(),
       { timeout: SEED_TIMEOUT },
     );
+    // Content-aware wait, for the same reason as `enterpriseReload` in the next
+    // test: the panel fetches the enterprise profile ON MOUNT, and a slow
+    // mount-time GET (or its StrictMode duplicate) can resolve AFTER this
+    // waiter is armed but BEFORE the seed commits. First-response matching then
+    // captured that PRE-SEED body and asserted 106 against 0 — exactly how this
+    // failed in CI. The component guards itself with a reqSeq counter, so the
+    // UI was never wrong; only the spec's assumption was.
     const enterpriseLoaded = page.waitForResponse(
-      (r) =>
-        r.url().includes("/enterprise-profile") &&
-        r.request().method() === "GET" &&
-        r.ok(),
+      async (r) => {
+        if (
+          !r.url().includes("/enterprise-profile") ||
+          r.request().method() !== "GET" ||
+          !r.ok()
+        ) {
+          return false;
+        }
+        const body = (await r.json().catch(() => null)) as {
+          subcategories?: unknown[];
+        } | null;
+        return (body?.subcategories?.length ?? 0) > 0;
+      },
       { timeout: SEED_TIMEOUT },
     );
     await seedBtn.click();
