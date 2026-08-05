@@ -535,3 +535,84 @@ def test_gemini_http_error_records_failed_row(monkeypatch, db_factory) -> None:
 def test_ai_package_imports() -> None:
     # Guard against an accidental import-time regression in the module.
     assert ai is not None
+
+
+# --- Anthropic truncation guard (live-path defect found 2026-08-04) ---------
+#
+# A live zt_score run against Anthropic overran the hardcoded 4096-token output
+# cap. The reply came back truncated mid-string, `parse_json` died with an
+# opaque JSONDecodeError, and the route 500'd — the exact failure mode
+# `_parse_generate_content` was given a guard for on the Gemini/Vertex side
+# (see test_generate_content_truncation_raises_loudly). The Anthropic adapter
+# never inspected `stop_reason`, so the default provider still had the bug.
+
+
+class _FakeAnthropicMessage:
+    def __init__(self, text: str, stop_reason: str | None) -> None:
+        block = type("Block", (), {"type": "text", "text": text})()
+        self.content = [block]
+        self.stop_reason = stop_reason
+        self.usage = type("Usage", (), {"input_tokens": 11, "output_tokens": 22})()
+
+
+class _FakeAnthropicClient:
+    def __init__(self, text: str, stop_reason: str | None) -> None:
+        self._text = text
+        self._stop_reason = stop_reason
+        self.last_kwargs: dict = {}
+        self.messages = type(
+            "Messages",
+            (),
+            {"create": lambda _self, **kw: self._create(**kw)},
+        )()
+
+    def _create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return _FakeAnthropicMessage(self._text, self._stop_reason)
+
+
+def _anthropic_with(monkeypatch, text: str, stop_reason: str | None):
+    provider = llm_mod.AnthropicProvider(model="claude-opus-5", api_key="k")
+    fake = _FakeAnthropicClient(text, stop_reason)
+    monkeypatch.setattr(provider, "_ensure_client", lambda: fake)
+    return provider, fake
+
+
+@pytest.mark.unit
+def test_anthropic_truncation_raises_loudly(monkeypatch) -> None:
+    """stop_reason=max_tokens must FAIL LOUDLY at the adapter, not hand a half
+    JSON document to the engine parser."""
+    provider, _ = _anthropic_with(monkeypatch, '{"scores": [{"tier": "hi', "max_tokens")
+    with pytest.raises(RuntimeError, match="max_tokens"):
+        provider.complete("Draft it.", {"k": "v"})
+
+
+@pytest.mark.unit
+def test_anthropic_refusal_raises_loudly(monkeypatch) -> None:
+    """Any non-terminal-success stop_reason is surfaced, not silently returned."""
+    provider, _ = _anthropic_with(monkeypatch, "", "refusal")
+    with pytest.raises(RuntimeError, match="refusal"):
+        provider.complete("Draft it.", {"k": "v"})
+
+
+@pytest.mark.unit
+def test_anthropic_normal_finish_parses(monkeypatch) -> None:
+    """end_turn (and an absent stop_reason, as in hand-built fixtures) parse."""
+    provider, _ = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
+    resp = provider.complete("Draft it.", {"k": "v"})
+    assert resp.content == '{"ok": true}'
+    assert resp.output_tokens == 22
+
+    provider2, _ = _anthropic_with(monkeypatch, '{"ok": true}', None)
+    assert provider2.complete("Draft it.", {"k": "v"}).content == '{"ok": true}'
+
+
+@pytest.mark.unit
+def test_anthropic_output_cap_matches_the_other_adapters(monkeypatch) -> None:
+    """The 4096 cap truncated zt_score in the 2026-08-04 live run. Anthropic now
+    uses the same _MAX_OUTPUT_TOKENS the generateContent adapters were raised to
+    on 2026-07-15, so one cap governs every provider."""
+    provider, fake = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
+    provider.complete("Draft it.", {"k": "v"})
+    assert fake.last_kwargs["max_tokens"] == llm_mod._MAX_OUTPUT_TOKENS
+    assert llm_mod._MAX_OUTPUT_TOKENS >= 8192

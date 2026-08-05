@@ -97,6 +97,12 @@ class FixtureProvider:
         return fn(payload)
 
 
+# Anthropic terminal reasons that mean "the model said everything it meant to".
+# Anything else (max_tokens, refusal, pause_turn, …) leaves a partial body that
+# must never be parsed as if it were complete.
+_ANTHROPIC_CLEAN_STOP_REASONS = frozenset({"end_turn", "stop_sequence"})
+
+
 class AnthropicProvider:
     """Live Anthropic Claude provider.
 
@@ -129,7 +135,11 @@ class AnthropicProvider:
         # already run upstream, so this content is safe to egress.
         msg = client.messages.create(
             model=self.model,
-            max_tokens=4096,
+            # Shared with the generateContent + OpenAI adapters. This was a
+            # hardcoded 4096 until the 2026-08-04 live run, where zt_score
+            # overran it and came back truncated mid-string (see the guard
+            # below). One cap now governs every provider.
+            max_tokens=_MAX_OUTPUT_TOKENS,
             messages=[
                 {
                     "role": "user",
@@ -140,6 +150,18 @@ class AnthropicProvider:
                 }
             ],
         )
+        # FAIL LOUDLY on a non-clean finish, mirroring _parse_generate_content.
+        # A truncated draft ("max_tokens") is NOT a partial success: handing it
+        # to the engine's json.loads produces an opaque JSONDecodeError, a 500,
+        # and — because the 500 rolls the request transaction back — no
+        # llm_calls row at all. Raising here names the real cause instead.
+        stop_reason = getattr(msg, "stop_reason", None)
+        if stop_reason is not None and stop_reason not in _ANTHROPIC_CLEAN_STOP_REASONS:
+            raise RuntimeError(
+                f"Anthropic did not finish cleanly (stop_reason={stop_reason}). "
+                "The response is incomplete and was NOT parsed; if this is "
+                "max_tokens, the draft exceeded the output budget."
+            )
         # `msg.content` is a list of blocks; gather the text blocks.
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         input_tokens = getattr(getattr(msg, "usage", None), "input_tokens", None)
