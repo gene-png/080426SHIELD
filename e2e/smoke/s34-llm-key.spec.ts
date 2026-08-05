@@ -110,6 +110,13 @@ test("admin: Run AI warns before producing offline output, then proceeds once ac
   );
 
   // First click surfaces the offline warning instead of silently running.
+  //
+  // Deliberately NOT preceded by a wait on the ai-status response: clicking
+  // while that request is still in flight is precisely what broke the guard
+  // (it failed open on a null status and ran, writing 1646 fields of canned
+  // output with no warning — caught by the first full-suite run of this spec,
+  // which standalone had always skipped). Keep the click eager so this stays a
+  // regression test for that race, not just for the happy path.
   await runAi.click();
   const dialog = page.getByRole("alertdialog", { name: "No API key loaded" });
   await expect(dialog).toBeVisible({ timeout: 30_000 });

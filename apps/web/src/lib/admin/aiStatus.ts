@@ -44,30 +44,72 @@ export function acknowledgeOffline(s: AiStatus): void {
   }
 }
 
+/**
+ * Where the status request has got to.
+ *
+ * `status === null` is ambiguous on its own — it means BOTH "we haven't asked
+ * yet" and "the endpoint is down" — and a consumer that conflates the two
+ * treats an in-flight request as a permanent unknown. That is exactly how the
+ * Run-AI guard came to produce 1646 fields of canned output with no warning:
+ * under load the click beat the fetch. Callers must branch on `phase`, not on
+ * `status === null`.
+ */
+export type AiStatusPhase = "loading" | "loaded" | "error";
+
 export interface UseAiStatus {
   status: AiStatus | null;
+  phase: AiStatusPhase;
+  /**
+   * Resolves once the in-flight status request settles — `null` if it failed.
+   * Lets an event handler wait for the answer instead of guessing from a
+   * `null` status, which is what the Run-AI guard needs.
+   */
+  settled: () => Promise<AiStatus | null>;
   refresh: () => void;
+}
+
+interface StatusResult {
+  nonce: number;
+  status: AiStatus | null;
+  phase: Exclude<AiStatusPhase, "loading">;
 }
 
 /** Load AI status once on mount, with a manual refresh for after key changes. */
 export function useAiStatus(): UseAiStatus {
-  const [status, setStatus] = React.useState<AiStatus | null>(null);
   const [nonce, setNonce] = React.useState(0);
+  const [result, setResult] = React.useState<StatusResult | null>(null);
+  const inFlight = React.useRef<Promise<AiStatus | null> | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
-    fetchAiStatus()
-      .then((s) => {
-        if (!cancelled) setStatus(s);
-      })
-      .catch(() => {
-        // Non-blocking: a status outage must not stop an admin working.
-        if (!cancelled) setStatus(null);
-      });
+    // Rejection is folded into `null` here so both consumers — the render
+    // state below and `settled()` — see the same settled value.
+    const request = fetchAiStatus().then(
+      (s) => s,
+      () => null,
+    );
+    inFlight.current = request;
+    void request.then((s) => {
+      if (cancelled) return;
+      // Non-blocking: a status outage must not stop an admin working. The
+      // distinction from "loading" is the whole point of `phase`.
+      setResult({ nonce, status: s, phase: s ? "loaded" : "error" });
+    });
     return () => {
       cancelled = true;
     };
   }, [nonce]);
 
-  return { status, refresh: () => setNonce((n) => n + 1) };
+  // A result from a previous nonce is stale: `refresh()` puts us back in
+  // "loading" by derivation, so no effect ever has to set state to say so.
+  const fresh = result && result.nonce === nonce ? result : null;
+
+  return {
+    status: fresh ? fresh.status : null,
+    phase: fresh ? fresh.phase : "loading",
+    // The fallback covers a click landing before the mount effect ran; one
+    // extra request is the right trade against a promise that never settles.
+    settled: () => inFlight.current ?? fetchAiStatus().catch(() => null),
+    refresh: () => setNonce((n) => n + 1),
+  };
 }

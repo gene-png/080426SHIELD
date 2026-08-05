@@ -40,9 +40,11 @@ test.describe("s25 /admin/health — operator readiness matrix", () => {
 
     // Overall status: all-green. Every REQUIRED dependency is ok on a healthy
     // stack, so the deployment reads ready — never the degraded/offender badge.
-    // The overall badge is the page's only role="status" element; the negative
-    // is scoped to it because the page's descriptive copy also says "degraded".
-    const overall = page.getByRole("status");
+    // Addressed by accessible name: the admin shell's AiStatusBanner is also
+    // role="status" on every admin page, so an unnamed getByRole("status")
+    // resolves two elements here. The negative is scoped to this badge because
+    // the page's descriptive copy also says "degraded".
+    const overall = page.getByRole("status", { name: "Overall readiness" });
     await expect(overall).toContainText("All systems ready", {
       timeout: 20000,
     });

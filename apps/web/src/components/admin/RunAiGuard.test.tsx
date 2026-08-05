@@ -138,6 +138,64 @@ describe("RunAiGuard (issue 2)", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("does NOT run when clicked before the status has loaded — it waits, then warns", async () => {
+    // The full-suite e2e failure this pins: under load the ai-status fetch had
+    // not resolved when Run AI was clicked, the guard treated "not asked yet"
+    // as "unknown, fail open", and 1646 fields of canned output were written
+    // with no warning at all. "Still loading" is not "unavailable".
+    let resolveStatus!: (r: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const onProceed = vi.fn();
+    renderGuard(onProceed);
+
+    // Click while the status request is still in flight.
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    expect(
+      onProceed,
+      "a click made before the status is known must not produce canned output",
+    ).not.toHaveBeenCalled();
+
+    // The answer arrives: no key loaded. The deferred click must now warn.
+    resolveStatus(
+      new Response(JSON.stringify(statusBody()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+    expect(onProceed).not.toHaveBeenCalled();
+  });
+
+  it("honours a deferred click when the status turns out to be live", async () => {
+    let resolveStatus!: (r: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const onProceed = vi.fn();
+    renderGuard(onProceed);
+
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    expect(onProceed).not.toHaveBeenCalled();
+
+    resolveStatus(
+      new Response(
+        JSON.stringify(statusBody({ ready: true, key_source: "database" })),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    // No warning is owed when AI is live — the click just lands late.
+    await waitFor(() => expect(onProceed).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
   it("fails open when the status endpoint is unavailable — never blocks work", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
     const onProceed = vi.fn();

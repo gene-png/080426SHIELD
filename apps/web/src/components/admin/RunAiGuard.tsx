@@ -8,6 +8,7 @@ import {
   useAiStatus,
 } from "@/lib/admin/aiStatus";
 
+import type { AiStatus } from "@/lib/admin/client";
 import type { JSX } from "react";
 
 /**
@@ -23,6 +24,14 @@ import type { JSX } from "react";
  * `aiStatusKey`), so removing the key invalidates it: the next Run-AI in the
  * same session warns again rather than silently reusing an "I know" from
  * before the key was removed.
+ *
+ * A click that lands BEFORE the status request resolves is held, not passed
+ * through. The first cut failed open on `status === null`, which conflates
+ * "still loading" with "endpoint down" — so under load the guard silently ran
+ * and wrote 1646 fields of canned output (caught by the full-suite s34 run,
+ * pinned by RunAiGuard.test.tsx). A genuine status outage still fails open:
+ * an outage must not stop an admin working, but not-asked-yet is not an
+ * outage.
  */
 export function RunAiGuard({
   onProceed,
@@ -33,28 +42,52 @@ export function RunAiGuard({
   /** The Run-AI control. Receives the click handler to attach. */
   children: (props: { onClick: () => void }) => React.ReactNode;
 }): JSX.Element {
-  const { status } = useAiStatus();
-  const [prompting, setPrompting] = React.useState(false);
+  const { status, phase, settled } = useAiStatus();
+  /** The status the open warning describes; non-null exactly while prompting. */
+  const [promptFor, setPromptFor] = React.useState<AiStatus | null>(null);
+  const [awaitingStatus, setAwaitingStatus] = React.useState(false);
 
-  function handleClick(): void {
-    // Unknown status must not block work — fail open to the existing behaviour.
-    if (!status || status.ready || hasAcknowledgedOffline(status)) {
+  /** Decide what a click means, given a SETTLED status. */
+  function decide(s: AiStatus | null): void {
+    // A status OUTAGE fails open — it must not block work.
+    if (!s || s.ready || hasAcknowledgedOffline(s)) {
       onProceed();
       return;
     }
-    setPrompting(true);
+    setPromptFor(s);
+  }
+
+  async function handleClick(): Promise<void> {
+    if (phase !== "loading") {
+      decide(status);
+      return;
+    }
+    // Hold the click until we know. Proceeding here would be a silent
+    // success — the one thing this component exists to prevent.
+    setAwaitingStatus(true);
+    const resolved = await settled();
+    setAwaitingStatus(false);
+    decide(resolved);
   }
 
   function continueOffline(): void {
-    if (status) acknowledgeOffline(status);
-    setPrompting(false);
+    if (promptFor) acknowledgeOffline(promptFor);
+    setPromptFor(null);
     onProceed();
   }
 
   return (
     <>
       {children({ onClick: handleClick })}
-      {prompting && status ? (
+      {awaitingStatus ? (
+        // Deliberately not role="status": /admin/health already owns that
+        // landmark and a second one breaks its locator. aria-live announces it
+        // without adding a competing status role.
+        <p aria-live="polite" className="mt-2 text-xs text-ink-tertiary">
+          Checking whether an API key is loaded…
+        </p>
+      ) : null}
+      {promptFor ? (
         <div
           role="alertdialog"
           aria-label="No API key loaded"
@@ -83,7 +116,7 @@ export function RunAiGuard({
             </button>
             <button
               type="button"
-              onClick={() => setPrompting(false)}
+              onClick={() => setPromptFor(null)}
               className="rounded-md px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:text-ink-primary"
             >
               Cancel
