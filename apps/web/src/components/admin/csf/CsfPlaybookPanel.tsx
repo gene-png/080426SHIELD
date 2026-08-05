@@ -20,6 +20,7 @@ import {
 } from "@/lib/csf/client";
 
 import { AiPreviewButton } from "../AiPreviewButton";
+import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
 import type {
@@ -243,14 +244,19 @@ export function CsfPlaybookPanel({
                 {busy === "seed" ? "Seeding…" : "Seed Working Profiles"}
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => void onRunAi()}
-                disabled={busy !== null || readOnly}
-                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {busy === "run" ? "Running…" : "Run AI (csf_score)"}
-              </button>
+              /* Issue 2: warn before producing canned output when offline. */
+              <RunAiGuard onProceed={() => void onRunAi()}>
+                {({ onClick }) => (
+                  <button
+                    type="button"
+                    onClick={onClick}
+                    disabled={busy !== null || readOnly}
+                    className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {busy === "run" ? "Running…" : "Run AI (csf_score)"}
+                  </button>
+                )}
+              </RunAiGuard>
             )}
             {seeded ? (
               <button

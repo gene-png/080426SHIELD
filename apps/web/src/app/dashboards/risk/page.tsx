@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { RiskDashboard } from "@/components/dashboards/risk/RiskDashboard";
 import { ACTIVE_CLIENT_COOKIE, ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { SkipToContent } from "@/components/site/SkipToContent";
 import type { RiskDashboardData } from "@/lib/dashboards/risk";
 
 import type { JSX } from "react";
@@ -56,7 +57,11 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
 
   if (!data) {
     return (
-      <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-16">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-16 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+      >
         <h1 className="text-2xl font-semibold text-ink-primary">
           Risk Register not available yet
         </h1>
@@ -75,5 +80,20 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
     );
   }
 
-  return <RiskDashboard data={data} />;
+  // The dashboards render their own dark shell, so they were returning no
+  // <main> at all — the skip-to-content link had no destination here and the
+  // page exposed no main landmark (found in the 2026-08-04 review). Matches
+  // the eight app shells: one <main id="main-content"> with tabIndex={-1}.
+  return (
+    <>
+      <SkipToContent />
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+      >
+        <RiskDashboard data={data} />
+      </main>
+    </>
+  );
 }

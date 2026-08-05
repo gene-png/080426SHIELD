@@ -27,6 +27,8 @@ export interface ServiceResponse {
 }
 
 export interface CapabilityItem {
+  /** Set when this row is a component named inside a bundled licence. */
+  parent_item_id?: string | null;
   id: string;
   capability_list_id: string;
   name: string;
@@ -43,6 +45,13 @@ export interface CapabilityItem {
   consolidation_target_id: string | null;
 }
 
+export interface ExcludedRow {
+  index: number;
+  summary: string;
+  /** A consultant reviewed this exclusion and agrees with it. */
+  confirmed?: boolean;
+}
+
 export interface CapabilityList {
   id: string;
   service_id: string;
@@ -51,6 +60,10 @@ export interface CapabilityList {
   items: CapabilityItem[];
   approved_at: string | null;
   approved_by: string | null;
+  /** Rows in the source upload. Null on lists extracted before 0036. */
+  source_rows_total?: number | null;
+  /** Uploaded rows that produced no capability. Empty when unattributable. */
+  excluded_rows?: ExcludedRow[];
 }
 
 export interface CapabilityItemPatch {

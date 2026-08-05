@@ -133,7 +133,14 @@ class AnthropicProvider:
         client = self._ensure_client()
         # Payload is sent as JSON inside the user message. The redactor has
         # already run upstream, so this content is safe to egress.
-        msg = client.messages.create(
+        # STREAMED, not a blocking create(). With the cap at 8192 a single
+        # non-streaming request for zt_score ran long enough that Anthropic
+        # dropped it — `APIConnectionError: Server disconnected without sending
+        # a response` (2026-08-05 live run), which left the workspace spinning
+        # forever. Streaming holds the connection open and
+        # `get_final_message()` returns the same assembled Message, so the
+        # stop_reason guard and token accounting below are unchanged.
+        with client.messages.stream(
             model=self.model,
             # Shared with the generateContent + OpenAI adapters. This was a
             # hardcoded 4096 until the 2026-08-04 live run, where zt_score
@@ -149,7 +156,8 @@ class AnthropicProvider:
                     ],
                 }
             ],
-        )
+        ) as stream:
+            msg = stream.get_final_message()
         # FAIL LOUDLY on a non-clean finish, mirroring _parse_generate_content.
         # A truncated draft ("max_tokens") is NOT a partial success: handing it
         # to the engine's json.loads produces an opaque JSONDecodeError, a 500,
@@ -530,8 +538,15 @@ class LLMClient:
             name_hints=name_hints,
         )
 
+        # Describe the PROVIDER that is about to be called, never the
+        # environment variable. `_build_provider` promotes a runtime key
+        # (D-037) to a live adapter while SHIELD_LLM_MODE can still read
+        # "fixture", so deriving this from settings recorded real Anthropic
+        # egress as FIXTURE — found in the 2026-08-04 live run. `llm_calls` is
+        # the egress evidence for a FedRAMP-targeted deployment; it must not
+        # claim that no external call happened when one did.
         call_mode: LLMCallMode = (
-            LLMCallMode.FIXTURE if self._settings.shield_llm_mode == "fixture" else LLMCallMode.LIVE
+            LLMCallMode.FIXTURE if self.provider.name == "fixture" else LLMCallMode.LIVE
         )
 
         row = LLMCall(

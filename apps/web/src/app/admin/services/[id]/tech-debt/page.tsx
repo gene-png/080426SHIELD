@@ -6,7 +6,7 @@ import { TechDebtWorkspace } from "@/components/admin/TechDebtWorkspace";
 import type { JSX } from "react";
 
 export const metadata: Metadata = {
-  title: "Tech Debt service",
+  title: "Technical Debt Review",
 };
 
 export default async function TechDebtServicePage(props: {
@@ -20,7 +20,7 @@ export default async function TechDebtServicePage(props: {
     <EnsureActiveClient serviceId={params.id}>
       <TechDebtWorkspace
         serviceId={params.id}
-        serviceTitle="Tech Debt Review"
+        serviceTitle="Technical Debt Review"
       />
     </EnsureActiveClient>
   );

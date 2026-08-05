@@ -83,6 +83,20 @@ test("client views a released software-portfolio dashboard", async ({
   // The two charts (spend bar + sprawl donut) mount client-side.
   await expect(page.locator("canvas")).toHaveCount(2);
 
+  // A11y (UX finding 19): the dashboards render their own dark shell and used
+  // to expose NO <main> at all, so the skip link had no destination and screen
+  // readers had no primary content region. Asserted here rather than in s12
+  // because this spec already seeds a released dashboard to look at.
+  const main = page.locator("main#main-content");
+  await expect(main).toHaveCount(1);
+
+  await page.keyboard.press("Tab");
+  const skip = page.getByRole("link", { name: "Skip to content" });
+  await expect(skip).toBeFocused();
+  await skip.press("Enter");
+  await expect(page).toHaveURL(/#main-content$/);
+  await expect(main).toBeFocused();
+
   await page.waitForTimeout(1200);
   await page
     .screenshot({ path: "artifacts/tech-debt-dashboard.png", fullPage: true })

@@ -33,6 +33,8 @@ import {
   titleCase,
   type RiskTier,
 } from "@/lib/risk/matrix";
+import { RunAiGuard } from "@/components/admin/RunAiGuard";
+
 import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
 import type { JSX } from "react";
@@ -261,18 +263,24 @@ export function RiskRegisterDashboard(): JSX.Element {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={onGenerate}
-            disabled={busy !== null}
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
-          >
-            {busy === "generate"
-              ? "Generating…"
-              : register
-                ? "Regenerate"
-                : "Generate"}
-          </button>
+          {/* Issue 2: risk_synthesize is an AI job — warn before producing
+              canned output when no key is loaded. */}
+          <RunAiGuard onProceed={() => void onGenerate()}>
+            {({ onClick }) => (
+              <button
+                type="button"
+                onClick={onClick}
+                disabled={busy !== null}
+                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
+              >
+                {busy === "generate"
+                  ? "Generating…"
+                  : register
+                    ? "Regenerate"
+                    : "Generate"}
+              </button>
+            )}
+          </RunAiGuard>
           {register ? (
             <button
               type="button"

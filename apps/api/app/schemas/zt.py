@@ -166,6 +166,10 @@ class ZtRunAiResponse(BaseModel):
     pillar_narratives: dict[str, str] = {}
     executive_summary: str | None = None
     roadmap_summary: str | None = None
+    # How many client-submitted answers an offline run deliberately left alone
+    # (migration 0035). Always 0 for a live run. Surfaced so the skip is visible
+    # rather than silent.
+    preserved_client_answers: int = 0
 
 
 class ZtInterviewQuestion(BaseModel):

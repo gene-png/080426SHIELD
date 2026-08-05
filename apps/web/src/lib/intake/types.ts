@@ -48,10 +48,20 @@ export interface ServiceRequestResponse {
   declined_reason: string | null;
 }
 
+export interface IntakeContactResponse {
+  display_name: string | null;
+  email: string;
+  title: string | null;
+  phone: string | null;
+  timezone: string | null;
+}
+
 export interface IntakeStateResponse {
   client: ClientProfileResponse | null;
   service_requests: ServiceRequestResponse[];
   intake_completed_at: string | null;
+  /** The primary contact, so Review & submit can show what is being sent. */
+  contact?: IntakeContactResponse | null;
 }
 
 /** One assessment = one Service (workspace) the client owns. */

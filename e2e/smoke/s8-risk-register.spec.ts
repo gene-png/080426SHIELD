@@ -5,6 +5,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasClientId, atlasServiceId } from "../helpers/ids";
+import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 8 (T7): the Risk Register (Work Order E).
@@ -238,6 +239,7 @@ test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the
     { timeout: 120000 },
   );
   await page.getByRole("button", { name: /^(Generate|Regenerate)$/ }).click();
+  await acknowledgeOfflineAi(page);
   const register = (await (await generated).json()) as RiskRegisterResponse;
   expect(register.version).toBe(priorVersion + 1);
   expect(register.entries.length).toBeGreaterThan(0);
@@ -329,6 +331,7 @@ test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the
     { timeout: 120000 },
   );
   await page.getByRole("button", { name: "Regenerate" }).click();
+  await acknowledgeOfflineAi(page);
   const register2 = (await (await regenerated).json()) as RiskRegisterResponse;
   expect(register2.version).toBe(register.version + 1);
   await expect(

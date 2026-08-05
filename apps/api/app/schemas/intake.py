@@ -118,10 +118,28 @@ class ServiceRequestResponse(BaseModel):
     declined_reason: str | None
 
 
+class IntakeContactResponse(BaseModel):
+    """The primary contact as the wizard will submit it.
+
+    Returned so "Review & submit" can show what is about to be sent: the step
+    previously rendered Organization, Services and Systems only, and the client
+    had no way to check the POC details before committing (UX finding 3).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    display_name: str | None
+    email: str
+    title: str | None
+    phone: str | None
+    timezone: str | None
+
+
 class IntakeStateResponse(BaseModel):
     client: ClientProfileResponse | None
     service_requests: list[ServiceRequestResponse]
     intake_completed_at: datetime | None
+    contact: IntakeContactResponse | None = None
 
 
 class EngagementCreateRequest(BaseModel):

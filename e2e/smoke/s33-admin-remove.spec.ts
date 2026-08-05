@@ -141,9 +141,19 @@ test("management: deactivating a user blocks their sign-in, reactivating restore
     timeout: 30_000,
   });
 
-  // Deactivate.
+  // Deactivate. Two steps since UX finding 20: the first click asks for
+  // confirmation, naming the user and stating that they are signed out
+  // immediately and can be reactivated.
   const userRow = card.locator("li", { hasText: userEmail }).first();
-  await userRow.getByRole("button", { name: "Deactivate" }).click();
+  await userRow
+    .getByRole("button", { name: "Deactivate", exact: true })
+    .click();
+  // Assert the confirm control rather than building a RegExp from the email —
+  // the address contains "+", which is a regex quantifier.
+  await expect(
+    userRow.getByRole("button", { name: "Yes, deactivate" }),
+  ).toBeVisible();
+  await userRow.getByRole("button", { name: "Yes, deactivate" }).click();
   await expect(userRow.getByText("Deactivated")).toBeVisible({
     timeout: 30_000,
   });
@@ -169,7 +179,7 @@ test("management: deactivating a user blocks their sign-in, reactivating restore
     .first();
   await userRow2.getByRole("button", { name: "Reactivate" }).click();
   await expect(
-    userRow2.getByRole("button", { name: "Deactivate" }),
+    userRow2.getByRole("button", { name: "Deactivate", exact: true }),
   ).toBeVisible({
     timeout: 30_000,
   });

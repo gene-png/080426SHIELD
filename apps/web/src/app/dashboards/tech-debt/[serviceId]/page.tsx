@@ -6,6 +6,7 @@ import { TechDebtDashboard } from "@/components/dashboards/techDebt/TechDebtDash
 import { ApiError, apiFetch } from "@/lib/api";
 import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
+import { SkipToContent } from "@/components/site/SkipToContent";
 import type { TechDebtDashboardData } from "@/lib/dashboards/techDebt";
 
 import type { JSX } from "react";
@@ -49,7 +50,11 @@ export default async function TechDebtDashboardPage({
 
   if (!data) {
     return (
-      <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-16">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-16 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+      >
         <h1 className="text-2xl font-semibold text-ink-primary">
           Dashboard not available yet
         </h1>
@@ -68,5 +73,20 @@ export default async function TechDebtDashboardPage({
     );
   }
 
-  return <TechDebtDashboard data={data} />;
+  // The dashboards render their own dark shell, so they were returning no
+  // <main> at all — the skip-to-content link had no destination here and the
+  // page exposed no main landmark (found in the 2026-08-04 review). Matches
+  // the eight app shells: one <main id="main-content"> with tabIndex={-1}.
+  return (
+    <>
+      <SkipToContent />
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+      >
+        <TechDebtDashboard data={data} />
+      </main>
+    </>
+  );
 }

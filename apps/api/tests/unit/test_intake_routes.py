@@ -288,3 +288,39 @@ def test_intake_requires_authentication(app_client) -> None:
         },
     )
     assert r.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# The review step must be able to show what it is about to submit.
+#
+# UX finding 3 / E2E F-7: "Review & submit" rendered Organization, Services and
+# Systems but NOT the contact details, because /intake never returned them. A
+# client could not check the POC name, title, phone or timezone before
+# committing the intake.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_intake_state_returns_the_contact_for_review(app_client) -> None:
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    client.patch(
+        "/intake",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={
+            "display_name": "Dana Reyes",
+            "title": "Director of Information Security",
+            "phone": "+1 319 555 0142",
+            "timezone": "America/Chicago",
+        },
+    )
+
+    r = client.get("/intake", headers={"Authorization": f"Bearer {bearer}"})
+    assert r.status_code == 200, r.text
+    contact = r.json()["contact"]
+    assert contact["display_name"] == "Dana Reyes"
+    assert contact["title"] == "Director of Information Security"
+    assert contact["phone"] == "+1 319 555 0142"
+    assert contact["timezone"] == "America/Chicago"
+    # The email is the account's own and is shown read-only on the wizard.
+    assert contact["email"]

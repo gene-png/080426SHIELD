@@ -13,8 +13,13 @@ import {
 } from "@shield/design-system";
 
 import { Dropzone } from "@/components/intake/Dropzone";
+import { hasAcknowledgedOffline, useAiStatus } from "@/lib/admin/aiStatus";
+import { splitLines } from "@/lib/text";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
+  addCapabilityComponents,
+  confirmExcludedRow,
+  includeExcludedRow,
   approveCapabilityList,
   discardCapabilityList,
   extractCapabilities,
@@ -26,6 +31,7 @@ import {
 } from "@/lib/tech_debt/client";
 import type {
   CapabilityItem,
+  ExcludedRow,
   CapabilityList,
   ConsolidationPlanSummary,
   Deliverable,
@@ -59,7 +65,9 @@ export function TechDebtWorkspace({
     null,
   );
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
+  const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
   const [approving, setApproving] = React.useState(false);
   const [discarding, setDiscarding] = React.useState(false);
@@ -130,6 +138,86 @@ export function TechDebtWorkspace({
       await refresh();
     })();
   }, [refresh]);
+
+  /**
+   * UX finding 5: a bundled licence such as Microsoft 365 E5 extracted as one
+   * line, hiding the Defender / Entra capabilities that overlap separately
+   * licensed tools. The CONSULTANT names what is inside — the model is never
+   * asked, because inventing bundle contents is exactly the fabricated detail
+   * the AI seam exists to prevent.
+   */
+  /**
+   * UX finding 4 (second half): disclosure alone told the consultant nine rows
+   * were dropped without letting them do anything about it. A row the extractor
+   * wrongly skipped is recoverable; one it correctly skipped can be
+   * acknowledged so it stops reading as outstanding.
+   */
+  async function onIncludeRow(row: ExcludedRow): Promise<void> {
+    if (!list) return;
+    const name = window.prompt(
+      `Include this row as a capability?
+
+${row.summary}
+
+Name it:`,
+      "",
+    );
+    if (name === null || !name.trim()) return;
+    const category = window.prompt("Category (optional):", "") ?? undefined;
+    setSplitError(null);
+    try {
+      setList(
+        await includeExcludedRow(list.id, row.index, {
+          name: name.trim(),
+          category: category?.trim() || undefined,
+        }),
+      );
+    } catch (err) {
+      setSplitError(
+        err instanceof Error ? err.message : "Couldn't include that row.",
+      );
+    }
+  }
+
+  async function onConfirmRow(row: ExcludedRow): Promise<void> {
+    if (!list) return;
+    setSplitError(null);
+    try {
+      setList(await confirmExcludedRow(list.id, row.index));
+    } catch (err) {
+      setSplitError(
+        err instanceof Error ? err.message : "Couldn't confirm that row.",
+      );
+    }
+  }
+
+  async function onSplitBundle(item: CapabilityItem): Promise<void> {
+    const raw = window.prompt(
+      `What does "${item.name}" include?
+
+One capability per line, e.g.
+Microsoft Defender for Endpoint
+Microsoft Entra ID P2
+
+Components carry no cost of their own — this licence keeps its full value.`,
+      "",
+    );
+    if (raw === null) return;
+    const names = splitLines(raw);
+    if (names.length === 0) return;
+    setSplitError(null);
+    try {
+      const next = await addCapabilityComponents(
+        item.id,
+        names.map((name) => ({ name })),
+      );
+      setList(next);
+    } catch (err) {
+      setSplitError(
+        err instanceof Error ? err.message : "Couldn't add components.",
+      );
+    }
+  }
 
   async function runExtraction(artifactId: string): Promise<void> {
     setExtracting(true);
@@ -284,6 +372,18 @@ export function TechDebtWorkspace({
           <Dropzone
             onUploaded={(a) => {
               setDocsReloadKey((k) => k + 1);
+              // Issue 2: uploading auto-started an AI extraction with no click
+              // to intercept, so an offline run could produce canned output
+              // unannounced. When AI is not live (and the admin hasn't already
+              // acknowledged it) the file is just listed — the guarded
+              // "Extract from this" button below is then the way in.
+              if (
+                aiStatus &&
+                !aiStatus.ready &&
+                !hasAcknowledgedOffline(aiStatus)
+              ) {
+                return;
+              }
               void runExtraction(a.id);
             }}
             accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
@@ -377,11 +477,87 @@ export function TechDebtWorkspace({
               />
             </div>
           </header>
+
+          {/* UX finding 4: the extraction keeps only security capabilities and
+              skips the rest. Reporting the survivors as the portfolio hid 45%
+              of the uploaded spend in the 2026-08-04 review. Say what was left
+              out, and what it was. */}
+          {typeof list.source_rows_total === "number" &&
+          list.source_rows_total > list.items.length ? (
+            <div
+              className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
+              role="status"
+              aria-label="Extraction reconciliation"
+            >
+              <p className="font-semibold text-status-warning-fg">
+                {list.source_rows_total} rows received · {list.items.length}{" "}
+                included · {list.source_rows_total - list.items.length} excluded
+              </p>
+              <p className="mt-1 text-ink-secondary">
+                Totals below cover the included security tooling only, not the
+                whole upload.
+              </p>
+              {list.excluded_rows && list.excluded_rows.length > 0 ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
+                    Show the {list.excluded_rows.length} excluded row
+                    {list.excluded_rows.length === 1 ? "" : "s"}
+                  </summary>
+                  <ul className="mt-2 flex flex-col gap-1">
+                    {list.excluded_rows.map((row) => (
+                      <li
+                        key={row.index}
+                        className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary"
+                      >
+                        <span className="font-mono text-ink-tertiary">
+                          row {row.index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1">{row.summary}</span>
+                        {row.confirmed ? (
+                          <span className="text-status-success-fg">
+                            ✓ correctly excluded
+                          </span>
+                        ) : readOnly ? null : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void onIncludeRow(row)}
+                              className="font-medium text-brand-600 underline hover:text-brand-700"
+                            >
+                              Include…
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void onConfirmRow(row)}
+                              className="text-ink-tertiary underline hover:text-ink-secondary"
+                            >
+                              Correctly excluded
+                            </button>
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : (
+                <p className="mt-1 text-xs text-ink-tertiary">
+                  The provider did not attribute every capability to a source
+                  row, so the excluded rows can&apos;t be listed individually.
+                </p>
+              )}
+            </div>
+          ) : null}
           <EditableCapabilityTable
             items={list.items}
             onItemUpdate={onItemUpdate}
             readOnly={readOnly}
+            onSplitBundle={readOnly ? undefined : onSplitBundle}
           />
+          {splitError ? (
+            <p className="text-sm text-status-danger-fg" role="alert">
+              {splitError}
+            </p>
+          ) : null}
         </section>
       ) : (
         <EmptyState

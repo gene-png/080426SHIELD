@@ -25,6 +25,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
+import { formatDateOnly } from "@/lib/dates";
 
 type ServiceRequestRow = AdminIntakeQueueResponse["service_requests"][number];
 
@@ -171,10 +172,7 @@ function ServiceRequestCard({
         <dl>
           {row("Email", s.requested_by.email)}
           {target ? row("Client target", target) : null}
-          {row(
-            "Target deadline",
-            s.deadline ? new Date(s.deadline).toLocaleDateString() : null,
-          )}
+          {row("Target deadline", formatDateOnly(s.deadline))}
           {row("Notes", s.notes)}
         </dl>
 

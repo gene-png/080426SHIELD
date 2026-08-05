@@ -78,6 +78,8 @@ export interface ZtRunAiResponse {
   pillar_narratives: Record<string, string>;
   executive_summary: string | null;
   roadmap_summary: string | null;
+  /** Client-submitted answers an offline run left alone. 0 for a live run. */
+  preserved_client_answers?: number;
 }
 
 export interface PillarScore {

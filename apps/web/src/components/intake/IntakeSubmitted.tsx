@@ -60,6 +60,15 @@ export function IntakeSubmitted({ state }: IntakeSubmittedProps): JSX.Element {
     ? new Date(state.intake_completed_at).toLocaleString()
     : null;
 
+  // UX finding 6: the confirmation said "received" but gave the client nothing
+  // to quote back. Derived from the earliest request id so it is stable and
+  // real rather than a generated-looking number.
+  const reference = state.service_requests
+    .map((r) => r.id)
+    .sort()[0]
+    ?.slice(0, 8)
+    .toUpperCase();
+
   return (
     <Card>
       <CardHeader>
@@ -71,6 +80,9 @@ export function IntakeSubmitted({ state }: IntakeSubmittedProps): JSX.Element {
             ✓
           </span>
           <CardTitle>Intake received</CardTitle>
+          <StatusPill tone="success" withDot>
+            Submitted · awaiting consultant review
+          </StatusPill>
         </div>
       </CardHeader>
       <CardBody>
@@ -81,6 +93,16 @@ export function IntakeSubmitted({ state }: IntakeSubmittedProps): JSX.Element {
             {submittedAt ? ` on ${submittedAt}` : ""}. A consultant will review
             your submission and reach out with next steps.
           </p>
+
+          {reference ? (
+            <p className="text-sm text-ink-secondary">
+              Reference{" "}
+              <span className="font-mono font-semibold text-ink-primary">
+                {reference}
+              </span>{" "}
+              — quote this if you contact us about this request.
+            </p>
+          ) : null}
 
           {selfAssessments.length > 0 ? (
             <div className="rounded-md border border-border-subtle bg-brand-50 p-4">
@@ -143,10 +165,10 @@ export function IntakeSubmitted({ state }: IntakeSubmittedProps): JSX.Element {
               My assessments
             </Link>
             <Link
-              href="/"
+              href="/home"
               className="rounded-md border border-border bg-surface-card px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken"
             >
-              Back to home
+              Go to my dashboard
             </Link>
           </div>
         </div>
