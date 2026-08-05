@@ -119,6 +119,12 @@ class ZtAnswer(UUIDPKMixin, TimestampMixin, Base):
 
     # Work Order C2: a locked row is never changed by a Run-AI rerun.
     locked: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    # Provenance (migration 0035): 'client' | 'ai' | 'consultant', NULL when
+    # unknown (pre-0035 rows). Distinct from `locked`, which records a
+    # consultant's deliberate choice — this records WHO supplied the value, so
+    # a fixture run can refuse to overwrite what a client submitted.
+    answer_source: Mapped[str | None] = mapped_column(String(16))
     evidence_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artifacts.id", ondelete="SET NULL")
     )

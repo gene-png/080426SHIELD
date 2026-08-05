@@ -33,6 +33,7 @@ from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
+from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -456,6 +457,15 @@ def run_ai(
 
     before = _snap()
 
+    # Fixture output must never overwrite what a client submitted (migration
+    # 0035). Client-sourced rows are treated exactly like locked rows for the
+    # duration of an offline run; a LIVE run may still draft over them, which is
+    # the consultant workflow and shows a diff for review.
+    protected = protected_keys(
+        ((code, r.answer_source) for code, r in rows.items()),
+        is_fixture=llm.provider.name == "fixture",
+    )
+
     def _coerce(v: object) -> int | None:
         try:
             iv = int(v)  # type: ignore[arg-type]
@@ -482,7 +492,7 @@ def run_ai(
         if not isinstance(sugg, dict):
             continue
         row = rows.get(sugg.get("code"))
-        if row is None or row.locked:
+        if row is None or row.locked or sugg.get("code") in protected:
             continue
         cur = _coerce(sugg.get("current"))
         if cur is not None:
@@ -492,6 +502,7 @@ def run_ai(
             row.target_stage = tgt
         row.answered_by = user.id
         row.answered_at = utcnow()
+        row.answer_source = SOURCE_AI
 
     db.flush()
     after = _snap()
@@ -546,6 +557,7 @@ def run_ai(
         pillar_narratives={str(k): str(v) for k, v in narratives.items()},
         executive_summary=(data.get("executive_summary") or None),
         roadmap_summary=(data.get("roadmap_summary") or None),
+        preserved_client_answers=len(protected),
     )
 
 
@@ -860,6 +872,13 @@ def submit_self_assessment(
         if sr is not None:
             sr.zt_target_stage = body.target_stage
     a.status = ZtAssessmentStatus.SUBMITTED
+    # Provenance (migration 0035): these are the client's own answers. Stamping
+    # here — rather than on each answer write — captures exactly the set the
+    # client stands behind, and is what stops an offline Run-AI overwriting them
+    # with canned demo values.
+    for ans in db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars():
+        if ans.maturity_stage is not None:
+            ans.answer_source = SOURCE_CLIENT
     audit(
         db,
         action="zt.self_assessment.submitted",

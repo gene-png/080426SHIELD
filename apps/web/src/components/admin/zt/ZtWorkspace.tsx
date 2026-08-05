@@ -477,6 +477,22 @@ export function ZtWorkspace({
                   .
                 </p>
               ) : null}
+              {runResult?.preserved_client_answers ? (
+                /* The skip must be visible, not silent: offline output is never
+                   written over answers the client submitted. */
+                <p
+                  className="text-sm text-status-warning-fg"
+                  aria-live="polite"
+                >
+                  {runResult.preserved_client_answers} client-submitted answer
+                  {runResult.preserved_client_answers === 1
+                    ? " was"
+                    : "s were"}{" "}
+                  left untouched — offline output is never written over the
+                  client&apos;s own responses. Load an API key to run real
+                  analysis over them.
+                </p>
+              ) : null}
             </CardBody>
           </Card>
           <ZtScoreCard score={score} />
