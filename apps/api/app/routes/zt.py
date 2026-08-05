@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.diff import diff_keyed_rows
 from app.ai.engine import run_job
+from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.audit import audit
@@ -462,17 +463,19 @@ def run_ai(
             return None
         return iv if 1 <= iv <= max_stage else None
 
-    result = run_job(
-        db,
-        llm,
-        req.preview.job_name,
-        inputs=req.preview.inputs,
-        requested_by=user.id,
-        service_id=svc.id,
-        client_id=client.id,
-        client_org_name=req.preview.client_org_name,
-        name_hints=req.preview.name_hints,
-    )
+    # A provider failure here must stay typed and leave an llm_calls row.
+    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
+        result = run_job(
+            db,
+            llm,
+            req.preview.job_name,
+            inputs=req.preview.inputs,
+            requested_by=user.id,
+            service_id=svc.id,
+            client_id=client.id,
+            client_org_name=req.preview.client_org_name,
+            name_hints=req.preview.name_hints,
+        )
     data = result.data if isinstance(result.data, dict) else {}
 
     for sugg in data.get("capabilities", []):

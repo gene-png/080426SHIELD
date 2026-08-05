@@ -13,6 +13,7 @@ import {
 } from "@shield/design-system";
 
 import { Dropzone } from "@/components/intake/Dropzone";
+import { hasAcknowledgedOffline, useAiStatus } from "@/lib/admin/aiStatus";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
   approveCapabilityList,
@@ -59,6 +60,7 @@ export function TechDebtWorkspace({
     null,
   );
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
   const [extractError, setExtractError] = React.useState<string | null>(null);
   const [approving, setApproving] = React.useState(false);
@@ -284,6 +286,18 @@ export function TechDebtWorkspace({
           <Dropzone
             onUploaded={(a) => {
               setDocsReloadKey((k) => k + 1);
+              // Issue 2: uploading auto-started an AI extraction with no click
+              // to intercept, so an offline run could produce canned output
+              // unannounced. When AI is not live (and the admin hasn't already
+              // acknowledged it) the file is just listed — the guarded
+              // "Extract from this" button below is then the way in.
+              if (
+                aiStatus &&
+                !aiStatus.ready &&
+                !hasAcknowledgedOffline(aiStatus)
+              ) {
+                return;
+              }
               void runExtraction(a.id);
             }}
             accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"

@@ -176,18 +176,23 @@ def extract_capabilities(
     # Runs through the AI job registry (Work Order C1); the "tech_debt_extract"
     # job keeps the historical "extract.capabilities" llm purpose.
     from app.ai.engine import run_job
+    from app.ai.failures import ai_call_boundary
 
-    result = run_job(
-        db,
-        llm,
-        "tech_debt_extract",
-        inputs=payload,
-        requested_by=requested_by.id,
-        service_id=service_id,
-        client_id=client_id,
-        client_org_name=client_org_name,
-        name_hints=tuple(name_hints),
-    )
+    # Scoped to the model call only: parsing above raises
+    # UnsupportedInventoryFormat, which the route maps to a 415 and which must
+    # not be rewritten as an AI failure.
+    with ai_call_boundary(db, llm, purpose="extract.capabilities"):
+        result = run_job(
+            db,
+            llm,
+            "tech_debt_extract",
+            inputs=payload,
+            requested_by=requested_by.id,
+            service_id=service_id,
+            client_id=client_id,
+            client_org_name=client_org_name,
+            name_hints=tuple(name_hints),
+        )
     return ExtractionResult(items=result.data, llm_call=result.llm_call)
 
 

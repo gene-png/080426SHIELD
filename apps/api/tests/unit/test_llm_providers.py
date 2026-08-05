@@ -31,8 +31,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import ai
 from app.ai import llm as llm_mod
 from app.ai.llm import (
+    FixtureProvider,
     GeminiProvider,
     LLMClient,
+    LLMResponse,
     OpenAIProvider,
     VertexProvider,
     _build_provider,
@@ -616,3 +618,78 @@ def test_anthropic_output_cap_matches_the_other_adapters(monkeypatch) -> None:
     provider.complete("Draft it.", {"k": "v"})
     assert fake.last_kwargs["max_tokens"] == llm_mod._MAX_OUTPUT_TOKENS
     assert llm_mod._MAX_OUTPUT_TOKENS >= 8192
+
+
+# --------------------------------------------------------------------------- #
+# llm_calls.mode must describe the PROVIDER, not the environment variable.
+#
+# Found by the 2026-08-04 live run: with a key pasted through the admin panel
+# (D-037) the runtime forces a live adapter, but `mode` was derived from
+# `settings.shield_llm_mode`. On the exact configuration that feature exists for
+# — SHIELD_LLM_MODE=fixture plus a stored key — every call egressed to Anthropic
+# and was recorded as FIXTURE. The audit trail is the egress evidence for a
+# FedRAMP-targeted deployment; it cannot say "no external call" when one was made.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_live_provider_records_mode_live_even_when_env_says_fixture(
+    monkeypatch, db_factory
+) -> None:
+    """The D-037 configuration: env still says fixture, a runtime key made the
+    call live. The row must say LIVE."""
+    _install_fake_httpx(
+        monkeypatch,
+        _FakeResponse(
+            200,
+            {
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            },
+        ),
+    )
+    provider = OpenAIProvider(model="gpt-4o-mini", api_key="sk-test")
+    fixture_env = Settings(
+        shield_llm_mode="fixture",
+        shield_llm_provider="openai",
+        openai_api_key="sk-test",
+    )
+    client = LLMClient(provider, settings=fixture_env)
+
+    with db_factory() as db:
+        admin = _new_admin(db)
+        client.invoke(
+            db,
+            purpose="csf.narrative",
+            prompt="x",
+            payload={"a": 1},
+            requested_by=admin.id,
+        )
+        db.commit()
+        row = db.execute(select(LLMCall)).scalar_one()
+        assert row.provider == "openai"
+        assert row.mode == LLMCallMode.LIVE, "a real provider call must never be audited as FIXTURE"
+
+
+@pytest.mark.unit
+def test_fixture_provider_records_mode_fixture_even_when_env_says_live(db_factory) -> None:
+    """The converse: no external call happened, so the row must say FIXTURE
+    regardless of what the environment claims."""
+    provider = FixtureProvider(model="fixture-model-1")
+    provider.register_static("csf.narrative", LLMResponse('{"ok": true}', 5, 3))
+    live_env = Settings(shield_llm_mode="live", shield_llm_provider="anthropic")
+    client = LLMClient(provider, settings=live_env)
+
+    with db_factory() as db:
+        admin = _new_admin(db)
+        client.invoke(
+            db,
+            purpose="csf.narrative",
+            prompt="x",
+            payload={"a": 1},
+            requested_by=admin.id,
+        )
+        db.commit()
+        row = db.execute(select(LLMCall)).scalar_one()
+        assert row.provider == "fixture"
+        assert row.mode == LLMCallMode.FIXTURE

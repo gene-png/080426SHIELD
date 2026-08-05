@@ -10,7 +10,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
@@ -180,3 +180,62 @@ def test_csf_run_ai_requires_seeded_profile(app_client) -> None:
     provider.register_static("csf_score", LLMResponse('{"scores": []}'))
     # No profile seeded -> 409.
     assert c.post(f"/csf/services/{svc_id}/run-ai", headers=h).status_code == 409
+
+
+# --------------------------------------------------------------------------- #
+# A failed AI call must leave evidence and a usable error.
+#
+# Found by the 2026-08-04 live run: a provider failure propagated as an
+# unhandled exception, FastAPI returned a bare 500, and the rollback took the
+# llm_calls row with it. Three real Anthropic calls consumed tokens and left
+# ZERO rows behind. The workspace sat on "Running…" forever because no typed
+# error ever reached it.
+# --------------------------------------------------------------------------- #
+
+
+def _raise_provider_error(_payload):
+    raise RuntimeError("Anthropic did not finish cleanly (stop_reason=max_tokens).")
+
+
+@pytest.mark.unit
+def test_run_ai_provider_failure_returns_typed_error(app_client) -> None:
+    """The client gets a typed D-016 error it can render, not a bare 500."""
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    provider.register("csf_score", _raise_provider_error)
+
+    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+
+    assert r.status_code == 502, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "ai_call_failed"
+    assert "cut off" in err["message"], err["message"]
+    # The UI has to be able to say whether money may have been spent.
+    assert err["charged_likely"] is False  # fixture provider — no egress
+
+
+@pytest.mark.unit
+def test_run_ai_provider_failure_persists_the_llm_call_row(app_client) -> None:
+    """The FAILED llm_calls row must survive the request.
+
+    Asserted against the database through an INDEPENDENT session, because the
+    defect being pinned is precisely that the request transaction rolled the row
+    back — an assertion made through the request's own session would not see it.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    provider.register("csf_score", _raise_provider_error)
+
+    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 502
+
+    from app.models.llm_call import LLMCall, LLMCallStatus
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        rows = check.execute(select(LLMCall)).scalars().all()
+    failed = [x for x in rows if x.status == LLMCallStatus.FAILED]
+    assert failed, "a failed provider call left no audit row at all"
+    assert failed[0].purpose == "csf_score"
+    assert failed[0].error_message
+    assert failed[0].duration_ms is not None

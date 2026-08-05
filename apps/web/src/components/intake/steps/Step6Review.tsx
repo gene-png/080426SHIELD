@@ -13,6 +13,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
+import { formatDateOnly } from "@/lib/dates";
 
 /** Human-readable summary of the client-set targets for a service, if any. */
 function targetSummary(
@@ -164,8 +165,7 @@ export function Step6Review({
                   ) : null}
                   {input?.deadline ? (
                     <p className="text-ink-secondary">
-                      Target deadline:{" "}
-                      {new Date(input.deadline).toLocaleDateString()}
+                      Target deadline: {formatDateOnly(input.deadline)}
                     </p>
                   ) : null}
                   {input.notes ? (

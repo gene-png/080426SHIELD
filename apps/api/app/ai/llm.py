@@ -530,8 +530,15 @@ class LLMClient:
             name_hints=name_hints,
         )
 
+        # Describe the PROVIDER that is about to be called, never the
+        # environment variable. `_build_provider` promotes a runtime key
+        # (D-037) to a live adapter while SHIELD_LLM_MODE can still read
+        # "fixture", so deriving this from settings recorded real Anthropic
+        # egress as FIXTURE — found in the 2026-08-04 live run. `llm_calls` is
+        # the egress evidence for a FedRAMP-targeted deployment; it must not
+        # claim that no external call happened when one did.
         call_mode: LLMCallMode = (
-            LLMCallMode.FIXTURE if self._settings.shield_llm_mode == "fixture" else LLMCallMode.LIVE
+            LLMCallMode.FIXTURE if self.provider.name == "fixture" else LLMCallMode.LIVE
         )
 
         row = LLMCall(
