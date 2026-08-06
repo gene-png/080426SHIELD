@@ -448,6 +448,52 @@ assessment, deliverable and audit row.
 - [x] An admin can open a service dashboard **before** release (preview), reaching it on a cold URL with no active-client cookie; the payload is identical to what the client will see apart from a `released` flag. (s36-release-and-preview.spec.ts; backend test asserts preview == client view)
 - [ ] Live path: paste a **real** provider key through the UI and confirm a Run AI produces live (non-fixture) output. Needs a human with a real key — the automated coverage stops at the validation contract with a substituted validator (§14 remains the live-AI section).
 
+
+## 37. Tech Debt portfolio scope + security sign-off (D-039)
+
+- [x] Extraction keeps **every** inventory row and classifies it, rather than dropping the non-security ones. A payroll system is extracted, not silently discarded — under the v1 prompt the guided review lost 9 of 21 rows and $742,440 of real spend with no disclosure. (test_tech_debt_security_classification.py; s37-security-signoff.spec.ts)
+- [x] A capability the model calls **not security-related** stays in the ATT&CK tool subset until a consultant agrees. `valid_tools` is a hard allow-list on what the model may cite, so a tool dropped by mistake becomes uncitable and its technique reads as *uncovered* rather than unassessed. (test_tech_debt_security_scope.py; s37 asserts it through the API while the queue shows it)
+- [x] Signing off on the negative is what removes it from the subset, and the queue then empties. (s37-security-signoff.spec.ts)
+- [x] A wrongly-classified security tool can be **overturned** by naming which of prevent / detect / respond it serves; the overturn also clears the sign-off so a stale confirmation cannot re-exclude it later. (s37-security-signoff.spec.ts)
+- [x] "Mark security-related" stays disabled until a function is named — a capability serving none of the three is not a claim the mapping can act on, and the API rejects it 422. (s37; test_tech_debt_security_classification.py)
+- [x] An **unclassified** row (pre-0038, or a provider that omitted the field) is treated as in-scope, never as a negative. Collapsing the two would drop an entire pre-migration inventory out of ATT&CK. (test_tech_debt_security_scope.py, test_tech_debt_security_classification.py)
+- [x] A DISCARDED capability list's rows are no longer offered to the ATT&CK mapping. Before this there was no status filter at all, so a thrown-away draft stayed citable forever. (test_tech_debt_security_classification.py)
+- [ ] Live path: confirm a **real** provider classifies a mixed portfolio sensibly (the fixture classifies deterministically by row index). Needs a human with a real key.
+
+## 38. Derived six-stage progress (D-040)
+
+- [x] All four workspaces render the same six stages — prepare, analyze, review, approve, generate, release — from a read-only derivation that changes no status. (s38-progress-stages.spec.ts)
+- [x] Stage evidence is scoped to the **version that produced it**: an AI run belonging to an earlier draft does not mark a newer one analysed. `llm_calls` carries no version link, so this is the whole point of the derivation. (test_service_stages.py; s38 drives a real discard-and-re-extract cycle)
+- [x] No completed stage ever follows an incomplete one, and exactly one stage is current. A cursor sitting behind finished work reads as a broken step rather than a passed one. (test_service_stages.py; s38 asserts the invariant over the whole bar)
+- [x] A service with **no version at all** shows nothing as prepared — an empty Tech Debt service must not claim its inventory was uploaded. (test_service_stages.py)
+- [x] Zero Trust and CSF label the first stage "Self-assessment"; Tech Debt and ATT&CK call it "Prepare", because they have no client-input step. No stage is rendered permanently dead. (s38-progress-stages.spec.ts; ProgressStages.test.tsx)
+- [x] Each stage states its status in text, not colour alone — a progress indicator whose entire meaning is dot colour conveys nothing to a screen reader. (ProgressStages.test.tsx; s38 asserts the rendered text)
+
+## 39. Extraction reconciliation + excluded-row queue (UX finding 4)
+
+- [x] The workspace states what the upload contained, what was kept and what was dropped — "4 rows received · 3 included · 1 excluded" — instead of presenting the survivors as the whole inventory. (s39-excluded-rows.spec.ts)
+- [x] Received always equals included plus excluded; recovering a dropped row moves it into the list without changing the received count. (s39-excluded-rows.spec.ts)
+- [x] A row the extractor could not interpret can be **named by a consultant** and pulled back in as a real capability, carrying no AI confidence badge. (s39-excluded-rows.spec.ts; test_tech_debt_routes.py)
+- [x] Confirming an exclusion **leaves it listed** rather than hiding it — the reconciliation has to keep telling the truth about what was uploaded — but stops flagging it as outstanding. (s39-excluded-rows.spec.ts)
+- [x] This is reachable offline at all only because the fixture extractor now skips rows it cannot name, which is what the real prompt instructs. It previously invented a name for every row, so `excluded_rows` was always empty and this entire surface was untestable. (app/ai/fixtures.py; s39)
+
+## 40. Intake: primary contact + shared service defaults (D-041)
+
+- [x] Title, phone and timezone typed on the contact step **survive leaving and returning**. They were previously passed to the step as hardcoded nulls, so the API saved them and the form showed them blank. (browser-verified 2026-08-06 on a fresh account; no committed spec yet)
+- [x] "I am not the primary contact" records someone else's details, and the server resolves the engagement's contact to that person. (test_intake_primary_contact.py; browser-verified `is_override: true` end to end)
+- [x] An override must name someone — a stray title or phone redirects nothing; a named contact without an email keeps the account address; partial overrides fall back field by field; unchecking clears the stored values. (test_intake_primary_contact.py, 7 cases, verified by breaking the rule)
+- [x] Shared deadline and context fan out to the services that have none, filling **blanks only** so a deliberately-set per-service value survives. (SharedServiceDefaults.test.tsx)
+- [x] Per-service cards collapse, but any service still missing a required assessment target stays open — a collapsed card hiding a blocking field would look complete and fail at submit. (Step5Notes.tsx; no committed spec yet)
+- [ ] An e2e spec walking the intake wizard end to end with an override and shared defaults. The current coverage is unit + a scripted browser run, not a committed spec.
+
+## 41. Admin queue: stage progress + bulk workspace creation (D-040, UX finding 15)
+
+- [x] Each published service in the intake queue shows the same six-stage bar the workspace shows, from the same derivation — the queue cannot drift from the workspace. (browser-verified 2026-08-06; no committed spec yet)
+- [x] A service with no workspace yet says "No workspace yet" rather than borrowing a stage word for a state that has no version behind it. (browser-verified 2026-08-06)
+- [x] Select-all creates every missing workspace in one action, and the button names the count it will create. (browser-verified: 2 selected → "Create 2 selected workspaces" → both opened)
+- [x] A partial run **names what failed** and leaves the failures selected for a one-click retry — reporting "3 created" while two silently did not is the failure bulk creation exists to prevent. (BulkPublishBar.tsx; not yet exercised by a test — the failure path needs a fault-injecting spec)
+- [ ] An e2e spec for the queue bar and bulk creation. Browser-verified only.
+
 ---
 
 ## Sign-off

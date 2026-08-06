@@ -1096,3 +1096,157 @@ the four admin `*DeliverableCard.tsx`,
 `apps/web/src/lib/dashboards/resolveClient.ts`, the six `lib/*/client.ts` and
 four `lib/*/types.ts`; `e2e/smoke/s36-release-and-preview.spec.ts`.
 Completes D-035.
+
+## D-039 — Tech Debt covers the whole portfolio; a negative security call needs sign-off
+
+**Decision (2026-08-05, UX finding 4 / E2E F-5).** The extraction prompt kept
+only _security_ capabilities and silently dropped everything else. The guided
+review uploaded 21 rows / $1,634,236 and the workspace showed 12 rows /
+$891,796 — the survivors presented as the entire inventory. Prompt **v2** keeps
+every row and classifies it instead: `security_related`, plus
+`security_functions` drawn from prevent / detect / respond (migration **0038**).
+
+`security_functions` is a **list**, not a scalar. An EDR genuinely serves all
+three, and the three map 1:1 onto the columns `AttackCoverage` already keeps
+(`prevention_tools` / `detection_tools` / `response_tools`), so the
+classification reaches the mapping surface without translation.
+
+**Broadening the scope moves the risk rather than removing it.**
+`_client_tool_names` feeds the ATT&CK mapping, and `valid_tools` there is not
+merely prompt input — it is a **hard allow-list on which tools the model may
+cite**. A capability wrongly marked non-security becomes _uncitable_, so the
+technique it covered reads as **uncovered rather than unassessed**: a fabricated
+gap, presented to a client as an assessed absence.
+
+So a negative classification is **provisional until a human agrees with it**:
+
+| `security_related`                         | `security_class_confirmed` | In the ATT&CK subset? |
+| ------------------------------------------ | -------------------------- | --------------------- |
+| `True`                                     | any                        | yes                   |
+| `NULL` (pre-0038, or the model omitted it) | any                        | yes                   |
+| `False`                                    | `False`                    | **yes — provisional** |
+| `False`                                    | `True`                     | no                    |
+
+`None` never collapses to `False`: an unclassified row is the absence of a
+decision, not a negative one. An unreviewed negative costs a consultant one
+glance at a row that did not need it; the failure it prevents is a blind spot
+nobody ever sees. We take the glance.
+
+Two endpoints work the queue: **confirm** a negative, or **overturn** it by
+naming the functions it actually serves (which also clears the sign-off, so a
+stale flag cannot silently re-exclude the row later).
+
+Fixed in the same pass: `_client_tool_names` had **no status filter at all**, so
+a DISCARDED list's rows stayed citable forever. Only DISCARDED is excluded —
+DRAFT still counts, because mapping ATT&CK before approving the tech-debt list is
+a normal order of work.
+
+**Ref:** `apps/api/app/tech_debt/security_scope.py` (the rule, in one place),
+`apps/api/app/tech_debt/extract.py` (prompt v2), `apps/api/app/routes/attack.py`
+(`_client_tool_names`), `apps/api/app/routes/tech_debt.py` (confirm / override),
+migration `0038`; `test_tech_debt_security_scope.py`,
+`test_tech_debt_security_classification.py`;
+`e2e/smoke/s37-security-signoff.spec.ts`.
+
+## D-040 — One derived six-stage vocabulary, presentation only
+
+**Decision (2026-08-06, UX findings 16 and 15).** The four services each
+described progress in their own words. They now share six stages — **prepare,
+analyze, review, approve, generate, release** — rendered from a read-only
+derivation.
+
+**Relabel only.** No state machine, route or audit vocabulary changed, and
+`status` still means exactly what it meant. `app/services/stages.py` answers a
+narrower question ("how far along does this version look?") and writes nothing.
+
+Two of the six are **not states anybody stores** — a capability list is DRAFT
+before a Run-AI and still DRAFT after — so `analyze` and `generate` are derived
+from evidence. The naive query is a trap: `llm_calls` has **no version link at
+all** and `Deliverable.version` is its own counter, so "has this service ever
+been analysed?" lights up `analyze` on a brand-new draft because a discarded one
+was analysed earlier.
+
+Evidence is therefore anchored to the version **two different ways**, because the
+services do not build their versions in the same order:
+
+- **Zero Trust, CSF, ATT&CK** create the assessment and _then_ run AI on it, so a
+  run belonging to this version is newer than it — `created_at` is the anchor.
+- **Tech Debt is inverted.** The extraction runs FIRST and the capability list is
+  built from its output, so the `llm_calls` row precedes the list it produced by
+  milliseconds, and a timestamp anchor reports every extraction as belonging to
+  no version at all. Tech Debt uses the list's own extraction provenance
+  (`source_rows_total`), which is version-scoped by construction. **The e2e spec
+  found this; the unit tests did not.**
+
+Neither needs a migration or a new column.
+
+Two further rules, both found in the browser rather than by a test:
+
+1. **Progress is monotonic.** Reaching a stage means the ones before it are
+   behind you. Without this, an approved list whose extraction predated the
+   current version rendered `analyze` as "current" sitting _left of_ three
+   completed stages — a cursor behind finished work reads as a broken step.
+2. **A service with no version has prepared nothing.** `prepare` is otherwise
+   unconditional for Tech Debt and ATT&CK (no client-input step), so an empty
+   service claimed its inventory was already uploaded.
+
+**"Submitted" is not a stage.** It exists only for Zero Trust and CSF. Rather
+than render a stage that can never light for half the services, the asymmetry
+lives in what `prepare` _means_ — labelled "Self-assessment" where there is one,
+"Prepare" where there is not.
+
+**The admin queue reuses these six words** rather than the finding's separate
+seven-item list (submitted / ready / workspace created / analyzing / review
+required / finalized / released). Naming the same concept two ways in two places
+is the confusion this work exists to remove, and reusing the derivation means the
+queue cannot drift from the workspace because it is the same computation. One
+genuinely new state sits in front of the bar: **"No workspace yet"** — nothing
+exists for a stage to describe.
+
+**Ref:** `apps/api/app/services/stages.py`,
+`apps/api/app/routes/service_stages.py`, `apps/web/src/lib/stages/client.ts`,
+`apps/web/src/components/admin/ProgressStages.tsx`; `test_service_stages.py`;
+`e2e/smoke/s38-progress-stages.spec.ts`.
+
+## D-041 — The primary contact belongs to the engagement, not to whoever typed it
+
+**Decision (2026-08-06, UX finding 9).** Intake took the contact from the
+signed-in user's own record, and the email field is deliberately read-only. That
+is right when they _are_ the point of contact and wrong whenever they are not —
+an assistant or procurement lead completing the wizard on someone else's behalf
+had no way to say so, so the engagement recorded the wrong person and a
+consultant would go on to contact them.
+
+Four nullable columns on `client` (migration **0039**), not on `users`: the
+contact is a property of the engagement, not of the account that happened to fill
+in the form. `NULL` means "the contact is the submitter", which is what every
+pre-0039 row already means. No new endpoint — these ride the `ClientProfilePatch`
+auto-save path the Organization step already uses.
+
+`_effective_contact` is the single resolver, and its rules are tested because
+getting them wrong means mail goes to someone who explicitly said they are not
+the contact:
+
+- an override must **name** someone; a stray title or phone redirects nothing
+- a named contact with no email keeps the account address — the only one we can
+  be sure reaches a human
+- partial overrides fall back **field by field** rather than blanking
+- unchecking the box **clears** the stored values, so it cannot keep redirecting
+
+Two round-trip bugs fixed alongside, the second found only in the browser:
+`title` / `phone` / `timezone` were passed to Step 3 as **hardcoded nulls** (the
+API saved and returned them; the form never read them back), and the new override
+columns were initially missing from `ClientProfileResponse`, so re-opening the
+step would have shown an unchecked box over a live override.
+
+**Explicitly NOT done: merging Organization and Contact into one wizard step.**
+The finding raises it conditionally ("if the resulting page remains manageable"),
+and it is the expensive half — renumbering the wizard ripples through Step 6
+review and the intake specs. Prefill plus the override delivers the finding's
+actual value without that. Confirmed with the repo owner on 2026-08-06; recorded
+here so it is not re-opened as an oversight.
+
+**Ref:** `apps/api/app/routes/intake.py` (`_effective_contact`),
+`apps/api/app/models/client.py`, `apps/api/app/schemas/intake.py`, migration
+`0039`; `apps/web/src/components/intake/steps/Step3Contact.tsx`;
+`test_intake_primary_contact.py`.

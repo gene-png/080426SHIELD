@@ -1,7 +1,7 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-04 (seven-issue fix pass on `fix/seven-issue-pass`,
-targeting `v3.8.0` — see the section at the end of "Current state"). NOTE: this
+_Last updated: 2026-08-06 (portfolio scope + derived stages + intake contact;
+PRs #9/#10 merged, #11/#12 in flight — see the end of "Current state"). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
 `main` carrying the working tree through `v3.7.0`; the PR numbers cited in the
 sprint history below belong to the upstream repo, not to this one. This file
@@ -147,7 +147,7 @@ admin-only soft-delete state transition), **D-032** (hybrid Keycloak SSO as a
 flag-gated exchange, never a bearer), **D-033** (destructive-by-design automation
 is opt-in-gated).
 
-- **Seven-issue fix pass ON ITS BRANCH** (`fix/seven-issue-pass`, targeting
+- **Seven-issue fix pass MERGED** (PR #5, was `fix/seven-issue-pass`, targeting
   `v3.8.0`): seven reported issues in four phases. Three were the same class of
   defect — a surface that renders but cannot be acted on. The client `/home`
   service cards were unlinked `Card`s, so a client could see a service and had no
@@ -176,6 +176,110 @@ is opt-in-gated).
 | — | Bandit `# nosec` marker CI needed on the dev artifact path | `6ad9cfb` |
 | 2 | `POST`/`DELETE /admin/llm-key` (validate against the provider, then store Fernet-encrypted, migration 0034); `AiStatusBanner` moved into the admin shell; `LlmKeyPanel`; `RunAiGuard`; `.env` placeholder model corrected; `test_admin_llm_key.py`, `RunAiGuard.test.tsx`, `s34` | `006f571` |
 | 4 | Release wired end to end for all four services (callers + 4 proxy routes + `released_at` type fix), admin pre-release preview via the shared `_dashboard_deliverable()` resolver, `resolveDashboardClientId()` for cold admin URLs, single-body-read fix in all six client libs; `s36` | `c601d32` |
+
+- **Seven-issue pass and UX-findings remediation MERGED** (PRs #5, #6, #7, #8):
+  the pass described below landed, along with the 2026-08-04 UX/E2E remediation
+  (audit-mode correctness, a failure record that survives the request rollback,
+  the offline Run-AI guard on every entry point, extraction reconciliation,
+  bundle decomposition, date-only rendering, dashboard `<main>` landmarks). PR #7
+  separately repaired a `pnpm-lock.yaml` that was missing `chart.js` /
+  `react-chartjs-2`, which had been failing CI on **every** branch.
+
+- **Portfolio scope, derived stages, and intake contact MERGED** (PRs #9, #10;
+  migrations **0038**, **0039**): three decisions, D-039 through D-041.
+
+  **Tech Debt now covers the whole software portfolio.** The v1 prompt kept only
+  security capabilities and dropped the rest silently — the guided review
+  uploaded 21 rows / $1,634,236 and the workspace showed 12 / $891,796 as though
+  that were the inventory. Prompt v2 classifies every row instead. That moves the
+  risk rather than removing it: `valid_tools` in the ATT&CK mapping is a hard
+  allow-list on what the model may cite, so a wrong "not security" call makes a
+  tool *uncitable* and its technique reads as uncovered rather than unassessed.
+  A negative is therefore provisional until a consultant signs off (D-039).
+
+  **One six-stage vocabulary across all four services**, derived read-only from
+  status plus evidence, changing no state machine (D-040). The version trap is
+  real and was hit twice: `llm_calls` has no version link, and Tech Debt builds
+  its list *after* the run that produced it, so the timestamp anchor that works
+  for the other three matches nothing there.
+
+  **The intake contact belongs to the engagement**, not to whoever filled in the
+  form (D-041).
+
+  Notable process point: **the browser check found a defect in every one of the
+  four rounds**, including two the unit tests could not see (the monotonic-stage
+  cursor, and stage evidence for Tech Debt). The e2e specs written afterwards
+  found two more. See "Lessons learned (portfolio scope + stages)" below.
+
+- **CI hygiene MERGED** (PR #10): the gitleaks job had failed on **every** PR
+  since it was added, with a 403 "Resource not accessible by integration" — the
+  workflow default is `contents: read` and gitleaks writes findings back to the
+  PR. Job-scoped `pull-requests: write` fixes it. Dependabot PRs still 403 by
+  GitHub's design, and that caveat is recorded in the workflow. `s11-staleness`
+  also stopped sharing the seeded ATT&CK service with `s5` (it raced for it *and*
+  approved/finalised it, changing state every later spec inherited).
+
+- **IN FLIGHT, not yet merged:** PR **#11** (intake primary-contact override +
+  shared service defaults, migration 0039) and PR **#12** (admin queue stage bar
+  + bulk workspace creation). Both green apart from a running E2E at the time of
+  writing.
+
+### Portfolio scope + stages: change → commit
+
+| Change | What shipped | Commit |
+| --- | --- | --- |
+| D-039 | Prompt v2 classifies every row; `security_scope.py` fail-safe rule; confirm/override endpoints; `_client_tool_names` status filter; migration 0038 | `faa8a78` |
+| D-040 | `services/stages.py` + `/services/{id}/stages`; `ProgressStages` in four workspaces; `useServiceStages` phase-explicit hook | `faa8a78`, `576f0f6` |
+| e2e | `s37` sign-off queue, `s38` stage bar — which found the empty-service and Tech-Debt-ordering bugs | `569984b` |
+| CI + isolation | gitleaks permissions, `s11` mints its own service, fixture skips unnameable rows, `s39` excluded-rows queue | `bd653b0` |
+
+## Lessons learned (portfolio scope + stages)
+
+- **A filter that decides what an AI may cite is not an input, it is an
+  assertion.** `valid_tools` reads like prompt plumbing. It is actually the list
+  of names the model is *allowed* to say, so anything missing from it produces a
+  gap the report presents as assessed. Any narrowing of that list needs a human
+  in front of it, and it must fail toward inclusion.
+
+- **`None` is not `False`, and collapsing them loses data silently.** An
+  unclassified capability is the absence of a decision. Treating it as a negative
+  would have dropped every pre-migration inventory out of ATT&CK with nothing
+  failing and no error anywhere.
+
+- **The same trap has two different shapes in one codebase.** Stage evidence had
+  to be version-anchored — and then Tech Debt turned out to build its version
+  *after* the run that produced it, so the anchor that was correct for three
+  services matched nothing for the fourth. "We fixed the version trap" was true
+  and incomplete; only the e2e spec showed the second half.
+
+- **A hand-written serializer will drop a new column, twice.**
+  `_serialize_list_with_items` silently omitted `source_rows_total`, then
+  `confirmed`, each reading as null in the UI with nothing failing — the second
+  time despite a comment warning about the first. It now builds from the model.
+
+- **An unreachable review surface is an untested one.** The excluded-rows queue
+  could not appear in fixture mode because the fixture invented a name for every
+  row, so no exclusion could ever exist. The same hole hid the security sign-off
+  queue. Both were closed by making the fixture behave like the prompt it stands
+  in for, not by writing more tests around the unreachable state.
+
+- **Run the browser check before believing the tests.** Four rounds, four
+  defects it caught that unit tests and typecheck did not: a null
+  `source_rows_total`, a monotonic-stage cursor rendered behind completed work,
+  an override stored but absent from the response that had to restore it, and a
+  400 on every stage call in the admin queue (tenant resolved from an
+  active-client cookie while the page was scoped by path).
+
+- **A check that is always red is worse than no check.** gitleaks failed on every
+  PR for a permissions reason unrelated to any diff. That is not a nuisance —
+  it trains everyone to skip the one signal that matters the day it is real.
+
+- **A helper that gives up silently costs more than one that throws.**
+  `acknowledgeOfflineAi` waited 4s for the offline dialog, returned quietly when
+  it did not appear in time, and left the caller waiting two minutes for a
+  request that would never be sent — failing with "timeout waiting for response",
+  which points at the API instead of the un-clicked button. Diagnosed twice
+  before the cause was found.
 
 ## Machine-local facts (this box)
 
