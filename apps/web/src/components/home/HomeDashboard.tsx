@@ -158,6 +158,24 @@ function bucketFor(
 }
 
 /**
+ * What the client would actually DO with this service, in their words.
+ *
+ * Finding #17 asks for one named primary action per service. The bucket heading
+ * says who owns the next move; this says what that move is. Keyed off the
+ * bucket rather than re-deriving from status, so the label can never disagree
+ * with the group the card is filed under.
+ *
+ * Rendered as text inside the card's existing link — never its own <a>. A
+ * nested anchor is invalid HTML and would give every card two tab stops
+ * pointing at the same destination.
+ */
+const BUCKET_ACTIONS: Record<BucketKey, string> = {
+  action: "Resume assessment",
+  progress: "View status",
+  results: "View results",
+};
+
+/**
  * Where a service card goes when clicked. Mirrors the card's own phase so the
  * destination always matches the status the client just read (Navigation_Spec
  * §12: no card is a dead end, and no link lands somewhere unrelated):
@@ -374,6 +392,13 @@ export function HomeDashboard({
                               <StatusPill tone={phase.tone} withDot>
                                 {phase.label}
                               </StatusPill>
+                              {/* Finding #17's primary action. A span, not a
+                                  link — the whole card is already the link.
+                                  mt-auto pins it to the bottom so the actions
+                                  line up across cards of differing heights. */}
+                              <span className="mt-auto pt-1 text-sm font-semibold text-brand-600">
+                                {BUCKET_ACTIONS[key]} →
+                              </span>
                             </CardBody>
                           </Card>
                         </Link>

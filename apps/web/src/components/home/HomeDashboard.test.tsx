@@ -293,6 +293,42 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
     ).toBeNull();
   });
 
+  /**
+   * Finding #17's other half: "give each service one primary action, such as
+   * Resume assessment, View status, or View results." The bucket says who owns
+   * the next move; the action names what that move IS, in the client's words.
+   *
+   * The action must stay INSIDE the card's existing link rather than becoming a
+   * link of its own — a nested <a> is invalid HTML and would give every card two
+   * tab stops pointing at the same place.
+   */
+  it.each([
+    ["Action required", "NIST CSF", "Resume assessment"],
+    ["In progress", "Zero Trust", "View status"],
+    ["Results available", "Tech Debt Review", "View results"],
+  ] as const)("names the primary action in %s", (bucketName, title, action) => {
+    renderAll();
+    const card = within(bucket(bucketName))
+      .getAllByRole("listitem")
+      .find((li) => li.textContent?.includes(title)) as HTMLElement;
+    expect(card, `no card titled ${title}`).toBeTruthy();
+    expect(
+      within(card).getByText(action, { exact: false }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps each card a single tab stop — the action is not its own link", () => {
+    renderAll();
+    for (const b of BUCKETS) {
+      for (const li of within(bucket(b)).getAllByRole("listitem")) {
+        expect(
+          within(li).getAllByRole("link"),
+          "a card must expose exactly one link, not a nested action anchor",
+        ).toHaveLength(1);
+      }
+    }
+  });
+
   it("still shows the no-services empty state", () => {
     render(
       <HomeDashboard

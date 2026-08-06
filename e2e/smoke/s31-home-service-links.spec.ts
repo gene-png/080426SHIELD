@@ -21,6 +21,13 @@ import { signIn } from "../helpers/auth";
 const CLIENT_EMAIL = "client@atlas.example";
 const CLIENT_PASSWORD = "DemoPass!2026";
 
+/** Finding #17: the one named primary action each bucket's cards must carry. */
+const ACTION_FOR: Record<string, string> = {
+  "Action required": "Resume assessment",
+  "In progress": "View status",
+  "Results available": "View results",
+};
+
 test("client home: every service card is a link, routed by its own phase", async ({
   page,
 }) => {
@@ -139,9 +146,18 @@ test("client home: services are grouped by task status, one bucket each", async 
       `"${title}" must count what it lists (${cardCount} cards + ${messageRows} message rows)`,
     ).toBe(cardCount + messageRows);
 
+    // Finding #17: every card names its one primary action, and the wording
+    // matches the bucket it sits in.
+    const expectedAction = ACTION_FOR[title.replace(/ \(\d+\)$/, "")];
+    expect(expectedAction, `unmapped bucket heading "${title}"`).toBeTruthy();
+
     carded += cardCount;
     for (let j = 0; j < cardCount; j++) {
       const text = (await cards.nth(j).innerText()).trim();
+      expect(
+        text,
+        `a card in "${title}" must name its action ("${expectedAction}")`,
+      ).toContain(expectedAction);
       const already = placed.get(text);
       expect(
         already === undefined || already === i,
