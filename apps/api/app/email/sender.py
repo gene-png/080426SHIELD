@@ -93,20 +93,20 @@ def send_release_notification(*, to: str, service_label: str, title: str, versio
 
     Best-effort: gated by the same delivery flag as every other send — with
     delivery off this is a logged no-op inside ``send_email``. Carries the
-    service, the deliverable title/version, and a link to the client's documents
+    service, the deliverable title/version, and a link to the client's results
     surface so the recipient can review and download it.
     """
     base = get_settings().web_base_url.rstrip("/")
     # UX finding 18: results live in one place now. /documents still
-    # permanently redirects here, so older emails keep working.
-    documents_url = f"{base}/results"
+    # permanently redirects here, so emails already sent keep working.
+    results_url = f"{base}/results"
     subject = f"Your {service_label} deliverable is ready"
     body = (
         f"A new {service_label} deliverable has been released to your team on "
         "SHIELD.\n\n"
         f"  {title} (v{version})\n\n"
-        "Open your documents to review and download it:\n\n"
-        f"{documents_url}\n\n"
+        "Open your results to review and download it:\n\n"
+        f"{results_url}\n\n"
         "You are receiving this because you have a SHIELD client account for "
         "this engagement."
     )

@@ -2,7 +2,7 @@
 
 On deliverable release, when ``SHIELD_EMAIL_DELIVERY_ENABLED`` is on, every
 active client-role user of the deliverable's tenant is notified by email
-(service, title/version, a link to ``{web_base_url}/documents``). The
+(service, title/version, a link to ``{web_base_url}/results``). The
 notification is best-effort: with delivery off the release proceeds exactly as
 v3.3.0 (loud skip log), and an SMTP failure logs loudly WITHOUT rolling back the
 release (the release is the source of truth — D-030).
@@ -151,9 +151,9 @@ def test_release_notifies_active_client_users_of_tenant_only(db_factory, monkeyp
 
 
 @pytest.mark.unit
-def test_notification_body_carries_service_title_version_and_documents_link(monkeypatch) -> None:
+def test_notification_body_carries_service_title_version_and_results_link(monkeypatch) -> None:
     """The composed email names the service, title, version and links to
-    /documents on the configured web base URL."""
+    /results on the configured web base URL."""
     sent: list[dict] = []
     monkeypatch.setattr(
         "app.email.sender.send_email",
@@ -181,7 +181,9 @@ def test_notification_body_carries_service_title_version_and_documents_link(monk
     assert "NIST CSF 2.0" in msg["subject"] or "NIST CSF 2.0" in msg["body"]
     assert "NIST CSF 2.0 Assessment" in msg["body"]
     assert "v3" in msg["body"] or "version 3" in msg["body"].lower()
-    assert "https://shield.example/documents" in msg["body"]
+    # UX finding 18: results consolidated onto /results. /documents still
+    # permanently redirects, so emails already delivered keep working.
+    assert "https://shield.example/results" in msg["body"]
 
 
 @pytest.mark.unit
