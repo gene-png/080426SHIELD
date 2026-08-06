@@ -56,3 +56,13 @@ class Client(UUIDPKMixin, TimestampMixin, Base):
     # NULL means active (the C0 additive pattern: pre-migration rows parse
     # unchanged).
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Primary-contact override (migration 0039). NULL means "the contact is the
+    # user who submitted the intake", which is what every pre-0039 row means.
+    # Set only when whoever filled in the wizard says they are NOT the point of
+    # contact — an assistant or procurement lead completing it for someone else.
+    # The contact belongs to the engagement, not to the account that typed it.
+    primary_contact_name: Mapped[str | None] = mapped_column(String(255))
+    primary_contact_email: Mapped[str | None] = mapped_column(String(320))
+    primary_contact_title: Mapped[str | None] = mapped_column(String(255))
+    primary_contact_phone: Mapped[str | None] = mapped_column(String(64))

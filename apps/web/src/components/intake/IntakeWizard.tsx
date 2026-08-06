@@ -220,12 +220,25 @@ export function IntakeWizard(): JSX.Element {
             <Step2Organization state={state} onSave={onClientFieldChange} />
           ) : step === "contact" ? (
             <Step3Contact
+              // Read what the API actually returns. These were hardcoded nulls,
+              // so a title or phone typed here came back blank on the next
+              // visit even though it had saved (UX finding 9).
               defaults={{
-                display_name: userName,
-                title: null,
-                phone: null,
-                timezone: null,
+                display_name: state.contact?.display_name ?? userName,
+                title: state.contact?.title ?? null,
+                phone: state.contact?.phone ?? null,
+                timezone: state.contact?.timezone ?? null,
                 email: userEmail,
+              }}
+              override={{
+                primary_contact_name:
+                  state.client?.primary_contact_name ?? null,
+                primary_contact_email:
+                  state.client?.primary_contact_email ?? null,
+                primary_contact_title:
+                  state.client?.primary_contact_title ?? null,
+                primary_contact_phone:
+                  state.client?.primary_contact_phone ?? null,
               }}
               onSave={onProfileFieldChange}
             />
