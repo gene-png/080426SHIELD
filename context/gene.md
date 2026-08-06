@@ -1,7 +1,7 @@
 # Gene — current status
 
 _Owner: Gene (gene-png). Only Gene's sessions write this file._
-_Last updated: 2026-08-04_
+_Last updated: 2026-08-06_
 
 Keep this short and current: your sessions overwrite it freely (it's yours
 alone, so it never merge-conflicts). Dave's agents read it at `/pickup` to
@@ -9,50 +9,86 @@ know what you have in flight without digging through branches.
 
 ## Branch / in flight
 
-- `fix/seven-issue-pass` — seven reported issues, fixed in four phases, PR open
-  against `main` targeting `v3.8.0`. Two additive migrations (0033
-  `client.archived_at`, 0034 `llm_credentials`), new decisions D-036/D-037/D-038,
-  six new e2e specs (`s31`–`s36`).
-  - **Issues 1 / 5 / 6** — navigation dead ends: `/home` service cards were
-    unlinked, `/admin/active` was a stub, and the skip link's focus ring was
-    cancelled by `outline-hidden`.
-  - **Issues 3 / 7** — soft client archive + user deactivate/reactivate, and
-    `/admin/queue` became an index of organizations instead of opening onto
-    whichever tenant was created last.
-  - **Issue 2** — runtime provider API-key management (validate-then-store,
-    Fernet at rest, DB beats env), plus the offline warning on every admin page
-    and a Run-AI guard.
-  - **Issue 4** — nothing in the product could release a deliverable, so the
-    D-035 client dashboards were unreachable for every client. Fixed, plus an
-    admin pre-release preview through the same builder.
+- `feat/home-task-buckets` — **PR #15**, C3, against `main`. One commit,
+  `apps/web` + one e2e spec only, nothing under `apps/api`.
+  - `/home`'s "Your services" was one flat grid in arrival order, so a client
+    read every phase pill to find the one that needed them — and an open
+    self-assessment rendered TWICE, once as a card and again in the
+    "Waiting on you" list beside it.
+  - Now three buckets by **who owns the next move**: Action required /
+    In progress / Results available, each service in exactly one. Empty
+    buckets don't render. "Waiting on you" is gone; unread messages move into
+    Action required, since they need the client but have no service card.
+  - **No six-stage bar on this surface** — Master Spec §6.4 is "phase and next
+    steps only" for a client. The six-stage derivation stays admin-only.
+  - Phase pills deliberately UNCHANGED. The bucket says who has the next move,
+    the pill says what phase the engagement is in. Also the safe call: `s31`
+    routes its assertions off pill text, so rewording would have meant editing
+    a test to reach green.
+
+## Phase C is complete
+
+C1 `#12` (admin queue stages + bulk create) → C2 `#14` (`/results` replaces
+`/documents`) → C3 `#15` (this branch).
+
+## CI debt — read this before trusting a green tick
+
+**GitHub Actions had a major outage on 2026-08-06 from 15:22 UTC** (critical,
+"workflow runs failing or delayed, queued jobs may time out"). Consequences
+that outlive the outage:
+
+1. **`main`'s HEAD `cf9cccd` (the PR #14 merge) has NO CI run.** All five jobs
+   on the post-merge run sat unstarted and were killed at GitHub's 15/20-minute
+   queue timeouts. `main`'s last green run is `60f59f7` (PR #13).
+   - Mitigating, and worth knowing rather than re-deriving: `cf9cccd`'s tree is
+     **byte-identical** to `396c776`, the branch tip that got the full local
+     gate set (ruff, black, `pytest -m unit` 801/801) AND four green CI jobs
+     (web, e2e, gitleaks, demo) at 15:36, before the outage bit. The gap is a
+     missing checkmark, not unverified code.
+2. **PR #15 has no CI run at all.** Retargeting its base from
+   `feat/results-consolidation` to `main` fires `pull_request: edited`, which is
+   NOT in the workflow's default trigger set — and a close/reopen didn't create
+   a run either, because run creation itself was failing.
 
 ## Next steps
 
-1. PR review + merge, then tag `v3.8.0`.
-2. Open follow-ups (also listed in the PR body):
-   - `s34-llm-key`'s Run-AI-guard test self-skips when the seeded ATT&CK
-     assessment is already released (Run AI renders disabled), so whether the
-     browser exercises the dialog depends on DB state. A spec that seeds its own
-     unreleased service would make it unconditional. Note this skip is what hid
-     the fail-open race until the first full-suite run — treat a
-     conditionally-skipping spec as untested, not as passing.
-   - Key validation has a real provider probe for `anthropic` only. openai /
-     gemini / vertex refuse with an explicit "not implemented for this provider"
-     rather than pretending to validate — worth closing.
+1. Once Actions recovers: re-run CI on `main` for `cf9cccd`, and force PR #15's
+   first run with an empty commit (`synchronize` is the reliable trigger — base
+   changes and reopens are not).
+2. Merge PR #15, then `CONTEXT.md` + `SMOKE_TEST.md` + `DECISIONS.md` need a
+   Phase C wrap-up pass. `CONTEXT.md`'s "Current state" still stops at PRs
+   #11/#12 in flight.
+3. Carry-overs still open from `fix/seven-issue-pass`, none urgent:
+   - `s34-llm-key`'s Run-AI-guard test self-skips when the seeded ATT&CK service
+     is already released. A spec that seeds its own unreleased service would make
+     it unconditional. That skip is what hid the fail-open race until the first
+     full-suite run — treat a conditionally-skipping spec as untested.
+   - Key validation has a real provider probe for `anthropic` only; openai /
+     gemini / vertex refuse with an explicit not-implemented rather than
+     pretending to validate.
+   - `release_deliverable()` still never flips the per-service assessment to
+     `RELEASED` (D-035). Consistency cleanup.
    - SMOKE §36's live-key line still needs a human with a real key.
-3. `release_deliverable()` still never flips the per-service assessment to
-   `RELEASED` (noted in D-035, unchanged here). Consistency cleanup, not urgent.
 
 ## Notes for Dave
 
-- `/auth/login` never checked `User.is_active` before this branch — refresh,
-  MFA-verify and password-reset all did. If you have anything that assumed
-  deactivation blocked sign-in, it did not until now.
-- `dashboardPathFor()` (`apps/web/src/lib/dashboards/routes.ts`) is now the single
-  source of truth for "where does this service kind go" — `/home` and
-  `/documents` both read it. Add new service kinds there, not in a local switch.
-- `jsonRequest`'s error path in the six `lib/*/client.ts` wrappers used to read
-  the response body twice, which threw and masked the real status. Fixed in all
-  six; if you touch one, keep the single read.
-- My box runs web on `:3000` (canonical), not the `:3001` your CONTEXT machine
+- `needsClient()` in `HomeDashboard.tsx` is now the single predicate for "the
+  client still owes their self-assessment" — it feeds both the Action-required
+  bucket and the hero's Continue button. Those were written out separately
+  before, which is exactly how the same assessment got rendered twice. Add
+  readers to that function, not another inline filter.
+- `dashboardPathFor()` (`apps/web/src/lib/dashboards/routes.ts`) remains the
+  single source of truth for "where does this service kind go". `/home` and
+  `/results` both read it.
+- `/documents` permanently redirects to `/results` and **stays** — release
+  emails carrying the old path are already in people's inboxes. `s17` asserts
+  that promise rather than leaving it to trust.
+- Two testing traps this branch hit, both worth knowing before you write
+  assertions against a heading:
+  - The bucket count renders INSIDE the `<h3>`, so the accessible name is
+    `"Action required (2)"`, not `"Action required"`.
+  - Playwright's `innerText` returns CSS-transformed text — the heading is
+    styled `uppercase`, so it reads back `"ACTION REQUIRED (2)"`. Use
+    `textContent`, which is what the accessible name (and a screen reader) sees.
+- My box runs web on `:3000` (canonical), not the `:3001` the CONTEXT machine
   notes describe.
