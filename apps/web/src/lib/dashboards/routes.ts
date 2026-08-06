@@ -3,7 +3,7 @@ import type { ServiceType } from "@/lib/intake/types";
 /**
  * Single source of truth for client dashboard routes.
  *
- * Both the /documents list and the /home service grid link to dashboards; they
+ * Both the /results list and the /home service grid link to dashboards; they
  * previously would have carried their own copy of this switch, which is exactly
  * how the two surfaces drift when a new dashboard ships. One helper, one map.
  *

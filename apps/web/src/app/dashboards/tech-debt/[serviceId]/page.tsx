@@ -64,7 +64,7 @@ export default async function TechDebtDashboardPage({
             : "We couldn't load this dashboard."}
         </p>
         <Link
-          href="/documents"
+          href="/results"
           className="text-sm font-medium text-brand-600 hover:text-brand-700"
         >
           ← Back to documents

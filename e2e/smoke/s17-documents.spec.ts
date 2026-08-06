@@ -92,7 +92,48 @@ async function ensureDocsTenant(
   return tenant.id;
 }
 
-test.describe("s17 /documents — released deliverables for the client", () => {
+test.describe("s17 /results — released deliverables for the client", () => {
+  test("the old /documents path still lands on results (UX finding 18)", async ({
+    page,
+    request,
+  }) => {
+    // /documents moved to /results, and the redirect is PERMANENT and stays.
+    // Release notification emails carrying the old path are already sitting in
+    // people's inboxes; a 404 on a link we sent them is worse than an extra
+    // route. This asserts the promise that redirect makes.
+    test.slow();
+    const token = await adminApiToken(request);
+    const auth = { Authorization: `Bearer ${token}` };
+    const stamp = Date.now();
+    const domain = `docs-redirect-${stamp}.example`;
+    const created = await request.post(`${API_BASE}/admin/clients`, {
+      headers: auth,
+      data: { legal_name: `Documents Redirect QA ${stamp}` },
+    });
+    expect(created.ok(), `create tenant (${created.status()})`).toBeTruthy();
+    const tenant = (await created.json()) as ClientRow;
+    const approved = await request.post(
+      `${API_BASE}/admin/clients/${tenant.id}/domains`,
+      { headers: auth, data: { domain } },
+    );
+    expect(
+      approved.status() === 201 || approved.status() === 409,
+      `approve ${domain}: ${approved.status()}`,
+    ).toBeTruthy();
+
+    await register(page, "Ronnie Redirect", uniqueEmail(domain), PASSWORD);
+    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({
+      timeout: 20000,
+    });
+
+    await page.goto("/documents");
+    await expect(page).toHaveURL(/\/results$/, { timeout: 30000 });
+    // And it is the real page, not a bare redirect target.
+    await expect(page.getByText("No results yet")).toBeVisible({
+      timeout: 30000,
+    });
+  });
+
   test("empty state renders before any release (no dead ends, §12)", async ({
     page,
     request,
@@ -104,7 +145,7 @@ test.describe("s17 /documents — released deliverables for the client", () => {
     // accumulates a released row on every prior run (the next test releases v1),
     // so the empty state can only be proven in a tenant that has never released
     // anything. Create a throwaway tenant with its own approved domain and
-    // register a fresh client into it: its /documents is empty by construction.
+    // register a fresh client into it: its /results is empty by construction.
     const token = await adminApiToken(request);
     const auth = { Authorization: `Bearer ${token}` };
     const stamp = Date.now();
@@ -128,20 +169,20 @@ test.describe("s17 /documents — released deliverables for the client", () => {
     ).toBeTruthy();
 
     // A real client of the empty tenant self-registers (auto signed-in) and
-    // opens /documents — no deliverable has ever been released here.
+    // opens /results — no deliverable has ever been released here.
     await register(page, "Ellie Empty", uniqueEmail(emptyDomain), PASSWORD);
     await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({
       timeout: 20000,
     });
-    await page.goto("/documents");
+    await page.goto("/results");
 
-    // The no-dead-ends empty state renders (DocumentsList EmptyState), not a
+    // The no-dead-ends empty state renders (ResultsList EmptyState), not a
     // bare blank, with its onward-guidance copy.
     await expect(
-      page.getByRole("heading", { name: "No documents yet" }),
+      page.getByRole("heading", { name: "No results yet" }),
     ).toBeVisible({ timeout: 20000 });
     await expect(
-      page.getByText(/When your SHIELD analyst releases a report/),
+      page.getByText(/When your SHIELD analyst releases an assessment/),
     ).toBeVisible();
   });
 
@@ -205,15 +246,15 @@ test.describe("s17 /documents — released deliverables for the client", () => {
     const v2 = (await fin2.json()) as DeliverableRow;
 
     // A real client of this tenant self-registers (auto signed-in) and opens
-    // /documents.
+    // /results.
     await register(page, "Dana Docs", uniqueEmail(TENANT_DOMAIN), PASSWORD);
     await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({
       timeout: 20000,
     });
-    await page.goto("/documents");
+    await page.goto("/results");
 
-    // Client nav gained the Documents entry.
-    await expect(page.getByRole("link", { name: "Documents" })).toBeVisible({
+    // Client nav gained the Results entry (was "Documents" before UX 18).
+    await expect(page.getByRole("link", { name: "Results" })).toBeVisible({
       timeout: 20000,
     });
 
@@ -275,13 +316,18 @@ test.describe("s17 /documents — released deliverables for the client", () => {
     ).toBeTruthy();
     const deliverable = seeded as DeliverableRow;
 
-    // The REAL seeded client of the Atlas tenant signs in and opens /documents.
+    // The REAL seeded client of the Atlas tenant signs in and opens /results.
     await signIn(page, CLIENT_EMAIL, CLIENT_PASSWORD);
-    await page.goto("/documents");
+    await page.goto("/results");
     const table = page.getByRole("table");
     await expect(table).toBeVisible({ timeout: 20000 });
+    // .first(): deliverable titles are NOT unique on a shared database. s29
+    // mints a service called "E2E Software Portfolio" on every run, so a
+    // long-lived local DB accumulates several rows with this exact title and a
+    // bare filter() trips strict mode. The assertion here is "the released
+    // deliverable is listed", which the first match answers honestly.
     await expect(
-      page.getByRole("row").filter({ hasText: deliverable.title }),
+      page.getByRole("row").filter({ hasText: deliverable.title }).first(),
     ).toBeVisible();
 
     // The seeded deliverable's bytes are in the SAME store the API reads: the

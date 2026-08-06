@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { HomeDashboard } from "./HomeDashboard";
 
-import type { ClientDeliverable } from "@/components/documents/DocumentsList";
+import type { ClientDeliverable } from "@/components/results/ResultsList";
 import type { AssessmentResponse } from "@/lib/intake/types";
 
 /**

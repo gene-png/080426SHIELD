@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import type { ClientDeliverableListResponse } from "@/components/documents/DocumentsList";
+import type { ClientDeliverableListResponse } from "@/components/results/ResultsList";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
 import type { ValueSummary } from "@/components/home/ValueLoopCard";
 import { PublicFooter } from "@/components/site/PublicFooter";

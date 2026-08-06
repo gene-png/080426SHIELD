@@ -73,7 +73,7 @@ export function DashShell({
         >
           <div>
             <Link
-              href="/documents"
+              href="/results"
               style={{ color: C.accent2, fontSize: 12, textDecoration: "none" }}
             >
               ← Back to documents
