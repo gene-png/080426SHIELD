@@ -8,7 +8,7 @@ import { signIn } from "../helpers/auth";
  * exactly the dead end Navigation_Spec §12 forbids.
  *
  * Every card is now a link whose destination mirrors that card's own phase:
- *   "Report ready"  → that service's dashboard (or /documents when the service
+ *   "Report ready"  → that service's dashboard (or /results when the service
  *                     kind has no dashboard, e.g. NIST CSF)
  *   "In progress"   → the self-assessment questionnaire to resume
  *   anything else   → /assessments
@@ -59,8 +59,8 @@ test("client home: every service card is a link, routed by its own phase", async
       sawReportReady = true;
       expect(
         href,
-        `a "Report ready" card must open a dashboard or the documents list (got ${href})`,
-      ).toMatch(/^\/(dashboards\/(attack|zt|tech-debt)\/|documents)/);
+        `a "Report ready" card must open a dashboard or the results list (got ${href})`,
+      ).toMatch(/^\/(dashboards\/(attack|zt|tech-debt)\/|results)/);
     } else if (text.includes("in progress")) {
       sawInProgress = true;
       expect(

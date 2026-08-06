@@ -20,7 +20,7 @@ import type { JSX } from "react";
  * (apps/api/app/schemas/clients.py): only RELEASED deliverables reach them.
  */
 
-/** One released deliverable as the client sees it on /documents. */
+/** One released deliverable as the client sees it on /results. */
 export interface ClientDeliverable {
   id: string;
   service_id: string;
@@ -94,7 +94,7 @@ function downloadsFor(d: ClientDeliverable): DownloadLink[] {
   return links;
 }
 
-export function DocumentsList({
+export function ResultsList({
   items,
 }: {
   items: ClientDeliverable[];
@@ -183,14 +183,14 @@ export function DocumentsList({
 
   return (
     <DataTable
-      caption="Reports and workbooks released to your organization."
+      caption="Everything released to your organization: dashboards, reports and workbooks, by service."
       columns={columns}
       rows={items}
       rowKey={(d) => d.id}
       emptyState={
         <EmptyState
-          title="No documents yet"
-          description="When your SHIELD analyst releases a report, it will appear here to view and download."
+          title="No results yet"
+          description="When your SHIELD analyst releases an assessment, its dashboard and downloads appear here."
         />
       }
     />

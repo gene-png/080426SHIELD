@@ -26,7 +26,7 @@ export default async function AttackDashboardPage({
   }
   const token = session.accessToken;
 
-  // Resolve the tenant exactly like /documents: client users are pinned; a
+  // Resolve the tenant exactly like /results: client users are pinned; a
   // platform admin uses the active-client cookie (forwarded as X-Client-Id).
   // Issue 4: admins reaching this from a deliverable card may have no active
   // client cookie yet; the resolver falls back to the service's owning tenant.
@@ -69,7 +69,7 @@ export default async function AttackDashboardPage({
             : "We couldn't load this dashboard."}
         </p>
         <Link
-          href="/documents"
+          href="/results"
           className="text-sm font-medium text-brand-600 hover:text-brand-700"
         >
           ← Back to documents

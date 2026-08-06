@@ -10,7 +10,7 @@ import {
   type StatusTone,
 } from "@shield/design-system";
 
-import type { ClientDeliverable } from "@/components/documents/DocumentsList";
+import type { ClientDeliverable } from "@/components/results/ResultsList";
 import {
   ValueLoopCard,
   type ValueSummary,
@@ -98,7 +98,7 @@ function phaseFor(
  * destination always matches the status the client just read (Navigation_Spec
  * §12: no card is a dead end, and no link lands somewhere unrelated):
  *
- *   report ready  → that service's dashboard, or /documents if it has none
+ *   report ready  → that service's dashboard, or /results if it has none
  *   in progress   → the self-assessment questionnaire to resume
  *   anything else → /assessments, the list this service came from
  */
@@ -107,7 +107,7 @@ function serviceHref(
   hasReleasedDeliverable: boolean,
 ): string {
   if (hasReleasedDeliverable) {
-    return dashboardPathFor(e.service_type, e.service_id) ?? "/documents";
+    return dashboardPathFor(e.service_type, e.service_id) ?? "/results";
   }
   if (
     ASSESSMENT_SERVICE_TYPES.includes(e.service_type) &&
@@ -169,7 +169,7 @@ export function HomeDashboard({
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Link
-              href="/documents"
+              href="/results"
               className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600"
             >
               View reports

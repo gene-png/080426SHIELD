@@ -97,7 +97,9 @@ def send_release_notification(*, to: str, service_label: str, title: str, versio
     surface so the recipient can review and download it.
     """
     base = get_settings().web_base_url.rstrip("/")
-    documents_url = f"{base}/documents"
+    # UX finding 18: results live in one place now. /documents still
+    # permanently redirects here, so older emails keep working.
+    documents_url = f"{base}/results"
     subject = f"Your {service_label} deliverable is ready"
     body = (
         f"A new {service_label} deliverable has been released to your team on "

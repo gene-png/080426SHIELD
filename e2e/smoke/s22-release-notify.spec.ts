@@ -112,7 +112,7 @@ async function releaseCsfDeliverable(
 }
 
 test.describe("s22 release notification — client mail lands in MailHog (§29)", () => {
-  test("releasing a CSF deliverable emails the tenant client with the /documents link", async ({
+  test("releasing a CSF deliverable emails the tenant client with the /results link", async ({
     request,
   }) => {
     test.slow();
@@ -155,13 +155,13 @@ test.describe("s22 release notification — client mail lands in MailHog (§29)"
       expectedSubject,
     );
 
-    // The body carries the deliverable title + a link to the client /documents
+    // The body carries the deliverable title + a link to the client /results
     // surface (collapse MailHog quoted-printable soft line breaks first).
     const body = message!.Content.Body.replace(/=\r?\n/g, "").replace(
       /=3D/g,
       "=",
     );
-    expect(body, "body links to /documents").toContain("/documents");
+    expect(body, "body links to /results").toContain("/results");
     expect(body, "body names the released deliverable").toContain(
       deliverable.title,
     );

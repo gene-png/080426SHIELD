@@ -142,9 +142,9 @@ test.describe("demo-journey — hosted-demo post-reset story (SHIELD_DEMO_SMOKE=
       page.getByRole("link", { name: "View reports" }),
     ).toBeVisible();
 
-    // /documents lists the seeded deliverable, and the client's own download
+    // /results lists the seeded deliverable, and the client's own download
     // link streams 200 with non-zero bytes (seed → MinIO storage parity).
-    await page.goto("/documents");
+    await page.goto("/results");
     await expect(page.getByRole("table")).toBeVisible({ timeout: 20000 });
     await expect(
       page.getByRole("row").filter({ hasText: deliverable.title }),

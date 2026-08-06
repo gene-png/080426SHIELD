@@ -6,7 +6,7 @@ import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 /**
  * D-035: once the admin generates and finalizes (exports) the Risk Register, the
  * client can open its dashboard (5x5 matrix + tier mix + full register). The
- * register is client-level, reached via a link on /documents.
+ * register is client-level, reached via a link on /results.
  */
 
 test("client views the finalized Risk Register dashboard", async ({
@@ -67,8 +67,8 @@ test("client views the finalized Risk Register dashboard", async ({
 
   await signIn(page, CLIENT_EMAIL, CLIENT_PASSWORD);
 
-  // The Risk Register link surfaces on /documents once finalized.
-  await page.goto("/documents");
+  // The Risk Register link surfaces on /results once finalized.
+  await page.goto("/results");
   await expect(page.getByText("View Risk Register dashboard →")).toBeVisible();
   await page.getByText("View Risk Register dashboard →").click();
   await page.waitForURL((url) => url.pathname.includes("/dashboards/risk"));

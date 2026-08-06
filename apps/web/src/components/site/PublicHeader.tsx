@@ -40,10 +40,10 @@ export async function PublicHeader(): Promise<JSX.Element> {
               </Link>
               {role === "client" ? (
                 <Link
-                  href="/documents"
+                  href="/results"
                   className="rounded-md px-3 py-2 font-medium text-ink-secondary hover:text-ink-primary"
                 >
-                  Documents
+                  Results
                 </Link>
               ) : null}
               <Link
