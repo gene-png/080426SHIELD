@@ -78,6 +78,85 @@ test("client home: every service card is a link, routed by its own phase", async
   );
 });
 
+/**
+ * C3: the grid is grouped by who owns the next move — Action required / In
+ * progress / Results available — and a service belongs to EXACTLY ONE group.
+ *
+ * The cross-bucket duplicate check compares whole-card text, not titles, and
+ * tolerates repeats WITHIN a bucket on purpose: titles are not unique on the
+ * shared e2e database (s29 mints "E2E Software Portfolio" every run), so two
+ * same-named services in the same phase are expected and legitimate. Landing in
+ * two different buckets is the defect worth catching.
+ */
+test("client home: services are grouped by task status, one bucket each", async ({
+  page,
+}) => {
+  await signIn(page, CLIENT_EMAIL, CLIENT_PASSWORD);
+  await page.goto("/home");
+
+  const heading = page.getByRole("heading", { name: "Your services" });
+  await expect(heading).toBeVisible();
+  const services = page.locator("section", { has: heading });
+
+  const buckets = services.locator("section[aria-labelledby^='bucket-']");
+  const bucketCount = await buckets.count();
+  expect(
+    bucketCount,
+    "the seeded tenant should fill at least one task-status bucket",
+  ).toBeGreaterThan(0);
+
+  // Whole-card text -> the bucket index it was found in.
+  const placed = new Map<string, number>();
+  let carded = 0;
+
+  for (let i = 0; i < bucketCount; i++) {
+    const group = buckets.nth(i);
+    // textContent, not innerText: the heading is styled `uppercase`, and
+    // innerText returns the CSS-transformed "ACTION REQUIRED". The DOM text is
+    // what the accessible name is computed from, so it is also what a screen
+    // reader announces — assert against that rather than against the styling.
+    const title = (
+      (await group.getByRole("heading").first().textContent()) ?? ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(
+      title,
+      "a bucket heading must name a task status and carry its count",
+    ).toMatch(/^(Action required|In progress|Results available) \(\d+\)$/);
+
+    // The count in the heading must describe what the bucket actually lists —
+    // service cards plus the unread-messages row, which needs the client too
+    // but has no service card of its own.
+    const declared = Number(/\((\d+)\)/.exec(title)?.[1]);
+    const cards = group.locator("li");
+    const cardCount = await cards.count();
+    const messageRows = await group
+      .getByRole("link", { name: /Open messages/ })
+      .count();
+    expect(
+      declared,
+      `"${title}" must count what it lists (${cardCount} cards + ${messageRows} message rows)`,
+    ).toBe(cardCount + messageRows);
+
+    carded += cardCount;
+    for (let j = 0; j < cardCount; j++) {
+      const text = (await cards.nth(j).innerText()).trim();
+      const already = placed.get(text);
+      expect(
+        already === undefined || already === i,
+        `a service must sit in exactly one bucket, but this one is in ${already} and ${i}:\n${text}`,
+      ).toBe(true);
+      placed.set(text, i);
+    }
+  }
+
+  // Nothing left behind in an ungrouped flat grid.
+  expect(carded, "every service card must live inside a bucket").toBe(
+    await services.locator("li").count(),
+  );
+});
+
 test("client home: a released service card actually opens its dashboard", async ({
   page,
 }) => {
