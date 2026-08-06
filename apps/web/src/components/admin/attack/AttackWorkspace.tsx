@@ -46,6 +46,8 @@ import { AttackMatrix } from "./AttackMatrix";
 import { AttackTechniquePanel } from "./AttackTechniquePanel";
 
 import type { JSX } from "react";
+import { ProgressStages } from "../ProgressStages";
+import { useServiceStages } from "@/lib/stages/client";
 
 export interface AttackWorkspaceProps {
   serviceId: string;
@@ -72,6 +74,12 @@ export function AttackWorkspace({
   const [catalog, setCatalog] = React.useState<AttackCatalog | null>(null);
   const [assessment, setAssessment] = React.useState<AttackAssessment | null>(
     null,
+  );
+  // Derived six-stage progress. Re-reads when this workspace's own
+  // state moves, since the derivation is computed from that same state.
+  const { phase: stagesPhase, stages: serviceStages } = useServiceStages(
+    serviceId,
+    `${assessment?.status ?? ""}:${assessment?.version ?? ""}`,
   );
   const [heatmap, setHeatmap] = React.useState<AttackHeatmap | null>(null);
   const [deliverable, setDeliverable] =
@@ -368,6 +376,14 @@ export function AttackWorkspace({
           ) : null}
         </div>
       </header>
+
+      {stagesPhase === "ready" && serviceStages ? (
+        <ProgressStages
+          stages={serviceStages.stages}
+          kind={serviceStages.kind}
+          version={serviceStages.version}
+        />
+      ) : null}
 
       {loadError ? (
         <Card>

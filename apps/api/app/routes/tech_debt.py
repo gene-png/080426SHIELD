@@ -41,11 +41,11 @@ from app.schemas.tech_debt import (
     CapabilityListResponse,
     ConsolidationPlanSummary,
     DeliverableResponse,
-    ExcludedRowResponse,
     ExtractRequest,
     IncludeExcludedRowRequest,
     OverlapAnalysisResponse,
     OverlapBucketResponse,
+    SecurityClassificationOverride,
     ServiceCreateRequest,
     ServiceResponse,
     TopCostItemResponse,
@@ -159,28 +159,14 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
         .scalars()
         .all()
     )
-    return CapabilityListResponse(
-        id=cap_list.id,
-        service_id=cap_list.service_id,
-        version=cap_list.version,
-        status=cap_list.status,
-        items=[CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items],
-        approved_at=cap_list.approved_at,
-        approved_by=cap_list.approved_by,
-        # This serializer builds the response field-by-field, so anything added
-        # to the model MUST be added here too or it silently reads as null —
-        # the same shape of bug as the released_at/released_to_client_at
-        # mismatch that made the release control look broken.
-        source_rows_total=cap_list.source_rows_total,
-        excluded_rows=[
-            ExcludedRowResponse(
-                index=int(r.get("index", -1)),
-                summary=str(r.get("summary", "")),
-                confirmed=bool(r.get("confirmed", False)),
-            )
-            for r in (cap_list.excluded_rows or [])
-        ],
-    )
+    # Built FROM THE MODEL, not field-by-field. The hand-written version silently
+    # dropped a newly-added column twice — `source_rows_total`, then `confirmed`
+    # — each time reading as null in the UI with nothing failing. A new column on
+    # CapabilityList now flows through automatically; only `items` is filled by
+    # hand, because it is a separate query rather than an attribute.
+    resp = CapabilityListResponse.model_validate(cap_list, from_attributes=True)
+    resp.items = [CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items]
+    return resp
 
 
 @router.post(
@@ -287,6 +273,10 @@ def extract_capability_list(
                 notes=item.notes,
                 confidence_pct=item.confidence_pct,
                 source_artifact_id=artifact.id,
+                # Prompt v2 classifies rather than filters. None stays None: an
+                # unclassified row is not a negative one.
+                security_related=item.security_related,
+                security_functions=list(item.security_functions),
             )
         )
 
@@ -468,6 +458,107 @@ def confirm_excluded_row(
         target_id=cap_list.id,
         actor_user_id=user.id,
         details={"row_index": row_index},
+    )
+    db.commit()
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
+
+
+def _editable_item_or_404(
+    db: Session, item_id: uuid.UUID, client: Client
+) -> tuple[CapabilityItem, CapabilityList]:
+    """Fetch an item in this tenant whose list is still open to edits."""
+    item = db.get(CapabilityItem, item_id)
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capability item not found.",
+        )
+    cap_list = _editable_list_or_404(db, item.capability_list_id, client)
+    return item, cap_list
+
+
+@router.post(
+    "/capability-items/{item_id}/security-classification/confirm",
+    response_model=CapabilityListResponse,
+    summary="Agree a capability is not security-related (admin)",
+)
+def confirm_security_classification(
+    item_id: uuid.UUID,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Sign off on a NEGATIVE security classification.
+
+    Until this runs, the model's "not security-related" call is provisional and
+    the row stays in the ATT&CK subset (app.tech_debt.security_scope). This is
+    the only thing that takes it out, and it takes a human to do it — a wrongly
+    dropped security tool becomes uncitable in the mapping, so its absence would
+    read as an assessed gap rather than a missing input.
+
+    Only meaningful on a negative. Confirming a row the model called
+    security-related would record agreement with a classification that has no
+    effect, so it is refused rather than silently stored.
+    """
+    item, cap_list = _editable_item_or_404(db, item_id, client)
+    if item.security_related is not False:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "not_a_negative_classification",
+                "message": (
+                    "Only a capability classified as not security-related needs "
+                    "sign-off. This one is not."
+                ),
+            },
+        )
+
+    item.security_class_confirmed = True
+    audit(
+        db,
+        action="capability_item.security_classification_confirmed",
+        target_type="capability_item",
+        target_id=item.id,
+        actor_user_id=user.id,
+        details={"name": item.name},
+    )
+    db.commit()
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
+
+
+@router.post(
+    "/capability-items/{item_id}/security-classification/override",
+    response_model=CapabilityListResponse,
+    summary="Overturn a classification: this capability IS security-related (admin)",
+)
+def override_security_classification(
+    item_id: uuid.UUID,
+    body: SecurityClassificationOverride,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """Record that the model got the security call wrong.
+
+    The consultant supplies which of prevent / detect / respond it serves; the
+    model is not re-asked. Clearing `security_class_confirmed` matters on the
+    path back — a row confirmed non-security and later overturned must not keep
+    a stale sign-off that would silently re-exclude it if it were reclassified.
+    """
+    item, cap_list = _editable_item_or_404(db, item_id, client)
+
+    item.security_related = True
+    item.security_functions = [f.value for f in body.security_functions]
+    item.security_class_confirmed = False
+    audit(
+        db,
+        action="capability_item.security_classification_overridden",
+        target_type="capability_item",
+        target_id=item.id,
+        actor_user_id=user.id,
+        details={"name": item.name, "security_functions": item.security_functions},
     )
     db.commit()
     db.refresh(cap_list)

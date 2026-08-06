@@ -54,7 +54,7 @@ from app.models.attack_assessment import (
     AttackAssessmentStatus,
     AttackCoverage,
 )
-from app.models.capability import CapabilityItem, CapabilityList
+from app.models.capability import CapabilityItem, CapabilityList, CapabilityListStatus
 from app.models.client import Client
 from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
@@ -79,6 +79,7 @@ from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
+from app.tech_debt.security_scope import security_scope_filter
 from app.tenant import (
     require_attack_assessment_in_tenant,
     require_service_in_tenant,
@@ -446,10 +447,26 @@ def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
 
 
 def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
-    """Tool names from the client's Tech Debt capability list(s), if any.
+    """Security tool names from the client's Tech Debt capability list(s).
 
     ATT&CK maps the client's security tooling to techniques; the canonical
-    source is the Tech Debt approved capability list (Work Order D2).
+    source is the Tech Debt capability list (Work Order D2).
+
+    Two filters, both load-bearing:
+
+    * **Security scope.** Tech Debt covers the whole software portfolio since
+      migration 0038, so the raw list now includes payroll and CRM. Only rows in
+      security scope are offered here — and `security_scope_filter` deliberately
+      keeps rows whose non-security call is unconfirmed, because this list is a
+      hard allow-list on what the model may cite: a tool missing from it cannot
+      be named, and the technique it covers reads as uncovered.
+    * **List status.** Previously absent entirely, so a DISCARDED list's rows
+      stayed citable forever — a consultant throwing a draft away did not stop
+      its tools being offered as evidence. Only DISCARDED is excluded here:
+      DRAFT still counts, because mapping ATT&CK before approving the tech-debt
+      list is a normal order of work. Superseded versions also still count,
+      which is arguably wrong but is pre-existing behaviour and not this
+      change's business.
     """
     names = (
         db.execute(
@@ -459,6 +476,8 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
             .where(
                 Service.client_id == client_id,
                 Service.kind == ServiceKind.TECH_DEBT,
+                CapabilityList.status != CapabilityListStatus.DISCARDED,
+                security_scope_filter(),
             )
         )
         .scalars()

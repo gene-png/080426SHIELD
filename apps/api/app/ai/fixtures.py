@@ -236,6 +236,10 @@ _DEMO_TECH_DEBT_ITEMS: list[dict[str, Any]] = [
 _TECH_DEBT_NAME_KEYS = ("name", "product", "tool", "capability", "vendor_product", "item")
 
 
+# Deterministic per-row function so offline output is stable across runs.
+_TECH_DEBT_FUNCTION_CYCLE = ("prevent", "detect", "respond")
+
+
 def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
     rows = payload.get("rows")
     if isinstance(rows, list) and rows:
@@ -249,17 +253,34 @@ def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
                     name = value.strip()
                     break
             vendor = row.get("vendor")
+            # Prompt v2 classifies every row instead of dropping the
+            # non-security ones. Cycle the call so offline mode exercises BOTH
+            # branches — otherwise the sign-off queue could never appear in a
+            # demo or an e2e run, and an unreachable review surface is an
+            # untested one (the excluded-rows queue had exactly this problem:
+            # the fixture echoed every row, so no exclusion could ever exist).
+            security_related = i % 4 != 3
             items.append(
                 {
                     "name": name or f"Capability {i + 1}",
                     "vendor": vendor if isinstance(vendor, str) and vendor.strip() else None,
                     "category": None,
-                    "function": "Security capability (fixture-mode draft).",
+                    "function": (
+                        "Security capability (fixture-mode draft)."
+                        if security_related
+                        else "Business capability (fixture-mode draft)."
+                    ),
                     "annual_cost_usd": None,
                     "license_count": None,
                     "notes": "Drafted offline in fixture mode; confirm before approving.",
                     "confidence_pct": 60 + (i % 4) * 10,  # 60..90
                     "source_row_index": i,
+                    "security_related": security_related,
+                    "security_functions": (
+                        [_TECH_DEBT_FUNCTION_CYCLE[i % len(_TECH_DEBT_FUNCTION_CYCLE)]]
+                        if security_related
+                        else []
+                    ),
                 }
             )
     else:

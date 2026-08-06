@@ -30,6 +30,7 @@ from app.routes import (
     notifications,
     oidc,
     risk,
+    service_stages,
     tech_debt,
     zt,
 )
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(risk.router)
     app.include_router(clients.router)
     app.include_router(ai_preview.router)
+    app.include_router(service_stages.router)
 
     return app
 

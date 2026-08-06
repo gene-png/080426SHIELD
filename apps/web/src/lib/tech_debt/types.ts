@@ -1,3 +1,5 @@
+export type SecurityFunction = "prevent" | "detect" | "respond";
+
 /** Wire types mirroring apps/api/app/schemas/tech_debt.py. */
 
 export type ServiceKind =
@@ -39,6 +41,15 @@ export interface CapabilityItem {
   license_count: number | null;
   notes: string | null;
   confidence_pct: number | null;
+  /**
+   * Security classification (migration 0038). Tri-state: null means nobody has
+   * classified this row, which is NOT the same as "not security-related" — an
+   * unclassified row stays in the ATT&CK subset.
+   */
+  security_related?: boolean | null;
+  security_functions?: SecurityFunction[];
+  /** A consultant has agreed with a NEGATIVE classification. */
+  security_class_confirmed?: boolean;
   source_artifact_id: string | null;
   disposition: CapabilityDisposition | null;
   disposition_rationale: string | null;
