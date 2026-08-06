@@ -23,11 +23,20 @@ would light up `analyze` on a brand-new draft because some earlier, discarded
 draft was analysed months ago — a stale-evidence bug of exactly the shape that
 bit Sprint 9.
 
-Both signals are therefore anchored to the version's own ``created_at``: only
-evidence produced at or after this version came into existence counts for it.
-Evidence from v1 is strictly older than v2's creation, so it cannot leak
-forward. This needs no migration and no new column — the timestamps that decide
-it are already there.
+Evidence is therefore anchored to the version, two different ways, because the
+services do not all build their versions in the same order:
+
+* **Zero Trust, CSF, ATT&CK** create the assessment and THEN run AI on it, so a
+  run belonging to this version is newer than it. ``created_at`` is the anchor:
+  evidence from v1 is strictly older than v2's creation and cannot leak forward.
+* **Tech Debt is inverted.** The extraction call runs FIRST and the capability
+  list is built from its output, so the ``llm_calls`` row predates the list it
+  produced by milliseconds. A timestamp anchor reports every extraction as
+  belonging to no version at all — which the e2e spec caught. Tech Debt uses the
+  list's own extraction provenance instead, which is version-scoped by
+  construction and needs no clock comparison.
+
+Neither needs a migration or a new column.
 """
 
 from __future__ import annotations
@@ -92,6 +101,14 @@ def analysis_ran_for_version(
     older than this version's creation and is not counted. A version with no
     ``created_at`` (shouldn't happen — TimestampMixin sets it) claims nothing
     rather than claiming everything.
+
+    ONLY VALID WHERE THE RUN FOLLOWS THE VERSION. Zero Trust, CSF and ATT&CK all
+    work that way: an assessment is created, then Run-AI scores it. Tech Debt is
+    inverted — the extraction call runs FIRST and the capability list is created
+    from its output, so the run's ``requested_at`` precedes the list's
+    ``created_at`` by milliseconds and this function would report every
+    extraction as belonging to no version at all. Use
+    :func:`extraction_produced_version` there instead; the caller picks.
     """
     purposes = ANALYSIS_PURPOSES.get(kind)
     if not purposes or version_created_at is None:
@@ -103,6 +120,21 @@ def analysis_ran_for_version(
         LLMCall.requested_at >= version_created_at,
     )
     return db.execute(stmt.limit(1)).first() is not None
+
+
+def extraction_produced_version(cap_list) -> bool:
+    """True when THIS capability list was cut by an AI extraction.
+
+    Version-scoped by construction rather than by timestamp: ``source_rows_total``
+    is written by the extraction that created the list, so it cannot be inherited
+    from an earlier draft the way an ``llm_calls`` row can. That side-steps the
+    ordering problem entirely — no clock comparison, nothing to get wrong.
+
+    NULL on pre-0036 lists, which read as un-analysed rather than analysed. The
+    conservative direction: a bar that under-claims is a smaller lie than one
+    that reports analysis nobody ran.
+    """
+    return getattr(cap_list, "source_rows_total", None) is not None
 
 
 def deliverable_exists_for_version(
@@ -132,16 +164,23 @@ def derive_stages(
     client_input_received: bool,
     analyzed: bool,
     generated: bool,
+    version_exists: bool = True,
 ) -> list[Stage]:
     """Map stored status + derived evidence onto the six stages.
 
     Pure: every input is already resolved, so the whole table is testable
     without a database.
+
+    ``version_exists`` is False only for a service nothing has happened to yet.
+    It matters because `prepare` for Tech Debt and ATT&CK is otherwise
+    unconditional — those services have no client-input step, so the stage is
+    satisfied by the version existing. With no version at all, an empty Tech
+    Debt service claimed its inventory was already uploaded.
     """
     released = status == "released"
     approved = status in ("approved", "released")
 
-    prepared = True if kind not in _CLIENT_INPUT_KINDS else client_input_received
+    prepared = version_exists and (kind not in _CLIENT_INPUT_KINDS or client_input_received)
     # `review` is the consultant working the draft. There is no stored marker
     # for "I have looked at this", so it is treated as reached once there is
     # something to review and not yet signed off by approval.

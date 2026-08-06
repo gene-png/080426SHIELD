@@ -34,6 +34,7 @@ from app.services.stages import (
     analysis_ran_for_version,
     deliverable_exists_for_version,
     derive_stages,
+    extraction_produced_version,
 )
 
 router = APIRouter(prefix="/services", tags=["services"])
@@ -111,6 +112,7 @@ def service_stages(
             client_input_received=False,
             analyzed=False,
             generated=False,
+            version_exists=False,
         )
         return ServiceStagesResponse(
             service_id=service_id,
@@ -120,6 +122,20 @@ def service_stages(
         )
 
     created_at = row.created_at
+    # Tech Debt inverts the usual order: the extraction call runs first and the
+    # capability list is created from its output, so the run predates the list
+    # it produced and a timestamp anchor would never match. The list carries its
+    # own extraction provenance instead — version-scoped by construction.
+    if svc.kind == ServiceKind.TECH_DEBT:
+        analyzed = extraction_produced_version(row)
+    else:
+        analyzed = analysis_ran_for_version(
+            db,
+            service_id=service_id,
+            kind=svc.kind,
+            version_created_at=created_at,
+        )
+
     return ServiceStagesResponse(
         service_id=service_id,
         kind=svc.kind,
@@ -129,12 +145,7 @@ def service_stages(
                 kind=svc.kind,
                 status=str(row.status),
                 client_input_received=str(row.status) in _CLIENT_SUBMITTED,
-                analyzed=analysis_ran_for_version(
-                    db,
-                    service_id=service_id,
-                    kind=svc.kind,
-                    version_created_at=created_at,
-                ),
+                analyzed=analyzed,
                 generated=deliverable_exists_for_version(
                     db,
                     service_id=service_id,
