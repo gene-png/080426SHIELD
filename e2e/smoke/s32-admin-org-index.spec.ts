@@ -105,3 +105,36 @@ test("scoped queue pages for two different orgs show different organizations", a
     "two different orgs must not render the same organization header",
   ).not.toBe(secondHeading);
 });
+
+/**
+ * IA appendix: "Filters by client, service, status, and age."
+ *
+ * The predicates are unit-tested in `lib/admin/filters.test.ts`; this proves the
+ * wiring — that typing in the box actually narrows the rendered list, and that
+ * filtering to nothing says so instead of looking like an empty queue.
+ */
+test("admin queue: the organization filter narrows the list and explains an empty result", async ({
+  page,
+}) => {
+  await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+  await page.goto("/admin/queue");
+
+  const orgLinks = page.locator('a[href^="/admin/queue/"]');
+  await expect(orgLinks.first()).toBeVisible({ timeout: 30_000 });
+  const total = await orgLinks.count();
+
+  // Filter to a string no organization can contain.
+  const filter = page.getByPlaceholder("Filter by organization name…");
+  await filter.fill("zzz-no-such-organization-zzz");
+  await expect(orgLinks).toHaveCount(0);
+
+  // An empty FILTERED list must not read as an empty queue.
+  await expect(
+    page.getByText("No organizations match these filters"),
+    "a filtered-to-nothing list must say the filters did it",
+  ).toBeVisible();
+
+  // Clearing restores every row.
+  await filter.fill("");
+  await expect(orgLinks).toHaveCount(total);
+});

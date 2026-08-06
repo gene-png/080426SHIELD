@@ -13,6 +13,14 @@ import {
 } from "@shield/design-system";
 
 import { fetchIntakeQueue, fulfillServiceRequest } from "@/lib/admin/client";
+import {
+  AGE_OPTIONS,
+  DEFAULT_REQUEST_FILTERS,
+  REQUEST_STATUS_OPTIONS,
+  activeFilterLabels,
+  filterServiceRequests,
+  type RequestFilters,
+} from "@/lib/admin/filters";
 import { useServiceStages } from "@/lib/stages/client";
 import { BulkPublishBar } from "./BulkPublishBar";
 import { ProgressStages } from "./ProgressStages";
@@ -25,6 +33,7 @@ import {
   CSF_TARGET_TIERS,
   SERVICE_LABELS,
   ZT_TARGET_STAGES,
+  type ServiceType,
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
@@ -89,6 +98,110 @@ function serviceState(s: ServiceRequestRow): string {
   // The one genuine state the stage model has no room for: nothing has been
   // created yet, so there is no version for a stage to describe.
   return "No workspace yet";
+}
+
+const FILTER_SELECT_CLASS =
+  "rounded-md border border-border bg-surface-card px-2 py-1.5 text-sm text-ink-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500";
+
+/**
+ * Service / status / age filters over the requests already on the page (IA
+ * appendix). Client-side: the queue payload is already loaded, so filtering
+ * costs no round trip and cannot go stale against what is rendered.
+ */
+function RequestFilterBar({
+  filters,
+  onChange,
+  shown,
+  total,
+}: {
+  filters: RequestFilters;
+  onChange: (next: RequestFilters) => void;
+  shown: number;
+  total: number;
+}): JSX.Element {
+  const dirty =
+    filters.service !== "all" ||
+    filters.status !== "all" ||
+    filters.age !== "all";
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-3 py-2">
+      <label className="flex items-center gap-2 text-sm text-ink-secondary">
+        Service
+        <select
+          value={filters.service}
+          onChange={(e) => onChange({ ...filters, service: e.target.value })}
+          className={FILTER_SELECT_CLASS}
+        >
+          <option value="all">All</option>
+          {(Object.keys(SERVICE_LABELS) as ServiceType[]).map((t) => (
+            <option key={t} value={t}>
+              {SERVICE_LABELS[t]}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex items-center gap-2 text-sm text-ink-secondary">
+        Status
+        <select
+          value={filters.status}
+          onChange={(e) =>
+            onChange({
+              ...filters,
+              status: e.target.value as RequestFilters["status"],
+            })
+          }
+          className={FILTER_SELECT_CLASS}
+        >
+          <option value="all">All</option>
+          {REQUEST_STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex items-center gap-2 text-sm text-ink-secondary">
+        Age
+        <select
+          value={filters.age}
+          onChange={(e) =>
+            onChange({
+              ...filters,
+              age: e.target.value as RequestFilters["age"],
+            })
+          }
+          className={FILTER_SELECT_CLASS}
+        >
+          <option value="all">Any</option>
+          {AGE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {dirty ? (
+        <>
+          {/* Always say how much is hidden. A filtered count with no total is
+              how an admin concludes there is less work than there is. */}
+          <span className="text-sm text-ink-secondary">
+            Showing {shown} of {total}
+          </span>
+          <button
+            type="button"
+            onClick={() => onChange(DEFAULT_REQUEST_FILTERS)}
+            className="text-sm font-semibold text-brand-600 hover:text-brand-500"
+          >
+            Clear filters
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 function ReadinessItem({
@@ -306,6 +419,10 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const [error, setError] = React.useState<string | null>(null);
   // Which requests are ticked for bulk workspace creation.
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  // IA appendix: filter by service, status and age (client-side, no refetch).
+  const [filters, setFilters] = React.useState<RequestFilters>(
+    DEFAULT_REQUEST_FILTERS,
+  );
 
   const load = React.useCallback(() => {
     fetchIntakeQueue(clientId)
@@ -345,9 +462,19 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
     c?.prompting_context && c.prompting_context.trim(),
   );
   const hasDocuments = state.artifacts.length > 0;
+  const visibleRequests = filterServiceRequests(
+    state.service_requests,
+    filters,
+    new Date(),
+  );
   // Bulk-creatable: no workspace yet, not declined, and a kind that HAS a
   // workspace — a consultation request has nothing to publish.
-  const eligibleIds = state.service_requests
+  //
+  // Derived from the VISIBLE rows, not all of them. "Select all" must never
+  // reach a request the admin cannot currently see: publishing something that
+  // is filtered off the screen is the partial-processing failure the bulk
+  // action exists to prevent, inverted.
+  const eligibleIds = visibleRequests
     .filter(
       (s) =>
         !s.fulfilled_service_id &&
@@ -452,14 +579,28 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
           />
         ) : (
           <>
+            <RequestFilterBar
+              filters={filters}
+              onChange={setFilters}
+              shown={visibleRequests.length}
+              total={state.service_requests.length}
+            />
             <BulkPublishBar
               eligibleIds={eligibleIds}
               selected={selected}
               onSelectionChange={setSelected}
               onPublished={load}
             />
+            {visibleRequests.length === 0 ? (
+              /* Name the filters. "No results" on a filtered queue reads as
+                 "no work exists", which is how work gets missed. */
+              <EmptyState
+                title="No requests match these filters"
+                description={`Filtering by ${activeFilterLabels(filters).join(" · ")} hides all ${state.service_requests.length} requests. Clear the filters to see them.`}
+              />
+            ) : null}
             <ul className="mt-3 flex flex-col gap-3">
-              {state.service_requests.map((s) => (
+              {visibleRequests.map((s) => (
                 <li key={s.id}>
                   <ServiceRequestCard
                     s={s}
