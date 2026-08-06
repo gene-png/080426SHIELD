@@ -255,3 +255,34 @@ class AdminLlmCallsResponse(BaseModel):
 
     calls: list[AdminLlmCallRow]
     next_cursor: str | None = None
+
+
+class AdminDeliverableRow(BaseModel):
+    """One deliverable version as an admin sees it.
+
+    Unlike the client-facing `ClientDeliverableResponse`, this carries
+    UNRELEASED rows — that is the reason the surface exists. `status` and
+    `client_visible` are derived in the route from columns that already exist
+    (`superseded_by` / `released_at` / `finalized_at`), so nothing new is
+    persisted and there is no second lifecycle to keep in step with §12.
+    """
+
+    id: uuid.UUID
+    service_id: uuid.UUID
+    service_kind: ServiceKind
+    service_title: str
+    title: str
+    version: int
+    #: generated | released | superseded
+    status: str
+    #: True ONLY for a released, non-superseded row — what the client can see.
+    client_visible: bool
+    finalized_at: datetime | None
+    released_at: datetime | None
+    pdf_artifact_id: uuid.UUID | None
+    xlsx_artifact_id: uuid.UUID | None
+    docx_artifact_id: uuid.UUID | None
+
+
+class AdminDeliverableListResponse(BaseModel):
+    items: list[AdminDeliverableRow]

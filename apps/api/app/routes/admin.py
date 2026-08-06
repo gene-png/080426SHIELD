@@ -27,11 +27,12 @@ from app.ai import keystore
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
-from app.dependencies import require_role
+from app.dependencies import current_client, require_role
 from app.models.artifact import Artifact
 from app.models.audit_entry import AuditEntry
 from app.models.client import Client
 from app.models.client_domain import ClientDomain
+from app.models.deliverable import Deliverable
 from app.models.llm_call import LLMCall, LLMCallStatus
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.service_request import ServiceRequest, ServiceType
@@ -44,6 +45,8 @@ from app.schemas.admin import (
     AdminClientCreateRequest,
     AdminClientListResponse,
     AdminClientSummary,
+    AdminDeliverableListResponse,
+    AdminDeliverableRow,
     AdminDomainCreateRequest,
     AdminDomainListResponse,
     AdminDomainRow,
@@ -180,6 +183,88 @@ def intake_queue(
         artifacts=artifacts,
         total_users=total_users,
     )
+
+
+def _deliverable_status(deliv: Deliverable) -> tuple[str, bool]:
+    """Derive (status, client_visible) from columns that already exist.
+
+    Superseded wins over released: a superseded row is history whatever it once
+    was, and reporting it as client-visible would tell a consultant the client
+    is looking at a version that has since been replaced.
+
+    No new column, no migration, and no second lifecycle to drift from the §12
+    release rule — `released_at` remains the single source of truth for "the
+    client can see this".
+    """
+    if deliv.superseded_by is not None:
+        return "superseded", False
+    if deliv.released_at is not None:
+        return "released", True
+    return "generated", False
+
+
+@router.get(
+    "/deliverables",
+    response_model=AdminDeliverableListResponse,
+    summary="Every deliverable for the active tenant, released or not (admin)",
+)
+def list_admin_deliverables(
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminDeliverableListResponse:
+    """All of a tenant's deliverables, including ones no client can see yet.
+
+    The client-facing route (`/clients/{id}/deliverables`) filters to
+    `released_at IS NOT NULL` by design. This one deliberately does NOT: an
+    admin's question is "what have we produced, and what is actually out?", and
+    the unreleased rows are half that answer. Deliverables were previously only
+    visible one service workspace at a time — the admin-side version of the
+    scattered-results problem the client `/results` page fixed.
+
+    Tenant scope comes from `current_client` (the X-Client-Id header for a
+    platform admin), the same resolution every other tenant-scoped surface uses.
+    """
+    rows = (
+        db.execute(
+            select(Deliverable, Service)
+            .join(Service, Service.id == Deliverable.service_id)
+            .where(Service.client_id == client.id)
+            .order_by(Service.title.asc(), Deliverable.version.desc())
+        )
+        .tuples()
+        .all()
+    )
+
+    items = []
+    for deliv, svc in rows:
+        status_label, visible = _deliverable_status(deliv)
+        items.append(
+            AdminDeliverableRow(
+                id=deliv.id,
+                service_id=deliv.service_id,
+                service_kind=svc.kind,
+                service_title=svc.title,
+                title=deliv.title,
+                version=deliv.version,
+                status=status_label,
+                client_visible=visible,
+                finalized_at=deliv.finalized_at,
+                released_at=deliv.released_at,
+                pdf_artifact_id=deliv.pdf_artifact_id,
+                xlsx_artifact_id=deliv.xlsx_artifact_id,
+                docx_artifact_id=deliv.docx_artifact_id,
+            )
+        )
+
+    logger.info(
+        "admin.deliverables.listed client_id=%s actor=%s count=%d released=%d",
+        client.id,
+        user.id,
+        len(items),
+        sum(1 for i in items if i.client_visible),
+    )
+    return AdminDeliverableListResponse(items=items)
 
 
 @router.get(
