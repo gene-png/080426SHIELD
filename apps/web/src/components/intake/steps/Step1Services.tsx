@@ -10,6 +10,7 @@ import {
 } from "@shield/design-system";
 
 import {
+  SERVICE_DESCRIPTIONS,
   SERVICE_LABELS,
   type IntakeStateResponse,
   type ServiceType,
@@ -100,6 +101,11 @@ export function Step1Services({
                   className="text-sm text-ink-secondary"
                 >
                   {SERVICE_DESCRIPTIONS[service]}
+                  {/* Wizard mechanics, not a property of the service — so this
+                      stays here rather than in the shared description. */}
+                  {service === "consultation"
+                    ? " Selecting this clears the other picks."
+                    : ""}
                 </p>
               </CardBody>
             </Card>
@@ -109,18 +115,3 @@ export function Step1Services({
     </div>
   );
 }
-
-const SERVICE_DESCRIPTIONS: Record<ServiceType, string> = {
-  tech_debt:
-    "Inventory your security stack, surface overlap and gaps, ship a consolidation plan.",
-  zero_trust_cisa:
-    "Score current and target maturity per pillar against CISA Zero Trust Maturity Model 2.0.",
-  zero_trust_dod:
-    "Score current and target maturity per pillar against DoD Zero Trust Reference Architecture.",
-  nist_csf:
-    "Full 10-step NIST CSF 2.0 Playbook with tiered profiles, 5-dimension scoring, gap plan.",
-  attack_coverage:
-    "Score the full MITRE ATT&CK Enterprise matrix against your approved capability list.",
-  consultation:
-    "A guided conversation to scope which services fit. Selecting this clears the other picks.",
-};

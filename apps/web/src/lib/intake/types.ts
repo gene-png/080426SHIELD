@@ -150,6 +150,33 @@ export interface IntakeSubmitRequest {
   timezone?: string;
 }
 
+/**
+ * One-line explanation of each service, in client-facing language.
+ *
+ * Shared deliberately: the intake picker and the /help page must describe a
+ * service the same way, and the surest way to guarantee that is one definition.
+ * This lived privately inside Step1Services.tsx until the Help surface needed
+ * it (IA appendix: "Messages / Help — service explanations").
+ *
+ * Intake-only mechanics do NOT belong here — Step1Services appends its own
+ * "selecting this clears the other picks" hint, because that sentence is about
+ * the wizard, not about the service.
+ */
+export const SERVICE_DESCRIPTIONS: Record<ServiceType, string> = {
+  tech_debt:
+    "Inventory your security stack, surface overlap and gaps, ship a consolidation plan.",
+  zero_trust_cisa:
+    "Score current and target maturity per pillar against CISA Zero Trust Maturity Model 2.0.",
+  zero_trust_dod:
+    "Score current and target maturity per pillar against DoD Zero Trust Reference Architecture.",
+  nist_csf:
+    "Full 10-step NIST CSF 2.0 Playbook with tiered profiles, 5-dimension scoring, gap plan.",
+  attack_coverage:
+    "Score the full MITRE ATT&CK Enterprise matrix against your approved capability list.",
+  consultation:
+    "A guided conversation to scope which services fit your organization.",
+};
+
 export const SERVICE_LABELS: Record<ServiceType, string> = {
   tech_debt: "Technical Debt Review",
   zero_trust_cisa: "Zero Trust Assessment (CISA ZTMM 2.0)",
