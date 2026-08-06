@@ -45,6 +45,8 @@ import { CsfQuestionnaire } from "./CsfQuestionnaire";
 import { CsfScoreCard } from "./CsfScoreCard";
 
 import type { JSX } from "react";
+import { ProgressStages } from "../ProgressStages";
+import { useServiceStages } from "@/lib/stages/client";
 
 export interface CsfWorkspaceProps {
   serviceId: string;
@@ -76,6 +78,12 @@ export function CsfWorkspace({
   const [catalog, setCatalog] = React.useState<CsfCatalog | null>(null);
   const [assessment, setAssessment] = React.useState<CsfAssessment | null>(
     null,
+  );
+  // Derived six-stage progress. Re-reads when this workspace's own
+  // state moves, since the derivation is computed from that same state.
+  const { phase: stagesPhase, stages: serviceStages } = useServiceStages(
+    serviceId,
+    `${assessment?.status ?? ""}:${assessment?.version ?? ""}`,
   );
   const [score, setScore] = React.useState<CsfScoreSummary | null>(null);
   const [gap, setGap] = React.useState<GapAnalysis | null>(null);
@@ -381,6 +389,14 @@ export function CsfWorkspace({
           ) : null}
         </div>
       </header>
+
+      {stagesPhase === "ready" && serviceStages ? (
+        <ProgressStages
+          stages={serviceStages.stages}
+          kind={serviceStages.kind}
+          version={serviceStages.version}
+        />
+      ) : null}
 
       {assessment?.status === "submitted" ? (
         <div className="rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm text-status-warning-fg">

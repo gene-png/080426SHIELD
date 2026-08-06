@@ -46,6 +46,9 @@ import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
 import { OverlapDashboard } from "./OverlapDashboard";
 
 import type { JSX } from "react";
+import { ProgressStages } from "./ProgressStages";
+import { SecurityClassificationQueue } from "./SecurityClassificationQueue";
+import { useServiceStages } from "@/lib/stages/client";
 
 export interface TechDebtWorkspaceProps {
   serviceId: string;
@@ -57,6 +60,12 @@ export function TechDebtWorkspace({
   serviceTitle,
 }: TechDebtWorkspaceProps): JSX.Element {
   const [list, setList] = React.useState<CapabilityList | null>(null);
+  // Derived six-stage progress. Re-reads when this workspace's own
+  // state moves, since the derivation is computed from that same state.
+  const { phase: stagesPhase, stages: serviceStages } = useServiceStages(
+    serviceId,
+    `${list?.status ?? ""}:${list?.version ?? ""}`,
+  );
   const [overlap, setOverlap] = React.useState<OverlapAnalysis | null>(null);
   const [overlapError, setOverlapError] = React.useState<string | null>(null);
   const [overlapLoading, setOverlapLoading] = React.useState(false);
@@ -358,6 +367,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
         </div>
       </header>
 
+      {stagesPhase === "ready" && serviceStages ? (
+        <ProgressStages
+          stages={serviceStages.stages}
+          kind={serviceStages.kind}
+          version={serviceStages.version}
+        />
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Upload inventory and extract</CardTitle>
@@ -478,10 +495,21 @@ Components carry no cost of their own — this licence keeps its full value.`,
             </div>
           </header>
 
-          {/* UX finding 4: the extraction keeps only security capabilities and
-              skips the rest. Reporting the survivors as the portfolio hid 45%
-              of the uploaded spend in the 2026-08-04 review. Say what was left
-              out, and what it was. */}
+          {/* Sign-off queue for negative security classifications. The
+              extraction is portfolio-wide, so the security call is a property
+              of each row rather than a filter — and it decides what ATT&CK may
+              cite. Nothing leaves that subset without a human agreeing. */}
+          <SecurityClassificationQueue
+            list={list}
+            onUpdated={setList}
+            editable={list.status === "draft"}
+          />
+
+          {/* UX finding 4: rows the extraction could not turn into a
+              capability at all — notes, headers, duplicates. Rare now that the
+              prompt keeps the whole portfolio, but "rare" is not "never", and
+              reporting the survivors as the portfolio hid 45% of the uploaded
+              spend in the 2026-08-04 review. */}
           {typeof list.source_rows_total === "number" &&
           list.source_rows_total > list.items.length ? (
             <div
@@ -494,8 +522,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 included · {list.source_rows_total - list.items.length} excluded
               </p>
               <p className="mt-1 text-ink-secondary">
-                Totals below cover the included security tooling only, not the
-                whole upload.
+                Totals below cover the included rows only, not the whole upload.
               </p>
               {list.excluded_rows && list.excluded_rows.length > 0 ? (
                 <details className="mt-2">

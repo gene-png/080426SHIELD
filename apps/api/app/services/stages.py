@@ -155,10 +155,23 @@ def derive_stages(
         "release": released,
     }
 
+    # Progress is monotonic: reaching a stage means the ones before it are
+    # behind you. Without this the bar renders its cursor BEHIND finished work
+    # — an approved, generated list whose extraction predates the current
+    # version shows `analyze` as "current" sitting left of three completed
+    # stages, which reads as a broken step rather than a passed one. Evidence
+    # of a specific AI run is a different question from process position, and
+    # this bar answers the second.
+    reached = False
+    resolved: dict[str, bool] = {}
+    for key in reversed(STAGE_KEYS):
+        reached = reached or done[key]
+        resolved[key] = reached
+
     stages: list[Stage] = []
     current_assigned = False
     for key in STAGE_KEYS:
-        if done[key]:
+        if resolved[key]:
             stages.append(Stage(key=key, state="complete"))
             continue
         # The first unfinished stage is where the work actually is.

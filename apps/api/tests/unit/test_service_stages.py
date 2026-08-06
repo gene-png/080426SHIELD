@@ -312,3 +312,49 @@ def test_stage_order_is_stable() -> None:
         generated=False,
     )
     assert tuple(s.key for s in stages) == STAGE_KEYS
+
+
+@pytest.mark.unit
+def test_progress_is_monotonic_no_current_marker_behind_completed_work() -> None:
+    """Found in the browser, not in a unit test.
+
+    A seeded Tech Debt list whose extraction predates its current version came
+    back as `analyze=current` sitting to the LEFT of review/approve/generate all
+    complete. A progress bar with its cursor behind finished stages reads as a
+    broken step rather than a passed one. Reaching a stage means the ones before
+    it are behind you.
+    """
+    states = _states(
+        derive_stages(
+            kind=ServiceKind.TECH_DEBT,
+            status="approved",
+            client_input_received=True,
+            analyzed=False,  # no AI run attributable to THIS version
+            generated=True,
+        )
+    )
+    assert states["analyze"] == "complete"
+    assert states["review"] == "complete"
+    assert states["approve"] == "complete"
+    assert states["generate"] == "complete"
+    assert states["release"] == "current"
+    # And still exactly one cursor.
+    assert list(states.values()).count("current") == 1
+
+
+@pytest.mark.unit
+def test_monotonic_fill_does_not_invent_progress_that_never_happened() -> None:
+    """The fill only reaches backwards from work that IS done. A draft with
+    nothing behind it must not light up."""
+    states = _states(
+        derive_stages(
+            kind=ServiceKind.TECH_DEBT,
+            status="draft",
+            client_input_received=True,
+            analyzed=False,
+            generated=False,
+        )
+    )
+    assert states["analyze"] == "current"
+    assert states["review"] == "pending"
+    assert states["release"] == "pending"

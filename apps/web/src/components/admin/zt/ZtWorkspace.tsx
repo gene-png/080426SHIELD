@@ -48,6 +48,8 @@ import { ZtQuestionnaire } from "./ZtQuestionnaire";
 import { ZtScoreCard } from "./ZtScoreCard";
 
 import type { JSX } from "react";
+import { ProgressStages } from "../ProgressStages";
+import { useServiceStages } from "@/lib/stages/client";
 
 export interface ZtWorkspaceProps {
   serviceId: string;
@@ -85,6 +87,12 @@ export function ZtWorkspace({
 }: ZtWorkspaceProps): JSX.Element {
   const [catalog, setCatalog] = React.useState<ZtCatalog | null>(null);
   const [assessment, setAssessment] = React.useState<ZtAssessment | null>(null);
+  // Derived six-stage progress. Re-reads when this workspace's own
+  // state moves, since the derivation is computed from that same state.
+  const { phase: stagesPhase, stages: serviceStages } = useServiceStages(
+    serviceId,
+    `${assessment?.status ?? ""}:${assessment?.version ?? ""}`,
+  );
   const [score, setScore] = React.useState<ZtScoreSummary | null>(null);
   const [gap, setGap] = React.useState<GapAnalysis | null>(null);
   const [deliverable, setDeliverable] = React.useState<ZtDeliverable | null>(
@@ -392,6 +400,14 @@ export function ZtWorkspace({
           ) : null}
         </div>
       </header>
+
+      {stagesPhase === "ready" && serviceStages ? (
+        <ProgressStages
+          stages={serviceStages.stages}
+          kind={serviceStages.kind}
+          version={serviceStages.version}
+        />
+      ) : null}
 
       {assessment?.status === "submitted" ? (
         <div className="rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm text-status-warning-fg">

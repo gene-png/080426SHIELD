@@ -7,6 +7,7 @@ import type {
   ConsolidationPlanSummary,
   Deliverable,
   OverlapAnalysis,
+  SecurityFunction,
   ServiceResponse,
 } from "./types";
 
@@ -157,6 +158,33 @@ export async function confirmExcludedRow(
   return jsonRequest<CapabilityList>(
     `/api/proxy/tech-debt/capability-lists/${listId}/excluded-rows/${rowIndex}/confirm`,
     { method: "POST" },
+  );
+}
+
+/**
+ * Agree that a capability is not security-related.
+ *
+ * Until this runs the model's negative is provisional and the row stays in the
+ * ATT&CK subset — a tool wrongly dropped there becomes uncitable, so its
+ * absence would read as an assessed gap rather than a missing input.
+ */
+export async function confirmSecurityClassification(
+  itemId: string,
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-items/${itemId}/security-classification/confirm`,
+    { method: "POST" },
+  );
+}
+
+/** Overturn a negative: this capability IS security-related. */
+export async function overrideSecurityClassification(
+  itemId: string,
+  securityFunctions: SecurityFunction[],
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-items/${itemId}/security-classification/override`,
+    { method: "POST", body: { security_functions: securityFunctions } },
   );
 }
 
