@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.llm import LLMClient
 from app.models.artifact import Artifact
+from app.models.capability import SecurityFunction
 from app.models.client import Client
 from app.models.llm_call import LLMCall
 from app.models.user import User
@@ -34,14 +35,32 @@ from app.storage import StorageBackend
 from app.tech_debt.parsers import parse_inventory
 from app.tech_debt.reconcile import Reconciliation, reconcile_rows
 
-PROMPT_VERSION = "v1"
+# v2 (2026-08-05): portfolio scope. v1 kept only security capabilities and
+# silently dropped the rest, so the workspace presented the survivors as the
+# whole inventory. v2 keeps every row and classifies it instead.
+PROMPT_VERSION = "v2"
 
-PROMPT = """You extract a structured capability list from a raw security \
-tool inventory.
+PROMPT = """You extract a structured capability list from a raw software \
+inventory.
 
-For each row in the JSON `rows` array, decide if it represents a security \
-capability the organization is paying for (tool, platform, service, \
-subscription). Skip rows that are notes, blank, or duplicates.
+The inventory covers the organization's ENTIRE software portfolio, not only its \
+security tooling. For each row in the JSON `rows` array, decide if it \
+represents a capability the organization is paying for (tool, platform, \
+service, subscription). Keep it if so, whatever its purpose - finance, HR, \
+collaboration, engineering and security all belong in the list. Skip a row ONLY \
+when it is a note, a blank, a column header, or a duplicate of a row you have \
+already returned.
+
+Classify every capability you keep:
+
+  - `security_related`: true if the capability's purpose includes defending the \
+organization (preventing, detecting or responding to threats), false otherwise. \
+Judge the capability's actual purpose - a payroll system that happens to have a \
+login is not security-related.
+  - `security_functions`: when `security_related` is true, which of "prevent", \
+"detect" and "respond" it serves. Return every one that applies - an endpoint \
+detection and response platform typically serves all three. Return an empty \
+list when `security_related` is false.
 
 Return ONLY a JSON object of the form:
 
@@ -50,11 +69,14 @@ Return ONLY a JSON object of the form:
       {
         "name": "<short name>",
         "vendor": "<vendor or null>",
-        "category": "<category like CNAPP, EDR, SIEM, IAM, GRC, or null>",
+        "category": "<category like CNAPP, EDR, SIEM, IAM, GRC, ERP, HCM, \
+Productivity, or null>",
         "function": "<one-line function the capability serves, or null>",
         "annual_cost_usd": <number or null>,
         "license_count": <integer or null>,
         "notes": "<short note, or null>",
+        "security_related": <true or false>,
+        "security_functions": ["prevent"|"detect"|"respond", ...],
         "confidence_pct": <integer 0-100>,
         "source_row_index": <integer index into rows[]>
       },
@@ -78,15 +100,22 @@ class ExtractedCapability:
     notes: str | None
     confidence_pct: int | None
     source_row_index: int | None
+    # Prompt v2. None when the provider omitted the field (an older prompt, or a
+    # response that dropped it) — never coerced to False, because False is a
+    # decision and None is the absence of one. app.tech_debt.security_scope
+    # keeps unclassified rows in the ATT&CK subset for exactly that reason.
+    security_related: bool | None = None
+    security_functions: tuple[str, ...] = ()
 
 
 @dataclass
 class ExtractionResult:
     items: list[ExtractedCapability]
     llm_call: LLMCall
-    # How the uploaded rows map onto `items`. The prompt keeps only security
-    # capabilities and skips the rest; without this the workspace presented the
-    # survivors as the whole inventory (UX finding 4 / E2E F-5).
+    # How the uploaded rows map onto `items`. Since prompt v2 the extraction is
+    # portfolio-wide, so exclusions should now be rare — notes, headers and
+    # duplicates rather than whole categories of software. The reconciliation
+    # stays because "rare" is not "never" (UX finding 4 / E2E F-5).
     reconciliation: Reconciliation
 
 
@@ -115,6 +144,19 @@ def _parse_response(content: str) -> list[ExtractedCapability]:
     return [_coerce_item(item) for item in raw_items if isinstance(item, dict)]
 
 
+def _security_functions(raw: Any) -> tuple[str, ...]:
+    """Keep only recognised prevent/detect/respond values, in a stable order.
+
+    Anything else the provider invents is dropped rather than stored — these
+    values drive the ATT&CK citation buckets, so an unrecognised one would be a
+    label nothing can act on.
+    """
+    if not isinstance(raw, list):
+        return ()
+    seen = {str(v).strip().lower() for v in raw if v is not None}
+    return tuple(f.value for f in SecurityFunction if f.value in seen)
+
+
 def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
     def _opt_str(key: str) -> str | None:
         v = item.get(key)
@@ -141,6 +183,32 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         except (TypeError, ValueError):
             return None
 
+    def _opt_bool(key: str) -> bool | None:
+        """Tri-state: an absent or unrecognised value stays None, never False.
+
+        None means "the model did not classify this row"; False means "the model
+        said no". Collapsing the two would silently convert every unclassified
+        row into a negative, which is the one direction that loses tools.
+        """
+        v = item.get(key)
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("true", "yes"):
+                return True
+            if s in ("false", "no"):
+                return False
+        return None
+
+    functions = _security_functions(item.get("security_functions"))
+    related = _opt_bool("security_related")
+    # A named security function contradicts a False flag. Trust the function:
+    # it is the more specific claim, and inclusion is the safe direction — a
+    # tool wrongly kept costs a review, one wrongly dropped costs a blind spot.
+    if functions and related is False:
+        related = True
+
     return ExtractedCapability(
         name=(_opt_str("name") or "Unknown capability"),
         vendor=_opt_str("vendor"),
@@ -151,6 +219,8 @@ def _coerce_item(item: dict[str, Any]) -> ExtractedCapability:
         notes=_opt_str("notes"),
         confidence_pct=_opt_int("confidence_pct"),
         source_row_index=_opt_int("source_row_index"),
+        security_related=related,
+        security_functions=functions,
     )
 
 

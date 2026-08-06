@@ -5,9 +5,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.capability import CapabilityDisposition, CapabilityListStatus
+from app.models.capability import (
+    CapabilityDisposition,
+    CapabilityListStatus,
+    SecurityFunction,
+)
 from app.models.service import ServiceKind, ServiceStatus
 
 
@@ -54,6 +58,17 @@ class CapabilityItemResponse(BaseModel):
     locked: bool = False
     # Set on a component named inside a bundled licence (migration 0037).
     parent_item_id: uuid.UUID | None = None
+    # Security classification (migration 0038). `security_related` is tri-state:
+    # None means nobody has classified this row, which is NOT the same as False.
+    security_related: bool | None = None
+    security_functions: list[SecurityFunction] = []
+    security_class_confirmed: bool = False
+
+    @field_validator("security_functions", mode="before")
+    @classmethod
+    def _functions_default(cls, v: object) -> object:
+        """A NULL JSON column reads as no functions, not as a validation error."""
+        return v or []
 
 
 class ExcludedRowResponse(BaseModel):
@@ -92,7 +107,9 @@ class CapabilityListResponse(BaseModel):
     service_id: uuid.UUID
     version: int
     status: CapabilityListStatus
-    items: list[CapabilityItemResponse]
+    # Defaulted so the whole response can be built from the ORM row in one
+    # `model_validate` call; the route fills it from a separate query.
+    items: list[CapabilityItemResponse] = []
     approved_at: datetime | None
     approved_by: uuid.UUID | None
     # Reconciliation of the source upload against what was extracted (0036).
@@ -100,6 +117,20 @@ class CapabilityListResponse(BaseModel):
     # rather than implying a complete inventory.
     source_rows_total: int | None = None
     excluded_rows: list[ExcludedRowResponse] = []
+
+    @field_validator("excluded_rows", mode="before")
+    @classmethod
+    def _excluded_default(cls, v: object) -> object:
+        """A NULL JSON column means no exclusions recorded, not a bad response."""
+        return v or []
+
+
+class SecurityClassificationOverride(BaseModel):
+    """The model called this non-security; a consultant says otherwise."""
+
+    # At least one function: "it is security-related but serves none of prevent,
+    # detect or respond" is not a claim the ATT&CK mapping can act on.
+    security_functions: list[SecurityFunction] = Field(min_length=1)
 
 
 class CapabilityComponentInput(BaseModel):

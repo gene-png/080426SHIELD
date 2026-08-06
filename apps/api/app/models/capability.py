@@ -59,6 +59,19 @@ class CapabilityDisposition(enum.StrEnum):
     CUT = "cut"
 
 
+class SecurityFunction(enum.StrEnum):
+    """What a security-related capability does (migration 0038).
+
+    Deliberately the same three words ATT&CK coverage already keeps columns for
+    (``prevention_tools`` / ``detection_tools`` / ``response_tools``), so the
+    classification maps onto the mapping surface without translation.
+    """
+
+    PREVENT = "prevent"
+    DETECT = "detect"
+    RESPOND = "respond"
+
+
 class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "capability_lists"
     __table_args__ = (
@@ -123,6 +136,22 @@ class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
     parent_item_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("capability_items.id", ondelete="CASCADE")
     )
+
+    # Security classification (migration 0038). Tech Debt covers the whole
+    # software portfolio, so a row being non-security is a property of the row,
+    # not a reason to drop it.
+    #
+    # Tri-state on purpose: None = never classified (every pre-0038 row), which
+    # must never read as a negative. See `security_class_confirmed`.
+    security_related: Mapped[bool | None] = mapped_column()
+    # Subset of SecurityFunction values. A list because one tool commonly serves
+    # several (an EDR prevents, detects AND responds).
+    security_functions: Mapped[list | None] = mapped_column(JSON)
+    # A consultant has agreed with a NEGATIVE classification. Until they do, the
+    # negative is not acted on: `_client_tool_names` keeps the row in the ATT&CK
+    # subset, because a wrongly-excluded security tool becomes uncitable there
+    # and its absence reads as assessed rather than missing.
+    security_class_confirmed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # Consolidation-plan verdict (Phase 3 stage 7). None = undecided.
     disposition: Mapped[CapabilityDisposition | None] = mapped_column(
