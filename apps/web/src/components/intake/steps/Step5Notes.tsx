@@ -4,6 +4,7 @@ import * as React from "react";
 import { Field, inputClasses, textareaClasses } from "../Field";
 import { Dropzone, EmptyArtifactsHint } from "../Dropzone";
 import { RedactionDisclosure } from "../RedactionDisclosure";
+import { SharedServiceDefaults } from "./SharedServiceDefaults";
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 import {
   CSF_PROFILES,
@@ -33,6 +34,14 @@ export interface Step5NotesProps {
  * Stage-6 addition: document upload + redaction disclosure render at the
  * top of this step. Artifacts hit POST /artifacts directly (separate from
  * the intake state); the upload list reloads each time the user lands here.
+ *
+ * UX finding 8: this step combined uploads, framework targets, maturity
+ * choices, deadlines and notes for up to four services into one long scroll —
+ * and a client picking all four typed the same deadline and the same paragraph
+ * four times. Two changes: shared defaults that fan out to the blanks, and one
+ * collapsible card per service so the page is a list of services rather than a
+ * wall of fields. Anything still missing a required target stays OPEN, so
+ * collapsing can never hide something that blocks submission.
  */
 export function Step5Notes({
   state,
@@ -41,6 +50,11 @@ export function Step5Notes({
 }: Step5NotesProps): JSX.Element {
   const picks = (state.client?.service_interests ?? []) as ServiceType[];
 
+  // Explicit open/closed per card once the user touches it; before that the
+  // default comes from whether the service still needs a required target.
+  const [openCards, setOpenCards] = React.useState<
+    Partial<Record<ServiceType, boolean>>
+  >({});
   const [artifacts, setArtifacts] = React.useState<ArtifactSummary[]>([]);
   const [listError, setListError] = React.useState<string | null>(null);
 
@@ -62,6 +76,24 @@ export function Step5Notes({
     })();
   }, [refreshArtifacts]);
 
+  /**
+   * Services whose required assessment target is still unset. These cards stay
+   * expanded: a collapsed card hiding a blocking field would look complete and
+   * fail at submit.
+   */
+  function needsAttention(
+    svc: ServiceType,
+    input: ServiceRequestInput | undefined,
+  ): boolean {
+    if (svc === "nist_csf") {
+      return !input?.csf_target_tier || !input?.csf_profile;
+    }
+    if (svc === "zero_trust_cisa" || svc === "zero_trust_dod") {
+      return !input?.zt_target_stage;
+    }
+    return false;
+  }
+
   function update(svc: ServiceType, patch: Partial<ServiceRequestInput>): void {
     onChange({
       ...serviceInputs,
@@ -71,6 +103,26 @@ export function Step5Notes({
         ...patch,
       },
     });
+  }
+
+  /**
+   * Apply shared defaults to the services that have none. Per-service values
+   * are the only thing stored, so this writes real per-service fields rather
+   * than an engagement-level default anything would later have to resolve.
+   */
+  function applyShared(patch: { deadline?: string; notes?: string }): void {
+    const next = { ...serviceInputs };
+    for (const svc of picks) {
+      const current = next[svc] ?? { service_type: svc };
+      next[svc] = {
+        ...current,
+        service_type: svc,
+        deadline:
+          current.deadline ?? (patch.deadline ? patch.deadline : undefined),
+        notes: current.notes ?? (patch.notes ? patch.notes : undefined),
+      };
+    }
+    onChange(next);
   }
 
   return (
@@ -142,20 +194,42 @@ export function Step5Notes({
             afterwards.
           </p>
         )}
+        <SharedServiceDefaults
+          services={picks}
+          serviceInputs={serviceInputs}
+          onApply={applyShared}
+        />
         {picks.map((svc) => {
           const input = serviceInputs[svc] ?? { service_type: svc };
+          const attention = needsAttention(svc, serviceInputs[svc]);
           return (
-            <section
+            <details
               key={svc}
-              aria-labelledby={`svc-${svc}-heading`}
+              open={openCards[svc] ?? attention}
+              onToggle={(e) =>
+                setOpenCards((prev) => ({
+                  ...prev,
+                  [svc]: e.currentTarget.open,
+                }))
+              }
               className="rounded-md border border-border-subtle bg-surface-card p-4"
             >
-              <h4
-                id={`svc-${svc}-heading`}
-                className="text-sm font-semibold text-ink-primary"
-              >
+              <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm font-semibold text-ink-primary">
                 {SERVICE_LABELS[svc]}
-              </h4>
+                {/* Collapsed cards still have to say whether they are done. */}
+                {attention ? (
+                  <span className="rounded bg-status-warning-bg px-2 py-0.5 text-xs font-medium text-status-warning-fg">
+                    Target required
+                  </span>
+                ) : (
+                  <span className="text-xs font-normal text-ink-tertiary">
+                    {input.deadline
+                      ? `Due ${input.deadline.slice(0, 10)}`
+                      : "No deadline"}
+                    {input.notes ? " · notes added" : ""}
+                  </span>
+                )}
+              </summary>
               {svc === "nist_csf" ||
               svc === "zero_trust_cisa" ||
               svc === "zero_trust_dod" ? (
@@ -285,7 +359,7 @@ export function Step5Notes({
                   />
                 </Field>
               </div>
-            </section>
+            </details>
           );
         })}
       </section>

@@ -52,6 +52,36 @@ from app.schemas.intake import (
 _ZT_SERVICE_TYPES = (ServiceType.ZERO_TRUST_CISA, ServiceType.ZERO_TRUST_DOD)
 
 
+def _effective_contact(client: Client | None, user: User) -> IntakeContactResponse:
+    """Whose details this engagement actually uses.
+
+    The submitting user by default. When the client carries a primary-contact
+    override (migration 0039) that wins — someone said explicitly that they are
+    not the point of contact, and silently mailing them anyway is the failure
+    the override exists to prevent.
+
+    An override is recognised by having a name or an email; the two optional
+    fields alone are not enough to redirect anything. Partial overrides fall
+    back field by field rather than blanking, so a name-only override still
+    keeps a usable phone number.
+    """
+    override_name = getattr(client, "primary_contact_name", None) if client else None
+    override_email = getattr(client, "primary_contact_email", None) if client else None
+    if not (override_name or override_email):
+        return IntakeContactResponse.model_validate(user, from_attributes=True)
+
+    return IntakeContactResponse(
+        display_name=override_name or user.display_name,
+        # The account email is the only address we can be sure reaches someone,
+        # so it stands in when the override names a person without one.
+        email=override_email or user.email,
+        title=getattr(client, "primary_contact_title", None) or user.title,
+        phone=getattr(client, "primary_contact_phone", None) or user.phone,
+        timezone=user.timezone,
+        is_override=True,
+    )
+
+
 def _validate_targets(item: ServiceRequestInput) -> None:
     """Enforce client-supplied assessment targets per selected service.
 
@@ -123,7 +153,7 @@ def read_intake(
         client=client,
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
-        contact=IntakeContactResponse.model_validate(user, from_attributes=True),
+        contact=_effective_contact(client, user),
     )
 
 
@@ -172,7 +202,7 @@ def patch_intake(
         client=client,
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
-        contact=IntakeContactResponse.model_validate(user, from_attributes=True),
+        contact=_effective_contact(client, user),
     )
 
 
@@ -289,7 +319,7 @@ def submit_intake(
         client=client,
         service_requests=list(all_requests),
         intake_completed_at=client.intake_completed_at,
-        contact=IntakeContactResponse.model_validate(user, from_attributes=True),
+        contact=_effective_contact(client, user),
     )
 
 

@@ -46,6 +46,13 @@ class ClientProfilePatch(BaseModel):
     prompting_context: str | None = Field(default=None, max_length=4000)
     service_interests: list[ServiceType] | None = None
 
+    # Primary-contact override (0039). Rides the existing client auto-save path
+    # rather than adding an endpoint. All NULL = the contact is the submitter.
+    primary_contact_name: str | None = Field(default=None, max_length=255)
+    primary_contact_email: str | None = Field(default=None, max_length=320)
+    primary_contact_title: str | None = Field(default=None, max_length=255)
+    primary_contact_phone: str | None = Field(default=None, max_length=64)
+
 
 class IntakePatchRequest(BaseModel):
     """Auto-save body: any subset of client fields plus optional profile bits."""
@@ -99,6 +106,14 @@ class ClientProfileResponse(BaseModel):
     prompting_context: str | None
     service_interests: list[str] | None
     intake_completed_at: datetime | None
+    # Primary-contact override (0039). Returned so the wizard can re-open the
+    # step with the override still checked and populated. Omitting these was the
+    # same round-trip bug as the hardcoded-null contact fields: stored, applied,
+    # and invisible to the form that wrote them.
+    primary_contact_name: str | None = None
+    primary_contact_email: str | None = None
+    primary_contact_title: str | None = None
+    primary_contact_phone: str | None = None
 
 
 class ServiceRequestResponse(BaseModel):
@@ -133,6 +148,10 @@ class IntakeContactResponse(BaseModel):
     title: str | None
     phone: str | None
     timezone: str | None
+    # True when these values came from the client's primary-contact override
+    # rather than from the submitting user's own account, so Review & submit can
+    # say whose details are about to be sent.
+    is_override: bool = False
 
 
 class IntakeStateResponse(BaseModel):

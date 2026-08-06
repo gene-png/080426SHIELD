@@ -253,6 +253,57 @@ route → engine.run_job(purpose, payload, client_id)
   always challenged; the flag decides what happens to a not-yet-enrolled /
   unverified user), rather than refusing to boot for a flow that didn't exist.
 
+## Derived progress stages (D-040)
+
+`app/services/stages.py` + `GET /services/{id}/stages`. **Read-only**: it writes
+nothing, reinterprets no status, and changes no state machine. It exists so the
+four workspaces and the admin intake queue describe progress in one vocabulary
+— prepare, analyze, review, approve, generate, release — instead of five.
+
+Two of the six stages are not stored anywhere. A capability list is `DRAFT`
+before a Run-AI and still `DRAFT` after, and generating a deliverable does not
+move `status` either, so `analyze` and `generate` are derived from evidence.
+
+The hazard is stale evidence. `llm_calls` carries `service_id` and **no version
+link**, and `Deliverable.version` counts deliverables rather than assessments —
+so the obvious query ("has this service ever been analysed?") lights up a
+brand-new draft because a discarded one was analysed weeks ago. Evidence is
+anchored to the version, and the anchor differs by service because the services
+build their versions in opposite orders:
+
+| Service                 | Order                                             | Anchor                                         |
+| ----------------------- | ------------------------------------------------- | ---------------------------------------------- |
+| Zero Trust, CSF, ATT&CK | assessment created, _then_ Run-AI                 | `llm_calls.requested_at >= version.created_at` |
+| Tech Debt               | extraction runs FIRST, list built from its output | the list's own `source_rows_total`             |
+
+Tech Debt cannot use the timestamp: its `llm_calls` row precedes the list it
+produced by milliseconds, so a `>=` anchor matches nothing. Its extraction
+provenance is version-scoped by construction instead, which removes the clock
+comparison rather than tuning it.
+
+Progress is **monotonic** — reaching a stage implies the ones before it — so the
+bar never renders a "current" cursor to the left of completed work.
+
+## Tech Debt security scope (D-039)
+
+`app/tech_debt/security_scope.py` holds one rule, in one place: which
+capabilities the ATT&CK mapping may draw on.
+
+Tech Debt covers the whole software portfolio, so the capability list now
+contains payroll and CRM alongside the EDR. `_client_tool_names`
+(`app/routes/attack.py`) narrows it, and that list is **not merely prompt
+input** — `valid_tools` is a hard allow-list on the tool names the model is
+permitted to cite. A capability missing from it cannot be named at all, so the
+technique it covers reads as _uncovered_ rather than _unassessed_. That
+asymmetry is why the rule fails toward inclusion: a row is in scope unless a
+human has explicitly agreed it is not.
+
+`security_functions` (prevent / detect / respond) deliberately mirrors
+`AttackCoverage`'s `prevention_tools` / `detection_tools` / `response_tools`, so
+the classification reaches the mapping without translation. Gating citations
+per-function is possible on this data but is **not** enabled — it would suppress
+legitimate citations and needs its own evidence.
+
 ## Failure model
 
 - API errors use the typed `{reason, message}` dict-detail envelope (D-016);
