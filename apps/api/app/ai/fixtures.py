@@ -252,6 +252,19 @@ def _fixture_tech_debt(payload: dict[str, Any]) -> LLMResponse:
                 if isinstance(value, str) and value.strip():
                     name = value.strip()
                     break
+            if name is None:
+                # No usable name in any known column: a note, a blank, a
+                # section header, a totals line. The real prompt tells the
+                # model to skip exactly these, so the fixture does too.
+                #
+                # It used to invent "Capability N" instead, which meant the
+                # fixture ALWAYS returned one item per uploaded row — so
+                # `excluded_rows` was always empty and the reconciliation
+                # banner and its review queue could never appear offline.
+                # An unreachable review surface is an untested one; this is the
+                # same unlock that made the security sign-off queue testable.
+                continue
+
             vendor = row.get("vendor")
             # Prompt v2 classifies every row instead of dropping the
             # non-security ones. Cycle the call so offline mode exercises BOTH

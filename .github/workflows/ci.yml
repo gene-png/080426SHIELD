@@ -98,6 +98,23 @@ jobs:
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    # The workflow default is `contents: read` (top of this file). gitleaks
+    # writes its findings back to the pull request, so with only read access it
+    # failed every run with 403 "Resource not accessible by integration" — on
+    # PRs with no secrets in them at all. A check that is red on every PR
+    # regardless of the diff teaches everyone to ignore it, which is worse than
+    # not running it: the one time it goes red for a real reason, it looks the
+    # same as the other times.
+    #
+    # Scoped to this job rather than raised at the top of the file, so no other
+    # job gains write access it does not need.
+    #
+    # Caveat: pull requests opened by Dependabot run with a read-only token no
+    # matter what this block says (GitHub grants Dependabot PRs restricted
+    # permissions by design), so those may still report 403 here.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
         with:
