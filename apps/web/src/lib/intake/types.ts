@@ -29,6 +29,14 @@ export interface ClientProfileResponse {
   prompting_context: string | null;
   service_interests: string[] | null;
   intake_completed_at: string | null;
+  /**
+   * Primary-contact override (migration 0039). All null means the contact is
+   * whoever submitted the intake — which is what every pre-0039 client means.
+   */
+  primary_contact_name?: string | null;
+  primary_contact_email?: string | null;
+  primary_contact_title?: string | null;
+  primary_contact_phone?: string | null;
 }
 
 export type CsfProfile = "LOW" | "MOD" | "HIGH";
@@ -54,6 +62,8 @@ export interface IntakeContactResponse {
   title: string | null;
   phone: string | null;
   timezone: string | null;
+  /** These details came from the override, not the submitting user's account. */
+  is_override?: boolean;
 }
 
 export interface IntakeStateResponse {
@@ -103,6 +113,15 @@ export interface ClientProfilePatch {
   country?: string;
   prompting_context?: string;
   service_interests?: ServiceType[];
+  /**
+   * Primary-contact override (migration 0039). Explicitly nullable, unlike the
+   * fields above: clearing "I am not the primary contact" has to SEND null to
+   * erase a stored override, and an optional-undefined field cannot say that.
+   */
+  primary_contact_name?: string | null;
+  primary_contact_email?: string | null;
+  primary_contact_title?: string | null;
+  primary_contact_phone?: string | null;
 }
 
 export interface IntakePatchRequest {
