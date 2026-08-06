@@ -33,8 +33,15 @@ export class StagesProxyError extends Error {
 export async function fetchServiceStages(
   serviceId: string,
   signal?: AbortSignal,
+  /**
+   * Tenant to resolve against. Required wherever the caller is scoped to a
+   * tenant by something other than the active-client cookie — the admin intake
+   * queue is scoped by path, and without this every card 400s.
+   */
+  clientId?: string,
 ): Promise<ServiceStages> {
-  const res = await fetch(`/api/proxy/services/${serviceId}/stages`, {
+  const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
+  const res = await fetch(`/api/proxy/services/${serviceId}/stages${qs}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
     signal,
@@ -68,6 +75,7 @@ export async function fetchServiceStages(
 export function useServiceStages(
   serviceId: string | null | undefined,
   reloadKey: unknown = 0,
+  clientId?: string,
 ): {
   phase: "loading" | "ready" | "error";
   stages: ServiceStages | null;
@@ -88,7 +96,7 @@ export function useServiceStages(
     if (!key || !serviceId) return;
     const controller = new AbortController();
     let live = true;
-    fetchServiceStages(serviceId, controller.signal)
+    fetchServiceStages(serviceId, controller.signal, clientId)
       .then((stages) => {
         if (live) setResult({ key, phase: "ready", stages });
       })
@@ -103,7 +111,7 @@ export function useServiceStages(
       live = false;
       controller.abort();
     };
-  }, [key, serviceId]);
+  }, [key, serviceId, clientId]);
 
   // No service to describe: ready with nothing, not an error and not a wait.
   if (!serviceId) return { phase: "ready", stages: null };

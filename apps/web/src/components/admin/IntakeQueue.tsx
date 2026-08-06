@@ -13,6 +13,9 @@ import {
 } from "@shield/design-system";
 
 import { fetchIntakeQueue, fulfillServiceRequest } from "@/lib/admin/client";
+import { useServiceStages } from "@/lib/stages/client";
+import { BulkPublishBar } from "./BulkPublishBar";
+import { ProgressStages } from "./ProgressStages";
 import {
   workspaceHref,
   type AdminIntakeQueueResponse,
@@ -78,9 +81,14 @@ function serviceTone(
 }
 
 function serviceState(s: ServiceRequestRow): string {
-  if (s.fulfilled_service_id) return "Published";
+  // Published services show the six-stage bar instead of a status word, so the
+  // admin queue and the workspaces describe progress the same way rather than
+  // inventing a second vocabulary for the same thing (UX finding 15).
+  if (s.fulfilled_service_id) return "Workspace open";
   if (s.declined_at) return "Declined";
-  return "Awaiting review";
+  // The one genuine state the stage model has no room for: nothing has been
+  // created yet, so there is no version for a stage to describe.
+  return "No workspace yet";
 }
 
 function ReadinessItem({
@@ -118,11 +126,19 @@ function ServiceRequestCard({
   hasContext,
   hasDocuments,
   onPublished,
+  clientId,
+  selectable,
+  selected,
+  onToggleSelect,
 }: {
   s: ServiceRequestRow;
   hasContext: boolean;
   hasDocuments: boolean;
   onPublished: () => void;
+  clientId: string;
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelect: (checked: boolean) => void;
 }): JSX.Element {
   const [publishing, setPublishing] = React.useState(false);
   const [publishError, setPublishError] = React.useState<string | null>(null);
@@ -135,6 +151,15 @@ function ServiceRequestCard({
     s.service_type === "zero_trust_cisa" ||
     s.service_type === "zero_trust_dod";
   const href = workspaceHref(s.service_type, s.fulfilled_service_id);
+  // Progress for a published service, in the same six words the workspace uses.
+  // Keyed on the fulfilled id so an unpublished request never fetches.
+  const { phase: stagesPhase, stages: serviceStages } = useServiceStages(
+    s.fulfilled_service_id,
+    s.fulfilled_service_id ?? "",
+    // Scoped by PATH here, not by the admin's active-client cookie, which may
+    // point at a different tenant entirely.
+    clientId,
+  );
 
   async function onPublish(): Promise<void> {
     setPublishing(true);
@@ -155,11 +180,28 @@ function ServiceRequestCard({
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>{SERVICE_LABELS[s.service_type]}</CardTitle>
+          <div className="flex items-center gap-2">
+            {selectable ? (
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={(e) => onToggleSelect(e.target.checked)}
+                aria-label={`Select ${SERVICE_LABELS[s.service_type]} for bulk workspace creation`}
+              />
+            ) : null}
+            <CardTitle>{SERVICE_LABELS[s.service_type]}</CardTitle>
+          </div>
           <StatusPill tone={serviceTone(s)} withDot>
             {serviceState(s)}
           </StatusPill>
         </div>
+        {stagesPhase === "ready" && serviceStages ? (
+          <ProgressStages
+            stages={serviceStages.stages}
+            kind={serviceStages.kind}
+            version={serviceStages.version}
+          />
+        ) : null}
         <CardDescription>
           Requested {new Date(s.requested_at).toLocaleString()} by{" "}
           <span className="font-medium text-ink-primary">
@@ -262,6 +304,8 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
     null,
   );
   const [error, setError] = React.useState<string | null>(null);
+  // Which requests are ticked for bulk workspace creation.
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
 
   const load = React.useCallback(() => {
     fetchIntakeQueue(clientId)
@@ -301,6 +345,16 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
     c?.prompting_context && c.prompting_context.trim(),
   );
   const hasDocuments = state.artifacts.length > 0;
+  // Bulk-creatable: no workspace yet, not declined, and a kind that HAS a
+  // workspace — a consultation request has nothing to publish.
+  const eligibleIds = state.service_requests
+    .filter(
+      (s) =>
+        !s.fulfilled_service_id &&
+        !s.declined_at &&
+        s.service_type !== "consultation",
+    )
+    .map((s) => s.id);
 
   return (
     <div className="flex flex-col gap-6">
@@ -397,18 +451,37 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
             description="Each service the client picks at intake becomes a request here."
           />
         ) : (
-          <ul className="flex flex-col gap-3">
-            {state.service_requests.map((s) => (
-              <li key={s.id}>
-                <ServiceRequestCard
-                  s={s}
-                  hasContext={hasContext}
-                  hasDocuments={hasDocuments}
-                  onPublished={load}
-                />
-              </li>
-            ))}
-          </ul>
+          <>
+            <BulkPublishBar
+              eligibleIds={eligibleIds}
+              selected={selected}
+              onSelectionChange={setSelected}
+              onPublished={load}
+            />
+            <ul className="mt-3 flex flex-col gap-3">
+              {state.service_requests.map((s) => (
+                <li key={s.id}>
+                  <ServiceRequestCard
+                    s={s}
+                    hasContext={hasContext}
+                    hasDocuments={hasDocuments}
+                    onPublished={load}
+                    clientId={clientId}
+                    selectable={eligibleIds.includes(s.id)}
+                    selected={selected.has(s.id)}
+                    onToggleSelect={(checked) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (checked) next.add(s.id);
+                        else next.delete(s.id);
+                        return next;
+                      })
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 

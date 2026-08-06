@@ -14,10 +14,16 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   props: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const params = await props.params;
+  // An admin viewing the intake queue is scoped to a tenant BY PATH, and their
+  // active-client cookie may point somewhere else entirely — which made this
+  // call 400 with "X-Client-Id required" on every card in the queue. Callers
+  // that already know the tenant say so explicitly.
+  const clientId =
+    new URL(request.url).searchParams.get("clientId") ?? undefined;
   const session = await auth();
   const token = session?.accessToken ?? null;
   if (!token) {
@@ -29,6 +35,7 @@ export async function GET(
   try {
     const result = await apiFetch<unknown>(`/services/${params.id}/stages`, {
       bearer: token,
+      ...(clientId ? { clientId } : {}),
     });
     return NextResponse.json(result);
   } catch (err) {
