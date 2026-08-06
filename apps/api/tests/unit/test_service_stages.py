@@ -30,6 +30,7 @@ from app.services.stages import (
     analysis_ran_for_version,
     deliverable_exists_for_version,
     derive_stages,
+    extraction_produced_version,
 )
 
 T0 = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
@@ -358,3 +359,57 @@ def test_monotonic_fill_does_not_invent_progress_that_never_happened() -> None:
     assert states["analyze"] == "current"
     assert states["review"] == "pending"
     assert states["release"] == "pending"
+
+
+@pytest.mark.unit
+def test_a_service_with_no_version_has_not_prepared_anything() -> None:
+    """Found by the e2e spec, not by these tests.
+
+    `prepare` for Tech Debt and ATT&CK is otherwise unconditional — they have no
+    client-input step, so the stage is satisfied by the version existing. With
+    no version at all, an empty Tech Debt service claimed its inventory had
+    already been uploaded.
+    """
+    states = _states(
+        derive_stages(
+            kind=ServiceKind.TECH_DEBT,
+            status="draft",
+            client_input_received=False,
+            analyzed=False,
+            generated=False,
+            version_exists=False,
+        )
+    )
+    assert states["prepare"] == "current"
+    assert states["analyze"] == "pending"
+    assert set(states.values()) == {"current", "pending"}
+
+
+# --------------------------------------------------------------------------- #
+# Tech Debt inverts the ordering the timestamp anchor assumes.
+# --------------------------------------------------------------------------- #
+
+
+class _FakeList:
+    def __init__(self, source_rows_total):
+        self.source_rows_total = source_rows_total
+
+
+@pytest.mark.unit
+def test_tech_debt_uses_extraction_provenance_not_a_timestamp() -> None:
+    """Found by the e2e spec.
+
+    Zero Trust, CSF and ATT&CK create the assessment and THEN run AI on it, so a
+    run is always newer than its version. Tech Debt is inverted: the extraction
+    call runs first and the capability list is built from its output, so the
+    llm_calls row predates the list by milliseconds and the timestamp anchor
+    reported every extraction as belonging to no version at all.
+
+    `source_rows_total` is written by the extraction that cut the list, so it is
+    version-scoped by construction and cannot be inherited from an earlier draft.
+    """
+    assert extraction_produced_version(_FakeList(21)) is True
+    # Zero rows received is still an extraction that ran.
+    assert extraction_produced_version(_FakeList(0)) is True
+    # Pre-0036 lists read as un-analysed: under-claiming is the smaller lie.
+    assert extraction_produced_version(_FakeList(None)) is False

@@ -17,13 +17,28 @@ import type { Page } from "@playwright/test";
  * Safe to call unconditionally: it returns immediately when AI is live, when
  * the admin already acknowledged in this session, or when the control being
  * clicked is not guarded.
+ *
+ * The wait is deliberately generous. At 4s this helper gave up BEFORE the
+ * dialog rendered on a next-dev cold compile under suite load, returned
+ * silently, and left the guard open — so the caller's `waitForResponse` sat
+ * there for its full two minutes and then failed with "timeout waiting for
+ * event: response", which points at the API rather than at the un-clicked
+ * button actually holding things up. Waiting longer costs nothing when the
+ * dialog is genuinely absent (the common path is that it appears within
+ * milliseconds); mis-reporting the cause cost an afternoon.
  */
+const GUARD_TIMEOUT_MS = 20000;
+
 export async function acknowledgeOfflineAi(page: Page): Promise<void> {
   const dialog = page.getByRole("alertdialog", { name: "No API key loaded" });
   try {
-    await dialog.waitFor({ state: "visible", timeout: 4000 });
+    await dialog.waitFor({ state: "visible", timeout: GUARD_TIMEOUT_MS });
   } catch {
     return; // No guard shown — nothing to acknowledge.
   }
   await dialog.getByRole("button", { name: "Continue offline" }).click();
+  // The dialog must actually close: a click that lands while React is still
+  // attaching is a no-op, and the caller would otherwise wait on a request
+  // that never gets sent.
+  await dialog.waitFor({ state: "hidden", timeout: GUARD_TIMEOUT_MS });
 }
