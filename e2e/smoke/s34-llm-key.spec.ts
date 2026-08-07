@@ -1,11 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import {
-  adminApiToken,
-  atlasClientIdViaApi,
-  atlasServiceIdsViaApi,
-} from "../helpers/ids";
+import { adminApiToken, API_BASE } from "../helpers/ids";
 
 /**
  * Issue 2: an admin must be TOLD when AI will produce offline output, and be
@@ -22,6 +18,54 @@ import {
  */
 
 test.describe.configure({ timeout: 180_000 });
+
+/**
+ * A throwaway tenant with an ATT&CK service and a DRAFT coverage assessment.
+ *
+ * Its own tenant rather than Atlas, for two reasons. It keeps the shared seed
+ * untouched — and an unreleased ATT&CK service in Atlas would surface on the
+ * client's /home as an "In progress" card linking to /assessments, which `s31`
+ * asserts against (it expects "In progress" to mean a resumable
+ * self-assessment). Isolation avoids borrowing that problem.
+ */
+async function createAttackWorkspace(
+  request: APIRequestContext,
+  token: string,
+): Promise<{ clientId: string; serviceId: string }> {
+  const auth = { Authorization: `Bearer ${token}` };
+  const stamp = Date.now();
+
+  const tenant = await request.post(`${API_BASE}/admin/clients`, {
+    headers: auth,
+    data: { legal_name: `Run-AI Guard QA ${stamp}` },
+  });
+  expect(tenant.ok(), `create tenant (${tenant.status()})`).toBeTruthy();
+  const clientId = ((await tenant.json()) as { id: string }).id;
+
+  const headers = { ...auth, "X-Client-Id": clientId };
+  const svc = await request.post(`${API_BASE}/attack/services`, {
+    headers,
+    data: { kind: "attack_coverage", title: `Run-AI Guard QA ${stamp}` },
+  });
+  expect(svc.status(), `open ATT&CK service (${await svc.text()})`).toBe(201);
+  const serviceId = ((await svc.json()) as { id: string }).id;
+
+  // Pre-seeds an unscored row per technique and lands in DRAFT — the state
+  // that keeps Run AI enabled.
+  const assessment = await request.post(
+    `${API_BASE}/attack/services/${serviceId}/assessments`,
+    { headers },
+  );
+  expect(
+    assessment.status(),
+    `create assessment (${await assessment.text()})`,
+  ).toBe(201);
+  expect(
+    ((await assessment.json()) as { status: string }).status.toLowerCase(),
+  ).toBe("draft");
+
+  return { clientId, serviceId };
+}
 
 test("admin: the offline warning appears on every admin page and offers the fix", async ({
   page,
@@ -85,29 +129,37 @@ test("admin: the key panel reports offline state and refuses a bad key without s
 
 test("admin: Run AI warns before producing offline output, then proceeds once acknowledged", async ({
   page,
+  request,
 }) => {
+  test.slow();
+
+  // Seed a workspace whose Run AI button CANNOT be disabled.
+  //
+  // This test used to resolve the seeded Atlas ATT&CK service and then
+  // self-skip twice: once if the seed had no such service, and once if its
+  // assessment was already released (which renders Run AI read-only). Whether
+  // the browser ever exercised the guard therefore depended on shared database
+  // state nobody controls — and a spec that skips is UNTESTED, not passing.
+  // That skip is exactly what hid the fail-open race below until the first
+  // full-suite run.
+  //
+  // A fresh tenant with a fresh DRAFT assessment makes `readOnly`
+  // (approved || released) impossible, so the assertions always run.
+  const token = await adminApiToken(request);
+  const { serviceId } = await createAttackWorkspace(request, token);
+
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-
-  // Resolve a seeded ATT&CK workspace through the API rather than hunting for
-  // a link: which workspaces the queue exposes depends on what has been
-  // published, and this spec is about the Run-AI gate, not queue navigation.
-  const token = await adminApiToken(page.request);
-  const clientId = await atlasClientIdViaApi(page.request, token);
-  const byType = await atlasServiceIdsViaApi(page.request, token, clientId);
-  const serviceId = byType.get("attack_coverage");
-  test.skip(!serviceId, "seed has no ATT&CK coverage service");
-
   await page.goto(`/admin/services/${serviceId}/attack-coverage`);
   const runAi = page.getByRole("button", { name: "Run AI", exact: true });
   await expect(runAi).toBeVisible({ timeout: 60_000 });
 
-  // A released assessment renders Run AI disabled — a legitimate state the
-  // shared seed can be in. The gate's own logic is covered exhaustively by
-  // RunAiGuard.test.tsx; this spec only proves the wiring on a live workspace.
-  test.skip(
-    !(await runAi.isEnabled()),
-    "seeded ATT&CK assessment is read-only (released), so Run AI is disabled",
-  );
+  // Asserted, not skipped on: a draft assessment must leave Run AI actionable.
+  // If this ever fails, the guard genuinely cannot be reached and the rest of
+  // the test would have been silently skipped under the old shape.
+  await expect(
+    runAi,
+    "a freshly drafted assessment must leave Run AI enabled",
+  ).toBeEnabled();
 
   // First click surfaces the offline warning instead of silently running.
   //
