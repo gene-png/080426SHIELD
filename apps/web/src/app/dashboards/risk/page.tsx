@@ -74,7 +74,7 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
           href="/results"
           className="text-sm font-medium text-brand-600 hover:text-brand-700"
         >
-          ← Back to documents
+          ← Back to results
         </Link>
       </main>
     );

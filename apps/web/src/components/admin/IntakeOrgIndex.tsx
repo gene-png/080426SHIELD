@@ -11,6 +11,11 @@ import {
 } from "@shield/design-system";
 
 import { listClients, type ClientSummary } from "@/lib/admin/client";
+import {
+  DEFAULT_ORG_FILTERS,
+  filterOrganizations,
+  type OrgFilters,
+} from "@/lib/admin/filters";
 
 import type { JSX } from "react";
 
@@ -48,6 +53,8 @@ function formatDate(iso: string | null): string {
 export function IntakeOrgIndex(): JSX.Element {
   const [clients, setClients] = React.useState<ClientSummary[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // IA appendix: filter the index by name, and by whether work is waiting.
+  const [filters, setFilters] = React.useState<OrgFilters>(DEFAULT_ORG_FILTERS);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -67,6 +74,8 @@ export function IntakeOrgIndex(): JSX.Element {
       cancelled = true;
     };
   }, []);
+
+  const visible = clients ? filterOrganizations(clients, filters) : [];
 
   if (error) {
     return (
@@ -95,6 +104,34 @@ export function IntakeOrgIndex(): JSX.Element {
         </p>
       </header>
 
+      {clients !== null && clients.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex-1 text-sm">
+            <span className="sr-only">Filter organizations by name</span>
+            <input
+              type="search"
+              value={filters.query}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, query: e.target.value }))
+              }
+              placeholder="Filter by organization name…"
+              className="w-full rounded-md border border-border bg-surface-card px-3 py-2 text-sm text-ink-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-ink-secondary">
+            <input
+              type="checkbox"
+              checked={filters.awaitingOnly}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, awaitingOnly: e.target.checked }))
+              }
+              className="h-4 w-4 rounded-sm border-border text-brand-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus"
+            />
+            Only awaiting review
+          </label>
+        </div>
+      ) : null}
+
       {clients === null ? (
         <p className="text-sm text-ink-tertiary">Loading organizations…</p>
       ) : clients.length === 0 ? (
@@ -102,9 +139,16 @@ export function IntakeOrgIndex(): JSX.Element {
           title="No organizations yet"
           description="When a client registers and submits intake, they'll appear here."
         />
+      ) : visible.length === 0 ? (
+        /* Filtered to nothing. Say so explicitly — a bare "none" here reads as
+           "no organizations exist", which is not what happened. */
+        <EmptyState
+          title="No organizations match these filters"
+          description={`${clients.length} ${clients.length === 1 ? "organization is" : "organizations are"} hidden by the filters above. Clear them to see everything.`}
+        />
       ) : (
         <ul className="flex flex-col gap-3">
-          {clients.map((c) => (
+          {visible.map((c) => (
             <li key={c.id}>
               <Link
                 href={`/admin/queue/${c.id}`}

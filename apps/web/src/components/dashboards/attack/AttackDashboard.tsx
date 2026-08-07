@@ -265,7 +265,7 @@ export function AttackDashboard({
               href="/results"
               style={{ color: C.accent2, fontSize: 12, textDecoration: "none" }}
             >
-              ← Back to documents
+              ← Back to results
             </Link>
             <h1 style={{ margin: "6px 0 0", fontSize: 22, fontWeight: 700 }}>
               {data.service_title}

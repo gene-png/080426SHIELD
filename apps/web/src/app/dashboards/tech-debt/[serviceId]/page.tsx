@@ -67,7 +67,7 @@ export default async function TechDebtDashboardPage({
           href="/results"
           className="text-sm font-medium text-brand-600 hover:text-brand-700"
         >
-          ← Back to documents
+          ← Back to results
         </Link>
       </main>
     );

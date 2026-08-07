@@ -261,6 +261,15 @@ export function RiskRegisterDashboard(): JSX.Element {
               ? ` · version ${register.version}`
               : " · not yet generated"}
           </p>
+          {/* The IA appendix asks whether the register is global, per-client or
+              per-service. It is per-client, synthesized across that client's
+              services — but the only place that was said is the "pick a client
+              first" empty state, which anyone who already has a client selected
+              never sees. Say it where it is actually read. */}
+          <p className="text-sm text-ink-tertiary">
+            Client-specific · synthesized across all of this client&apos;s
+            services
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Issue 2: risk_synthesize is an AI job — warn before producing
