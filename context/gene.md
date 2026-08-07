@@ -44,7 +44,8 @@ The four Criticals:
    (`routes/admin.py:778`) never checks `shield_llm_mode`, contradicting its own
    docstring. Draft answers are also unprotected — `answer_source` is stamped
    only at submit.
-2. **N-014** — ATT&CK Run AI. Being worked; see below.
+2. **N-014** — ATT&CK Run AI could never complete. **Fixed and validated in this
+   PR** — see below.
 3. **N-010** — released client reports state "Total annual cost: $3,368,000" for
    a **$3,608,000** upload with no disclosure that 2 rows were excluded.
    Verified by parsing the actual PDF/XLSX/DOCX.
