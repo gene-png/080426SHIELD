@@ -59,10 +59,19 @@ def _ensure_defaults() -> None:
     global _REGISTERED_DEFAULTS
     if _REGISTERED_DEFAULTS:
         return
-    _REGISTERED_DEFAULTS = True
     # Import for side effect: registers the built-in jobs. Imported lazily to
     # avoid a circular import at module load.
+    #
+    # The flag is set AFTER the import, not before. Setting it first is a
+    # check-then-set race: a second thread entering while the first is still
+    # importing sees the flag already true, returns early, and then reads an
+    # EMPTY registry. Every concurrent worker in the batched mitre_map run hit
+    # exactly that — `No AI job registered as 'mitre_map'. Registered: ()`.
+    # Re-entering the import is harmless: Python caches modules and
+    # register_job() overwrites by name, so the worst case is idempotent work.
     from app.ai import jobs  # noqa: F401
+
+    _REGISTERED_DEFAULTS = True
 
 
 def get_job(name: str) -> AIJob:

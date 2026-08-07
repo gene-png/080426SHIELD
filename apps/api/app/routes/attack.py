@@ -17,15 +17,16 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.diff import diff_keyed_rows
-from app.ai.engine import run_job
+from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
@@ -550,6 +551,125 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
     )
 
 
+# mitre_map asks for one JSON object per ATT&CK technique, and the Enterprise
+# matrix supplies ~633 of them. Measured live on 2026-08-07 it costs ~575 output
+# tokens per technique, so a single request wants ~364k output tokens — 2.8x
+# claude-opus-5's 128k ceiling — and ~80 minutes of generation. It is not a
+# budget problem; one request cannot express this job. It is split.
+#
+# 25 keeps a batch near ~14k output tokens: comfortably inside every provider's
+# ceiling, ~30s of generation, and small enough that losing one costs little.
+# Batches run concurrently because wall-clock here is dominated by token
+# throughput, which batching alone does not improve — only overlapping does.
+# 5 workers is deliberately modest: the provider rate limit is shared with every
+# other job in the deployment, and this endpoint already sits behind
+# enforce_ai_rate_limit.
+_MITRE_BATCH_SIZE = 25
+_MITRE_MAX_WORKERS = 5
+
+
+@dataclass
+class _BatchedResult:
+    """Shape-compatible stand-in for engine.JobResult's `.data`."""
+
+    data: dict[str, Any]
+
+
+def _run_mitre_map_batched(
+    db: Session,
+    llm: LLMClient,
+    req: AttackAiRequest,
+    *,
+    requested_by: uuid.UUID,
+    service_id: uuid.UUID,
+    client_id: uuid.UUID,
+) -> tuple[list[dict], int, int]:
+    """Run mitre_map as concurrent batches. Returns (suggestions, total, failed).
+
+    Each batch is a real `run_job` call and therefore writes its own `llm_calls`
+    row — N rows per run instead of one. That is the honest accounting: N
+    provider calls were made and each is separately billable.
+
+    Each worker gets its OWN Session. A SQLAlchemy Session is not thread-safe,
+    and the request-scoped `db` belongs to the endpoint; sharing it across
+    threads corrupts state. Each worker commits its own audit row so evidence of
+    a call survives independently of whether its siblings — or the request —
+    succeed.
+
+    A partial failure does NOT discard the run. Losing 1 batch of 26 should cost
+    the consultant 25 techniques, not all 633 and the money already spent on
+    them. Only a total failure raises, and it raises through `ai_call_boundary`
+    so the error stays typed and carries `charged_likely`.
+    """
+    codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
+    batches = [
+        codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)
+    ] or [[]]
+
+    def _one(batch: list[str]) -> dict:
+        # Bind to the REQUEST session's engine, not the module-level
+        # SessionLocal. A Session is not thread-safe so each worker needs its
+        # own, but reaching for SessionLocal opens a connection outside whatever
+        # the caller is bound to — which silently bypassed the test suite's
+        # dependency-injected engine and broke isolation across test files.
+        # get_bind() keeps workers on the same database the request is using.
+        session = Session(bind=db.get_bind())
+        try:
+            out = run_job(
+                session,
+                llm,
+                req.preview.job_name,
+                inputs={**req.preview.inputs, "technique_codes": batch},
+                requested_by=requested_by,
+                service_id=service_id,
+                client_id=client_id,
+                client_org_name=req.preview.client_org_name,
+                name_hints=req.preview.name_hints,
+            )
+            session.commit()
+            return out.data or {}
+        except Exception:
+            # Mirror ai_call_boundary: commit so the FAILED row survives the
+            # exception, then let it propagate to be counted.
+            session.commit()
+            raise
+        finally:
+            session.close()
+
+    # Warm the job registry on THIS thread before any worker touches it. Lazy
+    # registration behind a module flag is not something a worker should be the
+    # first to trigger, even now that the flag ordering is fixed.
+    get_job(req.preview.job_name)
+
+    suggestions: list[dict] = []
+    failed = 0
+    first_error: Exception | None = None
+
+    with ThreadPoolExecutor(max_workers=_MITRE_MAX_WORKERS) as pool:
+        futures = [pool.submit(_one, b) for b in batches]
+        for fut in as_completed(futures):
+            try:
+                data = fut.result()
+            except Exception as exc:  # noqa: BLE001 - counted, not swallowed
+                failed += 1
+                first_error = first_error or exc
+                _log.error(
+                    "mitre_map_batch_failed",
+                    service_id=str(service_id),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                continue
+            suggestions.extend(t for t in (data.get("techniques") or []) if isinstance(t, dict))
+
+    if failed == len(batches) and first_error is not None:
+        # Nothing usable came back. Re-raise inside the boundary so the caller
+        # gets the same typed 502 + charged_likely it always did.
+        with ai_call_boundary(db, llm, purpose=req.preview.job_name):
+            raise first_error
+
+    return suggestions, len(batches), failed
+
+
 @router.post(
     "/services/{service_id}/run-ai",
     response_model=AttackRunAiResponse,
@@ -591,19 +711,15 @@ def run_ai(
         }
 
     before = _snap()
-    # A provider failure here must stay typed and leave an llm_calls row.
-    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-        result = run_job(
-            db,
-            llm,
-            req.preview.job_name,
-            inputs=req.preview.inputs,
-            requested_by=user.id,
-            service_id=svc.id,
-            client_id=client.id,
-            client_org_name=req.preview.client_org_name,
-            name_hints=req.preview.name_hints,
-        )
+    suggestions, batches_total, batches_failed = _run_mitre_map_batched(
+        db,
+        llm,
+        req,
+        requested_by=user.id,
+        service_id=svc.id,
+        client_id=client.id,
+    )
+    result = _BatchedResult(data={"techniques": suggestions})
 
     def _validate_tools(names: object) -> list[str]:
         if not isinstance(names, list):
@@ -674,7 +790,13 @@ def run_ai(
         AttackCoverageResponse.model_validate(r, from_attributes=True)
         for r in sorted(rows.values(), key=lambda r: r.technique_code)
     ]
-    return AttackRunAiResponse(tools_available=len(tools), changed=changes, coverage=coverage)
+    return AttackRunAiResponse(
+        tools_available=len(tools),
+        changed=changes,
+        coverage=coverage,
+        batches_total=batches_total,
+        batches_failed=batches_failed,
+    )
 
 
 @router.post(
