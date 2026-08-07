@@ -122,14 +122,36 @@ export function DeliverablesTable(): JSX.Element {
   }, []);
 
   if (error) {
+    // Keep the page header. This used to return the bare error card, so a
+    // failed fetch erased the page's own identity: no "Deliverables" heading,
+    // no explanation of what the page is, nothing to orient on — a dead end
+    // that looked like a broken app rather than a failed request.
+    //
+    // It also made s40 unfalsifiable. The spec waits for the heading, so an
+    // error rendered as "element(s) not found", which reads like a slow page.
+    // It was diagnosed as a cold-compile timeout and the wait was raised
+    // 10s -> 30s (e9aa9ae); the heading was never going to appear at any
+    // timeout, and CI has been red on main since. An error state that hides
+    // the page is worth fixing on its own; that it also stops a test lying
+    // about the cause is the reason it went unnoticed for so long.
     return (
-      <Card>
-        <CardBody>
-          <p className="text-sm text-status-danger-fg" role="alert">
-            {error}
+      <div className="flex flex-col gap-6">
+        <header className="space-y-1">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+            Admin
           </p>
-        </CardBody>
-      </Card>
+          <h1 className="text-3xl font-semibold text-ink-primary">
+            Deliverables
+          </h1>
+        </header>
+        <Card>
+          <CardBody>
+            <p className="text-sm text-status-danger-fg" role="alert">
+              {error}
+            </p>
+          </CardBody>
+        </Card>
+      </div>
     );
   }
 
