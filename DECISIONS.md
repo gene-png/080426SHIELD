@@ -1250,3 +1250,98 @@ here so it is not re-opened as an oversight.
 `apps/api/app/models/client.py`, `apps/api/app/schemas/intake.py`, migration
 `0039`; `apps/web/src/components/intake/steps/Step3Contact.tsx`;
 `test_intake_primary_contact.py`.
+
+## D-042 — `/results` is the one client-facing results surface, and `/documents` redirects forever
+
+**Decision (2026-08-06, UX finding 18).** Reports were downloaded from
+`/documents` while dashboards were reached from `/home` or a "View dashboard"
+link. A client had **three places** to look for the outcome of one engagement and
+no way to know which held what.
+
+`/results` is now the single destination. The list already carried nearly
+everything the finding asks for — service, version, release date, status
+(Final / Superseded), the dashboard link and the PDF/XLSX downloads — so this is
+consolidation and a rename, not a rebuild.
+
+**`/documents` permanently redirects, and stays.** Release notification emails
+carrying the old path are already sitting in people's inboxes; a 404 on a link we
+sent is worse than keeping a route forever. `s17` asserts that promise rather
+than leaving it to trust. The release email now points at `/results` directly
+rather than through the redirect.
+
+**Ref:** `apps/web/src/app/results/`, `apps/web/src/app/documents/page.tsx`
+(redirect), `apps/web/src/components/results/ResultsList.tsx`,
+`apps/api/app/notifications/`; `s17`.
+
+## D-043 — Client Home groups by who owns the next move; the six-stage bar stays admin-only
+
+**Decision (2026-08-06, UX finding 17).** "Your services" was one flat grid in
+arrival order, so a client with several engagements read every phase pill to work
+out which one needed them — and an open self-assessment appeared **twice**, once
+as a card and again in a "Waiting on you" list beside it.
+
+Three buckets, and every service lands in **exactly one**: **Action required** /
+**In progress** / **Results available**. Ownership, not progress. That single
+placement is what removes the duplication rather than patching around it, and
+"Waiting on you" is gone entirely — unread messages, which need the client but
+have no service card, moved **into** Action required.
+
+**The six-stage bar (D-040) deliberately does NOT appear here.** Master Spec §6.4
+restricts a client surface to phase and next steps; the six stages are consultant
+vocabulary and stay in the workspaces and the admin queue. The finding named three
+buckets, not six stages, and the two answer different questions — so the card
+keeps its existing **phase pill** alongside the bucket heading. Leaving the pill
+alone also meant `s31`'s phase-driven routing assertions needed no edit to stay
+green, which is the right way round: the test did not move to accommodate the
+change.
+
+Each card names **one primary action** — Resume assessment / View status / View
+results — keyed off the bucket so the label cannot disagree with the group. It is
+a `<span>` inside the card's existing link, never a nested `<a>`: that would be
+invalid HTML and would give every card two tab stops to the same destination. A
+test asserts exactly one link per card.
+
+The finding's third clause, "move secondary actions into a menu", is a **no-op**
+here — `/home` has no per-card secondary actions to move. Recorded rather than
+faked.
+
+**Ref:** `apps/web/src/components/home/HomeDashboard.tsx` (`bucketFor`,
+`needsClient`, `BUCKET_ACTIONS`); `HomeDashboard.test.tsx`; `s31`.
+
+## D-044 — The admin Deliverables view derives its status, and is read-only
+
+**Decision (2026-08-07, IA appendix).** D-042 gave clients one place to find
+their reports. Admins still had that problem: deliverables were visible only
+inside the workspace that produced them, so "what have we produced for this
+client, and what have they actually seen?" meant opening every workspace in turn.
+
+`GET /admin/deliverables` mirrors the client route's query with one deliberate
+difference — it **drops the `released_at IS NOT NULL` filter**. That filter is the
+§12 release rule and is correct for a client; for an admin the unreleased rows are
+half the answer.
+
+**No migration.** All three states derive from columns already on the table:
+
+| Condition           | Status     | `client_visible` |
+| ------------------- | ---------- | ---------------- |
+| `superseded_by` set | superseded | false            |
+| `released_at` set   | released   | **true**         |
+| `finalized_at` set  | generated  | false            |
+
+**Superseded wins over released.** A superseded row was often released once;
+reporting it as client-visible would tell a consultant the client is looking at a
+version that has since been replaced. `released_at` remains the single source of
+truth for client visibility, so there is no second lifecycle to drift from §12.
+
+**Read-only on purpose.** No release button on a cross-service list — that is how
+someone releases the wrong version to the wrong tenant. Finalize and release stay
+in the owning workspace, and the e2e asserts the absence rather than trusting it.
+
+Scope is the active-client tenant via `current_client`, the same mechanism the
+Risk Register uses; no new cross-tenant read surface. A cross-tenant roll-up is a
+recorded follow-up, not a silent omission.
+
+**Ref:** `apps/api/app/routes/admin.py` (`list_admin_deliverables`,
+`_deliverable_status`), `apps/api/app/schemas/admin.py`;
+`apps/web/src/components/admin/DeliverablesTable.tsx`,
+`apps/web/src/lib/admin/deliverables.ts`; `test_admin_deliverables.py`, `s40`.

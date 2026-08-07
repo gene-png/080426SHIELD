@@ -1,7 +1,7 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-06 (portfolio scope + derived stages + intake contact;
-PRs #9/#10 merged, #11/#12 in flight — see the end of "Current state"). NOTE: this
+_Last updated: 2026-08-07 (Phase C + Phase D complete; PRs #11–#19 all merged,
+`main` at `a9ec90f` — see "UX findings burn-down" at the end of "Current state"). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
 `main` carrying the working tree through `v3.7.0`; the PR numbers cited in the
 sprint history below belong to the upstream repo, not to this one. This file
@@ -219,10 +219,39 @@ is opt-in-gated).
   also stopped sharing the seeded ATT&CK service with `s5` (it raced for it *and*
   approved/finalised it, changing state every later spec inherited).
 
-- **IN FLIGHT, not yet merged:** PR **#11** (intake primary-contact override +
-  shared service defaults, migration 0039) and PR **#12** (admin queue stage bar
-  + bulk workspace creation). Both green apart from a running E2E at the time of
-  writing.
+### UX findings burn-down — COMPLETE (`main` at `a9ec90f`, 2026-08-07)
+
+`UX findings.docx` (22 numbered findings + a "Recommended page structure"
+appendix) and the 2026-08-04 guided live run (`REPORT.md`, F-1..F-12, outside the
+repo at `e2e-review-20260804-211926/`) are both **fully burnt down**. The two
+documents overlap heavily; PR #6 carries the authoritative change -> finding table.
+
+| Phase | PR | Findings closed |
+| --- | --- | --- |
+| — | #5, #6 | UX 1, 2, 3, 6, 10, 11, 12, 13, 14, 19, 20, 21, 22 + F-1..F-12 (F-10 **withdrawn**: a measurement artifact of the review harness, not a defect) |
+| A | #9, #10 | UX 4 (disclosure + portfolio scope), UX 16 (D-039, D-040) |
+| — | `2552dca` | UX 5 (bundle decomposition, migration 0037) |
+| B | #11 | UX 8, 9 (D-041) |
+| C1 | #12 | UX 15 |
+| C2 | #14 | UX 18 (**D-042**) |
+| C3 | #15 | UX 17 (**D-043**) |
+| D | #16 | IA appendix: admin Deliverables (**D-044**) |
+| D | #17 | IA appendix: queue filters, Risk Register scope; plus six stale "Back to documents" labels C2 missed |
+| D | #18 | IA appendix: Help surface + shared `SERVICE_DESCRIPTIONS` |
+| — | #19 | `s34`'s Run-AI-guard test made unconditional |
+
+**No migrations in Phase C or D.** The Deliverables statuses derive from columns
+that already existed.
+
+**The one open item is a verification gap, not a defect.** `REPORT.md` records
+that CSF and MITRE live scoring were never completed, deprioritised once F-3 was
+established, and F-3's own note says Zero Trust could not complete on live
+Anthropic at all. PR #6 added streaming to answer that — but **nothing has
+re-proven ZT, CSF or MITRE against live Anthropic since**. Sprint 7's live
+validation (2026-07-15) was on **Vertex/Gemini**, a different adapter with a
+different failure mode. On the default provider exactly one purpose
+(`extract.capabilities`) has ever completed live, and that was before the
+streaming change. Treat "live Anthropic works" as unproven until a run says so.
 
 ### Portfolio scope + stages: change → commit
 
@@ -394,7 +423,10 @@ is opt-in-gated).
   release-notification suites and the opt-in `tests/live/test_live_ai.py`
   (`@pytest.mark.live`, excluded from `-m unit`, GCP-validated 2026-07-15) are
   unchanged.
-- Web unit tests: `pnpm -F web test` (vitest) 37/37 across 10 files. Sprint 9 T1
+- Web unit tests: `pnpm -F web test` (vitest) **116/116 across 22 files** on
+  `a9ec90f`. Phase C/D added `HomeDashboard` bucket + primary-action cases,
+  `DeliverablesTable.test.tsx`, and `lib/admin/filters.test.ts` (the queue filter
+  predicates, including the future-timestamp case). Earlier: 37/37 across 10 files. Sprint 9 T1
   added `DiscardDraftButton.test.tsx` (renders only for a draft, opens the Modal,
   confirm invokes the callback, cancel/ESC/backdrop are no-ops) and `CsfWorkspace`
   discard tests (the answered-count warning line, plus the end-of-sprint audit pass's
@@ -406,7 +438,14 @@ is opt-in-gated).
 - Web `tsc --noEmit` clean on Next 15 / React 19 / Tailwind 4 / Auth.js v5. ESLint
   0 errors (1 pre-existing postcss warning). In-container `pnpm -F web build` was
   proven green in T6 (the standalone prod image the demo compose runs).
-- e2e: 27 spec files (host, resolves `:3001`). Sprint 9 added `s26-oidc-login`
+- e2e: **41 spec files** (host; `:3000` on Gene's box, `:3001` on Dave's). Phase
+  C/D added `s40-admin-deliverables` and `s41-help`, and rewrote `s34`'s
+  Run-AI-guard test to seed its own tenant so it can no longer self-skip.
+  **Numbering caution:** `s37`/`s38` were briefly duplicated when the Phase D
+  specs were added without checking the directory — renamed to `s40`/`s41` in the
+  same pass. `s12` carries a genuine pre-existing duplicate
+  (`s12-a11y-nav`, `s12-notfound`). Check `ls e2e/smoke` before claiming a number.
+  Earlier: 27 spec files. Sprint 9 added `s26-oidc-login`
   (opt-in, self-skips unless `E2E_OIDC=1`) and `demo/demo-journey` (opt-in,
   self-skips unless `SHIELD_DEMO_SMOKE=1`), so the default suite count is unchanged.
   The T10 exit run was green on the flag-off dev stack: 51 passed / 6 skipped (2
