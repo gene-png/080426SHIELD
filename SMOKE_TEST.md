@@ -496,6 +496,58 @@ assessment, deliverable and audit row.
 
 ---
 
+## 42. Results replaces Documents (D-042, UX finding 18)
+
+- [x] `/results` lists every released deliverable with service, version, release date, status (Final / Superseded), the dashboard link and the PDF/XLSX downloads. (`s17-documents.spec.ts`)
+- [x] `/documents` permanently redirects to `/results`, and the real page renders after the redirect — release emails already in inboxes carry the old path. (`s17-documents.spec.ts`)
+- [x] The release notification email points at `/results` directly rather than through the redirect. (`2581537`; asserted by the MailHog check in `s22`)
+- [x] Every dashboard's "back to" link lands on `/results` **and says so** — six labels still read "Back to documents" until `2c1918c`. (`3e5db4e`; no spec asserts the wording — see the gap below)
+- [ ] A spec asserting the back-link *wording*, not just its href. Its absence is exactly why six stale labels survived a fully green suite.
+
+---
+
+## 43. Client Home grouped by task status (D-043, UX finding 17)
+
+- [x] "Your services" renders three buckets — Action required / In progress / Results available — and every service appears in **exactly one**. (`s31-home-service-links.spec.ts`)
+- [x] Each bucket heading carries a count that matches what the bucket actually lists, messages row included. (`s31`)
+- [x] Every card names one primary action matching its bucket: Resume assessment / View status / View results. (`s31`, `HomeDashboard.test.tsx`)
+- [x] A card is a **single tab stop** — the action is a span inside the card link, not a nested anchor. (`HomeDashboard.test.tsx`)
+- [x] Unread messages appear inside Action required, and the old "Waiting on you" list — which duplicated the same self-assessment — is gone. (`HomeDashboard.test.tsx`)
+- [x] No six-stage bar on this surface (§6.4: phase and next steps only). (by construction; `HomeDashboard.tsx` imports no stage code)
+- [x] §6.4 still holds: no percentage or scoring math renders on `/home`. (`s18-home.spec.ts`)
+
+---
+
+## 44. Admin Deliverables view (D-044, IA appendix)
+
+- [x] `/admin/deliverables` lists every deliverable for the active tenant **including unreleased ones** — the reason the surface exists. (`s40-admin-deliverables.spec.ts`, which seeds its own unreleased row rather than hoping the seed has one)
+- [x] Status derives correctly across generated / released / superseded, and `client_visible` is true only for a released, non-superseded row. (`test_admin_deliverables.py`)
+- [x] A tenant never sees another tenant's deliverables; a client-role caller is refused 403. (`test_admin_deliverables.py`)
+- [x] The list is read-only — no release action on a cross-service view. (`s40` asserts the absence)
+- [x] Reachable from the admin sidebar. (`s40`)
+- [ ] Cross-tenant roll-up (one table, all tenants). Deliberately out of scope; recorded in D-044.
+
+---
+
+## 45. Admin queue filters + Risk Register scope (IA appendix)
+
+- [x] The organization index filters by name and by "only awaiting review", and a filtered-to-nothing list **says the filters did it** rather than reading as an empty queue. (`s32-admin-org-index.spec.ts`)
+- [x] Service requests filter by service, status and age; the empty state names the active filters. (`filters.test.ts`; browser-verified 2026-08-07)
+- [x] "Select all" is scoped to **visible** rows, so bulk publish can never reach a request filtered off screen. (`IntakeQueue.tsx`; `filters.test.ts` covers the predicates — the scoping itself has no spec, see below)
+- [x] A request dated in the future counts as newest, not oldest — clock skew must not bury fresh work. (`filters.test.ts`)
+- [x] The Risk Register states its scope (client-specific, synthesized across that client's services) where a user with a client already selected can read it. (`3e5db4e`; `s8` + `s30` green, no wording assertion)
+- [ ] A spec pinning the visible-only scoping of bulk select. Unit-tested predicates are not the same as the wiring.
+
+---
+
+## 46. Help surface (IA appendix)
+
+- [x] `/help` explains every service, from the same `SERVICE_DESCRIPTIONS` map the intake picker reads — so a service cannot be described one way when you pick it and another when you look it up. (`s41-help.spec.ts`)
+- [x] Support routes resolve: messages, the accessibility statement, and account settings. (`s41`)
+- [x] Reachable from the signed-in header, and the accessibility link is a real destination, not a dead end. (`s41`)
+
+---
+
 ## Sign-off
 
 - [ ] All core flows pass

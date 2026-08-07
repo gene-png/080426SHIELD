@@ -1,7 +1,7 @@
 # Gene — current status
 
 _Owner: Gene (gene-png). Only Gene's sessions write this file._
-_Last updated: 2026-08-06_
+_Last updated: 2026-08-07_
 
 Keep this short and current: your sessions overwrite it freely (it's yours
 alone, so it never merge-conflicts). Dave's agents read it at `/pickup` to
@@ -9,86 +9,73 @@ know what you have in flight without digging through branches.
 
 ## Branch / in flight
 
-- `feat/home-task-buckets` — **PR #15**, C3, against `main`. One commit,
-  `apps/web` + one e2e spec only, nothing under `apps/api`.
-  - `/home`'s "Your services" was one flat grid in arrival order, so a client
-    read every phase pill to find the one that needed them — and an open
-    self-assessment rendered TWICE, once as a card and again in the
-    "Waiting on you" list beside it.
-  - Now three buckets by **who owns the next move**: Action required /
-    In progress / Results available, each service in exactly one. Empty
-    buckets don't render. "Waiting on you" is gone; unread messages move into
-    Action required, since they need the client but have no service card.
-  - **No six-stage bar on this surface** — Master Spec §6.4 is "phase and next
-    steps only" for a client. The six-stage derivation stays admin-only.
-  - Phase pills deliberately UNCHANGED. The bucket says who has the next move,
-    the pill says what phase the engagement is in. Also the safe call: `s31`
-    routes its assertions off pill text, so rewording would have meant editing
-    a test to reach green.
+Nothing but the docs PR carrying this file. `main` is at `a9ec90f` with PRs
+**#15–#19** merged: Phase C's C3, all four Phase D items, and the `s34` fix. All
+five went in with a full green CI board (Python, Web, gitleaks, E2E, Demo).
 
-## Phase C is complete
+## What just landed
 
-C1 `#12` (admin queue stages + bulk create) → C2 `#14` (`/results` replaces
-`/documents`) → C3 `#15` (this branch).
+**The UX findings burn-down is complete.** Both review documents are closed out:
+`UX findings.docx` (22 findings + the "Recommended page structure" appendix) and
+the 2026-08-04 guided live run (`REPORT.md`, F-1..F-12, at
+`../e2e-review-20260804-211926/`). The full finding → PR mapping is in
+`CONTEXT.md` under "UX findings burn-down" — don't re-derive it, establishing it
+took a pass through PR #6's change→finding table plus the migration history.
 
-## CI debt — read this before trusting a green tick
+New decisions: **D-042** (`/results` canonical, `/documents` redirects forever),
+**D-043** (client Home by ownership; six-stage bar stays admin-only),
+**D-044** (admin Deliverables: derived status, superseded wins, read-only).
 
-**GitHub Actions had a major outage on 2026-08-06 from 15:22 UTC** (critical,
-"workflow runs failing or delayed, queued jobs may time out"). Consequences
-that outlive the outage:
-
-1. **`main`'s HEAD `cf9cccd` (the PR #14 merge) has NO CI run.** All five jobs
-   on the post-merge run sat unstarted and were killed at GitHub's 15/20-minute
-   queue timeouts. `main`'s last green run is `60f59f7` (PR #13).
-   - Mitigating, and worth knowing rather than re-deriving: `cf9cccd`'s tree is
-     **byte-identical** to `396c776`, the branch tip that got the full local
-     gate set (ruff, black, `pytest -m unit` 801/801) AND four green CI jobs
-     (web, e2e, gitleaks, demo) at 15:36, before the outage bit. The gap is a
-     missing checkmark, not unverified code.
-2. **PR #15 has no CI run at all.** Retargeting its base from
-   `feat/results-consolidation` to `main` fires `pull_request: edited`, which is
-   NOT in the workflow's default trigger set — and a close/reopen didn't create
-   a run either, because run creation itself was failing.
+No migrations in Phase C or D.
 
 ## Next steps
 
-1. Once Actions recovers: re-run CI on `main` for `cf9cccd`, and force PR #15's
-   first run with an empty commit (`synchronize` is the reliable trigger — base
-   changes and reopens are not).
-2. Merge PR #15, then `CONTEXT.md` + `SMOKE_TEST.md` + `DECISIONS.md` need a
-   Phase C wrap-up pass. `CONTEXT.md`'s "Current state" still stops at PRs
-   #11/#12 in flight.
-3. Carry-overs still open from `fix/seven-issue-pass`, none urgent:
-   - `s34-llm-key`'s Run-AI-guard test self-skips when the seeded ATT&CK service
-     is already released. A spec that seeds its own unreleased service would make
-     it unconditional. That skip is what hid the fail-open race until the first
-     full-suite run — treat a conditionally-skipping spec as untested.
+1. **The one real gap is verification, not code.** ZT, CSF and MITRE have never
+   completed against **live Anthropic** since PR #6 added streaming to answer
+   F-3. Sprint 7's live validation was Vertex/Gemini — a different adapter with a
+   different failure mode. On the default provider exactly one purpose
+   (`extract.capabilities`) has ever completed live, and that predates the
+   streaming change. Needs a human with a real key; SMOKE §14/§36 both want it.
+2. Follow-ups recorded in the PR bodies, none urgent:
+   - Cross-tenant deliverables roll-up (D-044 scopes to the active tenant).
+   - A spec pinning that bulk "select all" is scoped to VISIBLE queue rows. The
+     predicates are unit-tested; the scoping itself is not.
+   - A spec asserting back-link **wording**. Six labels read "Back to documents"
+     while landing on `/results` for a whole release, because every spec checked
+     the href and none checked the words.
    - Key validation has a real provider probe for `anthropic` only; openai /
-     gemini / vertex refuse with an explicit not-implemented rather than
-     pretending to validate.
+     gemini / vertex refuse with an explicit not-implemented.
    - `release_deliverable()` still never flips the per-service assessment to
-     `RELEASED` (D-035). Consistency cleanup.
-   - SMOKE §36's live-key line still needs a human with a real key.
+     `RELEASED` (D-035).
 
 ## Notes for Dave
 
-- `needsClient()` in `HomeDashboard.tsx` is now the single predicate for "the
-  client still owes their self-assessment" — it feeds both the Action-required
-  bucket and the hero's Continue button. Those were written out separately
-  before, which is exactly how the same assessment got rendered twice. Add
-  readers to that function, not another inline filter.
+- **`ls e2e/smoke` before naming a spec.** I added `s37-admin-deliverables` and
+  `s38-help` on top of the existing `s37-security-signoff` and
+  `s38-progress-stages`. Playwright does not care, so nothing failed — the
+  collision surfaced only while writing docs. Renamed to `s40`/`s41`. `s12` has a
+  genuine pre-existing duplicate.
+- `needsClient()` in `HomeDashboard.tsx` is the single predicate for "the client
+  still owes their self-assessment" — it feeds both the Action-required bucket
+  and the hero's Continue button. Those were written out separately before, which
+  is exactly how the same assessment got rendered twice. Add readers to that
+  function, not another inline filter.
+- `lib/admin/filters.ts` holds the queue filter predicates as pure functions so
+  the filtering and the empty-state message read ONE definition of "what is
+  active". Add a filter there and add its label too, or the empty state will
+  under-report why the list is empty.
+- `SERVICE_DESCRIPTIONS` moved out of `Step1Services.tsx` into
+  `lib/intake/types.ts`; `/help` and the intake picker share it now. Intake-only
+  mechanics (the "clears the other picks" hint) stay in the component.
 - `dashboardPathFor()` (`apps/web/src/lib/dashboards/routes.ts`) remains the
   single source of truth for "where does this service kind go". `/home` and
   `/results` both read it.
-- `/documents` permanently redirects to `/results` and **stays** — release
-  emails carrying the old path are already in people's inboxes. `s17` asserts
-  that promise rather than leaving it to trust.
-- Two testing traps this branch hit, both worth knowing before you write
-  assertions against a heading:
-  - The bucket count renders INSIDE the `<h3>`, so the accessible name is
-    `"Action required (2)"`, not `"Action required"`.
-  - Playwright's `innerText` returns CSS-transformed text — the heading is
-    styled `uppercase`, so it reads back `"ACTION REQUIRED (2)"`. Use
-    `textContent`, which is what the accessible name (and a screen reader) sees.
+- `/documents` permanently redirects to `/results` and **stays** — release emails
+  carrying the old path are already in people's inboxes. `s17` asserts that
+  promise rather than leaving it to trust.
+- Two heading-assertion traps, now also in `CLAUDE.md`: a count rendered inside a
+  heading changes its accessible name (`"Action required (2)"`), and Playwright's
+  `innerText` returns CSS-transformed text — an `uppercase` heading reads back
+  SHOUTING, so use `textContent`.
 - My box runs web on `:3000` (canonical), not the `:3001` the CONTEXT machine
   notes describe.

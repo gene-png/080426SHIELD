@@ -103,8 +103,32 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - A spec that self-skips on a data precondition is UNTESTED, not passing. `s34`'s
   Run-AI-guard test skipped every standalone run (the seeded service was
   released, so the button was disabled) and hid a real fail-open defect until the
-  first full-suite run. When a `test.skip(...)` guards a spec, check how often it
-  actually fires before trusting the green.
+  first full-suite run. **Fixed 2026-08-07 (PR #19):** it now mints its own
+  tenant + ATT&CK service + DRAFT assessment, so `readOnly` cannot be true and
+  the skip became an assertion. The general rule stands — when a `test.skip(...)`
+  guards a spec, seed the precondition instead of branching on it. The tell that
+  it was worth doing: on the day of the fix the seeded assessment happened to be
+  DRAFT, so the spec "passed" while proving nothing about the guard.
+- **Before naming a new e2e spec, `ls e2e/smoke`.** Phase D added
+  `s37-admin-deliverables` and `s38-help` alongside the existing
+  `s37-security-signoff` and `s38-progress-stages` — Playwright does not care, so
+  nothing failed, and the collision was only caught while writing docs. Renamed to
+  `s40`/`s41`. `s12` still carries a genuine pre-existing duplicate.
+- **Playwright's `innerText` returns CSS-TRANSFORMED text.** A heading styled
+  `uppercase` reads back as `"ACTION REQUIRED (7)"`. Use `textContent` when
+  asserting wording — that is also what the accessible name is computed from, so
+  it is what a screen reader announces. Asserting `innerText` pins the styling,
+  not the copy.
+- **A count rendered inside a heading changes its accessible name.** `<h3>Action
+  required <span>(2)</span></h3>` has the name `"Action required (2)"`, so an
+  exact `getByRole("heading", { name: "Action required" })` misses. Keep the count
+  in the heading (a screen-reader user should hear it) and match with an anchored
+  regex.
+- **`.next/types` survives a branch switch and breaks `tsc`.** After checking out
+  a branch without a route another branch added, `tsc --noEmit` fails with
+  `Cannot find module '../../src/app/.../page.js'` from the stale generated
+  validator. `rm -rf apps/web/.next/types` then recreate web. It is a cache
+  artifact, not a type error — do not "fix" the code.
 - A React hook that returns `null` for BOTH "still loading" and "request failed"
   makes its callers conflate the two. Anything gating on that null fails open the
   moment the box is slow — expose an explicit phase instead.
