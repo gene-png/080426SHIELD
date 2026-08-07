@@ -109,6 +109,23 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   guards a spec, seed the precondition instead of branching on it. The tell that
   it was worth doing: on the day of the fix the seeded assessment happened to be
   DRAFT, so the spec "passed" while proving nothing about the guard.
+- **Assert what must APPEAR before what must not.** `toHaveCount(0)` on a page
+  still mid-fetch passes vacuously — the element it forbids simply has not
+  rendered yet. Wait on the positive state first (`toBeVisible`), then assert the
+  absence; by then the page has settled and the check means something. s40's
+  no-client assertion passed this way while the page underneath was still
+  printing the exact error it forbade.
+- **If a page's heading renders in every state except the failure one, "heading
+  visible" silently becomes a proxy for "the page works".** `/admin/deliverables`
+  early-returned a bare error card, so a failed fetch dropped the `Deliverables`
+  heading; s40 waits on that heading, so a real 400 surfaced as "element(s) not
+  found", was read as a slow page, and the timeout got raised instead (CI red on
+  main from 2026-08-07). Restoring the header alone would then have turned s40
+  green over a page showing nothing but `Failed to load deliverables (400).` Fix
+  both ends: render the page identity in EVERY branch, and make the spec assert a
+  state only a working page can reach. Download the CI artifact
+  (`gh run download <id> -n playwright-report`) — `error-context.md` carries the
+  failing page snapshot and ends this class of argument in one read.
 - **Before naming a new e2e spec, `ls e2e/smoke`.** Phase D added
   `s37-admin-deliverables` and `s38-help` alongside the existing
   `s37-security-signoff` and `s38-progress-stages` — Playwright does not care, so
