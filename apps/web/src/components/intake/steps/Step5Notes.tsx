@@ -206,12 +206,17 @@ export function Step5Notes({
             <details
               key={svc}
               open={openCards[svc] ?? attention}
-              onToggle={(e) =>
+              onToggle={(e) => {
+                // Read `open` BEFORE handing control to the state updater.
+                // React nulls the synthetic event's currentTarget once this
+                // handler returns, and the functional updater runs later,
+                // during render — dereferencing it there throws.
+                const isOpen = e.currentTarget.open;
                 setOpenCards((prev) => ({
                   ...prev,
-                  [svc]: e.currentTarget.open,
-                }))
-              }
+                  [svc]: isOpen,
+                }));
+              }}
               className="rounded-md border border-border-subtle bg-surface-card p-4"
             >
               <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm font-semibold text-ink-primary">
