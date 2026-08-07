@@ -53,6 +53,12 @@ export async function PublicHeader(): Promise<JSX.Element> {
                 Messages
               </Link>
               <Link
+                href="/help"
+                className="rounded-md px-3 py-2 font-medium text-ink-secondary hover:text-ink-primary"
+              >
+                Help
+              </Link>
+              <Link
                 href="/account"
                 className="rounded-md px-3 py-2 font-medium text-ink-secondary hover:text-ink-primary"
               >
