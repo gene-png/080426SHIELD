@@ -7,6 +7,186 @@ All notable changes to SHIELD by Kentro v2.0. Format roughly follows [Keep a Cha
 > (smoke sweep) is now `[3.0.1]` and Sprint 2 (findings burn-down, formerly
 > `[3.0.1]`) is now `[3.0.2]`. No tags existed for the collided numbers.
 
+## [3.10.0] · UX findings burn-down complete — Results, task-status Home, Deliverables, Help · 2026-08-07
+
+Closes both outstanding review documents: `UX findings.docx` (22 numbered
+findings plus its "Recommended page structure" appendix) and the 2026-08-04
+guided live run (`REPORT.md`, F-1..F-12). New decisions **D-042**, **D-043**,
+**D-044**. **No migrations** — the one new read surface derives its states from
+columns that already existed.
+
+### One place to look for results (PR #14, UX 18 — D-042)
+
+- **`/results` replaces `/documents`.** Reports were downloaded from
+  `/documents` while dashboards were reached from `/home` or a "View dashboard"
+  link, so a client had three places to look for the outcome of one engagement
+  and no way to know which held what.
+- **`/documents` permanently redirects, and stays.** Release notification emails
+  already sitting in inboxes carry the old path; a 404 on a link we sent is worse
+  than keeping a route forever. `s17` asserts that promise. The release email now
+  points at `/results` directly rather than through the redirect.
+- Six link labels still read "Back to documents" while landing on `/results` for
+  a whole release, because every spec checked the href and none checked the
+  words. Fixed in PR #17; the missing assertion is recorded in SMOKE §42.
+
+### Client Home organised by who owns the next move (PR #15, UX 17 — D-043)
+
+- **Three buckets, one per service:** Action required / In progress / Results
+  available. "Your services" was a flat grid in arrival order, so a client with
+  several engagements read every phase pill to find the one that needed them.
+- **The duplication is gone by construction.** An open self-assessment used to
+  render twice — as a card and again in a "Waiting on you" list beside it. A
+  service now lands in exactly one bucket, and "Waiting on you" is retired;
+  unread messages, which need the client but have no service card, moved into
+  Action required. One `needsClient()` predicate feeds both the bucket and the
+  hero's Continue button, so they cannot disagree.
+- **Each card names one primary action** — Resume assessment / View status /
+  View results — as a span inside the card's existing link, never a nested
+  anchor. A test asserts exactly one link per card.
+- **No six-stage bar here.** §6.4 restricts a client surface to phase and next
+  steps; the six stages stay consultant vocabulary. The phase pill is unchanged,
+  so `s31`'s routing assertions needed no edit to stay green.
+
+### Admin Deliverables (PR #16, IA appendix — D-044)
+
+- **One place per tenant showing every deliverable, released or not.** They were
+  visible only inside the workspace that produced them — the admin-side twin of
+  the problem `/results` fixed for clients.
+- Status derives from existing columns: superseded / released / generated. **No
+  migration.** Superseded beats released, because a superseded row was often
+  released once and calling it client-visible would say the client is looking at
+  a version that has been replaced.
+- **Read-only.** No release action on a cross-service list; that is how the wrong
+  version reaches the wrong tenant. `s40` asserts the absence.
+
+### Admin console and Help (PRs #17, #18, IA appendix)
+
+- **Intake queue filters** by organization name, service, status and age, all
+  client-side over data already fetched. A filtered-to-nothing list **names the
+  filters that emptied it** — a bare "no results" on a queue reads as "no work
+  exists". "Select all" is scoped to visible rows, so bulk publish can never
+  reach a request filtered off screen.
+- **The Risk Register states its scope** — client-specific, synthesized across
+  that client's services. It already said so, but only in the "pick a client
+  first" empty state, which anyone with a client selected never sees.
+- **`/help`** explains every service and carries the support routes. The copy
+  moved out of `Step1Services.tsx` into `lib/intake/types.ts` so the intake
+  picker and the help page cannot describe a service differently.
+
+### Test integrity (PR #19)
+
+- **`s34`'s Run-AI-guard test can no longer self-skip.** It resolved the seeded
+  ATT&CK service and bailed out if that assessment was released — so whether the
+  browser exercised the guard depended on database state nobody controls, and
+  that skip is what hid the fail-open race it now guards. It seeds its own
+  tenant and draft assessment, and the skip became an assertion. Verified by
+  forcing the old condition: it now fails loudly where it used to report green.
+- Two e2e specs were added on colliding `s37`/`s38` numbers and renamed to
+  `s40`/`s41`. Playwright resolves by path, so nothing failed — the collision
+  surfaced only when the docs cited the numbers.
+
+## [3.9.0] · Portfolio scope, derived stages, UX remediation · 2026-08-06
+
+The 2026-08-04 guided end-to-end review and the UX findings document, worked
+through in order of severity. New decisions **D-039**, **D-040**, **D-041**;
+migrations **0038** and **0039**, both additive and SQLite-safe (C0).
+
+### Audit integrity and the analysis lifecycle (PR #6)
+
+- **`llm_calls.mode` reflects the provider that actually ran.** It was derived
+  from `settings.shield_llm_mode` while `_build_provider` forces a live adapter
+  whenever a runtime key exists — so on the exact configuration D-037 was built
+  for, calls egressed to Anthropic and were logged as `FIXTURE`. For a platform
+  whose egress evidence _is_ `llm_calls`, that is the audit trail lying.
+- **A failed AI call leaves a FAILED audit row.** `invoke()` set the status and
+  flushed, but `get_db` never commits, so the 500 discarded the row with the
+  request transaction — a failure left no record at all. The failure is now
+  written through an independent short-lived session that commits on its own.
+- **Fixture output can no longer overwrite a submitted self-assessment.** The
+  offline Run-AI guard reached one of five entry points; an unguarded fixture run
+  on Zero Trust silently overwrote a real client self-assessment (average
+  maturity 2.14 → 1.49). The guard is on every entry point, and it holds a click
+  made _before_ the AI-status request resolves rather than failing open.
+- **Anthropic streaming** for the long jobs that died with
+  `APIConnectionError: Server disconnected` on a non-streaming request, keeping
+  the `stop_reason` guard.
+
+### Client-visible data integrity (PR #6)
+
+- **Extraction reconciliation.** 21 uploaded rows / $1,634,236 became 12 items /
+  $891,796 with no disclosure — the survivors presented as the whole inventory.
+  The workspace now states rows received, included and excluded, with a queue to
+  recover a wrongly-dropped row or confirm an exclusion (which leaves it listed:
+  the reconciliation has to keep telling the truth about the upload).
+- **Bundle decomposition.** Microsoft 365 E5 extracted as a single $294,120 line,
+  so three of five planted redundancies were undetectable. A consultant names the
+  components; the model is never asked what is inside a bundle, which would be
+  exactly the fabricated detail the AI seam exists to prevent. Components carry no
+  cost of their own, so decomposing can never inflate the portfolio total.
+- **Review & submit completeness**, intake confirmation content, date-only
+  rendering (`2027-06-30` rendered as `6/29/2027`), dashboard `<main>` landmarks,
+  self-assessment type resolution from the service record, and autosave
+  consistency.
+
+### Tech Debt covers the whole portfolio (PR #9 — D-039, migration 0038)
+
+- Prompt **v2** keeps every inventory row and classifies it — `security_related`
+  plus `security_functions` from prevent / detect / respond — instead of dropping
+  the non-security ones silently.
+- **A negative security classification is provisional until a consultant agrees.**
+  `valid_tools` in the ATT&CK mapping is a hard allow-list on the tools the model
+  may cite, so a capability wrongly marked non-security becomes _uncitable_ and
+  the technique it covered reads as uncovered rather than unassessed. Unclassified
+  rows and unconfirmed negatives both stay in scope; only explicit sign-off
+  removes one.
+- `_client_tool_names` gained a status filter. It had none, so a **discarded**
+  capability list's rows stayed citable forever.
+- `_serialize_list_with_items` builds from the model. Hand-written, it had
+  silently dropped a newly-added column twice, each reading as null in the UI
+  with nothing failing.
+
+### One derived six-stage vocabulary (PR #9 — D-040)
+
+- `prepare → analyze → review → approve → generate → release` across all four
+  services, derived read-only from status plus evidence. **No state machine,
+  route or audit vocabulary changed.**
+- `analyze` and `generate` are not stored states, and the naive query is a trap:
+  `llm_calls` has no version link, so "has this service ever been analysed?"
+  lights up a brand-new draft. Evidence is anchored to the version — by
+  `created_at` for Zero Trust / CSF / ATT&CK, and by the list's own extraction
+  provenance for Tech Debt, which builds its version _after_ the run that
+  produced it.
+- Progress is monotonic, so the bar never renders a cursor behind completed work.
+  "Submitted" is not a stage: it exists only for Zero Trust and CSF, so the
+  asymmetry lives in what `prepare` is called rather than in a stage that can
+  never light.
+
+### CI and test isolation (PRs #7, #10)
+
+- **`pnpm-lock.yaml` was out of sync** with `apps/web/package.json` (missing
+  `chart.js` / `react-chartjs-2`), failing CI on every branch, not just one.
+- **The gitleaks job had never passed.** The workflow default is `contents: read`
+  and gitleaks writes findings back to the PR, so it 403'd on every run including
+  PRs with no secrets. A check that is red regardless of the diff teaches everyone
+  to ignore the one signal that matters the day it is real.
+- **`s11-staleness` stopped sharing the seeded ATT&CK service with `s5`** — it
+  raced for it _and_ approved/finalised it, changing state every later spec
+  inherited.
+- **The fixture extractor behaves like the prompt it stands in for**: it
+  classifies rows, and skips ones it cannot name. Both the security sign-off queue
+  and the excluded-rows queue were previously unreachable offline, and an
+  unreachable review surface is an untested one.
+
+### Tests
+
+New: `s37-security-signoff`, `s38-progress-stages`, `s39-excluded-rows`, plus
+backend suites for the security scope rules, the stage derivation (including the
+version-trap cases) and classification through the API. Each new rule was
+verified by breaking the implementation and watching the intended test fail.
+
+Minor bump: new user-facing surfaces and endpoints, all additive; no breaking
+API changes.
+
 ## [3.8.0] · Seven-issue pass — navigation, removal, runtime AI keys, release control · 2026-08-04
 
 Seven reported issues, fixed in four phases on `fix/seven-issue-pass`. Three of

@@ -128,7 +128,9 @@ per-service `POST /{service}/deliverables/{id}/release` routes (typed 409
 reads live in `app/routes/clients.py`:
 
 - `GET /clients/{cid}/deliverables` — released-only, tenant-enforced (404 on
-  mismatch), feeding the `/documents` page (§6.7).
+  mismatch), feeding the `/results` page (§6.7). `/documents` permanently
+  redirects to it and stays: release emails already delivered carry the old
+  path (D-042).
 - `GET /clients/{cid}/value-summary` — the cross-service value loop (§2.5) on
   `/home` (§6.4). **Deterministic aggregation, no LLM**: it sums already-computed
   engine outputs and gates every number on the §12 release rule — a service
@@ -136,6 +138,15 @@ reads live in `app/routes/clients.py`:
   pinned to the FINALIZED (approved/released) assessment version so a
   post-release draft can never leak (a service with no released data renders
   "Pending", never a fabricated 0).
+
+An **admin** read of the same table sits at `GET /admin/deliverables`
+(`app/routes/admin.py`, D-044): the client query WITHOUT the
+`released_at IS NOT NULL` filter, so unreleased work is visible to the people who
+produced it. Status is derived, not stored — `superseded_by` beats `released_at`
+beats `finalized_at` — so `released_at` remains the single source of truth for
+client visibility and there is no second lifecycle to drift from §12. Tenant scope
+comes from `current_client` (the active-client header), and the surface is
+read-only: finalize and release stay in the workspace that owns the service.
 
 The artifact download path (`app/routes/artifacts.py`) admits a client to a
 released own-tenant deliverable's artifacts and nothing else. The CSF Playbook

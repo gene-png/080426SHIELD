@@ -19,6 +19,6 @@ tenants (picking the active client via the top-nav switcher):
   versioned deliverables.
 - Downloads deliverables (spec §15.5 filenames) to hand off to the client.
 - Releases deliverables to the client (Sprint 5, D-025): released artifacts
-  surface on the client's `/home` dashboard and `/documents` page, and the
+  surface on the client's `/home` dashboard and `/results` page, and the
   release emails the tenant's active client users (Sprint 7, D-030,
   best-effort — the release stands even if the email fails).

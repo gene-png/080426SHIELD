@@ -101,7 +101,7 @@ The script runs `docker compose down -v` → `up -d --build`, waits for the
 full-matrix `/ready` probe to go all-green (db, redis, minio, keycloak, llm),
 seeds the demo, then prints the URLs + logins. **`down -v` deletes all demo
 data** — that is the point of a reset. Sign in as `client@atlas.example` /
-`DemoPass!2026` and the released reports on `/home` and `/documents` download.
+`DemoPass!2026` and the released reports on `/home` and `/results` download.
 
 ### Hosted-demo compose (production web build)
 
