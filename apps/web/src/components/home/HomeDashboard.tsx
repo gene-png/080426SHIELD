@@ -94,6 +94,88 @@ function phaseFor(
 }
 
 /**
+ * True when the client still owes their own self-assessment on this service —
+ * the one thing on /home whose next move belongs to the client rather than the
+ * analyst.
+ *
+ * ONE predicate, two readers: the "Action required" bucket and the hero's
+ * "Continue self-assessment" call to action. They used to be written out
+ * separately, which is how the same self-assessment ended up rendered in two
+ * places at once; sharing the predicate means they cannot disagree.
+ */
+function needsClient(e: AssessmentResponse): boolean {
+  return (
+    ASSESSMENT_SERVICE_TYPES.includes(e.service_type) &&
+    e.assessment_status === "draft"
+  );
+}
+
+/** Task-status buckets, in render order (C3). */
+type BucketKey = "action" | "progress" | "results";
+
+const BUCKETS: ReadonlyArray<{
+  key: BucketKey;
+  title: string;
+  blurb: string;
+}> = [
+  {
+    key: "action",
+    title: "Action required",
+    blurb: "These are waiting on you before they can move forward.",
+  },
+  {
+    key: "progress",
+    title: "In progress",
+    blurb: "With your analyst. Nothing needed from you right now.",
+  },
+  {
+    key: "results",
+    title: "Results available",
+    blurb: "Released and ready to read.",
+  },
+];
+
+/**
+ * Which bucket owns a service — that is, who has the next move.
+ *
+ * EXACTLY ONE bucket per service, which is the whole point: a client reads one
+ * heading instead of comparing four phase pills, and nothing is listed twice.
+ * Released wins over everything (the report is out, there is nothing left to
+ * wait on), then the client's own outstanding work, then everything else, which
+ * by definition sits with the analyst.
+ *
+ * This is ownership, not progress. The card's phase pill still says which phase
+ * the engagement is in, and the two answer different questions — §6.4 keeps the
+ * six-stage consultant bar off this surface entirely.
+ */
+function bucketFor(
+  e: AssessmentResponse,
+  hasReleasedDeliverable: boolean,
+): BucketKey {
+  if (hasReleasedDeliverable || e.status === "released") return "results";
+  if (needsClient(e)) return "action";
+  return "progress";
+}
+
+/**
+ * What the client would actually DO with this service, in their words.
+ *
+ * Finding #17 asks for one named primary action per service. The bucket heading
+ * says who owns the next move; this says what that move is. Keyed off the
+ * bucket rather than re-deriving from status, so the label can never disagree
+ * with the group the card is filed under.
+ *
+ * Rendered as text inside the card's existing link — never its own <a>. A
+ * nested anchor is invalid HTML and would give every card two tab stops
+ * pointing at the same destination.
+ */
+const BUCKET_ACTIONS: Record<BucketKey, string> = {
+  action: "Resume assessment",
+  progress: "View status",
+  results: "View results",
+};
+
+/**
  * Where a service card goes when clicked. Mirrors the card's own phase so the
  * destination always matches the status the client just read (Navigation_Spec
  * §12: no card is a dead end, and no link lands somewhere unrelated):
@@ -129,11 +211,16 @@ export function HomeDashboard({
   const releasedServiceIds = new Set(deliverables.map((d) => d.service_id));
   // Ordered released_at desc upstream, so [0] is the freshest report.
   const latest = deliverables[0] ?? null;
-  const openSelfAssessments = engagements.filter(
-    (e) =>
-      ASSESSMENT_SERVICE_TYPES.includes(e.service_type) &&
-      e.assessment_status === "draft",
-  );
+  const openSelfAssessments = engagements.filter(needsClient);
+  // Every engagement filed under exactly one bucket, in arrival order within it.
+  const grouped: Record<BucketKey, AssessmentResponse[]> = {
+    action: [],
+    progress: [],
+    results: [],
+  };
+  for (const e of engagements) {
+    grouped[bucketFor(e, releasedServiceIds.has(e.service_id))].push(e);
+  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -228,8 +315,8 @@ export function HomeDashboard({
       {/* Band 2.5: cross-service value loop (§2.5), only once data is released. */}
       {valueSummary ? <ValueLoopCard summary={valueSummary} /> : null}
 
-      {/* Band 3: per-service status grid. */}
-      <section aria-labelledby="services-heading" className="space-y-3">
+      {/* Band 3: services grouped by who owns the next move (C3). */}
+      <section aria-labelledby="services-heading" className="space-y-6">
         <h2
           id="services-heading"
           className="text-lg font-semibold text-ink-primary"
@@ -241,88 +328,96 @@ export function HomeDashboard({
             title="No services yet"
             description="When you start an assessment, its progress will show up here."
           />
-        ) : (
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {engagements.map((e) => {
-              const released = releasedServiceIds.has(e.service_id);
-              const phase = phaseFor(e, released);
-              return (
-                <li key={e.service_id}>
+        ) : null}
+        {BUCKETS.map(({ key, title, blurb }) => {
+          const items = grouped[key];
+          // Unread messages need the client too, but have no service card of
+          // their own — they belong under the same heading rather than in a
+          // second "what needs me" list somewhere else on the page.
+          const showMessages = key === "action" && unreadMessages > 0;
+          if (items.length === 0 && !showMessages) return null;
+          const count = items.length + (showMessages ? 1 : 0);
+          return (
+            <section
+              key={key}
+              aria-labelledby={`bucket-${key}`}
+              className="space-y-3"
+            >
+              <div className="space-y-0.5">
+                <h3
+                  id={`bucket-${key}`}
+                  className="text-sm font-semibold uppercase tracking-wide text-ink-primary"
+                >
+                  {title}{" "}
+                  <span className="font-normal text-ink-tertiary">
+                    ({count})
+                  </span>
+                </h3>
+                <p className="text-xs text-ink-secondary">{blurb}</p>
+              </div>
+              {showMessages ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface-card px-4 py-3 text-sm">
+                  <span className="text-ink-secondary">
+                    {unreadMessages} unread{" "}
+                    {unreadMessages === 1 ? "message" : "messages"} from your
+                    analyst
+                  </span>
                   <Link
-                    href={serviceHref(e, released)}
-                    className="block h-full rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+                    href="/messages"
+                    className="font-semibold text-brand-600 hover:text-brand-500"
                   >
-                    <Card className="h-full transition-colors hover:border-brand-500">
-                      <CardBody className="flex flex-col gap-2">
-                        <p className="text-sm font-semibold text-ink-primary">
-                          {e.title}
-                        </p>
-                        <p className="text-xs text-ink-secondary">
-                          {SERVICE_LABELS[e.service_type]}
-                        </p>
-                        <StatusPill tone={phase.tone} withDot>
-                          {phase.label}
-                        </StatusPill>
-                      </CardBody>
-                    </Card>
+                    Open messages →
                   </Link>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                </div>
+              ) : null}
+              {items.length > 0 ? (
+                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {items.map((e) => {
+                    const released = releasedServiceIds.has(e.service_id);
+                    const phase = phaseFor(e, released);
+                    return (
+                      <li key={e.service_id}>
+                        <Link
+                          href={serviceHref(e, released)}
+                          className="block h-full rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+                        >
+                          <Card className="h-full transition-colors hover:border-brand-500">
+                            <CardBody className="flex flex-col gap-2">
+                              <p className="text-sm font-semibold text-ink-primary">
+                                {e.title}
+                              </p>
+                              <p className="text-xs text-ink-secondary">
+                                {SERVICE_LABELS[e.service_type]}
+                              </p>
+                              <StatusPill tone={phase.tone} withDot>
+                                {phase.label}
+                              </StatusPill>
+                              {/* Finding #17's primary action. A span, not a
+                                  link — the whole card is already the link.
+                                  mt-auto pins it to the bottom so the actions
+                                  line up across cards of differing heights. */}
+                              <span className="mt-auto pt-1 text-sm font-semibold text-brand-600">
+                                {BUCKET_ACTIONS[key]} →
+                              </span>
+                            </CardBody>
+                          </Card>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </section>
+          );
+        })}
       </section>
 
-      {/* Band 4: waiting-on-you + recent activity. */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Waiting on you</CardTitle>
-          </CardHeader>
-          <CardBody>
-            {openSelfAssessments.length === 0 && unreadMessages === 0 ? (
-              <p className="text-sm text-ink-secondary">
-                Nothing needs your attention right now. We&apos;ll flag anything
-                that does.
-              </p>
-            ) : (
-              <ul className="flex flex-col gap-3 text-sm">
-                {openSelfAssessments.map((e) => (
-                  <li
-                    key={e.service_id}
-                    className="flex flex-wrap items-center justify-between gap-2"
-                  >
-                    <span className="text-ink-secondary">
-                      Finish your {SERVICE_LABELS[e.service_type]}
-                    </span>
-                    <Link
-                      href={`/self-assessment/${e.service_id}?type=${e.service_type}`}
-                      className="font-semibold text-brand-600 hover:text-brand-500"
-                    >
-                      Continue →
-                    </Link>
-                  </li>
-                ))}
-                {unreadMessages > 0 ? (
-                  <li className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-ink-secondary">
-                      {unreadMessages} unread{" "}
-                      {unreadMessages === 1 ? "message" : "messages"} from your
-                      analyst
-                    </span>
-                    <Link
-                      href="/messages"
-                      className="font-semibold text-brand-600 hover:text-brand-500"
-                    >
-                      Open messages →
-                    </Link>
-                  </li>
-                ) : null}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
-
+      {/* Band 4: recent activity.
+          "Waiting on you" used to sit beside this and listed the same open
+          self-assessments the grid above already showed — the duplication C3
+          names. "Action required" is now the single answer to "what needs me",
+          so this band is history only. */}
+      <div className="grid gap-6">
         <Card>
           <CardHeader>
             <CardTitle>Recent activity</CardTitle>
