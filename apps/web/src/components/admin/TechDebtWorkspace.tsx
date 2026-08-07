@@ -510,16 +510,29 @@ Components carry no cost of their own — this licence keeps its full value.`,
               prompt keeps the whole portfolio, but "rare" is not "never", and
               reporting the survivors as the portfolio hid 45% of the uploaded
               spend in the 2026-08-04 review. */}
+          {/* Gate on the exclusion RECORD, not on a count comparison. The old
+              test was `source_rows_total > items.length`, which used "fewer
+              items than source rows" as a proxy for "rows were excluded".
+              Splitting a bundle ADDS child items — 26 became 32 against 28
+              source rows — so `28 > 32` went false and this whole block
+              unmounted, permanently. The disclosure disappeared exactly when a
+              consultant used a first-class feature, and stayed gone across a
+              reload (2026-08-07 review). Excluded rows are what makes this
+              honest; count them directly.
+
+              `included` likewise counts SOURCE-derived rows only, so
+              decomposition can never move the reconciliation arithmetic. */}
           {typeof list.source_rows_total === "number" &&
-          list.source_rows_total > list.items.length ? (
+          (list.excluded_rows?.length ?? 0) > 0 ? (
             <div
               className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
               role="status"
               aria-label="Extraction reconciliation"
             >
               <p className="font-semibold text-status-warning-fg">
-                {list.source_rows_total} rows received · {list.items.length}{" "}
-                included · {list.source_rows_total - list.items.length} excluded
+                {list.source_rows_total} rows received ·{" "}
+                {list.items.filter((i) => !i.parent_item_id).length} included ·{" "}
+                {list.excluded_rows?.length ?? 0} excluded
               </p>
               <p className="mt-1 text-ink-secondary">
                 Totals below cover the included rows only, not the whole upload.

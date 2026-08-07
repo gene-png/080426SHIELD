@@ -36,12 +36,13 @@ async function jsonRequest<T>(
   return (await res.json()) as T;
 }
 
-export async function getActiveClientId(): Promise<string | null> {
-  const { active } = await jsonRequest<{ active: string | null }>(
-    "/api/active-client",
-  );
-  return active;
-}
+/**
+ * Re-exported from the neutral module: the active tenant is not a risk concern,
+ * and /admin/deliverables needs the same lookup. `describeRiskError` already
+ * falls back to `err.message` for a non-RiskProxyError, so callers here are
+ * unaffected by the plain Error it throws.
+ */
+export { getActiveClientId } from "@/lib/active-client";
 
 export async function getClientName(cid: string): Promise<string> {
   try {

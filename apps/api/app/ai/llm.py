@@ -145,8 +145,10 @@ class AnthropicProvider:
             # Shared with the generateContent + OpenAI adapters. This was a
             # hardcoded 4096 until the 2026-08-04 live run, where zt_score
             # overran it and came back truncated mid-string (see the guard
-            # below). One cap now governs every provider.
-            max_tokens=_MAX_OUTPUT_TOKENS,
+            # below). One default now governs every provider, sized up per
+            # purpose for jobs whose draft cannot fit it (see
+            # _MAX_OUTPUT_TOKENS_BY_PURPOSE).
+            max_tokens=max_output_tokens_for(payload.get("__purpose__")),
             messages=[
                 {
                     "role": "user",
@@ -185,6 +187,47 @@ _HTTP_TIMEOUT_SECONDS = 60.0
 # overhead; the finishReason guard in _parse_generate_content still FAILS LOUDLY
 # if a generation ever exceeds even this (never silently returns half a doc).
 _MAX_OUTPUT_TOKENS = 8192
+
+# One cap does not fit every job. `mitre_map` emits one JSON object per ATT&CK
+# technique and the Enterprise matrix supplies ~633 of them, so its draft is an
+# order of magnitude larger than any other purpose's. At 8192 it did not
+# "sometimes truncate" — it could never fit, and the 2026-08-07 live run failed
+# after 100s on stop_reason=max_tokens with 0/633 scored, nothing applied, and a
+# fresh billable failure on every retry.
+#
+# Two things make the headroom below deliberately generous rather than a tight
+# fit to the JSON:
+#   * `max_tokens` bounds thinking AND response text together, and on
+#     claude-opus-5 an omitted `thinking` parameter runs ADAPTIVE THINKING (a
+#     default that flipped from Opus 4.8/4.7). An unknown share of the budget is
+#     spent before the first JSON byte.
+#   * The failure mode is asymmetric: too small loses the whole run and the
+#     money spent on it; too large costs nothing extra, because output is billed
+#     on tokens actually generated, not on the cap.
+#
+# Anything not listed keeps the shared default — this is a targeted fix, not a
+# blanket raise. Longer term the better shape is to chunk `mitre_map` per tactic
+# (14 smaller calls that fail independently and retry cheaply) rather than ask
+# for one very large document; this unblocks the job without that refactor.
+_MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
+    "mitre_map": 64000,
+    # risk_synthesize drafts one entry per finding and is batched at 20 (see
+    # _RISK_BATCH_SIZE). A batch is ~14k output tokens of structured JSON before
+    # adaptive thinking takes its share, so the shared 8192 truncates it — which
+    # is what failed every live generate on 2026-08-07, twice, billably. Sized
+    # generously for the same reason mitre_map is: output is billed on tokens
+    # actually generated, not on the cap, so too large costs nothing while too
+    # small loses the batch and the money spent on it.
+    "risk_synthesize": 32000,
+}
+
+
+def max_output_tokens_for(purpose: str | None) -> int:
+    """Output-token cap for `purpose`, falling back to the shared default."""
+    if not purpose:
+        return _MAX_OUTPUT_TOKENS
+    return _MAX_OUTPUT_TOKENS_BY_PURPOSE.get(purpose, _MAX_OUTPUT_TOKENS)
+
 
 # OpenAI reasoning / `responses` model families (the o-series and gpt-5) REJECT
 # the legacy ``max_tokens`` Chat Completions key with an HTTP 400 and require
@@ -225,7 +268,9 @@ def _generate_content_body(
     prompt: str, payload: dict[str, Any], *, model: str | None = None
 ) -> dict[str, Any]:
     """Shape a redacted prompt + payload into a generateContent request body."""
-    generation_config: dict[str, Any] = {"maxOutputTokens": _MAX_OUTPUT_TOKENS}
+    generation_config: dict[str, Any] = {
+        "maxOutputTokens": max_output_tokens_for(payload.get("__purpose__"))
+    }
     if model is not None and _GEMINI_THINKING_RE.search(model):
         generation_config["thinkingConfig"] = {"thinkingBudget": _THINKING_BUDGET_TOKENS}
     return {
@@ -292,7 +337,7 @@ class OpenAIProvider:
     def complete(self, prompt: str, payload: dict[str, Any]) -> LLMResponse:
         body = {
             "model": self.model,
-            _openai_token_limit_key(self.model): _MAX_OUTPUT_TOKENS,
+            _openai_token_limit_key(self.model): max_output_tokens_for(payload.get("__purpose__")),
             "messages": [
                 {"role": "user", "content": f"{prompt}\n\n{json.dumps(_egress_payload(payload))}"},
             ],

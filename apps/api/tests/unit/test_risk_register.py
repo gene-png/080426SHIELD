@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.risk.exporters import build_context as build_risk_context
 from app.risk.exporters import render_docx, render_pdf
+from app.routes.risk import _RISK_BATCH_SIZE
 
 
 @pytest.fixture()
@@ -255,3 +257,139 @@ def test_each_generate_is_a_new_version(app_client) -> None:
     assert v2["version"] == 2
     latest = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
     assert latest.json()["version"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Batching. risk_synthesize drafts ONE entry per finding, and a real client
+# supplies hundreds: the 2026-08-07 validation client had 509 (472 ATT&CK
+# gap/partial + 37 ZT). At ~500 output tokens an entry that is ~250k tokens of
+# output, past claude-opus-5's 128k ceiling — so no output budget can make a
+# single request work. It is split, exactly as mitre_map was.
+# ---------------------------------------------------------------------------
+
+
+def _seed_many_gaps(c: TestClient, bearer: str, cid: str, count: int) -> tuple[list[str], str]:
+    """Seed `count` ATT&CK gaps plus one ZT gap. Returns (technique codes, capability)."""
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    asvc = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    )
+    a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
+    rows = a.json()["coverage"][:count]
+    assert len(rows) == count, f"assessment supplied only {len(rows)} techniques"
+    for cov in rows:
+        c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+
+    zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
+    za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
+    zans = za.json()["answers"][0]
+    c.patch(f"/zt/answers/{zans['id']}", headers=h, json={"maturity_stage": 1})
+    return [r["technique_code"] for r in rows], zans["capability_code"]
+
+
+def _entry_per_finding(payload: dict) -> LLMResponse:
+    """A response shaped like the real prompt's: one candidate entry per finding."""
+    entries = [
+        {
+            "title": f"Risk for {f['source_id']}",
+            "description": "d",
+            "axis": "detection",
+            "source": f["source"],
+            "source_id": f["source_id"],
+            "linked_techniques": [],
+            "linked_controls": [],
+            "likelihood": "high",
+            "impact": "major",
+            "recommended_action": "remediate",
+            "rationale": "r",
+        }
+        for f in payload.get("findings", [])
+    ]
+    return LLMResponse(json.dumps({"entries": entries}))
+
+
+@pytest.mark.unit
+def test_generate_splits_large_finding_sets_and_loses_nothing(app_client) -> None:
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    codes, capability = _seed_many_gaps(c, bearer, cid, _RISK_BATCH_SIZE + 1)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    batch_sizes: list[int] = []
+
+    def fixture(payload: dict) -> LLMResponse:
+        batch_sizes.append(len(payload.get("findings", [])))
+        return _entry_per_finding(payload)
+
+    provider.register("risk_synthesize", fixture)
+
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    # More than one provider call, and the register accounts for every finding
+    # that went into them — batching must not quietly drop the tail.
+    assert len(batch_sizes) > 1
+    assert body["batches_total"] == len(batch_sizes)
+    assert body["batches_failed"] == 0
+    assert sum(batch_sizes) == len(codes) + 1  # + the ZT gap
+    assert {e["source_id"] for e in body["entries"]} == {*codes, capability}
+    # No batch may exceed the cap that made splitting necessary in the first place.
+    assert max(batch_sizes) <= _RISK_BATCH_SIZE
+
+
+@pytest.mark.unit
+def test_generate_keeps_the_batches_that_succeeded(app_client) -> None:
+    """A partial failure must cost the failed slice, not the whole run.
+
+    Discarding everything would also discard the money already spent on the
+    batches that came back clean.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_many_gaps(c, bearer, cid, _RISK_BATCH_SIZE + 1)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    seen = 0
+
+    def flaky(payload: dict) -> LLMResponse:
+        nonlocal seen
+        seen += 1
+        if seen == 1:
+            raise RuntimeError("provider exploded on this batch")
+        return _entry_per_finding(payload)
+
+    provider.register("risk_synthesize", flaky)
+
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["batches_failed"] == 1
+    assert body["batches_total"] > 1
+    # The surviving batches still produced entries.
+    assert len(body["entries"]) > 0
+
+
+@pytest.mark.unit
+def test_generate_fails_loudly_when_every_batch_fails(app_client) -> None:
+    """Nothing usable came back, so this is a failure — not an empty register."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_many_gaps(c, bearer, cid, _RISK_BATCH_SIZE + 1)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    def always_fails(_payload: dict) -> LLMResponse:
+        raise RuntimeError("provider is down")
+
+    provider.register("risk_synthesize", always_fails)
+
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 502, r.text
+    # Typed envelope (D-016), not a raw traceback. charged_likely must survive:
+    # the admin needs to know whether a retry may cost money a second time.
+    err = r.json()["error"]
+    assert err["reason"] == "ai_call_failed"
+    assert err["message"]
+    assert err["charged_likely"] is False  # fixture provider bills nothing
+    # And no half-built register was left behind.
+    assert c.get(f"/risk/clients/{cid}/register/latest", headers=bh).status_code == 404

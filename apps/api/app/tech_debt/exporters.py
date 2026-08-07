@@ -33,6 +33,33 @@ class DeliverableContext:
     total_cost: float
     estimated_savings: float
     savings_cost_known: bool
+    # Reconciliation (N-010). The workspace disclosed "N rows received · M
+    # included · K excluded"; the deliverable did not, so a released report
+    # stated an unqualified "Total annual cost" for an upload whose excluded
+    # rows were worth $240,000. Defaulted so older callers still construct.
+    source_rows_total: int | None = None
+    excluded_count: int = 0
+
+
+def reconciliation_line(ctx: DeliverableContext) -> str | None:
+    """ "N rows received · M included · K excluded", or None when nothing was dropped.
+
+    A client uploaded 28 rows worth $3,608,000; two were excluded and the
+    released PDF/XLSX/DOCX said only "Total annual cost: $3,368,000". The report
+    has to carry the same reconciliation the workspace shows, or it states a
+    partial figure as a total.
+    """
+    if not ctx.excluded_count or ctx.source_rows_total is None:
+        return None
+    return (
+        f"{ctx.source_rows_total} rows received · {len(ctx.items)} included · "
+        f"{ctx.excluded_count} excluded"
+    )
+
+
+def cost_label(ctx: DeliverableContext) -> str:
+    """Never call a partial figure a total (UX finding #4)."""
+    return "Included annual cost" if ctx.excluded_count else "Total annual cost"
 
 
 def _disposition_label(d: CapabilityDisposition | None) -> str:
@@ -64,7 +91,10 @@ def build_context(
                 savings_known = False
             else:
                 estimated_savings += float(it.annual_cost_usd)
+    excluded = list(getattr(cap_list, "excluded_rows", None) or [])
     return DeliverableContext(
+        source_rows_total=getattr(cap_list, "source_rows_total", None),
+        excluded_count=len(excluded),
         client_legal_name=client_legal_name or "Client",
         service_title=service_title,
         cap_list=cap_list,
@@ -129,7 +159,17 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
 
     # Summary row at the bottom.
     summary_row = ws.max_row + 2
-    ws.cell(row=summary_row, column=1, value="Total annual cost").font = Font(bold=True)
+    recon = reconciliation_line(ctx)
+    if recon:
+        ws.cell(row=summary_row, column=1, value="Reconciliation").font = Font(bold=True)
+        ws.cell(row=summary_row, column=2, value=recon)
+        ws.cell(
+            row=summary_row + 1,
+            column=2,
+            value="Figures below cover the included rows only, not the whole upload.",
+        ).font = Font(italic=True)
+        summary_row += 3
+    ws.cell(row=summary_row, column=1, value=cost_label(ctx)).font = Font(bold=True)
     ws.cell(row=summary_row, column=5, value=ctx.total_cost).number_format = "$#,##0"
     ws.cell(row=summary_row + 1, column=1, value="Estimated annual savings").font = Font(bold=True)
     savings_cell = ws.cell(row=summary_row + 1, column=5, value=ctx.estimated_savings)
@@ -191,6 +231,16 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     story.append(Spacer(1, 0.2 * inch))
 
     story.append(Paragraph("Summary", h2))
+    recon = reconciliation_line(ctx)
+    if recon:
+        story.append(Paragraph(f"<b>{recon}</b>", body))
+        story.append(
+            Paragraph(
+                "Figures below cover the included rows only, not the whole upload.",
+                body,
+            )
+        )
+        story.append(Spacer(1, 0.08 * inch))
     savings = (
         f"${ctx.estimated_savings:,.0f}"
         if ctx.savings_cost_known
@@ -199,7 +249,7 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
     story.append(
         Paragraph(
             f"Capabilities reviewed: <b>{len(ctx.items)}</b> · "
-            f"Total annual cost: <b>${ctx.total_cost:,.0f}</b> · "
+            f"{cost_label(ctx)}: <b>${ctx.total_cost:,.0f}</b> · "
             f"Estimated annual savings: <b>{savings}</b>",
             body,
         )
@@ -277,9 +327,14 @@ def render_docx(ctx: DeliverableContext) -> bytes:
         else f"≥ ${ctx.estimated_savings:,.0f}"
     )
     add_heading(doc, "Summary")
-    lines = [
+    recon = reconciliation_line(ctx)
+    lines = (
+        [recon, "Figures below cover the included rows only, not the whole upload."]
+        if recon
+        else []
+    ) + [
         f"Capabilities reviewed: {len(ctx.items)}",
-        f"Total annual cost: ${ctx.total_cost:,.0f}",
+        f"{cost_label(ctx)}: ${ctx.total_cost:,.0f}",
         f"Estimated annual savings: {savings}",
     ]
     if not ctx.savings_cost_known:

@@ -117,6 +117,12 @@ class AttackRunAiResponse(BaseModel):
     tools_available: int
     changed: list[CoverageChange]
     coverage: list[AttackCoverageResponse]
+    # mitre_map runs as concurrent batches (one llm_calls row each). Additive +
+    # defaulted so older clients and stored payloads parse unchanged (C0).
+    # A partial run APPLIES what succeeded rather than discarding it, so the
+    # consultant must be told the draft is incomplete and which slice is missing.
+    batches_total: int = 0
+    batches_failed: int = 0
 
 
 class AttackCoveragePatch(BaseModel):

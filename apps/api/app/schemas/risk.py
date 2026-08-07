@@ -63,3 +63,11 @@ class RiskRegisterResponse(BaseModel):
     tier_counts: dict[str, int] = {}
     axis_counts: dict[str, int] = {}
     action_counts: dict[str, int] = {}
+    # risk_synthesize runs as concurrent batches (one llm_calls row each).
+    # Additive + defaulted so older clients and stored payloads parse unchanged
+    # (C0). A partial run KEEPS what succeeded rather than discarding it, so the
+    # consultant must be told the draft is incomplete and by how much. Both are
+    # 0 on a register read back from storage — they describe a generate run, not
+    # the register itself.
+    batches_total: int = 0
+    batches_failed: int = 0

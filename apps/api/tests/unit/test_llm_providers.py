@@ -644,6 +644,34 @@ def test_anthropic_output_cap_matches_the_other_adapters(monkeypatch) -> None:
     assert llm_mod._MAX_OUTPUT_TOKENS >= 8192
 
 
+@pytest.mark.unit
+def test_output_cap_is_sized_per_purpose(monkeypatch) -> None:
+    """mitre_map emits one JSON object per ATT&CK technique — ~633 of them —
+    which does not fit the 8192 default. The 2026-08-07 live run failed after
+    100s on stop_reason=max_tokens with 0/633 scored and nothing applied, and
+    every retry was a fresh billable failure. The cap is now per purpose.
+
+    Note the budget covers thinking AND response text: on claude-opus-5 an
+    omitted `thinking` parameter runs adaptive thinking, so the headroom here
+    is deliberately generous rather than a tight fit to the JSON.
+    """
+    # The big job gets room for the whole matrix.
+    assert llm_mod.max_output_tokens_for("mitre_map") >= 32000
+
+    # Everything else is unchanged — this is not a blanket raise.
+    assert llm_mod.max_output_tokens_for("csf_score") == llm_mod._MAX_OUTPUT_TOKENS
+    assert llm_mod.max_output_tokens_for(None) == llm_mod._MAX_OUTPUT_TOKENS
+
+    # And the provider actually applies it, keyed off the __purpose__ control key.
+    provider, fake = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
+    provider.complete("Draft it.", {"k": "v", "__purpose__": "mitre_map"})
+    assert fake.last_kwargs["max_tokens"] == llm_mod.max_output_tokens_for("mitre_map")
+
+    provider2, fake2 = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
+    provider2.complete("Draft it.", {"k": "v", "__purpose__": "csf_score"})
+    assert fake2.last_kwargs["max_tokens"] == llm_mod._MAX_OUTPUT_TOKENS
+
+
 # --------------------------------------------------------------------------- #
 # llm_calls.mode must describe the PROVIDER, not the environment variable.
 #

@@ -120,6 +120,16 @@ test("admin deliverables: reachable from the admin sidebar", async ({
 }) => {
   test.slow();
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+
+  // Seed the precondition instead of inheriting it. This spec is about the
+  // state a consultant is in immediately after signing in — no client picked
+  // yet — and that is exactly the state the 2026-08-07 CI failure hit. Leaving
+  // it to ambient cookie state means the spec cannot say which case it proved.
+  const cleared = await page.request.post("/api/active-client", {
+    data: { clientId: null },
+  });
+  expect(cleared.ok(), "clear the active client").toBeTruthy();
+
   await page.goto("/admin/queue");
 
   const navLink = page
@@ -132,11 +142,26 @@ test("admin deliverables: reachable from the admin sidebar", async ({
     .poll(() => new URL(page.url()).pathname, { timeout: 30_000 })
     .toBe("/admin/deliverables");
   // 30s, not the 10s default: arriving here is the FIRST hit on this route in a
-  // CI run, so next dev compiles it cold. The URL poll above already passed when
-  // this failed in CI — navigation was fine, the page just had not finished
-  // building inside 10 seconds. Every other wait in this file is 30s; this one
-  // defaulted by oversight.
+  // CI run, so next dev compiles it cold.
   await expect(page.getByRole("heading", { name: "Deliverables" })).toBeVisible(
     { timeout: 30_000 },
   );
+
+  // The heading alone is not evidence the page works. With no client selected
+  // this route used to fire a request that could only ever 400 and render
+  // "Failed to load deliverables (400)" — a raw upstream status, which D-016
+  // forbids. Restoring the page header fixed the missing heading and would have
+  // let this spec pass over a page that still showed nothing but that error.
+  // Order matters: assert the state that must APPEAR before asserting the one
+  // that must not. `toHaveCount(0)` on a page still mid-fetch passes vacuously,
+  // which is how this spec would have gone green over the very bug it exists
+  // to catch.
+  await expect(
+    page.getByText(/Pick a client first/),
+    "with no client selected the page must say what to do next",
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByText(/Failed to load deliverables/),
+    "a raw upstream status must never reach the page",
+  ).toHaveCount(0);
 });

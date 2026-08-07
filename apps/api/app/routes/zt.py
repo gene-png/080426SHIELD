@@ -462,7 +462,7 @@ def run_ai(
     # duration of an offline run; a LIVE run may still draft over them, which is
     # the consultant workflow and shows a diff for review.
     protected = protected_keys(
-        ((code, r.answer_source) for code, r in rows.items()),
+        ((code, r.answer_source, r.maturity_stage is not None) for code, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
 

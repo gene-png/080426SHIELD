@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DeliverablesTable } from "./DeliverablesTable";
 
@@ -18,8 +18,18 @@ vi.mock("@/lib/admin/deliverables", async (importOriginal) => ({
   fetchAdminDeliverables: vi.fn(),
 }));
 
+vi.mock("@/lib/active-client", () => ({ getActiveClientId: vi.fn() }));
+
 const { fetchAdminDeliverables } = await import("@/lib/admin/deliverables");
 const mockFetch = vi.mocked(fetchAdminDeliverables);
+const { getActiveClientId } = await import("@/lib/active-client");
+const mockActiveClient = vi.mocked(getActiveClientId);
+
+beforeEach(() => {
+  // Every test below is about an admin who has already picked a tenant, unless
+  // it says otherwise.
+  mockActiveClient.mockResolvedValue("11111111-1111-4111-8111-111111111111");
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -114,5 +124,37 @@ describe("DeliverablesTable", () => {
     await waitFor(() =>
       expect(screen.getByText("No deliverables yet")).toBeInTheDocument(),
     );
+  });
+
+  // With no tenant chosen there is nothing to scope the request to, and the API
+  // dependency answers a missing X-Client-Id with a 400. Asking anyway printed
+  // "Failed to load deliverables (400)." — an upstream status dump standing in
+  // for "pick a client", which is what CI hit on 2026-08-07.
+  describe("with no client selected", () => {
+    beforeEach(() => {
+      mockActiveClient.mockResolvedValue(null);
+    });
+
+    it("says what to do next instead of reporting a failure", async () => {
+      render(<DeliverablesTable />);
+      expect(
+        await screen.findByText("Pick a client first"),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("never fires the tenant-scoped request at all", async () => {
+      render(<DeliverablesTable />);
+      await screen.findByText("Pick a client first");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("keeps the page heading, so the surface stays identifiable", async () => {
+      render(<DeliverablesTable />);
+      await screen.findByText("Pick a client first");
+      expect(
+        screen.getByRole("heading", { name: "Deliverables", level: 1 }),
+      ).toBeInTheDocument();
+    });
   });
 });

@@ -10,6 +10,7 @@ import {
   type StatusTone,
 } from "@shield/design-system";
 
+import { getActiveClientId } from "@/lib/active-client";
 import {
   fetchAdminDeliverables,
   type AdminDeliverableRow,
@@ -95,18 +96,54 @@ function groupByService(
   return out;
 }
 
+/**
+ * The page's own identity. Rendered by EVERY branch — loading, empty, error and
+ * "no client picked" alike — because a state that drops the heading leaves the
+ * reader with no way to tell a broken app from a page that simply has nothing
+ * to show. It also stops s40's heading assertion from being a proxy for
+ * "the page works" when it is not.
+ */
+function PageHeader(): JSX.Element {
+  return (
+    <header className="space-y-1">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+        Admin
+      </p>
+      <h1 className="text-3xl font-semibold text-ink-primary">Deliverables</h1>
+      <p className="max-w-prose text-sm text-ink-secondary">
+        Every report produced for this organization, including the ones the
+        client cannot see yet. Only{" "}
+        <strong className="font-semibold text-ink-primary">Released</strong>{" "}
+        rows are visible to the client.
+      </p>
+    </header>
+  );
+}
+
 export function DeliverablesTable(): JSX.Element {
   const [rows, setRows] = React.useState<AdminDeliverableRow[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // Distinct from "this tenant has no deliverables". An admin who has not
+  // picked a client yet has no tenant to scope the request to, and the upstream
+  // dependency answers a missing X-Client-Id with a 400 — so asking at all can
+  // only produce "Failed to load deliverables (400)." on a page whose real
+  // answer is "pick a client".
+  const [needsClient, setNeedsClient] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    fetchAdminDeliverables(controller.signal)
-      .then((data) => {
+    (async () => {
+      try {
+        const activeClientId = await getActiveClientId();
+        if (cancelled) return;
+        if (!activeClientId) {
+          setNeedsClient(true);
+          return;
+        }
+        const data = await fetchAdminDeliverables(controller.signal);
         if (!cancelled) setRows(data.items);
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         // An aborted request was superseded, not failed.
         if (err instanceof DOMException && err.name === "AbortError") return;
         if (!cancelled) {
@@ -114,7 +151,8 @@ export function DeliverablesTable(): JSX.Element {
             err instanceof Error ? err.message : "Failed to load deliverables.",
           );
         }
-      });
+      }
+    })();
     return () => {
       cancelled = true;
       controller.abort();
@@ -122,14 +160,43 @@ export function DeliverablesTable(): JSX.Element {
   }, []);
 
   if (error) {
+    // Keep the page header. This used to return the bare error card, so a
+    // failed fetch erased the page's own identity: no "Deliverables" heading,
+    // no explanation of what the page is, nothing to orient on — a dead end
+    // that looked like a broken app rather than a failed request.
     return (
-      <Card>
-        <CardBody>
-          <p className="text-sm text-status-danger-fg" role="alert">
-            {error}
-          </p>
-        </CardBody>
-      </Card>
+      <div className="flex flex-col gap-6">
+        <PageHeader />
+        <Card>
+          <CardBody>
+            <p className="text-sm text-status-danger-fg" role="alert">
+              {error}
+            </p>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
+
+  if (needsClient) {
+    // Not an error and not an empty tenant: nothing has been asked for yet.
+    // Mirrors the Risk Register, which is also generated per client.
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader />
+        <EmptyState
+          title="Pick a client first"
+          description="Deliverables are listed per client. Choose a client from the switcher, then return here."
+          action={
+            <Link
+              href="/admin/management"
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600"
+            >
+              Go to Management
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
@@ -138,20 +205,7 @@ export function DeliverablesTable(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="space-y-1">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
-          Admin
-        </p>
-        <h1 className="text-3xl font-semibold text-ink-primary">
-          Deliverables
-        </h1>
-        <p className="max-w-prose text-sm text-ink-secondary">
-          Every report produced for this organization, including the ones the
-          client cannot see yet. Only{" "}
-          <strong className="font-semibold text-ink-primary">Released</strong>{" "}
-          rows are visible to the client.
-        </p>
-      </header>
+      <PageHeader />
 
       {rows === null ? (
         <p className="text-sm text-ink-secondary">Loading deliverables…</p>

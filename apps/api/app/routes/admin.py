@@ -799,6 +799,29 @@ def _ai_readiness(db: Session, s) -> tuple[bool, str, str]:
             source,
         )
 
+    # A key alone is not enough. `_build_provider` promotes the LIVE adapter only
+    # for a RUNTIME key (source 'database', pasted through POST /admin/llm-key) —
+    # that is the explicit "bring AI online without a redeploy" path. An
+    # ENVIRONMENT key with SHIELD_LLM_MODE=fixture still falls through to the
+    # fixture provider, so the call is canned no matter what this function says.
+    #
+    # Reporting ready=true there is not a cosmetic inaccuracy: AiStatusBanner
+    # renders nothing when ready, and RunAiGuard.decide() proceeds immediately
+    # when ready, so both protections silently disable themselves. Found in the
+    # 2026-08-07 live run, where a Zero Trust Run-AI served fixture output with
+    # no warning and overwrote five of the client's own answers.
+    if source != "database" and s.shield_llm_mode != "live":
+        return (
+            False,
+            (
+                f"SHIELD_LLM_MODE={s.shield_llm_mode!r}, so AI steps generate offline "
+                "(fixture) responses even though an environment key is present. Set "
+                "SHIELD_LLM_MODE=live and restart the api, or load a key here to "
+                "enable live AI without a redeploy."
+            ),
+            source,
+        )
+
     if provider not in ("anthropic", "openai", "gemini"):
         return (
             False,
