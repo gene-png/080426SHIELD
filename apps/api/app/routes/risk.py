@@ -11,13 +11,14 @@ the client id is named in the path (like /admin/services/{id}); no X-Client-Id.
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.engine import run_job
+from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.attack.catalog import all_codes as attack_all_codes
@@ -25,6 +26,7 @@ from app.audit import audit
 from app.db.session import get_db
 from app.dependencies import require_role
 from app.docx_export import DOCX_MIME
+from app.logging import get_logger
 from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
@@ -56,7 +58,26 @@ from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filen
 
 router = APIRouter(prefix="/risk", tags=["risk-register"])
 
+_log = get_logger(__name__)
+
 _admin_required = Depends(require_role(UserRole.ADMIN))
+
+# risk_synthesize drafts ONE candidate entry per finding, and findings are one
+# per gap across every assessment a client has. The 2026-08-07 validation client
+# produced 509 of them (472 ATT&CK gap/partial + 37 Zero Trust). Each entry
+# carries a description, compensating controls, residual risk and a rationale —
+# richer than a mitre_map row, which measured ~310-575 output tokens — so a
+# single request wants roughly 250k output tokens against claude-opus-5's 128k
+# ceiling. As with mitre_map, this is not a budget problem: one request cannot
+# express the job, and raising the cap only trades a fast, well-messaged failure
+# for a slow silent one. It is split.
+#
+# 20 keeps a batch near ~14k output tokens — inside every provider's ceiling and
+# small enough that losing one costs little. Workers are capped at 5 for the
+# same reason attack's are: the provider rate limit is shared with every other
+# job in the deployment, and generate() already sits behind enforce_ai.
+_RISK_BATCH_SIZE = 20
+_RISK_MAX_WORKERS = 5
 
 
 def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
@@ -190,6 +211,112 @@ def _enum_or_none(enum_cls, value):
         return None
 
 
+def _run_risk_synthesize_batched(
+    db: Session,
+    llm: LLMClient,
+    findings: list[dict],
+    *,
+    valid_techniques: list[str],
+    valid_controls: list[str],
+    requested_by: uuid.UUID,
+    client_id: uuid.UUID,
+    client_org_name: str | None,
+) -> tuple[list[dict], int, int]:
+    """Run risk_synthesize as concurrent batches. Returns (entries, total, failed).
+
+    Each batch is a real `run_job` call and therefore writes its own `llm_calls`
+    row — N rows per run. That is the honest accounting: N separately-billable
+    provider calls were made.
+
+    The allow-lists go to EVERY batch. `valid_techniques` / `valid_controls` are
+    what stop the model citing a technique or control the client's assessments
+    never contained, so a batch that did not receive them would be unguarded.
+    They cost input tokens, which is the cheap side of this trade.
+
+    Each worker gets its OWN Session bound to the REQUEST session's engine. A
+    Session is not thread-safe, and reaching for the module-level SessionLocal
+    instead would open a connection outside whatever the caller is bound to —
+    which silently bypassed the test suite's injected engine when attack's
+    batching was written.
+
+    A partial failure does NOT discard the run: losing one batch should cost the
+    consultant that slice, not every entry and the money already spent on them.
+    Only a total failure raises, and it raises through `ai_call_boundary` so the
+    error stays typed and carries `charged_likely`.
+    """
+    batches = [
+        findings[i : i + _RISK_BATCH_SIZE] for i in range(0, len(findings), _RISK_BATCH_SIZE)
+    ] or [[]]
+
+    def _one(batch: list[dict]) -> dict:
+        session = Session(bind=db.get_bind())
+        try:
+            out = run_job(
+                session,
+                llm,
+                "risk_synthesize",
+                inputs={
+                    "findings": batch,
+                    "valid_techniques": valid_techniques,
+                    "valid_controls": valid_controls,
+                },
+                requested_by=requested_by,
+                client_id=client_id,
+                client_org_name=client_org_name,
+            )
+            session.commit()
+            return out.data if isinstance(out.data, dict) else {}
+        except Exception:
+            # Mirror ai_call_boundary: commit so the FAILED row survives the
+            # exception, then let it propagate to be counted.
+            session.commit()
+            raise
+        finally:
+            session.close()
+
+    # Warm the job registry on THIS thread before any worker touches it. Lazy
+    # registration behind a module flag is not something a worker should be the
+    # first to trigger.
+    get_job("risk_synthesize")
+
+    entries: list[dict] = []
+    failed = 0
+    first_error: Exception | None = None
+
+    with ThreadPoolExecutor(max_workers=_RISK_MAX_WORKERS) as pool:
+        futures = [pool.submit(_one, b) for b in batches]
+        for fut in as_completed(futures):
+            try:
+                data = fut.result()
+            except Exception as exc:  # noqa: BLE001 - counted, not swallowed
+                failed += 1
+                first_error = first_error or exc
+                _log.error(
+                    "risk_synthesize_batch_failed",
+                    client_id=str(client_id),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                continue
+            entries.extend(e for e in (data.get("entries") or []) if isinstance(e, dict))
+
+    _log.info(
+        "risk_synthesize_batched",
+        client_id=str(client_id),
+        findings=len(findings),
+        batches_total=len(batches),
+        batches_failed=failed,
+        entries=len(entries),
+    )
+
+    if failed == len(batches) and first_error is not None:
+        # Nothing usable came back. Re-raise inside the boundary so the caller
+        # gets the same typed 502 + charged_likely it always did.
+        with ai_call_boundary(db, llm, purpose="risk_synthesize"):
+            raise first_error
+
+    return entries, len(batches), failed
+
+
 @router.post(
     "/clients/{cid}/register/generate",
     response_model=RiskRegisterResponse,
@@ -217,22 +344,19 @@ def generate(
 
     findings, valid_techniques, valid_controls = _gather_findings(db, cid)
     client_org = None if client.legal_name == "(pending intake)" else client.legal_name
-    # A provider failure here must stay typed and leave an llm_calls row.
-    with ai_call_boundary(db, llm, purpose="risk_synthesize"):
-        result = run_job(
-            db,
-            llm,
-            "risk_synthesize",
-            inputs={
-                "findings": findings,
-                "valid_techniques": sorted(valid_techniques),
-                "valid_controls": sorted(valid_controls),
-            },
-            requested_by=admin.id,
-            client_id=cid,
-            client_org_name=client_org,
-        )
-    data = result.data if isinstance(result.data, dict) else {}
+    # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
+    # total failure still raises typed, through ai_call_boundary.
+    entries_draft, batches_total, batches_failed = _run_risk_synthesize_batched(
+        db,
+        llm,
+        findings,
+        valid_techniques=sorted(valid_techniques),
+        valid_controls=sorted(valid_controls),
+        requested_by=admin.id,
+        client_id=cid,
+        client_org_name=client_org,
+    )
+    data = {"entries": entries_draft}
 
     # New version; supersede the prior current one.
     prior = _latest(db, RiskRegister, cid)
@@ -283,10 +407,15 @@ def generate(
         target_type="risk_register",
         target_id=register.id,
         actor_user_id=admin.id,
-        details={"version": next_version, "findings": len(findings)},
+        details={
+            "version": next_version,
+            "findings": len(findings),
+            "batches_total": batches_total,
+            "batches_failed": batches_failed,
+        },
     )
     db.commit()
-    return _serialize(db, register)
+    return _serialize(db, register, batches_total=batches_total, batches_failed=batches_failed)
 
 
 def _write_artifact(
@@ -421,7 +550,13 @@ def latest(
     return _serialize(db, reg)
 
 
-def _serialize(db: Session, register: RiskRegister) -> RiskRegisterResponse:
+def _serialize(
+    db: Session,
+    register: RiskRegister,
+    *,
+    batches_total: int = 0,
+    batches_failed: int = 0,
+) -> RiskRegisterResponse:
     entries = (
         db.execute(
             select(RiskEntry)
@@ -460,4 +595,6 @@ def _serialize(db: Session, register: RiskRegister) -> RiskRegisterResponse:
         tier_counts=tier_counts(tiers),
         axis_counts=axis_counts(axes),
         action_counts=action_counts(actions),
+        batches_total=batches_total,
+        batches_failed=batches_failed,
     )

@@ -211,6 +211,14 @@ _MAX_OUTPUT_TOKENS = 8192
 # for one very large document; this unblocks the job without that refactor.
 _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     "mitre_map": 64000,
+    # risk_synthesize drafts one entry per finding and is batched at 20 (see
+    # _RISK_BATCH_SIZE). A batch is ~14k output tokens of structured JSON before
+    # adaptive thinking takes its share, so the shared 8192 truncates it — which
+    # is what failed every live generate on 2026-08-07, twice, billably. Sized
+    # generously for the same reason mitre_map is: output is billed on tokens
+    # actually generated, not on the cap, so too large costs nothing while too
+    # small loses the batch and the money spent on it.
+    "risk_synthesize": 32000,
 }
 
 
