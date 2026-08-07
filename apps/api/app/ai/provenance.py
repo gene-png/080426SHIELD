@@ -27,13 +27,30 @@ def is_client_sourced(answer_source: str | None) -> bool:
     return answer_source == SOURCE_CLIENT
 
 
-def protected_keys(rows: Iterable[tuple[str, str | None]], *, is_fixture: bool) -> set[str]:
+def protected_keys(rows: Iterable[tuple[str, str | None, bool]], *, is_fixture: bool) -> set[str]:
     """Keys a fixture run must leave alone.
 
-    ``rows`` is (key, answer_source) pairs. Empty for a live run: overwriting a
-    client's self-assessment with real analysis is the consultant workflow, and
-    the diff is shown for review.
+    ``rows`` is (key, answer_source, is_answered) triples. Empty for a live run:
+    overwriting a client's self-assessment with real analysis is the consultant
+    workflow, and the diff is shown for review.
+
+    During a fixture run the test is "does this row hold an answer the AI did
+    not write?" — deliberately two conditions:
+
+    * **Not AI-written.** Keying on ``SOURCE_CLIENT`` alone left a hole: that
+      stamp is applied only when the client SUBMITS, so an in-progress draft
+      carried NULL and was overwritten. In the 2026-08-07 live run a client had
+      answered 5 of 37 Zero Trust capabilities; a fixture Run-AI changed three
+      of the values and re-stamped all five ``ai``, unrecoverably. Pre-0035
+      rows carry NULL too, and they are someone's real work as well.
+
+    * **Answered.** A fresh assessment is all NULLs — unanswered *and*
+      unstamped. Protecting those would stop a fixture run populating an empty
+      assessment at all, which is exactly what D-017 demos and the e2e suite
+      depend on. There is nothing to protect in an empty row.
+
+    Fixture may still refresh output it wrote itself.
     """
     if not is_fixture:
         return set()
-    return {key for key, source in rows if is_client_sourced(source)}
+    return {key for key, source, is_answered in rows if is_answered and source != SOURCE_AI}

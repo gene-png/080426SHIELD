@@ -263,11 +263,18 @@ def test_get_service_resolves_owning_client(app_client: TestClient) -> None:
 
 
 @pytest.mark.unit
-def test_ai_status_reports_fixture_mode(app_client: TestClient) -> None:
+def test_ai_status_reports_fixture_mode(app_client: TestClient, monkeypatch) -> None:
+    from app.config import get_settings
+
     admin_bearer = _register(app_client, "admin@example.com")["tokens"]["access_token"]
     client_bearer = _register(app_client, "client@example.com")["tokens"]["access_token"]
 
-    # Tests run in fixture mode -> AI is not live-ready, and no key leaks.
+    # Pin the mode instead of inheriting it. This asserted on ambient config, so
+    # it silently reported 'live' for anyone running with SHIELD_LLM_MODE=live in
+    # .env — green in CI, failing locally, testing nothing either way.
+    monkeypatch.setattr(get_settings(), "shield_llm_mode", "fixture", raising=False)
+
+    # Fixture mode -> AI is not live-ready, and no key leaks.
     r = app_client.get("/admin/ai-status", headers={"Authorization": f"Bearer {admin_bearer}"})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -282,6 +289,43 @@ def test_ai_status_reports_fixture_mode(app_client: TestClient) -> None:
         ).status_code
         == 403
     )
+
+
+@pytest.mark.unit
+def test_ai_status_is_not_ready_in_fixture_mode_even_with_an_environment_key(
+    app_client: TestClient, monkeypatch
+) -> None:
+    """fixture mode + an ENVIRONMENT key must still report ready=false.
+
+    Only a runtime key pasted through POST /admin/llm-key promotes the live
+    adapter while SHIELD_LLM_MODE reads 'fixture' (_build_provider). An
+    environment key does not: the call still returns canned fixtures. But
+    _ai_readiness only asked "is a key loaded?", so this configuration — the
+    shipped shape of .env — reported `ready: true` with the detail "Live AI
+    configured".
+
+    That is not cosmetic. AiStatusBanner renders nothing when ready, and
+    RunAiGuard.decide() proceeds immediately when ready, so BOTH protections
+    disabled themselves. In the 2026-08-07 live run a Zero Trust Run-AI then
+    served fixture output with no warning and overwrote five of the client's own
+    answers.
+    """
+    import app.ai.keystore as keystore_mod
+    from app.config import get_settings
+
+    admin_bearer = _register(app_client, "envkey-admin@example.com")["tokens"]["access_token"]
+    # Pin the mode rather than inheriting it: a developer running with
+    # SHIELD_LLM_MODE=live in .env would otherwise silently not test this.
+    monkeypatch.setattr(get_settings(), "shield_llm_mode", "fixture", raising=False)
+    monkeypatch.setattr(keystore_mod, "key_source", lambda *a, **k: "environment")
+
+    r = app_client.get("/admin/ai-status", headers={"Authorization": f"Bearer {admin_bearer}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mode"] == "fixture"
+    assert body["key_source"] == "environment"
+    assert body["ready"] is False, "fixture mode must never report ready"
+    assert "fixture" in body["detail"].lower()
 
 
 @pytest.mark.unit
