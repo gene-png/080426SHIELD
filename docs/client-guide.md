@@ -17,5 +17,6 @@ SHIELD is structured around a guided engagement with Kentro:
 - **Phase 2 (Intake):** plain-English wizard, auto-save, document upload with redaction disclosure.
 - **Phase 6 (Polish):** complete client docs and walkthroughs.
 
-(Released deliverables surfacing on your home dashboard and `/documents` —
-formerly "Phase 3-5" — shipped in Sprint 5.)
+(Released deliverables surfacing on your home dashboard and `/results` —
+formerly "Phase 3-5" — shipped in Sprint 5. The page was called `/documents`
+until 2026-08-06; that path still redirects, so older links keep working.)

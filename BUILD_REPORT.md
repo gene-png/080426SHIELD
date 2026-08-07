@@ -4,45 +4,51 @@
 > and what is deferred. Narrative history lives in `CHANGELOG.md`; non-obvious
 > choices in `DECISIONS.md`; state-of-`main` in `CONTEXT.md`.
 
-## Latest change — 2026-07-22 (Sprint 9 · activate the seam, `[3.5.0]`)
+## Latest change — 2026-08-07 (UX findings burn-down complete, `[3.10.0]`)
 
-**The dormant Keycloak seam is now a working hybrid sign-in, every service can
-discard a draft, and the demo compose + export eyeballs are covered by committed
-automation.** Eleven tasks (T0 through T10) on
-`feat/sso-discard-demo-sprint-9`. See `CHANGELOG.md` `[3.5.0]`, `SPRINT_9.md`, and
-DECISIONS **D-031/D-032/D-033** for the full record.
+**Both outstanding review documents are closed out.** `UX findings.docx` (22
+numbered findings plus its "Recommended page structure" appendix) and the
+2026-08-04 guided live run (`REPORT.md`, F-1..F-12) are fully burnt down across
+PRs #5, #6, #9-#12 and #14-#21. New DECISIONS **D-042/D-043/D-044**. **No
+migrations in Phase C or D** — the one new read surface derives its states from
+columns that already existed.
+
+The finding → PR mapping lives in `CONTEXT.md` under "UX findings burn-down".
+Do not re-derive it; establishing it required a pass through PR #6's
+change→finding table plus the migration history, and it corrected two
+assumptions (UX 5 and UX 4's review-queue half had already shipped, and F-10 was
+**withdrawn** as a measurement artifact of the review harness rather than fixed).
 
 Highlights:
 
-- **Hybrid Keycloak OIDC, flag-gated default OFF (T4 through T7; D-032; migration
-  0032):** a real Keycloak sign-in sits beside the credentials form behind
-  `SHIELD_AUTH_OIDC_ENABLED`. The browser round trip ends at `POST /auth/oidc/exchange`,
-  which verifies the access token against the realm JWKS (RS256-only, `iss`/`aud`/`azp`
-  pinned) and mints a native SHIELD HS256 pair only for an already-active local
-  account. A Keycloak token is never accepted as an API bearer, and there is no JIT
-  provisioning. With the flag off the provider does not exist and zero Keycloak network
-  calls happen. `s26-oidc-login.spec.ts` drives both paths and self-skips unless
-  `E2E_OIDC=1`.
-- **Draft discard across all four services (T0 through T3; D-031):** a draft-only
-  admin `POST .../discard` returns the record to `status='discarded'`, writes exactly
-  one audit row, and is idempotent on re-discard; SUBMITTED/APPROVED/RELEASED refuse
-  with a typed 409. The web adds the app's first destructive-confirm dialog (the shared
-  `DiscardDraftButton`). The version trap is closed and the hidden latest-consumers
-  (risk synthesis, engagement cards) skip discarded rows. Three e2e preambles that used
-  to approve-away a draft now discard it.
-- **Demo + export automation (T2, T8, T9; D-033):** the five SMOKE §10 export eyeballs
-  are replaced by unit assertions over real PDF/DOCX/XLSX bytes (pypdf test dep);
-  `demo-reset --demo` plus `e2e/demo/demo-journey.spec.ts` prove the hosted-demo
-  compose locally, and a new CI `demo` job runs the whole bring-up on every PR.
+- **One client-facing results surface (D-042).** `/results` replaces
+  `/documents`, which permanently redirects and stays — release emails already
+  delivered carry the old path.
+- **Client Home by ownership (D-043).** Action required / In progress / Results
+  available, one bucket per service, each card naming one primary action. That
+  single placement is what removed a duplication rather than patching it: an open
+  self-assessment used to render both as a card and in a "Waiting on you" list.
+  The six-stage bar deliberately stays admin-only (§6.4).
+- **Admin Deliverables (D-044).** Every deliverable for the active tenant,
+  released or not — the admin-side twin of the problem `/results` fixed for
+  clients. Derived status, superseded beats released, read-only.
+- **Admin queue filters, Risk Register scope, and `/help`**, closing the IA
+  appendix. Two long-standing gaps from the 2026-07-08 repo audit —
+  `/admin/deliverables` and `/help` — are now built.
+- **Test integrity.** `s34`'s Run-AI-guard test could self-skip on database
+  state, which is what hid the fail-open race it guards; it now seeds its own
+  tenant and the skip is an assertion. Verified by forcing the old condition and
+  watching it fail where it used to report green.
 
-One migration (0032, additive). New DECISIONS D-031/D-032/D-033. Version is a
-minor bump (two new flag-gated user-facing surfaces); tag/CHANGELOG level only,
-package manifests untouched.
+Gates on `main` (`741b1e9`): full CI green — Python, Web, gitleaks, E2E,
+Demo — plus local `pytest -m unit` 807/807 and vitest 116/116.
 
 ## Overall status
 
-**`v3.0.0` shipped (PR #1, v2 work order Parts A–F). Sprints 1–8 merged (Sprint 8
-as PR #42); Sprint 9 complete on its branch. The live-AI path is proven against
+**`v3.0.0` shipped (PR #1, v2 work order Parts A–F). Sprints 1–9 all merged.
+Since Sprint 9 the work has been review-driven rather than sprint-planned — the
+seven-issue pass, then the UX findings burn-down, which completed at `[3.10.0]`
+on 2026-08-07; no sprint is currently staged. The live-AI path is proven against
 real Vertex AI via ADC with no static key (Sprint 7 D-029); the client
 release-notification loop is closed (D-030) and the web auth stack is on Auth.js
 v5. Sprint 9 activates the long-dormant Keycloak seam as a hybrid OIDC sign-in
@@ -155,6 +161,17 @@ this sprint serves web on **:3001**; Playwright resolves the port via
 
 ## Open items / deferred (needs-David or a future sprint)
 
+0. **UNPROVEN, and the most important item here: the live Anthropic path for
+   `zt_score`, `csf_score` and `mitre_map`.** The 2026-08-04 live run
+   (`REPORT.md`) never completed CSF or MITRE scoring, and F-3 records that Zero
+   Trust could not complete on live Anthropic at all — a non-streaming request
+   ran too long and the connection was dropped. PR #6 added streaming to answer
+   that, but **nothing has re-proven those three purposes on Anthropic since**.
+   Sprint 7's live validation (2026-07-15) was **Vertex/Gemini**, a different
+   adapter with a different failure mode. On the default provider exactly one
+   purpose (`extract.capabilities`) has ever completed live, and that predates the
+   streaming change. Needs a human with a real key; SMOKE §14 and §36 both want
+   it. Treat "live Anthropic works" as unproven until a run says otherwise.
 1. **SMOKE_TEST §27 — CI `demo` job pending its first PR run:** the new `demo`
    job is green locally (Sprint 9 T8's destructive proving run) and the YAML is
    validated, but this repo's CI triggers only on push/PR to `main`, so its first

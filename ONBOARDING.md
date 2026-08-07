@@ -108,12 +108,14 @@ agents per `.claude/commands/loop-sprint.md`). Each sprint ships a plan doc
 (`SPRINT_<n>.md`) and a committed staged queue
 (`.claude/sprint-queue.sprint-<n>.json`).
 
-**The staged, ready-to-launch sprint is `SPRINT_8.md`** (queue
-`.claude/sprint-queue.sprint-8.json`, branch `feat/browser-proof-sprint-8`,
-target v3.4.1): shared MailHog e2e helper, tech-debt extract draft-guard,
-release-notification e2e, verify/forgot/reset pages e2e, MFA e2e (TOTP +
-recovery codes), admin-health + `/documents` empty state. The plan was
-reviewed by OpenAI Codex before merge (PR #37 carries the findings table).
+**No sprint is staged right now** (as of 2026-08-07, `[3.10.0]`). Sprints 1-9
+are all merged, and the work since has been review-driven rather than
+sprint-planned: the seven-issue pass, then the UX findings burn-down through
+Phase D, which is complete — see `CONTEXT.md` "UX findings burn-down". The
+highest committed pair is still `SPRINT_9.md` /
+`.claude/sprint-queue.sprint-9.json`, and it has shipped; treat it as history,
+not as the next thing to launch. Stage a `SPRINT_10.md` before running the loop
+again.
 (Convention: the staged sprint is always the highest-numbered committed
 `SPRINT_<n>.md` / `sprint-queue.sprint-<n>.json` pair — each planning PR must
 bump this paragraph.)
