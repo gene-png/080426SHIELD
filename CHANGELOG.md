@@ -7,24 +7,83 @@ All notable changes to SHIELD by Kentro v2.0. Format roughly follows [Keep a Cha
 > (smoke sweep) is now `[3.0.1]` and Sprint 2 (findings burn-down, formerly
 > `[3.0.1]`) is now `[3.0.2]`. No tags existed for the collided numbers.
 
-## [Unreleased]
+## [3.10.0] · UX findings burn-down complete — Results, task-status Home, Deliverables, Help · 2026-08-07
 
-On branches, not yet on `main`. Promote these into a version entry as they merge.
+Closes both outstanding review documents: `UX findings.docx` (22 numbered
+findings plus its "Recommended page structure" appendix) and the 2026-08-04
+guided live run (`REPORT.md`, F-1..F-12). New decisions **D-042**, **D-043**,
+**D-044**. **No migrations** — the one new read surface derives its states from
+columns that already existed.
 
-- **Intake: primary-contact override + shared service defaults** (PR #11,
-  migration **0039**, D-041). "I am not the primary contact" records someone
-  else's details for the engagement; shared deadline/context fan out to the
-  services that have none, filling blanks only. Also fixes two round-trip bugs
-  where the contact step and then the override columns were saved and returned
-  but never read back by the form that wrote them.
-- **Admin queue: stage bar + bulk workspace creation** (PR #12). Each published
-  service shows the same six-stage bar the workspace shows, from the same
-  derivation; "No workspace yet" covers the state before that. Select-all creates
-  the missing workspaces in one action and names what failed rather than
-  reporting a clean run.
-- **One client-facing Results section** (PR #14, UX finding 18). `/results`
-  replaces `/documents`, which permanently redirects — release notification
-  emails already delivered carry the old path and must keep working.
+### One place to look for results (PR #14, UX 18 — D-042)
+
+- **`/results` replaces `/documents`.** Reports were downloaded from
+  `/documents` while dashboards were reached from `/home` or a "View dashboard"
+  link, so a client had three places to look for the outcome of one engagement
+  and no way to know which held what.
+- **`/documents` permanently redirects, and stays.** Release notification emails
+  already sitting in inboxes carry the old path; a 404 on a link we sent is worse
+  than keeping a route forever. `s17` asserts that promise. The release email now
+  points at `/results` directly rather than through the redirect.
+- Six link labels still read "Back to documents" while landing on `/results` for
+  a whole release, because every spec checked the href and none checked the
+  words. Fixed in PR #17; the missing assertion is recorded in SMOKE §42.
+
+### Client Home organised by who owns the next move (PR #15, UX 17 — D-043)
+
+- **Three buckets, one per service:** Action required / In progress / Results
+  available. "Your services" was a flat grid in arrival order, so a client with
+  several engagements read every phase pill to find the one that needed them.
+- **The duplication is gone by construction.** An open self-assessment used to
+  render twice — as a card and again in a "Waiting on you" list beside it. A
+  service now lands in exactly one bucket, and "Waiting on you" is retired;
+  unread messages, which need the client but have no service card, moved into
+  Action required. One `needsClient()` predicate feeds both the bucket and the
+  hero's Continue button, so they cannot disagree.
+- **Each card names one primary action** — Resume assessment / View status /
+  View results — as a span inside the card's existing link, never a nested
+  anchor. A test asserts exactly one link per card.
+- **No six-stage bar here.** §6.4 restricts a client surface to phase and next
+  steps; the six stages stay consultant vocabulary. The phase pill is unchanged,
+  so `s31`'s routing assertions needed no edit to stay green.
+
+### Admin Deliverables (PR #16, IA appendix — D-044)
+
+- **One place per tenant showing every deliverable, released or not.** They were
+  visible only inside the workspace that produced them — the admin-side twin of
+  the problem `/results` fixed for clients.
+- Status derives from existing columns: superseded / released / generated. **No
+  migration.** Superseded beats released, because a superseded row was often
+  released once and calling it client-visible would say the client is looking at
+  a version that has been replaced.
+- **Read-only.** No release action on a cross-service list; that is how the wrong
+  version reaches the wrong tenant. `s40` asserts the absence.
+
+### Admin console and Help (PRs #17, #18, IA appendix)
+
+- **Intake queue filters** by organization name, service, status and age, all
+  client-side over data already fetched. A filtered-to-nothing list **names the
+  filters that emptied it** — a bare "no results" on a queue reads as "no work
+  exists". "Select all" is scoped to visible rows, so bulk publish can never
+  reach a request filtered off screen.
+- **The Risk Register states its scope** — client-specific, synthesized across
+  that client's services. It already said so, but only in the "pick a client
+  first" empty state, which anyone with a client selected never sees.
+- **`/help`** explains every service and carries the support routes. The copy
+  moved out of `Step1Services.tsx` into `lib/intake/types.ts` so the intake
+  picker and the help page cannot describe a service differently.
+
+### Test integrity (PR #19)
+
+- **`s34`'s Run-AI-guard test can no longer self-skip.** It resolved the seeded
+  ATT&CK service and bailed out if that assessment was released — so whether the
+  browser exercised the guard depended on database state nobody controls, and
+  that skip is what hid the fail-open race it now guards. It seeds its own
+  tenant and draft assessment, and the skip became an assertion. Verified by
+  forcing the old condition: it now fails loudly where it used to report green.
+- Two e2e specs were added on colliding `s37`/`s38` numbers and renamed to
+  `s40`/`s41`. Playwright resolves by path, so nothing failed — the collision
+  surfaced only when the docs cited the numbers.
 
 ## [3.9.0] · Portfolio scope, derived stages, UX remediation · 2026-08-06
 
