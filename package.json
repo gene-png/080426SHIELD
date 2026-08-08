@@ -1,7 +1,7 @@
 {
   "name": "shield-v2",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.11.0",
   "description": "SHIELD by Kentro v3.0 - enterprise cybersecurity assessment platform",
   "packageManager": "pnpm@9.12.0",
   "engines": {
