@@ -7,6 +7,98 @@ All notable changes to SHIELD by Kentro v2.0. Format roughly follows [Keep a Cha
 > (smoke sweep) is now `[3.0.1]` and Sprint 2 (findings burn-down, formerly
 > `[3.0.1]`) is now `[3.0.2]`. No tags existed for the collided numbers.
 
+## [3.11.0] · Validation remediation — every Critical closed, sessions survive the work · 2026-08-08
+
+Closes the 2026-08-07 end-to-end validation run (`REPORT.md`, N-001..N-033) and
+the defects found while verifying its fixes. **All seven Critical findings are
+fixed and on `main`, CI green.** No breaking changes; one additive migration
+(`0040`).
+
+> **This is not a bug-free build.** Known-accepted risks are tracked in
+> **issue #25** and `context/gene.md` — most importantly, **AI spend is
+> under-reported by >60% and must not be billed from**. Zero Trust, NIST CSF and
+> the Risk Register have still never been driven end to end, and `csf_score` /
+> `zt_score` have never completed a live run.
+
+### The Criticals (PRs #22, #23)
+
+- **Intake step 5 crashed the application** (N-003). `onToggle` read
+  `e.currentTarget.open` inside a state updater, after React had nulled it. It
+  fired on arrival, not on click, so **no client could submit an intake**. Of 41
+  smoke specs none walked the wizard that far, which is why CI stayed green.
+- **ATT&CK could never complete its core AI step** (N-014). `mitre_map` emits one
+  object per technique across ~633 techniques — far past any single call's output
+  ceiling. Now runs as concurrent batches (25 techniques × 5 workers), each
+  writing its own `llm_calls` row. **Validated live: 26/26 batches, 633/633
+  techniques scored.**
+- **A fixture run masqueraded as live and destroyed a client's answers** (N-029).
+  Readiness asked only "is a key loaded?", so the shipped shape of `.env`
+  reported `ready:true` in fixture mode and silently disabled both the banner and
+  the Run-AI guard. Draft answers now carry provenance and are protected.
+- **A released report understated spend by $240,000** (N-010). The exclusion
+  disclosure unmounted after a bundle split — the fix for one finding defeated
+  the fix for another — and the deliverable never carried the reconciliation at
+  all. All three formats now state it, and relabel the figure when rows were
+  dropped.
+- **The Risk Register could never generate live** (N-032). One entry per finding
+  × 509 findings ≈ 250k output tokens against a 128k ceiling; no budget could
+  have worked. Now batched like `mitre_map`.
+- **ATT&CK fabricated a 100%-gap assessment with no capability list** (N-033). An
+  empty allow-list means every technique reads as uncovered, so a run produced
+  607 gaps that were an artifact of missing input — releasable to a client, and
+  billable on every attempt. Now refused before the provider is called.
+- **`/admin/deliverables` showed a raw upstream 400** (N-030) when no client was
+  selected, and had been holding CI red on `main`.
+
+### Sessions survive the work (PR #24)
+
+- **Concurrent requests were logging users out mid-task.** Refresh tokens are
+  single-use; a browser presents the same one from several requests at once, so
+  the first rotated it and the rest were rejected as replay — observed as pairs
+  of `auth.refresh_reused` **286 microseconds apart**. An active user was logged
+  out _because_ they were active.
+- Rotation now honours the immediately-previous token for
+  `jwt_refresh_grace_seconds` (default 60) and serves the current identity, so
+  racers converge. One generation, time-boxed; set to `0` for strict single-use.
+- **Access TTL 15 min → 60 min; refresh TTL 30 min → 24 h.** The second is forced
+  by the first: a refresh token must outlive the token it renews.
+- **Session-expiry warnings at five minutes and one minute**, on every signed-in
+  page. Dismissing the five-minute notice does not suppress the one-minute one.
+
+### The admin workspaces read as a sequence (PRs #24, #26)
+
+- **Four numbered steps** — draft with AI → review and adjust → approve →
+  generate and release — on ATT&CK, Tech Debt, NIST CSF and Zero Trust. Sections
+  had sat in the order the features were built, so on three of the four the
+  actual assessment work was at the _bottom_ of the page, below the deliverable
+  and the message thread.
+- Blocked steps state **why** and name the step to return to. Approving an
+  entirely unscored ATT&CK assessment is no longer possible.
+- Risk Register deliberately unchanged — two adjacent actions, no editing
+  surface.
+- **Intake queue navigable at 70 organizations**: A–Z ordering, a jump-to
+  dropdown, and duplicate legal names disambiguated.
+
+### Rendering
+
+- **Metric-card values size to fit** (`3xl → lg` by length). A real seven-figure
+  annual cost ran outside its card — the number a consultant opens the page to
+  read was the one they could not read. Fixed in the design system, so every
+  dashboard benefits.
+- **`s42-layout-overflow`** sweeps 9 pages × 2 viewport widths for content
+  escaping its container. Mobile widths are not yet covered.
+
+### Testing
+
+824 backend unit tests, 138 web unit tests, 84 e2e specs — all green. New
+coverage for the refresh race, the empty-capability guard, the security-scope
+boundary (a row marked "not cyber" leaves ATT&CK but stays in Tech Debt costs),
+the intake-queue dropdown, session warnings, and layout overflow.
+
+**Still untested by construction:** live-path tests (`pytest -m live`) self-skip
+without a key, so budget, latency and provider defects remain invisible to CI.
+Three of five AI purposes have now been bitten by exactly that class.
+
 ## [3.10.0] · UX findings burn-down complete — Results, task-status Home, Deliverables, Help · 2026-08-07
 
 Closes both outstanding review documents: `UX findings.docx` (22 numbered
