@@ -21,6 +21,28 @@ const DELTA_TONE: Record<NonNullable<NumberCardProps["deltaTone"]>, string> = {
   neutral: "text-ink-secondary",
 };
 
+/**
+ * Step the value's type size down as it gets longer.
+ *
+ * These cards sit in a 5-across grid, so the box is narrow while the value is
+ * whatever the data says. At a fixed `text-3xl` a real annual-cost figure —
+ * "$3,608,000" — ran outside its card on the Tech Debt workspace: the number a
+ * consultant is there to read was the one thing they could not read.
+ *
+ * Stepping the size beats truncation (an ellipsised currency figure is worse
+ * than a small one — "$3,608…" is not a number) and beats wrapping (a wrapped
+ * figure changes card heights and breaks the row alignment the grid exists for).
+ * The thresholds are character counts because that is what actually overflows;
+ * commas and currency symbols occupy space just like digits do.
+ */
+function valueSizeClass(value: string | number): string {
+  const length = String(value).length;
+  if (length <= 6) return "text-3xl";
+  if (length <= 9) return "text-2xl";
+  if (length <= 13) return "text-xl";
+  return "text-lg";
+}
+
 export function NumberCard({
   label,
   value,
@@ -31,11 +53,23 @@ export function NumberCard({
   ...rest
 }: NumberCardProps): JSX.Element {
   return (
-    <Card className={cn("p-6", className)} {...rest}>
-      <p className="text-xs font-medium uppercase tracking-wider text-ink-tertiary">
+    // min-w-0 is load-bearing: without it a grid item refuses to shrink below
+    // its content's intrinsic width, so a long value pushes the card past its
+    // column instead of the text adapting.
+    <Card className={cn("min-w-0 p-6", className)} {...rest}>
+      <p className="truncate text-xs font-medium uppercase tracking-wider text-ink-tertiary">
         {label}
       </p>
-      <p className="mt-2 text-3xl font-semibold leading-tight text-ink-primary">
+      <p
+        // tabular-nums keeps digits on a fixed advance so figures line up
+        // between cards; break-words is the last-resort guard for a single
+        // unbroken token longer than any size step anticipated.
+        className={cn(
+          "mt-2 break-words font-semibold leading-tight tabular-nums text-ink-primary",
+          valueSizeClass(value),
+        )}
+        title={String(value)}
+      >
         {value}
       </p>
       {delta ? (

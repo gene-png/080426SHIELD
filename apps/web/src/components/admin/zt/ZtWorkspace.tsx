@@ -37,6 +37,7 @@ import type {
 
 import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
+import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
@@ -359,28 +360,7 @@ export function ZtWorkspace({
               No assessment yet
             </StatusPill>
           )}
-          {assessment ? (
-            <button
-              type="button"
-              onClick={() => void onApprove()}
-              disabled={
-                busy !== null ||
-                (assessment.status !== "draft" &&
-                  assessment.status !== "submitted")
-              }
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {assessment.status === "approved"
-                ? "Approved"
-                : assessment.status === "released"
-                  ? "Released"
-                  : busy === "approve"
-                    ? "Approving…"
-                    : assessment.status === "submitted"
-                      ? "Approve client inputs"
-                      : "Approve"}
-            </button>
-          ) : (
+          {assessment ? null : (
             <button
               type="button"
               onClick={() => void onCreateAssessment()}
@@ -444,16 +424,19 @@ export function ZtWorkspace({
         />
       ) : (
         <>
-          <Card>
-            <CardHeader>
-              <CardTitle>Run AI (zt_score)</CardTitle>
-            </CardHeader>
-            <CardBody className="flex flex-col gap-3">
-              <p className="text-sm text-ink-secondary">
-                Suggest a current and target maturity stage per capability (on
-                this framework&apos;s scale) plus per-pillar narratives. Locked
-                rows are left untouched.
-              </p>
+          {/* Ordered the way the work is done. This page used to run Run AI ->
+              score -> messages -> gaps -> roadmap -> deliverable ->
+              QUESTIONNAIRE, so the capability review — the actual work — sat at
+              the very bottom, below the deliverable. Analysis output (score,
+              gaps, roadmap) and the message thread are reference and now sit
+              after the numbered path. */}
+          <WorkflowStep
+            number={1}
+            title="Draft the maturity scoring with AI"
+            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. Locked rows and answers the client submitted themselves are never overwritten."
+            done={runResult !== null}
+          >
+            <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
                   loaded. The guard shipped on the ATT&CK workspace only, so a
                   fixture run here silently overwrote a real client
@@ -509,10 +492,84 @@ export function ZtWorkspace({
                   analysis over them.
                 </p>
               ) : null}
-            </CardBody>
-          </Card>
+            </div>
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={2}
+            title="Review every capability and adjust"
+            description="Work through the pillars and set the maturity stage you can defend. Where the client filled in their own self-assessment, this is where you check it for completeness and accuracy — their answers are what the report rests on."
+            done={
+              assessment.status !== "draft" && assessment.status !== "submitted"
+            }
+          >
+            <ZtQuestionnaire
+              catalog={catalog}
+              answersByCode={answersByCode}
+              readOnly={readOnly}
+              onAnswerUpdate={onAnswerUpdate}
+            />
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={3}
+            title={
+              assessment.status === "submitted"
+                ? "Approve the client's inputs"
+                : "Approve the assessment"
+            }
+            description="Locks the scoring so the deliverable is generated from a fixed set of answers. Approving does not send anything to the client — that is the last step."
+            done={
+              assessment.status === "approved" ||
+              assessment.status === "released"
+            }
+          >
+            <button
+              type="button"
+              onClick={() => void onApprove()}
+              disabled={
+                busy !== null ||
+                (assessment.status !== "draft" &&
+                  assessment.status !== "submitted")
+              }
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {assessment.status === "approved"
+                ? "Approved"
+                : assessment.status === "released"
+                  ? "Released"
+                  : busy === "approve"
+                    ? "Approving…"
+                    : assessment.status === "submitted"
+                      ? "Approve client inputs"
+                      : "Approve"}
+            </button>
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={4}
+            title="Generate and release the deliverable"
+            description="Renders the report from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
+            blockedReason={
+              assessment.status === "draft" || assessment.status === "submitted"
+                ? "Approve the assessment in step 3 before generating a deliverable from it."
+                : null
+            }
+          >
+            <div className="flex flex-col gap-3">
+              <StaleDocsNudge stale={assessment.documents_stale} />
+              <ZtDeliverableCard
+                serviceId={serviceId}
+                assessmentStatus={assessment.status}
+                deliverable={deliverable}
+                onChange={setDeliverable}
+              />
+            </div>
+          </WorkflowStep>
+
+          {/* Reference, not steps: analysis output and the thread are useful
+              throughout and required at no particular point. */}
           <ZtScoreCard score={score} />
-          <MessageThread serviceId={serviceId} />
           <ZtGapList
             analysis={gap}
             targetStage={targetStage}
@@ -520,19 +577,7 @@ export function ZtWorkspace({
             stages={catalog.stages}
           />
           <ZtRoadmapCard analysis={gap} />
-          <StaleDocsNudge stale={assessment.documents_stale} />
-          <ZtDeliverableCard
-            serviceId={serviceId}
-            assessmentStatus={assessment.status}
-            deliverable={deliverable}
-            onChange={setDeliverable}
-          />
-          <ZtQuestionnaire
-            catalog={catalog}
-            answersByCode={answersByCode}
-            readOnly={readOnly}
-            onAnswerUpdate={onAnswerUpdate}
-          />
+          <MessageThread serviceId={serviceId} />
         </>
       )}
     </div>

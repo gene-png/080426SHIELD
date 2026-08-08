@@ -40,6 +40,7 @@ import type {
 
 import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
+import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "./DiscardDraftButton";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
 import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
@@ -375,54 +376,65 @@ Components carry no cost of their own — this licence keeps its full value.`,
         />
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Upload inventory and extract</CardTitle>
-          <CardDescription>
-            Drop the inventory CSV or XLSX. The redactor strips PII before the
-            AI sees the rows. Each extraction creates a new versioned list;
-            previous versions stay in the audit log.
-          </CardDescription>
-        </CardHeader>
-        <CardBody className="flex flex-col gap-4">
-          <RedactionDisclosure />
-          <Dropzone
-            onUploaded={(a) => {
-              setDocsReloadKey((k) => k + 1);
-              // Issue 2: uploading auto-started an AI extraction with no click
-              // to intercept, so an offline run could produce canned output
-              // unannounced. When AI is not live (and the admin hasn't already
-              // acknowledged it) the file is just listed — the guarded
-              // "Extract from this" button below is then the way in.
-              if (
-                aiStatus &&
-                !aiStatus.ready &&
-                !hasAcknowledgedOffline(aiStatus)
-              ) {
-                return;
-              }
-              void runExtraction(a.id);
-            }}
-            accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-          />
-          {extracting ? (
-            <p className="text-sm text-ink-tertiary" aria-live="polite">
-              Extracting capability list…
-            </p>
-          ) : null}
-          {extractError ? (
-            <p className="text-sm text-status-danger-fg" role="alert">
-              {extractError}
-            </p>
-          ) : null}
-        </CardBody>
-      </Card>
+      {/* Ordered and labelled the way the work is done. The sequence here was
+          already close to right; what was missing was any statement of what to
+          do first, what each stage is for, or what "done" looks like. Analysis
+          output (consolidation plan, overlap) moves below the numbered path. */}
+      <WorkflowStep
+        number={1}
+        title="Upload the inventory and extract"
+        description="Drop the client's software inventory. The redactor strips PII before anything leaves the platform, then Claude extracts one capability per row. Rows it cannot name are reported as exclusions rather than silently dropped."
+        done={list !== null}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle>Upload inventory and extract</CardTitle>
+            <CardDescription>
+              Drop the inventory CSV or XLSX. The redactor strips PII before the
+              AI sees the rows. Each extraction creates a new versioned list;
+              previous versions stay in the audit log.
+            </CardDescription>
+          </CardHeader>
+          <CardBody className="flex flex-col gap-4">
+            <RedactionDisclosure />
+            <Dropzone
+              onUploaded={(a) => {
+                setDocsReloadKey((k) => k + 1);
+                // Issue 2: uploading auto-started an AI extraction with no click
+                // to intercept, so an offline run could produce canned output
+                // unannounced. When AI is not live (and the admin hasn't already
+                // acknowledged it) the file is just listed — the guarded
+                // "Extract from this" button below is then the way in.
+                if (
+                  aiStatus &&
+                  !aiStatus.ready &&
+                  !hasAcknowledgedOffline(aiStatus)
+                ) {
+                  return;
+                }
+                void runExtraction(a.id);
+              }}
+              accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            />
+            {extracting ? (
+              <p className="text-sm text-ink-tertiary" aria-live="polite">
+                Extracting capability list…
+              </p>
+            ) : null}
+            {extractError ? (
+              <p className="text-sm text-status-danger-fg" role="alert">
+                {extractError}
+              </p>
+            ) : null}
+          </CardBody>
+        </Card>
 
-      <IntakeDocumentsPanel
-        onExtract={(id) => void runExtraction(id)}
-        extracting={extracting}
-        reloadKey={docsReloadKey}
-      />
+        <IntakeDocumentsPanel
+          onExtract={(id) => void runExtraction(id)}
+          extracting={extracting}
+          reloadKey={docsReloadKey}
+        />
+      </WorkflowStep>
 
       {loadError ? (
         <Card>
@@ -454,63 +466,55 @@ Components carry no cost of their own — this licence keeps its full value.`,
       ) : null}
 
       {list ? (
-        <section aria-labelledby="cap-list" className="flex flex-col gap-3">
-          <header className="flex flex-wrap items-end justify-between gap-2">
-            <h2
-              id="cap-list"
-              className="text-lg font-semibold text-ink-primary"
-            >
-              Capability list v{list.version}
-            </h2>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <StatusPill tone="info">{list.items.length} items</StatusPill>
-              <StatusPill tone={lowConfidence === 0 ? "success" : "warning"}>
-                {lowConfidence === 0
-                  ? "All rows ≥ 70% confident"
-                  : `${lowConfidence} low-confidence rows`}
-              </StatusPill>
-              <StatusPill tone="neutral">
-                Total cost: ${totalCost.toLocaleString()}
-              </StatusPill>
-              <button
-                type="button"
-                onClick={() => void onApprove()}
-                disabled={approving || list.status !== "draft"}
-                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+        <WorkflowStep
+          number={2}
+          title="Review and correct the extracted list"
+          description="Check what the extraction produced against what the client actually runs: fix names and costs, split bundles into their components, and confirm or overturn the security classification on each row. That classification decides what the ATT&CK mapping is allowed to cite, so an error here becomes a fabricated gap there."
+          done={list.status === "approved" || list.status === "released"}
+        >
+          <section aria-labelledby="cap-list" className="flex flex-col gap-3">
+            <header className="flex flex-wrap items-end justify-between gap-2">
+              <h2
+                id="cap-list"
+                className="text-lg font-semibold text-ink-primary"
               >
-                {list.status === "approved"
-                  ? "Approved"
-                  : list.status === "released"
-                    ? "Released"
-                    : approving
-                      ? "Approving…"
-                      : "Approve list"}
-              </button>
-              <DiscardDraftButton
-                status={list.status}
-                destructionSummary={discardSummary}
-                onConfirm={onDiscard}
-                disabled={approving || extracting || discarding}
-              />
-            </div>
-          </header>
+                Capability list v{list.version}
+              </h2>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <StatusPill tone="info">{list.items.length} items</StatusPill>
+                <StatusPill tone={lowConfidence === 0 ? "success" : "warning"}>
+                  {lowConfidence === 0
+                    ? "All rows ≥ 70% confident"
+                    : `${lowConfidence} low-confidence rows`}
+                </StatusPill>
+                <StatusPill tone="neutral">
+                  Total cost: ${totalCost.toLocaleString()}
+                </StatusPill>
+                <DiscardDraftButton
+                  status={list.status}
+                  destructionSummary={discardSummary}
+                  onConfirm={onDiscard}
+                  disabled={approving || extracting || discarding}
+                />
+              </div>
+            </header>
 
-          {/* Sign-off queue for negative security classifications. The
+            {/* Sign-off queue for negative security classifications. The
               extraction is portfolio-wide, so the security call is a property
               of each row rather than a filter — and it decides what ATT&CK may
               cite. Nothing leaves that subset without a human agreeing. */}
-          <SecurityClassificationQueue
-            list={list}
-            onUpdated={setList}
-            editable={list.status === "draft"}
-          />
+            <SecurityClassificationQueue
+              list={list}
+              onUpdated={setList}
+              editable={list.status === "draft"}
+            />
 
-          {/* UX finding 4: rows the extraction could not turn into a
+            {/* UX finding 4: rows the extraction could not turn into a
               capability at all — notes, headers, duplicates. Rare now that the
               prompt keeps the whole portfolio, but "rare" is not "never", and
               reporting the survivors as the portfolio hid 45% of the uploaded
               spend in the 2026-08-04 review. */}
-          {/* Gate on the exclusion RECORD, not on a count comparison. The old
+            {/* Gate on the exclusion RECORD, not on a count comparison. The old
               test was `source_rows_total > items.length`, which used "fewer
               items than source rows" as a proxy for "rows were excluded".
               Splitting a bundle ADDS child items — 26 became 32 against 28
@@ -522,83 +526,85 @@ Components carry no cost of their own — this licence keeps its full value.`,
 
               `included` likewise counts SOURCE-derived rows only, so
               decomposition can never move the reconciliation arithmetic. */}
-          {typeof list.source_rows_total === "number" &&
-          (list.excluded_rows?.length ?? 0) > 0 ? (
-            <div
-              className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
-              role="status"
-              aria-label="Extraction reconciliation"
-            >
-              <p className="font-semibold text-status-warning-fg">
-                {list.source_rows_total} rows received ·{" "}
-                {list.items.filter((i) => !i.parent_item_id).length} included ·{" "}
-                {list.excluded_rows?.length ?? 0} excluded
-              </p>
-              <p className="mt-1 text-ink-secondary">
-                Totals below cover the included rows only, not the whole upload.
-              </p>
-              {list.excluded_rows && list.excluded_rows.length > 0 ? (
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
-                    Show the {list.excluded_rows.length} excluded row
-                    {list.excluded_rows.length === 1 ? "" : "s"}
-                  </summary>
-                  <ul className="mt-2 flex flex-col gap-1">
-                    {list.excluded_rows.map((row) => (
-                      <li
-                        key={row.index}
-                        className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary"
-                      >
-                        <span className="font-mono text-ink-tertiary">
-                          row {row.index + 1}
-                        </span>
-                        <span className="min-w-0 flex-1">{row.summary}</span>
-                        {row.confirmed ? (
-                          <span className="text-status-success-fg">
-                            ✓ correctly excluded
-                          </span>
-                        ) : readOnly ? null : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void onIncludeRow(row)}
-                              className="font-medium text-brand-600 underline hover:text-brand-700"
-                            >
-                              Include…
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void onConfirmRow(row)}
-                              className="text-ink-tertiary underline hover:text-ink-secondary"
-                            >
-                              Correctly excluded
-                            </button>
-                          </>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ) : (
-                <p className="mt-1 text-xs text-ink-tertiary">
-                  The provider did not attribute every capability to a source
-                  row, so the excluded rows can&apos;t be listed individually.
+            {typeof list.source_rows_total === "number" &&
+            (list.excluded_rows?.length ?? 0) > 0 ? (
+              <div
+                className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
+                role="status"
+                aria-label="Extraction reconciliation"
+              >
+                <p className="font-semibold text-status-warning-fg">
+                  {list.source_rows_total} rows received ·{" "}
+                  {list.items.filter((i) => !i.parent_item_id).length} included
+                  · {list.excluded_rows?.length ?? 0} excluded
                 </p>
-              )}
-            </div>
-          ) : null}
-          <EditableCapabilityTable
-            items={list.items}
-            onItemUpdate={onItemUpdate}
-            readOnly={readOnly}
-            onSplitBundle={readOnly ? undefined : onSplitBundle}
-          />
-          {splitError ? (
-            <p className="text-sm text-status-danger-fg" role="alert">
-              {splitError}
-            </p>
-          ) : null}
-        </section>
+                <p className="mt-1 text-ink-secondary">
+                  Totals below cover the included rows only, not the whole
+                  upload.
+                </p>
+                {list.excluded_rows && list.excluded_rows.length > 0 ? (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
+                      Show the {list.excluded_rows.length} excluded row
+                      {list.excluded_rows.length === 1 ? "" : "s"}
+                    </summary>
+                    <ul className="mt-2 flex flex-col gap-1">
+                      {list.excluded_rows.map((row) => (
+                        <li
+                          key={row.index}
+                          className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary"
+                        >
+                          <span className="font-mono text-ink-tertiary">
+                            row {row.index + 1}
+                          </span>
+                          <span className="min-w-0 flex-1">{row.summary}</span>
+                          {row.confirmed ? (
+                            <span className="text-status-success-fg">
+                              ✓ correctly excluded
+                            </span>
+                          ) : readOnly ? null : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void onIncludeRow(row)}
+                                className="font-medium text-brand-600 underline hover:text-brand-700"
+                              >
+                                Include…
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void onConfirmRow(row)}
+                                className="text-ink-tertiary underline hover:text-ink-secondary"
+                              >
+                                Correctly excluded
+                              </button>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : (
+                  <p className="mt-1 text-xs text-ink-tertiary">
+                    The provider did not attribute every capability to a source
+                    row, so the excluded rows can&apos;t be listed individually.
+                  </p>
+                )}
+              </div>
+            ) : null}
+            <EditableCapabilityTable
+              items={list.items}
+              onItemUpdate={onItemUpdate}
+              readOnly={readOnly}
+              onSplitBundle={readOnly ? undefined : onSplitBundle}
+            />
+            {splitError ? (
+              <p className="text-sm text-status-danger-fg" role="alert">
+                {splitError}
+              </p>
+            ) : null}
+          </section>
+        </WorkflowStep>
       ) : (
         <EmptyState
           title="No capability list yet"
@@ -608,17 +614,52 @@ Components carry no cost of their own — this licence keeps its full value.`,
 
       {list ? (
         <>
+          <WorkflowStep
+            number={3}
+            title="Approve the capability list"
+            description="Locks the inventory so the deliverable is generated from a fixed set of rows and costs. Approving does not send anything to the client — that is the last step."
+            done={list.status === "approved" || list.status === "released"}
+          >
+            <button
+              type="button"
+              onClick={() => void onApprove()}
+              disabled={approving || list.status !== "draft"}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {list.status === "approved"
+                ? "Approved"
+                : list.status === "released"
+                  ? "Released"
+                  : approving
+                    ? "Approving…"
+                    : "Approve list"}
+            </button>
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={4}
+            title="Generate and release the deliverable"
+            description="Renders the PDF, XLSX and DOCX from the approved list. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
+            blockedReason={
+              list.status === "draft"
+                ? "Approve the capability list in step 3 before generating a deliverable from it."
+                : null
+            }
+          >
+            <DeliverableCard
+              serviceId={serviceId}
+              capabilityListStatus={list.status}
+              deliverable={deliverable}
+              onChange={setDeliverable}
+            />
+          </WorkflowStep>
+
+          {/* Reference, not steps: analysis output, useful throughout. */}
           <ConsolidationPlanCard summary={plan} />
           <OverlapDashboard
             analysis={overlap}
             loading={overlapLoading && overlap === null}
             error={overlapError}
-          />
-          <DeliverableCard
-            serviceId={serviceId}
-            capabilityListStatus={list.status}
-            deliverable={deliverable}
-            onChange={setDeliverable}
           />
         </>
       ) : null}
