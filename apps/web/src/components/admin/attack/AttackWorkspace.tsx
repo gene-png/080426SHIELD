@@ -67,6 +67,13 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : "Request failed.";
 }
 
+/** The machine-readable `reason` on a typed error envelope (D-016), if present. */
+function errorReason(err: unknown): string | null {
+  if (!(err instanceof AttackProxyError)) return null;
+  const payload = err.payload as { error?: { reason?: string } } | undefined;
+  return payload?.error?.reason ?? null;
+}
+
 export function AttackWorkspace({
   serviceId,
   serviceTitle,
@@ -91,6 +98,9 @@ export function AttackWorkspace({
   const [runResult, setRunResult] = React.useState<AttackRunAiResponse | null>(
     null,
   );
+  // Set when the API REFUSES a run (typed 409). Distinct from loadError: the
+  // page is fine, the prerequisite is not.
+  const [runBlocked, setRunBlocked] = React.useState<string | null>(null);
   const [selectedCode, setSelectedCode] = React.useState<string | null>(null);
   const [showSubs, setShowSubs] = React.useState(false);
 
@@ -275,13 +285,22 @@ export function AttackWorkspace({
     try {
       const result = await runAttackAi(serviceId);
       setRunResult(result);
+      setRunBlocked(null);
       // Re-pull the assessment so the matrix reflects the AI's suggestions,
       // guarded so a concurrent patch that started meanwhile still wins.
       const a = await fetchLatestAssessment(serviceId);
       if (seq === assessmentSeq.current) setAssessment(a);
       await refreshHeatmap();
     } catch (err) {
-      setLoadError(describeError(err));
+      // A refused run is guidance, not a broken page. Mapping with an empty
+      // capability list would report every technique as a gap, so the API
+      // blocks it — render that as something to act on rather than as a red
+      // "failed to load" banner that reads like an outage.
+      if (errorReason(err) === "no_security_capabilities") {
+        setRunBlocked(describeError(err));
+      } else {
+        setLoadError(describeError(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -453,9 +472,16 @@ export function AttackWorkspace({
                     ? ""
                     : "s"}
                   .{" "}
-                  {runResult.tools_available === 0
-                    ? "No tools were available from the Tech Debt list, so only statuses were inferred."
-                    : `${runResult.tools_available} tool${runResult.tools_available === 1 ? "" : "s"} available for mapping.`}
+                  {`${runResult.tools_available} tool${runResult.tools_available === 1 ? "" : "s"} available for mapping.`}
+                </p>
+              ) : null}
+              {runBlocked ? (
+                <p
+                  className="text-sm text-status-warning-fg"
+                  role="status"
+                  data-testid="attack-run-blocked"
+                >
+                  {runBlocked}
                 </p>
               ) : null}
             </CardBody>
