@@ -698,6 +698,41 @@ def run_ai(
     )
     tools = req.preview.inputs["capability_list"]
 
+    # An empty allow-list cannot produce an assessment — only a fabricated one.
+    # `valid_tools` is a HARD allow-list (see `_client_tool_names`): a tool that
+    # is not in it cannot be cited, so with zero tools every technique can only
+    # come back uncovered no matter what the client actually runs.
+    #
+    # This is not hypothetical. A live run on 2026-08-07 with tools_available=0
+    # wrote 607 `gap` + 26 `not_applicable` across all 633 techniques, billed for
+    # the call, and left a releasable assessment stating a catastrophic security
+    # posture that was an artifact of missing input. The audit row recorded
+    # `tools_available: 0`, so the system knew; the only disclosure was a
+    # post-run sentence, after the money was spent and the rows were written.
+    #
+    # Refuse before spending anything, and name the actual remedy — the usual
+    # cause is that the Tech Debt work was done under a DIFFERENT client, and
+    # tenant isolation (correctly) will not reach across for it.
+    if not tools:
+        _log.warning(
+            "attack.run_ai.refused_no_capabilities",
+            service_id=str(svc.id),
+            client_id=str(client.id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "no_security_capabilities",
+                "message": (
+                    "This client has no security capabilities to map against, so "
+                    "every technique would be reported as a gap regardless of what "
+                    "the client actually runs. Complete this client's Tech Debt "
+                    "capability list first — if you already did, check it was done "
+                    "under this client and not another one."
+                ),
+            },
+        )
+
     def _snap() -> dict[str, dict]:
         return {
             code: {

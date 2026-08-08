@@ -53,11 +53,14 @@ test("management: archiving a client removes it from the list and the org index"
     timeout: 30_000,
   });
 
-  // It shows up in the intake-queue org index while active.
+  // It shows up in the intake-queue org index while active. Scoped to the ROW,
+  // not to any text: the org name now appears twice on this page — once in the
+  // list and once in the "Jump to an organization" dropdown — so a bare
+  // getByText is a strict-mode violation rather than an assertion.
   await page.goto("/admin/queue");
-  await expect(page.getByText(legalName, { exact: true })).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(
+    page.getByRole("link", { name: new RegExp(legalName) }),
+  ).toBeVisible({ timeout: 30_000 });
 
   // Archive it — behind an explicit confirm, not a single click.
   await page.goto("/admin/management");
@@ -70,7 +73,9 @@ test("management: archiving a client removes it from the list and the org index"
     timeout: 30_000,
   });
 
-  // ...and gone from the org index.
+  // ...and gone from the org index. Deliberately page-wide rather than
+  // row-scoped: an archived tenant must vanish from the dropdown too, and a
+  // count of 0 across the whole page proves both at once.
   await page.goto("/admin/queue");
   await settleForHydration(page);
   await expect(page.getByText(legalName, { exact: true })).toHaveCount(0);

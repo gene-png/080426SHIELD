@@ -67,8 +67,21 @@ def _admin(c: TestClient) -> tuple[str, str]:
     return bearer, cid
 
 
-def _seed_tech_debt_tools(TestSession: sessionmaker, cid: str, user_id, tools: list[str]) -> None:
-    """A Tech Debt service + approved capability list with the given tool names."""
+def _seed_tech_debt_tools(
+    TestSession: sessionmaker,
+    cid: str,
+    user_id,
+    tools: list[str],
+    *,
+    security_related: bool | None = None,
+    confirmed: bool = False,
+) -> None:
+    """A Tech Debt service + approved capability list with the given tool names.
+
+    `security_related` / `confirmed` set the security classification, which is
+    what `security_scope_filter` keys on — see `tech_debt/security_scope.py`.
+    The default (None, False) is the pre-0038 shape: in scope.
+    """
     import uuid as _uuid
 
     with TestSession() as db:
@@ -85,7 +98,14 @@ def _seed_tech_debt_tools(TestSession: sessionmaker, cid: str, user_id, tools: l
         db.add(cl)
         db.flush()
         for name in tools:
-            db.add(CapabilityItem(capability_list_id=cl.id, name=name))
+            db.add(
+                CapabilityItem(
+                    capability_list_id=cl.id,
+                    name=name,
+                    security_related=security_related,
+                    security_class_confirmed=confirmed,
+                )
+            )
         db.commit()
 
 
@@ -131,9 +151,86 @@ def test_run_ai_applies_validated_dpr_and_reports_changes(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_run_ai_refuses_when_the_client_has_no_security_capabilities(app_client) -> None:
+    """An empty allow-list cannot produce an assessment — only a fabricated one.
+
+    `valid_tools` is a hard allow-list: a tool absent from it cannot be cited, so
+    with ZERO tools every technique can only come back uncovered. On 2026-08-07 a
+    live run in exactly this state wrote 607 gaps and 26 not-applicable across
+    633 techniques, billed for the call, and left a releasable assessment stating
+    a catastrophic security posture that was an artifact of missing input. The
+    audit row recorded `tools_available: 0` — the system knew.
+
+    Refuse before spending anything. The consultant's real problem is that this
+    client has no approved Tech Debt inventory, and that is what we say.
+    """
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme ATT&CK"}
+    )
+    svc_id = svc.json()["id"]
+    created = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    before = {row["technique_code"]: row["status"] for row in created.json()["coverage"]}
+
+    # Deliberately NO Tech Debt list for this client.
+    called: list[dict] = []
+
+    def _spy(payload: dict) -> LLMResponse:
+        called.append(payload)
+        return LLMResponse('{"techniques": []}')
+
+    provider.register("mitre_map", _spy)
+
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 409, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "no_security_capabilities"
+    # The message has to name the actual remedy, not the symptom.
+    assert "Tech Debt" in err["message"]
+
+    # The expensive part never happened — this is the whole point of blocking
+    # rather than warning after the fact.
+    assert called == [], "the provider must not be called with an empty allow-list"
+
+    # And nothing was written: no fabricated gaps left behind to be released.
+    after = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
+    assert after.status_code == 200, after.text
+    assert {row["technique_code"]: row["status"] for row in after.json()["coverage"]} == before
+
+
+@pytest.mark.unit
+def test_run_ai_allows_a_client_whose_only_capabilities_are_non_security(app_client) -> None:
+    """A row the consultant confirmed as non-security leaves the ATT&CK subset.
+
+    If that empties the subset the run is refused for the same reason as above —
+    the distinction that matters is "no security tooling", not "no rows".
+    """
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(
+        TestSession, cid, me["id"], ["Figma"], security_related=False, confirmed=True
+    )
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme"})
+    svc_id = svc.json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "no_security_capabilities"
+
+
+@pytest.mark.unit
 def test_run_ai_skips_locked_rows(app_client) -> None:
     c, TestSession, provider = app_client
     bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    # This spec is about lock-skipping, not about the empty-list guard — give it
+    # a real tool so it exercises the path it is named for.
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Splunk"])
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme"})
     svc_id = svc.json()["id"]
@@ -159,8 +256,12 @@ def test_run_ai_skips_locked_rows(app_client) -> None:
 
 @pytest.mark.unit
 def test_run_ai_marks_documents_stale(app_client) -> None:
-    c, _TestSession, provider = app_client
+    c, TestSession, provider = app_client
     bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    # Staleness is what this spec is about; seed a tool so the empty-list guard
+    # does not short-circuit the run before it can mark anything.
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Splunk"])
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme"})
     svc_id = svc.json()["id"]
