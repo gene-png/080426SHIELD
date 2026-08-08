@@ -36,6 +36,7 @@ import type {
 
 import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
+import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
@@ -360,22 +361,7 @@ export function AttackWorkspace({
               No assessment yet
             </StatusPill>
           )}
-          {assessment ? (
-            <button
-              type="button"
-              onClick={() => void onApprove()}
-              disabled={busy !== null || assessment.status !== "draft"}
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {assessment.status === "approved"
-                ? "Approved"
-                : assessment.status === "released"
-                  ? "Released"
-                  : busy === "approve"
-                    ? "Approving…"
-                    : "Approve"}
-            </button>
-          ) : (
+          {assessment ? null : (
             <button
               type="button"
               onClick={() => void onCreateAssessment()}
@@ -428,18 +414,19 @@ export function AttackWorkspace({
         />
       ) : (
         <>
-          <AttackHeatmapCard heatmap={heatmap} />
-          <Card>
-            <CardHeader>
-              <CardTitle>Run AI (mitre_map)</CardTitle>
-            </CardHeader>
-            <CardBody className="flex flex-col gap-3">
-              <p className="text-sm text-ink-secondary">
-                Suggest a coverage status and the detection / prevention /
-                response tooling per technique from this client&apos;s Tech Debt
-                capability list. Locked rows are left untouched; you stay in
-                control of the final call.
-              </p>
+          {/* Ordered the way the work is actually done. This page used to run
+              heatmap → Run AI → deliverable → messages → matrix, so the matrix —
+              the longest task and the whole point of the page — sat at the
+              bottom below the message thread, and nothing said what to do
+              first. Reference material (the rollup, the thread) now sits after
+              the steps rather than between them. */}
+          <WorkflowStep
+            number={1}
+            title="Draft the mapping with AI"
+            description="Claude suggests a coverage status and the detection / prevention / response tooling for each technique, using only this client's approved Tech Debt capability list. It drafts; you decide. Locked rows are never touched."
+            done={runResult !== null || scoredCount > 0}
+          >
+            <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
                   loaded. Passes straight through when AI is live. */}
               <RunAiGuard onProceed={() => void onRunAi()}>
@@ -484,35 +471,94 @@ export function AttackWorkspace({
                   {runBlocked}
                 </p>
               ) : null}
-            </CardBody>
-          </Card>
-          <StaleDocsNudge stale={assessment.documents_stale} />
-          <AttackDeliverableCard
-            serviceId={serviceId}
-            assessmentStatus={assessment.status}
-            deliverable={deliverable}
-            onChange={setDeliverable}
-          />
+            </div>
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={2}
+            title="Review every technique and adjust"
+            description="Click any cell to set its coverage status, cite the tooling that provides it, and record your rationale. This is the judgement the client is paying for — the AI draft is a starting point, not an answer. Lock a row to protect it from future AI runs."
+            done={assessment.status !== "draft"}
+          >
+            <div className="flex flex-col gap-4">
+              <AttackTechniquePanel
+                technique={selectedTechnique}
+                coverage={selectedCoverage}
+                coverageDefinitions={catalog.coverage_definitions}
+                readOnly={readOnly}
+                onPatch={(patch) => {
+                  if (!selectedCoverage) return;
+                  return onPatch(selectedCoverage.id, patch);
+                }}
+              />
+              <AttackMatrix
+                catalog={catalog}
+                coverageByCode={coverageByCode}
+                heatmapByTactic={heatmapByTactic}
+                onSelectTechnique={(code) => setSelectedCode(code)}
+                selectedCode={selectedCode}
+                showSubTechniques={showSubs}
+                onToggleSubTechniques={setShowSubs}
+              />
+            </div>
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={3}
+            title="Approve the assessment"
+            description="Locks the coverage matrix so the deliverable is generated from a fixed set of scores. Approving does not release anything to the client — that is the last step."
+            done={assessment.status !== "draft"}
+            blockedReason={
+              scoredCount === 0
+                ? "Nothing has been scored yet. Run the AI draft or score techniques by hand in step 2 first."
+                : null
+            }
+          >
+            <button
+              type="button"
+              onClick={() => void onApprove()}
+              disabled={
+                busy !== null ||
+                assessment.status !== "draft" ||
+                scoredCount === 0
+              }
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {assessment.status === "approved"
+                ? "Approved"
+                : assessment.status === "released"
+                  ? "Released"
+                  : busy === "approve"
+                    ? "Approving…"
+                    : "Approve"}
+            </button>
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={4}
+            title="Generate and release the deliverable"
+            description="Renders the PDF and XLSX from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
+            blockedReason={
+              assessment.status === "draft"
+                ? "Approve the assessment in step 3 before generating a deliverable from it."
+                : null
+            }
+          >
+            <div className="flex flex-col gap-3">
+              <StaleDocsNudge stale={assessment.documents_stale} />
+              <AttackDeliverableCard
+                serviceId={serviceId}
+                assessmentStatus={assessment.status}
+                deliverable={deliverable}
+                onChange={setDeliverable}
+              />
+            </div>
+          </WorkflowStep>
+
+          {/* Reference, not steps: useful throughout, required at no particular
+              point. Kept below the flow so the numbered path stays unbroken. */}
+          <AttackHeatmapCard heatmap={heatmap} />
           <MessageThread serviceId={serviceId} />
-          <AttackTechniquePanel
-            technique={selectedTechnique}
-            coverage={selectedCoverage}
-            coverageDefinitions={catalog.coverage_definitions}
-            readOnly={readOnly}
-            onPatch={(patch) => {
-              if (!selectedCoverage) return;
-              return onPatch(selectedCoverage.id, patch);
-            }}
-          />
-          <AttackMatrix
-            catalog={catalog}
-            coverageByCode={coverageByCode}
-            heatmapByTactic={heatmapByTactic}
-            onSelectTechnique={(code) => setSelectedCode(code)}
-            selectedCode={selectedCode}
-            showSubTechniques={showSubs}
-            onToggleSubTechniques={setShowSubs}
-          />
         </>
       )}
     </div>
