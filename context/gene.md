@@ -1,7 +1,7 @@
 # Gene — current status
 
 _Owner: Gene (gene-png). Only Gene's sessions write this file._
-_Last updated: 2026-08-07 (evening — final validation run)_
+_Last updated: 2026-08-08 (post-validation remediation — PRs #22, #23, #24 merged)_
 
 Keep this short and current: your sessions overwrite it freely (it's yours
 alone, so it never merge-conflicts). Dave's agents read it at `/pickup` to
@@ -9,20 +9,18 @@ know what you have in flight without digging through branches.
 
 ## Branch / in flight
 
-**`fix/intake-crash-and-ai-output-budget` → PR #22** (open, pushed, 3 commits):
+**`feat/workflow-steps-all-workspaces`** — rolls the numbered-step pattern from
+the ATT&CK workspace out to Tech Debt, CSF and Zero Trust. Risk Register
+deliberately left alone (two adjacent actions, no editing surface — steps would
+be ceremony).
 
-| Commit | What |
-|---|---|
-| `a182a63` | `fix(intake)` — Step 5 crash. **Critical.** |
-| `070af0d` | `fix(ai)` — per-purpose output-token budget + test |
-| `9452604` | `feat(attack)` — batched concurrent `mitre_map` + 2 bugs found while building it |
+**Merged tonight:** PR #22 (four Criticals + risk_synthesize batching), PR #23
+(ATT&CK empty-capability hard block + intake-queue dropdown), PR #24 (session
+refresh race + TTLs + expiry warnings + ATT&CK step ordering). `main` is green.
 
-All gates green: `ruff` clean, `black` clean, **39 unit tests pass** (attack +
-llm). **ATT&CK now validates end to end** (see below) — merge-ready pending a CI pass on the web typecheck/lint for the .tsx change.
-
-> ⚠️ **The repo is now PUBLIC** (`gene-png/080426SHIELD`). History was audited
-> before pushing: `.env` never committed, no `sk-ant-*` key ever in any commit,
-> no `*.pem`/`*.key`/`*credentials*` ever tracked. Keep it that way.
+> ⚠️ **The repo is PUBLIC** (`gene-png/080426SHIELD`). History was audited before
+> pushing: `.env` never committed, no `sk-ant-*` key ever in any commit, no
+> `*.pem`/`*.key`/`*credentials*` ever tracked. Keep it that way.
 
 ## What just happened
 
@@ -112,17 +110,53 @@ individually.
 - `.playwright-mcp/` is untracked scratch (screenshots, downloads, logs). Not
   ignored — **never commit it**.
 
+## Open concerns — accepted for now, NOT resolved (2026-08-08)
+
+Recorded at Gene's direction: knowingly accepted, to be revisited. Also filed as
+a GitHub issue so they are visible outside this file.
+
+1. **The live Anthropic key is an operational and financial risk.** It sits in
+   `.env` with `SHIELD_LLM_MODE=live`, so ANY local run — including a stray e2e
+   spec — spends real money against it. This has already happened twice: an
+   `s30` run burned two failed `risk_synthesize` calls, and an `s5-attack` run
+   fired 38 live calls before timing out. **Check the LLM mode before running
+   e2e locally.** The key was expected to expire within 24h of 2026-08-07;
+   confirm whether it did. Longer term the dev default should be `fixture` with
+   live opt-in per command, not the reverse.
+2. **AI spend cannot be billed from.** Under-reported by >60% on the validation
+   sample: failed calls record NULL tokens (N-019), there are no cache/retry/cost
+   columns (C-002), no row is written before dispatch (N-016), and fixture rows
+   store character estimates in the same token columns as live rows (N-020).
+   **Nobody should invoice a client from this ledger.**
+3. **The refresh-rotation grace is a deliberate, narrow security trade** (PR #24).
+   A replayed refresh token is accepted for 60s instead of being rejected. It is
+   one generation only and time-boxed, and `jwt_refresh_grace_seconds=0` restores
+   strict single-use — but it IS a loosening of replay detection, made to stop
+   users being logged out mid-task.
+4. **`jwt_refresh_ttl_seconds` went 30 min → 24h** in the same PR. Forced by
+   arithmetic (a refresh token must outlive the access token it renews), but it
+   means a stolen refresh token is useful for a day rather than half an hour. The
+   daily forced-reauth ceiling still bounds it.
+5. **`shield_idle_timeout_seconds` is dead config** — defined, never read. It
+   reads like an enforced 30-minute idle timeout and enforces nothing. Wire it up
+   or delete it; right now it is a lie in the settings file.
+
 ## Next steps
 
-1. Land PR #22 (ATT&CK validated; see above).
-2. Complete Phase 5 of the validation report — it is written as BLOCKED but real
+1. Complete Phase 5 of the validation report — it is written as BLOCKED but real
    mappings now exist; re-check the dataset traps against them.
-3. Fix the other three Criticals — **N-029 first**, it destroys client data.
-4. Add the missing e2e spec for intake steps 1→6. Of 41 smoke specs **none**
+2. Add the missing e2e spec for intake steps 1→6. Of 41 smoke specs **none**
    walks the wizard to step 5 or submits, which is why the Critical shipped.
-5. Untested and documented as such: ZT/CSF/Risk Register end-to-end, 3 of 5
-   Claude purposes live, ATT&CK mapping quality at full matrix, contrast/200%
-   zoom/print/axe, cross-client authz (needs a second tenant).
+3. Run `risk_synthesize` live once. Batching (PR #22) removed the blocker but the
+   purpose has still never completed a live generation.
+4. Untested and documented as such: ZT/CSF/Risk Register end-to-end, 2 of 5
+   Claude purposes live (`csf_score`, `zt_score`), ATT&CK mapping quality at full
+   matrix, contrast/200% zoom/print/axe, cross-client authz (needs a second
+   tenant).
+5. **Live-path tests never run in CI** — `pytest -m live` self-skips without a
+   key, so budget/latency/provider defects are invisible to automation. Three of
+   five purposes have now been bitten by exactly that. Highest-value gap in the
+   test strategy.
 
 ## Cost note
 

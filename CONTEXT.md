@@ -1,7 +1,7 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-07 (Phase C + Phase D complete; PRs #11–#19 all merged,
-`main` at `a9ec90f` — see "UX findings burn-down" at the end of "Current state"). NOTE: this
+_Last updated: 2026-08-08 (post-validation remediation; PRs #22–#24 merged,
+`main` at `55a470a`, CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
 `main` carrying the working tree through `v3.7.0`; the PR numbers cited in the
 sprint history below belong to the upstream repo, not to this one. This file
@@ -11,6 +11,31 @@ facts and environment gotchas live in `CLAUDE.md`; personal in-flight status
 lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
+
+### 2026-08-08 — validation remediation (PRs #22, #23, #24)
+
+The 2026-08-07 end-to-end validation run found 4 Critical defects; two more were
+found while verifying the fixes. **All are now fixed and on `main`.**
+
+| Finding | What it was | Fixed by |
+|---|---|---|
+| N-003 | Intake step 5 crashed the app — no client could submit | `a182a63` |
+| N-014 | ATT&CK `mitre_map` failed 100% of the time; validated live at 633/633 after | `070af0d` + `9452604` |
+| N-029 | Fixture run masqueraded as live and destroyed a client's answers | `a6fa0e1` |
+| N-010 | Released report understated spend by $240,000 with no disclosure | `5e1f075` |
+| N-030 | `/admin/deliverables` showed a raw 400 when no client was selected | `d03f119` |
+| N-032 | Risk Register could never generate live (509 findings vs an 8192 cap) | `ef99e69` |
+| N-033 | ATT&CK Run AI fabricated a 100%-gap assessment with no capability list | `ced76e4` |
+
+Also landed: session refresh-rotation race fixed (concurrent requests were
+logging users out mid-task), access TTL 15 min → 60 min, refresh TTL 30 min →
+24 h, session-expiry warnings at 5 and 1 minute, and the ATT&CK workspace
+reordered into numbered steps.
+
+**Known-accepted risks are listed in `context/gene.md` under "Open concerns"** —
+the live API key's cost exposure, the AI ledger being unfit for billing, and the
+deliberate narrowing of refresh-token replay detection. None is resolved.
+
 
 - **v2 work order (Parts A–F) merged to `main`** (PR #1, migrations 0015–0025,
   `v3.0.0`): all four service surfaces, multi-tenant onboarding, AI job
