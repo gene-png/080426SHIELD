@@ -83,6 +83,7 @@ def _seed_tech_debt_tools(
     annual_cost_usd: int | None = None,
     title: str = "Acme Tech Debt",
     version: int = 1,
+    status: str = "APPROVED",
 ) -> None:
     """A Tech Debt service + approved capability list with the given tool names.
 
@@ -102,9 +103,7 @@ def _seed_tech_debt_tools(
         )
         db.add(svc)
         db.flush()
-        cl = CapabilityList(
-            service_id=svc.id, version=version, status=CapabilityListStatus.APPROVED
-        )
+        cl = CapabilityList(service_id=svc.id, version=version, status=CapabilityListStatus[status])
         db.add(cl)
         db.flush()
         for name in tools:

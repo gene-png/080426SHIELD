@@ -118,6 +118,25 @@ export function AttackAiInputsPanel({
         </div>
       ) : null}
 
+      {/* Excluded drafts are stated, not silently omitted. Starting ATT&CK
+          before Tech Debt is finalised is normal, and a silently shorter list
+          is indistinguishable from a client who does not own the tools. */}
+      {inputs.draft_excluded_count > 0 ? (
+        <p
+          className="text-xs text-ink-secondary"
+          data-testid="attack-draft-excluded"
+        >
+          {inputs.draft_excluded_count}{" "}
+          {inputs.draft_excluded_count === 1
+            ? "capability is"
+            : "capabilities are"}{" "}
+          on an unapproved draft and{" "}
+          {inputs.draft_excluded_count === 1 ? "is" : "are"} excluded until
+          approved. Approve the capability list in its Tech Debt workspace to
+          include {inputs.draft_excluded_count === 1 ? "it" : "them"}.
+        </p>
+      ) : null}
+
       {inputs.documents.length > 0 ? (
         <ul className="flex flex-col gap-1 text-sm">
           {inputs.documents.map((d) => (

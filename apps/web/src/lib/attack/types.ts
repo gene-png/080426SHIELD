@@ -183,6 +183,9 @@ export interface AttackAiInputs {
   duplicate_names: number;
   awaiting_signoff_count: number;
   items_without_source_document: number;
+  /** On an unapproved draft list, held back until someone vouches for them. */
+  draft_excluded_count: number;
+  draft_lists_count: number;
   documents: AttackAiInputDocument[];
   lists: AttackAiInputList[];
   items: AttackAiInputItem[];

@@ -125,7 +125,18 @@ def _extract(
         json={"artifact_id": artifact_id},
     )
     assert r.status_code == 201, r.text
-    return svc_id, r.json()
+    body = r.json()
+    # Approve it. Extraction produces a DRAFT, and since 2026-08-08 only an
+    # APPROVED list feeds the ATT&CK allow-list — a draft is raw AI output
+    # nobody has vouched for. These tests are about the SECURITY-CLASSIFICATION
+    # rule, so they need a list that reaches ATT&CK at all; without this they
+    # would pass trivially against an empty subset and prove nothing.
+    a = c.post(
+        f"/tech-debt/capability-lists/{body['id']}/approve",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert a.status_code == 200, a.text
+    return svc_id, body
 
 
 # One security tool, one unambiguous non-security tool.

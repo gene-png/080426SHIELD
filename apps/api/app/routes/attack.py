@@ -466,13 +466,28 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
       keeps rows whose non-security call is unconfirmed, because this list is a
       hard allow-list on what the model may cite: a tool missing from it cannot
       be named, and the technique it covers reads as uncovered.
-    * **List status.** Previously absent entirely, so a DISCARDED list's rows
-      stayed citable forever — a consultant throwing a draft away did not stop
-      its tools being offered as evidence. Only DISCARDED is excluded here:
-      DRAFT still counts, because mapping ATT&CK before approving the tech-debt
-      list is a normal order of work. Superseded versions also still count,
-      which is arguably wrong but is pre-existing behaviour and not this
-      change's business.
+    * **List status — APPROVED or RELEASED only.** A DRAFT list is raw
+      extraction output that no human has vouched for. Approving a capability
+      list records who vouched and when (`approved_by` / `approved_at`), and
+      that attestation is the only thing standing between a client's security
+      report and an unreviewed file.
+
+      DRAFT used to count, on the reasoning that mapping ATT&CK before
+      finalising Tech Debt is a normal order of work. On 2026-08-08 that let a
+      draft produced by a MALFORMED-UPLOAD TEST contribute four bare vendor
+      stubs to a real client's allow-list, and a live run attributed 765
+      citations across 361 techniques to them instead of the licensed products.
+
+      Note why "newest version wins" would NOT have helped: the malformed list
+      was version 2, the latest. Approval is the only gate that excludes an
+      unreviewed file. Superseded APPROVED versions still count, which is
+      arguably wrong but is pre-existing behaviour and not this change's
+      business.
+
+      The excluded drafts are reported by `/ai-inputs`, never silently dropped:
+      "these capabilities are held back until the list is approved" is
+      actionable, whereas a silently shorter list is indistinguishable from a
+      client who does not own the tools.
     """
     return sorted({r.name for r in _client_capability_rows(db, client_id)})
 
@@ -504,12 +519,25 @@ class CapabilitySource:
     tech_debt_service_title: str
 
 
-def _client_capability_rows(db: Session, client_id: uuid.UUID) -> list[CapabilitySource]:
+# Only a human-vouched list may feed a client's security mapping. RELEASED is
+# past approval, not short of it.
+_CITABLE_LIST_STATUSES = (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED)
+
+
+def _client_capability_rows(
+    db: Session,
+    client_id: uuid.UUID,
+    statuses: tuple[CapabilityListStatus, ...] = _CITABLE_LIST_STATUSES,
+) -> list[CapabilitySource]:
     """The in-scope capability rows behind `_client_tool_names`.
 
     Identical joins and filters — the name reduction is the only difference, so
     the allow-list cannot drift from what the workspace displays. Rows with a
     blank name are dropped here, since a nameless tool cannot be cited.
+
+    `statuses` exists so the workspace can ask the same question about DRAFT
+    lists and report what is being held back, rather than leaving the exclusion
+    silent.
     """
     rows = (
         db.execute(
@@ -519,7 +547,7 @@ def _client_capability_rows(db: Session, client_id: uuid.UUID) -> list[Capabilit
             .where(
                 Service.client_id == client_id,
                 Service.kind == ServiceKind.TECH_DEBT,
-                CapabilityList.status != CapabilityListStatus.DISCARDED,
+                CapabilityList.status.in_(statuses),
                 security_scope_filter(),
             )
         )
@@ -1204,6 +1232,10 @@ def ai_inputs(
             key=lambda d: d.title.lower(),
         )
 
+    # What is being held back, and why — never a silent omission.
+    draft_rows = _client_capability_rows(db, client.id, (CapabilityListStatus.DRAFT,))
+    draft_lists = {r.capability_list_id for r in draft_rows}
+
     distinct_names = {r.name for r in rows}
     _log.info(
         "attack.ai_inputs.read",
@@ -1211,6 +1243,7 @@ def ai_inputs(
         client_id=str(client.id),
         tools_sent=len(distinct_names),
         lists=len(lists),
+        draft_excluded=len(draft_lists),
     )
     return AttackAiInputsResponse(
         service_id=service_id,
@@ -1219,6 +1252,8 @@ def ai_inputs(
         duplicate_names=len(rows) - len(distinct_names),
         awaiting_signoff_count=sum(1 for r in rows if r.awaiting_signoff),
         items_without_source_document=sum(1 for r in rows if r.source_artifact_id is None),
+        draft_excluded_count=len({r.name for r in draft_rows}),
+        draft_lists_count=len(draft_lists),
         documents=documents,
         lists=sorted(
             lists.values(), key=lambda entry: (entry.tech_debt_service_title, entry.version)

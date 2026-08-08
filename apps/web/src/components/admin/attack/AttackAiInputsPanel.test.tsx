@@ -28,6 +28,8 @@ function inputs(over: Partial<AttackAiInputs> = {}): AttackAiInputs {
     duplicate_names: 0,
     awaiting_signoff_count: 0,
     items_without_source_document: 0,
+    draft_excluded_count: 0,
+    draft_lists_count: 0,
     documents: [],
     lists: [
       {
@@ -181,6 +183,26 @@ describe("AttackAiInputsPanel", () => {
     expect(
       await screen.findByText("1 with no source document"),
     ).toBeInTheDocument();
+  });
+
+  it("says what an unapproved draft is holding back, rather than omitting it", async () => {
+    // Silently excluding drafts would make those capabilities simply missing —
+    // indistinguishable from a client who does not own them, which is the same
+    // ambiguity that makes a fabricated gap dangerous.
+    mockFetch.mockResolvedValue(
+      inputs({ draft_excluded_count: 2, draft_lists_count: 1 }),
+    );
+    render(<AttackAiInputsPanel serviceId="svc-1" />);
+    const note = await screen.findByTestId("attack-draft-excluded");
+    expect(note).toHaveTextContent(/2 capabilities are on an unapproved draft/);
+    expect(note).toHaveTextContent(/excluded until approved/);
+  });
+
+  it("says nothing about drafts when there are none", async () => {
+    mockFetch.mockResolvedValue(inputs());
+    render(<AttackAiInputsPanel serviceId="svc-1" />);
+    await screen.findByTestId("attack-ai-inputs");
+    expect(screen.queryByTestId("attack-draft-excluded")).toBeNull();
   });
 
   it("fails loudly — a vanished panel would read as 'no capabilities'", async () => {

@@ -204,3 +204,77 @@ def test_is_admin_only(app_client) -> None:  # noqa: F811
         },
     )
     assert r.status_code == 403, r.text
+
+
+# ---------------------------------------------------------------------------
+# Only an APPROVED list feeds the mapping (2026-08-08).
+#
+# A DRAFT list is raw extraction output nobody has vouched for. On 2026-08-08 a
+# draft produced by a malformed-upload TEST contributed four bare vendor stubs
+# ("CrowdStrike", "Splunk", ...) to a real client's allow-list, and a live run
+# attributed 765 citations across 361 techniques to them instead of the licensed
+# products. Approval is the only gate that excludes an unreviewed file: the
+# malformed list was the LATEST version, so a "newest version wins" rule would
+# have kept it and dropped the approved one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_a_draft_list_does_not_feed_the_mapping(app_client) -> None:  # noqa: F811
+    c, TestSession, _provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(
+        TestSession, cid, me["id"], ["Reviewed Tool"], title="Approved", status="APPROVED"
+    )
+    _seed_tech_debt_tools(
+        TestSession, cid, me["id"], ["Unreviewed Stub"], title="Draft", status="DRAFT"
+    )
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = _attack_service(c, h)
+
+    body = c.get(f"/attack/services/{svc_id}/ai-inputs", headers=h).json()
+    assert [i["name"] for i in body["items"]] == ["Reviewed Tool"]
+    assert body["tools_sent"] == 1
+
+
+@pytest.mark.unit
+def test_a_released_list_still_feeds_the_mapping(app_client) -> None:  # noqa: F811
+    """RELEASED is past approval, not short of it."""
+    c, TestSession, _provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(
+        TestSession, cid, me["id"], ["Released Tool"], title="Rel", status="RELEASED"
+    )
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = _attack_service(c, h)
+
+    assert c.get(f"/attack/services/{svc_id}/ai-inputs", headers=h).json()["tools_sent"] == 1
+
+
+@pytest.mark.unit
+def test_excluded_drafts_are_reported_not_silent(app_client) -> None:  # noqa: F811
+    """Starting ATT&CK before Tech Debt is finalised is a normal order of work.
+
+    Excluding drafts silently would make those capabilities simply missing, with
+    no way to tell that from "the client does not own them" — the same
+    indistinguishability that makes a fabricated gap dangerous. The consultant is
+    told what is being held back and why.
+    """
+    c, TestSession, _provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(
+        TestSession, cid, me["id"], ["Reviewed"], title="Approved", status="APPROVED"
+    )
+    _seed_tech_debt_tools(
+        TestSession, cid, me["id"], ["Pending A", "Pending B"], title="Draft", status="DRAFT"
+    )
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = _attack_service(c, h)
+
+    body = c.get(f"/attack/services/{svc_id}/ai-inputs", headers=h).json()
+    assert body["tools_sent"] == 1
+    assert body["draft_excluded_count"] == 2
+    assert body["draft_lists_count"] == 1

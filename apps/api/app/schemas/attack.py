@@ -245,6 +245,12 @@ class AttackAiInputsResponse(BaseModel):
     duplicate_names: int = 0
     awaiting_signoff_count: int = 0
     items_without_source_document: int = 0
+    # Capabilities sitting on an UNAPPROVED draft list, held back until someone
+    # vouches for them. Reported rather than silently omitted: a shorter list is
+    # otherwise indistinguishable from a client who does not own the tools, and
+    # starting ATT&CK before Tech Debt is finalised is a normal order of work.
+    draft_excluded_count: int = 0
+    draft_lists_count: int = 0
     documents: list[AttackAiInputDocument] = []
     lists: list[AttackAiInputList] = []
     items: list[AttackAiInputItem] = []
