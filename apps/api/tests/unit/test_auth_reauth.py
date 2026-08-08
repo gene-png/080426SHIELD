@@ -127,7 +127,24 @@ def test_refresh_within_window_carries_auth_time_forward(app_client: TestClient)
 
 
 @pytest.mark.unit
-def test_reused_old_refresh_token_rejected(app_client: TestClient) -> None:
+def test_reused_old_refresh_token_rejected(app_client: TestClient, monkeypatch) -> None:
+    """Strict single-use, with the rotation grace disabled.
+
+    NOTE: this test's contract CHANGED on 2026-08-08. It used to assert that a
+    replayed token is rejected immediately. It now pins that behaviour with
+    `jwt_refresh_grace_seconds = 0`, because with the grace enabled (the
+    default) an immediate replay is deliberately ACCEPTED — see
+    `test_concurrent_refresh_with_the_same_token_does_not_log_the_user_out`.
+    The change is intentional and narrow, not a weakening to reach green: a
+    token two generations old, or replayed after the window, is still rejected,
+    and this test proves the strict path still exists and still works.
+    """
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("JWT_REFRESH_GRACE_SECONDS", "0")
+    get_settings.cache_clear()
+
     body = _register(app_client)
     original_refresh = body["tokens"]["refresh_token"]
 
@@ -143,6 +160,96 @@ def test_reused_old_refresh_token_rejected(app_client: TestClient) -> None:
     # The freshly rotated token still works.
     ok = app_client.post("/auth/refresh", json={"refresh_token": new_refresh})
     assert ok.status_code == 200, ok.text
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.unit
+def test_concurrent_refresh_with_the_same_token_does_not_log_the_user_out(
+    app_client: TestClient,
+) -> None:
+    """The defect this grace window exists for.
+
+    A browser fires several requests at once when the access token expires, and
+    every one presents the SAME refresh token. Observed in the API log as pairs
+    of `auth.refresh_reused` 286 MICROSECONDS apart, each ending in a hard
+    sign-out mid-task. Both callers must come away with a working session.
+    """
+    body = _register(app_client)
+    original_refresh = body["tokens"]["refresh_token"]
+
+    winner = app_client.post("/auth/refresh", json={"refresh_token": original_refresh})
+    assert winner.status_code == 200, winner.text
+
+    # The racer presents the same (now rotated-out) token a moment later.
+    loser = app_client.post("/auth/refresh", json={"refresh_token": original_refresh})
+    assert loser.status_code == 200, loser.text
+
+    # Both hold usable tokens, and they converge on ONE identity rather than
+    # each rotating the other out — otherwise the race just moves.
+    from app.security.jwt import verify_token
+
+    winner_jti = verify_token(winner.json()["refresh_token"], expected_type="refresh").jti
+    loser_jti = verify_token(loser.json()["refresh_token"], expected_type="refresh").jti
+    assert winner_jti == loser_jti, "concurrent refreshers must not fight over rotation"
+
+    # And the converged token still refreshes normally afterwards.
+    again = app_client.post("/auth/refresh", json={"refresh_token": loser.json()["refresh_token"]})
+    assert again.status_code == 200, again.text
+
+
+@pytest.mark.unit
+def test_grace_does_not_survive_the_window(app_client: TestClient) -> None:
+    """Time-boxed, not permanent: a replay after the window is still replay."""
+    from app.config import get_settings
+    from app.models.user import User
+
+    body = _register(app_client)
+    original_refresh = body["tokens"]["refresh_token"]
+    assert (
+        app_client.post("/auth/refresh", json={"refresh_token": original_refresh}).status_code
+        == 200
+    )
+
+    # Backdate the rotation past the grace window.
+    settings = get_settings()
+    from app.db.session import get_db
+    from app.main import create_app  # noqa: F401 - app already built by the fixture
+
+    db_gen = app_client.app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        user = db.query(User).filter(User.email == "first@example.com").one()
+        user.refresh_rotated_at = datetime.now(UTC) - timedelta(
+            seconds=settings.jwt_refresh_grace_seconds + 5
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    stale = app_client.post("/auth/refresh", json={"refresh_token": original_refresh})
+    assert stale.status_code == 401, stale.text
+    assert stale.json()["error"]["reason"] == "refresh_reused"
+
+
+@pytest.mark.unit
+def test_a_token_two_generations_old_is_rejected_even_within_the_window(
+    app_client: TestClient,
+) -> None:
+    """Only the IMMEDIATELY previous jti is honoured — the grace is not a history."""
+    body = _register(app_client)
+    gen1 = body["tokens"]["refresh_token"]
+
+    r2 = app_client.post("/auth/refresh", json={"refresh_token": gen1})
+    assert r2.status_code == 200
+    gen2 = r2.json()["refresh_token"]
+    r3 = app_client.post("/auth/refresh", json={"refresh_token": gen2})
+    assert r3.status_code == 200
+
+    # gen1 is now two rotations back, still well inside the time window.
+    stale = app_client.post("/auth/refresh", json={"refresh_token": gen1})
+    assert stale.status_code == 401, stale.text
+    assert stale.json()["error"]["reason"] == "refresh_reused"
 
 
 # -----------------------------------------------------------------------------

@@ -16,6 +16,7 @@ first consultant on this deployment).
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -102,7 +103,9 @@ def _normalize_email(raw: str) -> str:
     return raw.strip().lower()
 
 
-def _issue_pair(user: User, *, auth_time: datetime | None = None) -> TokenPairResponse:
+def _issue_pair(
+    user: User, *, auth_time: datetime | None = None, keep_jti: uuid.UUID | None = None
+) -> TokenPairResponse:
     """Issue an access + refresh pair and record the refresh jti for rotation.
 
     On a fresh login/register pass `auth_time=None` (defaults to now). On
@@ -115,9 +118,19 @@ def _issue_pair(user: User, *, auth_time: datetime | None = None) -> TokenPairRe
         subject=user.id, role=user.role.value, typ="access", auth_time=auth_time
     )
     refresh_token, refresh_payload = issue_token(
-        subject=user.id, role=user.role.value, typ="refresh", auth_time=auth_time
+        subject=user.id,
+        role=user.role.value,
+        typ="refresh",
+        auth_time=auth_time,
+        jti=keep_jti,
     )
-    user.active_refresh_jti = str(refresh_payload.jti)
+    # `keep_jti` is the grace path: the caller lost a rotation race, so it gets a
+    # token carrying the CURRENT identity rather than a new one. Rotating again
+    # here would simply knock the race winner out instead, which is the bug.
+    if keep_jti is None:
+        user.previous_refresh_jti = user.active_refresh_jti
+        user.refresh_rotated_at = utcnow()
+        user.active_refresh_jti = str(refresh_payload.jti)
     log.info(
         "auth.tokens_issued",
         user_id=str(user.id),
@@ -639,20 +652,61 @@ def refresh(
 
     # (b) Rotation. Only the single most recently issued refresh token is valid;
     # a replayed (already-rotated) token no longer matches and is rejected loudly.
+    #
+    # With one exception, added 2026-08-08. A browser fires several requests at
+    # once when the access token expires and EVERY one presents the same refresh
+    # token. The first rotates it and the rest were rejected as replay — seen in
+    # the log as pairs of `auth.refresh_reused` 286 microseconds apart, each
+    # ending in a hard sign-out mid-task. That is not an attack, it is normal
+    # concurrency, and treating it as replay is what users experienced as "the
+    # page logs me out while I am working".
+    #
+    # So the IMMEDIATELY previous jti is honoured for `jwt_refresh_grace_seconds`
+    # and served the CURRENT identity (no further rotation), letting concurrent
+    # callers converge. The envelope stays narrow on purpose: one generation
+    # only, time-boxed, and a genuine replay — older token, or the same token
+    # after the window — is still rejected exactly as before. Set the grace to 0
+    # to restore strict single-use.
     if user.active_refresh_jti != str(payload.jti):
-        log.warning(
-            "auth.refresh_reused",
+        grace = settings.jwt_refresh_grace_seconds
+        # _as_aware: SQLite hands back naive datetimes for a timezone=True
+        # column, so a bare subtraction raises TypeError under the test suite
+        # while working fine on Postgres.
+        rotated_at = _as_aware(user.refresh_rotated_at)
+        within_grace = (
+            grace > 0
+            and user.previous_refresh_jti == str(payload.jti)
+            and rotated_at is not None
+            and (utcnow() - rotated_at).total_seconds() <= grace
+        )
+        if not within_grace:
+            log.warning(
+                "auth.refresh_reused",
+                user_id=str(user.id),
+                presented_jti=str(payload.jti),
+                active_jti=user.active_refresh_jti,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "reason": "refresh_reused",
+                    "message": "This session has been superseded. Please sign in again.",
+                },
+            )
+        log.info(
+            "auth.refresh_grace_served",
             user_id=str(user.id),
             presented_jti=str(payload.jti),
             active_jti=user.active_refresh_jti,
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "reason": "refresh_reused",
-                "message": "This session has been superseded. Please sign in again.",
-            },
+        # active_refresh_jti is a str column; the token needs a real UUID.
+        tokens = _issue_pair(
+            user,
+            auth_time=payload.auth_time,
+            keep_jti=uuid.UUID(user.active_refresh_jti) if user.active_refresh_jti else None,
         )
+        db.commit()
+        return tokens
 
     tokens = _issue_pair(user, auth_time=payload.auth_time)
     db.commit()
