@@ -93,9 +93,15 @@ function reasonOf(payload: unknown): string | undefined {
 /**
  * Trade the stored refresh token for a fresh access+refresh pair.
  *
- * The backend access token lives 15 min while the NextAuth session lives
- * 24 h, so without this the session keeps handing proxies a dead bearer and
- * every upstream call 401s. On failure we stamp the token with an error so
+ * The backend access token lives an hour while the NextAuth session lives 24 h,
+ * so without this the session keeps handing proxies a dead bearer and every
+ * upstream call 401s.
+ *
+ * Concurrency note: several jwt callbacks can reach this at once and each will
+ * present the SAME refresh token. That used to end in a hard sign-out, because
+ * the backend rotates refresh tokens single-use and rejected the losers as
+ * replay. The backend now honours the immediately-previous token for a short
+ * grace window and serves the current identity, so the racers converge instead. On failure we stamp the token with an error so
  * `session()` stops exposing the access token and the UI falls back to
  * sign-in. A backend `reauth_required` / `refresh_reused` reason (daily
  * forced-reauth ceiling, or a rotated-out token) is surfaced as the distinct
@@ -118,6 +124,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       accessToken: refreshed.access_token,
       refreshToken: refreshed.refresh_token,
       accessExpiresAt: refreshed.access_expires_at,
+      refreshExpiresAt: refreshed.refresh_expires_at,
       error: undefined,
     };
   } catch (err) {
@@ -150,6 +157,9 @@ interface OidcExchangeResponse {
     access_token: string;
     refresh_token: string;
     access_expires_at: string;
+    // The backend has always sent this (it returns a full TokenPairResponse);
+    // it was simply not declared here until the session countdown needed it.
+    refresh_expires_at: string;
   };
 }
 
@@ -241,6 +251,7 @@ export const authConfig: NextAuthConfig = {
             accessToken: tokens.access_token,
             refreshToken: tokens.refresh_token,
             accessExpiresAt: tokens.access_expires_at ?? undefined,
+            refreshExpiresAt: tokens.refresh_expires_at ?? undefined,
           };
           return user;
         } catch (err) {
@@ -305,6 +316,8 @@ export const authConfig: NextAuthConfig = {
           token.accessToken = exchanged.tokens.access_token;
           token.refreshToken = exchanged.tokens.refresh_token;
           token.accessExpiresAt = exchanged.tokens.access_expires_at;
+          token.refreshExpiresAt =
+            exchanged.tokens.refresh_expires_at ?? undefined;
           token.error = undefined;
           console.info(
             `[auth.oidc] exchange succeeded role=${exchanged.user.role}`,
@@ -326,6 +339,7 @@ export const authConfig: NextAuthConfig = {
         token.accessToken = user.accessToken;
         token.refreshToken = user.refreshToken;
         token.accessExpiresAt = user.accessExpiresAt;
+        token.refreshExpiresAt = user.refreshExpiresAt;
         token.error = undefined;
         return token;
       }
@@ -355,6 +369,10 @@ export const authConfig: NextAuthConfig = {
       // can route back to sign-in instead of silently 401ing on every proxy.
       session.accessToken = token.error ? undefined : token.accessToken;
       session.error = token.error;
+      // The point past which no rotation can save the session. SessionExpiryWarning
+      // counts down to this; the access token's own expiry is meaningless to a
+      // user because it is renewed silently.
+      session.sessionExpiresAt = token.refreshExpiresAt;
       return session;
     },
   },

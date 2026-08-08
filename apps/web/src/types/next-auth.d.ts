@@ -8,12 +8,19 @@ declare module "next-auth" {
     role?: "admin" | "client";
     accessToken?: string;
     error?: string;
+    /**
+     * When this session can no longer be renewed — the refresh token's expiry.
+     * Past it no rotation can help and the user WILL be signed out, so it is the
+     * only honest thing to count down to in the UI.
+     */
+    sessionExpiresAt?: string;
   }
   interface User {
     role?: "admin" | "client";
     accessToken?: string;
     refreshToken?: string;
     accessExpiresAt?: string;
+    refreshExpiresAt?: string;
   }
 }
 
@@ -23,6 +30,7 @@ declare module "next-auth/jwt" {
     accessToken?: string;
     refreshToken?: string;
     accessExpiresAt?: string;
+    refreshExpiresAt?: string;
     error?: string;
   }
 }
