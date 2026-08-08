@@ -36,6 +36,7 @@ import type {
 
 import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
+import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 
 import { CsfDeliverableCard } from "./CsfDeliverableCard";
@@ -348,28 +349,7 @@ export function CsfWorkspace({
               No assessment yet
             </StatusPill>
           )}
-          {assessment ? (
-            <button
-              type="button"
-              onClick={() => void onApprove()}
-              disabled={
-                busy !== null ||
-                (assessment.status !== "draft" &&
-                  assessment.status !== "submitted")
-              }
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {assessment.status === "approved"
-                ? "Approved"
-                : assessment.status === "released"
-                  ? "Released"
-                  : busy === "approve"
-                    ? "Approving…"
-                    : assessment.status === "submitted"
-                      ? "Approve client inputs"
-                      : "Approve"}
-            </button>
-          ) : (
+          {assessment ? null : (
             <button
               type="button"
               onClick={() => void onCreateAssessment()}
@@ -433,28 +413,100 @@ export function CsfWorkspace({
         />
       ) : (
         <>
+          {/* Ordered the way the work is done. This page used to run score ->
+              playbook -> messages -> gaps -> deliverable -> QUESTIONNAIRE, so
+              the 106-subcategory review — the actual work — sat at the very
+              bottom, below the deliverable. Score, gaps and the thread are
+              reference and now sit after the numbered path. */}
+          <WorkflowStep
+            number={1}
+            title="Work the Playbook and draft with AI"
+            description="The 10-step CSF 2.0 Playbook builds the working profiles, and Run AI drafts a tier per subcategory from them. It drafts; you decide."
+          >
+            <CsfPlaybookPanel serviceId={serviceId} readOnly={readOnly} />
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={2}
+            title="Review every subcategory and adjust"
+            description="Work through all 106 subcategories and set the tier you can defend. Where the client filled in their own responses, this is where you check them for completeness and accuracy — their answers are what the report rests on."
+            done={
+              assessment.status !== "draft" && assessment.status !== "submitted"
+            }
+          >
+            <CsfQuestionnaire
+              catalog={catalog}
+              answersByCode={answersByCode}
+              questionsByCode={interviewByCode}
+              readOnly={readOnly}
+              onAnswerUpdate={onAnswerUpdate}
+            />
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={3}
+            title={
+              assessment.status === "submitted"
+                ? "Approve the client's inputs"
+                : "Approve the assessment"
+            }
+            description="Locks the tiers so the deliverable is generated from a fixed set of answers. Approving does not send anything to the client — that is the last step."
+            done={
+              assessment.status === "approved" ||
+              assessment.status === "released"
+            }
+          >
+            <button
+              type="button"
+              onClick={() => void onApprove()}
+              disabled={
+                busy !== null ||
+                (assessment.status !== "draft" &&
+                  assessment.status !== "submitted")
+              }
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {assessment.status === "approved"
+                ? "Approved"
+                : assessment.status === "released"
+                  ? "Released"
+                  : busy === "approve"
+                    ? "Approving…"
+                    : assessment.status === "submitted"
+                      ? "Approve client inputs"
+                      : "Approve"}
+            </button>
+          </WorkflowStep>
+
+          <WorkflowStep
+            number={4}
+            title="Generate and release the deliverable"
+            description="Renders the report from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
+            blockedReason={
+              assessment.status === "draft" || assessment.status === "submitted"
+                ? "Approve the assessment in step 3 before generating a deliverable from it."
+                : null
+            }
+          >
+            <div className="flex flex-col gap-3">
+              <StaleDocsNudge stale={assessment.documents_stale} />
+              <CsfDeliverableCard
+                serviceId={serviceId}
+                assessmentStatus={assessment.status}
+                deliverable={deliverable}
+                onChange={setDeliverable}
+              />
+            </div>
+          </WorkflowStep>
+
+          {/* Reference, not steps. */}
           <CsfScoreCard score={score} />
-          <CsfPlaybookPanel serviceId={serviceId} readOnly={readOnly} />
-          <MessageThread serviceId={serviceId} />
           <CsfGapList
             analysis={gap}
             targetTier={targetTier}
             onChangeTargetTier={(t) => void onChangeTargetTier(t)}
           />
-          <StaleDocsNudge stale={assessment.documents_stale} />
-          <CsfDeliverableCard
-            serviceId={serviceId}
-            assessmentStatus={assessment.status}
-            deliverable={deliverable}
-            onChange={setDeliverable}
-          />
-          <CsfQuestionnaire
-            catalog={catalog}
-            answersByCode={answersByCode}
-            questionsByCode={interviewByCode}
-            readOnly={readOnly}
-            onAnswerUpdate={onAnswerUpdate}
-          />
+          <MessageThread serviceId={serviceId} />
         </>
       )}
     </div>
