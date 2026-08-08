@@ -72,6 +72,17 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # any user who has not yet logged in simply have no active refresh token.
     active_refresh_jti: Mapped[str | None] = mapped_column(String(36))
 
+    # Rotation grace (2026-08-08). The jti rotated out by the MOST RECENT
+    # refresh, and when that rotation happened. A browser fires several requests
+    # at once when the access token expires and every one presents the same
+    # refresh token; without these the first won and the rest were rejected as
+    # replay, ending in a hard sign-out mid-task. Only the IMMEDIATELY previous
+    # jti is remembered, and only for jwt_refresh_grace_seconds — a token two
+    # generations old, or replayed after the window, is still rejected.
+    # Nullable/additive (C0): pre-migration rows simply have no grace token.
+    previous_refresh_jti: Mapped[str | None] = mapped_column(String(36))
+    refresh_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     # Keycloak subject (TOFU-bound) for the hybrid OIDC exchange (Sprint 9 T4,
     # D-032). NULL until this user first completes POST /auth/oidc/exchange, at
     # which point the token's `sub` is stamped here; a later exchange whose sub

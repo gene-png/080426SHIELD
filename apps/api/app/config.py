@@ -135,8 +135,27 @@ class Settings(BaseSettings):
     shield_redaction_mode: RedactionMode = "strict"
 
     # Session security (Master Spec §4.5)
-    jwt_access_ttl_seconds: int = Field(default=900, ge=60)
-    jwt_refresh_ttl_seconds: int = Field(default=1800, ge=300)
+    # 3600, raised from 900 on 2026-08-08. The old 15 minutes was not itself the
+    # problem — the web rotates the access token automatically — but it made the
+    # rotation race below fire four times an hour, which is what users
+    # experienced as "the page logs me out while I am working".
+    jwt_access_ttl_seconds: int = Field(default=3600, ge=60)
+    # MUST comfortably exceed jwt_access_ttl_seconds. At the old 1800 against a
+    # 3600 access TTL the refresh token would die half an hour BEFORE the token
+    # it exists to renew, guaranteeing a hard logout with no recovery path.
+    # 86400 aligns it with shield_forced_reauth_seconds, so the daily ceiling —
+    # not an incidental TTL — is what actually bounds a session.
+    jwt_refresh_ttl_seconds: int = Field(default=86400, ge=300)
+    # Rotation grace. A refresh token is single-use, but a browser routinely
+    # fires several requests at once when the access token expires, and every
+    # one of them presents the SAME refresh token. The first rotates it and the
+    # rest were rejected as replay — observed in production logs as pairs of
+    # `auth.refresh_reused` 286 MICROSECONDS apart, each ending in a hard
+    # sign-out. Within this window the immediately-previous jti is accepted and
+    # the CURRENT pair is re-issued (no further rotation), so concurrent callers
+    # converge instead of knocking each other out. Set to 0 to restore strict
+    # single-use. See `refresh()` in routes/auth.py for the security envelope.
+    jwt_refresh_grace_seconds: int = Field(default=60, ge=0)
     # Short-lived token issued after the password factor when MFA is enrolled;
     # exchanged for the full pair by POST /auth/mfa/verify-login (Sprint 6 T4).
     jwt_mfa_pending_ttl_seconds: int = Field(default=300, ge=60)

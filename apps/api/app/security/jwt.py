@@ -77,17 +77,23 @@ def issue_token(
     typ: TokenType = "access",
     auth_time: datetime | None = None,
     additional_claims: dict | None = None,
+    jti: uuid.UUID | None = None,
 ) -> tuple[str, TokenPayload]:
     """Sign and return a token plus its decoded payload.
 
     `auth_time` is the original login time. Pass it forward on refresh so the
     forced-reauth ceiling anchors to the original login; omit it on a fresh
     login/register and it defaults to now.
+
+    `jti` is normally minted here. The refresh grace path passes the CURRENT
+    active jti explicitly so that concurrent refreshers converge on one token
+    identity instead of each rotating the others out — see `refresh()` in
+    routes/auth.py. Never pass it to mint a *fresh* session.
     """
     settings = get_settings()
     now = _now()
     exp = now + _ttl_for(typ)
-    jti = uuid.uuid4()
+    jti = jti or uuid.uuid4()
     effective_auth_time = auth_time or now
 
     claims: dict = {
