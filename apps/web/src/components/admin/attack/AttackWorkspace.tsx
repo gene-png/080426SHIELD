@@ -41,6 +41,7 @@ import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
+import { AttackAiInputsPanel } from "./AttackAiInputsPanel";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
@@ -427,6 +428,8 @@ export function AttackWorkspace({
             done={runResult !== null || scoredCount > 0}
           >
             <div className="flex flex-col gap-3">
+              {/* What the run will actually use, BEFORE it is clicked. */}
+              <AttackAiInputsPanel serviceId={serviceId} />
               {/* Issue 2: warn before producing canned output when no key is
                   loaded. Passes straight through when AI is live. */}
               <RunAiGuard onProceed={() => void onRunAi()}>

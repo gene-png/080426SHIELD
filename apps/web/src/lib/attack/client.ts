@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  AttackAiInputs,
   AttackAssessment,
   AttackCatalog,
   AttackCoveragePatch,
@@ -167,5 +168,15 @@ export async function releaseAttackDeliverable(
   return jsonRequest<AttackDeliverable>(
     `/api/proxy/attack/deliverables/${deliverableId}/release`,
     { method: "POST" },
+  );
+}
+
+/** What the mapping will run against — capabilities, lists and source documents. */
+export async function fetchAttackAiInputs(
+  serviceId: string,
+): Promise<AttackAiInputs> {
+  return jsonRequest<AttackAiInputs>(
+    `/api/proxy/attack/services/${serviceId}/ai-inputs`,
+    { method: "GET" },
   );
 }

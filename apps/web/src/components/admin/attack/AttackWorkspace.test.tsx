@@ -26,8 +26,12 @@ vi.mock("@/lib/attack/client", () => ({
   approveAssessment: vi.fn(),
   patchCoverage: vi.fn(),
   runAttackAi: vi.fn(),
+  fetchAttackAiInputs: vi.fn(),
 }));
 
+vi.mock("./AttackAiInputsPanel", () => ({
+  AttackAiInputsPanel: () => null,
+}));
 vi.mock("./AttackDeliverableCard", () => ({
   AttackDeliverableCard: () => null,
 }));

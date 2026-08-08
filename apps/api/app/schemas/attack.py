@@ -169,3 +169,73 @@ class AttackHeatmap(BaseModel):
     not_applicable: int
     coverage_pct: float
     by_tactic: list[TacticHeatmapEntry]
+
+
+# ---------------------------------------------------------------------------
+# "What feeds this mapping" (2026-08-08)
+#
+# The workspace reported only a count — `23 tools available` — and only AFTER
+# the run. An admin could not answer "what is being reviewed, and where did it
+# come from?", which is how a run with ZERO capabilities produced 607 fabricated
+# gaps that read like a real assessment (N-033).
+#
+# Every list field is defaulted so an older client parses a newer response and
+# vice versa (the C0 pattern).
+# ---------------------------------------------------------------------------
+
+
+class AttackAiInputDocument(BaseModel):
+    """A client-uploaded file that at least one contributing capability came from."""
+
+    id: uuid.UUID
+    title: str  # the sanitised original filename
+    mime_type: str
+    size_bytes: int
+    uploaded_at: datetime
+    item_count: int = 0
+
+
+class AttackAiInputList(BaseModel):
+    """A capability list contributing tools to this mapping."""
+
+    capability_list_id: uuid.UUID
+    tech_debt_service_id: uuid.UUID
+    tech_debt_service_title: str
+    version: int
+    status: str
+    # False => a LATER version of the same list exists and this one still
+    # counts. Surfaced because it routinely surprises people: every
+    # non-discarded version feeds the mapping, not just the newest.
+    is_latest_for_service: bool = True
+    item_count: int = 0
+
+
+class AttackAiInputItem(BaseModel):
+    """One capability being offered to the model."""
+
+    name: str
+    vendor: str | None = None
+    category: str | None = None
+    security_functions: list[str] = []
+    # The model's non-security call that nobody has agreed with yet. Still in
+    # scope deliberately (see tech_debt/security_scope.py) — shown so a
+    # consultant can spot a misclassification before it becomes a false gap.
+    awaiting_signoff: bool = False
+    source_document_id: uuid.UUID | None = None
+    capability_list_id: uuid.UUID
+    list_label: str
+    list_is_superseded: bool = False
+
+
+class AttackAiInputsResponse(BaseModel):
+    service_id: uuid.UUID
+    # Equal to run-ai's `tools_available`, by construction: both count the
+    # distinct names in `AttackAiRequest.tools`.
+    tools_sent: int
+    items_in_scope: int = 0
+    duplicate_names: int = 0
+    awaiting_signoff_count: int = 0
+    items_without_source_document: int = 0
+    documents: list[AttackAiInputDocument] = []
+    lists: list[AttackAiInputList] = []
+    items: list[AttackAiInputItem] = []

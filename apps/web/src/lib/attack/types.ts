@@ -133,3 +133,57 @@ export interface AttackDeliverable {
   released_at: string | null;
   superseded_by: string | null;
 }
+
+/**
+ * What the mapping will run against, from
+ * `GET /attack/services/{id}/ai-inputs`.
+ *
+ * The workspace previously showed only a count, and only after the run. Every
+ * array is optional-by-default on the API side so an older client parses a
+ * newer response.
+ */
+export interface AttackAiInputDocument {
+  id: string;
+  title: string;
+  mime_type: string;
+  size_bytes: number;
+  uploaded_at: string;
+  item_count: number;
+}
+
+export interface AttackAiInputList {
+  capability_list_id: string;
+  tech_debt_service_id: string;
+  tech_debt_service_title: string;
+  version: number;
+  status: string;
+  /** False => a newer version exists and this one STILL feeds the mapping. */
+  is_latest_for_service: boolean;
+  item_count: number;
+}
+
+export interface AttackAiInputItem {
+  name: string;
+  vendor: string | null;
+  category: string | null;
+  security_functions: string[];
+  /** The model called it non-security; nobody has agreed yet. Still in scope. */
+  awaiting_signoff: boolean;
+  source_document_id: string | null;
+  capability_list_id: string;
+  list_label: string;
+  list_is_superseded: boolean;
+}
+
+export interface AttackAiInputs {
+  service_id: string;
+  /** Equals the run's `tools_available`, by construction. */
+  tools_sent: number;
+  items_in_scope: number;
+  duplicate_names: number;
+  awaiting_signoff_count: number;
+  items_without_source_document: number;
+  documents: AttackAiInputDocument[];
+  lists: AttackAiInputList[];
+  items: AttackAiInputItem[];
+}
