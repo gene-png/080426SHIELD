@@ -95,6 +95,49 @@ def test_run_job_mitre_map_is_parseable_without_overrides(db_session) -> None:
 
 
 @pytest.mark.unit
+def test_mitre_map_fixture_reads_the_enriched_capability_shape(db_session) -> None:
+    """`capability_list` carries objects, not bare strings, since 2026-08-08.
+
+    The fixture used to pull names with a helper that keeps only `isinstance(v,
+    str)`, so an object payload silently produced ZERO cited tools — and fixture
+    mode is what CI runs. Every assertion about D/P/R citations would have gone
+    quietly meaningless rather than red. Both shapes must work: the objects are
+    what the app now sends, and the bare strings are what older stored payloads
+    and the test above still carry.
+    """
+    llm = LLMClient(build_runtime_provider())
+    result = run_job(
+        db_session,
+        llm,
+        "mitre_map",
+        inputs={
+            "capability_list": [
+                {
+                    "name": "CrowdStrike Falcon",
+                    "vendor": "CrowdStrike",
+                    "category": "Endpoint Security",
+                    "security_functions": ["detect", "respond"],
+                },
+                {"name": "Splunk"},
+            ],
+            "technique_codes": ["T1003", "T1059", "T1566"],
+        },
+        requested_by=uuid.uuid4(),
+    )
+    techniques = result.data["techniques"]
+    assert len(techniques) == 3
+
+    cited = {
+        tool
+        for t in techniques
+        for tool in t["detection_tools"] + t["prevention_tools"] + t["response_tools"]
+    }
+    # The whole point: tools ARE cited, and only by their `name`.
+    assert cited, "an object capability_list must still yield tool citations"
+    assert cited <= {"CrowdStrike Falcon", "Splunk"}
+
+
+@pytest.mark.unit
 def test_run_job_zt_score_cisa_is_parseable_without_overrides(db_session) -> None:
     llm = LLMClient(build_runtime_provider())
     result = run_job(

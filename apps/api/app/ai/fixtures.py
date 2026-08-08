@@ -29,6 +29,7 @@ its dependency overrides take precedence over this runtime provider.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -91,6 +92,28 @@ def _strs(value: object) -> list[str]:
     return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
 
 
+def _capability_names(value: object) -> list[str]:
+    """Tool names from a capability list in EITHER shape.
+
+    `capability_list` carries objects since 2026-08-08 —
+    `{"name", "vendor", "category", "security_functions"}` — so the model can map
+    from more than a bare string. Bare strings remain legal: older stored
+    payloads still hold them, and several tests still pass them.
+
+    This has to accept both because `_strs` keeps only `isinstance(v, str)`, so
+    an object payload silently produced ZERO cited tools. Fixture mode is what CI
+    runs, so that failure would have made every D/P/R assertion in the suite
+    quietly meaningless rather than red.
+    """
+    names: list[str] = []
+    for entry in value if isinstance(value, list) else []:
+        if isinstance(entry, str):
+            names.append(entry)
+        elif isinstance(entry, Mapping) and isinstance(entry.get("name"), str):
+            names.append(entry["name"])
+    return names
+
+
 # ---------------------------------------------------------------------------
 # mitre_map: ATT&CK coverage + Detection/Prevention/Response tool citations
 # ---------------------------------------------------------------------------
@@ -100,7 +123,7 @@ _MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "not_applicable")
 
 def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
     codes = sorted(_strs(payload.get("technique_codes")))
-    tools = _strs(payload.get("capability_list"))
+    tools = _capability_names(payload.get("capability_list"))
     techniques: list[dict[str, Any]] = []
     for i, code in enumerate(codes):
         status = _MITRE_STATUS_CYCLE[i % len(_MITRE_STATUS_CYCLE)]
