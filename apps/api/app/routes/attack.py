@@ -62,6 +62,10 @@ from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
 from app.schemas.attack import (
+    AttackAiInputDocument,
+    AttackAiInputItem,
+    AttackAiInputList,
+    AttackAiInputsResponse,
     AttackAssessmentResponse,
     AttackCoveragePatch,
     AttackCoverageResponse,
@@ -80,7 +84,7 @@ from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
-from app.tech_debt.security_scope import security_scope_filter
+from app.tech_debt.security_scope import awaiting_security_signoff, security_scope_filter
 from app.tenant import (
     require_attack_assessment_in_tenant,
     require_service_in_tenant,
@@ -469,9 +473,46 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
       which is arguably wrong but is pre-existing behaviour and not this
       change's business.
     """
-    names = (
+    return sorted({r.name for r in _client_capability_rows(db, client_id)})
+
+
+@dataclass(frozen=True)
+class CapabilitySource:
+    """One in-scope capability row, plus the list and service it came from.
+
+    `_client_tool_names` reduces these to bare names for the allow-list. Keeping
+    the fuller row lets the workspace answer "what is being reviewed, and where
+    did it come from?" without a second, subtly-different query — and lets the
+    model receive vendor/category/function instead of a naked string.
+    """
+
+    item_id: uuid.UUID
+    name: str
+    vendor: str | None
+    category: str | None
+    function: str | None
+    security_functions: tuple[str, ...]
+    security_related: bool | None
+    security_class_confirmed: bool
+    awaiting_signoff: bool
+    source_artifact_id: uuid.UUID | None
+    capability_list_id: uuid.UUID
+    list_version: int
+    list_status: str
+    tech_debt_service_id: uuid.UUID
+    tech_debt_service_title: str
+
+
+def _client_capability_rows(db: Session, client_id: uuid.UUID) -> list[CapabilitySource]:
+    """The in-scope capability rows behind `_client_tool_names`.
+
+    Identical joins and filters — the name reduction is the only difference, so
+    the allow-list cannot drift from what the workspace displays. Rows with a
+    blank name are dropped here, since a nameless tool cannot be cited.
+    """
+    rows = (
         db.execute(
-            select(CapabilityItem.name)
+            select(CapabilityItem, CapabilityList, Service)
             .join(CapabilityList, CapabilityItem.capability_list_id == CapabilityList.id)
             .join(Service, CapabilityList.service_id == Service.id)
             .where(
@@ -481,10 +522,71 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
                 security_scope_filter(),
             )
         )
-        .scalars()
+        .tuples()
         .all()
     )
-    return sorted({n.strip() for n in names if n and n.strip()})
+    out: list[CapabilitySource] = []
+    for item, cap_list, svc in rows:
+        if not item.name or not item.name.strip():
+            continue
+        out.append(
+            CapabilitySource(
+                item_id=item.id,
+                name=item.name.strip(),
+                vendor=item.vendor,
+                category=item.category,
+                function=item.function,
+                security_functions=tuple(item.security_functions or ()),
+                security_related=item.security_related,
+                security_class_confirmed=bool(item.security_class_confirmed),
+                awaiting_signoff=awaiting_security_signoff(item),
+                source_artifact_id=item.source_artifact_id,
+                capability_list_id=cap_list.id,
+                list_version=cap_list.version,
+                list_status=str(getattr(cap_list.status, "value", cap_list.status)),
+                tech_debt_service_id=svc.id,
+                tech_debt_service_title=svc.title,
+            )
+        )
+    return out
+
+
+def _capability_payload(rows: Iterable[CapabilitySource]) -> list[dict[str, Any]]:
+    """The capability list as it egresses: one object per DISTINCT tool name.
+
+    The model used to receive bare strings, so it had to re-derive detection /
+    prevention / response from a product name alone — while the Tech Debt
+    extractor had ALREADY classified that (`security_functions`) and thrown the
+    answer away. Sending what we already know is the cheapest accuracy win here.
+
+    Deliberately narrow. `notes` is the highest-PII field on the row, and cost /
+    licence counts are commercially sensitive and mapping-irrelevant, so none of
+    them egress. Nor does our own workflow state (`security_related`,
+    `awaiting_signoff`): telling the model "a human has not yet agreed this is
+    non-security" invites it to quietly discount the row, which is the exact
+    fabricated-gap failure `security_scope` exists to prevent. That state belongs
+    in the UI, not the prompt.
+
+    Keyed on the same distinct names `valid_tools` is built from, so the payload
+    and the allow-list cannot drift. Duplicates across list versions merge, with
+    `security_functions` unioned — a tool called security-relevant in either list
+    is security-relevant.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    for row in sorted(rows, key=lambda r: r.name):
+        entry = merged.setdefault(row.name, {"name": row.name})
+        for key, value in (
+            ("vendor", row.vendor),
+            ("category", row.category),
+            # Truncated: a long free-text description is re-sent to EVERY batch.
+            ("function", (row.function or "").strip()[:160] or None),
+        ):
+            if value and not entry.get(key):
+                entry[key] = value
+        if row.security_functions:
+            funcs = set(entry.get("security_functions", ())) | set(row.security_functions)
+            entry["security_functions"] = sorted(funcs)
+    return [merged[name] for name in sorted(merged)]
 
 
 _VALID_STATUSES = {s.value for s in CoverageStatus}
@@ -511,6 +613,15 @@ class AttackAiRequest:
     rows: dict[str, AttackCoverage]
     locked_keys: frozenset[str]
     valid_tools: frozenset[str]
+    # The distinct tool names, in order. The SOURCE OF TRUTH for the
+    # empty-capability guard and for `tools_available`, so neither depends on
+    # what `capability_list` happens to look like inside the payload — that
+    # shape changed on 2026-08-08 and will change again.
+    tools: tuple[str, ...]
+    # Every contributing row, before the name dedupe. Display only: the same
+    # tool arriving from two capability lists is exactly what an admin needs to
+    # see, and is precisely what the allow-list has to collapse.
+    capability_rows: tuple[CapabilitySource, ...]
     preview: AiPreviewPayload
 
 
@@ -529,7 +640,8 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
 
-    tools = _client_tool_names(db, client.id)
+    cap_rows = _client_capability_rows(db, client.id)
+    tools = sorted({r.name for r in cap_rows})
     rows = {
         r.technique_code: r
         for r in db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -543,9 +655,14 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         rows=rows,
         locked_keys=locked_keys,
         valid_tools=frozenset(t.lower() for t in tools),
+        tools=tuple(tools),
+        capability_rows=tuple(cap_rows),
         preview=AiPreviewPayload(
             job_name="mitre_map",
-            inputs={"capability_list": tools, "technique_codes": sorted(rows)},
+            inputs={
+                "capability_list": _capability_payload(cap_rows),
+                "technique_codes": sorted(rows),
+            },
             client_org_name=client_org,
         ),
     )
@@ -696,7 +813,11 @@ def run_ai(
         req.locked_keys,
         req.valid_tools,
     )
-    tools = req.preview.inputs["capability_list"]
+    # req.tools, NOT the payload: the guard and the count must not depend on
+    # what `capability_list` looks like. That shape changed on 2026-08-08 from
+    # bare strings to objects, and reading it here would have silently made
+    # `tools_available` a count of dicts.
+    tools = req.tools
 
     # An empty allow-list cannot produce an assessment — only a fabricated one.
     # `valid_tools` is a HARD allow-list (see `_client_tool_names`): a tool that
@@ -945,6 +1066,136 @@ def discard_assessment(
     db.commit()
     db.refresh(a)
     return _serialize_assessment(db, a)
+
+
+# ---------------------------------------------------------------------------
+# What feeds this mapping
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/services/{service_id}/ai-inputs",
+    response_model=AttackAiInputsResponse,
+    summary="The capabilities and documents this mapping will run against (admin)",
+)
+def ai_inputs(
+    service_id: uuid.UUID,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackAiInputsResponse:
+    """What the mapping will be given, before it is run.
+
+    The workspace previously reported one number — `23 tools available` — and
+    only AFTER the run. An admin could not see which capabilities were in play or
+    which document they came from, which is how a run with ZERO capabilities
+    wrote 607 fabricated gaps that read exactly like a real assessment (N-033).
+
+    Deliberately its own endpoint rather than part of `/ai/preview`:
+
+    * the preview sits behind the AI rate limit, so a panel loading on mount
+      would spend the run budget on a page view;
+    * the preview requires an existing assessment, and "what will this run
+      against?" is a question asked BEFORE creating one;
+    * the preview returns the REDACTED payload, and an admin needs the real
+      names — a redacted one is unrecognisable.
+
+    Read-only. Never gates Run AI; the typed 409 in `run_ai` is the only guard.
+    """
+    require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    rows = _client_capability_rows(db, client.id)
+
+    # A later version of the same tech-debt list does NOT retire an earlier one:
+    # every non-discarded version still feeds the mapping. Surfaced, not fixed.
+    latest_version: dict[uuid.UUID, int] = {}
+    for row in rows:
+        current = latest_version.get(row.tech_debt_service_id, 0)
+        latest_version[row.tech_debt_service_id] = max(current, row.list_version)
+
+    lists: dict[uuid.UUID, AttackAiInputList] = {}
+    doc_counts: dict[uuid.UUID, int] = {}
+    items: list[AttackAiInputItem] = []
+    for row in sorted(rows, key=lambda r: (r.name.lower(), r.list_version)):
+        superseded = row.list_version < latest_version[row.tech_debt_service_id]
+        entry = lists.get(row.capability_list_id)
+        if entry is None:
+            lists[row.capability_list_id] = AttackAiInputList(
+                capability_list_id=row.capability_list_id,
+                tech_debt_service_id=row.tech_debt_service_id,
+                tech_debt_service_title=row.tech_debt_service_title,
+                version=row.list_version,
+                status=row.list_status,
+                is_latest_for_service=not superseded,
+                item_count=1,
+            )
+        else:
+            entry.item_count += 1
+        if row.source_artifact_id is not None:
+            doc_counts[row.source_artifact_id] = doc_counts.get(row.source_artifact_id, 0) + 1
+        items.append(
+            AttackAiInputItem(
+                name=row.name,
+                vendor=row.vendor,
+                category=row.category,
+                security_functions=list(row.security_functions),
+                awaiting_signoff=row.awaiting_signoff,
+                source_document_id=row.source_artifact_id,
+                capability_list_id=row.capability_list_id,
+                list_label=f"{row.tech_debt_service_title} v{row.list_version}",
+                list_is_superseded=superseded,
+            )
+        )
+
+    # One query, not one per item. The tenant predicate is defence in depth: a
+    # dangling or cross-tenant id is dropped rather than rendered.
+    documents: list[AttackAiInputDocument] = []
+    if doc_counts:
+        found = (
+            db.execute(
+                select(Artifact).where(
+                    Artifact.id.in_(doc_counts.keys()),
+                    Artifact.client_id == client.id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        documents = sorted(
+            (
+                AttackAiInputDocument(
+                    id=a.id,
+                    title=a.title,
+                    mime_type=a.mime_type,
+                    size_bytes=a.size_bytes,
+                    uploaded_at=a.uploaded_at,
+                    item_count=doc_counts.get(a.id, 0),
+                )
+                for a in found
+            ),
+            key=lambda d: d.title.lower(),
+        )
+
+    distinct_names = {r.name for r in rows}
+    _log.info(
+        "attack.ai_inputs.read",
+        service_id=str(service_id),
+        client_id=str(client.id),
+        tools_sent=len(distinct_names),
+        lists=len(lists),
+    )
+    return AttackAiInputsResponse(
+        service_id=service_id,
+        tools_sent=len(distinct_names),
+        items_in_scope=len(rows),
+        duplicate_names=len(rows) - len(distinct_names),
+        awaiting_signoff_count=sum(1 for r in rows if r.awaiting_signoff),
+        items_without_source_document=sum(1 for r in rows if r.source_artifact_id is None),
+        documents=documents,
+        lists=sorted(
+            lists.values(), key=lambda entry: (entry.tech_debt_service_title, entry.version)
+        ),
+        items=items,
+    )
 
 
 # ---------------------------------------------------------------------------

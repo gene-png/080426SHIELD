@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -75,6 +76,13 @@ def _seed_tech_debt_tools(
     *,
     security_related: bool | None = None,
     confirmed: bool = False,
+    vendor: str | None = None,
+    category: str | None = None,
+    security_functions: list[str] | None = None,
+    notes: str | None = None,
+    annual_cost_usd: int | None = None,
+    title: str = "Acme Tech Debt",
+    version: int = 1,
 ) -> None:
     """A Tech Debt service + approved capability list with the given tool names.
 
@@ -88,13 +96,15 @@ def _seed_tech_debt_tools(
         svc = Service(
             kind=ServiceKind.TECH_DEBT,
             status=ServiceStatus.IN_PROGRESS,
-            title="Acme Tech Debt",
+            title=title,
             client_id=_uuid.UUID(cid),
             opened_by=_uuid.UUID(user_id),
         )
         db.add(svc)
         db.flush()
-        cl = CapabilityList(service_id=svc.id, version=1, status=CapabilityListStatus.APPROVED)
+        cl = CapabilityList(
+            service_id=svc.id, version=version, status=CapabilityListStatus.APPROVED
+        )
         db.add(cl)
         db.flush()
         for name in tools:
@@ -102,6 +112,11 @@ def _seed_tech_debt_tools(
                 CapabilityItem(
                     capability_list_id=cl.id,
                     name=name,
+                    vendor=vendor,
+                    category=category,
+                    security_functions=security_functions,
+                    notes=notes,
+                    annual_cost_usd=annual_cost_usd,
                     security_related=security_related,
                     security_class_confirmed=confirmed,
                 )
@@ -278,3 +293,176 @@ def test_run_ai_marks_documents_stale(app_client) -> None:
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
     assert latest.status_code == 200, latest.text
     assert latest.json()["documents_stale"] is True  # Work Order C3
+
+
+# ---------------------------------------------------------------------------
+# The enriched capability payload (2026-08-08).
+#
+# The model used to receive bare strings, so it re-derived detection /
+# prevention / response from a product name alone — while the extractor had
+# already classified exactly that and the ATT&CK path discarded it. These tests
+# pin what egresses, and — more importantly — what must NOT.
+# ---------------------------------------------------------------------------
+
+
+def _capture_payload(provider, response: str = '{"techniques": []}') -> list[dict]:
+    """Register a mitre_map fixture that records every payload it is handed."""
+    seen: list[dict] = []
+
+    def _spy(payload: dict) -> LLMResponse:
+        seen.append(payload)
+        return LLMResponse(response)
+
+    provider.register("mitre_map", _spy)
+    return seen
+
+
+@pytest.mark.unit
+def test_capability_payload_carries_the_fields_the_extractor_already_found(app_client) -> None:
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(
+        TestSession,
+        cid,
+        me["id"],
+        ["CrowdStrike Falcon"],
+        vendor="CrowdStrike",
+        category="Endpoint Security",
+        security_functions=["detect", "respond"],
+    )
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"})
+    svc_id = svc.json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    seen = _capture_payload(provider)
+
+    assert c.post(f"/attack/services/{svc_id}/run-ai", headers=h).status_code == 200
+
+    entry = seen[0]["capability_list"][0]
+    assert entry["name"] == "CrowdStrike Falcon"
+    assert entry["vendor"] == "CrowdStrike"
+    assert entry["category"] == "Endpoint Security"
+    assert entry["security_functions"] == ["detect", "respond"]
+
+
+@pytest.mark.unit
+def test_payload_names_are_exactly_the_allow_list(app_client) -> None:
+    """The invariant. If these drift, the model is offered tools it may not cite.
+
+    `valid_tools` is a HARD allow-list — a citation outside it is dropped and the
+    technique reads as uncovered. So every name in the payload must be in the
+    allow-list and vice versa, by construction rather than by coincidence.
+    """
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Splunk", "Okta", "  Padded  "])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"})
+    svc_id = svc.json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    seen = _capture_payload(provider)
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    names = {e["name"] for e in seen[0]["capability_list"]}
+
+    assert names == {"Splunk", "Okta", "Padded"}, "names must be stripped, as the allow-list is"
+    # tools_available counts distinct NAMES, not payload entries or dicts.
+    assert body["tools_available"] == 3
+
+
+@pytest.mark.unit
+def test_a_cited_vendor_is_rejected_but_the_exact_name_is_kept(app_client) -> None:
+    """The risk enrichment introduces, pinned.
+
+    Handing the model `vendor` and `category` gives it three plausible strings
+    per tool where it previously had one. `_validate_tools` drops anything that
+    is not an exact name — silently — so a model citing "CrowdStrike" instead of
+    "CrowdStrike Falcon" produces a technique that reads as uncovered. The prompt
+    forbids it; this proves the code enforces it.
+    """
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(
+        TestSession,
+        cid,
+        me["id"],
+        ["CrowdStrike Falcon"],
+        vendor="CrowdStrike",
+        category="Endpoint Security",
+    )
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"})
+    svc_id = svc.json()["id"]
+    a = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    code = a.json()["coverage"][0]["technique_code"]
+
+    provider.register_static(
+        "mitre_map",
+        LLMResponse(
+            '{"techniques": [{"technique_code": "' + code + '", "status": "covered",'
+            ' "detection_tools": ["CrowdStrike", "Endpoint Security",'
+            ' "CrowdStrike Falcon"], "prevention_tools": [], "response_tools": []}]}'
+        ),
+    )
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == ["CrowdStrike Falcon"], "vendor/category are not citable"
+
+
+@pytest.mark.unit
+def test_notes_and_cost_never_egress(app_client) -> None:
+    """A security boundary, not a preference.
+
+    `notes` is free-text consultant commentary and the highest-PII field on the
+    row; cost and licence counts are commercially sensitive and useless for
+    mapping. Redaction is a compensating control, not a licence to widen what
+    leaves the building.
+    """
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(
+        TestSession,
+        cid,
+        me["id"],
+        ["Splunk"],
+        notes="Renewal owner is Jane Doe, jane@acme.example — see contract 88231",
+        annual_cost_usd=200000,
+    )
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"})
+    svc_id = svc.json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    seen = _capture_payload(provider)
+
+    assert c.post(f"/attack/services/{svc_id}/run-ai", headers=h).status_code == 200
+
+    blob = json.dumps(seen[0])
+    assert "Jane Doe" not in blob
+    assert "jane@acme.example" not in blob
+    assert "88231" not in blob
+    assert "200000" not in blob
+    assert seen[0]["capability_list"] == [{"name": "Splunk"}], "empty fields are omitted"
+
+
+@pytest.mark.unit
+def test_every_batch_receives_the_same_capability_list(app_client) -> None:
+    """The list is re-sent per batch; all batches must agree on the allow-list."""
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Splunk"], vendor="Splunk Inc")
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"})
+    svc_id = svc.json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    seen = _capture_payload(provider)
+
+    assert c.post(f"/attack/services/{svc_id}/run-ai", headers=h).status_code == 200
+
+    assert len(seen) > 1, "the full matrix must batch"
+    first = seen[0]["capability_list"]
+    assert all(p["capability_list"] == first for p in seen)

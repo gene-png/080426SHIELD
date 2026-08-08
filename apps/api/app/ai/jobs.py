@@ -90,6 +90,17 @@ _MITRE_MAP_PROMPT = """You are assisting a Kentro analyst mapping a security too
 inventory to the MITRE ATT&CK Enterprise matrix. From the capability list and any
 context, SUGGEST a draft only.
 
+Each entry in `capability_list` is an object with a required `name` and optional
+`vendor`, `category`, `function` (a one-line description of what the tool does)
+and `security_functions` (a subset of prevent / detect / respond). Treat
+`security_functions` as the inventory's own view of the tool's primary role —
+useful evidence, not a restriction. Cite a tool wherever it genuinely applies.
+
+CITE THE `name` VALUE EXACTLY AND VERBATIM in detection_tools, prevention_tools
+and response_tools. Never substitute the vendor, the category, an abbreviation or
+a reworded form: a citation that does not match a `name` exactly is DISCARDED,
+and the technique it was meant to cover is then recorded as uncovered.
+
 For each technique you can speak to, suggest a coverage status (covered, partial,
 gap, not_applicable) and which listed tools provide detection, prevention, and
 response, plus a short rationale. You may ONLY name tools that appear in the
