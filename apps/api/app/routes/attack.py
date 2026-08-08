@@ -38,6 +38,7 @@ from app.attack.catalog import (
 from app.attack.catalog import (
     all_codes as attack_all_codes,
 )
+from app.attack.citations import Candidate, CitationResolver, resolve_citations
 from app.attack.coverage import COVERAGE_DEFINITIONS, CoverageStatus
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import render_docx as render_attack_docx
@@ -567,8 +568,8 @@ def _capability_payload(rows: Iterable[CapabilitySource]) -> list[dict[str, Any]
     fabricated-gap failure `security_scope` exists to prevent. That state belongs
     in the UI, not the prompt.
 
-    Keyed on the same distinct names `valid_tools` is built from, so the payload
-    and the allow-list cannot drift. Duplicates across list versions merge, with
+    Keyed on the same distinct names the citation resolver is built from, so the
+    payload and the allow-list cannot drift. Duplicates across list versions merge, with
     `security_functions` unioned — a tool called security-relevant in either list
     is security-relevant.
     """
@@ -604,15 +605,14 @@ class AttackAiRequest:
     """Loaded state + outbound payload for the ATT&CK mitre_map run-ai job.
 
     Built once by :func:`build_attack_ai_request`; consumed by run-ai (which
-    needs ``rows``/``locked_keys``/``valid_tools`` to validate and apply
-    suggestions) and by the redaction-preview route (which only needs
+    needs ``rows``/``locked_keys``/``capability_rows`` to resolve, validate and
+    apply suggestions) and by the redaction-preview route (which only needs
     ``.preview``).
     """
 
     assessment: AttackAssessment
     rows: dict[str, AttackCoverage]
     locked_keys: frozenset[str]
-    valid_tools: frozenset[str]
     # The distinct tool names, in order. The SOURCE OF TRUTH for the
     # empty-capability guard and for `tools_available`, so neither depends on
     # what `capability_list` happens to look like inside the payload — that
@@ -654,7 +654,6 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         assessment=a,
         rows=rows,
         locked_keys=locked_keys,
-        valid_tools=frozenset(t.lower() for t in tools),
         tools=tuple(tools),
         capability_rows=tuple(cap_rows),
         preview=AiPreviewPayload(
@@ -807,12 +806,7 @@ def run_ai(
     """
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
     req = build_attack_ai_request(db, svc, client)
-    a, rows, locked_keys, valid_tools = (
-        req.assessment,
-        req.rows,
-        req.locked_keys,
-        req.valid_tools,
-    )
+    a, rows, locked_keys = (req.assessment, req.rows, req.locked_keys)
     # req.tools, NOT the payload: the guard and the count must not depend on
     # what `capability_list` looks like. That shape changed on 2026-08-08 from
     # bare strings to objects, and reading it here would have silently made
@@ -877,11 +871,29 @@ def run_ai(
     )
     result = _BatchedResult(data={"techniques": suggestions})
 
+    # Resolve a near-miss citation instead of dropping it. An exact-match check
+    # discarded "CrowdStrike" when the list said "CrowdStrike Falcon Enterprise"
+    # — SILENTLY — so the technique read as a gap, and in a client report "gap"
+    # then means "the model phrased the name wrong". Enriching the payload with
+    # vendor and category made that likelier, not rarer.
+    #
+    # Resolution never guesses between two plausible homes: ambiguous citations
+    # are still refused, because a wrong attribution is invisible while a drop is
+    # counted below.
+    resolver = CitationResolver(
+        [Candidate(name=r.name, vendor=r.vendor) for r in req.capability_rows]
+    )
+    citation_stats = {"normalised": 0, "rejected": 0}
+    rejected_samples: list[str] = []
+
     def _validate_tools(names: object) -> list[str]:
-        if not isinstance(names, list):
-            return []
-        # Only tools that actually appear in the client's capability list.
-        return [t for t in names if isinstance(t, str) and t.lower() in valid_tools]
+        outcome = resolve_citations(names, resolver)
+        citation_stats["normalised"] += outcome.normalised
+        citation_stats["rejected"] += outcome.rejected
+        for sample in outcome.rejected_examples:
+            if len(rejected_samples) < 10 and sample not in rejected_samples:
+                rejected_samples.append(sample)
+        return outcome.tools
 
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
@@ -932,13 +944,28 @@ def run_ai(
         )
 
     a.documents_stale = True  # Work Order C3
+    if citation_stats["rejected"]:
+        # The backstop. A citation we could not resolve is a technique that will
+        # read as uncovered for a reason that is NOT the client's posture, so it
+        # must never be silent.
+        _log.warning(
+            "attack.run_ai.citations_rejected",
+            service_id=str(svc.id),
+            rejected=citation_stats["rejected"],
+            examples=rejected_samples,
+        )
     audit(
         db,
         action="attack.run_ai",
         target_type="attack_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"tools_available": len(tools), "changed_rows": len(diffs)},
+        details={
+            "tools_available": len(tools),
+            "changed_rows": len(diffs),
+            "citations_normalized": citation_stats["normalised"],
+            "citations_rejected": citation_stats["rejected"],
+        },
     )
     db.commit()
 
@@ -948,6 +975,8 @@ def run_ai(
     ]
     return AttackRunAiResponse(
         tools_available=len(tools),
+        citations_normalized=citation_stats["normalised"],
+        citations_rejected=citation_stats["rejected"],
         changed=changes,
         coverage=coverage,
         batches_total=batches_total,

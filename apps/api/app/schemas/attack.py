@@ -123,6 +123,15 @@ class AttackRunAiResponse(BaseModel):
     # consultant must be told the draft is incomplete and which slice is missing.
     batches_total: int = 0
     batches_failed: int = 0
+    # Citation resolution (2026-08-08). `normalized` counts near-misses the code
+    # resolved to a real capability — e.g. a vendor-only citation matched to the
+    # one product it can mean. `rejected` counts citations that stayed genuinely
+    # unresolvable, which is the backstop: those techniques will read as
+    # uncovered for a reason that is NOT the client's security posture, so the
+    # number must be visible rather than inferred from a silent drop.
+    # Additive + defaulted (C0).
+    citations_normalized: int = 0
+    citations_rejected: int = 0
 
 
 class AttackCoveragePatch(BaseModel):

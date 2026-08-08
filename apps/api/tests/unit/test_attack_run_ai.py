@@ -373,14 +373,19 @@ def test_payload_names_are_exactly_the_allow_list(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_a_cited_vendor_is_rejected_but_the_exact_name_is_kept(app_client) -> None:
-    """The risk enrichment introduces, pinned.
+def test_a_cited_vendor_resolves_to_the_product_it_can_only_mean(app_client) -> None:
+    """The risk enrichment introduces, and how it is now handled.
+
+    CONTRACT CHANGED 2026-08-08. This test previously asserted that a vendor-only
+    citation was DROPPED. Dropping was the wrong answer: the technique then read
+    as a gap, and "gap" in a client report cannot mean "the model phrased the
+    name wrong". A near miss is now RESOLVED when it can only mean one thing.
 
     Handing the model `vendor` and `category` gives it three plausible strings
-    per tool where it previously had one. `_validate_tools` drops anything that
-    is not an exact name — silently — so a model citing "CrowdStrike" instead of
-    "CrowdStrike Falcon" produces a technique that reads as uncovered. The prompt
-    forbids it; this proves the code enforces it.
+    per tool where it had one, so this path got more likely, not less. What must
+    still hold: an unresolvable string ("Endpoint Security" names no product
+    here) is refused, and the resolved and exact citations collapse to ONE tool
+    rather than inflating coverage.
     """
     c, TestSession, provider = app_client
     bearer, cid = _admin(c)
@@ -409,7 +414,16 @@ def test_a_cited_vendor_is_rejected_but_the_exact_name_is_kept(app_client) -> No
     )
     body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
-    assert row["detection_tools"] == ["CrowdStrike Falcon"], "vendor/category are not citable"
+    # "CrowdStrike" resolved to the one product it can mean; "CrowdStrike Falcon"
+    # matched exactly; the two collapse. "Endpoint Security" resolved to nothing.
+    assert row["detection_tools"] == ["CrowdStrike Falcon"]
+    # Counted per citation event, and the static fixture answers every batch, so
+    # assert the RELATIONSHIP rather than a batch-count-dependent number.
+    assert body["citations_normalized"] > 0, "the vendor citation was resolved, not dropped"
+    assert body["citations_rejected"] > 0, "the category names no product and stays refused"
+    assert (
+        body["citations_normalized"] == body["citations_rejected"]
+    ), "one resolved vendor and one refused category per response"
 
 
 @pytest.mark.unit
