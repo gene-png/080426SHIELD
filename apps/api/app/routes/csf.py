@@ -1079,9 +1079,15 @@ def patch_dimension_score(
     # dimension scores). They feed `export_playbook`, which stores the Working
     # Profile workbook and its PDF/DOCX as artifacts. Whether that track should
     # freeze on assessment approval is an OPEN DECISION, not an oversight — see
-    # issue #37. It is deliberately not enforced here: every approved assessment
-    # in the field was approved before the profile was seeded, so a freeze on
-    # approval would make the workbook permanently unexportable.
+    # issue #37.
+    #
+    # Deliberately not enforced here. In the dev/demo database on 2026-08-09,
+    # all 25 APPROVED assessments carry ZERO dimension-score rows, against 636
+    # each on DRAFT and SUBMITTED. Strictly that says they were never seeded at
+    # all, not that seeding followed approval — but either way a freeze on
+    # `seed_profiles` would strand them, because seeding is what creates the
+    # rows and `export_playbook` refuses without them. That is a demo database,
+    # so it bounds the shape of the problem rather than proving field usage.
     audit(
         db,
         action="csf.dimension_score.updated",
