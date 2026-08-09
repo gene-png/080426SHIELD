@@ -433,7 +433,7 @@ export function ZtWorkspace({
           <WorkflowStep
             number={1}
             title="Draft the maturity scoring with AI"
-            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. Locked rows are never overwritten. An offline run also leaves every answer the AI did not write — submitted, still in progress, or consultant-entered; a live run may draft over them and shows you the diff."
+            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. Locked rows are never overwritten. An offline run also leaves alone any answer the AI did not write — a client submission, or one still in progress. A row the AI did write stays AI-owned even after you edit it, so lock it if your edit must survive another offline run. A live run may draft over anything unlocked, and shows you the diff."
             done={runResult !== null}
           >
             <div className="flex flex-col gap-3">
@@ -506,10 +506,14 @@ export function ZtWorkspace({
                 >
                   {runResult.rejected_stage_values} stage value
                   {runResult.rejected_stage_values === 1 ? "" : "s"} came back
-                  outside the 1&ndash;{catalog?.stages.length ?? 4} range and{" "}
-                  {runResult.rejected_stage_values === 1 ? "was" : "were"} not
-                  applied; those capabilities keep the stage they had. Rows
-                  skipped for other reasons are not counted here.
+                  unusable — outside the 1&ndash;{catalog.stages.length} range,
+                  or not a number —{" "}
+                  {runResult.rejected_stage_values === 1
+                    ? "and was"
+                    : "and were"}{" "}
+                  not applied. Anything else in the same suggestion still
+                  applied, so a capability may have moved anyway. Rows skipped
+                  for other reasons are not counted here.
                 </p>
               ) : null}
             </div>

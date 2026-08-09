@@ -440,3 +440,50 @@ def test_live_run_ai_counts_a_rejected_value_even_when_the_other_applies(
     assert row["maturity_stage"] is None, "an out-of-range current must not apply"
     assert row["target_stage"] == 3
     assert body["rejected_stage_values"] == 1, "the dropped current must be counted"
+
+
+@pytest.mark.unit
+def test_live_run_ai_does_stamp_ai_provenance_when_it_changes_a_stage(
+    app_client, monkeypatch
+) -> None:
+    """The POSITIVE half of the provenance contract (issue #38).
+
+    Every other provenance test here asserts the stamp does NOT move. Without
+    this one, deleting the `answer_source = SOURCE_AI` write leaves the whole
+    suite green — and the consequence is not benign: `protected_keys` protects
+    any answered row whose source is not AI, so AI-written rows would all become
+    protected, `preserved_client_answers` would jump to the full capability
+    count, and the "fixture may refresh output it wrote itself" path that D-017
+    demos and the e2e suite rely on would stop working.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 3, "target": 4}]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = next(x for x in body["answers"] if x["capability_code"] == code)
+    assert row["maturity_stage"] == 3
+    assert any(ch["capability_code"] == code for ch in body["changed"])
+
+    from app.models.zt_assessment import ZtAnswer
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        stored = check.execute(
+            select(ZtAnswer).where(ZtAnswer.capability_code == code)
+        ).scalar_one()
+        assert stored.answer_source == "ai", (
+            "a stage the AI genuinely wrote must be stamped as AI-authored, or "
+            "every AI row becomes 'protected' and fixture refresh breaks"
+        )
+        assert stored.answered_by is not None
+        assert stored.answered_at is not None

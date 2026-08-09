@@ -106,6 +106,11 @@ _admin_required = Depends(require_role(UserRole.ADMIN))
 
 _log = get_logger(__name__)
 
+# Per-run cap on per-value rejection detail lines. The counts stay exact; this
+# only bounds how many individual model values are echoed into the log, since
+# the `capabilities` array is unbounded.
+_MAX_REJECT_LOGS = 20
+
 
 # ---------------------------------------------------------------------------
 # Framework <-> ServiceKind mapping
@@ -489,6 +494,7 @@ def run_ai(
     data = result.data if isinstance(result.data, dict) else {}
 
     rejected_values = 0
+    unknown_codes = 0
     suggested: set[str] = set()
     for sugg in data.get("capabilities", []):
         if not isinstance(sugg, dict):
@@ -502,11 +508,13 @@ def run_ai(
             # A code that matches no capability applies nowhere. It has no
             # counter yet — the per-reason breakdown is W1 (PR #35) — but it
             # must not disappear without a trace.
-            _log.warning(
-                "zt_run_ai_unknown_capability_code",
-                assessment_id=str(a.id),
-                capability_code=code,
-            )
+            unknown_codes += 1
+            if unknown_codes <= _MAX_REJECT_LOGS:
+                _log.warning(
+                    "zt_run_ai_unknown_capability_code",
+                    assessment_id=str(a.id),
+                    capability_code=repr(code)[:120],
+                )
             continue
         if row.locked or code in protected:
             continue
@@ -538,19 +546,33 @@ def run_ai(
         for field, raw in (("current", sugg.get("current")), ("target", sugg.get("target"))):
             if raw is not None and _coerce(raw) is None:
                 rejected_values += 1
-                _log.warning(
-                    "zt_run_ai_stage_value_rejected",
-                    assessment_id=str(a.id),
-                    capability_code=code,
-                    field=field,
-                    value=raw,
-                    max_stage=max_stage,
-                )
+                # Capped: `capabilities` is unbounded, so a hallucinating or
+                # hostile response could otherwise flood the log with model
+                # output. The COUNT is always exact and always returned; only
+                # the per-value detail is sampled.
+                if rejected_values <= _MAX_REJECT_LOGS:
+                    _log.warning(
+                        "zt_run_ai_stage_value_rejected",
+                        assessment_id=str(a.id),
+                        capability_code=code,
+                        field=field,
+                        value=repr(raw)[:120],
+                        max_stage=max_stage,
+                    )
         if cur is not None:
             row.maturity_stage = cur
         if tgt is not None:
             row.target_stage = tgt
         suggested.add(code)
+
+    if rejected_values or unknown_codes:
+        _log.warning(
+            "zt_run_ai_suggestions_dropped",
+            assessment_id=str(a.id),
+            rejected_stage_values=rejected_values,
+            unknown_capability_codes=unknown_codes,
+            detail_logs_capped_at=_MAX_REJECT_LOGS,
+        )
 
     db.flush()
     after = _snap()
