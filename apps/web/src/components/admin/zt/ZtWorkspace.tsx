@@ -433,7 +433,7 @@ export function ZtWorkspace({
           <WorkflowStep
             number={1}
             title="Draft the maturity scoring with AI"
-            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. An offline run leaves alone any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone a row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any row, and shows you the diff."
+            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. An offline run leaves alone any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone a row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
             done={runResult !== null}
           >
             <div className="flex flex-col gap-3">
@@ -495,42 +495,6 @@ export function ZtWorkspace({
                   {runResult.preserved_client_answers === 1 ? "it" : "them"}.
                   Load an API key to run real analysis over{" "}
                   {runResult.preserved_client_answers === 1 ? "it" : "them"}.
-                </p>
-              ) : null}
-              {runResult?.rejected_stage_values ||
-              runResult?.unusable_suggestions ? (
-                /* Discarded model output looks exactly like agreement unless it
-                   is said out loud. Stage values are counted per VALUE so one
-                   bad stage cannot hide behind a good one in the same
-                   suggestion; unreadable entries are counted separately,
-                   because a wholly malformed response would otherwise render as
-                   a clean zero-change run. */
-                <p
-                  className="text-sm text-status-warning-fg"
-                  aria-live="polite"
-                >
-                  {runResult.rejected_stage_values ? (
-                    <>
-                      {runResult.rejected_stage_values} stage value
-                      {runResult.rejected_stage_values === 1 ? "" : "s"} came
-                      back unusable — outside the 1&ndash;
-                      {catalog.stages.length} range, or not a number — and{" "}
-                      {runResult.rejected_stage_values === 1 ? "was" : "were"}{" "}
-                      not applied. Any other value in the same suggestion still
-                      applied if it was in range.{" "}
-                    </>
-                  ) : null}
-                  {runResult.unusable_suggestions ? (
-                    <>
-                      {runResult.unusable_suggestions} entr
-                      {runResult.unusable_suggestions === 1 ? "y" : "ies"} in
-                      the response could not be read as a capability at all and{" "}
-                      {runResult.unusable_suggestions === 1 ? "was" : "were"}{" "}
-                      discarded.{" "}
-                    </>
-                  ) : null}
-                  Rows skipped for other reasons — locked, or an answer the AI
-                  did not write — are not counted here.
                 </p>
               ) : null}
             </div>

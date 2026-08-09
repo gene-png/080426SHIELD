@@ -83,18 +83,6 @@ export interface ZtRunAiResponse {
    * in progress, or consultant-entered. 0 for a live run.
    */
   preserved_client_answers?: number;
-  /**
-   * Individual stage values the model returned outside the framework range, so
-   * they were not applied. Counted per value. Narrow by design: 0 means "no
-   * value was out of range", NOT "nothing was dropped".
-   */
-  rejected_stage_values?: number;
-  /**
-   * Entries that could not be read as a capability at all (non-object entry,
-   * unusable code, or a non-list `capabilities`). Separate from
-   * `rejected_stage_values`: there is nothing to apply them to.
-   */
-  unusable_suggestions?: number;
 }
 
 export interface PillarScore {

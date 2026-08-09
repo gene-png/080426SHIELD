@@ -493,8 +493,7 @@ def run_ai(
         )
     data = result.data if isinstance(result.data, dict) else {}
 
-    rejected_values = 0
-    unusable = 0
+    dropped = 0
     suggested: set[str] = set()
     # `capabilities` is whatever the model returned — `parse_json` does no schema
     # validation — so a scalar or object here would raise TypeError out of the
@@ -502,7 +501,6 @@ def run_ai(
     raw_caps = data.get("capabilities")
     if not isinstance(raw_caps, list):
         if raw_caps is not None:
-            unusable += 1
             _log.warning(
                 "zt_run_ai_capabilities_not_a_list",
                 assessment_id=str(a.id),
@@ -514,8 +512,8 @@ def run_ai(
             # Counted, not skipped in silence: a response that is entirely
             # unreadable would otherwise render as a clean zero-change run,
             # which is the exact shape this feature exists to end.
-            unusable += 1
-            if unusable <= _MAX_REJECT_LOGS:
+            dropped += 1
+            if dropped <= _MAX_REJECT_LOGS:
                 _log.warning(
                     "zt_run_ai_entry_not_an_object",
                     assessment_id=str(a.id),
@@ -531,8 +529,8 @@ def run_ai(
             # A code that matches no capability applies nowhere. It has no
             # counter yet — the per-reason breakdown is W1 (PR #35) — but it
             # must not disappear without a trace.
-            unusable += 1
-            if unusable <= _MAX_REJECT_LOGS:
+            dropped += 1
+            if dropped <= _MAX_REJECT_LOGS:
                 _log.warning(
                     "zt_run_ai_unknown_capability_code",
                     assessment_id=str(a.id),
@@ -568,12 +566,12 @@ def run_ai(
         # times a code appeared.
         for field, raw in (("current", sugg.get("current")), ("target", sugg.get("target"))):
             if raw is not None and _coerce(raw) is None:
-                rejected_values += 1
+                dropped += 1
                 # Capped: `capabilities` is unbounded, so a hallucinating or
                 # hostile response could otherwise flood the log with model
                 # output. The COUNT is always exact and always returned; only
                 # the per-value detail is sampled.
-                if rejected_values <= _MAX_REJECT_LOGS:
+                if dropped <= _MAX_REJECT_LOGS:
                     _log.warning(
                         "zt_run_ai_stage_value_rejected",
                         assessment_id=str(a.id),
@@ -588,12 +586,17 @@ def run_ai(
             row.target_stage = tgt
         suggested.add(code)
 
-    if rejected_values or unusable:
+    if dropped:
+        # Logged, deliberately NOT returned. A user-facing count has to say
+        # exactly what it does and does not cover, and every attempt to do that
+        # in one number on this PR produced a sentence that was false for an
+        # adjacent case. The honest per-reason breakdown is W1 (PR #35); until
+        # then this is loud in the log and silent in the API rather than
+        # confidently wrong on screen.
         _log.warning(
             "zt_run_ai_suggestions_dropped",
             assessment_id=str(a.id),
-            rejected_stage_values=rejected_values,
-            unusable_suggestions=unusable,
+            dropped=dropped,
             detail_logs_capped_at=_MAX_REJECT_LOGS,
         )
 
@@ -661,11 +664,7 @@ def run_ai(
         target_type="zt_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={
-            "changed_rows": len(diffs),
-            "rejected_stage_values": rejected_values,
-            "unusable_suggestions": unusable,
-        },
+        details={"changed_rows": len(diffs), "suggestions_dropped": dropped},
     )
     db.commit()
 
@@ -680,8 +679,6 @@ def run_ai(
         executive_summary=(data.get("executive_summary") or None),
         roadmap_summary=(data.get("roadmap_summary") or None),
         preserved_client_answers=len(protected),
-        rejected_stage_values=rejected_values,
-        unusable_suggestions=unusable,
     )
 
 
