@@ -183,11 +183,17 @@ class ZtRunAiResponse(BaseModel):
     # reports the one bad value instead of hiding it behind the good one.
     #
     # The limit is stated rather than implied: this counts REJECTED VALUES only.
-    # It does NOT count a suggestion dropped for an unknown capability code, a
-    # locked row, or a preserved answer — those are separate reasons with their
-    # own surfaces, and one number cannot carry them honestly. The per-reason
-    # breakdown is W1 (PR #35).
+    # It does NOT count a locked row or a preserved answer — those are separate
+    # reasons with their own surfaces, and one number cannot carry them
+    # honestly. The per-reason breakdown is W1 (PR #35).
     rejected_stage_values: int = 0
+    # Entries in the response that could not be read as a capability at all: a
+    # non-object entry, an unusable `code`, or a `capabilities` value that was
+    # not a list. Separate from `rejected_stage_values` because the failure is
+    # different — there the model named a real capability and gave a bad number,
+    # here there is nothing to apply to. Without this, a wholly malformed
+    # response renders as a clean zero-change run.
+    unusable_suggestions: int = 0
 
 
 class ZtInterviewQuestion(BaseModel):

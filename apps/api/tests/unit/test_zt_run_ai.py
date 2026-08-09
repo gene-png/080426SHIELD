@@ -487,3 +487,50 @@ def test_live_run_ai_does_stamp_ai_provenance_when_it_changes_a_stage(
         )
         assert stored.answered_by is not None
         assert stored.answered_at is not None
+
+
+@pytest.mark.unit
+def test_a_wholly_unreadable_response_is_counted_not_reported_as_agreement(
+    app_client, monkeypatch
+) -> None:
+    """A response nothing can be applied from must not read as a clean run.
+
+    `capabilities` is whatever the model returned — `parse_json` does no schema
+    validation — so drifting off the object shape to a bare list of codes used
+    to hit `if not isinstance(sugg, dict): continue` and vanish. The run then
+    reported zero changes and zero rejections, which is indistinguishable from
+    "the AI reviewed everything and agreed with all of it".
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": ["' + code + '", "ID-99", 7]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["changed"] == []
+    assert body["unusable_suggestions"] == 3, "every unreadable entry must be counted"
+    assert body["rejected_stage_values"] == 0, "no capability was named, so no value was rejected"
+
+
+@pytest.mark.unit
+def test_a_non_list_capabilities_value_does_not_500(app_client, monkeypatch) -> None:
+    """`parse_json` does not validate shape, so a scalar here used to raise
+    TypeError out of the `for` and surface as an untyped 500 on a well-formed
+    request. It is a bad model response, not a server fault."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    provider.register_static("zt_score", LLMResponse('{"capabilities": 0}'))
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["unusable_suggestions"] == 1

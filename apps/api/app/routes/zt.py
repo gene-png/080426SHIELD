@@ -494,10 +494,33 @@ def run_ai(
     data = result.data if isinstance(result.data, dict) else {}
 
     rejected_values = 0
-    unknown_codes = 0
+    unusable = 0
     suggested: set[str] = set()
-    for sugg in data.get("capabilities", []):
+    # `capabilities` is whatever the model returned — `parse_json` does no schema
+    # validation — so a scalar or object here would raise TypeError out of the
+    # `for` and surface as an untyped 500 on a well-formed request.
+    raw_caps = data.get("capabilities")
+    if not isinstance(raw_caps, list):
+        if raw_caps is not None:
+            unusable += 1
+            _log.warning(
+                "zt_run_ai_capabilities_not_a_list",
+                assessment_id=str(a.id),
+                received=repr(raw_caps)[:120],
+            )
+        raw_caps = []
+    for sugg in raw_caps:
         if not isinstance(sugg, dict):
+            # Counted, not skipped in silence: a response that is entirely
+            # unreadable would otherwise render as a clean zero-change run,
+            # which is the exact shape this feature exists to end.
+            unusable += 1
+            if unusable <= _MAX_REJECT_LOGS:
+                _log.warning(
+                    "zt_run_ai_entry_not_an_object",
+                    assessment_id=str(a.id),
+                    entry=repr(sugg)[:120],
+                )
             continue
         code = sugg.get("code")
         # An unhashable code (list/dict) would raise `unhashable type` out of
@@ -508,8 +531,8 @@ def run_ai(
             # A code that matches no capability applies nowhere. It has no
             # counter yet — the per-reason breakdown is W1 (PR #35) — but it
             # must not disappear without a trace.
-            unknown_codes += 1
-            if unknown_codes <= _MAX_REJECT_LOGS:
+            unusable += 1
+            if unusable <= _MAX_REJECT_LOGS:
                 _log.warning(
                     "zt_run_ai_unknown_capability_code",
                     assessment_id=str(a.id),
@@ -565,12 +588,12 @@ def run_ai(
             row.target_stage = tgt
         suggested.add(code)
 
-    if rejected_values or unknown_codes:
+    if rejected_values or unusable:
         _log.warning(
             "zt_run_ai_suggestions_dropped",
             assessment_id=str(a.id),
             rejected_stage_values=rejected_values,
-            unknown_capability_codes=unknown_codes,
+            unusable_suggestions=unusable,
             detail_logs_capped_at=_MAX_REJECT_LOGS,
         )
 
@@ -638,7 +661,11 @@ def run_ai(
         target_type="zt_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"changed_rows": len(diffs), "rejected_stage_values": rejected_values},
+        details={
+            "changed_rows": len(diffs),
+            "rejected_stage_values": rejected_values,
+            "unusable_suggestions": unusable,
+        },
     )
     db.commit()
 
@@ -654,6 +681,7 @@ def run_ai(
         roadmap_summary=(data.get("roadmap_summary") or None),
         preserved_client_answers=len(protected),
         rejected_stage_values=rejected_values,
+        unusable_suggestions=unusable,
     )
 
 

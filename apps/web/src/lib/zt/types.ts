@@ -89,6 +89,12 @@ export interface ZtRunAiResponse {
    * value was out of range", NOT "nothing was dropped".
    */
   rejected_stage_values?: number;
+  /**
+   * Entries that could not be read as a capability at all (non-object entry,
+   * unusable code, or a non-list `capabilities`). Separate from
+   * `rejected_stage_values`: there is nothing to apply them to.
+   */
+  unusable_suggestions?: number;
 }
 
 export interface PillarScore {
