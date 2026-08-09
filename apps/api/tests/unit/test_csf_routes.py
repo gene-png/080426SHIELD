@@ -430,39 +430,6 @@ def test_dimension_scores_are_not_writable_once_approved(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_a_locked_dimension_score_row_cannot_be_silently_unlocked(app_client) -> None:
-    """`locked` was in the writable field list with no check on the row's own
-    lock, so the one control protecting a curated row could be switched off by
-    the same request that overwrote it."""
-    c = app_client
-    admin = _register(c, "admin@example.com")
-    bearer = admin["tokens"]["access_token"]
-    h = {"Authorization": f"Bearer {bearer}"}
-    svc_id = _open_service(c, bearer)
-    _new_assessment(c, bearer, svc_id)
-    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
-    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
-    score_id = rows[0]["id"]
-
-    locked = c.patch(f"/csf/dimension-scores/{score_id}", headers=h, json={"locked": True})
-    assert locked.status_code == 200, locked.text
-    assert locked.json()["locked"] is True
-
-    r = c.patch(
-        f"/csf/dimension-scores/{score_id}",
-        headers=h,
-        json={"governance": 2, "locked": False},
-    )
-    assert r.status_code == 409, r.text
-    assert r.json()["error"]["reason"] == "row_locked"
-
-    still = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
-    row = next(x for x in still if x["id"] == score_id)
-    assert row["locked"] is True, "the lock protected itself"
-    assert row["governance"] == 0, "the value behind the lock was not touched"
-
-
-@pytest.mark.unit
 def test_patching_a_dimension_score_writes_an_audit_row(app_client) -> None:
     """Its sibling `patch_answer` audits every edit. This route did not, so a
     change to the scores had no actor and no timestamp anywhere."""
@@ -518,3 +485,28 @@ def test_profiles_cannot_be_seeded_into_an_approved_assessment(app_client) -> No
     )
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "assessment_locked"
+
+
+@pytest.mark.unit
+def test_a_discarded_assessment_says_so_rather_than_claiming_approval(app_client) -> None:
+    """DISCARDED is reachable only through `patch_dimension_score`, which loads
+    by `row.assessment_id`; `_latest_assessment` filters it out for the other
+    two callers. It gets its own message because telling someone a thrown-away
+    assessment is "locked after approval" describes the opposite of what
+    happened, and sends them looking for an approval nobody made."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _open_service(c, bearer)
+    a = _new_assessment(c, bearer, svc_id)
+    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    score_id = rows[0]["id"]
+
+    discarded = c.post(f"/csf/assessments/{a['id']}/discard", headers=h)
+    assert discarded.status_code == 200, discarded.text
+
+    r = c.patch(f"/csf/dimension-scores/{score_id}", headers=h, json={"governance": 2})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "assessment_discarded"

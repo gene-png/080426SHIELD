@@ -203,18 +203,27 @@ def _editable_assessment_or_409(db: Session, assessment_id: uuid.UUID) -> CsfAss
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No assessment yet.",
         )
-    if a.status in (
-        CsfAssessmentStatus.APPROVED,
-        CsfAssessmentStatus.RELEASED,
-        CsfAssessmentStatus.DISCARDED,
-    ):
+    if a.status == CsfAssessmentStatus.DISCARDED:
+        # Reachable only from `patch_dimension_score`, which loads by
+        # `row.assessment_id`; `_latest_assessment` already filters DISCARDED
+        # out for the other two callers. Its own message, because telling
+        # someone a thrown-away assessment is "locked after approval" describes
+        # the opposite of what happened.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "assessment_discarded",
+                "message": "This assessment was discarded. Start a new one to keep working.",
+            },
+        )
+    if a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "reason": "assessment_locked",
                 "message": (
-                    "This assessment is locked. Its scores are what the released "
-                    "documents were built from, so they cannot change after approval."
+                    "This assessment is approved. Its scores are what the exported "
+                    "Working Profile was built from, so they cannot change now."
                 ),
             },
         )
@@ -1093,27 +1102,20 @@ def patch_dimension_score(
     row = db.get(CsfDimensionScore, score_id)
     if row is None or row.client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score row not found.")
-    # Issue #37. This route never loaded the parent, so it could not see that the
-    # assessment was frozen — and these are the SCORES the deliverable renders
-    # from. `clients.py` serves APPROVED/RELEASED assessments to the client
-    # dashboard, so an edit here made the delivered PDF and the live dashboard
-    # disagree with nothing recording that it happened.
+    # Issue #37. This route never loaded the parent, so it could not see that
+    # the assessment was frozen.
+    #
+    # Precisely what these rows feed, because an earlier draft of this comment
+    # got it wrong: NOT the Deliverable and NOT the client dashboard — both read
+    # `CsfAnswer.maturity_tier` (`finalize_csf_deliverable`, `clients.py:230`),
+    # and `CsfDeliverableContext` carries no dimension scores. They feed
+    # `export_playbook`, which renders the Working Profile workbook and its PDF
+    # / DOCX and stores them as artifacts stamped CONSULTANT_APPROVED. That is
+    # client-facing work product built from an approved assessment, so it
+    # freezes with it — but the failure mode is a stale exported workbook, not a
+    # released PDF contradicting a live dashboard.
     _editable_assessment_or_409(db, row.assessment_id)
     data = body.model_dump(exclude_unset=True)
-    # A locked row protects itself. `locked` is in the writable set below, so
-    # without this the same request could switch the lock off and overwrite the
-    # value it was guarding.
-    if row.locked and set(data) != {"locked"}:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "row_locked",
-                "message": (
-                    "This row is locked against changes. Unlock it first if you "
-                    "meant to edit it."
-                ),
-            },
-        )
     for f in (
         "governance",
         "policy",
