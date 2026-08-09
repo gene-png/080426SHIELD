@@ -290,8 +290,6 @@ def test_live_run_ai_does_not_stamp_ai_provenance_on_a_rejected_suggestion(
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3, "a rejected suggestion changed the value"
     assert all(ch["capability_code"] != code for ch in body["changed"])
-    # The rejection is reported, not silent — the diff alone cannot show it,
-    # because nothing changed is exactly what a rejection looks like.
 
     from app.models.zt_assessment import ZtAnswer
 
@@ -406,15 +404,16 @@ def test_live_run_ai_duplicate_codes_that_round_trip_do_not_claim_authorship(
 
 
 @pytest.mark.unit
-def test_live_run_ai_counts_a_rejected_value_even_when_the_other_applies(
+def test_live_run_ai_drops_an_out_of_range_value_but_applies_its_sibling(
     app_client, monkeypatch
 ) -> None:
-    """A bad stage must not hide behind a good one in the same suggestion.
+    """The two stage values are validated independently.
 
-    Counting per SUGGESTION made `{"current": 9, "target": 3}` invisible: the
-    target landed, so the suggestion was not "empty", and the out-of-range
-    current was dropped with no diff row, no counter and no banner. Counting per
-    VALUE is what makes it observable.
+    `{"current": 9, "target": 3}` must apply the target and drop the current,
+    rather than the bad value poisoning the whole suggestion or the good one
+    dragging the bad one in. The drop is visible in the log, not the response —
+    see the `zt_run_ai_suggestions_dropped` comment in `run_ai` for why this PR
+    deliberately returns no count.
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
@@ -496,3 +495,44 @@ def test_a_non_list_capabilities_value_does_not_500(app_client, monkeypatch) -> 
     provider.register_static("zt_score", LLMResponse('{"capabilities": 0}'))
     r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
     assert r.status_code == 200, r.text
+
+
+@pytest.mark.unit
+def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monkeypatch) -> None:
+    """The shapes `parse_json` will happily hand back that used to crash.
+
+    `parse_json` is bare `json.loads` with no schema validation, so anything the
+    model emits reaches this loop. An unhashable `code` raised
+    `TypeError: unhashable type` out of `rows.get`, and a non-list
+    `capabilities` raised out of the `for` — both surfacing as an untyped 500 on
+    a well-formed request. They are bad model output, not server faults.
+
+    This is the only coverage for those two guards; without it, deleting either
+    leaves the suite green.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    for payload in (
+        '{"capabilities": 0}',  # not a list
+        '{"capabilities": [{"code": ["x"], "current": 2}]}',  # unhashable code
+        '{"capabilities": ["' + code + '", 7]}',  # entries that are not objects
+        '{"capabilities": [{"code": "NOPE-1", "current": 2}]}',  # unknown code
+    ):
+        provider.register_static("zt_score", LLMResponse(payload))
+        r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+        assert r.status_code == 200, f"{payload} -> {r.status_code} {r.text}"
+        assert r.json()["changed"] == [], f"{payload} should change nothing"
+
+    from app.models.zt_assessment import ZtAnswer
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        stored = check.execute(
+            select(ZtAnswer).where(ZtAnswer.capability_code == code)
+        ).scalar_one()
+        assert stored.maturity_stage is None
+        assert stored.answer_source is None, "no row was written, so nothing was authored"

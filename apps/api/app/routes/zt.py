@@ -106,9 +106,9 @@ _admin_required = Depends(require_role(UserRole.ADMIN))
 
 _log = get_logger(__name__)
 
-# Per-run cap on per-value rejection detail lines. The counts stay exact; this
-# only bounds how many individual model values are echoed into the log, since
-# the `capabilities` array is unbounded.
+# Per-run cap on drop-detail log lines. `capabilities` is unbounded, so a
+# hallucinating or hostile response could otherwise flood the log with model
+# output. The aggregate line still carries the exact event count.
 _MAX_REJECT_LOGS = 20
 
 
@@ -501,6 +501,7 @@ def run_ai(
     raw_caps = data.get("capabilities")
     if not isinstance(raw_caps, list):
         if raw_caps is not None:
+            dropped += 1
             _log.warning(
                 "zt_run_ai_capabilities_not_a_list",
                 assessment_id=str(a.id),
@@ -510,8 +511,7 @@ def run_ai(
     for sugg in raw_caps:
         if not isinstance(sugg, dict):
             # Counted, not skipped in silence: a response that is entirely
-            # unreadable would otherwise render as a clean zero-change run,
-            # which is the exact shape this feature exists to end.
+            # unreadable would otherwise leave no trace at all.
             dropped += 1
             if dropped <= _MAX_REJECT_LOGS:
                 _log.warning(
@@ -526,9 +526,8 @@ def run_ai(
         # non-string types miss harmlessly and fall to the unknown-code log.
         row = rows.get(code) if isinstance(code, str) else None
         if row is None:
-            # A code that matches no capability applies nowhere. It has no
-            # counter yet — the per-reason breakdown is W1 (PR #35) — but it
-            # must not disappear without a trace.
+            # A code that matches no capability applies nowhere, and must not
+            # disappear without a trace.
             dropped += 1
             if dropped <= _MAX_REJECT_LOGS:
                 _log.warning(
@@ -567,10 +566,8 @@ def run_ai(
         for field, raw in (("current", sugg.get("current")), ("target", sugg.get("target"))):
             if raw is not None and _coerce(raw) is None:
                 dropped += 1
-                # Capped: `capabilities` is unbounded, so a hallucinating or
-                # hostile response could otherwise flood the log with model
-                # output. The COUNT is always exact and always returned; only
-                # the per-value detail is sampled.
+                # Detail lines are capped (see _MAX_REJECT_LOGS); the
+                # aggregate below still carries the exact event count.
                 if dropped <= _MAX_REJECT_LOGS:
                     _log.warning(
                         "zt_run_ai_stage_value_rejected",
@@ -587,16 +584,20 @@ def run_ai(
         suggested.add(code)
 
     if dropped:
-        # Logged, deliberately NOT returned. A user-facing count has to say
-        # exactly what it does and does not cover, and every attempt to do that
-        # in one number on this PR produced a sentence that was false for an
-        # adjacent case. The honest per-reason breakdown is W1 (PR #35); until
-        # then this is loud in the log and silent in the API rather than
-        # confidently wrong on screen.
+        # Logged, deliberately NOT returned and NOT audited. `dropped_events`
+        # mixes units on purpose — an unreadable entry, an unusable code and a
+        # single out-of-range stage each count one — so it can say "something
+        # was discarded, go read the detail lines" and nothing more. It is not
+        # a suggestion count and must not be presented as one.
+        #
+        # A user-facing number has to state exactly what it does and does not
+        # cover; every attempt to do that in one integer on this PR produced a
+        # sentence that was true for the case it was written for and false for
+        # an adjacent one. The honest per-reason breakdown is W1 (PR #35).
         _log.warning(
             "zt_run_ai_suggestions_dropped",
             assessment_id=str(a.id),
-            dropped=dropped,
+            dropped_events=dropped,
             detail_logs_capped_at=_MAX_REJECT_LOGS,
         )
 
@@ -664,7 +665,7 @@ def run_ai(
         target_type="zt_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"changed_rows": len(diffs), "suggestions_dropped": dropped},
+        details={"changed_rows": len(diffs)},
     )
     db.commit()
 
