@@ -378,55 +378,13 @@ def test_catalog_subcategory_count_matches_module() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Approved-assessment write guards (issue #37)
+# Dimension-score audit trail (issue #37)
 #
-# `patch_answer` refuses on APPROVED/RELEASED/DISCARDED and has since D-031.
-# Three sibling routes never loaded the parent assessment at all, so the CSF
-# SCORE table — the numbers the deliverable is rendered from — stayed writable
-# after approval, after finalize, and after release, with no audit row naming
-# who changed them.
+# `patch_dimension_score` wrote no audit row, so a change to a Working Profile
+# score had no actor and no timestamp anywhere. The separate question — whether
+# these rows should freeze when the assessment is approved — is an open decision
+# recorded on #37, deliberately not enforced here.
 # ---------------------------------------------------------------------------
-
-
-def _approved_with_scores(c: TestClient) -> tuple[str, str, str, str]:
-    """An APPROVED CSF assessment with seeded high-tier scores.
-
-    Returns (bearer, service id, assessment id, one dimension-score id).
-    """
-    admin = _register(c, "admin@example.com")
-    bearer = admin["tokens"]["access_token"]
-    h = {"Authorization": f"Bearer {bearer}"}
-    svc_id = _open_service(c, bearer)
-    a = _new_assessment(c, bearer, svc_id)
-    seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
-    assert seeded.status_code == 200, seeded.text
-    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
-    score_id = rows[0]["id"]
-    approved = c.post(f"/csf/assessments/{a['id']}/approve", headers=h)
-    assert approved.status_code == 200, approved.text
-    assert approved.json()["status"] == "approved"
-    return bearer, svc_id, a["id"], score_id
-
-
-@pytest.mark.unit
-def test_dimension_scores_are_not_writable_once_approved(app_client) -> None:
-    """The scores the client-facing report is built from must freeze on approve.
-
-    `patch_dimension_score` never loaded `CsfAssessment`, so it could not see
-    the status. An admin could rewrite a released assessment's scores and get a
-    200, while `clients.py` serves APPROVED/RELEASED assessments to the client
-    dashboard — so the delivered PDF and the live dashboard would disagree with
-    nothing recording why.
-    """
-    c = app_client
-    bearer, _, _, score_id = _approved_with_scores(c)
-    r = c.patch(
-        f"/csf/dimension-scores/{score_id}",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"governance": 0, "policy": 0},
-    )
-    assert r.status_code == 409, r.text
-    assert r.json()["error"]["reason"] == "assessment_locked"
 
 
 @pytest.mark.unit
@@ -455,58 +413,3 @@ def test_patching_a_dimension_score_writes_an_audit_row(app_client) -> None:
         ).scalar_one()
         assert str(entry.target_id) == score_id
         assert entry.actor_user_id is not None
-
-
-@pytest.mark.unit
-def test_gap_actions_are_not_writable_once_approved(app_client) -> None:
-    """POA&M annotations ride the same deliverable, so they freeze with it."""
-    c = app_client
-    bearer, svc_id, _, _ = _approved_with_scores(c)
-    code = SUBCATEGORIES[0].code
-    r = c.put(
-        f"/csf/services/{svc_id}/gap-actions/{code}",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"owner": "someone"},
-    )
-    assert r.status_code == 409, r.text
-    assert r.json()["error"]["reason"] == "assessment_locked"
-
-
-@pytest.mark.unit
-def test_profiles_cannot_be_seeded_into_an_approved_assessment(app_client) -> None:
-    """Seeding writes new CsfDimensionScore rows, which is a mutation of a
-    frozen assessment however additive it looks."""
-    c = app_client
-    bearer, svc_id, _, _ = _approved_with_scores(c)
-    r = c.post(
-        f"/csf/services/{svc_id}/profiles/seed",
-        headers={"Authorization": f"Bearer {bearer}"},
-        json={"tiers": ["moderate"]},
-    )
-    assert r.status_code == 409, r.text
-    assert r.json()["error"]["reason"] == "assessment_locked"
-
-
-@pytest.mark.unit
-def test_a_discarded_assessment_says_so_rather_than_claiming_approval(app_client) -> None:
-    """DISCARDED is reachable only through `patch_dimension_score`, which loads
-    by `row.assessment_id`; `_latest_assessment` filters it out for the other
-    two callers. It gets its own message because telling someone a thrown-away
-    assessment is "locked after approval" describes the opposite of what
-    happened, and sends them looking for an approval nobody made."""
-    c = app_client
-    admin = _register(c, "admin@example.com")
-    bearer = admin["tokens"]["access_token"]
-    h = {"Authorization": f"Bearer {bearer}"}
-    svc_id = _open_service(c, bearer)
-    a = _new_assessment(c, bearer, svc_id)
-    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
-    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
-    score_id = rows[0]["id"]
-
-    discarded = c.post(f"/csf/assessments/{a['id']}/discard", headers=h)
-    assert discarded.status_code == 200, discarded.text
-
-    r = c.patch(f"/csf/dimension-scores/{score_id}", headers=h, json={"governance": 2})
-    assert r.status_code == 409, r.text
-    assert r.json()["error"]["reason"] == "assessment_discarded"

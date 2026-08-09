@@ -183,53 +183,6 @@ def _serialize_assessment(db: Session, a: CsfAssessment) -> CsfAssessmentRespons
     )
 
 
-def _editable_assessment_or_409(db: Session, assessment_id: uuid.UUID) -> CsfAssessment:
-    """The parent assessment, or a typed 409 if it is frozen (issue #37).
-
-    `patch_answer` has refused on APPROVED/RELEASED/DISCARDED since D-031. Three
-    sibling routes — the dimension-score patch, the gap-action upsert, and the
-    profile seed — never loaded the assessment at all, so the numbers a released
-    client report is rendered from stayed writable after approval. This is the
-    one place that check lives now, so a fourth route cannot quietly skip it.
-
-    Note RELEASED is only ever set by `scripts/seed_demo.py`; no route
-    transitions into it. It is checked anyway because the seeded demo data does
-    carry it, and because a guard that omits a state the database can hold is
-    the shape that produced this defect.
-    """
-    a = db.get(CsfAssessment, assessment_id)
-    if a is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No assessment yet.",
-        )
-    if a.status == CsfAssessmentStatus.DISCARDED:
-        # Reachable only from `patch_dimension_score`, which loads by
-        # `row.assessment_id`; `_latest_assessment` already filters DISCARDED
-        # out for the other two callers. Its own message, because telling
-        # someone a thrown-away assessment is "locked after approval" describes
-        # the opposite of what happened.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "assessment_discarded",
-                "message": "This assessment was discarded. Start a new one to keep working.",
-            },
-        )
-    if a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "assessment_locked",
-                "message": (
-                    "This assessment is approved. Its scores are what the exported "
-                    "Working Profile was built from, so they cannot change now."
-                ),
-            },
-        )
-    return a
-
-
 def _latest_assessment(db: Session, service_id: uuid.UUID) -> CsfAssessment | None:
     # D-031: a DISCARDED assessment is retired from every "latest" consumer.
     # The next-version mint uses _max_assessment_version, not this helper.
@@ -1011,9 +964,6 @@ def seed_profiles(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Create an assessment first."
         )
-    # Seeding writes new CsfDimensionScore rows — additive, but still a mutation
-    # of a frozen assessment (issue #37).
-    _editable_assessment_or_409(db, a.id)
     tiers = [t for t in body.tiers if t in _VALID_TIERS]
     if not tiers:
         raise HTTPException(
@@ -1102,19 +1052,6 @@ def patch_dimension_score(
     row = db.get(CsfDimensionScore, score_id)
     if row is None or row.client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score row not found.")
-    # Issue #37. This route never loaded the parent, so it could not see that
-    # the assessment was frozen.
-    #
-    # Precisely what these rows feed, because an earlier draft of this comment
-    # got it wrong: NOT the Deliverable and NOT the client dashboard — both read
-    # `CsfAnswer.maturity_tier` (`finalize_csf_deliverable`, `clients.py:230`),
-    # and `CsfDeliverableContext` carries no dimension scores. They feed
-    # `export_playbook`, which renders the Working Profile workbook and its PDF
-    # / DOCX and stores them as artifacts stamped CONSULTANT_APPROVED. That is
-    # client-facing work product built from an approved assessment, so it
-    # freezes with it — but the failure mode is a stale exported workbook, not a
-    # released PDF contradicting a live dashboard.
-    _editable_assessment_or_409(db, row.assessment_id)
     data = body.model_dump(exclude_unset=True)
     for f in (
         "governance",
@@ -1133,8 +1070,18 @@ def patch_dimension_score(
             setattr(row, f, data[f])
         elif f in data and f in ("rationale", "what_we_found", "target_level"):
             setattr(row, f, None)  # explicit clear allowed for nullable text/target
-    # Its sibling `patch_answer` has always audited. Without this a change to a
-    # client-facing score had no actor and no timestamp anywhere.
+    # Issue #37. Its sibling `patch_answer` has always audited; this route did
+    # not, so a change to a Working Profile score had no actor and no timestamp
+    # anywhere — including on an assessment that had already been approved.
+    #
+    # These rows are NOT what the Deliverable or the client dashboard read (both
+    # take `CsfAnswer.maturity_tier`; `CsfDeliverableContext` carries no
+    # dimension scores). They feed `export_playbook`, which stores the Working
+    # Profile workbook and its PDF/DOCX as artifacts. Whether that track should
+    # freeze on assessment approval is an OPEN DECISION, not an oversight — see
+    # issue #37. It is deliberately not enforced here: every approved assessment
+    # in the field was approved before the profile was seeded, so a freeze on
+    # approval would make the workbook permanently unexportable.
     audit(
         db,
         action="csf.dimension_score.updated",
@@ -1327,8 +1274,6 @@ def upsert_gap_action(
     a = _latest_assessment(db, svc.id)
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
-    # POA&M annotations ride the same deliverable, so they freeze with it (#37).
-    _editable_assessment_or_409(db, a.id)
     if subcategory_code not in all_codes():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
