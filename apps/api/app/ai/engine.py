@@ -139,12 +139,17 @@ def parse_json_object(content: str) -> dict:
     non-object top level is always a contract violation and never a valid empty
     answer. A bare list is the likeliest drift: the model returns the array it
     was asked to nest under a key.
+
+    Checks the CONTAINER, not the key. `{"wrong_key": [...]}` still parses here
+    and is still discarded silently downstream — the Sprint 3 T0 drift recorded
+    in `jobs.py`. That half is tracked separately; do not read this function as
+    covering it.
     """
     data = parse_json(content)
     if not isinstance(data, dict):
         raise AIResponseShapeError(
-            "The AI response must be a JSON object with the expected top-level "
-            f"key, but the top level was {type(data).__name__}. Nothing was applied."
+            f"The AI response must be a JSON object, but the top level was a "
+            f"{type(data).__name__}. Nothing was applied."
         )
     return data
 

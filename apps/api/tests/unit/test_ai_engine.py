@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from collections.abc import Iterator
@@ -152,6 +153,7 @@ def test_parse_json_object_refuses_a_non_object_top_level() -> None:
     for payload in ('[{"code": "X"}]', '"just a string"', "7", "null"):
         with pytest.raises(AIResponseShapeError) as exc:
             parse_json_object(payload)
-        # The message has to name what arrived, or the operator cannot tell a
-        # provider bug from a prompt bug.
-        assert "object" in str(exc.value).lower(), payload
+        # Must name what ARRIVED, or the operator cannot tell a provider bug
+        # from a prompt bug. Asserting on "object" alone would pass on the
+        # constant prefix even if the type were dropped from the message.
+        assert type(json.loads(payload)).__name__ in str(exc.value), payload

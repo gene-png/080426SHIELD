@@ -261,4 +261,7 @@ def test_run_ai_unwrapped_list_response_fails_loudly_not_silently(app_client) ->
     assert r.status_code == 502, r.text
     err = r.json()["error"]
     assert err["reason"] == "ai_call_failed"
-    assert "format" in err["message"].lower() or "object" in err["message"].lower(), err["message"]
+    # Assert on wording only the new `friendly_reason` branch supplies. The
+    # generic fallback embeds the raw exception, which already contains
+    # "object" — so asserting that would pass with the branch deleted.
+    assert "drifted apart" in err["message"], err["message"]

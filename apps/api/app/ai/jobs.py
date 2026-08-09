@@ -6,7 +6,8 @@ per-domain pure functions and is never asked of the model.
 
 The prompt bodies here are the engine-level skeletons. The service phases
 (D2/D3/D4/E) refine the exact suggestion schema each job emits; the parser is
-`parse_json` so any well-formed JSON suggestion object round-trips.
+`parse_json_object` for the four suggestion jobs, so a response whose top
+level is not an object is refused rather than silently discarded (issue #41).
 """
 
 from __future__ import annotations
