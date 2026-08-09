@@ -255,3 +255,106 @@ def test_live_run_ai_may_update_client_answers(app_client, monkeypatch) -> None:
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 1
     assert body["preserved_client_answers"] == 0
+
+
+@pytest.mark.unit
+def test_live_run_ai_does_not_stamp_ai_provenance_on_a_rejected_suggestion(
+    app_client, monkeypatch
+) -> None:
+    """F9 (issue #38): a suggestion `_coerce` rejects applies NOTHING, so the row
+    must not go on to claim the model authored it.
+
+    Asserted on a LIVE run deliberately. `protected_keys` returns an empty set
+    off-fixture (`app/ai/provenance.py:54-56`), so live is the only mode where
+    the row is reachable at all — a fixture-mode test cannot express this and is
+    exactly why it shipped.
+
+    The stake is the client's own answer: re-stamping it `ai` loses the
+    `SOURCE_CLIENT` provenance irrecoverably AND re-opens the fixture door that
+    migration 0035 closed, since `protected_keys` protects only non-AI rows.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    code, _ = _submitted_self_assessment(c, h, svc_id)
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    # CISA tops out at stage 4. Both values are out of range, so neither is applied.
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 9, "target": 9}]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = next(x for x in body["answers"] if x["capability_code"] == code)
+    assert row["maturity_stage"] == 3, "a rejected suggestion changed the value"
+    assert all(ch["capability_code"] != code for ch in body["changed"])
+    # The rejection is reported, not silent — the diff alone cannot show it,
+    # because nothing changed is exactly what a rejection looks like.
+    assert body["suggestions_applied_nothing"] == 1
+
+    from app.models.zt_assessment import ZtAnswer
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        stored = check.execute(
+            select(ZtAnswer).where(ZtAnswer.capability_code == code)
+        ).scalar_one()
+        assert stored.answer_source == "client", (
+            "the client's own answer was re-stamped as AI-authored after the "
+            "model's suggestion was rejected (F9)"
+        )
+
+
+@pytest.mark.unit
+def test_live_run_ai_agreeing_with_the_client_does_not_claim_authorship(
+    app_client, monkeypatch
+) -> None:
+    """F9, the wider half (issue #38): an ACCEPTED value equal to what was
+    already there is the same non-authorship as a rejected one.
+
+    This is the LIKELIER case, not an edge case. `build_zt_ai_request` sends the
+    model `{"current": r.maturity_stage}` for every capability, so echoing the
+    client's own number back for rows it agrees with is the expected response
+    shape. Stamping that `ai` destroys the SOURCE_CLIENT provenance — which
+    `submit_self_assessment` can never restore, since it refuses once the
+    assessment leaves DRAFT — and unprotects the row for every later fixture
+    run, because `protected_keys` protects only non-AI rows.
+
+    The model here also proposes a TARGET, which IS new: the target must land
+    and appear in the diff, while the client's stamp on the maturity stage
+    survives. Provenance tracks who set the stage, which is what
+    `protected_keys` keys on.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    code, _ = _submitted_self_assessment(c, h, svc_id)
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    # current 3 == what the client submitted; target 4 is genuinely new.
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 3, "target": 4}]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = next(x for x in body["answers"] if x["capability_code"] == code)
+    assert row["maturity_stage"] == 3
+    assert row["target_stage"] == 4, "a genuinely new target must still apply"
+    # Nothing arrived empty, so the narrow counter stays 0.
+    assert body["suggestions_applied_nothing"] == 0
+
+    from app.models.zt_assessment import ZtAnswer
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        stored = check.execute(
+            select(ZtAnswer).where(ZtAnswer.capability_code == code)
+        ).scalar_one()
+        assert stored.answer_source == "client", (
+            "the model agreed with the client's stage and was credited with "
+            "authoring it, unprotecting the row for every later fixture run (F9)"
+        )

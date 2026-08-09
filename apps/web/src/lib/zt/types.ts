@@ -80,6 +80,11 @@ export interface ZtRunAiResponse {
   roadmap_summary: string | null;
   /** Client-submitted answers an offline run left alone. 0 for a live run. */
   preserved_client_answers?: number;
+  /**
+   * Suggestions that carried no usable value at all, so nothing applied.
+   * Narrow by design: 0 means "nothing arrived empty", NOT "nothing was dropped".
+   */
+  suggestions_applied_nothing?: number;
 }
 
 export interface PillarScore {

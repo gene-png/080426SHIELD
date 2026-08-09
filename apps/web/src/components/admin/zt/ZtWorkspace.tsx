@@ -483,13 +483,34 @@ export function ZtWorkspace({
                   className="text-sm text-status-warning-fg"
                   aria-live="polite"
                 >
-                  {runResult.preserved_client_answers} client-submitted answer
+                  {runResult.preserved_client_answers} client answer
                   {runResult.preserved_client_answers === 1
                     ? " was"
                     : "s were"}{" "}
-                  left untouched — offline output is never written over the
-                  client&apos;s own responses. Load an API key to run real
-                  analysis over them.
+                  left untouched — submitted or still in progress — offline
+                  output is never written over the client&apos;s own responses.
+                  Load an API key to run real analysis over them.
+                </p>
+              ) : null}
+              {runResult?.suggestions_applied_nothing ? (
+                /* A suggestion the model returned that carried no usable stage
+                   applies nothing — which looks exactly like agreement unless
+                   it is said out loud. */
+                <p
+                  className="text-sm text-status-warning-fg"
+                  aria-live="polite"
+                >
+                  {runResult.suggestions_applied_nothing} suggestion
+                  {runResult.suggestions_applied_nothing === 1 ? "" : "s"}{" "}
+                  contained no usable current or target stage, so{" "}
+                  {runResult.suggestions_applied_nothing === 1
+                    ? "that capability was"
+                    : "those capabilities were"}{" "}
+                  left as{" "}
+                  {runResult.suggestions_applied_nothing === 1
+                    ? "it was"
+                    : "they were"}
+                  . Values rejected for other reasons are not counted here.
                 </p>
               ) : null}
             </div>

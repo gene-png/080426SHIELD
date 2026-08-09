@@ -166,10 +166,26 @@ class ZtRunAiResponse(BaseModel):
     pillar_narratives: dict[str, str] = {}
     executive_summary: str | None = None
     roadmap_summary: str | None = None
-    # How many client-submitted answers an offline run deliberately left alone
+    # How many client-entered answers an offline run deliberately left alone
     # (migration 0035). Always 0 for a live run. Surfaced so the skip is visible
     # rather than silent.
+    #
+    # "Entered", not "submitted": `protected_keys` protects any answered row
+    # whose source is not AI, which includes a self-assessment still in
+    # progress. The copy said "submitted" and was wrong for exactly the
+    # in-progress case the draft-protection fix exists to cover.
     preserved_client_answers: int = 0
+    # Suggestions that carried NO usable value at all — both stages missing or
+    # both outside 1..max_stage — so nothing was applied (issue #38). Counted
+    # rather than dropped in silence.
+    #
+    # Deliberately narrow, and the limit is stated rather than implied: this
+    # does NOT count a suggestion dropped for an unknown capability code, a
+    # locked row, a preserved client answer, or one whose current was rejected
+    # while its target applied. Those are separate reasons and a single number
+    # cannot carry them honestly. The per-reason breakdown is W1 (PR #35); a 0
+    # here means "nothing arrived empty", not "nothing was dropped".
+    suggestions_applied_nothing: int = 0
 
 
 class ZtInterviewQuestion(BaseModel):

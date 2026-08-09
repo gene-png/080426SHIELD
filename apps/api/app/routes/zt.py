@@ -488,21 +488,77 @@ def run_ai(
         )
     data = result.data if isinstance(result.data, dict) else {}
 
+    applied_nothing = 0
     for sugg in data.get("capabilities", []):
         if not isinstance(sugg, dict):
             continue
-        row = rows.get(sugg.get("code"))
-        if row is None or row.locked or sugg.get("code") in protected:
+        code = sugg.get("code")
+        # A non-string code would raise `unhashable type` out of `rows.get` and
+        # surface as a 500 on a well-formed request.
+        row = rows.get(code) if isinstance(code, str) else None
+        if row is None:
+            # A code that matches no capability applies nowhere. It has no
+            # counter yet — the per-reason breakdown is W1 (PR #35) — but it
+            # must not disappear without a trace.
+            _log.warning(
+                "zt_run_ai_unknown_capability_code",
+                assessment_id=str(a.id),
+                capability_code=code,
+            )
+            continue
+        if row.locked or code in protected:
             continue
         cur = _coerce(sugg.get("current"))
+        tgt = _coerce(sugg.get("target"))
+        # Provenance follows the VALUE, not the attempt (issue #38).
+        #
+        # `_coerce` rejects anything outside 1..max_stage, so a suggestion can
+        # apply nothing at all. Stamping it anyway claimed the model authored a
+        # row it never touched — and where that row was the client's own
+        # submission it destroyed the SOURCE_CLIENT stamp irrecoverably
+        # (`submit_self_assessment` refuses once the assessment leaves DRAFT)
+        # and re-opened the fixture door migration 0035 closed, because
+        # `protected_keys` protects only non-AI rows.
+        #
+        # An ACCEPTED value that equals what was already there is the same
+        # non-authorship: the model agreed, it did not answer. That case is the
+        # likelier one, because `build_zt_ai_request` hands the model
+        # `{"current": r.maturity_stage}` for every capability — so echoing the
+        # client's own number back is the expected response, not an edge case.
+        current_changed = cur is not None and cur != row.maturity_stage
+        target_changed = tgt is not None and tgt != row.target_stage
         if cur is not None:
             row.maturity_stage = cur
-        tgt = _coerce(sugg.get("target"))
         if tgt is not None:
             row.target_stage = tgt
+        if not (current_changed or target_changed):
+            if cur is None and tgt is None:
+                applied_nothing += 1
+                _log.warning(
+                    "zt_run_ai_suggestion_applied_nothing",
+                    assessment_id=str(a.id),
+                    capability_code=code,
+                    current=sugg.get("current"),
+                    target=sugg.get("target"),
+                    max_stage=max_stage,
+                )
+            continue
         row.answered_by = user.id
         row.answered_at = utcnow()
-        row.answer_source = SOURCE_AI
+        # `answer_source` has exactly one functional reader: `protected_keys`,
+        # which protects a row when it is answered (`maturity_stage is not
+        # None`) and its source is not AI. The protection therefore exists to
+        # guard the MATURITY STAGE. A run that only proposes a target has not
+        # touched the stage, so flipping the stamp there would strip protection
+        # from a value the model never wrote.
+        #
+        # Not a claim about who else writes this field — `update_answer` and
+        # `patch_self_assessment_answer` both set `maturity_stage` without
+        # touching `answer_source`, and `SOURCE_CONSULTANT` is never assigned
+        # anywhere. Erring toward retaining the old stamp is the safe
+        # direction: it can only make a later fixture run MORE protective.
+        if current_changed:
+            row.answer_source = SOURCE_AI
 
     db.flush()
     after = _snap()
@@ -543,7 +599,7 @@ def run_ai(
         target_type="zt_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"changed_rows": len(diffs)},
+        details={"changed_rows": len(diffs), "suggestions_applied_nothing": applied_nothing},
     )
     db.commit()
 
@@ -558,6 +614,7 @@ def run_ai(
         executive_summary=(data.get("executive_summary") or None),
         roadmap_summary=(data.get("roadmap_summary") or None),
         preserved_client_answers=len(protected),
+        suggestions_applied_nothing=applied_nothing,
     )
 
 
