@@ -292,7 +292,7 @@ def test_live_run_ai_does_not_stamp_ai_provenance_on_a_rejected_suggestion(
     assert all(ch["capability_code"] != code for ch in body["changed"])
     # The rejection is reported, not silent — the diff alone cannot show it,
     # because nothing changed is exactly what a rejection looks like.
-    assert body["suggestions_applied_nothing"] == 1
+    assert body["rejected_stage_values"] == 2
 
     from app.models.zt_assessment import ZtAnswer
 
@@ -344,8 +344,8 @@ def test_live_run_ai_agreeing_with_the_client_does_not_claim_authorship(
     row = next(x for x in body["answers"] if x["capability_code"] == code)
     assert row["maturity_stage"] == 3
     assert row["target_stage"] == 4, "a genuinely new target must still apply"
-    # Nothing arrived empty, so the narrow counter stays 0.
-    assert body["suggestions_applied_nothing"] == 0
+    # Both values were in range, so nothing was rejected.
+    assert body["rejected_stage_values"] == 0
 
     from app.models.zt_assessment import ZtAnswer
 
@@ -358,3 +358,85 @@ def test_live_run_ai_agreeing_with_the_client_does_not_claim_authorship(
             "the model agreed with the client's stage and was credited with "
             "authoring it, unprotecting the row for every later fixture run (F9)"
         )
+
+
+@pytest.mark.unit
+def test_live_run_ai_duplicate_codes_that_round_trip_do_not_claim_authorship(
+    app_client, monkeypatch
+) -> None:
+    """F9, third route in (issue #38): the same code twice, netting to zero.
+
+    Deciding provenance per suggestion compares against a row the loop is still
+    mutating, so 3 -> 4 -> 3 reads as two changes, stamps twice, and lands back
+    on the client's own number. `before`/`after` are taken outside the loop, so
+    the diff shows nothing and no counter fires — the original defect reached
+    through the one input shape a per-suggestion rule cannot see.
+
+    Provenance is therefore settled after the loop from the net effect.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    code, _ = _submitted_self_assessment(c, h, svc_id)
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    provider.register_static(
+        "zt_score",
+        LLMResponse(
+            '{"capabilities": ['
+            '{"code": "' + code + '", "current": 4},'
+            '{"code": "' + code + '", "current": 3}]}'
+        ),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = next(x for x in body["answers"] if x["capability_code"] == code)
+    assert row["maturity_stage"] == 3, "the round trip should net to the client's value"
+    assert all(ch["capability_code"] != code for ch in body["changed"])
+    # Both values were in range, so nothing was rejected.
+    assert body["rejected_stage_values"] == 0
+
+    from app.models.zt_assessment import ZtAnswer
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        stored = check.execute(
+            select(ZtAnswer).where(ZtAnswer.capability_code == code)
+        ).scalar_one()
+        assert stored.answer_source == "client", (
+            "a duplicated capability code round-tripped through the loop and "
+            "stamped the client's own value as AI-authored (F9)"
+        )
+
+
+@pytest.mark.unit
+def test_live_run_ai_counts_a_rejected_value_even_when_the_other_applies(
+    app_client, monkeypatch
+) -> None:
+    """A bad stage must not hide behind a good one in the same suggestion.
+
+    Counting per SUGGESTION made `{"current": 9, "target": 3}` invisible: the
+    target landed, so the suggestion was not "empty", and the out-of-range
+    current was dropped with no diff row, no counter and no banner. Counting per
+    VALUE is what makes it observable.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    # CISA tops out at 4: the current is rejected, the target is fine.
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + code + '", "current": 9, "target": 3}]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = next(x for x in body["answers"] if x["capability_code"] == code)
+    assert row["maturity_stage"] is None, "an out-of-range current must not apply"
+    assert row["target_stage"] == 3
+    assert body["rejected_stage_values"] == 1, "the dropped current must be counted"

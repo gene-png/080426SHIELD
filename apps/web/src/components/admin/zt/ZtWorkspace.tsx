@@ -433,7 +433,7 @@ export function ZtWorkspace({
           <WorkflowStep
             number={1}
             title="Draft the maturity scoring with AI"
-            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. Locked rows and answers the client submitted themselves are never overwritten."
+            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. Locked rows are never overwritten. An offline run also leaves every answer the AI did not write — submitted, still in progress, or consultant-entered; a live run may draft over them and shows you the diff."
             done={runResult !== null}
           >
             <div className="flex flex-col gap-3">
@@ -477,40 +477,39 @@ export function ZtWorkspace({
                 </p>
               ) : null}
               {runResult?.preserved_client_answers ? (
-                /* The skip must be visible, not silent: offline output is never
-                   written over answers the client submitted. */
+                /* The skip must be visible, not silent. The population is every
+                   answer the AI did not write — `protected_keys` keys on
+                   `answer_source !== "ai"`, which also covers in-progress
+                   self-assessments and rows a consultant typed, since
+                   `update_answer` never writes that field. */
                 <p
                   className="text-sm text-status-warning-fg"
                   aria-live="polite"
                 >
-                  {runResult.preserved_client_answers} client answer
-                  {runResult.preserved_client_answers === 1
-                    ? " was"
-                    : "s were"}{" "}
-                  left untouched — submitted or still in progress — offline
-                  output is never written over the client&apos;s own responses.
+                  {runResult.preserved_client_answers} answer
+                  {runResult.preserved_client_answers === 1 ? "" : "s"} not
+                  written by the AI — submitted, still in progress, or
+                  consultant-entered —{" "}
+                  {runResult.preserved_client_answers === 1 ? "was" : "were"}{" "}
+                  left untouched. Offline output is never written over them.
                   Load an API key to run real analysis over them.
                 </p>
               ) : null}
-              {runResult?.suggestions_applied_nothing ? (
-                /* A suggestion the model returned that carried no usable stage
-                   applies nothing — which looks exactly like agreement unless
-                   it is said out loud. */
+              {runResult?.rejected_stage_values ? (
+                /* A stage the model returned outside the framework's range is
+                   discarded, which looks exactly like agreement unless it is
+                   said out loud. Counted per VALUE so one bad stage cannot hide
+                   behind a good one in the same suggestion. */
                 <p
                   className="text-sm text-status-warning-fg"
                   aria-live="polite"
                 >
-                  {runResult.suggestions_applied_nothing} suggestion
-                  {runResult.suggestions_applied_nothing === 1 ? "" : "s"}{" "}
-                  contained no usable current or target stage, so{" "}
-                  {runResult.suggestions_applied_nothing === 1
-                    ? "that capability was"
-                    : "those capabilities were"}{" "}
-                  left as{" "}
-                  {runResult.suggestions_applied_nothing === 1
-                    ? "it was"
-                    : "they were"}
-                  . Values rejected for other reasons are not counted here.
+                  {runResult.rejected_stage_values} stage value
+                  {runResult.rejected_stage_values === 1 ? "" : "s"} came back
+                  outside the 1&ndash;{catalog?.stages.length ?? 4} range and{" "}
+                  {runResult.rejected_stage_values === 1 ? "was" : "were"} not
+                  applied; those capabilities keep the stage they had. Rows
+                  skipped for other reasons are not counted here.
                 </p>
               ) : null}
             </div>

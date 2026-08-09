@@ -488,13 +488,15 @@ def run_ai(
         )
     data = result.data if isinstance(result.data, dict) else {}
 
-    applied_nothing = 0
+    rejected_values = 0
+    suggested: set[str] = set()
     for sugg in data.get("capabilities", []):
         if not isinstance(sugg, dict):
             continue
         code = sugg.get("code")
-        # A non-string code would raise `unhashable type` out of `rows.get` and
-        # surface as a 500 on a well-formed request.
+        # An unhashable code (list/dict) would raise `unhashable type` out of
+        # `rows.get` and surface as a 500 on a well-formed request. Other
+        # non-string types miss harmlessly and fall to the unknown-code log.
         row = rows.get(code) if isinstance(code, str) else None
         if row is None:
             # A code that matches no capability applies nowhere. It has no
@@ -525,43 +527,58 @@ def run_ai(
         # likelier one, because `build_zt_ai_request` hands the model
         # `{"current": r.maturity_stage}` for every capability — so echoing the
         # client's own number back is the expected response, not an edge case.
-        current_changed = cur is not None and cur != row.maturity_stage
-        target_changed = tgt is not None and tgt != row.target_stage
+        #
+        # Provenance is therefore NOT decided here. Deciding it per suggestion
+        # means comparing against a row this loop is still mutating, so two
+        # entries for the same code that round-trip (3 -> 4 -> 3) each look like
+        # a change, both stamp, and the net effect is zero — reproducing the
+        # original defect with no diff row and no counter. It is settled after
+        # the loop, from the before/after snapshot, which is immune to how many
+        # times a code appeared.
+        for field, raw in (("current", sugg.get("current")), ("target", sugg.get("target"))):
+            if raw is not None and _coerce(raw) is None:
+                rejected_values += 1
+                _log.warning(
+                    "zt_run_ai_stage_value_rejected",
+                    assessment_id=str(a.id),
+                    capability_code=code,
+                    field=field,
+                    value=raw,
+                    max_stage=max_stage,
+                )
         if cur is not None:
             row.maturity_stage = cur
         if tgt is not None:
             row.target_stage = tgt
-        if not (current_changed or target_changed):
-            if cur is None and tgt is None:
-                applied_nothing += 1
-                _log.warning(
-                    "zt_run_ai_suggestion_applied_nothing",
-                    assessment_id=str(a.id),
-                    capability_code=code,
-                    current=sugg.get("current"),
-                    target=sugg.get("target"),
-                    max_stage=max_stage,
-                )
-            continue
-        row.answered_by = user.id
-        row.answered_at = utcnow()
-        # `answer_source` has exactly one functional reader: `protected_keys`,
-        # which protects a row when it is answered (`maturity_stage is not
-        # None`) and its source is not AI. The protection therefore exists to
-        # guard the MATURITY STAGE. A run that only proposes a target has not
-        # touched the stage, so flipping the stamp there would strip protection
-        # from a value the model never wrote.
-        #
-        # Not a claim about who else writes this field — `update_answer` and
-        # `patch_self_assessment_answer` both set `maturity_stage` without
-        # touching `answer_source`, and `SOURCE_CONSULTANT` is never assigned
-        # anywhere. Erring toward retaining the old stamp is the safe
-        # direction: it can only make a later fixture run MORE protective.
-        if current_changed:
-            row.answer_source = SOURCE_AI
+        suggested.add(code)
 
     db.flush()
     after = _snap()
+
+    # Provenance follows the VALUE, not the attempt (issue #38). Settled here,
+    # from the net before/after effect, so it cannot be fooled by a rejected
+    # suggestion, by the model echoing back the number it was given, or by the
+    # same code appearing twice and round-tripping.
+    #
+    # `answer_source` has exactly one functional reader: `protected_keys`,
+    # which protects a row when it is answered (`maturity_stage is not None`)
+    # and its source is not AI. That protection exists to guard the MATURITY
+    # STAGE, so only a net change to the stage may claim it. A run that merely
+    # proposes a target has not answered the assessment and must not strip a
+    # stamp — and with it the protection — from a value it never wrote.
+    #
+    # `answered_by` / `answered_at` DO move on a target-only change, because
+    # the model did write something. They are the "who last touched this row"
+    # pair; `answer_source` is the narrower "who authored the stage" claim.
+    for code in suggested:
+        if after[code] == before[code]:
+            continue  # net no-op: agreement, or a duplicate that round-tripped
+        row = rows[code]
+        row.answered_by = user.id
+        row.answered_at = utcnow()
+        if after[code]["maturity_stage"] != before[code]["maturity_stage"]:
+            row.answer_source = SOURCE_AI
+
     diffs = diff_keyed_rows(
         before, after, ["maturity_stage", "target_stage"], locked_keys=locked_keys
     )
@@ -599,7 +616,7 @@ def run_ai(
         target_type="zt_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"changed_rows": len(diffs), "suggestions_applied_nothing": applied_nothing},
+        details={"changed_rows": len(diffs), "rejected_stage_values": rejected_values},
     )
     db.commit()
 
@@ -614,7 +631,7 @@ def run_ai(
         executive_summary=(data.get("executive_summary") or None),
         roadmap_summary=(data.get("roadmap_summary") or None),
         preserved_client_answers=len(protected),
-        suggestions_applied_nothing=applied_nothing,
+        rejected_stage_values=rejected_values,
     )
 
 
