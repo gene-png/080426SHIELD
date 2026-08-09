@@ -106,6 +106,11 @@ _admin_required = Depends(require_role(UserRole.ADMIN))
 
 _log = get_logger(__name__)
 
+# Per-run cap on drop-detail log lines. `capabilities` is unbounded, so a
+# hallucinating or hostile response could otherwise flood the log with model
+# output. The aggregate line still carries the exact event count.
+_MAX_REJECT_LOGS = 20
+
 
 # ---------------------------------------------------------------------------
 # Framework <-> ServiceKind mapping
@@ -488,24 +493,142 @@ def run_ai(
         )
     data = result.data if isinstance(result.data, dict) else {}
 
-    for sugg in data.get("capabilities", []):
+    dropped = 0
+    suggested: set[str] = set()
+    # `capabilities` is whatever the model returned — `parse_json` does no schema
+    # validation — so a scalar or object here would raise TypeError out of the
+    # `for` and surface as an untyped 500 on a well-formed request.
+    raw_caps = data.get("capabilities")
+    if not isinstance(raw_caps, list):
+        if raw_caps is not None:
+            dropped += 1
+            _log.warning(
+                "zt_run_ai_capabilities_not_a_list",
+                assessment_id=str(a.id),
+                received=repr(raw_caps)[:120],
+            )
+        raw_caps = []
+    for sugg in raw_caps:
         if not isinstance(sugg, dict):
+            # Counted, not skipped in silence: a response that is entirely
+            # unreadable would otherwise leave no trace at all.
+            dropped += 1
+            if dropped <= _MAX_REJECT_LOGS:
+                _log.warning(
+                    "zt_run_ai_entry_not_an_object",
+                    assessment_id=str(a.id),
+                    entry=repr(sugg)[:120],
+                )
             continue
-        row = rows.get(sugg.get("code"))
-        if row is None or row.locked or sugg.get("code") in protected:
+        code = sugg.get("code")
+        # An unhashable code (list/dict) would raise `unhashable type` out of
+        # `rows.get` and surface as a 500 on a well-formed request. Other
+        # non-string types miss harmlessly and fall to the unknown-code log.
+        row = rows.get(code) if isinstance(code, str) else None
+        if row is None:
+            # A code that matches no capability applies nowhere, and must not
+            # disappear without a trace.
+            dropped += 1
+            if dropped <= _MAX_REJECT_LOGS:
+                _log.warning(
+                    "zt_run_ai_unknown_capability_code",
+                    assessment_id=str(a.id),
+                    capability_code=repr(code)[:120],
+                )
+            continue
+        if row.locked or code in protected:
             continue
         cur = _coerce(sugg.get("current"))
+        tgt = _coerce(sugg.get("target"))
+        # Provenance follows the VALUE, not the attempt (issue #38).
+        #
+        # `_coerce` rejects anything outside 1..max_stage, so a suggestion can
+        # apply nothing at all. Stamping it anyway claimed the model authored a
+        # row it never touched — and where that row was the client's own
+        # submission it destroyed the SOURCE_CLIENT stamp irrecoverably
+        # (`submit_self_assessment` refuses once the assessment leaves DRAFT)
+        # and re-opened the fixture door migration 0035 closed, because
+        # `protected_keys` protects only non-AI rows.
+        #
+        # An ACCEPTED value that equals what was already there is the same
+        # non-authorship: the model agreed, it did not answer. That case is the
+        # likelier one, because `build_zt_ai_request` hands the model
+        # `{"current": r.maturity_stage}` for every capability — so echoing the
+        # client's own number back is the expected response, not an edge case.
+        #
+        # Provenance is therefore NOT decided here. Deciding it per suggestion
+        # means comparing against a row this loop is still mutating, so two
+        # entries for the same code that round-trip (3 -> 4 -> 3) each look like
+        # a change, both stamp, and the net effect is zero — reproducing the
+        # original defect with no diff row and no counter. It is settled after
+        # the loop, from the before/after snapshot, which is immune to how many
+        # times a code appeared.
+        for field, raw in (("current", sugg.get("current")), ("target", sugg.get("target"))):
+            if raw is not None and _coerce(raw) is None:
+                dropped += 1
+                # Detail lines are capped (see _MAX_REJECT_LOGS); the
+                # aggregate below still carries the exact event count.
+                if dropped <= _MAX_REJECT_LOGS:
+                    _log.warning(
+                        "zt_run_ai_stage_value_rejected",
+                        assessment_id=str(a.id),
+                        capability_code=code,
+                        field=field,
+                        value=repr(raw)[:120],
+                        max_stage=max_stage,
+                    )
         if cur is not None:
             row.maturity_stage = cur
-        tgt = _coerce(sugg.get("target"))
         if tgt is not None:
             row.target_stage = tgt
-        row.answered_by = user.id
-        row.answered_at = utcnow()
-        row.answer_source = SOURCE_AI
+        suggested.add(code)
+
+    if dropped:
+        # Logged, deliberately NOT returned and NOT audited. `dropped_events`
+        # mixes units on purpose — a whole discarded `capabilities` payload, an
+        # unreadable entry, an unusable code and a single out-of-range stage
+        # each count one — so it can say "something was discarded, go read the
+        # detail lines" and nothing more. It is not a suggestion count and must
+        # not be presented as one.
+        #
+        # A user-facing number has to state exactly what it does and does not
+        # cover; every attempt to do that in one integer on this PR produced a
+        # sentence that was true for the case it was written for and false for
+        # an adjacent one. The honest per-reason breakdown is W1 (PR #35).
+        _log.warning(
+            "zt_run_ai_suggestions_dropped",
+            assessment_id=str(a.id),
+            dropped_events=dropped,
+            detail_logs_capped_at=_MAX_REJECT_LOGS,
+        )
 
     db.flush()
     after = _snap()
+
+    # Provenance follows the VALUE, not the attempt (issue #38). Settled here,
+    # from the net before/after effect, so it cannot be fooled by a rejected
+    # suggestion, by the model echoing back the number it was given, or by the
+    # same code appearing twice and round-tripping.
+    #
+    # `answer_source` has exactly one functional reader: `protected_keys`,
+    # which protects a row when it is answered (`maturity_stage is not None`)
+    # and its source is not AI. That protection exists to guard the MATURITY
+    # STAGE, so only a net change to the stage may claim it. A run that merely
+    # proposes a target has not answered the assessment and must not strip a
+    # stamp — and with it the protection — from a value it never wrote.
+    #
+    # `answered_by` / `answered_at` DO move on a target-only change, because
+    # the model did write something. They are the "who last touched this row"
+    # pair; `answer_source` is the narrower "who authored the stage" claim.
+    for code in suggested:
+        if after[code] == before[code]:
+            continue  # net no-op: agreement, or a duplicate that round-tripped
+        row = rows[code]
+        row.answered_by = user.id
+        row.answered_at = utcnow()
+        if after[code]["maturity_stage"] != before[code]["maturity_stage"]:
+            row.answer_source = SOURCE_AI
+
     diffs = diff_keyed_rows(
         before, after, ["maturity_stage", "target_stage"], locked_keys=locked_keys
     )

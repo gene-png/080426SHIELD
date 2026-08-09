@@ -166,9 +166,16 @@ class ZtRunAiResponse(BaseModel):
     pillar_narratives: dict[str, str] = {}
     executive_summary: str | None = None
     roadmap_summary: str | None = None
-    # How many client-submitted answers an offline run deliberately left alone
-    # (migration 0035). Always 0 for a live run. Surfaced so the skip is visible
-    # rather than silent.
+    # How many answers an offline run deliberately left alone (migration 0035).
+    # Always 0 for a live run. Surfaced so the skip is visible rather than
+    # silent.
+    #
+    # NOT only client-submitted ones. `protected_keys` protects every answered
+    # row whose source is not AI, and `answer_source` is written in exactly two
+    # places — `submit_self_assessment` and the AI run. So this also covers a
+    # self-assessment still in progress AND any row a consultant typed through
+    # `update_answer`, which never writes the field. The name is kept for
+    # compatibility; the population is "answers the AI did not write".
     preserved_client_answers: int = 0
 
 

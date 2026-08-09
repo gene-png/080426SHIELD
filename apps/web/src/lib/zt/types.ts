@@ -78,7 +78,10 @@ export interface ZtRunAiResponse {
   pillar_narratives: Record<string, string>;
   executive_summary: string | null;
   roadmap_summary: string | null;
-  /** Client-submitted answers an offline run left alone. 0 for a live run. */
+  /**
+   * Answers the AI did not write that an offline run left alone — submitted,
+   * in progress, or consultant-entered. 0 for a live run.
+   */
   preserved_client_answers?: number;
 }
 

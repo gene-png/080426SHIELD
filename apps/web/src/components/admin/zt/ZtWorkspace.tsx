@@ -433,7 +433,7 @@ export function ZtWorkspace({
           <WorkflowStep
             number={1}
             title="Draft the maturity scoring with AI"
-            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. Locked rows and answers the client submitted themselves are never overwritten."
+            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
             done={runResult !== null}
           >
             <div className="flex flex-col gap-3">
@@ -477,19 +477,24 @@ export function ZtWorkspace({
                 </p>
               ) : null}
               {runResult?.preserved_client_answers ? (
-                /* The skip must be visible, not silent: offline output is never
-                   written over answers the client submitted. */
+                /* The skip must be visible, not silent. The population is every
+                   answer the AI did not write — `protected_keys` keys on
+                   `answer_source !== "ai"`, which also covers in-progress
+                   self-assessments and rows a consultant typed, since
+                   `update_answer` never writes that field. */
                 <p
                   className="text-sm text-status-warning-fg"
                   aria-live="polite"
                 >
-                  {runResult.preserved_client_answers} client-submitted answer
-                  {runResult.preserved_client_answers === 1
-                    ? " was"
-                    : "s were"}{" "}
-                  left untouched — offline output is never written over the
-                  client&apos;s own responses. Load an API key to run real
-                  analysis over them.
+                  {runResult.preserved_client_answers} answer
+                  {runResult.preserved_client_answers === 1 ? "" : "s"} not
+                  written by the AI — submitted, still in progress, or
+                  consultant-entered —{" "}
+                  {runResult.preserved_client_answers === 1 ? "was" : "were"}{" "}
+                  left untouched. Offline output is never written over{" "}
+                  {runResult.preserved_client_answers === 1 ? "it" : "them"}.
+                  Load an API key to run real analysis over{" "}
+                  {runResult.preserved_client_answers === 1 ? "it" : "them"}.
                 </p>
               ) : null}
             </div>
