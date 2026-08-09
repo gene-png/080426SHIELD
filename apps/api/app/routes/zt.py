@@ -585,10 +585,11 @@ def run_ai(
 
     if dropped:
         # Logged, deliberately NOT returned and NOT audited. `dropped_events`
-        # mixes units on purpose — an unreadable entry, an unusable code and a
-        # single out-of-range stage each count one — so it can say "something
-        # was discarded, go read the detail lines" and nothing more. It is not
-        # a suggestion count and must not be presented as one.
+        # mixes units on purpose — a whole discarded `capabilities` payload, an
+        # unreadable entry, an unusable code and a single out-of-range stage
+        # each count one — so it can say "something was discarded, go read the
+        # detail lines" and nothing more. It is not a suggestion count and must
+        # not be presented as one.
         #
         # A user-facing number has to state exactly what it does and does not
         # cover; every attempt to do that in one integer on this PR produced a

@@ -483,21 +483,6 @@ def test_live_run_ai_does_stamp_ai_provenance_when_it_changes_a_stage(
 
 
 @pytest.mark.unit
-def test_a_non_list_capabilities_value_does_not_500(app_client, monkeypatch) -> None:
-    """`parse_json` does not validate shape, so a scalar here used to raise
-    TypeError out of the `for` and surface as an untyped 500 on a well-formed
-    request. It is a bad model response, not a server fault."""
-    c, provider = app_client
-    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
-
-    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
-    provider.register_static("zt_score", LLMResponse('{"capabilities": 0}'))
-    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
-    assert r.status_code == 200, r.text
-
-
-@pytest.mark.unit
 def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monkeypatch) -> None:
     """The shapes `parse_json` will happily hand back that used to crash.
 
