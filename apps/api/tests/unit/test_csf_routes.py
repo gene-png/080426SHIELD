@@ -11,7 +11,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.csf.catalog import SUBCATEGORIES
@@ -375,3 +375,41 @@ def test_catalog_subcategory_count_matches_module() -> None:
     # The route test (test_catalog_endpoint_returns_106_subcategories)
     # asserts on the HTTP shape; this one asserts the module's truth.
     assert len(SUBCATEGORIES) == 106
+
+
+# ---------------------------------------------------------------------------
+# Dimension-score audit trail (issue #37)
+#
+# `patch_dimension_score` wrote no audit row, so a change to a Working Profile
+# score had no actor and no timestamp anywhere. The separate question — whether
+# these rows should freeze when the assessment is approved — is an open decision
+# recorded on #37, deliberately not enforced here.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_patching_a_dimension_score_writes_an_audit_row(app_client) -> None:
+    """Its sibling `patch_answer` audits every edit. This route did not, so a
+    change to the scores had no actor and no timestamp anywhere."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _open_service(c, bearer)
+    _new_assessment(c, bearer, svc_id)
+    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    score_id = rows[0]["id"]
+
+    ok = c.patch(f"/csf/dimension-scores/{score_id}", headers=h, json={"governance": 2})
+    assert ok.status_code == 200, ok.text
+
+    from app.models.audit_entry import AuditEntry
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        entry = check.execute(
+            select(AuditEntry).where(AuditEntry.action == "csf.dimension_score.updated")
+        ).scalar_one()
+        assert str(entry.target_id) == score_id
+        assert entry.actor_user_id is not None

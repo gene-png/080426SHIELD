@@ -1070,6 +1070,36 @@ def patch_dimension_score(
             setattr(row, f, data[f])
         elif f in data and f in ("rationale", "what_we_found", "target_level"):
             setattr(row, f, None)  # explicit clear allowed for nullable text/target
+    # Issue #37. Its sibling `patch_answer` has always audited; this route did
+    # not, so a change to a Working Profile score had no actor and no timestamp
+    # anywhere — including on an assessment that had already been approved.
+    #
+    # These rows are NOT what the Deliverable or the client dashboard read (both
+    # take `CsfAnswer.maturity_tier`; `CsfDeliverableContext` carries no
+    # dimension scores). They feed `export_playbook`, which stores the Working
+    # Profile workbook and its PDF/DOCX as artifacts. Whether that track should
+    # freeze on assessment approval is an OPEN DECISION, not an oversight — see
+    # issue #37.
+    #
+    # Deliberately not enforced here. In the dev/demo database on 2026-08-09,
+    # all 25 APPROVED assessments carry ZERO dimension-score rows, against 636
+    # each on DRAFT and SUBMITTED. Strictly that says they were never seeded at
+    # all, not that seeding followed approval — but either way a freeze on
+    # `seed_profiles` would strand them, because seeding is what creates the
+    # rows and `export_playbook` refuses without them. That is a demo database,
+    # so it bounds the shape of the problem rather than proving field usage.
+    audit(
+        db,
+        action="csf.dimension_score.updated",
+        target_type="csf_dimension_score",
+        target_id=row.id,
+        actor_user_id=user.id,
+        details={
+            "tier": row.tier,
+            "subcategory_code": row.subcategory_code,
+            "fields": sorted(data.keys()),
+        },
+    )
     db.commit()
     return _score_response(row)
 
