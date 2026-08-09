@@ -82,6 +82,15 @@ export interface AttackRunAiResponse {
   tools_available: number;
   changed: CoverageChange[];
   coverage: AttackCoverageRow[];
+  /**
+   * Citations the model made that code could not match to an approved
+   * capability, and ones it resolved from a near miss. These MUST be shown: an
+   * unresolved citation is a technique that will read as uncovered for a reason
+   * that is not the client's security posture, and a count nobody sees is the
+   * same silent failure the resolver was written to end.
+   */
+  citations_normalized: number;
+  citations_rejected: number;
 }
 
 export interface TacticHeatmapEntry {

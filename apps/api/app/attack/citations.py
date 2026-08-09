@@ -27,6 +27,11 @@ Rules, most conservative first:
    ("CrowdStrike" -> "CrowdStrike Falcon Enterprise").
 4. The citation is exactly one capability's vendor.
 
+Vendor ambiguity is checked BEFORE rule 3, not after: a vendor selling two
+listed products must be refused even when only one of them carries the vendor in
+its name. Checking it afterwards let "Cisco" resolve to `Cisco Umbrella` while
+`Duo Security` sat unmatched beside it.
+
 Anything ambiguous or unrecognised is unresolved and reported.
 """
 
@@ -89,6 +94,21 @@ class CitationResolver:
         if exact:
             return None, False
 
+        # AMBIGUITY CHECK FIRST. If this key names a vendor that sells more than
+        # one capability on the list, the citation could mean any of them and we
+        # refuse — even if only ONE of those products happens to embed the vendor
+        # in its NAME.
+        #
+        # This ordering is load-bearing and was wrong until 2026-08-08. With the
+        # substring rule first, "Cisco" against `Cisco Umbrella` + `Duo Security`
+        # matched exactly one NAME and resolved to Umbrella — crediting a DNS
+        # filter with the brute-force prevention that actually comes from Duo,
+        # and counting it as a normalised SUCCESS rather than a refusal. A wrong
+        # attribution is invisible in a report; a refusal is counted.
+        vendor = self._vendors.get(key)
+        if vendor and len(vendor) > 1:
+            return None, False
+
         # 3. A distinct substring of exactly one capability. Guarded on word
         # boundaries so "Okta" cannot resolve via "Diagnostokta".
         subs = {n for n in self._names if re.search(rf"(?:^|\s){re.escape(key)}(?:\s|$)", _fold(n))}
@@ -96,7 +116,6 @@ class CitationResolver:
             return next(iter(subs)), True
 
         # 4. Exactly one capability carries this vendor.
-        vendor = self._vendors.get(key)
         if vendor and len(vendor) == 1:
             return next(iter(vendor)), True
 

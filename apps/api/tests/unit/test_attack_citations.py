@@ -81,11 +81,36 @@ def test_an_ambiguous_partial_is_refused_rather_than_guessed() -> None:
 
 @pytest.mark.unit
 def test_an_ambiguous_vendor_is_refused() -> None:
+    """Two products, one vendor: the citation could mean either, so refuse.
+
+    NOTE the candidate names. This test previously used "Splunk Enterprise
+    Security" + "Splunk Phantom" — BOTH containing "Splunk" — so the substring
+    rule saw two matches and refused, and the vendor rule was never reached. It
+    passed while proving nothing about vendor ambiguity, which is the case it is
+    named for. Only ONE name may embed the vendor, or the test cannot see the
+    rule it is testing.
+    """
     r = _resolver(
         Candidate("Splunk Enterprise Security", "Splunk"),
-        Candidate("Splunk Phantom", "Splunk"),
+        Candidate("Phantom SOAR", "Splunk"),
     )
     assert r.resolve("Splunk") == (None, False)
+
+
+@pytest.mark.unit
+def test_a_vendor_shared_by_two_products_is_refused_even_when_only_one_is_named_for_it() -> None:
+    """The real-world shape: Cisco sells both a DNS filter and an MFA product.
+
+    Resolving "Cisco" to Umbrella would credit a DNS filter with brute-force
+    prevention that actually comes from Duo — a wrong attribution, which is
+    invisible in a report, and which would be counted as a NORMALISED success
+    rather than a refusal.
+    """
+    r = _resolver(
+        Candidate("Cisco Umbrella", "Cisco"),
+        Candidate("Duo Security", "Cisco"),
+    )
+    assert r.resolve("Cisco") == (None, False)
 
 
 @pytest.mark.unit

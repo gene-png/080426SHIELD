@@ -465,6 +465,35 @@ export function AttackWorkspace({
                   {`${runResult.tools_available} tool${runResult.tools_available === 1 ? "" : "s"} available for mapping.`}
                 </p>
               ) : null}
+              {/* An unresolved citation is a technique that will read as
+                  uncovered for a reason that is NOT the client's posture. A
+                  count that lives only in a log is the same silent failure the
+                  resolver exists to end, moved one layer up — so it is stated
+                  here, next to the result it affects. */}
+              {runResult && runResult.citations_rejected > 0 ? (
+                <p
+                  className="text-sm text-status-warning-fg"
+                  role="status"
+                  data-testid="attack-citations-rejected"
+                >
+                  {runResult.citations_rejected} tool citation
+                  {runResult.citations_rejected === 1 ? "" : "s"} could not be
+                  matched to an approved capability and{" "}
+                  {runResult.citations_rejected === 1 ? "was" : "were"}{" "}
+                  discarded — the techniques they referred to may read as
+                  uncovered for that reason rather than because of a real gap.
+                </p>
+              ) : null}
+              {runResult && runResult.citations_normalized > 0 ? (
+                <p className="text-xs text-ink-secondary">
+                  {runResult.citations_normalized} citation
+                  {runResult.citations_normalized === 1
+                    ? " was"
+                    : "s were"}{" "}
+                  resolved from a near miss (for example a vendor name matched
+                  to the one product it can mean).
+                </p>
+              ) : null}
               {runBlocked ? (
                 <p
                   className="text-sm text-status-warning-fg"
