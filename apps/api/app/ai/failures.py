@@ -45,6 +45,12 @@ def friendly_reason(exc: BaseException) -> str:
             "The AI provider closed the connection before responding. Nothing was "
             f"applied; you can retry. ({text})"
         )
+    if re.search(r"AIResponseShapeError", text):
+        return (
+            "The AI returned a response in the wrong format, so nothing was applied. "
+            "Re-run to try again; if it repeats, the prompt and the parser have "
+            f"drifted apart. ({text})"
+        )
     if re.search(r"401|Unauthorized|authentication", text, re.IGNORECASE):
         return f"The AI provider rejected the configured API key. ({text})"
     if re.search(r"429|rate.?limit", text, re.IGNORECASE):

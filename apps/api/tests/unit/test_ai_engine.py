@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from collections.abc import Iterator
@@ -116,3 +117,43 @@ def test_unknown_job_raises(db_session) -> None:
             inputs={},
             requested_by=uuid.uuid4(),
         )
+
+
+# --------------------------------------------------------------------------- #
+# Issue #41: a response whose TOP LEVEL is not an object was flattened to `{}`
+# by every consumer (`csf.py`, `zt.py`, `risk.py`, `attack.py`), so a model that
+# returned its list unwrapped had every suggestion discarded and the run
+# reported zero changes — indistinguishable from "the AI agreed with everything".
+#
+# `parse_json` cannot catch this: `json.loads` is perfectly happy with a list.
+# The four prompts all mandate an object (`{"scores": …}`, `{"capabilities": …}`,
+# `{"entries": …}`, `{"techniques": …}`), so a non-object top level is always a
+# contract violation and never a valid empty answer.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_parse_json_object_accepts_an_object() -> None:
+    from app.ai.engine import parse_json_object
+
+    assert parse_json_object('{"scores": []}') == {"scores": []}
+    assert parse_json_object('```json\n{"a": 1}\n```') == {"a": 1}
+
+
+@pytest.mark.unit
+def test_parse_json_object_refuses_a_non_object_top_level() -> None:
+    """Refuse, loudly. Returning `{}` is what made this invisible.
+
+    A bare list is the classic drift off a wrapped-object contract and the most
+    likely of these in practice — the model returns the array it was asked to
+    put under a key.
+    """
+    from app.ai.engine import AIResponseShapeError, parse_json_object
+
+    for payload in ('[{"code": "X"}]', '"just a string"', "7", "null"):
+        with pytest.raises(AIResponseShapeError) as exc:
+            parse_json_object(payload)
+        # Must name what ARRIVED, or the operator cannot tell a provider bug
+        # from a prompt bug. Asserting on "object" alone would pass on the
+        # constant prefix even if the type were dropped from the message.
+        assert type(json.loads(payload)).__name__ in str(exc.value), payload

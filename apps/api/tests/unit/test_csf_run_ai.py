@@ -239,3 +239,29 @@ def test_run_ai_provider_failure_persists_the_llm_call_row(app_client) -> None:
     assert failed[0].purpose == "csf_score"
     assert failed[0].error_message
     assert failed[0].duration_ms is not None
+
+
+@pytest.mark.unit
+def test_run_ai_unwrapped_list_response_fails_loudly_not_silently(app_client) -> None:
+    """Issue #41. A top-level array used to be flattened to `{}` at csf.py:1499.
+
+    The run then reported zero changes with no warning anywhere — the exact
+    "reads as total agreement" shape this engagement keeps finding. It must be a
+    typed error the workspace can render, not a clean-looking no-op.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    provider.register_static(
+        "csf_score",
+        LLMResponse('[{"tier": "high", "subcategory_code": "GV.OC-01", "governance": 2}]'),
+    )
+
+    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+
+    assert r.status_code == 502, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "ai_call_failed"
+    # Assert on wording only the new `friendly_reason` branch supplies. The
+    # generic fallback embeds the raw exception, which already contains
+    # "object" — so asserting that would pass with the branch deleted.
+    assert "drifted apart" in err["message"], err["message"]

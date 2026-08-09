@@ -265,7 +265,9 @@ def _run_risk_synthesize_batched(
                 client_org_name=client_org_name,
             )
             session.commit()
-            return out.data if isinstance(out.data, dict) else {}
+            # Guaranteed a dict by `parse_json_object`; a wrong shape raises
+            # and is counted as a failed batch rather than a silent empty one.
+            return out.data
         except Exception:
             # Mirror ai_call_boundary: commit so the FAILED row survives the
             # exception, then let it propagate to be counted.

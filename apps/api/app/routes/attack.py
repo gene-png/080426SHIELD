@@ -627,7 +627,9 @@ def _run_mitre_map_batched(
                 name_hints=req.preview.name_hints,
             )
             session.commit()
-            return out.data or {}
+            # Guaranteed a dict by `parse_json_object`; a wrong shape raises
+            # and is counted as a failed batch rather than a silent empty one.
+            return out.data
         except Exception:
             # Mirror ai_call_boundary: commit so the FAILED row survives the
             # exception, then let it propagate to be counted.

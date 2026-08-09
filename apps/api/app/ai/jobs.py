@@ -6,12 +6,13 @@ per-domain pure functions and is never asked of the model.
 
 The prompt bodies here are the engine-level skeletons. The service phases
 (D2/D3/D4/E) refine the exact suggestion schema each job emits; the parser is
-`parse_json` so any well-formed JSON suggestion object round-trips.
+`parse_json_object` for the four suggestion jobs, so a response whose top
+level is not an object is refused rather than silently discarded (issue #41).
 """
 
 from __future__ import annotations
 
-from app.ai.engine import AIJob, parse_json, register_job
+from app.ai.engine import AIJob, parse_json_object, register_job
 
 # --- Tech Debt extraction (moved behind the registry) ----------------------
 # Keeps the historical "extract.capabilities" purpose so existing fixtures and
@@ -65,7 +66,7 @@ calculated by code. Return strictly JSON of the form:
 "what_we_found": "..."}], "executive_summary": "..."}
 """
 
-register_job(AIJob(name="csf_score", prompt=_CSF_SCORE_PROMPT, parser=parse_json))
+register_job(AIJob(name="csf_score", prompt=_CSF_SCORE_PROMPT, parser=parse_json_object))
 
 
 # --- Zero Trust current/target suggestions ---------------------------------
@@ -82,7 +83,7 @@ or the roadmap — code does that. Return strictly JSON:
 "roadmap_summary": "..."}
 """
 
-register_job(AIJob(name="zt_score", prompt=_ZT_SCORE_PROMPT, parser=parse_json))
+register_job(AIJob(name="zt_score", prompt=_ZT_SCORE_PROMPT, parser=parse_json_object))
 
 
 # --- MITRE ATT&CK coverage suggestions -------------------------------------
@@ -100,7 +101,7 @@ Return strictly JSON:
 "rationale": "..."}], "executive_summary": "...", "top_blind_spots": [...]}
 """
 
-register_job(AIJob(name="mitre_map", prompt=_MITRE_MAP_PROMPT, parser=parse_json))
+register_job(AIJob(name="mitre_map", prompt=_MITRE_MAP_PROMPT, parser=parse_json_object))
 
 
 # --- Risk Register synthesis -----------------------------------------------
@@ -123,4 +124,6 @@ strictly JSON:
 "source": "coverage_finding|questionnaire_response", "source_id": "..."}]}
 """
 
-register_job(AIJob(name="risk_synthesize", prompt=_RISK_SYNTHESIZE_PROMPT, parser=parse_json))
+register_job(
+    AIJob(name="risk_synthesize", prompt=_RISK_SYNTHESIZE_PROMPT, parser=parse_json_object)
+)
