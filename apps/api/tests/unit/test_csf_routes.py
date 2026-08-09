@@ -11,7 +11,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.csf.catalog import SUBCATEGORIES
@@ -375,3 +375,146 @@ def test_catalog_subcategory_count_matches_module() -> None:
     # The route test (test_catalog_endpoint_returns_106_subcategories)
     # asserts on the HTTP shape; this one asserts the module's truth.
     assert len(SUBCATEGORIES) == 106
+
+
+# ---------------------------------------------------------------------------
+# Approved-assessment write guards (issue #37)
+#
+# `patch_answer` refuses on APPROVED/RELEASED/DISCARDED and has since D-031.
+# Three sibling routes never loaded the parent assessment at all, so the CSF
+# SCORE table — the numbers the deliverable is rendered from — stayed writable
+# after approval, after finalize, and after release, with no audit row naming
+# who changed them.
+# ---------------------------------------------------------------------------
+
+
+def _approved_with_scores(c: TestClient) -> tuple[str, str, str, str]:
+    """An APPROVED CSF assessment with seeded high-tier scores.
+
+    Returns (bearer, service id, assessment id, one dimension-score id).
+    """
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _open_service(c, bearer)
+    a = _new_assessment(c, bearer, svc_id)
+    seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    assert seeded.status_code == 200, seeded.text
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    score_id = rows[0]["id"]
+    approved = c.post(f"/csf/assessments/{a['id']}/approve", headers=h)
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+    return bearer, svc_id, a["id"], score_id
+
+
+@pytest.mark.unit
+def test_dimension_scores_are_not_writable_once_approved(app_client) -> None:
+    """The scores the client-facing report is built from must freeze on approve.
+
+    `patch_dimension_score` never loaded `CsfAssessment`, so it could not see
+    the status. An admin could rewrite a released assessment's scores and get a
+    200, while `clients.py` serves APPROVED/RELEASED assessments to the client
+    dashboard — so the delivered PDF and the live dashboard would disagree with
+    nothing recording why.
+    """
+    c = app_client
+    bearer, _, _, score_id = _approved_with_scores(c)
+    r = c.patch(
+        f"/csf/dimension-scores/{score_id}",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"governance": 0, "policy": 0},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "assessment_locked"
+
+
+@pytest.mark.unit
+def test_a_locked_dimension_score_row_cannot_be_silently_unlocked(app_client) -> None:
+    """`locked` was in the writable field list with no check on the row's own
+    lock, so the one control protecting a curated row could be switched off by
+    the same request that overwrote it."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _open_service(c, bearer)
+    _new_assessment(c, bearer, svc_id)
+    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    score_id = rows[0]["id"]
+
+    locked = c.patch(f"/csf/dimension-scores/{score_id}", headers=h, json={"locked": True})
+    assert locked.status_code == 200, locked.text
+    assert locked.json()["locked"] is True
+
+    r = c.patch(
+        f"/csf/dimension-scores/{score_id}",
+        headers=h,
+        json={"governance": 2, "locked": False},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "row_locked"
+
+    still = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    row = next(x for x in still if x["id"] == score_id)
+    assert row["locked"] is True, "the lock protected itself"
+    assert row["governance"] == 0, "the value behind the lock was not touched"
+
+
+@pytest.mark.unit
+def test_patching_a_dimension_score_writes_an_audit_row(app_client) -> None:
+    """Its sibling `patch_answer` audits every edit. This route did not, so a
+    change to the scores had no actor and no timestamp anywhere."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _open_service(c, bearer)
+    _new_assessment(c, bearer, svc_id)
+    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    score_id = rows[0]["id"]
+
+    ok = c.patch(f"/csf/dimension-scores/{score_id}", headers=h, json={"governance": 2})
+    assert ok.status_code == 200, ok.text
+
+    from app.models.audit_entry import AuditEntry
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as check:
+        entry = check.execute(
+            select(AuditEntry).where(AuditEntry.action == "csf.dimension_score.updated")
+        ).scalar_one()
+        assert str(entry.target_id) == score_id
+        assert entry.actor_user_id is not None
+
+
+@pytest.mark.unit
+def test_gap_actions_are_not_writable_once_approved(app_client) -> None:
+    """POA&M annotations ride the same deliverable, so they freeze with it."""
+    c = app_client
+    bearer, svc_id, _, _ = _approved_with_scores(c)
+    code = SUBCATEGORIES[0].code
+    r = c.put(
+        f"/csf/services/{svc_id}/gap-actions/{code}",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"owner": "someone"},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "assessment_locked"
+
+
+@pytest.mark.unit
+def test_profiles_cannot_be_seeded_into_an_approved_assessment(app_client) -> None:
+    """Seeding writes new CsfDimensionScore rows, which is a mutation of a
+    frozen assessment however additive it looks."""
+    c = app_client
+    bearer, svc_id, _, _ = _approved_with_scores(c)
+    r = c.post(
+        f"/csf/services/{svc_id}/profiles/seed",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"tiers": ["moderate"]},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "assessment_locked"
