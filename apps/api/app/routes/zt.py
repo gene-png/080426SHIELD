@@ -491,7 +491,10 @@ def run_ai(
             client_org_name=req.preview.client_org_name,
             name_hints=req.preview.name_hints,
         )
-    data = result.data if isinstance(result.data, dict) else {}
+    # `parse_json_object` guarantees a dict or raises (issue #41). The old
+    # `else {}` here discarded a whole unwrapped response and reported zero
+    # changes, which read as the model agreeing with everything.
+    data = result.data
 
     dropped = 0
     suggested: set[str] = set()

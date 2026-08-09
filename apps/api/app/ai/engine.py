@@ -118,6 +118,37 @@ def run_job(
     return JobResult(data=job.parser(response.content), llm_call=call_row)
 
 
+class AIResponseShapeError(ValueError):
+    """The model returned valid JSON of the wrong SHAPE (issue #41).
+
+    Distinct from a JSON syntax error: `json.loads` is perfectly happy with a
+    bare list, so nothing downstream noticed. Every consumer then did
+    ``data if isinstance(data, dict) else {}`` and discarded the whole response,
+    reporting zero changes — indistinguishable from the model agreeing with
+    everything. Raised so it travels the existing failure path instead: through
+    `ai_call_boundary` to a typed 502 for a single-call job, or counted as a
+    failed batch for a batched one. Either way the run is never silently empty.
+    """
+
+
+def parse_json_object(content: str) -> dict:
+    """`parse_json`, but the top level MUST be an object.
+
+    Every prompt that uses this mandates one — `{"scores": …}`,
+    `{"capabilities": …}`, `{"entries": …}`, `{"techniques": …}` — so a
+    non-object top level is always a contract violation and never a valid empty
+    answer. A bare list is the likeliest drift: the model returns the array it
+    was asked to nest under a key.
+    """
+    data = parse_json(content)
+    if not isinstance(data, dict):
+        raise AIResponseShapeError(
+            "The AI response must be a JSON object with the expected top-level "
+            f"key, but the top level was {type(data).__name__}. Nothing was applied."
+        )
+    return data
+
+
 def parse_json(content: str) -> Any:
     """Best-effort JSON parse of an LLM response, tolerating ```json fences."""
     text = content.strip()
