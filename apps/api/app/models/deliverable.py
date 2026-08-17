@@ -53,6 +53,24 @@ class Deliverable(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
 
+    # The PARENT version this deliverable was built from — the assessment or
+    # capability-list version, not `version` above, which is the deliverable's
+    # own independent counter (W4, migration 0041).
+    #
+    # Stamped at finalize, which is where the content freezes against a specific
+    # parent and where the parent is already required to be APPROVED. Release
+    # reads it to flip exactly that row to RELEASED. Without it the only
+    # available rule is "latest APPROVED", which flips the wrong row after
+    # approve v1 -> finalize -> cut v2 -> approve v2 -> release.
+    #
+    # Not a ForeignKey: the four parents live in four different tables, so there
+    # is no single referent. `(service_id, parent_version)` is unique because
+    # every parent table constrains `(service_id, version)`.
+    #
+    # NULL = finalized before 0041. Release leaves those parents alone and logs
+    # it rather than guessing (C0: older rows parse unchanged).
+    parent_version: Mapped[int | None] = mapped_column(Integer)
+
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("deliverables.id", ondelete="SET NULL")
     )

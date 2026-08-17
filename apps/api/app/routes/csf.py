@@ -2257,6 +2257,11 @@ def finalize_csf_deliverable(
         title=f"{svc.title} v{next_version}",
         summary=summary_line,
         version=next_version,
+        # W4: the parent version this report was built from. Stamped here, at the
+        # freeze, because this is where the content is fixed against a specific
+        # parent and where that parent is already required to be APPROVED.
+        # Release reads it to flip exactly this row (migration 0041).
+        parent_version=assessment.version,
         pdf_artifact_id=pdf_artifact.id,
         xlsx_artifact_id=xlsx_artifact.id,
         docx_artifact_id=docx_artifact.id,

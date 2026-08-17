@@ -267,3 +267,19 @@ def test_client_still_cannot_see_a_finalized_but_unreleased_dashboard(app_client
     )
     assert r.status_code == 404
     assert r.json()["error"]["reason"] == "dashboard_not_released"
+
+
+@pytest.mark.unit
+def test_zt_release_flips_the_assessment_to_released(app_client) -> None:
+    """W4 for Zero Trust. Before this, no API route assigned RELEASED at all, so
+    a released ZT service kept an assessment that still read APPROVED and the
+    progress bar showed `release` as the work still to do.
+    """
+    c = app_client
+    bearer = _register(c, "w4-zt-parent@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _seed_release(c, bearer, release=True)
+
+    latest = c.get(f"/zt/services/{svc_id}/assessments/latest", headers=h)
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["status"] == "released"

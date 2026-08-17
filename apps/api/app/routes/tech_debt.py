@@ -1074,7 +1074,18 @@ def finalize_deliverable(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No capability list yet.",
         )
-    if cap_list.status != CapabilityListStatus.APPROVED:
+    # RELEASED counts as approved-or-better, matching csf/zt/attack. This was
+    # `!= APPROVED`, which was harmless only while nothing ever assigned
+    # RELEASED: once W4 flips the parent on release, `!= APPROVED` would make
+    # releasing a tech-debt deliverable permanently block finalizing any further
+    # version for that service. CI could not have caught it — the only spec
+    # covering release-then-finalize (`s17-documents`) runs on CSF, which already
+    # accepted RELEASED. The ATT&CK plan's claim that all four services
+    # "hard-gate finalize on APPROVED/RELEASED" was false here, and only here.
+    if cap_list.status not in (
+        CapabilityListStatus.APPROVED,
+        CapabilityListStatus.RELEASED,
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Capability list must be approved before finalizing the deliverable.",
@@ -1168,6 +1179,11 @@ def finalize_deliverable(
         title=f"{svc.title} v{next_version}",
         summary=summary_line,
         version=next_version,
+        # W4: the parent version this report was built from. Stamped here, at the
+        # freeze, because this is where the content is fixed against a specific
+        # parent and where that parent is already required to be APPROVED.
+        # Release reads it to flip exactly this row (migration 0041).
+        parent_version=cap_list.version,
         pdf_artifact_id=pdf_artifact.id,
         xlsx_artifact_id=xlsx_artifact.id,
         docx_artifact_id=docx_artifact.id,

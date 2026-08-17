@@ -184,3 +184,19 @@ def test_dashboard_cross_tenant_is_404(app_client) -> None:
         headers={"Authorization": f"Bearer {bearer_other}"},
     )
     assert r.status_code == 404
+
+
+@pytest.mark.unit
+def test_attack_release_flips_the_assessment_to_released(app_client) -> None:
+    """W4 for ATT&CK. Same defect as the other three: the only writer of
+    RELEASED in the repo was `seed_demo.py`, so the status was unreachable
+    through the product and every reader keyed on it was effectively dead.
+    """
+    c = app_client
+    bearer = _register(c, "w4-attack-parent@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _seed_finalize_release(c, bearer, release=True)
+
+    latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["status"] == "released"

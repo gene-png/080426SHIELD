@@ -82,6 +82,16 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After
   ANY `apps/web` source edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
+- **`up -d --force-recreate web` silently recreates `api` too**, because `web`
+  `depends_on` it and compose reconciles the dependency — so api picks up
+  whatever the root `.env` says *at that moment*. This bit during W4: api had
+  been deliberately recreated in `fixture` mode, `.env` was later restored to
+  `live`, and a routine web recreate flipped api back to live with an invalid
+  key, 502-ing every Run-AI. "The container keeps the mode I recreated it with"
+  is only true until the next `up` touches it. After changing `.env`, or when
+  you need a specific mode to hold, recreate `api web` together and re-check
+  `docker compose exec -T api sh -lc 'env | grep SHIELD_LLM_MODE'` — don't infer
+  it from what you set earlier.
 - Adding a NEW python module under `app/` needs `docker compose restart api`
   (uvicorn --reload catches edits to existing modules, may miss new files).
 - After editing `apps/web/package.json`, reinstall inside the web container.

@@ -221,3 +221,32 @@ def test_tech_debt_dashboard_unreleased_404(app_client) -> None:
     )
     assert r.status_code == 404
     assert r.json()["error"]["reason"] == "dashboard_not_released"
+
+
+@pytest.mark.unit
+def test_tech_debt_release_flips_the_capability_list_and_finalize_still_works(app_client) -> None:
+    """W4 for Tech Debt, plus the break it would otherwise have shipped.
+
+    Two facts in one test, because they are only dangerous together:
+
+    1. Releasing flips `CapabilityList` to RELEASED, which makes
+       `_editable_list_or_404` live — before W4 nothing outside `seed_demo.py`
+       ever assigned that status, so the lock was dead code.
+    2. Finalizing a SECOND deliverable version still works afterwards. The gate
+       was `!= APPROVED` here while csf/zt/attack accept APPROVED or RELEASED,
+       so W4 would have made a released tech-debt service unable to produce
+       another report — and no test or spec covered it, because the only
+       release-then-finalize coverage (`s17-documents`) runs on CSF.
+    """
+    c, provider = app_client
+    bearer_admin = _register(c, "w4-td@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer_admin}"}
+    svc_id = _seed_release(c, provider, bearer_admin, release=True)
+
+    latest = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=h)
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["status"] == "released"
+
+    again = c.post(f"/tech-debt/services/{svc_id}/deliverables/finalize", headers=h)
+    assert again.status_code == 201, again.text
+    assert again.json()["version"] == 2
