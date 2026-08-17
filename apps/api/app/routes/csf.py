@@ -22,7 +22,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_, select, update
@@ -94,6 +94,7 @@ from app.schemas.csf import (
     CsfDimensionChange,
     CsfDimensionScorePatch,
     CsfDimensionScoreResponse,
+    CsfDroppedSuggestion,
     CsfGapActionResponse,
     CsfGapActionsResponse,
     CsfGapActionUpsert,
@@ -1375,6 +1376,317 @@ def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
 _DIM_FIELDS = ("governance", "policy", "implementation", "monitoring", "improvement")
 _RUN_FIELDS = (*_DIM_FIELDS, "what_we_found")
 
+# One row's worth of suggestions. Charged to an entry too broken to enumerate
+# what it meant to set, so an unreadable entry is never cheaper to lose than a
+# readable one that failed validation (W1, issue #44).
+_ROW_VALUE_SLOTS = len(_RUN_FIELDS)
+
+
+# The two keys that identify the row rather than suggest a value for it.
+_ROW_KEY_FIELDS = ("tier", "subcategory_code")
+
+# How far into a nested value `_hidden_value_count` will look. A real suggestion
+# is flat; two levels covers the plausible drift shapes ({"dimensions": {...}}).
+# The cap exists so a hostile payload cannot drive recursion, not to be precise.
+_MAX_NEST_DEPTH = 4
+
+
+def _bounded(raw: Any) -> str:
+    """Model output for an admin to read, truncated. An unparseable value can be
+    arbitrarily large, and this is echoed back in the response — never stored.
+    """
+    return repr(raw)[:120]
+
+
+def _bounded_key_part(raw: Any) -> str:
+    """One half of a row key, truncated. Same echo-back path as `_bounded`, and
+    a model can put a megabyte in `tier` just as easily as in a score.
+    """
+    return (raw if isinstance(raw, str) else repr(raw))[:80]
+
+
+def _hidden_value_count(raw: Any, _depth: int = 0) -> int:
+    """How many suggested values ONE key could be hiding.
+
+    A scalar is one value. A container is the dangerous case:
+    `{"dimensions": {"governance": 2, ... }}` is five scores wearing one key,
+    and charging it as 1 lets four of them fall out of both sides of the
+    invariant — which is the vacuous hold this whole design exists to prevent.
+
+    Counting the container's own `len` was the first cut and was wrong twice
+    over. It stops at one level, so `{"values": {"dimensions": {…5…}}}` charged
+    1 and hid five — the same vacuous hold the docstring claimed to close, one
+    nesting level down. It counts LEAVES now, to a bounded depth.
+
+    Charging `_ROW_VALUE_SLOTS` instead is deliberately not done: over-charging
+    inflates `received` and turns a normal run red, which is the #31 failure in
+    the other direction. Count what is actually in there.
+    """
+    if _depth >= _MAX_NEST_DEPTH:
+        # Deeper than any real suggestion. Stop rather than recurse a hostile
+        # payload; the undercount is bounded and stated, not silent.
+        return 1
+    if isinstance(raw, dict):
+        return sum(_hidden_value_count(v, _depth + 1) for v in raw.values()) or 1
+    if isinstance(raw, list):
+        return sum(_hidden_value_count(v, _depth + 1) for v in raw) or 1
+    return 1
+
+
+def _as_number(raw: Any) -> float | None:
+    """The suggested dimension score as a number, or None if it is not one.
+
+    `int()` was doing this job and is not a validator. `int(True)` is 1,
+    `int(1.9)` is 1, `int(2.7)` is 2 — each landed on the row, incremented
+    `applied` and produced no record, so the run reported full fidelity over a
+    value that changed on the way in. That is the silent handling this whole
+    feature exists to end, reached through the one line in the path nobody was
+    counting.
+
+    Returns a float so the caller can judge RANGE before wholeness: `3.9` is
+    both out of range and not whole, and "out of range" is the more useful thing
+    to tell a reader. `2.0` and `"2"` are whole numbers written differently and
+    are accepted — refusing a value the model plainly meant would lose real
+    work. `true` is refused: bool is an int subclass, but `True` is not a score.
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            return float(raw)
+        except OverflowError:
+            # A JSON integer too large for a float. `float()` raises here rather
+            # than returning inf, and an uncaught raise this far down is a bare
+            # 500 that rolls back the flushed `llm_calls` row — money spent, no
+            # ledger entry (the N-019 shape). Refuse it like any other non-score.
+            return None
+    if isinstance(raw, str):
+        try:
+            return float(raw.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _verbatim_key(sugg: dict) -> str | None:
+    """The row key as the model wrote it, with a missing half NAMED as missing.
+
+    `f"{tier}|{code}"` over absent keys yields the literal string "None|None" —
+    a row nobody named. Returning None when both are absent fixed only half of
+    that: a model that writes one half still produced "high|None", which reads
+    as a subcategory literally called "None". Each half is now either what the
+    model wrote or an explicit marker, so nothing in the key is invented.
+    """
+    tier, code = sugg.get("tier"), sugg.get("subcategory_code")
+    if tier is None and code is None:
+        return None
+    left = _bounded_key_part(tier) if tier is not None else "(missing tier)"
+    right = _bounded_key_part(code) if code is not None else "(missing subcategory_code)"
+    return f"{left}|{right}"
+
+
+def _apply_suggestions(
+    data: dict, rows: dict[str, CsfDimensionScore]
+) -> tuple[int, int, list[CsfDroppedSuggestion]]:
+    """Apply the csf_score suggestions, accounting for every one of them (W1).
+
+    The unit is ONE SUGGESTED VALUE — one field the model asked to set on one
+    row — because that is the granularity at which a suggestion is actually
+    accepted or rejected: a row can have `governance` applied and `improvement`
+    rejected in the same breath. Counting whole entries would let a row whose
+    every field is invalid report as applied while changing nothing, which is
+    the silent-drop family this exists to close.
+
+    Entry-level failures (`entry_shape`, `unknown_key`, `locked`) happen before
+    any single value can be blamed, so each states how many values it covers.
+
+    `received` is enumerated from what the model ACTUALLY WROTE, not from the
+    fields this code recognizes, and each key is charged for the values it
+    CARRIES rather than one apiece. Counting only recognized keys made a
+    misnamed field vanish from both sides at once; counting each key as 1 let a
+    container hide four more behind it. The opening this exploits is real though
+    not yet observed in a run: the prompt names the dimensions in prose as
+    "Policy and Process" / "Monitoring and Measurement" / "Continuous
+    Improvement" while its JSON example uses `policy` / `monitoring` /
+    `improvement`, so a model following the prose would lose three of five
+    scores and the run would still report "2 of 2 applied, nothing dropped".
+    A count that only sees what it already understands cannot detect drift,
+    which is the one thing it exists to detect.
+
+    Unrecognized field names are therefore itemized BEFORE the row is resolved
+    and before the lock is checked, so the drift signal survives a row that does
+    not exist and a row a human locked. Only the recognized values are charged
+    to `unknown_key` / `locked`, so nothing is counted twice.
+
+    Returns ``(received, applied, dropped)`` satisfying
+    ``received == applied + sum(d.values for d in dropped)``.
+    """
+    received = 0
+    applied = 0
+    dropped: list[CsfDroppedSuggestion] = []
+    # (row key, field) already written by an earlier entry in this response.
+    written: set[tuple[str, str]] = set()
+
+    for sugg in data.get("scores", []):
+        if not isinstance(sugg, dict):
+            received += _ROW_VALUE_SLOTS
+            dropped.append(
+                CsfDroppedSuggestion(
+                    reason="entry_shape",
+                    values=_ROW_VALUE_SLOTS,
+                    # Read by a human beside the model's own output, so it says
+                    # what it is. A bare `str` rendered as "= str" and read as
+                    # the model having sent the word "str".
+                    value=f"(a JSON {type(sugg).__name__}, not an object)",
+                )
+            )
+            continue
+
+        key = _verbatim_key(sugg)
+        fields = [f for f in _RUN_FIELDS if f in sugg]
+        unknown_fields = [k for k in sugg if k not in _RUN_FIELDS and k not in _ROW_KEY_FIELDS]
+        if not fields and not unknown_fields:
+            # A dict that names a row and suggests nothing. Enumerating gives
+            # zero, which would drop the entry out of BOTH sides of the
+            # invariant and satisfy it vacuously — the failure mode this design
+            # is built to make impossible.
+            received += _ROW_VALUE_SLOTS
+            dropped.append(
+                CsfDroppedSuggestion(reason="entry_shape", key=key, values=_ROW_VALUE_SLOTS)
+            )
+            continue
+
+        # Charge every key the model wrote for what it actually CARRIES. A
+        # container is several suggested values wearing one name, and that is
+        # true of a recognized key (`"governance": {"high": 2, "low": 0}`) just
+        # as much as a strange one — the first cut applied the count only to
+        # unrecognized keys, so a container under a recognized name was charged
+        # 1, itemized as 1, and the invariant held over the undercount.
+        field_values = {f: _hidden_value_count(sugg[f]) for f in fields}
+        unknown_values = {k: _hidden_value_count(sugg[k]) for k in unknown_fields}
+        received += sum(field_values.values()) + sum(unknown_values.values())
+
+        # Itemized BEFORE the row is resolved, and before the lock check.
+        # A model that misnames the row key — `code` for `subcategory_code`,
+        # which IS the Sprint 3 T0 drift — makes the row unresolvable, so an
+        # early return here discarded the one piece of evidence saying so. The
+        # reader got 318 identical "no matching row" bullets and was sent
+        # hunting a seeding fault, with the offending key name nowhere. The
+        # NAME is the whole diagnostic; it has to survive an unresolvable row
+        # and a locked one alike.
+        for field in unknown_fields:
+            dropped.append(
+                CsfDroppedSuggestion(
+                    reason="unknown_field",
+                    key=key,
+                    field=_bounded_key_part(field),
+                    values=unknown_values[field],
+                )
+            )
+
+        # What is left to account for once the drift is itemized above.
+        recognized_values = sum(field_values.values())
+        row_key = f"{sugg.get('tier')}|{sugg.get('subcategory_code')}"
+        row = rows.get(row_key)
+        # The row-level record is emitted UNCONDITIONALLY, even at values=0.
+        # Suppressing it when every field was also misnamed hid the row fault
+        # entirely: an entry naming an unseeded tier and wrapping its scores in
+        # one strange key produced nothing but an `unknown_field`, which the
+        # panel routes to the quiet block — so the run reported a field-name
+        # curiosity and never said the tier does not exist. It charges only the
+        # values not already itemized as drift, or the entry is counted twice on
+        # one side of the invariant; zero is an honest count for a record whose
+        # job is to name the row rather than account for a value.
+        if row is None:
+            dropped.append(
+                CsfDroppedSuggestion(reason="unknown_key", key=key, values=recognized_values)
+            )
+            continue
+        if row.locked:
+            # A by-design skip, NOT a defect. Kept distinct from unknown_key so
+            # the two never render as one number (#31 alert fatigue).
+            dropped.append(CsfDroppedSuggestion(reason="locked", key=key, values=recognized_values))
+            continue
+
+        for field in fields:
+            raw = sugg[field]
+            if field == "what_we_found":
+                if isinstance(raw, str):
+                    if (row_key, field) in written:
+                        # An earlier entry in THIS response already set this
+                        # value; it is overwritten here and never reaches the
+                        # client. Counting both as applied would report more
+                        # values landed than the row actually holds.
+                        dropped.append(
+                            CsfDroppedSuggestion(reason="superseded", key=key, field=field)
+                        )
+                        applied -= 1
+                    written.add((row_key, field))
+                    row.what_we_found = raw
+                    applied += 1
+                else:
+                    dropped.append(
+                        CsfDroppedSuggestion(
+                            reason="wrong_type",
+                            key=key,
+                            field=field,
+                            value=_bounded(raw),
+                            values=field_values[field],
+                        )
+                    )
+                continue
+            n = _as_number(raw)
+            if n is None:
+                # Not a score at all: text, a bool, a container.
+                dropped.append(
+                    CsfDroppedSuggestion(
+                        reason="unparseable",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
+                    )
+                )
+                continue
+            if not 0 <= n <= 2:
+                # Range BEFORE wholeness: `3.9` is both, and the range is what a
+                # reader needs to hear. This also runs before any `int()`, which
+                # is what keeps `inf` and `nan` from raising.
+                dropped.append(
+                    CsfDroppedSuggestion(
+                        reason="out_of_range",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
+                    )
+                )
+                continue
+            if n != int(n):
+                # In range but not whole. `1.9` used to be applied as 1 with
+                # nothing recorded — the only place in this path where a
+                # suggested value changed silently, inside the mechanism built
+                # to end exactly that.
+                dropped.append(
+                    CsfDroppedSuggestion(
+                        reason="unparseable",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
+                    )
+                )
+                continue
+            v = int(n)
+            if (row_key, field) in written:
+                dropped.append(CsfDroppedSuggestion(reason="superseded", key=key, field=field))
+                applied -= 1
+            written.add((row_key, field))
+            setattr(row, field, v)
+            applied += 1
+
+    return received, applied, dropped
+
 
 @dataclass(frozen=True)
 class CsfAiRequest:
@@ -1501,22 +1813,7 @@ def run_ai(
     # changes, which read as the model agreeing with everything.
     data = result.data
 
-    for sugg in data.get("scores", []):
-        if not isinstance(sugg, dict):
-            continue
-        row = rows.get(f"{sugg.get('tier')}|{sugg.get('subcategory_code')}")
-        if row is None or row.locked:
-            continue
-        for dim in _DIM_FIELDS:
-            if dim in sugg:
-                try:
-                    v = int(sugg[dim])
-                except (TypeError, ValueError):
-                    continue
-                if 0 <= v <= 2:
-                    setattr(row, dim, v)
-        if isinstance(sugg.get("what_we_found"), str):
-            row.what_we_found = sugg["what_we_found"]
+    received, applied, dropped = _apply_suggestions(data, rows)
 
     db.flush()
     after = _snap()
@@ -1533,6 +1830,10 @@ def run_ai(
             suggestions=len(data.get("scores", [])),
             unlocked_rows=len(rows) - len(locked_keys),
         )
+    dropped_by_reason: dict[str, int] = {}
+    for drop in dropped:
+        dropped_by_reason[drop.reason] = dropped_by_reason.get(drop.reason, 0) + drop.values
+
     changes: list[CsfDimensionChange] = []
     for d in diffs:
         tier, _, code = d.key.partition("|")
@@ -1562,6 +1863,25 @@ def run_ai(
             },
         )
 
+    # Reason codes and value counts only — no key, no model text. `key` and
+    # `value` are model-generated and the model was fed the client's own tiers
+    # and notes, so they get the same handling as all AI output (#44 constraint
+    # 1, Master Spec §12.1). Emitted on every run: a reader should never have to
+    # wonder whether the accounting ran.
+    #
+    # BELOW the D-031 re-read on purpose. Above it, a run that lost the discard
+    # race logged "applied=1908" for a transaction that then rolled back and
+    # wrote no audit row — logs and audit disagreeing about whether anything
+    # happened is precisely the confusion this accounting exists to remove.
+    _log.info(
+        "csf_run_ai_suggestions_accounted",
+        service_id=str(svc.id),
+        assessment_id=str(a.id),
+        received=received,
+        applied=applied,
+        dropped_by_reason=dropped_by_reason,
+    )
+
     a.documents_stale = True  # Work Order C3
     audit(
         db,
@@ -1569,14 +1889,27 @@ def run_ai(
         target_type="csf_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"changed_rows": len(diffs)},
+        details={
+            "changed_rows": len(diffs),
+            "suggestions_received": received,
+            "suggestions_applied": applied,
+            # Values, not records, so the durable row can check its own
+            # arithmetic: received == applied + sum(dropped_by_reason.values()).
+            "dropped_by_reason": dropped_by_reason,
+        },
     )
     db.commit()
     out_rows = [
         _score_response(r)
         for r in sorted(rows.values(), key=lambda r: (r.tier, r.subcategory_code))
     ]
-    return CsfRunAiResponse(changed=changes, rows=out_rows)
+    return CsfRunAiResponse(
+        changed=changes,
+        rows=out_rows,
+        suggestions_received=received,
+        suggestions_applied=applied,
+        dropped=dropped,
+    )
 
 
 @router.post(

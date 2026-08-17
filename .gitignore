@@ -66,6 +66,10 @@ e2e/artifacts/
 .claude/settings.local.json
 .claude/pr-body-*.md
 
+# Playwright MCP session artifacts (page snapshots). Written into the repo root
+# by the browser MCP server; never committed, and they fail the prettier gate.
+.playwright-mcp/
+
 # Local data
 postgres-data/
 redis-data/

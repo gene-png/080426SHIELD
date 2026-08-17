@@ -1345,3 +1345,219 @@ recorded follow-up, not a silent omission.
 `_deliverable_status`), `apps/api/app/schemas/admin.py`;
 `apps/web/src/components/admin/DeliverablesTable.tsx`,
 `apps/web/src/lib/admin/deliverables.ts`; `test_admin_deliverables.py`, `s40`.
+
+## D-045 — A dropped AI suggestion is counted in VALUES, and the invariant is a sum
+
+**Decision (2026-08-09, W1 CSF step, issue #44).** W1 makes every AI suggestion
+either applied or itemized. #44 settled the shape (itemized, not counters) but
+left the unit of `suggestions_received` / `suggestions_applied` open: its own
+reason vocabulary mixes `unparseable` / `out_of_range`, which describe a single
+field, with `entry_shape` / `unknown_key` / `locked`, which describe a whole
+entry. The two integers cannot count both.
+
+**The unit is ONE SUGGESTED VALUE** — one field the model asked to set on one
+row. Counting whole entries was rejected: a row whose every field is invalid
+would report as `applied` while changing nothing, and the invariant would hold
+vacuously over it. That is the silent-drop family W1 exists to close, reached
+through the mechanism meant to prevent it.
+
+**Entry-level drops state their own width.** `entry_shape`, `unknown_key` and
+`locked` fail before any single value can be blamed, so each carries `values`
+rather than defaulting to 1 — a rejected row carrying three suggestions is three
+lost values. An entry too broken to enumerate (a non-object, or an object naming
+no recognized field) is charged the full row width, so an unreadable entry is
+never cheaper to lose than a readable one that failed validation.
+
+**Therefore the invariant changes shape.** #44 wrote it as
+
+```
+received == applied + len(dropped)
+```
+
+which is only true when every record covers exactly one value. It is now
+
+```
+received == applied + sum(d.values for d in dropped)
+```
+
+and is asserted in the API tests. The audit row carries `dropped_by_reason` in
+values so the durable record can be checked against itself after the fact —
+recorded, not enforced; nothing validates the invariant at runtime.
+
+**`what_we_found` is a countable value like the rest**, with `wrong_type` for a
+non-string. It was previously skipped by a bare `isinstance` check with no
+trace — a silent gap sitting directly beside the counter that exists to end
+silent gaps.
+
+**A non-list `scores` is an error, not a pile of drops.** `{"scores": "..."}`
+passes `parse_json_object` (the top level IS an object) and then iterates one
+character at a time, manufacturing an unreadable entry per character. It raises
+via `parse_json_object_with_list("scores")`, by #44's own rule: a condition that
+can never coexist with an applied suggestion belongs in the error path. A
+MISSING `scores` key is untouched — that is #46, filed and deliberately outside
+W1's invariant.
+
+**Constraint 1 holds as written.** The API response carries `key` and `value`
+(transient, admin-only, the same trust boundary as the run result). The audit
+row gets reason codes and value counts only; the log gets counts only. Neither
+`key` nor model text reaches **the audit row or the log**, per Master Spec
+§12.1. (Model text of course still persists where the feature intends it to —
+`what_we_found` and the dimension scores land on `csf_dimension_scores`. The
+constraint is about the audit/log channel, not about the product.)
+
+**Scope of the two integers, stated because the UI sentence reads like a
+completeness claim.** They count values suggested for SCORING ROWS. The
+response's top-level `executive_summary` is outside them — and is not persisted
+by CSF at all, though ZT persists its equivalent (`routes/zt.py`). That
+asymmetry is pre-existing and is NOT resolved here; the copy says "score
+values" so the panel stops implying otherwise, and the gap is filed separately.
+
+### What the adversarial pass changed (same day, before merge)
+
+Two independent reviews of the first cut found the design defeating itself in
+five places. The headline one is the reason `received` is now enumerated from
+what the model WROTE rather than from what the parser recognizes:
+
+- **`unknown_field` (new reason).** `fields = [f for f in _RUN_FIELDS if f in
+sugg]` enumerated only recognized keys, so a misnamed field vanished from BOTH
+  sides of the invariant — received and applied agreed, `dropped` was empty, and
+  the panel asserted full accounting over the loss. The opening is real though
+  **not yet observed in a run**: the csf_score prompt names the dimensions in
+  prose as "Policy and Process" / "Monitoring and Measurement" / "Continuous
+  Improvement" while its JSON example uses `policy` / `monitoring` /
+  `improvement` (`test_csf_ai_contract.py` does pin every parser key into the
+  prompt text, which makes drift less likely, not impossible). **A count that
+  only sees what it already understands cannot detect drift, which is the one
+  thing it exists to detect.**
+- **`superseded` (new reason).** Two entries for the same row+field counted as
+  two applied while the row held one value — `applied` could exceed the values
+  actually on the rows without limit.
+- **`_verbatim_key` was half-fixed.** The guard was `tier is None AND code is
+None`, so one written half still produced `"high|None"`. Each half is now
+  either what the model wrote or an explicit `(missing …)` marker.
+- **`received == 0` is no longer reported as a clean run.** A response under the
+  wrong top-level key parses, yields an empty list, and rendered "AI applied 0 of
+  0" in the same calm type as "12 of 12" — the most reassuring possible way to
+  report a wholly-lost response. It now renders as a typed warning. This is the
+  reader-facing half of #46; **#46 itself stays open** — the parser still accepts
+  a missing `scores` key.
+- **`reason` is a closed `Literal`, and the UI gained a fallback label.** As a
+  bare `str` a new server-side code reached the workspace as an unmapped label
+  and rendered an empty bullet — count right, explanation silently gone. That
+  one was live. The companion change (the UI's by-design test from `!== "locked"`
+  to a named allow-list) is **hardening, not a defect** — with today's
+  vocabulary the two forms behave identically and no test distinguishes them.
+
+Also: the accounting log moved BELOW the D-031 re-read (it claimed `applied=N`
+for transactions that then rolled back), `out_of_range` now reports the raw model
+value rather than the coerced one, and row-key halves are length-bounded like
+`value` already was.
+
+**The log placement is the third sighting of one defect class**, and worth
+tracking as such rather than as a one-off: a success record written independently
+of the success. N-019 — `llm_calls` holds 0 input/output tokens for FAILED calls,
+two of which logged `charged_likely: true`, so the money was spent and the ledger
+says zero. #47 — `llm_calls` records COMPLETED for a response rejected after
+parsing. And this one — `applied=N` logged above the guard that could still
+refuse the run. All three are the ledger asserting something the database does
+not contain. Rule added to CLAUDE.md.
+
+### The second round, and what it says about "done"
+
+The repairs above were themselves audited before merge, and **the headline
+repair had re-opened the hole it closed.** Guarding with `if not fields and not
+unknown_fields` meant one unrecognized key suppressed the full-row-width charge:
+`{"dimensions": {…five scores…}}` was charged ONE value, so four fell out of
+both sides and the invariant held vacuously over them. An unknown key is now
+charged what it actually hides (`_hidden_value_count`).
+
+Also from that round: `unknown_field` no longer renders in the red "could not be
+applied" alert — a model volunteering one extra key per row loses nothing, and
+318 red items on a clean run is #31 rebuilt — it renders as its own visible,
+non-alarming block; the `unknown_key` label was reworded (it ended mid-clause
+and its em dash collided with the list separator, so the key read as the end of
+the sentence); and `skippedValues` gained the assertion it never had.
+
+**The generalisable part — stated narrowly, because the first version of this
+paragraph overclaimed.** ONE of these defects is explained by fixture vocabulary
+(`unknown_field`): every AI fixture in the suite was hand-authored using the
+parser's own field names, and **a fixture whose author already knew the answer
+the parser wanted cannot express drift** — the same blind spot §5's caveat names
+for fixture mode, one level down. That rule is now in CLAUDE.md. The others were
+missed for the ordinary reason: no fixture expressed two writes to one field, or
+a half-written key, or an empty `scores` list. The honest general lesson is the
+weaker one — **a fixture can only express the failure shapes its author already
+imagined** — and the specific one is worth naming because it is structural
+rather than imaginative.
+
+### The third round, run after a machine restart, on the same working tree
+
+Three more reviewers — backend accounting, web/e2e surface, test honesty — over
+the tree the first two rounds produced. **Every gate was green when they ran:**
+prettier, `tsc`, vitest 146/146, eslint. They found six more.
+
+- **The e2e assertion for this feature could never have matched.** `s7` waited
+  on `/AI applied \d+ of \d+ suggested value/` while the panel renders
+  `suggested score value` — the wording THIS decision record introduced, in the
+  scope paragraph above. The vitest was updated with it; the spec was not. All
+  three reviewers found it independently. It would have failed as a 30s
+  "element(s) not found", which is the symptom CLAUDE.md records being
+  misdiagnosed as a slow page and "fixed" with a longer timeout. **The only
+  end-to-end check of W1 was broken by the copy change made to be precise.**
+- **`unknown_key` swallowed the drift diagnostic.** The `row is None` branch
+  returned before the `unknown_field` loop, so a model that misnames the ROW KEY
+  — writing `code` for `subcategory_code`, which is the Sprint 3 T0 bug verbatim
+  — produced N identical "no matching row" bullets and never once said the word
+  `code`. The field name is itemized before the row is resolved now, and before
+  the lock is checked, which also closes the locked-row blind spot the docstring
+  had merely disclosed.
+- **The container count was still one level deep, and never applied to
+  recognized keys.** `{"governance": {"high": 2, "moderate": 1, "low": 0}}` was
+  charged 1; `{"values": {"dimensions": {…5…}}}` was charged 1. Both held the
+  invariant over the undercount — the same vacuous hold round 2 fixed, once one
+  key over and once one level down. It counts leaves to a bounded depth now, for
+  every key the model wrote.
+- **`int()` was doing validation.** `int(1.9)` is 1, in range, so it was written
+  to the row, counted as applied, and itemized nowhere. `true` became 1 the same
+  way. The suite had a test for `3.9` — but only because it is out of RANGE, so
+  the doctrine was pinned exactly where the code upheld it and nowhere it broke
+  it. Range is judged before wholeness now, so `3.9` stays `out_of_range` and
+  `1.9` is refused; `"2"` and `2.0` are still applied, because refusing a value
+  the model plainly meant is the #31 failure in the other direction.
+- **The panel called the loss "Harmless".** On the drift this feature exists to
+  catch, the grey block's number and the headline's shortfall are the SAME
+  values, and the copy led with "Harmless if the model is volunteering extra
+  detail" — inviting a consultant to write off three of five dimensions on every
+  row. It now says the values are part of the shortfall above, not extra.
+- **`dropped[].value` had no consumer.** The repair recorded above — "`out_of_range`
+  now reports the raw model value rather than the coerced one" — was invisible:
+  nothing rendered it, so the panel said a value fell outside 0-2 and never said
+  what it was. A run that wrote `5` looked identical to one that wrote `"high"`.
+
+Both drop lists are also capped at ten items now with an "and N more" line;
+systematic drift is the expected shape here, not the exception, and 318 bullets
+or one 5 KB comma-joined line is the diagnostic collapsing when it matters.
+
+**Two process notes.** Every new test above was verified by reverting the fix
+and watching it fail, because the fixes and tests were written together rather
+than test-first — the reverts are the substitute for having watched it fail the
+first time, and they are not optional when the order is wrong. And the reviewers'
+own claims were checked before being acted on: rounds 1-3 produced ten findings
+here, and the two that were downgraded (a log-above-commit window nobody could
+construct, a row-key collision that turned out unreachable) were downgraded by
+the reviewers themselves.
+
+**What this says about "done", now three rounds in.** Each round found real
+defects in the previous round's repairs, and green CI never caught any of them.
+The rate is not obviously falling. The honest reading is not "the third round
+made it correct" but "an audit gate keeps finding things a green suite cannot",
+and W1's remaining services (ZT, Risk, ATT&CK) should budget for the same rather
+than assume the pattern is now understood.
+
+**Ref:** `apps/api/app/routes/csf.py` (`_apply_suggestions`, `_verbatim_key`,
+`_hidden_value_count`, `_as_number`, `_ROW_VALUE_SLOTS`),
+`apps/api/app/schemas/csf.py` (`CsfDroppedSuggestion`),
+`apps/api/app/ai/engine.py` (`parse_json_object_with_list`);
+`apps/web/src/components/admin/csf/CsfPlaybookPanel.tsx` (`RunAiAccounting`,
+`describeItem`, `summarizeItems`);
+`test_csf_run_ai.py`, `CsfPlaybookPanel.test.tsx`, `s7`.

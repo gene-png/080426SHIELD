@@ -220,9 +220,44 @@ export interface CsfDimensionChange {
   new: unknown;
 }
 
+/**
+ * One suggestion the AI run did not apply, and why (W1, issue #44).
+ *
+ * `locked` is a by-design skip — a human locked that row — and renders apart
+ * from the rest. Folding it into a single "N dropped" number rebuilds the
+ * alert-fatigue problem issue #31 rejected: a warning that fires during normal
+ * work gets trained away, and takes the real ones with it.
+ */
+export interface CsfDroppedSuggestion {
+  /**
+   * Kept in step with the `Literal` on the API's `CsfDroppedSuggestion.reason`.
+   * The union is not exhaustive at runtime — the payload arrives as JSON — so
+   * the panel falls back to showing the raw code rather than an empty bullet.
+   */
+  reason:
+    | "entry_shape"
+    | "unknown_key"
+    | "unknown_field"
+    | "unparseable"
+    | "out_of_range"
+    | "wrong_type"
+    | "superseded"
+    | "locked";
+  /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
+  key: string | null;
+  field: string | null;
+  /** How many suggested values this one record accounts for. */
+  values: number;
+  value: unknown;
+}
+
 export interface CsfRunAiResponse {
   changed: CsfDimensionChange[];
   rows: CsfDimensionScore[];
+  /** Counted in suggested VALUES (one field on one row), not entries. */
+  suggestions_received: number;
+  suggestions_applied: number;
+  dropped: CsfDroppedSuggestion[];
 }
 
 export interface ExportedArtifact {

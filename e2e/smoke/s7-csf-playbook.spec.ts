@@ -14,7 +14,11 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  * seeded assessment is RELEASED, i.e. read-only), then walks the Playbook:
  *   1. Seed Working Profiles -> ~106 subcategories x 3 tiers.
  *   2. Run AI (csf_score) drafts the five dimensions + narrative (fixture-mode
- *      LLM, T6b); the panel echoes "AI updated N fields across M subcategories".
+ *      LLM, T6b); the panel accounts for every suggestion — "AI applied X of Y
+ *      suggested score values" — so a drop can never pass as agreement (W1,
+ *      #44). The wording is "score values", not "values": the counts cover
+ *      values suggested for scoring rows, and `executive_summary` is outside
+ *      them. Keep this comment and the locator below in step with the panel.
  *   3. Dimension editor: the five 0/1/2 scores + the Evidence toggle update
  *      total/level/cap LIVE, and the no-evidence cap clamps the level to <= 2
  *      (and Implementation to <= 1, hence total 9 not 10).
@@ -272,9 +276,15 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   expect(runBody.changed.some((c) => dimFields.has(c.field))).toBeTruthy();
   // ...and so was the narrative (what_we_found).
   expect(runBody.changed.some((c) => c.field === "what_we_found")).toBeTruthy();
-  // The panel echoes the what-changed summary.
+  // The panel accounts for every suggestion the run received (W1, issue #44),
+  // not just the ones that landed. NOTE: fixture mode echoes the payload keys
+  // back verbatim, so a fixture run has structurally zero drops — this can only
+  // prove the accounting line renders, never that a drop is surfaced. The drop
+  // branches are covered in CsfPlaybookPanel.test.tsx and the API unit tests.
   await expect(
-    page.locator("p", { hasText: /AI updated/ }).first(),
+    page
+      .locator("p", { hasText: /AI applied \d+ of \d+ suggested score value/ })
+      .first(),
   ).toBeVisible({ timeout: 30000 });
 
   // --- Dimension editor: live total/level/cap math --------------------------

@@ -12,7 +12,12 @@ level is not an object is refused rather than silently discarded (issue #41).
 
 from __future__ import annotations
 
-from app.ai.engine import AIJob, parse_json_object, register_job
+from app.ai.engine import (
+    AIJob,
+    parse_json_object,
+    parse_json_object_with_list,
+    register_job,
+)
 
 # --- Tech Debt extraction (moved behind the registry) ----------------------
 # Keeps the historical "extract.capabilities" purpose so existing fixtures and
@@ -66,7 +71,16 @@ calculated by code. Return strictly JSON of the form:
 "what_we_found": "..."}], "executive_summary": "..."}
 """
 
-register_job(AIJob(name="csf_score", prompt=_CSF_SCORE_PROMPT, parser=parse_json_object))
+# "scores" must be a list — W1 counts the entries in it, so a non-list would be
+# counted as noise rather than refused. ZT/Risk/ATT&CK get the same treatment as
+# their own W1 steps land; changing them here would be untested scope.
+register_job(
+    AIJob(
+        name="csf_score",
+        prompt=_CSF_SCORE_PROMPT,
+        parser=parse_json_object_with_list("scores"),
+    )
+)
 
 
 # --- Zero Trust current/target suggestions ---------------------------------

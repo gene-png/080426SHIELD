@@ -154,6 +154,38 @@ def parse_json_object(content: str) -> dict:
     return data
 
 
+def parse_json_object_with_list(key: str) -> Callable[[str], dict]:
+    """`parse_json_object`, but if ``key`` is present it MUST hold a list.
+
+    The suggestion loops iterate `data[key]`. A non-list there is not something
+    they can partially apply — a string iterates one character at a time, so the
+    loop would manufacture one unreadable "entry" per character and report a
+    confident total built entirely out of noise. A surfaced number that is wrong
+    is worse than no number (PR #39).
+
+    So it raises, by the rule issue #44 settled for the reason vocabulary: if a
+    condition can never coexist with an applied suggestion, it belongs in the
+    error path, not in a per-item drop list.
+
+    A MISSING key is deliberately left alone here — that is issue #46 (the other
+    half of the Sprint 3 T0 drift), which is filed and explicitly outside W1's
+    invariant. This guard covers only the case W1's own counting would otherwise
+    misreport.
+    """
+
+    def _parse(content: str) -> dict:
+        data = parse_json_object(content)
+        value = data.get(key, [])
+        if not isinstance(value, list):
+            raise AIResponseShapeError(
+                f'The AI response\'s "{key}" must be a JSON array, but it was a '
+                f"{type(value).__name__}. Nothing was applied."
+            )
+        return data
+
+    return _parse
+
+
 def parse_json(content: str) -> Any:
     """Best-effort JSON parse of an LLM response, tolerating ```json fences."""
     text = content.strip()

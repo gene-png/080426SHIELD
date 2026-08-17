@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -298,11 +298,80 @@ class CsfDimensionChange(BaseModel):
     new: Any = None
 
 
+class CsfDroppedSuggestion(BaseModel):
+    """One suggestion the csf_score run did NOT apply, and why (W1, issue #44).
+
+    Itemized rather than counted: a single integer cannot state its own scope,
+    so every wording of it is true for the case it was written for and false for
+    an adjacent one. Each entry here is self-describing instead.
+
+    `reason` is one of:
+
+    | reason         | meaning                                                  |
+    |----------------|----------------------------------------------------------|
+    | `entry_shape`  | the entry could not be read as a suggestion at all       |
+    | `unknown_key`  | named a row that does not exist (key carried verbatim)   |
+    | `unknown_field`| named a FIELD this code does not know — prompt/parser drift|
+    | `unparseable`  | the value was not a whole number (`1.9`, `true`, `"n/a"`)|
+    | `out_of_range` | the value fell outside the allowed 0-2                   |
+    | `wrong_type`   | `what_we_found` came back as something other than a string|
+    | `superseded`   | a later entry in the same response overwrote this value  |
+    | `locked`       | a human locked the row — a by-design skip, not a defect  |
+
+    `locked` renders separately from the rest. Folding a by-design skip into one
+    "N dropped" number rebuilds the alert-fatigue problem issue #31 rejected.
+    """
+
+    # A closed vocabulary on purpose. As a bare `str` a new reason code invented
+    # server-side reaches the workspace as an unmapped label and renders as an
+    # empty bullet — the count right, the explanation silently gone. Here it
+    # fails loudly at serialization instead.
+    reason: Literal[
+        "entry_shape",
+        "unknown_key",
+        "unknown_field",
+        "unparseable",
+        "out_of_range",
+        "wrong_type",
+        "superseded",
+        "locked",
+    ]
+    # "tier|subcategory_code" exactly as the model wrote it, or None when the
+    # model omitted them. Never the literal "None|None" — that fabricates a row
+    # nobody named. AI output: fine here (transient, admin-only, same trust
+    # boundary as the run result), never in an audit row (#44 constraint 1).
+    key: str | None = None
+    # The dimension or narrative field, for drops attributable to one value.
+    field: str | None = None
+    # How many suggested values this record accounts for. Usually 1, but never
+    # assume it: an entry-level drop states the whole row it lost (so a fully
+    # rejected row is not undercounted as a single bad field), and ANY key whose
+    # value is a container is charged the leaves it hides (so five scores under
+    # one name are five, not one). Anything summing these must add `values`,
+    # never count records.
+    values: int = 1
+    # The offending model output, bounded. API response only.
+    value: Any = None
+
+
 class CsfRunAiResponse(BaseModel):
-    """Result of a csf_score Run-AI: what changed + the refreshed rows."""
+    """Result of a csf_score Run-AI: what changed + the refreshed rows.
+
+    The counts are in units of ONE SUGGESTED VALUE — one field the model asked
+    to set on one row — and satisfy, for every response that parsed:
+
+        suggestions_received == suggestions_applied + sum(d.values for d in dropped)
+
+    A sum rather than `len(dropped)` (as issue #44 first wrote it) because
+    entry-level drops account for more than one value each. The invariant turns
+    "did we count everything?" into a test failure rather than an audit finding.
+    """
 
     changed: list[CsfDimensionChange]
     rows: list[CsfDimensionScoreResponse]
+    suggestions_received: int = 0
+    suggestions_applied: int = 0
+    dropped: list[CsfDroppedSuggestion] = []
 
 
 class ExportedArtifact(BaseModel):

@@ -1,7 +1,7 @@
 # Gene — current status
 
 _Owner: Gene (gene-png). Only Gene's sessions write this file._
-_Last updated: 2026-08-09 (cross-service integrity work — PRs #34, #35, #36, #39, #42 merged; #45 in review)_
+_Last updated: 2026-08-17 (W1 CSF step — PR opened; issues #51, #52, #53 filed)_
 
 Keep this short and current: your sessions overwrite it freely (it's yours
 alone, so it never merge-conflicts). Dave's agents read it at `/pickup` to
@@ -9,108 +9,119 @@ know what you have in flight without digging through branches.
 
 ## Branch / in flight
 
-**`fix/ai-response-shape-not-silently-discarded`** — PR #45, closes #41. The
-last thing in flight. Four CI jobs green, E2E was still running at the break;
-merge it when green if it hasn't already landed.
+**`feat/w1-csf-dropped-suggestions`** — W1's CSF step, PR open. Four adversarial
+rounds, all six queue gates green, `s7` green in fixture mode.
 
-Nothing else is on a branch. `main` is at PR #42.
+`main` is at PR #48.
 
 ## What this stretch was
 
-The ATT&CK citation-resolver plan (#34) read as an ATT&CK problem. It isn't.
-Auditing the other four services found **one defect family in ten places**:
+W1 (issue #44) closes one defect family found in ten places across the four
+services:
 
 > An AI-suggested value that fails validation is dropped silently, and the run's
 > output is indistinguishable from a run where the model had nothing to say.
 
-`docs/plans/2026-08-08-cross-service-integrity.md` (PR #35) is the plan of
-record. Read it before picking anything up — the workstreams below are W0–W8
-there.
+`docs/plans/2026-08-08-cross-service-integrity.md` is the plan of record (W0–W8).
+**D-045** carries the decision, the reason vocabulary, and all four audit rounds.
 
-**Merged:** #34 (ATT&CK plan), #35 (cross-service plan), #36
-(`adversarial-reviewer.md` onto main — it is a registered `subagent_type` now,
-stop inlining it), #39 (F9, ZT provenance), #42 (W0, CSF audit row).
-
-## Pick up here
-
-**W1 — `dropped[]` rollout. Issue #44 has the settled design; read it first.**
-Order: **CSF → ZT → Risk → ATT&CK**, and #41 (PR #45) had to land first.
-
-The design is deliberately NOT counters:
+Shipped for CSF: `suggestions_received` / `suggestions_applied` / itemized
+`dropped[{reason, key, field, values, value}]`, with
 
 ```
-suggestions_received / suggestions_applied / dropped: [{reason, key, value}]
-received == applied + len(dropped)
+received == applied + sum(d.values for d in dropped)
 ```
 
-Itemized, because a single integer cannot state its own scope — that is what
-sank the F9 counter layer. The invariant turns "did we count everything" into a
-test failure instead of an audit finding.
+counted in **values** (one field on one row), not entries.
 
-Two owner-set constraints on #44, do not lose them:
+## Pick up here — ZT, then Risk, then ATT&CK
 
-1. **`dropped[].value` is AI output.** `models/llm_call.py` — "Counts only -
-   never payload content (Master Spec §12.1)". API response may carry it; audit
-   rows get reason codes and counts ONLY; logs get a bounded non-content
-   identifier. NOTE: F9 already logs `value=repr(raw)[:120]` in `zt.py` — that
-   was mine, it predates the rule being stated, and W1's ZT step must revisit it.
-2. **ATT&CK is gated on W2 landing** and is not a copy of the pattern — W2's
-   confirmed / needs-review / rejected has to reconcile with applied-vs-dropped
-   explicitly, and the invariant restated either way. Both readings are written
-   out on #44; neither is obviously right.
+Order is unchanged: **CSF → ZT → Risk → ATT&CK**, ATT&CK still gated on W2.
 
-Starting point for CSF: `csf.py:1504` `data.get("scores", [])`. Note it
-conflates two reasons in one `continue` (`if row is None or row.locked`) and
-that `f"{tier}|{code}"` yields the literal `"None|None"` when the keys are
-absent — which is why dropped entries need the verbatim key.
+**Budget each remaining service for the same number of audit rounds CSF took —
+four.** That is not pessimism about the work converging. The defect rate did not
+fall across CSF's rounds, and the reason is worth stating exactly: round 4's
+find was a regression introduced by *round 3's own fix*. The audit catching the
+audit's repair is the process working correctly on itself, not evidence that the
+feature was in bad shape. Plan the rounds in; do not treat a clean round 2 as a
+reason to stop.
+
+**Watch for one specific shape, twice now the same.** A guard added to prevent
+OVERCOUNTING has twice created a path where nothing is recorded at all:
+
+- Round 1 → 2: `if not fields and not unknown_fields` meant one unrecognized key
+  suppressed the full-row-width charge, so four of five scores fell out of both
+  sides of the invariant.
+- Round 3 → 4: `if recognized_values:` suppressed the row-level record entirely
+  when every field was also misnamed, so an entry naming an unseeded tier
+  reported a field-name curiosity and never said the tier does not exist.
+
+Both are the same shape: **a conditional written to stop double-counting whose
+false branch silently drops the record instead of emitting it under a different
+reason.** When the next service's version needs one, make the false branch emit
+something — a zero-value record naming the fault is honest and keeps the reader
+informed; silence is not.
+
+Two owner-set constraints on #44 still stand:
+
+1. **`dropped[].value` is AI output.** API response may carry it; audit rows and
+   logs get reason codes and counts ONLY (Master Spec §12.1). CSF pins this with
+   two tests, both now carrying a model-invented field name. **ZT still owes the
+   revisit of `value=repr(raw)[:120]` in `zt.py`** — pre-existing, mine.
+2. **ATT&CK is gated on W2** and is not a copy of the pattern — W2's confirmed /
+   needs-review / rejected must reconcile with applied-vs-dropped explicitly.
+   Both readings are on #44; neither is obviously right.
 
 ## Open decisions — NOT to be reconstructed from memory
 
-**W0's freeze (#37).** PR #42 shipped only the audit row. The three freeze
-guards were pulled: 25 of 25 approved CSF assessments have zero dimension
-scores, so approval precedes seeding universally, and freezing `seed_profiles`
-would leave the Playbook permanently unexportable. Two questions on #37 need
-answering before it can move — what CSF approval governs, and whether the
-Playbook track gets its own approval (same shape as Risk Register in §W6).
-The recommendation is due back **after Part 3 reopen is scoped for CSF**, and it
-is a choice between freezing outright and gating on export staleness. A freeze
-with no recovery path is what made it a trap.
+**The W0 freeze.** `context/gene.md` previously pointed at "#37" for this and
+**that cross-reference is wrong** — #37 is CLOSED and is the SEV-1
+writable-RELEASED issue. The freeze decision needs re-locating before it can
+move. The substance is unchanged: PR #42 shipped only the audit row, the three
+freeze guards were pulled because 25 of 25 approved CSF assessments have zero
+dimension scores (approval precedes seeding universally), and freezing
+`seed_profiles` would leave the Playbook permanently unexportable. Still due
+**after Part 3 reopen is scoped for CSF**.
 
-**W3 gates W2.** W3 = record the exact tool-name set at the moment a Tech Debt
+**W3 gates W2.** W3 = snapshot the exact tool-name set when a Tech Debt
 capability list is approved, and have ATT&CK's "matched exactly, so confirmed"
-read that snapshot. Without it, narrow-confirmed is unsound: an APPROVED list is
-still editable (the guard refuses only RELEASED, which no route assigns), and
-the security-classification confirm queue changes allow-list membership by
-design. Do not ship W2's narrow definition against a mutable list.
+read that snapshot. An APPROVED list is still editable, so narrow-confirmed is
+unsound without it.
 
-## Open issues filed this stretch
+## Open issues
 
 | # | What |
 |---|---|
-| #37 | W0 freeze — open decision, see above |
-| #40 | ZT workspace has no lock control; API supports it, ATT&CK/CSF ship it |
-| #41 | top-level non-dict response discarded → PR #45 |
-| #43 | `CsfDimensionScore` locked-row semantics + empty/null PATCH bodies |
-| #44 | W1 design + the two constraints |
-| #46 | wrong-top-level-KEY still silent — the Sprint 3 T0 drift, other half. Explicitly outside W1's invariant |
+| #51 | W1 CSF accounting **never observed against a real provider** — fixture mode structurally cannot produce a drop |
+| #52 | `charged_likely` true for auth-rejected calls that cannot have been billed (N-019 inverted, all four services) |
+| #53 | `llm_calls` flushed not committed — any exception in `csf.py:1816-1902` discards a paid-for egress row; the D-031 409 reaches it **by design** |
+| #46 | wrong-top-level-KEY still silent; explicitly outside W1's invariant |
 | #47 | `llm_calls` records COMPLETED for a rejected response |
+| #43 | `CsfDimensionScore` locked-row semantics + empty/null PATCH bodies |
+| #40 | ZT workspace has no lock control |
 
-Plus pre-existing #30–#33 (ATT&CK audit record and deferrals) and **PR #29,
-green and still must not merge** until the resolver rewrite lands.
+Plus pre-existing #30–#33, and **PR #29, green and still must not merge** until
+the resolver rewrite (W2) lands plus a clean adversarial audit.
 
-## What actually worked, and what didn't
+## Environment note
 
-Eleven adversarial passes across F9 and W0; **nine found real defects, six of
-them in my own fixes**, including two recommendations that would have made
-things worse (un-locking seeded demo data; stranding 25 assessments). Green CI
-never caught any of it.
+The root `.env` was found in **live mode with a rejected Anthropic key** (401 on
+every call), which was 502-ing `s7` and failing two `test_risk_dashboard` cases
+that assume the fixture default. Flipped to fixture for the gate run and
+**restored to `SHIELD_LLM_MODE=live` afterwards, as found.** The key still needs
+replacing before any live work — and #51 is the live run W1 actually owes.
 
-The F9 counter layer failed three consecutive passes while the provenance fix
-beside it passed four — it got deleted rather than shipped. **A surfaced number
-that is wrong is worse than no number, because once a banner exists its absence
-reads as "nothing was dropped."** That lesson is why W1 is itemized.
+## What actually worked
 
-Practical: three concurrent `pytest -m unit` runs starve the api container to a
-crawl. Run one, detached INSIDE the container (`nohup` + a `/tmp/*.exit` file),
-and poll it — a host-side wrapper gets orphaned and its exit code is the
-pipeline's, not pytest's. When in doubt, let CI be the authority and say so.
+Four adversarial rounds on CSF; every round found real defects in the previous
+round's repairs, and **every queue gate was green each time**. The single most
+useful catch was the `s7` regex: a copy change made *for precision* broke the one
+end-to-end check of the feature, and it would have failed as "element(s) not
+found" — the symptom `CLAUDE.md` already records being misdiagnosed as a slow
+page and "fixed" with a longer timeout. Three independent reviewers found it; no
+gate did.
+
+Second most useful: the round-3 fixes were written alongside their tests rather
+than test-first, so each new test was verified by **reverting the fix and
+watching it fail**. Four reverts, four confirmed failures. When the order is
+wrong, that is the substitute, and it is not optional.
