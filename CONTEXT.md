@@ -1,7 +1,7 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-08 (post-validation remediation; PRs #22–#24 merged,
-`main` at `55a470a`, CI green). NOTE: this
+_Last updated: 2026-08-17 (cross-service integrity; PRs #34, #35, #36, #39, #42,
+#45, #48, #54 merged, `main` at `61d90e3`, CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
 `main` carrying the working tree through `v3.7.0`; the PR numbers cited in the
 sprint history below belong to the upstream repo, not to this one. This file
@@ -11,6 +11,115 @@ facts and environment gotchas live in `CLAUDE.md`; personal in-flight status
 lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
+
+### 2026-08-09 → 2026-08-17 — cross-service integrity (PRs #34, #35, #36, #39, #42, #45, #54)
+
+An audit that began as an ATT&CK citation-resolver problem (#34) turned out not
+to be an ATT&CK problem. Checking the other four services found **one defect
+family in ten places**:
+
+> An AI-suggested value that fails validation is dropped silently, and the run's
+> output is indistinguishable from a run where the model had nothing to say.
+
+`docs/plans/2026-08-08-cross-service-integrity.md` (PR #35) is the **plan of
+record**, with workstreams W0–W8. Read it before picking any of this up.
+
+| PR | What landed |
+| --- | --- |
+| #34 | The ATT&CK citation-resolver plan, copied into the repo |
+| #35 | The cross-service integrity plan (W0–W8) — plan of record |
+| #36 | `adversarial-reviewer` onto `main` as a registered `subagent_type` (stop inlining it) |
+| #39 | **F9** — ZT stamps AI provenance only when the AI actually changed the value |
+| #42 | **W0** — CSF dimension-score edits are audited; the freeze stayed an open decision |
+| #45 | **#41** — a top-level non-dict AI response is refused, not silently discarded |
+| #54 | **W1, CSF step** — every AI suggestion is applied or itemized (**D-045**) |
+
+**W1 is one service of four.** CSF is done; ZT, Risk and ATT&CK are outstanding,
+in that order, and ATT&CK is gated on W2 landing. Its shape, settled on #44:
+
+```
+suggestions_received / suggestions_applied / dropped: [{reason, key, field, values, value}]
+received == applied + sum(d.values for d in dropped)
+```
+
+Counted in **values** (one field on one row), not entries — **D-045** carries the
+reasoning and all four audit rounds. Itemized rather than counted because a
+single integer cannot state its own scope, which is what sank the F9 counter
+layer (see below).
+
+**W0's freeze is an open decision and must not be reconstructed from memory.**
+PR #42 shipped the audit row only; the three freeze guards were pulled because
+25 of 25 approved CSF assessments have zero dimension scores — approval precedes
+seeding universally, so freezing `seed_profiles` would leave the Playbook
+permanently unexportable. The recommendation is due **after Part 3 reopen is
+scoped for CSF**. Note the issue number cited for it in earlier handoffs (#37)
+is **wrong**: #37 is closed and is the SEV-1 writable-RELEASED issue.
+
+**W3 gates W2.** W3 = snapshot the exact tool-name set when a Tech Debt
+capability list is approved, and have ATT&CK's "matched exactly, so confirmed"
+read that snapshot. An APPROVED list is still editable, so narrow-confirmed is
+unsound without it. **PR #29 is green and must not merge** until the W2 resolver
+rewrite lands plus a clean adversarial audit.
+
+#### Open follow-ups from this stretch
+
+| # | What |
+| --- | --- |
+| #40 | ZT workspace has no lock control; the API supports it and ATT&CK/CSF ship it |
+| #43 | `CsfDimensionScore` locked-row semantics + empty/null PATCH bodies |
+| #46 | A response under the wrong top-level KEY is still silent — explicitly outside W1's invariant |
+| #47 | `llm_calls` records COMPLETED for a response rejected after parsing |
+| #51 | **W1's CSF accounting has never been observed against a real provider** — fixture mode structurally cannot produce a drop, so a green e2e proves nothing about it |
+| #52 | `charged_likely` is true for auth-rejected calls that cannot have been billed (N-019 inverted, all four services) |
+| #53 | `llm_calls` is flushed, not committed — any exception in the endpoint's post-call region discards a paid-for egress row, and the D-031 409 guard reaches it **by design** |
+
+## Lessons learned (cross-service integrity)
+
+- **A surfaced number that is wrong is worse than no number.** The F9 counter
+  layer failed three consecutive adversarial passes while the provenance fix
+  beside it passed four, so it was **deleted rather than shipped**. Once a banner
+  exists, its absence reads to a consultant as "nothing was dropped" — which is
+  exactly the claim a silent drop makes. That is why W1 is itemized: a single
+  integer cannot state its own scope, so every wording of it is true for the case
+  it was written for and false for an adjacent one.
+
+- **Green CI never caught any of it.** Across F9 and W0, eleven adversarial
+  passes ran and nine found real defects — six of those in the reviewer's own
+  fixes — and two recommendations would have made things actively worse
+  (un-locking seeded demo data; stranding 25 assessments). W1's CSF step then
+  took four more rounds, every one of which found something. Not one of those
+  defects was caught by a test suite that was green throughout.
+
+- **Budget four audit rounds per service, and do not read a flat defect rate as
+  failure to converge.** W1's CSF step took four. Round 2 found that round 1's
+  headline repair had re-opened the hole it closed; round 4 found the same of
+  round 3. That is the process working correctly on itself, not the work failing
+  to settle. ZT, Risk and ATT&CK should be planned with the same budget.
+
+- **A guard against DOUBLE-counting becomes a guard against counting at all.**
+  Twice in W1, a conditional added so a value would not be charged on both sides
+  of the invariant created a path that recorded nothing. Both times it was caught
+  by the round *after* the round that introduced it. The shape to watch: a
+  conditional whose false branch drops the record instead of emitting it under a
+  different reason. Now a rule in `CLAUDE.md`.
+
+- **Changing copy for precision breaks whatever asserts it.** W1's panel line
+  went from "suggested values" to "suggested **score** values" to be accurate
+  about scope. The vitest was updated; `s7`'s regex was not — so the only
+  end-to-end check of the feature could never have matched, and it would have
+  failed as `element(s) not found`, the symptom this project has already
+  misdiagnosed as a slow page and "fixed" with a longer timeout. Three
+  independent reviewers found it; no gate did.
+
+- **`int()` is not a validator.** `int(True)` is 1 and `int(1.9)` is 1, so a
+  coercion sitting in a validation path wrote a value the model never sent,
+  reported it as applied, and recorded nothing — silent handling inside the
+  mechanism built to end silent handling.
+
+- **A caveat that lives only in a code comment or a conversation will be lost.**
+  Every limitation found in this stretch was filed as an issue, including the
+  ones the author could have simply remembered: #51 exists because a green `s7`
+  will otherwise read as proof of a feature fixture mode cannot exercise at all.
 
 ### 2026-08-08 — validation remediation (PRs #22, #23, #24)
 
