@@ -60,7 +60,16 @@ export function DeliverableCard({
   const [error, setError] = React.useState<string | null>(null);
   const [confirmingRelease, setConfirmingRelease] = React.useState(false);
 
-  const canFinalize = capabilityListStatus === "approved";
+  // RELEASED counts as approved-or-better, matching the other three cards
+  // (CsfDeliverableCard, ZtDeliverableCard, AttackDeliverableCard all test both).
+  // This was `=== "approved"`, which was harmless only while nothing assigned
+  // RELEASED. Once W4 flips the list on release, the `=== "approved"` form
+  // greys out the ONLY finalize control in the product, permanently, with no
+  // reason shown — the hint at the bottom of this card is gated on there being
+  // no deliverable, and after a release there always is one. The API accepted
+  // the call the whole time, so it reads as a broken button rather than a rule.
+  const canFinalize =
+    capabilityListStatus === "approved" || capabilityListStatus === "released";
   const released = Boolean(deliverable?.released_at);
 
   async function onFinalize(): Promise<void> {

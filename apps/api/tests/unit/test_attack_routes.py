@@ -382,7 +382,21 @@ def test_heatmap_404_when_no_assessment(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_latest_assessment_admin_only_until_released(app_client) -> None:
+def test_latest_assessment_is_admin_only_regardless_of_status(app_client) -> None:
+    """W4 / D-046. Renamed from `..._admin_only_until_released`, which described
+    a rule the route no longer has — and never actually had, since nothing
+    outside `seed_demo.py` ever assigned RELEASED, so "until released" was a
+    condition that could not arrive.
+
+    The raw payload carries per-technique `notes`, `evidence_artifact_id`,
+    `locked` and `answered_by`. ATT&CK has no client-input step, so all of that
+    is consultant-authored internal text. Clients get `clients.py`'s curated
+    dashboard, which omits exactly those four fields.
+
+    The RELEASED half is asserted here because W4 made that status reachable for
+    the first time, and nothing else in the suite covers a client hitting this
+    route after a release.
+    """
     c = app_client
     admin = _register(c, "admin@example.com")
     client = _register(c, "client@example.com")
@@ -390,12 +404,33 @@ def test_latest_assessment_admin_only_until_released(app_client) -> None:
     bearer_admin = admin["tokens"]["access_token"]
     bearer_client = client["tokens"]["access_token"]
     svc_id = _open_service(c, bearer_admin)
-    _new_assessment(c, bearer_admin, svc_id)
+    a = _new_assessment(c, bearer_admin, svc_id)
     r = c.get(
         f"/attack/services/{svc_id}/assessments/latest",
         headers={"Authorization": f"Bearer {bearer_client}"},
     )
     assert r.status_code == 403
+
+    # ...and still 403 once the assessment really is RELEASED.
+    from app.models.attack_assessment import AttackAssessment, AttackAssessmentStatus
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as fix:
+        row = fix.get(AttackAssessment, _uuid.UUID(a["id"]))
+        row.status = AttackAssessmentStatus.RELEASED
+        fix.commit()
+
+    r2 = c.get(
+        f"/attack/services/{svc_id}/assessments/latest",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r2.status_code == 403, r2.text
+    # The admin still reads it, so this is a role boundary, not a broken route.
+    r3 = c.get(
+        f"/attack/services/{svc_id}/assessments/latest",
+        headers={"Authorization": f"Bearer {bearer_admin}"},
+    )
+    assert r3.status_code == 200, r3.text
 
 
 @pytest.mark.unit

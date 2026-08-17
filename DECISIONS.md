@@ -895,7 +895,11 @@ Key choices:
    client. Gating on the deliverable makes the dashboard visible exactly when the
    downloadable report is, with no change to the shared release flow. (Flipping
    the assessment to RELEASED on release remains a possible future consistency
-   cleanup — out of scope here.)
+   cleanup — out of scope here.) **SUPERSEDED by D-046 (2026-08-17):** release
+   now does flip the parent, and the deferral above turned out to be load-bearing
+   — it left the stage bar reporting a released service as still needing release,
+   and Tech Debt's mutability lock as dead code. The gate chosen in this decision
+   (the released deliverable, not parent status) is unchanged and still correct.
 2. **"AI suggests, code computes" holds.** Every number is recomputed by the pure
    `app/attack/analytics.py::compute()` engine over frozen coverage rows — no LLM.
    Blind-spot cards are derived from real `gap` techniques + their stored
@@ -1561,3 +1565,113 @@ than assume the pattern is now understood.
 `apps/web/src/components/admin/csf/CsfPlaybookPanel.tsx` (`RunAiAccounting`,
 `describeItem`, `summarizeItems`);
 `test_csf_run_ai.py`, `CsfPlaybookPanel.test.tsx`, `s7`.
+
+## D-046 — Release assigns RELEASED to the parent, and the deliverable records which parent
+
+**Decision (2026-08-17, W4, plan §8).** `release_deliverable()` now flips the
+parent assessment / capability list to `RELEASED`, in the same transaction that
+sets `deliverables.released_at`. Migration **0041** adds
+`deliverables.parent_version` so it flips the right row.
+
+**This supersedes D-035 §1**, which recorded the gap and deferred it verbatim:
+_"Flipping the assessment to RELEASED on release remains a possible future
+consistency cleanup — out of scope here."_ D-035's own choice — gating the client
+dashboard on the released deliverable rather than on parent status — stands
+unchanged and is still the right gate. What changes is that the parent status is
+no longer a dead field.
+
+**Why it stopped being cosmetic.** No API route assigned `RELEASED` anywhere; the
+only writer in the repo was `seed_demo.py` (8 assignments). The plan's first
+draft asserted the status was "never assigned anywhere", which was false and came
+from a grep scoped to `apps/api/app` presented as a repo-wide claim. The correct
+claim is narrower and worse: **the seeded world and the API-created world
+disagreed**, and every reader keyed on parent status worked only for seeded data.
+
+Consequences that were live in the product:
+
+- **The progress bar lied.** `services/stages.py` derives `released` from the
+  PARENT status, not from `deliverables.released_at`, so a service released
+  through the product showed `release` as its current incomplete stage while the
+  client already had the report. `test_service_stages.py:277` constructs
+  `status="released"` by hand and passed throughout — a test asserting a state no
+  route could reach.
+- **Tech Debt's mutability lock was dead code.** `_editable_list_or_404` refuses
+  edits to a RELEASED list; nothing could reach that status, so an approved list
+  stayed fully editable under a released PDF.
+- **Three approve routes returned an idempotent 200 after release** instead of
+  the 409 they were written to return.
+
+**Option B was rejected, reversing the plan's first draft.** Deleting the status
+comparisons and keying everything on `Deliverable.released_at` would un-lock the
+seeded Atlas capability list (`seed_demo.py:489`), which has no released
+deliverable behind it — so a demo client dashboard becomes editable under a
+released report, and four e2e specs flip from asserting read-only to silently
+exercising the path they were written to prove was blocked. It also does not fix
+the stage bar. Option A is the larger change and the one that does not quietly
+remove protection that currently fires.
+
+**The parent version is RECORDED, not inferred.** `deliverables` has no foreign
+key to any parent — the four parents live in four tables — and deliverable
+versions and parent versions are independent counters. So "which row" had three
+candidate answers that diverge in a real sequence:
+
+```
+approve v1 -> finalize -> cut v2 -> approve v2 -> release
+```
+
+"Latest APPROVED" flips v2, which the released report was never built from. This
+repo has hit the version trap twice already, so `parent_version` is stamped at
+**finalize** — the moment content freezes against a specific parent, and the gate
+that already requires APPROVED — and release flips exactly that row.
+
+**Two loud refusals, neither fatal.** The release is the source of truth (the
+D-030 rule: a side effect must not roll back what the user already asked for).
+`parent_version` NULL means finalized before 0041 and the parent is left alone
+with a `release_parent_unknown` warning — guessing is what the column exists to
+prevent. A parent that is not APPROVED is left alone with
+`release_parent_not_approved`, because flipping a DRAFT would skip APPROVED
+entirely and lock work in progress.
+
+**One guard was aligned, and it is the reason this could have shipped broken.**
+`tech_debt.py`'s finalize gate was `!= APPROVED` where csf/zt/attack accept
+`in (APPROVED, RELEASED)`. Once the parent flips, that would have made releasing
+a tech-debt deliverable **permanently block finalizing any further version** for
+that service. **CI could not have caught it**: the only release-then-finalize
+coverage (`s17-documents`) runs on CSF, which already accepted RELEASED. The
+ATT&CK plan's claim that all four services "hard-gate finalize on
+APPROVED/RELEASED" was false, and false only here. Now covered by a test that
+fails with `assert 409 == 201` without the fix.
+
+**The lock this creates is PARTIAL, and saying otherwise would overclaim.** For
+Tech Debt, RELEASED genuinely locks the list (`_editable_list_or_404`). For CSF it
+does not: `patch_dimension_score`, `profiles/seed` and `upsert_gap_action` have no
+parent-status guard at all, so the Working-Profile and POA&M track stays mutable
+on a RELEASED assessment — and `patch_dimension_score` feeds `export_playbook`,
+which writes artifacts. That is the deferred W0 freeze, recorded and open, not
+something W4 closes. "Release locks the parent" is true of the status field, not
+of every write path behind it.
+
+**Explicitly out of scope: `ServiceStatus.RELEASED`.** A fifth never-assigned
+RELEASED, read by two frontend surfaces (`HomeDashboard`, `AssessmentsView`) and
+still reachable only via the seed. W4 covers the parent assessment/list record,
+which is what the stage bar and the mutability locks read. Flipping
+`Service.status` is a separate question and stays open.
+
+**What the audit found, and it is the same lesson twice in one change.** The
+adversarial pass caught that `DeliverableCard.tsx` gated its finalize button on
+`capabilityListStatus === "approved"` — the identical one-off this decision
+congratulates itself on catching in `tech_debt.py`, in the half a human actually
+touches, unfixed. Releasing would have greyed out the only finalize control in
+the product, permanently and with no reason shown (the explanatory hint renders
+only when no deliverable exists). The API test asserting `201` on the same call
+passed straight over it: **it proves the route, not the product.** The component
+had no vitest at all, which is why. It has one now, and reverting the one-word
+fix fails exactly that case. Fixing one layer of a two-layer guard is not fixing
+the guard.
+
+**Ref:** `apps/api/app/deliverable_release.py` (`_PARENTS`, `_release_parent`),
+`apps/api/app/models/deliverable.py` (`parent_version`),
+`apps/api/alembic/versions/0041_deliverable_parent_version.py`,
+the four finalize routes (`csf.py`, `zt.py`, `attack.py`, `tech_debt.py`);
+`test_deliverable_release.py`, `test_tech_debt_dashboard.py`,
+`test_zt_dashboard.py`, `test_attack_dashboard.py`.

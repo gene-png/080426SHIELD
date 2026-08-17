@@ -343,10 +343,30 @@ def latest_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No assessment yet.",
         )
-    if user.role != UserRole.ADMIN and a.status != AttackAssessmentStatus.RELEASED:
+    # Admin-only, unconditionally — matching `tech_debt.py`'s capability-list
+    # read (W4 / D-046). This was `role != ADMIN and status != RELEASED`, which
+    # returned 403 to every client for the route's entire life because nothing
+    # outside the seed script ever assigned RELEASED. W4 makes that status
+    # reachable, so the old form would have started serving clients the raw
+    # assessment: per-technique `notes`, `evidence_artifact_id`, `locked` and
+    # `answered_by`. ATT&CK has NO client-input step, so every one of those notes
+    # is consultant-authored internal text and `answered_by` is an internal user
+    # id. The client's purpose-built view (`clients.py`'s attack dashboard) emits
+    # only status, rationale and the tool lists — it omits exactly those four
+    # fields, deliberately.
+    #
+    # NOTE the asymmetry with `csf.py` and `zt.py`, which keep the
+    # release-conditional form. It is DELIBERATE, not an oversight to tidy up:
+    # both are client-input services and expose the identical serialization
+    # through an ungated `GET .../self-assessment` ("the client owns these
+    # answers"), so tightening those two would close a door with an open one
+    # beside it and imply a protection that does not exist. Whether a client
+    # should see a released ATT&CK assessment at all, and through which view, is
+    # a policy question filed separately rather than decided by a status fix.
+    if user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="ATT&CK assessments are admin-only until released.",
+            detail="ATT&CK assessments are admin-only.",
         )
     return _serialize_assessment(db, a)
 
@@ -1201,6 +1221,11 @@ def finalize_attack_deliverable(
         title=f"{svc.title} v{next_version}",
         summary=summary_line,
         version=next_version,
+        # W4: the parent version this report was built from. Stamped here, at the
+        # freeze, because this is where the content is fixed against a specific
+        # parent and where that parent is already required to be APPROVED.
+        # Release reads it to flip exactly this row (migration 0041).
+        parent_version=assessment.version,
         pdf_artifact_id=pdf_artifact.id,
         xlsx_artifact_id=xlsx_artifact.id,
         docx_artifact_id=docx_artifact.id,

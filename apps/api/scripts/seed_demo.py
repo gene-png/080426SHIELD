@@ -301,6 +301,12 @@ def _release(
         title=f"{service.title} v1",
         summary=summary,
         version=1,
+        # The seed assigns the parent RELEASED directly, so `_release_parent`
+        # never runs on these rows — but leaving the link NULL would mean the one
+        # database a developer actually inspects has it unset everywhere, and any
+        # future consumer of the deliverable -> parent link resolves nothing on
+        # demo data. The seed builds v1 of everything (W4, migration 0041).
+        parent_version=1,
         pdf_artifact_id=pdf_art.id,
         xlsx_artifact_id=xlsx_art.id,
         finalized_at=now,

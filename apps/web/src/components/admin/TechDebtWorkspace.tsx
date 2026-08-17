@@ -351,7 +351,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
         <div className="flex flex-wrap items-center gap-2">
           {list ? (
             <StatusPill
-              tone={list.status === "approved" ? "success" : "info"}
+              tone={
+                // `released` is approved-or-better, so it reads "success" like
+                // its siblings do. Previously unreachable, so a released list
+                // showed a blue "info" pill saying "Released".
+                list.status === "approved" || list.status === "released"
+                  ? "success"
+                  : "info"
+              }
               withDot
             >
               {list.status === "draft"

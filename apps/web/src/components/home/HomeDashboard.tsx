@@ -80,6 +80,13 @@ function phaseFor(
 ): { label: string; tone: StatusTone } {
   if (hasReleasedDeliverable) return { label: "Report ready", tone: "success" };
   switch (e.assessment_status) {
+    // Reachable since W4 (D-046): release flips the parent assessment to
+    // RELEASED, where before only the seed script ever assigned it. Without
+    // this case a released engagement fell through to the default and read
+    // "Getting started" — masked today by the `hasReleasedDeliverable`
+    // short-circuit above, but that mask is one data disagreement thick.
+    case "released":
+      return { label: "Report ready", tone: "success" };
     case "approved":
       return { label: "Finalizing your report", tone: "info" };
     case "submitted":
