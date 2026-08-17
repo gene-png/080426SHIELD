@@ -109,6 +109,59 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   guards a spec, seed the precondition instead of branching on it. The tell that
   it was worth doing: on the day of the fix the seeded assessment happened to be
   DRAFT, so the spec "passed" while proving nothing about the guard.
+- **Author AI fixtures from what the PROMPT says, never from what the parser
+  expects.** A fixture hand-written against the parser's own field names agrees
+  with the parser *by construction*, so it can never express the one failure that
+  matters — the model and the code disagreeing about a key. Whoever writes it
+  already knows the answer the parser wants, and encodes that answer. Copy the
+  keys out of the prompt text (and out of a real logged response where one
+  exists); if the prompt says "Policy and Process" while the example JSON says
+  `policy`, that discrepancy is the test case, not a detail to normalise away.
+  This shape has now surfaced independently several times — the Sprint 3 T0
+  drift, `mitre_map`'s fixture, the Risk Register enum mismatch, and W1's
+  `unknown_field` (2026-08-09), where a green suite certified "3 of 3 applied,
+  nothing dropped" over three lost scores per row. Corollary: **fixture mode
+  cannot exercise drop/rejection counters at all** — the fixtures echo the
+  payload keys back verbatim, so those paths need synthetic unit tests and a
+  live run, and a green e2e proves nothing about them.
+- **A guard against DOUBLE-counting will quietly become a guard against counting
+  at all.** Twice in W1's CSF step, a conditional added so a value would not be
+  charged on both sides of an invariant turned into a path that recorded
+  nothing: `if not fields and not unknown_fields` let one unrecognized key
+  suppress a full-row charge, and `if recognized_values:` suppressed the
+  row-level record whenever every field was also misnamed — so an entry naming
+  an unseeded tier reported a field-name curiosity and never said the tier does
+  not exist. Both were caught by the round AFTER the round that added them.
+  The shape to watch: a conditional whose false branch drops the record instead
+  of emitting it under a different reason. Make the false branch emit something —
+  a zero-value record that names the fault is honest, and silence never is.
+- **Changing user-facing copy for precision silently breaks whatever asserts it.**
+  W1's panel line went from "suggested values" to "suggested **score** values"
+  because the counts cover scoring rows only. The vitest was updated in the same
+  pass; `s7`'s regex was not, so the one end-to-end check of the feature could
+  never match — and it fails as `element(s) not found`, the symptom this file
+  already records being misdiagnosed as a slow page and "fixed" with a longer
+  timeout. When you reword any string a spec matches, `grep` the exact old
+  phrase across `e2e/` and `apps/web` before moving on; three independent
+  reviewers each found this one, and no gate did.
+- **`int()` is not a validator, and neither is `float()`.** `int(True)` is 1,
+  `int(1.9)` is 1, `int("2")` is 2. A coercion in a validation path writes a
+  value the model never sent, reports it as applied, and records nothing —
+  silent handling inside the code meant to end silent handling. Parse to a
+  number, judge RANGE first (so `3.9` reports as out-of-range rather than as a
+  fraction), then reject anything not whole. Accept `"2"` and `2.0`: refusing a
+  value the model plainly meant is the same defect facing the other way.
+- **A success record must be written where the success is, not before it.**
+  Anything that says "this happened" — an audit row, a ledger row, a log line
+  claiming `applied=N` — belongs after the commit or guard that makes it true,
+  or it will eventually assert something the database does not contain. Three
+  instances so far: N-019 (`llm_calls` records 0 tokens for failed calls that
+  logged `charged_likely: true` — the money was spent and the ledger says zero),
+  #47 (`llm_calls` records COMPLETED for a response that was rejected after
+  parsing), and W1's accounting log, which claimed `applied=N` above the D-031
+  re-read and so reported values applied for transactions that then rolled back.
+  When adding any "it worked" record, find the line that makes it true and put
+  the record below it.
 - **Assert what must APPEAR before what must not.** `toHaveCount(0)` on a page
   still mid-fetch passes vacuously — the element it forbids simply has not
   rendered yet. Wait on the positive state first (`toBeVisible`), then assert the
