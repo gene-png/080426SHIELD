@@ -24,7 +24,12 @@ import type { ZtDroppedSuggestion, ZtRunAiResponse } from "@/lib/zt/types";
 const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
   // About the capability lookup, not the catalogue: a code can be well-formed
   // and still match no seeded row.
-  unknown_key: "no matching capability (is that code spelled right?)",
+  // CSF's wording asks "is that tier seeded?", which is actionable there
+  // because seeding is a button on that page. ZT has no such action: the prompt
+  // hands the model the exact code list, so an unknown key means the model
+  // invented a code and the consultant can neither fix its spelling nor seed
+  // anything. Say what they CAN do instead.
+  unknown_key: "no matching capability — it got no draft, so set it by hand",
   unknown_field: "field name this run does not recognize",
   entry_shape: "could not be read as a suggestion",
   // Not "was not a number": `1.9` and `true` are refused here too, and both are
@@ -62,14 +67,21 @@ const ITEM_CAP = 10;
 function describeReason(reason: string): string {
   // The payload is JSON, so `reason` is only a union by convention. An unmapped
   // code must show as itself — an empty bullet reads as "no reason given".
-  return (
-    DROP_REASON_LABEL[reason as ZtDroppedSuggestion["reason"]] ??
-    `unrecognized reason "${reason}"`
-  );
+  // `Object.hasOwn`, not `??`: a bare index resolves "toString"/"constructor"
+  // to an inherited FUNCTION, which `??` does not catch and React renders as
+  // nothing — reproducing the empty bullet this guard exists to prevent, for
+  // exactly the input class its own threat model names ("the server invented a
+  // reason code").
+  return Object.hasOwn(DROP_REASON_LABEL, reason)
+    ? DROP_REASON_LABEL[reason as ZtDroppedSuggestion["reason"]]
+    : `unrecognized reason "${reason}"`;
 }
 
 function describeItem(d: ZtDroppedSuggestion): string {
-  const where = d.key ?? "(no capability named)";
+  // `||`, not `??`: a model writing `"code": ""` yields an empty string, which
+  // `??` passes through and renders as a blank where the code should be. The
+  // rule is never to fabricate a row nobody named AND never to leave one blank.
+  const where = d.key || "(no capability named)";
   const what = d.field ? `${where} ${d.field}` : where;
   // The model's own output, bounded server-side and carried for exactly one
   // purpose: a human reading it. Without it "out of range" is unactionable —
@@ -114,10 +126,32 @@ export function ZtRunAiAccounting({
   );
   const sumValues = (xs: ZtDroppedSuggestion[]): number =>
     xs.reduce((n, d) => n + d.values, 0);
-  const failedValues = sumValues(failed);
   const unrecognizedValues = sumValues(unrecognized);
   const changedRows = new Set(result.changed.map((c) => c.capability_code))
     .size;
+  // A run that received suggestions and applied NONE is a failure, whichever
+  // bucket the drops fall into. Without this, total field-name drift renders
+  // entirely through `NOT_UNDERSTOOD` — every lost stage in calm secondary grey
+  // with no alert — while this component's own docstring argues that "applied 0
+  // of 0" deserves one. "Applied 0 of 74" is strictly worse and was getting
+  // LESS severity: the quiet-block carve-out is justified only for runs where
+  // everything asked for WAS applied, and nothing enforced that.
+  const nothingApplied =
+    result.suggestions_applied === 0 && result.suggestions_received > 0;
+  // Applied values are not changed fields: a value equal to what was already
+  // recorded applies and changes nothing. Common on a re-run, where "changing 0
+  // fields" alone reads as a failed run when it means the opposite.
+  const agreedThroughout =
+    result.suggestions_applied > 0 && result.changed.length === 0;
+  // EXACTLY ONE assertive region, always. The failure block is the alert when
+  // there is one; otherwise, if the run applied nothing, the headline becomes
+  // the alert. Without the second half, total field-name drift routes every
+  // record to the quiet `NOT_UNDERSTOOD` block and the whole run — every stage
+  // lost — renders in calm secondary grey with no alert at all, while "applied
+  // 0 of 0" gets one. Two alerts announce over each other, so it is one or the
+  // other, never both.
+  const headlineIsAlert = nothingApplied && failed.length === 0;
+  const failedValues = sumValues(failed);
 
   // A run that received NOTHING is not a clean run. The response parsed, so no
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
@@ -138,9 +172,22 @@ export function ZtRunAiAccounting({
     // (implicitly assertive), and nesting it in a polite region makes some
     // screen readers announce it twice.
     <div className="space-y-2">
-      <p className="text-sm text-ink-secondary" aria-live="polite">
+      <p
+        className={
+          nothingApplied
+            ? "text-sm text-status-danger-fg"
+            : "text-sm text-ink-secondary"
+        }
+        {...(headlineIsAlert
+          ? { role: "alert" as const }
+          : { "aria-live": "polite" as const })}
+      >
         AI applied{" "}
-        <span className="font-semibold text-ink-primary">
+        <span
+          className={
+            nothingApplied ? "font-semibold" : "font-semibold text-ink-primary"
+          }
+        >
           {result.suggestions_applied}
         </span>{" "}
         of {result.suggestions_received} suggested value
@@ -148,6 +195,12 @@ export function ZtRunAiAccounting({
         {result.changed.length} field
         {result.changed.length === 1 ? "" : "s"} across {changedRows} capabilit
         {changedRows === 1 ? "y" : "ies"}.
+        {nothingApplied
+          ? " Nothing was applied — every suggestion this run received was rejected or unrecognized. The detail below says which."
+          : null}
+        {agreedThroughout
+          ? " Every suggestion matched what was already recorded, so nothing needed changing."
+          : null}
       </p>
 
       {failed.length > 0 ? (
@@ -204,17 +257,24 @@ export function ZtRunAiAccounting({
         <ul className="list-disc pl-5 text-sm text-ink-tertiary">
           {groupByReason(skipped).map(([reason, items]) => (
             <li key={reason}>
-              {/* A skip record can legitimately account for zero values: the
-                  row fault is named while its values are counted under the
-                  names they arrived with. "0 suggested values skipped" reads as
-                  a contradiction, the same way it did in the failure block
-                  above. Reachable in live mode only — field-name drift on a
-                  locked or protected row — which is why fixture-backed tests
-                  could never surface it. */}
+              {/* Zero-guard: a skip record legitimately accounts for zero values
+                  when the row's fields were ALSO misnamed, because those values
+                  are counted under the names they arrived with. "0 suggested
+                  values skipped" reads as a contradiction, as it did in the
+                  failure block above.
+                  Reachable with `locked` (field drift on a locked row).
+                  NOT reachable with `protected`, which is fixture-only, and the
+                  fixture emits only recognised keys — so nothing can zero out a
+                  protected record. */}
+              {/* The row count is carried too: values alone cannot be
+                  reconciled with the preserved-answers paragraph below, which
+                  counts ROWS. ZT charges two values per row, so the two numbers
+                  differ by a factor a reader cannot infer from the page. */}
               {sumValues(items) > 0
-                ? `${sumValues(items)} suggested value${sumValues(items) === 1 ? "" : "s"} skipped`
-                : "Suggestions skipped"}{" "}
-              — {describeReason(reason)}
+                ? `${sumValues(items)} suggested value${sumValues(items) === 1 ? "" : "s"}`
+                : "Suggestions"}{" "}
+              across {items.length} capabilit{items.length === 1 ? "y" : "ies"}{" "}
+              skipped — {describeReason(reason)}
             </li>
           ))}
         </ul>

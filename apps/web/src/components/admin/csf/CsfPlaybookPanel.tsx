@@ -171,7 +171,14 @@ function groupByReason(
  * SCOPE, stated because the sentence reads like a completeness claim: this
  * accounts for values suggested for SCORING ROWS. The response's top-level
  * `executive_summary` is not counted here and is not persisted by CSF at all
- * (ZT does persist its equivalent) — hence "score values", not "values".
+ * — hence "score values", not "values".
+ *
+ * This used to add "(ZT does persist its equivalent)". That was FALSE, and it
+ * was load-bearing: D-045 carried the same claim and it became the stated basis
+ * for scoping ZT's narratives into W1's accounting, a decision that cost a round
+ * to unwind. ZT persists nothing of the kind; its narrative fields were removed
+ * outright (#64, D-047). Corrected here because this panel is the reference
+ * implementation everyone ports from, so a false claim here re-derives itself.
  */
 function RunAiAccounting({
   result,

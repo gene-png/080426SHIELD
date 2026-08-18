@@ -39,7 +39,7 @@ record**, with workstreams W0–W8. Read it before picking any of this up.
 | #63 | `CLAUDE.md`: a test that supplies its own expected value cannot fail |
 | #66 | **W1, ZT step** — in flight, not merged (**D-047**) |
 
-**W1 is two services of four.** CSF (#54) and ZT (#66, in flight) are done; Risk
+**W1 is two services of four.** CSF (#54) is on `main`; ZT (#66) is in flight and NOT yet merged; Risk
 and ATT&CK are outstanding, in that order, and ATT&CK is gated on W2 landing.
 ZT removed its narrative fields rather than counting them — nothing consumed
 them (#64) — and corrected D-045's false claim that ZT persisted them.
@@ -83,7 +83,7 @@ rewrite lands plus a clean adversarial audit.
 | #43 | `CsfDimensionScore` locked-row semantics + empty/null PATCH bodies |
 | #46 | A response under the wrong top-level KEY is still silent — explicitly outside W1's invariant |
 | #47 | `llm_calls` records COMPLETED for a response rejected after parsing |
-| #51 | **W1's accounting has never been observed against a real provider — CSF _and_ ZT.** Fixture mode cannot produce a validation drop, so a green e2e proves nothing about it. Exact ZT scope: seven of the eight reason codes need a live run to be seen at all; `protected` is fixture-ONLY (`protected_keys` returns an empty set off-fixture) so it can never be observed live; `locked` needs an API-seeded lock because the ZT workspace has no lock control (#40) |
+| #51 | **W1's accounting has never been observed against a real provider — CSF _and_ ZT.** Fixture mode cannot produce a validation drop, so a green e2e proves nothing about it. Exact ZT scope: **six** of the eight reason codes need a live run to be seen at all (`entry_shape`, `unknown_key`, `unknown_field`, `unparseable`, `out_of_range`, `superseded`); `protected` is fixture-ONLY (`protected_keys` returns an empty set off-fixture) so it can never be observed live; `locked` needs no live run either — `build_zt_ai_request` sends every row including locked ones, so a fixture run over an API-locked row surfaces it end to end today |
 | #59 | Release repair path is a permanent no-op for multi-version parents — `parent_version` never becomes known. **In scope for W5**, and the 0041 backfill has never run against data on any engine (the seed bypasses `release_deliverable` entirely) |
 | #60 | `csf_score` requests an `executive_summary` on every call and nothing reads it — paid for, discarded, counted nowhere |
 | #61 | W4's parent-flip log sits above its commit; the repair branch flips parent state with no audit row |

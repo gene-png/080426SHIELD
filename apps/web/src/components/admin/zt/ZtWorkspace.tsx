@@ -435,7 +435,11 @@ export function ZtWorkspace({
             number={1}
             title="Draft the maturity scoring with AI"
             description="Claude suggests a current and target maturity stage for each capability on this framework's scale. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
-            done={runResult !== null}
+            // Not `runResult !== null`: a run that applied NOTHING put a green
+            // success badge and a "— done" heading directly above "AI applied 0
+            // of 74". The step is complete when the AI actually drafted
+            // something, not merely when a request returned.
+            done={runResult !== null && runResult.suggestions_applied > 0}
           >
             <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
@@ -478,10 +482,12 @@ export function ZtWorkspace({
                   written by the AI — submitted, still in progress, or
                   consultant-entered —{" "}
                   {runResult.preserved_client_answers === 1 ? "was" : "were"}{" "}
-                  left untouched. Offline output is never written over{" "}
-                  {runResult.preserved_client_answers === 1 ? "it" : "them"}.
-                  Load an API key to run real analysis over{" "}
-                  {runResult.preserved_client_answers === 1 ? "it" : "them"}.
+                  left untouched by this offline run. These are the same rows
+                  counted in the skipped line above, where they are counted in
+                  suggested values rather than answers. A run with a real API
+                  key will draft over{" "}
+                  {runResult.preserved_client_answers === 1 ? "it" : "them"} —
+                  except any row you locked, which is respected in every mode.
                 </p>
               ) : null}
             </div>

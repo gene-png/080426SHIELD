@@ -132,10 +132,32 @@ def _bounded(raw: Any) -> str:
 
 
 def _bounded_key(raw: Any) -> str:
-    """A capability code, truncated. Same echo-back path as `_bounded`, and a
-    model can put a megabyte in `code` just as easily as in a stage.
+    """A capability code, escaped and truncated for the response.
+
+    This used to claim "same echo-back path as `_bounded`". It was not.
+    `_bounded` runs everything through `repr()`, which escapes every
+    non-printable code point; this returned the model's `str` RAW. The gap was
+    reachable and expensive (round 3):
+
+    * `json.loads` accepts an unpaired surrogate escape, so a `code` containing
+      one reached `dropped[].key` intact, `db.commit()` SUCCEEDED, and only then
+      did Starlette encode the response to UTF-8 and raise. The consultant saw
+      "an internal error occurred" over a database that had already been
+      rewritten - a 500 AFTER the commit, which is worse than a refusal, because
+      the UI does not re-fetch on that path and keeps showing pre-run values.
+    * No exotic encoding is needed for the cheaper variant: a right-to-left
+      override in `code` renders in the admin alert with the override live.
+      React escapes angle brackets, ampersands and quotes - not control
+      characters.
+
+    So: escape what is not printable, keep what is. A real capability code is
+    plain ASCII and passes through unchanged, which is what every test asserting
+    `key == code` depends on.
     """
-    return (raw if isinstance(raw, str) else repr(raw))[:80]
+    if not isinstance(raw, str):
+        return repr(raw)[:80]
+    # `repr(c)[1:-1]` is c's escaped form minus repr's surrounding quotes.
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in raw)[:80]
 
 
 def _hidden_value_count(raw: Any, _depth: int = 0) -> int:
@@ -150,13 +172,19 @@ def _hidden_value_count(raw: Any, _depth: int = 0) -> int:
         # Deeper than any real suggestion. Stop rather than recurse a hostile
         # payload.
         #
-        # BE PRECISE ABOUT WHAT THIS COSTS (round 2): the undercount is bounded
-        # in RECORDS, not in values. A list of 10,000 stages below the cap is
+        # BE PRECISE ABOUT WHAT THIS COSTS: the undercount is bounded in
+        # RECORDS, not in values. A list of 10,000 stages below the cap is
         # charged 1 on both sides, so the invariant closes over 9,999 lost
-        # values — the only path where it holds vacuously, in the feature built
-        # to stop exactly that. No real model nests this deep, which is why it
-        # is accepted rather than fixed, but "bounded" was the wrong word and
-        # the exclusion belongs on the record, not only in this comment.
+        # values. No real model nests this deep, which is why it is accepted
+        # rather than fixed — but "bounded" was the wrong word.
+        #
+        # It is NOT the only vacuous path, and round 2's comment saying so was
+        # wrong (round 3). Duplicate keys inside one entry are a second, and a
+        # likelier one: `json.loads` keeps the last, so the earlier value is
+        # gone before this code sees it — charged nothing, recorded nothing,
+        # invariant intact. That needs no hostile nesting, just ordinary
+        # generated-JSON sloppiness. Both exclusions are on the record in D-047;
+        # do not read this comment as an exhaustive list.
         return 1
     if isinstance(raw, dict):
         return sum(_hidden_value_count(v, _depth + 1) for v in raw.values()) or 1

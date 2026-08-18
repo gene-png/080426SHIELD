@@ -9,7 +9,7 @@ After running this you can sign in as:
 Usage (from apps/api):
   /tmp/shield-api-venv/bin/python -m scripts.seed_demo
 
-The script is idempotent — if it sees the admin user already, it does nothing.
+The script is idempotent — if it sees ANY service already, it does nothing (the guard is on `Service`, not the admin user, and `_bootstrap_org` runs before it regardless — see #65).
 """
 
 from __future__ import annotations

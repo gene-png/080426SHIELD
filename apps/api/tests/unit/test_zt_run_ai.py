@@ -1057,3 +1057,92 @@ def test_zt_score_prompt_does_not_ask_for_narratives() -> None:
 
     for key in ("pillar_narratives", "executive_summary", "roadmap_summary"):
         assert key not in _ZT_SCORE_PROMPT, f"{key} is back in the zt_score prompt (#64)"
+
+
+# --- W1 ZT round 3: the security lens ---------------------------------------
+
+
+@pytest.mark.unit
+def test_zt_run_ai_unencodable_code_does_not_500_after_committing(app_client) -> None:
+    """A `code` the response cannot encode must not commit and then explode.
+
+    `json.loads` accepts an unpaired surrogate escape. `_bounded_key` used to
+    return the model's string RAW, so it reached `dropped[].key`, the run
+    COMMITTED, and only then did the response encoder raise - a 500 over an
+    already-rewritten database, with the workspace still showing pre-run values
+    because its catch does not re-fetch. Worse than a refusal.
+
+    The escape is assembled at runtime so this source file never contains a lone
+    surrogate itself (writing one breaks any tool that reads the file as UTF-8 -
+    which is the same class of defect, one layer out).
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    lone_surrogate = "\\u" + "d800"  # two chars in THIS file, one escape in JSON
+    provider.register_static(
+        "zt_score",
+        LLMResponse(
+            '{"capabilities": [{"code": "'
+            + lone_surrogate
+            + '", "current": 1}, {"code": "'
+            + code
+            + '", "current": 2}]}'
+        ),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # The sibling entry still applied, and the run is reportable.
+    assert _answer(body, code)["maturity_stage"] == 2
+    d = _only_dropped(body)
+    assert d["reason"] == "unknown_key", d
+    # Escaped, not raw: the key round-trips as text and encodes cleanly.
+    assert d["key"] is not None
+    d["key"].encode("utf-8")
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_control_characters_in_a_code_are_escaped(app_client) -> None:
+    """A right-to-left override in `code` renders live in the admin alert.
+
+    React escapes angle brackets, ampersands and quotes - not control
+    characters - so the neutralising has to happen server-side, where every
+    other piece of model output already goes through `repr()`.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+
+    bidi = "\\u" + "202e"
+    provider.register_static(
+        "zt_score",
+        LLMResponse('{"capabilities": [{"code": "' + bidi + 'DEILPPA", "current": 1}]}'),
+    )
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    d = _only_dropped(r.json())
+    # The override is shown as its escape, not applied to the consultant's line.
+    assert "\\u202e" in d["key"], d
+    assert d["key"].isprintable(), d
+
+
+@pytest.mark.unit
+def test_zt_run_ai_ordinary_code_is_not_mangled_by_the_escaping(app_client) -> None:
+    """The counterweight: escaping must be invisible for real codes.
+
+    A capability code is plain ASCII. If the guard above started quoting or
+    escaping those, every `key == code` assertion elsewhere would be wrong and
+    the panel would show noise instead of the code the model wrote.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": "CISA.NOPE-1", "current": 2}])
+    d = _only_dropped(body)
+    assert d["key"] == "CISA.NOPE-1", d

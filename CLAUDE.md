@@ -75,7 +75,14 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   loop gate — and ruff's `# noqa: S1xx` does NOT suppress it. A string bandit
   flags needs its own `# nosec BXXX` marker too (Sprint 6 shipped a red CI on
   exactly this: a `"password_reset"` purpose label flagged as B105).
-- Seed: `docker compose exec -T api python scripts/seed_demo.py` (idempotent).
+- Seed: `docker compose exec -T api python scripts/seed_demo.py` — **NOT
+  idempotent, despite what it prints (#65).** The guard is "does ANY `Service`
+  row exist, for any tenant" — one service minted by an e2e spec aborts the
+  whole seed with "Services already present; skipping seeding." and exit 0. A
+  drifted dev DB therefore can never be repaired by re-seeding; the only
+  recovery is `docker compose down -v`. CI never hits this because its runners
+  start with empty volumes, so CI stays green on specs that cannot run
+  locally.
 
 ## Environment gotchas (learned the hard way)
 

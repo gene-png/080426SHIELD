@@ -1937,6 +1937,110 @@ extra top-level keys alongside a correct `capabilities` (the latter is adjacent 
 Two rounds, and the pattern D-045 recorded holds: the defect rate did not fall,
 it moved. Round 1 found the code; round 2 found the claims about the code.
 
+### What the adversarial pass changed (round 3)
+
+Three lenses this time, two of which nothing had used: a regression hunt on
+round 2, a SECURITY and tenancy pass, and a CONSULTANT-REALITY pass that worked
+out the exact text a person sees in five real scenarios. Round 3 found more than
+rounds 1 and 2 together, and round 2's code changes all held — as round 1's had.
+The pattern is now unmistakable: each round's fixes survive, and each round finds
+a class of defect the previous round was not looking for.
+
+**A 500 after a successful commit.** `_bounded_key` claimed in its own docstring
+to share `_bounded`'s echo-back path. It did not: `_bounded` runs everything
+through `repr()`, which escapes every non-printable code point; `_bounded_key`
+returned the model's `str` RAW, and that is the only branch a well-formed `code`
+can take. `json.loads` accepts an unpaired surrogate escape, so such a `code`
+reached `dropped[].key` intact, `db.commit()` SUCCEEDED — suggestions applied,
+provenance stamped, audit row written, `llm_calls` marked COMPLETED — and only
+then did the response encoder raise. The consultant saw "an internal error
+occurred" over a database that had already been rewritten, and `ZtWorkspace`'s
+catch does not re-fetch, so the grid kept showing pre-run values. A 500 after the
+commit is worse than a refusal. The cheaper variant needs no exotic encoding at
+all: a right-to-left override in `code` renders in the admin alert with the
+override live, because React escapes markup characters and not control ones.
+Fixed by escaping non-printables while leaving printable codes untouched, in ZT
+and in CSF's identical `_bounded_key_part`.
+
+**Two user-facing severity bugs, both of which reported success over failure.**
+A run losing 100% of its values to field-name drift routed every record to the
+deliberately-quiet `NOT_UNDERSTOOD` block: "AI applied 0 of 74" in calm secondary
+grey, no alert anywhere — while "applied 0 of 0" got one. The quiet block's own
+comment justifies it only for runs where everything asked for WAS applied, and
+nothing enforced that; this is the #31 constraint inverted. Worse, `WorkflowStep`
+took `done={runResult !== null}`, so a green success badge and a "— done" heading
+sat directly above that line. Severity is now derived from whether anything was
+applied, with EXACTLY one assertive region: the failure block when there is one,
+the headline when there is not. Two alerts announce over each other, which is why
+the first attempt at this — escalating the quiet records into the alert — was
+rewritten rather than kept.
+
+**A remedy that could not work.** `update_answer` sets `locked` and never writes
+`answer_source`, so every consultant-typed locked row is simultaneously `locked`
+and `protected`. The skip bullet said "row is locked" while the paragraph below
+counted the same row and instructed "Load an API key to run real analysis over
+them" — but live runs skip locked rows too. A consultant following that advice
+pays for a call and gets the identical result with no explanation. The paragraph
+now says the two blocks describe the same rows, and scopes the remedy to exclude
+locked ones.
+
+**Two numbers about the same rows, in different units, with no bridge.** In the
+commonest demo flow the panel showed "10 suggested values skipped" beside "5
+answers left untouched" — a factor of two, because ZT charges `current` and
+`target` per row, stated nowhere. The skip bullet now carries its row count as
+well as its value count, which is also what makes it reconcilable when the ratio
+is not 2 (a model that suggests for only some protected rows).
+
+**Also fixed:** `unknown_key`'s label was ported from CSF and lost the half that
+made it actionable — CSF asks "is that tier seeded?", and seeding is a button on
+that page, whereas ZT has no such action and the consultant cannot fix a model's
+spelling. It now says what they can do: set it by hand. `describeReason` looked
+up an untrusted reason on an object literal, so `"toString"` resolved to an
+inherited function and rendered as the empty bullet the guard exists to prevent.
+`d.key ?? …` let an empty-string code render as a blank.
+
+**Round 2's own claims needed three corrections**, which is the same shape round
+2 found in round 1. Its `protected`-is-fixture-only fix left a fifth site
+contradicting the four it fixed. Its depth-cap comment said the cap was "the only
+path where the invariant holds vacuously"; duplicate JSON keys inside one entry
+are a second and likelier one, since `json.loads` keeps the last and the earlier
+value is gone before this code sees it — no hostile nesting required. And its
+"exact" #51 scope was off by one in the expensive direction: `locked` needs no
+live run, because `build_zt_ai_request` sends every row including locked ones, so
+a fixture run over an API-locked row surfaces that reason end to end today. Six
+of eight, not seven.
+
+**Prompt-injection reach is real, new, and now stated.** A client-role user's
+`notes` go into the egress payload verbatim; the model's reply now lands on the
+consultant's screen through `dropped[].key`. ~800 characters of tenant-chosen
+prose can render inside the panel the consultant uses to judge whether the AI
+draft is trustworthy. Bounded, escaped, no privilege gained, and #44 sanctions
+`key`/`value` in the response — but before W1 that field never left the server.
+The schema docstring justified it as "same trust boundary as the run result",
+which is true of the MODEL and skips that a lower-privileged user seeds the
+model's input. That is the unstated-carve-out shape, and it belongs here rather
+than nowhere.
+
+**What held.** Tenant isolation is clean: every query is anchored to the
+tenant-verified service, the D-031 re-read cannot re-scope, and `dropped` is
+built only from model output and hardcoded literals, so it cannot carry another
+tenant's data. Logs and audit rows are counts-only, `dropped_by_reason`'s keys
+cannot be attacker-controlled because the `Literal` validates at construction,
+and the tests proving both are not vacuous. No new `llm_calls` hole. No DoS —
+`_MAX_OUTPUT_TOKENS` is the real ceiling, though nothing in `zt.py` would notice
+if it were raised the way `mitre_map`'s was. And the CSF zero-guard round 2 added
+did not change the non-zero copy by so much as a space.
+
+**Filed, not fixed:** #67 — CSF has no provenance protection at all, so an
+offline run silently overwrites hand-typed dimension scores where ZT protects the
+equivalent work. Pre-existing, and made more likely by this step, because a
+consultant who learns ZT's behaviour will assume it on CSF.
+
+Three rounds, and the honest reading is unchanged from D-045: not "round 3 made
+it correct", but that an audit gate keeps finding what a green suite cannot —
+and that the classes of defect keep moving. Round 1 found the arithmetic, round 2
+the claims, round 3 the security boundary and what a person actually sees.
+
 **Ref:** `apps/api/app/routes/zt.py` (`_as_number`, `_hidden_value_count`,
 `_bounded`, `_bounded_key`, the apply loop), `apps/api/app/schemas/zt.py`
 (`ZtDroppedSuggestion`, `ZtRunAiResponse`), `apps/api/app/ai/jobs.py`

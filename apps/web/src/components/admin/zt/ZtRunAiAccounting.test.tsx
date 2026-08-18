@@ -188,11 +188,15 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     const items = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(
-      items.some((t) => /2 suggested values skipped.*locked/.test(t ?? "")),
+      items.some((t) =>
+        /2 suggested values across 1 capability skipped.*locked/.test(t ?? ""),
+      ),
     ).toBe(true);
     expect(
       items.some((t) =>
-        /2 suggested values skipped.*not written by the AI/.test(t ?? ""),
+        /2 suggested values across 1 capability skipped.*not written by the AI/.test(
+          t ?? "",
+        ),
       ),
     ).toBe(true);
   });
@@ -221,7 +225,121 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
       .filter((t) => /skipped/.test(t));
     expect(skipped).toHaveLength(1);
     expect(skipped[0]).not.toMatch(/0 suggested value/);
-    expect(skipped[0]).toMatch(/Suggestions skipped .* row is locked/);
+    expect(skipped[0]).toMatch(
+      /Suggestions across 1 capability skipped .* row is locked/,
+    );
+  });
+
+  it("raises an alert when a run applied NOTHING, whichever bucket it fell in", () => {
+    // Total field-name drift routes every record to `NOT_UNDERSTOOD`, which is
+    // deliberately quiet. Before round 3 that meant 74 lost stages rendered in
+    // calm secondary grey with no alert at all — while "applied 0 of 0" DID get
+    // one. The quiet carve-out is justified only when everything asked for was
+    // applied; nothing enforced that.
+    const { container } = render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 74,
+          suggestions_applied: 0,
+          dropped: Array.from({ length: 74 }, (_, i) =>
+            drop({
+              reason: "unknown_field",
+              key: `ID-${i}`,
+              field: "maturity",
+            }),
+          ),
+        })}
+      />,
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/AI applied\s*0\s*of 74/);
+    expect(alert).toHaveTextContent(/Nothing was applied/);
+    expect(headline(container)).toMatch(
+      /every suggestion this run received was rejected or unrecognized/,
+    );
+  });
+
+  it("does not cry failure when everything applied but nothing changed", () => {
+    // A re-run over an already-drafted assessment applies every value and
+    // changes none. "changing 0 fields across 0 capabilities" alone reads as a
+    // failed run when it means the model agreed with everything.
+    const { container } = render(
+      <ZtRunAiAccounting
+        result={result({ suggestions_received: 74, suggestions_applied: 74 })}
+      />,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(headline(container)).toMatch(
+      /Every suggestion matched what was already recorded/,
+    );
+  });
+
+  it("carries a row count on the skip bullet, so it reconciles with the answers count", () => {
+    // The skip bullet counts VALUES and the preserved-answers paragraph counts
+    // ANSWERS. ZT charges two values per row, so a reader saw "10" beside "5"
+    // with no way to bridge them from anything on screen.
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 74,
+          suggestions_applied: 64,
+          dropped: Array.from({ length: 5 }, (_, i) =>
+            drop({ reason: "protected", key: `ID-${i}`, values: 2 }),
+          ),
+        })}
+      />,
+    );
+    const item = screen
+      .getAllByRole("listitem")
+      .map((li) => li.textContent ?? "")
+      .find((t) => /skipped/.test(t));
+    expect(item).toMatch(/10 suggested values across 5 capabilities skipped/);
+  });
+
+  it("renders hostile model text inertly and never as markup", () => {
+    // `key` and `field` are model-authored and, transitively, seeded by a
+    // client-role user's notes. Nothing pinned that they render as text.
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 1,
+          suggestions_applied: 0,
+          dropped: [
+            drop({
+              reason: "unknown_key",
+              key: '<img src=x onerror="alert(1)">',
+              value: "<script>alert(2)</script>",
+            }),
+          ],
+        })}
+      />,
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert.querySelector("img")).toBeNull();
+    expect(alert.querySelector("script")).toBeNull();
+    expect(alert).toHaveTextContent('<img src=x onerror="alert(1)">');
+  });
+
+  it("names an empty capability code instead of rendering a blank", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 1,
+          suggestions_applied: 0,
+          dropped: [
+            drop({
+              reason: "out_of_range",
+              key: "",
+              field: "current",
+              value: "9",
+            }),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "(no capability named)",
+    );
   });
 
   it("shows an unmapped reason code instead of an empty bullet", () => {
@@ -315,7 +433,11 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     expect(
       screen
         .getAllByRole("listitem")
-        .some((li) => /2 suggested values skipped/.test(li.textContent ?? "")),
+        .some((li) =>
+          /2 suggested values across 1 capability skipped/.test(
+            li.textContent ?? "",
+          ),
+        ),
     ).toBe(true);
   });
 });
