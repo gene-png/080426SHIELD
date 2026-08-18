@@ -145,6 +145,22 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   The shape to watch: a conditional whose false branch drops the record instead
   of emitting it under a different reason. Make the false branch emit something —
   a zero-value record that names the fault is honest, and silence never is.
+- **A test that supplies its own expected value — or its own precondition — from
+  the thing under test cannot fail.** The AI-fixture rule above is one instance
+  of this; this is the general shape, and it turned up twice on 2026-08-18 in
+  code that had already passed review. `tests/unit/test_csf_ai_contract.py`
+  builds its "prompt-compliant" response out of `_PARSER_ROW_KEYS` — the
+  parser's own constants — so it agrees with the parser by construction and
+  cannot see the prose/JSON drift the `csf_score` prompt actually carries, which
+  is the one thing a contract test exists to catch. `test_deliverable_release.py`
+  writes `parent_version = 1` by direct SQL and *then* re-releases, so it proves
+  the flip works given a link while the production claim under test — that
+  re-releasing establishes the link — is false for every multi-version service
+  (#59). Both were green; neither could ever have been red. The tell: the test
+  and the code read from the same constant, or the test's setup performs the very
+  step the code is supposed to perform. Derive the expected value from the SPEC —
+  the prompt text, a real logged response, the documented behaviour — and let the
+  setup build only the world, never the outcome.
 - **Changing user-facing copy for precision silently breaks whatever asserts it.**
   W1's panel line went from "suggested values" to "suggested **score** values"
   because the counts cover scoring rows only. The vitest was updated in the same
