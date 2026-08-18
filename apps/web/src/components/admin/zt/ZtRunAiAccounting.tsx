@@ -199,9 +199,17 @@ export function ZtRunAiAccounting({
         <ul className="list-disc pl-5 text-sm text-ink-tertiary">
           {groupByReason(skipped).map(([reason, items]) => (
             <li key={reason}>
-              {sumValues(items)} suggested value
-              {sumValues(items) === 1 ? "" : "s"} skipped —{" "}
-              {describeReason(reason)}
+              {/* A skip record can legitimately account for zero values: the
+                  row fault is named while its values are counted under the
+                  names they arrived with. "0 suggested values skipped" reads as
+                  a contradiction, the same way it did in the failure block
+                  above. Reachable in live mode only — field-name drift on a
+                  locked or protected row — which is why fixture-backed tests
+                  could never surface it. */}
+              {sumValues(items) > 0
+                ? `${sumValues(items)} suggested value${sumValues(items) === 1 ? "" : "s"} skipped`
+                : "Suggestions skipped"}{" "}
+              — {describeReason(reason)}
             </li>
           ))}
         </ul>

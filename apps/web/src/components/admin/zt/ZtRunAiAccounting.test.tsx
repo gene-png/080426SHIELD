@@ -193,6 +193,33 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     ).toBe(true);
   });
 
+  it("never says '0 suggested values skipped'", () => {
+    // Reachable in live mode: field-name drift on a locked row gives the
+    // `locked` record `values: 0`, because its values are counted under the
+    // drifted names they arrived with. "0 skipped" reads as a contradiction,
+    // exactly as it did in the failure block. Fixture mode cannot produce it,
+    // which is why only an adversarial read found it.
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 1,
+          suggestions_applied: 0,
+          dropped: [
+            drop({ reason: "unknown_field", key: "ID-1", field: "stage" }),
+            drop({ reason: "locked", key: "ID-1", values: 0 }),
+          ],
+        })}
+      />,
+    );
+    const skipped = screen
+      .getAllByRole("listitem")
+      .map((li) => li.textContent ?? "")
+      .filter((t) => /skipped/.test(t));
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).not.toMatch(/0 suggested value/);
+    expect(skipped[0]).toMatch(/Suggestions skipped .* row is locked/);
+  });
+
   it("shows an unmapped reason code instead of an empty bullet", () => {
     render(
       <ZtRunAiAccounting

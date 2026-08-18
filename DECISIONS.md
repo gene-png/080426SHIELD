@@ -1791,6 +1791,69 @@ Neither was wrong about the old code — both are recorded here rather than
 quietly edited, because "fix the code, not the test" only permits touching a
 test when the behaviour it pins is itself the thing being changed.
 
+### What the adversarial pass changed (round 1, same day, before merge)
+
+Two reviewers, one on the engine's arithmetic and one on the removal's blast
+radius. **One real defect, five stale artifacts, and three test gaps.** Every one
+was invisible to a green suite, and the suite was green when the round started.
+
+**The defect: a container under a recognized key broke the invariant.**
+`received` charged every key the leaves it hides, but the three per-field drop
+records passed no `values` at all, defaulting to 1. So
+`{"code": "CISA.ID.01", "current": {"stage": 2, "confidence": 0.8}}` charged
+`received=2` and itemized 1 — one suggested value gone with no record, which is
+precisely the silent loss this feature exists to end. Widened, it scales:
+`{"current": [1,2,3], "target": [1,2,3]}` lost four. The CSF sibling had this
+right (`csf.py:1641-1676` passes `values=field_values[field]` on every per-field
+record) **and had a regression test for it**; the ZT port copied the enumeration
+and not the charge. The tell was `field_values` being computed per field and then
+never read per field — only summed. Two of the three records were only
+accidentally safe, since a container cannot currently reach `out_of_range` or the
+non-whole branch; they were fixed anyway, because "unreachable today" is an
+unstated carve-out.
+
+**The removal left five things behind, and the worst of them reached a human.**
+`ZtWorkspace.tsx` still told the consultant Run AI produces "the per-pillar
+narrative", in an always-visible step description — the copy outlived the field
+it described, which is the same "dead thing implying a live one" this decision
+cites #62 to avoid. The `run_ai` docstring, which FastAPI renders as the endpoint
+description at `/docs`, still promised narratives in the response, contradicting
+the response model on the same page. `s6` delegated its uncovered drop branches
+to `ZtWorkspace.test.tsx`, **a file that has never existed** — the real one is
+`ZtRunAiAccounting.test.tsx`. Only two of the three removed fields were pinned
+absent, leaving `roadmap_summary` — the likeliest to be re-added alone, since a
+roadmap feature genuinely exists — free to come back green. And the by-design
+skip bullet had no zero-guard, so field drift on a locked row renders
+"0 suggested values skipped", the same contradiction the failure block above it
+had already been fixed to avoid.
+
+**Three test gaps, each of which would have let a revert pass green.** The
+`protected` branch was exercised only by a test asserting
+`preserved_client_answers`, never `dropped` — reverting it to a bare `continue`
+left the suite green over a two-value silent loss, one branch over from where
+that shape was already defended. The `superseded` record claims to name the value
+that was LOST, and nothing pinned it, so recording the winner instead — the
+natural mistake — would have told a consultant the opposite of the truth,
+greenly. And the second `entry_shape` branch had no test at all.
+
+Also hardened: `unknown_field.field` echoed the model's JSON key unbounded, while
+`code` beside it was bounded to 80 characters by a helper whose docstring names
+the threat. A key is model output too.
+
+**What held.** The invariant was hand-traced over roughly twenty payload shapes —
+empty entries, unhashable codes, `inf`/`nan`, a 400-digit integer, depth-5
+nesting, duplicate JSON keys, 3→4→3 round-trips — and holds everywhere else.
+`applied` cannot go negative. The F9 settlement loop cannot `KeyError`, because
+`suggested` only gains codes that resolved to a real row. `int(n)` cannot raise,
+because range is judged first. No model text reaches any log or audit row. And
+the removal genuinely has no consumer: no column, no migration, no exporter
+reader, no wholesale serialisation of the AI payload, and nothing in `apps/web`
+beyond the type declaration.
+
+The honest reading is the one D-045 reached for CSF: not "round 1 made it
+correct", but that an audit gate keeps finding what a green suite cannot. This
+step budgeted four rounds on that basis.
+
 **Ref:** `apps/api/app/routes/zt.py` (`_as_number`, `_hidden_value_count`,
 `_bounded`, `_bounded_key`, the apply loop), `apps/api/app/schemas/zt.py`
 (`ZtDroppedSuggestion`, `ZtRunAiResponse`), `apps/api/app/ai/jobs.py`

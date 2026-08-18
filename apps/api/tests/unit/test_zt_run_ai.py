@@ -105,6 +105,15 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
     # outside W1's invariant, which covers the entries in `capabilities`.
     assert "pillar_narratives" not in body
     assert "executive_summary" not in body
+    # All THREE, not two: `roadmap_summary` is the likeliest to be re-added
+    # alone, since a roadmap feature genuinely exists in `zt/scoring.py`.
+    assert "roadmap_summary" not in body
+    # And the top-level extras must not move the counters. Stated in the comment
+    # above; asserted here so a future `received` that enumerates top-level keys
+    # cannot pass silently.
+    assert body["suggestions_received"] == 2, body
+    assert body["suggestions_applied"] == 2, body
+    assert body["dropped"] == [], body["dropped"]
 
 
 @pytest.mark.unit
@@ -738,6 +747,10 @@ def test_zt_run_ai_superseded_value_is_not_counted_as_applied(app_client) -> Non
     d = _only_dropped(body)
     assert d["reason"] == "superseded", d
     assert d["field"] == "current", d
+    # Names the value that was LOST, not the one that won. Without this the
+    # natural mistake (recording `raw`) leaves the suite green while the record
+    # tells a consultant the opposite of what happened.
+    assert d["value"] == "2", d
     assert _answer(body, code)["maturity_stage"] == 3
     _assert_invariant(body)
 
@@ -792,3 +805,107 @@ def test_zt_run_ai_logs_carry_no_key_and_no_model_text(app_client, capsys) -> No
     assert "Okta is partial" not in text, text
     assert "okta_stage" not in text, text
     assert code not in text, text
+
+
+# --- W1 ZT round 1: found by the adversarial pass, each FAILED as first written
+
+
+@pytest.mark.unit
+def test_zt_run_ai_container_under_a_recognized_key_is_counted_whole(app_client) -> None:
+    """A wrapper under `current` must be charged the values it hides.
+
+    `received` charged the leaves, the drop record charged a flat 1, and the
+    difference fell out of both sides of the invariant with no record — the
+    silent loss this whole feature exists to end, reached through the one line
+    that was not ported from the CSF sibling.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(
+        c, provider, h, svc_id, [{"code": code, "current": {"stage": 2, "confidence": 0.8}}]
+    )
+    d = _only_dropped(body)
+    assert d["reason"] == "unparseable", d
+    assert d["field"] == "current", d
+    assert d["values"] == 2, "a wrapper hiding two values must not be charged one"
+    assert body["suggestions_received"] == 2, body
+    assert body["suggestions_applied"] == 0
+    assert _answer(body, code)["maturity_stage"] is None
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_containers_on_both_fields_lose_nothing(app_client) -> None:
+    """The same leak, widened: four values behind two recognized names."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(
+        c, provider, h, svc_id, [{"code": code, "current": [1, 2, 3], "target": [1, 2, 3]}]
+    )
+    assert body["suggestions_received"] == 6, body
+    assert body["suggestions_applied"] == 0
+    assert sum(d["values"] for d in body["dropped"]) == 6, body["dropped"]
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_protected_answer_is_itemized_not_a_silent_skip(app_client) -> None:
+    """`protected` is a by-design skip, but it must still be COUNTED.
+
+    Reverting this branch to a bare `continue` left the suite green over a
+    two-value silent loss: the one test covering it asserted only
+    `preserved_client_answers` and never looked at `dropped`.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    code, _ = _submitted_self_assessment(c, h, svc_id)
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 1, "target": 2}])
+    d = _only_dropped(body)
+    assert d["reason"] == "protected", d
+    assert d["key"] == code, d
+    assert d["values"] == 2, d
+    # Distinct from `locked` — nobody locked this row.
+    assert d["reason"] != "locked"
+    assert _answer(body, code)["maturity_stage"] == 3, "client answer was overwritten"
+    assert body["preserved_client_answers"] == 1
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_entry_naming_a_capability_with_no_values_is_not_silent(app_client) -> None:
+    """Names a real capability and suggests nothing. Charged the full row width,
+    not zero — a zero satisfies the invariant vacuously."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code}])
+    d = _only_dropped(body)
+    assert d["reason"] == "entry_shape", d
+    assert d["values"] == _ROW_VALUE_SLOTS, d
+    assert d["key"] == code, d
+    assert body["suggestions_received"] == _ROW_VALUE_SLOTS
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_unknown_field_name_is_bounded(app_client) -> None:
+    """A JSON KEY is model output too. `code` was bounded and `field` was not,
+    so a hostile key name reached the response, and the admin DOM, unbounded."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "x" * 5000: 2, "current": 1}])
+    drift = next(d for d in body["dropped"] if d["reason"] == "unknown_field")
+    assert len(drift["field"]) <= 80, len(drift["field"])
+    _assert_invariant(body)

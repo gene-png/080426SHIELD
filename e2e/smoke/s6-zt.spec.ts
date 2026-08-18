@@ -202,7 +202,7 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
   // across M capabilities" line. NOTE: fixture mode echoes the payload keys back
   // verbatim, so a fixture run has structurally zero drops; this can only prove
   // the accounting line renders, never that a drop is surfaced. The drop
-  // branches are covered in ZtWorkspace.test.tsx and the API unit tests.
+  // branches are covered in ZtRunAiAccounting.test.tsx and the API unit tests.
   //
   // The wording is "suggested values", NOT CSF's "suggested score values": ZT's
   // narrative fields were removed rather than counted (#64), so there is no

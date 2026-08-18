@@ -514,8 +514,8 @@ def run_ai(
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
 ) -> ZtRunAiResponse:
     """The ZT 'Run AI'. Suggests a current and target maturity level per
-    capability (on the framework's own scale) plus per-pillar narratives. AI
-    suggests; locked rows are untouched; code does the pillar roll-up + roadmap.
+    capability, on the framework's own scale. AI suggests; locked rows are
+    untouched; code does the pillar roll-up + roadmap.
     Returns a 'what changed' list.
     """
     svc = require_service_in_tenant(db, service_id, client.id)
@@ -632,7 +632,7 @@ def run_ai(
                 ZtDroppedSuggestion(
                     reason="unknown_field",
                     key=key,
-                    field=k,
+                    field=_bounded_key(k),
                     values=n_hidden,
                     value=_bounded(sugg[k]),
                 )
@@ -673,9 +673,19 @@ def run_ai(
             raw = sugg[field]
             n = _as_number(raw)
             if n is None:
+                # `values=field_values[field]`, NOT 1. `received` charged this
+                # key every leaf it hides, so a flat 1 here drops the rest out
+                # of both sides of the invariant with no record — the silent
+                # loss this feature exists to end, reached through the one line
+                # not ported from the CSF sibling. Found by the round-1
+                # adversarial pass; `csf.py` had it right and a test for it.
                 dropped.append(
                     ZtDroppedSuggestion(
-                        reason="unparseable", key=key, field=field, value=_bounded(raw)
+                        reason="unparseable",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
                     )
                 )
                 continue
@@ -685,14 +695,22 @@ def run_ai(
             if not 1 <= n <= max_stage:
                 dropped.append(
                     ZtDroppedSuggestion(
-                        reason="out_of_range", key=key, field=field, value=_bounded(raw)
+                        reason="out_of_range",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
                     )
                 )
                 continue
             if n != int(n):
                 dropped.append(
                     ZtDroppedSuggestion(
-                        reason="unparseable", key=key, field=field, value=_bounded(raw)
+                        reason="unparseable",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
                     )
                 )
                 continue
