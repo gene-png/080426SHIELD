@@ -521,3 +521,246 @@ def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monke
         ).scalar_one()
         assert stored.maturity_stage is None
         assert stored.answer_source is None, "no row was written, so nothing was authored"
+
+
+# ---------------------------------------------------------------------------
+# W1's ZT step - every AI suggestion is applied or itemized (issue #44, D-045).
+#
+# Payloads below carry ONLY `capabilities`, never a narrative key, so every
+# count here is unambiguous regardless of how the narrative fields are scoped.
+# ---------------------------------------------------------------------------
+
+# One capability entry's worth of suggestions: `current` and `target`. Used when
+# an entry is too broken to enumerate what it meant to set.
+_ROW_VALUE_SLOTS = 2
+
+
+def _run_ai_caps(c, provider, h, svc_id: str, caps: list) -> dict:
+    import json as _json
+
+    provider.register_static("zt_score", LLMResponse(_json.dumps({"capabilities": caps})))
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _assert_invariant(body: dict) -> None:
+    """Every suggestion the run received is either applied or itemized."""
+    accounted = body["suggestions_applied"] + sum(d["values"] for d in body["dropped"])
+    assert body["suggestions_received"] == accounted, body
+
+
+def _only_dropped(body: dict) -> dict:
+    assert len(body["dropped"]) == 1, body["dropped"]
+    return body["dropped"][0]
+
+
+def _answer(body: dict, code: str) -> dict:
+    return next(x for x in body["answers"] if x["capability_code"] == code)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_boolean_is_not_a_stage_of_one(app_client) -> None:
+    """`int(True)` is 1. A bool is not a maturity stage.
+
+    Reads the row back, not just the drop record: a regression that writes the
+    value AND itemizes the drop would look green on the record alone.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": True}])
+    d = _only_dropped(body)
+    assert d["reason"] == "unparseable", d
+    assert d["field"] == "current", d
+    assert _answer(body, code)["maturity_stage"] is None
+    assert body["suggestions_applied"] == 0
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_in_range_float_is_refused_not_silently_truncated(app_client) -> None:
+    """`int(1.9)` is 1 - a value the model never sent, reported as applied."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 1.9}])
+    d = _only_dropped(body)
+    assert d["reason"] == "unparseable", d
+    assert "1.9" in str(d["value"]), d
+    assert _answer(body, code)["maturity_stage"] is None
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_out_of_range_float_reports_range_not_a_fraction(app_client) -> None:
+    """Range is judged BEFORE wholeness, so 4.9 on a 1..4 ladder is out of range.
+
+    Today `int(4.9)` is 4, which is in range, so the run silently applies a 4 the
+    model never asked for.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 4.9}])
+    d = _only_dropped(body)
+    assert d["reason"] == "out_of_range", d
+    assert _answer(body, code)["maturity_stage"] is None
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_whole_number_written_as_text_or_float_is_applied(app_client) -> None:
+    """The counterweight: refusing a value the model plainly meant is the same
+    defect facing the other way."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": "2", "target": 3.0}])
+    assert body["dropped"] == [], body["dropped"]
+    assert body["suggestions_applied"] == 2
+    row = _answer(body, code)
+    assert row["maturity_stage"] == 2
+    assert row["target_stage"] == 3
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_unknown_field_is_counted_not_silently_ignored(app_client) -> None:
+    """The loop reads only code/current/target, so a drifted key vanishes."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 2, "maturity_level": 3}])
+    assert body["suggestions_applied"] == 1
+    assert body["suggestions_received"] == 2
+    drift = [d for d in body["dropped"] if d["reason"] == "unknown_field"]
+    assert len(drift) == 1 and drift[0]["field"] == "maturity_level", body["dropped"]
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_unknown_code_is_itemized_verbatim(app_client) -> None:
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": "NOPE-1", "current": 2}])
+    d = _only_dropped(body)
+    assert d["reason"] == "unknown_key", d
+    assert d["key"] == "NOPE-1", d
+    assert d["values"] == 1, d
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_unreadable_entry_counts_the_full_row_width(app_client) -> None:
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+
+    body = _run_ai_caps(c, provider, h, svc_id, ["not-a-dict"])
+    d = _only_dropped(body)
+    assert d["reason"] == "entry_shape", d
+    assert d["values"] == _ROW_VALUE_SLOTS, d
+    assert d["key"] is None, d
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_locked_row_is_a_visible_reason_not_a_silent_skip(app_client) -> None:
+    """`if row.locked or code in protected: continue` records nothing today."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    ans = a.json()["answers"][0]
+    code, ans_id = ans["capability_code"], ans["id"]
+    c.patch(f"/zt/answers/{ans_id}", headers=h, json={"locked": True})
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 2}])
+    d = _only_dropped(body)
+    assert d["reason"] == "locked", d
+    assert d["key"] == code, d
+    assert _answer(body, code)["maturity_stage"] is None
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_superseded_value_is_not_counted_as_applied(app_client) -> None:
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(
+        c, provider, h, svc_id, [{"code": code, "current": 2}, {"code": code, "current": 3}]
+    )
+    assert body["suggestions_received"] == 2
+    assert body["suggestions_applied"] == 1
+    d = _only_dropped(body)
+    assert d["reason"] == "superseded", d
+    assert d["field"] == "current", d
+    assert _answer(body, code)["maturity_stage"] == 3
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_audit_row_carries_counts_but_no_model_content(app_client) -> None:
+    """Audit rows get reason codes and value counts only (#44 constraint 1)."""
+    import json as _json
+    import os as _os
+
+    from sqlalchemy import create_engine as _ce
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 2, "okta_stage": 3}])
+
+    from app.models.audit import AuditEntry
+
+    eng = _ce(_os.environ["DATABASE_URL"], future=True)
+    with _sm(bind=eng, future=True)() as s:
+        row = s.execute(select(AuditEntry).where(AuditEntry.action == "zt.run_ai")).scalars().one()
+    details = row.details
+    assert details["suggestions_received"] == 2, details
+    assert details["suggestions_applied"] == 1, details
+    assert details["dropped_by_reason"] == {"unknown_field": 1}, details
+    blob = _json.dumps(details)
+    assert code not in blob, blob
+    assert "okta_stage" not in blob, blob
+
+
+@pytest.mark.unit
+def test_zt_run_ai_logs_carry_no_key_and_no_model_text(app_client, capsys) -> None:
+    """`zt.py` logs `value=repr(raw)[:120]` today - AI output in a log line.
+
+    Reads stdout, not `caplog`: structlog renders JSON straight to stdout here.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    capsys.readouterr()
+    _run_ai_caps(
+        c, provider, h, svc_id, [{"code": code, "current": "Okta is partial", "okta_stage": 2}]
+    )
+    text = capsys.readouterr().out
+    assert "zt_run_ai_suggestions_accounted" in text, text
+    assert "Okta is partial" not in text, text
+    assert "okta_stage" not in text, text
+    assert code not in text, text
