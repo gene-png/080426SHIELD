@@ -105,8 +105,11 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
     # outside W1's invariant, which covers the entries in `capabilities`.
     assert "pillar_narratives" not in body
     assert "executive_summary" not in body
-    # All THREE, not two: `roadmap_summary` is the likeliest to be re-added
-    # alone, since a roadmap feature genuinely exists in `zt/scoring.py`.
+    # All THREE, not two. NOTE the narrow scope: `body` is served through a
+    # `response_model`, which strips unknown keys, so this fires only if someone
+    # re-adds a SCHEMA field. It cannot catch a re-add to the PROMPT, which is
+    # the change that would start costing tokens again — that is pinned by
+    # `test_zt_score_prompt_does_not_ask_for_narratives` below.
     assert "roadmap_summary" not in body
     # And the top-level extras must not move the counters. Stated in the comment
     # above; asserted here so a future `received` that enumerates top-level keys
@@ -433,9 +436,10 @@ def test_live_run_ai_drops_an_out_of_range_value_but_applies_its_sibling(
 
     `{"current": 9, "target": 3}` must apply the target and drop the current,
     rather than the bad value poisoning the whole suggestion or the good one
-    dragging the bad one in. The drop is visible in the log, not the response —
-    see the `zt_run_ai_suggestions_dropped` comment in `run_ai` for why this PR
-    deliberately returns no count.
+    dragging the bad one in. The drop is now visible in the RESPONSE, itemized
+    per reason (W1, D-047). This docstring used to point at a
+    `zt_run_ai_suggestions_dropped` log line explaining why the count was
+    deliberately withheld; that line and that rationale are both gone.
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
@@ -769,7 +773,17 @@ def test_zt_run_ai_audit_row_carries_counts_but_no_model_content(app_client) -> 
     a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
     code = a.json()["answers"][0]["capability_code"]
 
-    _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 2, "okta_stage": 3}])
+    # THREE values behind ONE unrecognized key, so `dropped_by_reason` cannot
+    # pass by counting records — 3 discriminates values-per-reason from
+    # records-per-reason, which is the whole rule the audit row encodes. The
+    # previous payload used a scalar, where the two are identical.
+    _run_ai_caps(
+        c,
+        provider,
+        h,
+        svc_id,
+        [{"code": code, "current": 2, "okta_stages": {"a": 1, "b": 2, "c": 3}}],
+    )
 
     from app.models.audit_entry import AuditEntry
 
@@ -777,12 +791,16 @@ def test_zt_run_ai_audit_row_carries_counts_but_no_model_content(app_client) -> 
     with _sm(bind=eng, future=True)() as s:
         row = s.execute(select(AuditEntry).where(AuditEntry.action == "zt.run_ai")).scalars().one()
     details = row.details
-    assert details["suggestions_received"] == 2, details
+    assert details["suggestions_received"] == 4, details
     assert details["suggestions_applied"] == 1, details
-    assert details["dropped_by_reason"] == {"unknown_field": 1}, details
+    assert details["dropped_by_reason"] == {"unknown_field": 3}, details
+    # The durable record's own arithmetic must close, not just the response's.
+    assert details["suggestions_received"] == details["suggestions_applied"] + sum(
+        details["dropped_by_reason"].values()
+    ), details
     blob = _json.dumps(details)
     assert code not in blob, blob
-    assert "okta_stage" not in blob, blob
+    assert "okta_stages" not in blob, blob
 
 
 @pytest.mark.unit
@@ -807,7 +825,13 @@ def test_zt_run_ai_logs_carry_no_key_and_no_model_text(app_client, capsys) -> No
     assert code not in text, text
 
 
-# --- W1 ZT round 1: found by the adversarial pass, each FAILED as first written
+# --- W1 ZT round 1: found by the adversarial pass.
+#
+# Three of these five FAILED as first written (the two container cases and the
+# unbounded field name) and pin the round-1 fix. The other two — `protected` and
+# the second `entry_shape` branch — characterise behaviour that was already
+# correct but had NO test, so a revert to a bare `continue` would have stayed
+# green. Both kinds are worth keeping; only the first kind proves a fix.
 
 
 @pytest.mark.unit
@@ -909,3 +933,127 @@ def test_zt_run_ai_unknown_field_name_is_bounded(app_client) -> None:
     drift = next(d for d in body["dropped"] if d["reason"] == "unknown_field")
     assert len(drift["field"]) <= 80, len(drift["field"])
     _assert_invariant(body)
+
+
+# --- W1 ZT round 2: gaps the round-1 fixes did not close ---------------------
+
+
+@pytest.mark.unit
+def test_zt_run_ai_unresolvable_row_is_named_even_when_it_charges_nothing(app_client) -> None:
+    """The row fault is NAMED at values=0, not suppressed.
+
+    The code emits this record unconditionally and says so in a comment; nothing
+    pinned it. `test_zt_run_ai_unknown_code_is_itemized_verbatim` uses a
+    recognized field, so `recognized_values` is 1 there and a regression to
+    `if recognized_values:` would still emit. This is the payload that
+    discriminates: a run naming a capability that does not exist would otherwise
+    report a field-name curiosity and no alert at all.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": "NOPE-1", "maturity_level": 2}])
+    assert {d["reason"] for d in body["dropped"]} == {"unknown_field", "unknown_key"}, body
+    unresolved = next(d for d in body["dropped"] if d["reason"] == "unknown_key")
+    assert unresolved["key"] == "NOPE-1", unresolved
+    assert unresolved["values"] == 0, "named, not double-charged"
+    assert body["suggestions_received"] == 1
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_locked_row_still_reports_field_drift(app_client) -> None:
+    """Drift is itemized BEFORE the lock check, so a locked row cannot hide it."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    ans = a.json()["answers"][0]
+    code, ans_id = ans["capability_code"], ans["id"]
+    c.patch(f"/zt/answers/{ans_id}", headers=h, json={"locked": True})
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 2, "maturity_level": 1}])
+    assert {d["reason"] for d in body["dropped"]} == {"unknown_field", "locked"}, body
+    drift = next(d for d in body["dropped"] if d["reason"] == "unknown_field")
+    assert drift["field"] == "maturity_level", drift
+    assert _answer(body, code)["maturity_stage"] is None
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_absurdly_large_integer_is_itemized_not_a_500(app_client) -> None:
+    """`float()` raises OverflowError, not ValueError, on a huge JSON int.
+
+    Uncaught it is a bare 500 that rolls back the flushed `llm_calls` row —
+    money spent, ledger empty (the N-019 shape). The guard exists; nothing
+    pinned it, so deleting it was free.
+    """
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": int("9" * 400)}])
+    d = _only_dropped(body)
+    assert d["reason"] == "unparseable", d
+    assert d["field"] == "current", d
+    assert _answer(body, code)["maturity_stage"] is None
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_two_level_wrapper_counts_leaves_not_the_wrapper(app_client) -> None:
+    """Counting the container's own `len` stops one level down and hides the rest."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    code = a.json()["answers"][0]["capability_code"]
+
+    body = _run_ai_caps(
+        c,
+        provider,
+        h,
+        svc_id,
+        [{"code": code, "values": {"stages": {"a": 1, "b": 2, "c": 3, "d": 4, "e": 1}}}],
+    )
+    d = _only_dropped(body)
+    assert d["reason"] == "unknown_field", d
+    assert d["field"] == "values", d
+    assert d["values"] == 5, "a two-level wrapper hiding five values must not be charged one"
+    assert body["suggestions_received"] == 5
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_run_ai_same_field_on_two_capabilities_is_not_a_supersede(app_client) -> None:
+    """`written` is keyed (capability, field). Keying it on field alone would
+    make the second capability look like an overwrite of the first."""
+    c, provider = app_client
+    h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    answers = a.json()["answers"]
+    first, second = answers[0]["capability_code"], answers[1]["capability_code"]
+
+    body = _run_ai_caps(
+        c, provider, h, svc_id, [{"code": first, "current": 2}, {"code": second, "current": 2}]
+    )
+    assert body["dropped"] == [], body["dropped"]
+    assert body["suggestions_applied"] == 2
+    assert _answer(body, first)["maturity_stage"] == 2
+    assert _answer(body, second)["maturity_stage"] == 2
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_zt_score_prompt_does_not_ask_for_narratives() -> None:
+    """The prompt is the thing that costs money, and nothing else asserts it.
+
+    `assert "roadmap_summary" not in body` cannot catch a re-add to the PROMPT —
+    the response model strips unknown keys, so that assertion only fires if
+    someone adds a schema field. This is the one that fires if someone starts
+    paying for narrative tokens again (issue #64).
+    """
+    from app.ai.jobs import _ZT_SCORE_PROMPT
+
+    for key in ("pillar_narratives", "executive_summary", "roadmap_summary"):
+        assert key not in _ZT_SCORE_PROMPT, f"{key} is back in the zt_score prompt (#64)"

@@ -220,11 +220,11 @@ Remaining: C5 (dashboards) + C2 (rerun safeguards). Extraction/versioned lists/o
 
 ### D3 — Zero Trust `[~]` (backend done; dashboards/FE remaining)
 
-> **Done (backend):** per-capability `target_stage` on `zt_answers` (migration 0021) + PATCH (framework-validated) + responses; `POST /zt/services/{id}/run-ai` runs the `zt_score` job (suggests current + target per capability on the framework scale + pillar narratives; skips locked rows; clamps out-of-range; returns a what-changed list); `build_roadmap()` (12-month, priority-front-loaded, Identity/Data weighting already in the priority score) + per-capability targets in `analyze_gaps`; gap-analysis endpoint returns the roadmap. Tests: `test_zt_run_ai.py`.
+> **Done (backend):** per-capability `target_stage` on `zt_answers` (migration 0021) + PATCH (framework-validated) + responses; `POST /zt/services/{id}/run-ai` runs the `zt_score` job (suggests current + target per capability on the framework scale; skips locked rows; refuses out-of-range values and itemizes them; returns a what-changed list plus per-reason suggestion accounting — W1/D-047. Pillar narratives were removed from the prompt: nothing consumed them, issue #64); `build_roadmap()` (12-month, priority-front-loaded, Identity/Data weighting already in the priority score) + per-capability targets in `analyze_gaps`; gap-analysis endpoint returns the roadmap. Tests: `test_zt_run_ai.py`.
 > **Remaining:** the two dashboards (CISA Atlas executive model) + per-capability current/target pickers + run-ai proxy/lib (C5/D3-FE).
 
 - Migration `0020`: per-capability `target_stage` alongside `maturity_stage`.
-- BE: `zt_score` job suggests current+target+pillar narrative; gap = current<target per capability; 12-month roadmap weighting Identity/User + Data higher (weighting exists in `zt/scoring.py`). DoD 3-level from A4.
+- BE: `zt_score` job suggests current+target (narratives removed, #64); gap = current<target per capability; 12-month roadmap weighting Identity/User + Data higher (weighting exists in `zt/scoring.py`). DoD 3-level from A4.
 - FE: two dashboards (CISA Atlas executive model); per-capability current+target pickers.
 - **Acceptance:** per-capability current+target; gaps + roadmap compute; both frameworks correct level counts.
 

@@ -199,10 +199,19 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
 
   // The panel accounts for every suggestion the run received (W1, issue #44),
   // not just the ones that landed — this replaced the old "Updated N fields
-  // across M capabilities" line. NOTE: fixture mode echoes the payload keys back
-  // verbatim, so a fixture run has structurally zero drops; this can only prove
-  // the accounting line renders, never that a drop is surfaced. The drop
-  // branches are covered in ZtRunAiAccounting.test.tsx and the API unit tests.
+  // across M capabilities" line.
+  //
+  // NOTE: this spec mints a BLANK draft, so every row is unanswered and nothing
+  // is protected; the fixture then echoes the payload keys back with in-range
+  // values, so this run has zero drops and can only prove the accounting line
+  // renders. The VALIDATION drop branches are covered in
+  // ZtRunAiAccounting.test.tsx and the API unit tests.
+  //
+  // Round 2 correction: "fixture mode cannot produce a drop" is false for ZT.
+  // `protected` is fixture-ONLY (`protected_keys` returns an empty set
+  // off-fixture), so a run over a client-submitted assessment WOULD surface a
+  // drop here end to end. This spec deliberately avoids that state, so the one
+  // reason it could prove, it does not. Worth a spec of its own.
   //
   // The wording is "suggested values", NOT CSF's "suggested score values": ZT's
   // narrative fields were removed rather than counted (#64), so there is no

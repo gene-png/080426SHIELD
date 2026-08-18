@@ -8,9 +8,13 @@ import type { ZtDroppedSuggestion, ZtRunAiResponse } from "@/lib/zt/types";
 import { ZtRunAiAccounting } from "./ZtRunAiAccounting";
 
 // No client mocking needed: this component is pure. That is why it lives in its
-// own file — the drop branches it renders are unreachable through a fixture-mode
-// run (the fixture echoes the payload keys back verbatim, so it has structurally
-// zero drops), so they can only be covered here and in the API unit tests.
+// own file — the VALIDATION drop branches are unreachable through a fixture-mode
+// run, since the fixture echoes the payload keys back with in-range values, so
+// they can only be covered here and in the API unit tests.
+//
+// `protected` is the exception (round 2): it is fixture-ONLY, because
+// `protected_keys` returns an empty set off-fixture. A blanket "fixture mode
+// cannot produce a drop" is false for ZT.
 
 function drop(over: Partial<ZtDroppedSuggestion> = {}): ZtDroppedSuggestion {
   return { reason: "unknown_key", key: null, field: null, values: 1, ...over };

@@ -281,6 +281,40 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
     );
   });
 
+  it("never says '0 suggested values skipped' over a run that lost everything", async () => {
+    // A `locked` record accounts for ZERO values when every field on the locked
+    // row was ALSO misnamed — those values are counted under the drifted names
+    // they arrived with. The panel then asserted nothing was lost at the moment
+    // the most was. Found by W1's ZT step (D-047 round 1), which ported this
+    // block and hit the zero case there first; the sibling it was mirroring had
+    // the same hole. Fixture mode cannot produce it.
+    await runAi(
+      result({
+        suggestions_received: 2,
+        suggestions_applied: 0,
+        dropped: [
+          {
+            reason: "unknown_field",
+            key: "high|GV.OC-01",
+            field: "policy_and_process",
+            values: 2,
+            value: null,
+          },
+          {
+            reason: "locked",
+            key: "high|GV.OC-01",
+            field: null,
+            values: 0,
+            value: null,
+          },
+        ],
+      }),
+    );
+    const skipped = screen.getByText(/skipped because/);
+    expect(skipped).toHaveTextContent(/Suggestions skipped because/);
+    expect(skipped).not.toHaveTextContent(/0 suggested value/);
+  });
+
   it("shows an unmapped reason code instead of an empty bullet", async () => {
     // `reason` is a union by convention only — the payload is JSON. An unmapped
     // code used to index to undefined and render nothing, leaving a bullet with

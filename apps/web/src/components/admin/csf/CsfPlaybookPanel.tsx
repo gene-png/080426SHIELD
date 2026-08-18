@@ -273,8 +273,19 @@ function RunAiAccounting({
 
       {skipped.length > 0 ? (
         <p className="text-sm text-ink-tertiary">
-          {skippedValues} suggested value{skippedValues === 1 ? "" : "s"}{" "}
-          skipped because{" "}
+          {/* Zero-guard, for the same reason the failure block above has one: a
+              `locked` record legitimately accounts for ZERO values when every
+              field on the locked row was also misnamed, because those values
+              are counted under the names they arrived with. "0 suggested values
+              skipped because you locked those rows" is a sentence asserting
+              nothing was lost, printed at the moment the most was — the
+              prompt-prose drift shape `test_csf_run_ai_model_following_the_
+              prompt_prose_loses_everything_loudly` calls realistic. Found by
+              W1's ZT step, which ported this block and hit the zero case there
+              first (D-047 round 1). */}
+          {skippedValues > 0
+            ? `${skippedValues} suggested value${skippedValues === 1 ? "" : "s"} skipped because `
+            : "Suggestions skipped because "}
           {skipped.length === 1
             ? "you locked that row"
             : "you locked those rows"}

@@ -11,9 +11,14 @@ import type { ZtDroppedSuggestion, ZtRunAiResponse } from "@/lib/zt/types";
  *
  * Its own file rather than inline in `ZtWorkspace`, so the drop branches can be
  * tested directly. Reaching them through the workspace needs the whole client
- * mocked, and fixture mode structurally cannot produce a drop — so a test that
- * could only go through the workspace would be the expensive way to cover
- * nothing.
+ * mocked, and fixture mode cannot produce a VALIDATION drop — the fixture emits
+ * the parser's own keys with in-range values by construction.
+ *
+ * One exception, found in round 2 and worth stating because the blanket claim
+ * "fixture mode cannot produce a drop" is FALSE for ZT: `protected` is
+ * fixture-ONLY. `protected_keys` returns an empty set off-fixture
+ * (`app/ai/provenance.py`), so that reason can never occur live and DOES occur
+ * offline whenever the run touches a client-submitted or consultant-typed row.
  */
 
 const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {

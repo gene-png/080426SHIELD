@@ -1854,6 +1854,89 @@ The honest reading is the one D-045 reached for CSF: not "round 1 made it
 correct", but that an audit gate keeps finding what a green suite cannot. This
 step budgeted four rounds on that basis.
 
+### What the adversarial pass changed (round 2)
+
+Two lenses again: one attacking round 1's own fixes, one asking what was still
+missing. **Round 1's six changes all held** — the `values=field_values[field]`
+charge cannot double-count, because the `unknown_key` / `locked` / `protected`
+branches `continue` before the per-field loop is ever reached, so the two charges
+are mutually exclusive by control flow rather than by luck. What round 2 found
+was in the artifacts around the change, in one test that could not fail, and in a
+claim this decision itself asserted without checking.
+
+**A claim in round 1's own record was false.** Round 1 wrote that ZT's skip
+bullet reproduced "the contradiction the failure block above it had already been
+fixed to avoid" — implying the CSF sibling it was mirroring had the guard. It did
+not. `CsfPlaybookPanel.tsx` printed **"0 suggested values skipped because you
+locked those rows"** whenever every field on a locked row was also misnamed, which
+is the realistic prompt-prose drift shape CSF's own test calls out by name. So the
+sentence asserting nothing was lost printed at the moment the most was, live, in
+shipped CSF code. Fixed here with the ZT fix rather than filed, because it is the
+same defect and leaving a false statement in front of a consultant to preserve
+PR scope is the wrong trade.
+
+**"Fixture mode structurally cannot produce a drop" is FALSE for ZT.** It was
+written in four places — the component header, the vitest header, `s6`'s comment,
+and #51's framing — and it is inherited from CSF, where it is true. ZT has a
+reason CSF does not: `protected` is reachable **only** in fixture mode, because
+`protected_keys` returns an empty set off-fixture (`app/ai/provenance.py`). So the
+blanket claim is backwards for exactly one reason code, and it matters twice
+over: `protected` can never be observed live at all, and `s6` **could** have
+proven a drop branch end to end had it not deliberately minted a blank draft. All
+four sites now say what is actually true. The precise live-verification scope now
+lives on #51 rather than as a vague "never observed".
+
+**The audit-row test could not tell values from records.** It asserted
+`dropped_by_reason == {"unknown_field": 1}` over a scalar, where values and
+records are both 1 — so a refactor to `+= 1` would have passed it while writing
+`{"unparseable": 1}` over three lost stages into the durable record that outlives
+the response. This is round 1's own "ported the enumeration and not the charge"
+defect, one layer up, and round 1 did not look there. The payload now hides three
+values behind one key, and the test asserts the durable row's arithmetic closes
+against itself. CSF had already done both, deliberately.
+
+**Five behaviours were correct but unpinned**, each of which a revert would have
+carried green: the row-level record emitted at `values=0` (ZT's nearest test used
+a recognized field, so `if recognized_values:` would still have passed it); field
+drift surviving the lock check; the `OverflowError` guard whose absence is a bare
+500 that costs money and writes no ledger row; a two-level wrapper counting leaves
+rather than the wrapper; and the same field on two capabilities not reading as a
+supersede. Plus one the response could never pin: the _prompt_ no longer asking
+for narratives — `assert "roadmap_summary" not in body` only fires on a schema
+re-add, since `response_model` strips unknown keys, and the change that costs
+money is a re-add to the prompt.
+
+**The depth cap's comment was wrong, in the direction that matters.** It claimed
+"the undercount is bounded and stated". It is bounded in RECORDS and unbounded in
+VALUES: a list of 10,000 stages nested below `_MAX_NEST_DEPTH` is charged 1 on
+both sides, so the invariant closes over 9,999 lost values. It is the only path
+where the invariant holds vacuously — in the feature built to stop exactly that.
+No real model nests five deep, so it is accepted rather than fixed, but an
+accepted exclusion belongs on the record and not only in a comment. Corrected in
+both services.
+
+**Also corrected:** `IMPLEMENTATION.md`, which declares itself verified against
+live code, still described `zt_score` as producing pillar narratives — a sixth
+stale artifact of the same shape as round 1's five. A test-file docstring still
+pointed readers at a `zt_run_ai_suggestions_dropped` log line, and at a rationale
+for deliberately withholding the count, both of which this step deleted. And the
+round-1 test-block header claimed all five of its tests failed first; only three
+did, the other two characterising already-correct behaviour that had no test —
+a distinction worth keeping straight, because only the first kind proves a fix.
+
+**Stated, not fixed:** `response_shape` from #44's shared vocabulary is
+implemented by neither CSF nor ZT. The reason is real — a condition that can never
+coexist with an applied suggestion belongs in the error path, not a per-item drop
+list, which is what `parse_json_object_with_list` does — but it lived only in a
+parser comment, so a future agent building Risk or ATT&CK would read #44, find a
+ninth reason code, and either add it or spend a round working out why it is
+absent. Also unaccounted and now stated: duplicate JSON keys inside one entry, and
+extra top-level keys alongside a correct `capabilities` (the latter is adjacent to
+#46 but not the same defect).
+
+Two rounds, and the pattern D-045 recorded holds: the defect rate did not fall,
+it moved. Round 1 found the code; round 2 found the claims about the code.
+
 **Ref:** `apps/api/app/routes/zt.py` (`_as_number`, `_hidden_value_count`,
 `_bounded`, `_bounded_key`, the apply loop), `apps/api/app/schemas/zt.py`
 (`ZtDroppedSuggestion`, `ZtRunAiResponse`), `apps/api/app/ai/jobs.py`

@@ -148,7 +148,15 @@ def _hidden_value_count(raw: Any, _depth: int = 0) -> int:
     """
     if _depth >= _MAX_NEST_DEPTH:
         # Deeper than any real suggestion. Stop rather than recurse a hostile
-        # payload; the undercount is bounded and stated, not silent.
+        # payload.
+        #
+        # BE PRECISE ABOUT WHAT THIS COSTS (round 2): the undercount is bounded
+        # in RECORDS, not in values. A list of 10,000 stages below the cap is
+        # charged 1 on both sides, so the invariant closes over 9,999 lost
+        # values — the only path where it holds vacuously, in the feature built
+        # to stop exactly that. No real model nests this deep, which is why it
+        # is accepted rather than fixed, but "bounded" was the wrong word and
+        # the exclusion belongs on the record, not only in this comment.
         return 1
     if isinstance(raw, dict):
         return sum(_hidden_value_count(v, _depth + 1) for v in raw.values()) or 1
