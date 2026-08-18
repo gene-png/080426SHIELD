@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -158,14 +158,83 @@ class ZtCapabilityChange(BaseModel):
     new: Any = None
 
 
+class ZtDroppedSuggestion(BaseModel):
+    """One suggestion the zt_score run did NOT apply, and why (W1, issue #44).
+
+    Itemized rather than counted: a single integer cannot state its own scope,
+    so every wording of it is true for the case it was written for and false for
+    an adjacent one. Each entry here is self-describing instead.
+
+    `reason` is one of:
+
+    | reason         | meaning                                                  |
+    |----------------|----------------------------------------------------------|
+    | `entry_shape`  | the entry could not be read as a suggestion at all       |
+    | `unknown_key`  | named a capability that does not exist (key verbatim)    |
+    | `unknown_field`| named a FIELD this code does not know — prompt/parser drift|
+    | `unparseable`  | the value was not a whole number (`1.9`, `true`, `"n/a"`)|
+    | `out_of_range` | the value fell outside the framework's stage ladder      |
+    | `superseded`   | a later entry in the same response overwrote this value  |
+    | `locked`       | a human locked the row — a by-design skip, not a defect  |
+    | `protected`    | an offline run declined to overwrite a non-AI answer     |
+
+    `locked` and `protected` render separately from the rest. Both are by-design
+    skips; folding them into one "N dropped" number rebuilds the alert-fatigue
+    problem issue #31 rejected.
+
+    ZT has no `wrong_type`: CSF needed it for a narrative field, and ZT's
+    narrative fields were removed (#64). Every value ZT applies is a stage.
+    """
+
+    # A closed vocabulary on purpose. As a bare `str` a new reason code invented
+    # server-side reaches the workspace as an unmapped label and renders as an
+    # empty bullet — the count right, the explanation silently gone. Here it
+    # fails loudly at serialization instead.
+    reason: Literal[
+        "entry_shape",
+        "unknown_key",
+        "unknown_field",
+        "unparseable",
+        "out_of_range",
+        "superseded",
+        "locked",
+        "protected",
+    ]
+    # The capability code exactly as the model wrote it, or None when the model
+    # omitted it — never the literal "None", which fabricates a row nobody
+    # named. AI output: fine here (transient, admin-only, same trust boundary as
+    # the run result), never in an audit row or a log (#44 constraint 1).
+    key: str | None = None
+    # "current" or "target", for drops attributable to one value.
+    field: str | None = None
+    # How many suggested values this record accounts for. Usually 1, but never
+    # assume it: an entry-level drop states the whole row it lost (so a fully
+    # rejected entry is not undercounted as a single bad field), and ANY key
+    # whose value is a container is charged the leaves it hides. Anything
+    # summing these must add `values`, never count records.
+    values: int = 1
+    # The offending model output, bounded. AI output — response only.
+    value: Any = None
+
+
 class ZtRunAiResponse(BaseModel):
-    """Result of a zt_score Run-AI: what changed + the refreshed answers."""
+    """Result of a zt_score Run-AI: what changed + the refreshed answers.
+
+    `pillar_narratives`, `executive_summary` and `roadmap_summary` were removed
+    in W1's ZT step (issue #64): all three were returned and none was ever
+    persisted, exported or rendered. They are not deprecated fields left empty —
+    a dead field implying a live one is its own defect (see #62) — they are
+    gone, along with the prompt text that asked for them.
+    """
 
     changed: list[ZtCapabilityChange]
     answers: list[ZtAnswerResponse]
-    pillar_narratives: dict[str, str] = {}
-    executive_summary: str | None = None
-    roadmap_summary: str | None = None
+    # Every suggested value the run received is either applied or itemized:
+    #     received == applied + sum(d.values for d in dropped)
+    # Counted in VALUES (one field on one capability), not entries — D-045.
+    suggestions_received: int = 0
+    suggestions_applied: int = 0
+    dropped: list[ZtDroppedSuggestion] = []
     # How many answers an offline run deliberately left alone (migration 0035).
     # Always 0 for a live run. Surfaced so the skip is visible rather than
     # silent.

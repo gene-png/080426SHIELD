@@ -43,6 +43,7 @@ import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
 import { ZtDeliverableCard } from "./ZtDeliverableCard";
+import { ZtRunAiAccounting } from "./ZtRunAiAccounting";
 import { ZtGapList } from "./ZtGapList";
 import { ZtRoadmapCard } from "./ZtRoadmapCard";
 import { ZtQuestionnaire } from "./ZtQuestionnaire";
@@ -456,26 +457,12 @@ export function ZtWorkspace({
                 )}
               </RunAiGuard>
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
-              {runResult ? (
-                <p className="text-sm text-ink-secondary" aria-live="polite">
-                  Updated{" "}
-                  <span className="font-semibold text-ink-primary">
-                    {runResult.changed.length}
-                  </span>{" "}
-                  field
-                  {runResult.changed.length === 1 ? "" : "s"} across{" "}
-                  {
-                    new Set(runResult.changed.map((c) => c.capability_code))
-                      .size
-                  }{" "}
-                  capabilit
-                  {new Set(runResult.changed.map((c) => c.capability_code))
-                    .size === 1
-                    ? "y"
-                    : "ies"}
-                  .
-                </p>
-              ) : null}
+              {/* Replaces the old "Updated N fields across M capabilities"
+                  line, which reported only what LANDED — a run that lost every
+                  suggestion rendered identically to one the model had nothing
+                  to say about (W1, issue #44). The accounting states the same
+                  change counts and the shortfall alongside them. */}
+              {runResult ? <ZtRunAiAccounting result={runResult} /> : null}
               {runResult?.preserved_client_answers ? (
                 /* The skip must be visible, not silent. The population is every
                    answer the AI did not write — `protected_keys` keys on

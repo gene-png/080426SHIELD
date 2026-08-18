@@ -197,11 +197,20 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
     expect(v).toBeLessThanOrEqual(3);
   }
 
-  // The workspace echoes the "Updated N fields across M capabilities" summary.
+  // The panel accounts for every suggestion the run received (W1, issue #44),
+  // not just the ones that landed — this replaced the old "Updated N fields
+  // across M capabilities" line. NOTE: fixture mode echoes the payload keys back
+  // verbatim, so a fixture run has structurally zero drops; this can only prove
+  // the accounting line renders, never that a drop is surfaced. The drop
+  // branches are covered in ZtWorkspace.test.tsx and the API unit tests.
+  //
+  // The wording is "suggested values", NOT CSF's "suggested score values": ZT's
+  // narrative fields were removed rather than counted (#64), so there is no
+  // non-score category here to distinguish against.
   const summary = page
-    .locator("p", { hasText: "Updated" })
+    .locator("p", { hasText: /AI applied \d+ of \d+ suggested value/ })
     .filter({ hasText: "capabilit" });
-  await expect(summary).toBeVisible({ timeout: 30000 });
+  await expect(summary.first()).toBeVisible({ timeout: 30000 });
 
   // Remediation gaps surface and the 12-month roadmap sequences them by month.
   await expect(

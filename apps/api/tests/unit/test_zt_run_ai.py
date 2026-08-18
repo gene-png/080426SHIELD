@@ -90,8 +90,21 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
     assert row["target_stage"] == 4
     fields = {ch["field"] for ch in body["changed"] if ch["capability_code"] == code}
     assert {"maturity_stage", "target_stage"} <= fields
-    assert body["pillar_narratives"]["ID"] == "Identity is partial."
-    assert body["executive_summary"] == "draft"
+
+    # This test used to assert `pillar_narratives` and `executive_summary` were
+    # echoed back. Those assertions were not WRONG about the old behaviour —
+    # they are removed because the behaviour is deliberately gone (issue #64):
+    # all three narrative fields were returned and none was ever persisted,
+    # exported or rendered, so they were pulled from the prompt rather than
+    # given accounting machinery. The payload above still SENDS them, on
+    # purpose: a model that has not caught up with a prompt change must not 500.
+    #
+    # They are TOP-LEVEL keys, so they do not reach the per-entry unknown-field
+    # path and are not counted — the run ignores them exactly as CSF ignores its
+    # `executive_summary`. That top-level silence is issue #46 / #60 and is
+    # outside W1's invariant, which covers the entries in `capabilities`.
+    assert "pillar_narratives" not in body
+    assert "executive_summary" not in body
 
 
 @pytest.mark.unit
@@ -502,7 +515,6 @@ def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monke
 
     monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
     for payload in (
-        '{"capabilities": 0}',  # not a list
         '{"capabilities": [{"code": ["x"], "current": 2}]}',  # unhashable code
         '{"capabilities": ["' + code + '", 7]}',  # entries that are not objects
         '{"capabilities": [{"code": "NOPE-1", "current": 2}]}',  # unknown code
@@ -511,6 +523,22 @@ def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monke
         r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
         assert r.status_code == 200, f"{payload} -> {r.status_code} {r.text}"
         assert r.json()["changed"] == [], f"{payload} should change nothing"
+
+    # A NON-LIST `capabilities` moved out of the loop above, because it is no
+    # longer a 200. This is a deliberate behaviour change, not a test bent to
+    # fit the code: the old path did `raw_caps = []` after a warning — a
+    # default-value fallback on a bad shape, which FAIL LOUDLY forbids and which
+    # made a structurally broken response indistinguishable from a model that
+    # had nothing to say. It is now refused by
+    # `parse_json_object_with_list("capabilities")`, matching what csf_score
+    # already does with `scores`. Counting it as drops was the other option and
+    # is wrong: there are no entries to enumerate, so any per-entry number would
+    # be invented.
+    provider.register_static("zt_score", LLMResponse('{"capabilities": 0}'))
+    r = c.post(f"/zt/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["reason"] == "ai_call_failed"
+    assert "drifted apart" in r.json()["error"]["message"]
 
     from app.models.zt_assessment import ZtAnswer
 
@@ -730,7 +758,7 @@ def test_zt_run_ai_audit_row_carries_counts_but_no_model_content(app_client) -> 
 
     _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 2, "okta_stage": 3}])
 
-    from app.models.audit import AuditEntry
+    from app.models.audit_entry import AuditEntry
 
     eng = _ce(_os.environ["DATABASE_URL"], future=True)
     with _sm(bind=eng, future=True)() as s:

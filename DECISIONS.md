@@ -1412,9 +1412,33 @@ constraint is about the audit/log channel, not about the product.)
 **Scope of the two integers, stated because the UI sentence reads like a
 completeness claim.** They count values suggested for SCORING ROWS. The
 response's top-level `executive_summary` is outside them — and is not persisted
-by CSF at all, though ZT persists its equivalent (`routes/zt.py`). That
+by CSF at all, ~~though ZT persists its equivalent (`routes/zt.py`)~~. That
 asymmetry is pre-existing and is NOT resolved here; the copy says "score
 values" so the panel stops implying otherwise, and the gap is filed separately.
+
+> **Correction (2026-08-18, W1's ZT step).** The struck clause above is FALSE.
+> **ZT does not persist its equivalent.** `ZtAssessment` has no
+> `pillar_narratives`, `executive_summary` or `roadmap_summary` column, no
+> migration adds one, `zt/exporters.py` never reads them, and across all of
+> `apps/web/src` the only occurrence is the type declaration in
+> `lib/zt/types.ts`. The citation pointed at `routes/zt.py`, which _returned_
+> the values; nothing wrote them anywhere.
+>
+> The error is worth naming, not just fixing: this is a claim about a design
+> that was intended and never finished, written down as though it described the
+> schema, and never checked against it. Nothing in the codebase contradicted it
+> loudly, because a field that is returned and ignored looks exactly like a
+> field that is returned and stored, from the route.
+>
+> It was load-bearing. This sentence was the stated basis for scoping ZT's
+> narratives INTO W1's suggestion accounting — the reasoning being that a
+> dropped narrative would be a real lost value. Once the premise failed, so did
+> the conclusion: those values were discarded unconditionally, valid or not, so
+> a "dropped narrative" count would report loss where a validation failure lost
+> nothing that was not already thrown away by design, and a counter implying the
+> harm of a real dropped score trains the reader to discount the counters that
+> matter (the #31 constraint). The fields were removed from `_ZT_SCORE_PROMPT`
+> instead — see **D-047** and issue **#64**. CSF's half remains open as **#60**.
 
 ### What the adversarial pass changed (same day, before merge)
 
@@ -1675,3 +1699,100 @@ the guard.
 the four finalize routes (`csf.py`, `zt.py`, `attack.py`, `tech_debt.py`);
 `test_deliverable_release.py`, `test_tech_debt_dashboard.py`,
 `test_zt_dashboard.py`, `test_attack_dashboard.py`.
+
+## D-047 — ZT accounts for every suggested stage, and stops asking for narratives nobody reads
+
+**Date:** 2026-08-18 · **Workstream:** W1, ZT step · **Issues:** #44, #64 · **Supersedes nothing; corrects D-045's ZT-persistence claim in place.**
+
+W1's second service. The shape is D-045's, carried over intact: every suggested
+value is either applied or itemized, counted in VALUES, with the invariant
+
+```
+received == applied + sum(d.values for d in dropped)
+```
+
+What follows is only what differs from CSF, plus the one decision that is not a
+port.
+
+**The narrative fields were removed, not counted.** `_ZT_SCORE_PROMPT` asked for
+`pillar_narratives`, `executive_summary` and `roadmap_summary` on every run.
+`routes/zt.py` parsed all three and returned them; `lib/zt/types.ts` declared
+them; and that was the end of the road. No column on `ZtAssessment`, no
+migration, no reader in `zt/exporters.py`, and no reference anywhere in
+`apps/web/src` outside the type declaration itself.
+
+They were briefly scoped INTO this accounting, on the strength of D-045's claim
+that ZT persisted them. That claim was false and is corrected in place above.
+Once the premise went, the conclusion went with it, and the replacement argument
+— "a value the model wrote and the run discarded is the defect family regardless
+of storage" — does not hold either. **The defect W1 exists to catch is content
+that would otherwise have been KEPT vanishing silently.** These values vanished
+unconditionally, valid or not. A validation failure lost nothing that was not
+already being thrown away by design, so a per-reason drop count for them would
+have measured a quantity with no consumer and reported it in the same register
+as a genuinely lost score. That is the #31 alert-fatigue constraint arriving
+from a new direction: a counter that reports harm where none occurred teaches
+the reader to discount the counters that report harm where it did.
+
+So this was never an invariant-scope question. It was a waste question, and the
+answer is to stop paying for the tokens: the three fields are gone from the
+prompt, the response schema, the fixture and the TS types. **Not deprecated and
+left empty** — a dead field implying a live one is its own defect (#62). If a
+narrative or an executive summary should ever appear in the ZT workspace or the
+exported report, that is a real feature needing a column, a migration, an
+exporter change and a UI surface; re-adding the prompt text is the LAST step of
+that work, not the first. CSF's half of the same waste is open as #60.
+
+**`protected` is a reason code, distinct from `locked`.** ZT has a skip CSF does
+not: an offline run declines to overwrite a non-AI answer (migration 0035).
+`if row.locked or code in protected: continue` recorded nothing for either. They
+are now two records with two reasons. Folding them together was rejected: both
+are by-design skips that must render away from the failure alert, but telling a
+consultant a row is "locked" when nobody locked it is a false statement about
+who did what, and the two have different fixes.
+
+**A non-list `capabilities` is a 502, not a pile of drops.** The old path did
+`raw_caps = []` after a warning — a default-value fallback on a bad shape, which
+FAIL LOUDLY forbids, and which made a structurally broken response
+indistinguishable from a model with nothing to say. `zt_score` now uses
+`parse_json_object_with_list("capabilities")`, matching `csf_score`. Counting it
+as drops was the alternative and is wrong: there are no entries to enumerate, so
+any per-entry number would be invented. A MISSING key is still untouched — that
+is #46, deliberately outside this.
+
+**No `wrong_type`.** CSF needed it for a narrative field. Every value ZT applies
+is a stage, so the vocabulary is `entry_shape | unknown_key | unknown_field |
+unparseable | out_of_range | superseded | locked | protected`.
+
+**`suggested` gains a code only where a value landed.** The F9 provenance
+settlement loop iterates that set. Adding a code on a rejected suggestion would
+hand the settlement a row the model never wrote and re-open the defect PR #39
+closed.
+
+**The log moved below the D-031 re-read**, and the audit row gained
+`suggestions_received`, `suggestions_applied` and `dropped_by_reason` in values.
+Both follow the rule D-045 records the reviewers enforcing on CSF: a record
+saying "this happened" goes below the guard that makes it true.
+
+**Four log lines lost their model content.** `zt.py` logged
+`received=repr(raw_caps)[:120]`, `entry=repr(sugg)[:120]`,
+`capability_code=repr(code)[:120]` and `value=repr(raw)[:120]` — AI output in a
+log line, against #44 constraint 1. The per-event warnings are gone entirely,
+along with `_MAX_REJECT_LOGS`, which existed only to bound them. What they
+carried now reaches the admin through `dropped` on the response, which is the
+channel allowed to hold verbatim keys and values.
+
+**One pre-existing test changed on purpose, and one assertion was removed.**
+`test_a_malformed_response_does_not_500_and_changes_nothing` asserted a 200 for
+a non-list `capabilities`; that encodes the fail-soft path being deleted, so the
+case moved to its own 502 assertion. `test_zt_run_ai_applies_current_and_target`
+asserted the narratives were echoed back; that behaviour is deliberately gone.
+Neither was wrong about the old code — both are recorded here rather than
+quietly edited, because "fix the code, not the test" only permits touching a
+test when the behaviour it pins is itself the thing being changed.
+
+**Ref:** `apps/api/app/routes/zt.py` (`_as_number`, `_hidden_value_count`,
+`_bounded`, `_bounded_key`, the apply loop), `apps/api/app/schemas/zt.py`
+(`ZtDroppedSuggestion`, `ZtRunAiResponse`), `apps/api/app/ai/jobs.py`
+(`_ZT_SCORE_PROMPT`), `apps/api/app/ai/fixtures.py` (`_fixture_zt_score`),
+`apps/web/src/lib/zt/types.ts`, `apps/api/tests/unit/test_zt_run_ai.py`.
