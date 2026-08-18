@@ -29,7 +29,12 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
   // hands the model the exact code list, so an unknown key means the model
   // invented a code and the consultant can neither fix its spelling nor seed
   // anything. Say what they CAN do instead.
-  unknown_key: "no matching capability — it got no draft, so set it by hand",
+  // Not "set it by hand": every catalogue capability is seeded as a row when the
+  // assessment is created, so an unknown key means the model invented a code
+  // this framework does not contain. There is no row to go and set. Say what
+  // actually happened instead of advising something impossible.
+  unknown_key:
+    "no matching capability — the model invented a code this framework does not have",
   unknown_field: "field name this run does not recognize",
   entry_shape: "could not be read as a suggestion",
   // Not "was not a number": `1.9` and `true` are refused here too, and both are
@@ -105,12 +110,37 @@ function groupByReason(
   return [...by.entries()];
 }
 
+/**
+ * Distinct capabilities in a set of drop records, not the record count.
+ *
+ * Two entries naming the same locked code produce two records for ONE
+ * capability. This number exists to reconcile with `preserved_client_answers`,
+ * which counts rows — so counting records here would defeat its only purpose.
+ */
+function skippedRows(items: ZtDroppedSuggestion[]): number {
+  return new Set(items.map((d) => d.key ?? "")).size;
+}
+
 function summarizeItems(items: ZtDroppedSuggestion[]): string {
   const shown = items.slice(0, ITEM_CAP).map(describeItem).join(", ");
   const rest = items.length - ITEM_CAP;
   // "records", not a bare count: every other number here is in VALUES, and one
   // record can stand for several.
   return rest > 0 ? `${shown}, and ${rest} more records` : shown;
+}
+
+/**
+ * How many suggested values this run actually LOST.
+ *
+ * By-design skips (`locked`, `protected`) are not losses. Exported so
+ * `ZtWorkspace`'s step-completion uses the same definition the panel's severity
+ * uses — two places deciding "did this run go well" by different rules is how
+ * the panel ended up shouting over a clean offline run.
+ */
+export function lostValueCount(result: ZtRunAiResponse): number {
+  return (result.dropped ?? [])
+    .filter((d) => !BY_DESIGN_SKIPS.has(d.reason))
+    .reduce((n, d) => n + d.values, 0);
 }
 
 export function ZtRunAiAccounting({
@@ -129,20 +159,32 @@ export function ZtRunAiAccounting({
   const unrecognizedValues = sumValues(unrecognized);
   const changedRows = new Set(result.changed.map((c) => c.capability_code))
     .size;
-  // A run that received suggestions and applied NONE is a failure, whichever
-  // bucket the drops fall into. Without this, total field-name drift renders
-  // entirely through `NOT_UNDERSTOOD` — every lost stage in calm secondary grey
-  // with no alert — while this component's own docstring argues that "applied 0
-  // of 0" deserves one. "Applied 0 of 74" is strictly worse and was getting
-  // LESS severity: the quiet-block carve-out is justified only for runs where
-  // everything asked for WAS applied, and nothing enforced that.
-  const nothingApplied =
-    result.suggestions_applied === 0 && result.suggestions_received > 0;
+  // Severity derives from whether anything went WRONG, not from whether
+  // anything applied. Round 3 got this half-right and half-backwards:
+  //
+  //   Right: total field-name drift routed everything to the quiet block, so a
+  //   run losing every stage rendered in calm grey with no alert while "applied
+  //   0 of 0" got one.
+  //
+  //   Backwards: gating on `applied === 0` alone re-opened #31 in the exact
+  //   workflow `protected` exists for. A client submits all 37 capabilities, a
+  //   consultant presses Run AI offline, every suggestion is preserved by
+  //   design — and the panel shouted "nothing was applied, every suggestion was
+  //   rejected or unrecognized" over a run in which nothing went wrong.
+  //
+  // `lostValues` counts only what was actually lost: by-design skips are not
+  // losses and must never raise severity.
+  const lostValues = sumValues(failed) + sumValues(unrecognized);
+  const nothingApplied = result.suggestions_applied === 0 && lostValues > 0;
   // Applied values are not changed fields: a value equal to what was already
   // recorded applies and changes nothing. Common on a re-run, where "changing 0
-  // fields" alone reads as a failed run when it means the opposite.
+  // fields" alone reads as a failed run when it means the opposite. Gated on
+  // `lostValues === 0` too — otherwise it printed "every suggestion matched"
+  // one paragraph above "these are part of the shortfall".
   const agreedThroughout =
-    result.suggestions_applied > 0 && result.changed.length === 0;
+    result.suggestions_applied > 0 &&
+    result.changed.length === 0 &&
+    lostValues === 0;
   // EXACTLY ONE assertive region, always. The failure block is the alert when
   // there is one; otherwise, if the run applied nothing, the headline becomes
   // the alert. Without the second half, total field-name drift routes every
@@ -206,14 +248,26 @@ export function ZtRunAiAccounting({
       {failed.length > 0 ? (
         <div className="text-sm text-status-danger-fg" role="alert">
           <p className="font-semibold">
-            {failedValues > 0
-              ? `${failedValues} suggested value${failedValues === 1 ? "" : "s"} could not be applied:`
-              : // A failure record can legitimately account for zero values —
-                // "this capability does not exist" is a fault about the row,
-                // and the values it carried are counted under the name they
-                // arrived with. "0 could not be applied" over a red alert reads
-                // as a contradiction and invites dismissing it.
-                "Some suggestions could not be applied:"}
+            {nothingApplied
+              ? // The alert must be a SUPERSET of the headline, not a sibling of
+                // it. Round 3 established "exactly one assertive region: the
+                // failure block when there is one, the headline when there is
+                // not" — correct about COUNT, wrong about CONTENT. With
+                // failures AND nothing applied, the headline goes polite and
+                // this block was the only assertive utterance, saying "Some
+                // suggestions could not be applied" over a total loss. A
+                // screen-reader user heard "some"; a sighted one read "0 of 74"
+                // in the line above. The visual fix re-derived the original
+                // defect in the channel nobody had looked at.
+                `Nothing was applied — all ${result.suggestions_received} suggested value${result.suggestions_received === 1 ? "" : "s"} this run received were rejected or unrecognized:`
+              : failedValues > 0
+                ? `${failedValues} suggested value${failedValues === 1 ? "" : "s"} could not be applied:`
+                : // A failure record can legitimately account for zero values —
+                  // "this capability does not exist" is a fault about the row,
+                  // and the values it carried are counted under the name they
+                  // arrived with. "0 could not be applied" over a red alert reads
+                  // as a contradiction and invites dismissing it.
+                  "Some suggestions could not be applied:"}
           </p>
           <ul className="list-disc pl-5">
             {groupByReason(failed).map(([reason, items]) => (
@@ -273,8 +327,9 @@ export function ZtRunAiAccounting({
               {sumValues(items) > 0
                 ? `${sumValues(items)} suggested value${sumValues(items) === 1 ? "" : "s"}`
                 : "Suggestions"}{" "}
-              across {items.length} capabilit{items.length === 1 ? "y" : "ies"}{" "}
-              skipped — {describeReason(reason)}
+              across {skippedRows(items)} capabilit
+              {skippedRows(items) === 1 ? "y" : "ies"} skipped —{" "}
+              {describeReason(reason)}
             </li>
           ))}
         </ul>

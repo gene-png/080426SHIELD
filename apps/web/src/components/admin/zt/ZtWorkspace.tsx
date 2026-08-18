@@ -43,7 +43,7 @@ import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
 import { ZtDeliverableCard } from "./ZtDeliverableCard";
-import { ZtRunAiAccounting } from "./ZtRunAiAccounting";
+import { lostValueCount, ZtRunAiAccounting } from "./ZtRunAiAccounting";
 import { ZtGapList } from "./ZtGapList";
 import { ZtRoadmapCard } from "./ZtRoadmapCard";
 import { ZtQuestionnaire } from "./ZtQuestionnaire";
@@ -288,6 +288,13 @@ export function ZtWorkspace({
 
   async function onRunAi(): Promise<void> {
     setBusy("run");
+    // LOAD-BEARING for accessibility, not just for clearing the panel.
+    // This unmounts the accounting subtree, so the next render creates the
+    // live region fresh. `ZtRunAiAccounting`'s headline switches between
+    // role="alert" and aria-live="polite"; swapping that attribute on a
+    // PERSISTENT node is the least reliable live-region transition there is.
+    // Keeping the panel mounted across a re-run would silently break the
+    // announcement without breaking a single test.
     setRunResult(null);
     const seq = ++assessmentSeq.current;
     try {
@@ -439,7 +446,16 @@ export function ZtWorkspace({
             // success badge and a "— done" heading directly above "AI applied 0
             // of 74". The step is complete when the AI actually drafted
             // something, not merely when a request returned.
-            done={runResult !== null && runResult.suggestions_applied > 0}
+            // Done when the AI drafted something, OR when nothing was lost —
+            // an offline run over a fully client-submitted assessment applies
+            // nothing and preserves everything, which is success, not failure.
+            // Gating on `suggestions_applied > 0` alone left Step 1 permanently
+            // un-done for that workflow, on every re-run.
+            done={
+              runResult !== null &&
+              (runResult.suggestions_applied > 0 ||
+                lostValueCount(runResult) === 0)
+            }
           >
             <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
@@ -482,10 +498,10 @@ export function ZtWorkspace({
                   written by the AI — submitted, still in progress, or
                   consultant-entered —{" "}
                   {runResult.preserved_client_answers === 1 ? "was" : "were"}{" "}
-                  left untouched by this offline run. These are the same rows
-                  counted in the skipped line above, where they are counted in
-                  suggested values rather than answers. A run with a real API
-                  key will draft over{" "}
+                  left untouched by this offline run. Rows you also locked are
+                  reported above as locked rather than preserved, so this count
+                  and the skipped lines above overlap without matching. A run
+                  with a real API key will draft over{" "}
                   {runResult.preserved_client_answers === 1 ? "it" : "them"} —
                   except any row you locked, which is respected in every mode.
                 </p>

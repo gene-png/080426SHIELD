@@ -1184,3 +1184,81 @@ def test_csf_run_ai_absurdly_large_integer_is_itemized_not_a_500(app_client) -> 
     assert d["field"] == "governance"
     assert _row(body, code)["governance"] == 0
     _assert_invariant(body)
+
+
+# --- W1 round 4: the CSF half of round 3's escaping fix had no test at all ---
+
+
+@pytest.mark.unit
+def test_csf_run_ai_unencodable_key_does_not_500_after_committing(app_client) -> None:
+    """`_bounded_key_part` got the same fix as ZT's `_bounded_key` and none of
+    its tests.
+
+    Round 3 changed both and pinned one. Reverting the CSF half to `raw[:80]`
+    left the entire suite green, over a path that commits the run and then
+    raises while encoding the response - a 500 on top of an already-rewritten
+    database.
+
+    The escape is assembled at runtime so this file never contains a lone
+    surrogate itself.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+
+    lone_surrogate = "\\u" + "d800"
+    provider.register_static(
+        "csf_score",
+        LLMResponse(
+            '{"scores": [{"tier": "high", "subcategory_code": "'
+            + lone_surrogate
+            + '", "governance": 1}]}'
+        ),
+    )
+    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    d = _only_dropped(body)
+    assert d["reason"] == "unknown_key", d
+    assert d["key"] is not None
+    d["key"].encode("utf-8")  # must not raise
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_csf_run_ai_control_characters_in_a_key_are_escaped(app_client) -> None:
+    """A right-to-left override in `subcategory_code` renders live in the admin
+    alert otherwise - React escapes markup, not control characters."""
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+
+    bidi = "\\u" + "202e"
+    provider.register_static(
+        "csf_score",
+        LLMResponse(
+            '{"scores": [{"tier": "high", "subcategory_code": "'
+            + bidi
+            + 'DEILPPA", "governance": 1}]}'
+        ),
+    )
+    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    d = _only_dropped(r.json())
+    assert "\\u202e" in d["key"], d
+    assert d["key"].isprintable(), d
+
+
+@pytest.mark.unit
+def test_csf_run_ai_ordinary_key_is_not_mangled_by_the_escaping(app_client) -> None:
+    """The counterweight: escaping must be invisible for real codes."""
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+
+    provider.register_static(
+        "csf_score",
+        LLMResponse(
+            '{"scores": [{"tier": "high", "subcategory_code": "GV.OC-1", "governance": 1}]}'
+        ),
+    )
+    r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
+    d = _only_dropped(r.json())
+    assert d["key"] == "high|GV.OC-1", d

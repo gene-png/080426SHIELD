@@ -78,8 +78,11 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     render(
       <ZtRunAiAccounting
         result={result({
-          suggestions_received: 2,
-          suggestions_applied: 0,
+          // `applied > 0` on purpose: with nothing applied the lead switches to
+          // the "Nothing was applied" wording, which would stop this test
+          // exercising the values-vs-records count it exists to pin.
+          suggestions_received: 5,
+          suggestions_applied: 3,
           dropped: [drop({ reason: "entry_shape", values: 2 })],
         })}
       />,
@@ -342,6 +345,149 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     );
   });
 
+  it("tells the ALERT that nothing applied, not just the headline", () => {
+    // The headline is demoted to polite whenever a failure block exists, so
+    // with failures AND nothing applied the alert was the only assertive
+    // utterance and it said "Some suggestions could not be applied" over a
+    // total loss. The alert has to be a superset of the headline, not a
+    // sibling of it.
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 74,
+          suggestions_applied: 0,
+          dropped: [
+            drop({
+              reason: "out_of_range",
+              key: "ID-1",
+              field: "current",
+              values: 3,
+            }),
+            drop({
+              reason: "unknown_field",
+              key: "ID-2",
+              field: "maturity",
+              values: 71,
+            }),
+          ],
+        })}
+      />,
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/Nothing was applied/);
+    expect(alert).toHaveTextContent(/all 74 suggested values/);
+    // The misleading token is gone from this state specifically.
+    expect(alert).not.toHaveTextContent(
+      /Some suggestions could not be applied/,
+    );
+  });
+
+  it("stays CALM when every suggestion was skipped by design", () => {
+    // The workflow `protected` exists for: a client submits every capability,
+    // a consultant presses Run AI offline, everything is preserved. applied=0,
+    // received=74, and NOTHING went wrong. Gating severity on `applied === 0`
+    // alone shouted "every suggestion was rejected or unrecognized" over it —
+    // #31 re-opened by the fix for #31's inverse.
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 74,
+          suggestions_applied: 0,
+          dropped: Array.from({ length: 37 }, (_, i) =>
+            drop({ reason: "protected", key: `ID-${i}`, values: 2 }),
+          ),
+        })}
+      />,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/Nothing was applied/)).toBeNull();
+    expect(screen.queryByText(/rejected or unrecognized/)).toBeNull();
+  });
+
+  it("stays calm when every suggestion hit a locked row", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 20,
+          suggestions_applied: 0,
+          dropped: Array.from({ length: 10 }, (_, i) =>
+            drop({ reason: "locked", key: `ID-${i}`, values: 2 }),
+          ),
+        })}
+      />,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not claim agreement when there was a shortfall", () => {
+    // applied>0 and changed=0 is agreement ONLY if nothing was lost. With
+    // unrecognized keys it printed "every suggestion matched" one paragraph
+    // above "these are part of the shortfall".
+    const { container } = render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 111,
+          suggestions_applied: 74,
+          dropped: [
+            drop({
+              reason: "unknown_field",
+              key: "ID-1",
+              field: "confidence",
+              values: 37,
+            }),
+          ],
+        })}
+      />,
+    );
+    expect(headline(container)).not.toMatch(/Every suggestion matched/);
+    expect(screen.getByText(/37 values came back/)).toBeInTheDocument();
+  });
+
+  it("counts distinct capabilities on the skip bullet, not records", () => {
+    // Two entries naming the same locked code are two records for ONE
+    // capability. This number exists to reconcile with the answers count, so
+    // counting records defeats its only purpose.
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 6,
+          suggestions_applied: 2,
+          dropped: [
+            drop({ reason: "locked", key: "ID-1", values: 2 }),
+            drop({ reason: "locked", key: "ID-1", values: 2 }),
+          ],
+        })}
+      />,
+    );
+    const item = screen
+      .getAllByRole("listitem")
+      .map((li) => li.textContent ?? "")
+      .find((t) => /skipped/.test(t));
+    expect(item).toMatch(/across 1 capability skipped/);
+  });
+
+  it("renders an inherited Object property as an unrecognized reason", () => {
+    // `DROP_REASON_LABEL["toString"]` resolves to an inherited FUNCTION, which
+    // `??` does not catch and React renders as nothing — the empty bullet the
+    // guard exists to prevent. The previous test used "invented_later", which
+    // is `undefined` and so passes under `??` too: it could not detect the
+    // hardening it was added alongside.
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          suggestions_received: 1,
+          suggestions_applied: 0,
+          dropped: [
+            drop({ reason: "toString" as ZtDroppedSuggestion["reason"] }),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /unrecognized reason "toString"/,
+    );
+  });
+
   it("shows an unmapped reason code instead of an empty bullet", () => {
     render(
       <ZtRunAiAccounting
@@ -366,8 +512,12 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     render(
       <ZtRunAiAccounting
         result={result({
-          suggestions_received: 5,
-          suggestions_applied: 0,
+          // `applied > 0` on purpose: the "Some suggestions could not be
+          // applied" fallback this test pins is only reachable when the run
+          // applied something. With nothing applied the lead states the total
+          // instead, which is asserted separately.
+          suggestions_received: 8,
+          suggestions_applied: 3,
           dropped: [
             drop({
               reason: "unknown_field",

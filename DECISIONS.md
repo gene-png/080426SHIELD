@@ -1976,8 +1976,12 @@ the first attempt at this — escalating the quiet records into the alert — wa
 rewritten rather than kept.
 
 **A remedy that could not work.** `update_answer` sets `locked` and never writes
-`answer_source`, so every consultant-typed locked row is simultaneously `locked`
-and `protected`. The skip bullet said "row is locked" while the paragraph below
+`answer_source`, so every locked row whose stage was never AI-written is
+simultaneously `locked` and `protected`. (Round 4 correction: this said "every
+consultant-typed locked row", which overstates it — a row the AI drafted keeps
+`answer_source = "ai"` through a consultant's correction, so `protected_keys`
+excludes it. The workspace copy had this right where the decision record did
+not.) The skip bullet said "row is locked" while the paragraph below
 counted the same row and instructed "Load an API key to run real analysis over
 them" — but live runs skip locked rows too. A consultant following that advice
 pays for a call and gets the identical result with no explanation. The paragraph
@@ -2040,6 +2044,104 @@ Three rounds, and the honest reading is unchanged from D-045: not "round 3 made
 it correct", but that an audit gate keeps finding what a green suite cannot —
 and that the classes of defect keep moving. Round 1 found the arithmetic, round 2
 the claims, round 3 the security boundary and what a person actually sees.
+
+### What the adversarial pass changed (round 4)
+
+Two lenses: a regression hunt on round 3, and an ACCESSIBILITY pass nobody had
+run. **Round 4's yield was as high as round 3's**, which is the opposite of what
+"CSF needed four rounds" would predict — four was CSF's observed yield curve, not
+a law, and this one has not flattened. Both lenses independently found the same
+thing: **round 3's severity fix was half-right and half-backwards, and each half
+failed in the channel the other half was not tested in.**
+
+**Round 3 re-opened #31 in the exact workflow `protected` exists for.** Gating
+severity on `applied === 0` alone meant an offline run in which every suggestion
+was preserved BY DESIGN — a client submits all 37 capabilities, a consultant
+presses Run AI with no key — rendered a red assertive alert reading "Nothing was
+applied, every suggestion this run received was rejected or unrecognized", over a
+run in which nothing whatsoever went wrong. Three elements below it the grey
+block correctly said the same 74 values were skipped by design. And
+`done={… suggestions_applied > 0}` left Step 1 permanently un-done for that
+workflow, on every re-run: a guard that refuses to fire when it should. Severity
+now derives from `lostValues` — what was actually lost — with by-design skips
+excluded, and `ZtWorkspace` imports the same predicate so two places cannot
+decide "did this run go well" by different rules.
+
+**And the same fix under-fired in the audio channel.** `headlineIsAlert` demotes
+the headline to polite whenever a failure block exists, so with failures AND
+nothing applied the only assertive utterance was the failure block — which, by
+its own zero-guard, says "**Some** suggestions could not be applied". A
+screen-reader user heard "some" over a total loss while a sighted user read
+"0 of 74" in the line above. The alert has to be a SUPERSET of the headline, not
+a sibling of it; it now states the total when nothing applied. The round-3
+invariant — "exactly one assertive region" — was correct about count and silent
+about content, and the word "Some" that made the audio version wrong was chosen
+in round 3 to fix the visual version.
+
+**`agreedThroughout` claimed agreement over a shortfall.** Gated on
+`applied > 0 && changed === 0` and not on losses, so a re-run where the model
+volunteered a `confidence` key per capability printed "Every suggestion matched
+what was already recorded" one paragraph above "these are part of the shortfall
+in the line above". Now requires `lostValues === 0`.
+
+**Three smaller ones, all the same shape — a fix that reads as coverage and is
+not.** The `unknown_key` label round 3 rewrote to be actionable advises setting
+the capability by hand; every catalogue capability is seeded as a row at
+assessment creation, so an unknown key means the model invented a code the
+framework does not have and there is no row to go to. It now says that. The skip
+bullet's row count counted RECORDS, so two entries naming one locked code read as
+two capabilities — in the number added specifically to reconcile with
+`preserved_client_answers`, which counts rows. And the vitest added beside the
+`Object.hasOwn` hardening used `"invented_later"`, which is `undefined` and
+passes under `??` too — it could not detect the change it was added for. The
+inherited-function case (`"toString"`) now has its own test.
+
+**Round 3 ported one hardening to CSF and not the other, and tested neither.**
+`_bounded_key_part` got the escaping fix with no test at all — reverting it left
+the whole suite green over the commit-then-500 path. CSF now has the same three
+tests ZT has. `describeReason`'s prototype lookup was left on the `??` form in
+the file whose own docstring calls it "the reference implementation everyone
+ports from" — fixes travelling from copy to original and not back is how a
+codebase ends up with the original being the worst version of itself.
+
+**Two claims corrected.** The preserved-answers sentence round 3 added — "these
+are the same rows counted in the skipped line above" — is false whenever a
+protected row is also locked, because the lock check runs first and wins, which
+is precisely the overlap round 3 wrote the sentence to explain. And D-047's own
+round-3 text said "every consultant-typed locked row is simultaneously `locked`
+and `protected`"; a row the AI drafted keeps `answer_source = "ai"` through a
+consultant's correction, so `protected_keys` excludes it. The workspace copy had
+this right where the decision record did not.
+
+**What held.** The escaping fix itself survived a determined attack: `repr(c)`
+always uses single quotes for non-printables so the `[1:-1]` slice is always
+correct; `' '.isprintable()` is `True` so codes with spaces pass through;
+combining marks and astral characters are preserved; lone surrogates are the only
+unencodable code points in a Python `str` and they are always escaped, so the
+output is guaranteed encodable. The single-alert enumeration is structurally
+sound across all five combinations. `#51`'s corrected six-of-eight scope is
+accurate. `CLAUDE.md`'s new seed paragraph is accurate. No double announcement is
+reachable. Severity is stated in words as well as colour everywhere, contrast
+passes, and `WorkflowStep`'s done state is in the heading's accessible name
+rather than only the ✓ badge.
+
+**Filed, not fixed:** #69 (every admin live region is mounted with its text, so
+`role="alert"` fires and `aria-live="polite"` almost certainly never does —
+failures announce and successes do not; plus `role="alert"` wrapping an unbounded
+itemized list, since `ITEM_CAP` caps per reason group and not overall). #70
+(`AttackWorkspace` still marks its step done for a run that applied nothing — the
+rule ZT just adopted, unstated exemption). #71 (`csf.py` stores `what_we_found`
+unescaped — the one raw-model-string path round 3's fix did not reach, and the
+only durable one). #68 (the prompt-injection surface, documented in round 3 and
+not mitigated — filed because "documented" was doing work "mitigated" should have
+been doing).
+
+Four rounds, and the honest reading is unchanged and getting sharper: the audit
+gate keeps finding what a green suite cannot, the classes keep moving, and **the
+yield has not fallen**. Round 1 found the arithmetic, round 2 the claims, round 3
+the security boundary and what a person sees, round 4 the workflow the fixes
+themselves broke and the channel nobody had listened to. Anyone reading this to
+decide whether to stop at four should read the yield, not the count.
 
 **Ref:** `apps/api/app/routes/zt.py` (`_as_number`, `_hidden_value_count`,
 `_bounded`, `_bounded_key`, the apply loop), `apps/api/app/schemas/zt.py`

@@ -200,10 +200,18 @@ class ZtDroppedSuggestion(BaseModel):
         "locked",
         "protected",
     ]
-    # The capability code exactly as the model wrote it, or None when the model
-    # omitted it — never the literal "None", which fabricates a row nobody
-    # named. AI output: fine here (transient, admin-only, same trust boundary as
-    # the run result), never in an audit row or a log (#44 constraint 1).
+    # The capability code as the model wrote it (escaped and bounded), or None
+    # when the model omitted it — never the literal "None", which fabricates a
+    # row nobody named.
+    #
+    # AI output, carried here deliberately: transient, admin-only, and the one
+    # channel #44 sanctions for it. NOT the same trust boundary as the run
+    # result, which is what this comment used to claim. A CLIENT-role user's
+    # `notes` reach the model verbatim through `build_zt_ai_request`, so a
+    # lower-privileged tenant user seeds the input whose output lands here and
+    # renders on a consultant's screen. Bounded and escaped, no privilege
+    # gained — but it is a trust boundary crossing and is tracked as #68.
+    # Never in an audit row or a log (#44 constraint 1).
     key: str | None = None
     # "current" or "target", for drops attributable to one value.
     field: str | None = None

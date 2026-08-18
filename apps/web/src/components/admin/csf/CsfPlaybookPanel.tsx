@@ -98,10 +98,15 @@ const NOT_UNDERSTOOD: ReadonlySet<string> = new Set(["unknown_field"]);
 function describeReason(reason: string): string {
   // The payload is JSON, so `reason` is only a union by convention. An unmapped
   // code must show as itself — an empty bullet reads as "no reason given".
-  return (
-    DROP_REASON_LABEL[reason as CsfDroppedSuggestion["reason"]] ??
-    `unrecognized reason "${reason}"`
-  );
+  // `Object.hasOwn`, not `??`: a bare index resolves "toString"/"constructor"
+  // to an inherited FUNCTION, which `??` does not catch and React renders as
+  // nothing — the empty bullet this guard exists to prevent. Ported from ZT
+  // (round 3), because this file is the reference implementation everyone
+  // copies and a hardening applied to the copy and not the original inverts
+  // the direction fixes are supposed to travel.
+  return Object.hasOwn(DROP_REASON_LABEL, reason)
+    ? DROP_REASON_LABEL[reason as CsfDroppedSuggestion["reason"]]
+    : `unrecognized reason "${reason}"`;
 }
 
 function describeItem(d: CsfDroppedSuggestion): string {
