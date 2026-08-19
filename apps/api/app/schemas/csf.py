@@ -317,6 +317,7 @@ class CsfDroppedSuggestion(BaseModel):
     | `wrong_type`   | `what_we_found` came back as something other than a string|
     | `superseded`   | a later entry in the same response overwrote this value  |
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
+    | `protected`    | an offline run declined to overwrite a hand-typed score  |
 
     `locked` renders separately from the rest. Folding a by-design skip into one
     "N dropped" number rebuilds the alert-fatigue problem issue #31 rejected.
@@ -335,6 +336,7 @@ class CsfDroppedSuggestion(BaseModel):
         "wrong_type",
         "superseded",
         "locked",
+        "protected",
     ]
     # "tier|subcategory_code" exactly as the model wrote it, or None when the
     # model omitted them. Never the literal "None|None" — that fabricates a row

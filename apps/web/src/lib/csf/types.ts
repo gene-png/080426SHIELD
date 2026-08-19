@@ -242,7 +242,8 @@ export interface CsfDroppedSuggestion {
     | "out_of_range"
     | "wrong_type"
     | "superseded"
-    | "locked";
+    | "locked"
+    | "protected";
   /** "tier|subcategory_code" as the model wrote it; null if it wrote neither. */
   key: string | null;
   field: string | null;
