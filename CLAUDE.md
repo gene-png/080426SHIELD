@@ -99,6 +99,16 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   you need a specific mode to hold, recreate `api web` together and re-check
   `docker compose exec -T api sh -lc 'env | grep SHIELD_LLM_MODE'` — don't infer
   it from what you set earlier.
+- **A new migration does NOT reach the dev Postgres on its own, and no backend
+  test will tell you.** Every pytest fixture points `DATABASE_URL` at its own
+  SQLite file and runs `command.upgrade(cfg, "head")` itself, so a new column is
+  present in every unit test while the running dev database is still on the
+  previous revision. The model has the attribute, Postgres does not, and the
+  first thing to notice is an e2e failing with `An internal error occurred` over
+  a 500 — `psycopg.errors.UndefinedColumn` in `docker compose logs api`. Run
+  `docker compose exec -T api sh -lc "cd /app && alembic upgrade head"` after
+  adding one; `alembic current` tells you where the dev DB actually is. (0042
+  cost an e2e run diagnosed as a spec regression before the logs were read.)
 - Adding a NEW python module under `app/` needs `docker compose restart api`
   (uvicorn --reload catches edits to existing modules, may miss new files).
 - After editing `apps/web/package.json`, reinstall inside the web container.

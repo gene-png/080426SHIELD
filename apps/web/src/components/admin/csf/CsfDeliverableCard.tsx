@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
 
 import {
   Card,
@@ -153,6 +154,20 @@ export function CsfDeliverableCard({
           </ul>
         ) : null}
 
+        {/* The admin's own view of the client dashboard, live as soon as the
+            deliverable is finalized — before release. ZT, ATT&CK and Tech Debt
+            have carried this since issue 4; CSF had no dashboard to link to, so
+            when one was added the link was the piece left behind. Without it an
+            analyst releases sight-unseen, which is the exact thing the preview
+            path exists to prevent. */}
+        {deliverable ? (
+          <Link
+            href={`/dashboards/csf/${serviceId}`}
+            className="w-fit rounded-md border border-border bg-surface-card px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken"
+          >
+            View dashboard{released ? "" : " (preview)"} →
+          </Link>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"

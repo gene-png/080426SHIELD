@@ -19,6 +19,9 @@ __all__ = [
     "AttackDashboardRollup",
     "AttackDashboardTechnique",
     "AttackTacticCoverage",
+    "CsfDashboardResponse",
+    "CsfFunctionDashboard",
+    "CsfGapDashboard",
     "ClientDeliverableListResponse",
     "ClientDeliverableResponse",
     "RiskDashboardEntry",
@@ -128,6 +131,92 @@ class ZtPillarDashboard(BaseModel):
     target_label: str
     gap_pct: float  # max(0, target_pct - current_pct)
     weakest: list[str]  # lowest-scored capability NAMES (focus areas)
+
+
+class CsfFunctionDashboard(BaseModel):
+    """One CSF 2.0 function's current-vs-target maturity for the client view.
+
+    Mirrors `ZtPillarDashboard`. CSF's six functions (Govern, Identify, Protect,
+    Detect, Respond, Recover) are the natural analogue of ZT's pillars, and the
+    engine already rolls up to exactly that grain (`csf/scoring.py`).
+    """
+
+    code: str
+    name: str
+    subcategory_count: int
+    answered_count: int
+    coverage_pct: float
+    current_tier: float | None
+    current_pct: float | None
+    # "Unscored" when nothing in this function was answered. Without it the UI
+    # can only render an em dash, and an unanswered function is then
+    # indistinguishable from a poorly-scored one — while sorting to the TOP of a
+    # list ordered by "largest move required", with 0 gaps beside it.
+    current_label: str
+    target_pct: float | None
+    gap_pct: float  # max(0, target_pct - current_pct)
+    gap_count: int
+    weakest: list[str]  # lowest-scored subcategory CODES (focus areas)
+
+
+class CsfGapDashboard(BaseModel):
+    """One prioritized gap, as the engine ranked it."""
+
+    code: str
+    name: str
+    function: str
+    function_name: str
+    current_tier: int
+    target_tier: int
+    gap_size: int
+    priority_score: float
+
+
+class CsfDashboardResponse(BaseModel):
+    """Release-gated client-facing NIST CSF 2.0 dashboard payload.
+
+    Deterministic, from `csf/scoring.py` and `csf/gap.py` — no LLM. Every figure
+    is engine-derived; the curated prose in the mockups is deliberately not
+    reproduced, matching the other four dashboards.
+
+    TARGET TIER comes from the client's intake choice, not the engine default.
+    That is the #73 lesson applied preventively: the ZT exporter shipped for the
+    life of the repo computing gaps against a hardcoded 3 while the client had
+    chosen 4, so the document listed a different gap set than the consultant
+    approved. `target_tier_source` states which one was used, so a reader can
+    tell a real choice from a fallback rather than having to guess.
+    """
+
+    service_id: uuid.UUID
+    service_title: str
+    released_at: datetime
+    # False when an ADMIN previews a finalized-but-unreleased dashboard; clients
+    # only ever receive True. Same contract as the other four (issue 4).
+    released: bool = True
+    deliverable_version: int
+
+    overall_label: str
+    current_tier: float | None
+    current_pct: float | None
+    coverage_pct: float
+
+    target_tier: int
+    target_label: str
+    target_pct: float
+    # "client" when the tier came from the intake choice, "default" when the
+    # client never set one. Never silently conflated — see the docstring.
+    target_tier_source: str
+
+    total_gap_count: int
+    largest_gap_function: str | None
+    largest_gap_pct: float
+
+    functions: list[CsfFunctionDashboard]
+    # Ranked, and TRUNCATED. `total_gap_count` above is the real total, and the
+    # UI must show it: #75 is open because the ZT exporter renders a 20-item
+    # slice with the true count nowhere on the page, so a client reads 20 of 37
+    # remediation items with no statement that anything was omitted.
+    top_gaps: list[CsfGapDashboard]
 
 
 class ZtDashboardResponse(BaseModel):
