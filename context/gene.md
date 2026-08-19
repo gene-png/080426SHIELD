@@ -1,7 +1,7 @@
 # Gene — current status
 
 _Owner: Gene (gene-png). Only Gene's sessions write this file._
-_Last updated: 2026-08-19 (W1 ZT merged as PR #66, five audit rounds; MVP prioritization pass done)_
+_Last updated: 2026-08-19 (W1 ZT merged as PR #66; #44 and W3 resolved; #2/#67 shipped, awaiting audit)_
 
 Keep this short and current: your sessions overwrite it freely (it's yours
 alone, so it never merge-conflicts). Dave's agents read it at `/pickup` to
@@ -9,55 +9,103 @@ know what you have in flight without digging through branches.
 
 ## Branch / in flight
 
-**Nothing merged since ZT.** `main` is at `68ca6c9` (PR #66, W1's ZT step, five
-adversarial rounds), CI green on all five checks.
+**Nothing merged since ZT plus this file's own refresh.** `main` is at
+`b5c4ca4`, CI green.
 
 **PR #76 is ready to merge** — docs-only, corrects CONTEXT.md's stale "#66 in
-flight" claim, 5/5 checks green, no conflicts. Mechanical, just needs the click.
+flight" claim, 5/5 checks green, no conflicts. Still not merged; still your
+click, not the agent's.
 
-State of `main` is in **`CONTEXT.md`**, though CONTEXT.md itself is one PR
-(#76) behind on the ZT merge as of this writing.
+**#2 shipped on a branch, awaiting audit before commit.** Shape guards landed
+on all five AI jobs (`mitre_map` + `risk_synthesize` joined `csf_score`/
+`zt_score`; `parse_json_object` is now dead and was removed with a note).
+#67 implemented: migration 0042, consultant stamp, `protected_keys` wired
+into CSF's run, a new `protected` reason through schema/TS/panel. Caught one
+bug not in the original plan: CSF's skip copy hardcoded "you locked those
+rows," which would have mislabeled protected-reason skips as locked —
+regrouped by reason. Tests green (44 CSF pytest, 25 attack/risk/fixtures, 204
+web). Hold for the audit before merging, same as every other step this arc.
 
-## MVP prioritization — decided this pass, do not re-litigate from memory
+## MVP prioritization — decided, do not re-litigate from memory
 
 Gene defined MVP explicitly: **all five services, real client engagements,
-correct documents, working AI end to end — not the seeded demo.** That
-resolves an open question the agent asked; treat it as settled.
+correct documents, working AI end to end — not the seeded demo.**
 
 Revised priority order (supersedes any earlier ordering in CONTEXT.md or
 older handoffs):
 
 1. **Provider live key — Gene's own action, not the agent's.** Root `.env` key
 still 401s. Nothing on live-AI validation (#51) moves until this is fixed.
-2. **One small correctness PR: shape-guard `mitre_map` + `risk_synthesize`
-(the #46 family), and fix #67** (CSF's offline Run-AI silently overwrites
-hand-typed dimension scores — already a real incident, Identity pillar
-3.00 → 1, unrecoverable). Cheap, independent, do this first.
+2. **Shape-guard + #67 — SHIPPED on a branch, awaiting audit.** See above.
 3. **CSF client dashboard — start now, in parallel with #4, not after it.**
 `dashboardPathFor` returns null for `nist_csf`; the largest service and the
 one with the most AI investment has no client-facing results page at all.
-That's a harder MVP gate than a wrong number.
 4. **One focused persistence/export audit pass per service** (Tech Debt,
 ATT&CK, CSF, Risk — ZT's already done, five rounds). Use the export lens
-specifically, the one that found #73/#75 on ZT. Escalate to more rounds only
-if a pass finds something serious — do NOT default to the full four/five-round
-multi-lens treatment on all four remaining services, there isn't time before
-MVP.
-5. **W3 → W2 → W1-ATT&CK on a second session, run in parallel with 1-4, once
-two decisions below are made.** Sized against comparable merged work: W3
-~1-1.5 sessions, W2 ~2-3 sessions (the big one — `citations.py::resolve()`
-rewrite, tri-state, `pending_review` as a fourth technique state, #29 folds in),
-W1-ATT&CK ~1 session. ~4-6 sessions total, the long pole — everything else
-combined is ~2-3. File contention is low (chain lives in
-`attack.py`/`tech_debt.py`/`citations.py`; the other track in
-`jobs.py`/`csf.py`/`risk.py`/web dashboards); the one overlap is ATT&CK's
-exporter — sequence that pass after W2, not against it.
-6. **W6 (Risk publish gate) — add to the parallel track.** Not originally on
-the MVP list; see below for why it's now on it.
+specifically, the one that found #73/#75 on ZT. Escalate only if a pass finds
+something serious — do not default to the full multi-lens treatment on all
+four, there isn't time before MVP.
+5. **W3 → W2 → W1-ATT&CK on a second session, run in parallel with 1-4 — now
+UNBLOCKED, both decisions below are resolved.** Sized against comparable
+merged work: W3 ~1-1.5 sessions, W2 ~2-3 sessions (the big one), W1-ATT&CK
+~1 session. ~4-6 sessions total, the long pole — everything else combined is
+~2-3. File contention is low; the one overlap is ATT&CK's exporter —
+sequence that pass after W2, not against it.
+6. **W6 (Risk publish gate) — add to the parallel track.**
 
 **Real cost flagged, not free:** running a second session means Gene
-personally relays two independent threads instead of one. Worth it given the
-sizing math, but it's on him, not a free lever.
+personally relays two independent threads instead of one.
+
+## #44 — resolved: applied + separate tri-state count, not inside dropped
+
+Reversed my earlier lean after the agent's pushback, and the pushback is
+right. The decisive point: W1's `applied` doesn't mean "contributed to the
+score" — it means "the model's suggested value was written to the record."
+For a needs-review citation, section 5.1 says apply it and mark it — the
+citation genuinely is written to detection_tools/prevention_tools/
+response_tools. Putting it in `dropped` would assert it wasn't applied, which
+is false, and the panel renders drops as losses.
+
+ATT&CK is also structurally different from CSF/ZT here: section 5.1 is
+explicit that marking a citation "needs review" changes NOTHING about the
+score on its own — coverage is computed from technique status, not from
+citations. So for ATT&CK, `applied` never meant "contributed to the number"
+the way it does for the other two services.
+
+**Answer: count it as applied, and report the tri-state as its own count**
+distinct from `citations_normalized` and `citations_rejected` — which
+section 5.1 already requires regardless. The invariant
+`received == applied + dropped` holds unchanged, no restatement needed.
+
+**One implementation requirement, non-negotiable:** the panel must show the
+tri-state breakdown visibly alongside `applied`, not bury it. If `applied`
+is shown alone, a consultant will read it as "contributed to the score,"
+which is false for the needs-review subset — that's the exact ambiguous-
+single-number failure that killed the F9 counter layer. Do not ship this
+without the tri-state count on screen next to it.
+
+## W3 — resolved: Option A, approval-time membership snapshot
+
+When a CapabilityList is approved, store the exact security-scope tool-name
+set as data; ATT&CK's "confirmed" reads that snapshot instead of live rows.
+Chosen over Option B (confront the confirm queue) because A closes all five
+doors at once, B leaves two open (patch_capability_item can still rename
+tools) and breaks a deliberate workflow (security_scope.py's docstring: "the
+only way out of the subset is a human agreeing with the model"). A also pays
+for itself: W2 needs the same snapshot for clients.py, which currently reads
+CapabilityItem rows live for the client Tech Debt dashboard, so a post-
+release edit changes the client's dashboard total while the released PDF
+says otherwise. Same defect, same fix.
+
+**Before implementation, state explicitly, don't leave implicit: what
+happens to the snapshot on re-approval.** Retaken fresh, diffed against the
+prior snapshot, something else — pick one and write it down, the same
+discipline this arc has required everywhere else.
+
+**Independent of A vs B:** the `include_excluded_row` green "Human-curated"
+pill is a live bug — it writes `confidence_pct=None`, the same value the
+human-curation path writes, so a row nobody reviewed renders an affirmative
+false claim. Needs its own fix regardless of which W3 option ships.
 
 ## Risk / W6 — decided
 
@@ -66,9 +114,7 @@ sizing math, but it's on him, not a free lever.
 `POST /risk/register/export` has no approval gate and sets `finalized_at`,
 which `clients.py` reports to the client as `released_at`. An admin clicking
 Export to look publishes to the client — no review window, unlike the other
-four services (`s40` tests that for them). Risk is generated from batched AI
-synthesis with findings dropping silently — the least-reviewed of the five
-outputs is the only one with no review window.
+four services (`s40` tests that for them).
 
 Also a live bug, independent of the above: `clients.py` selects the
 highest-version register unconditionally then requires `finalized_at`
@@ -77,28 +123,16 @@ mid-read.
 
 **Decision: yes, Risk needs the same release guarantees as the other four for
 MVP.** The v2-unpublish bug is arguably MVP-blocking on its own. W6 sized as
-moderate — publish marker, gate change, `s30`, a DECISIONS.md amendment
-(CLAUDE.md requires it in the same PR), and the seed. Comparable to W4,
-smaller than W2.
+moderate — publish marker, gate change, `s30`, a DECISIONS.md amendment, and
+the seed. Comparable to W4, smaller than W2.
 
 ## Open decisions — NOT to be reconstructed from memory
 
-1. **#44's fork — leaning, not settled.** `needs_review`: inside `dropped`
-with its own reason code, or a sub-count of `applied`? Leaning toward inside
-`dropped`: the bucket already holds `locked`/`protected`, which are visible,
-by-design, non-alarming, and render separately rather than disappearing —
-`needs_review` (visible and retained, per the W2 plan section 5.1) fits that
-precedent rather than breaking it. **Not formally decided in issue #44** —
-check against the actual W2 implementation before treating this as settled.
-2. **W3's snapshot-vs-confirm-queue choice — genuinely open, not enough
-detail yet to decide.** Needs the two options spelled out from
-`docs/plans/2026-08-08-attack-citation-resolver.md` before anyone commits.
-Both #44's fork and this one block the second-session start.
-3. **#57** — client read of a released ATT&CK assessment, and through what
+1. **#57** — client read of a released ATT&CK assessment, and through what
 view.
-4. **`ServiceStatus.RELEASED`** — the never-assigned fifth status, seed-only.
+2. **`ServiceStatus.RELEASED`** — the never-assigned fifth status, seed-only.
 In scope or deferred? (#62)
-5. **W0's freeze shape** — freeze outright vs. gate on export staleness. Due
+3. **W0's freeze shape** — freeze outright vs. gate on export staleness. Due
 after Part 3 reopen is scoped for CSF.
 
 ## Environment — needs a human
