@@ -20,6 +20,7 @@ import {
 } from "@/lib/csf/client";
 
 import { AiPreviewButton } from "../AiPreviewButton";
+import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
 import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
@@ -556,6 +557,9 @@ export function CsfPlaybookPanel({
           ) : null}
 
           {runResult ? <RunAiAccounting result={runResult} /> : null}
+          {/* CSF's prompt carries the client's interview answers, so the
+              provenance vector is identical to ZT's (#68). */}
+          {runResult ? <AiDraftProvenanceNotice /> : null}
 
           {loading ? (
             <p className="text-sm text-ink-tertiary">Loading…</p>

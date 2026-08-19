@@ -41,6 +41,7 @@ import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
 
 import { ZtDeliverableCard } from "./ZtDeliverableCard";
 import { lostValueCount, ZtRunAiAccounting } from "./ZtRunAiAccounting";
@@ -495,6 +496,9 @@ export function ZtWorkspace({
                   to say about (W1, issue #44). The accounting states the same
                   change counts and the shortfall alongside them. */}
               {runResult ? <ZtRunAiAccounting result={runResult} /> : null}
+              {/* Sibling, not a child: the accounting component's severity
+                  logic stays untouched (#68). */}
+              {runResult ? <AiDraftProvenanceNotice /> : null}
               {runResult?.preserved_client_answers ? (
                 /* The skip must be visible, not silent. The population is every
                    answer the AI did not write — `protected_keys` keys on

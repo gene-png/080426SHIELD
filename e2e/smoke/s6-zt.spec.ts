@@ -221,6 +221,16 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
     .filter({ hasText: "capabilit" });
   await expect(summary.first()).toBeVisible({ timeout: 30000 });
 
+  // The AI-provenance notice stands beside the accounting on every run (#68).
+  // This is the ZT wiring proof — there is no ZtWorkspace vitest harness, so
+  // the component's own tests cannot show it is actually rendered here.
+  //
+  // Unlike the drop branches, fixture mode CAN prove this one end to end: the
+  // notice is unconditional, so it does not depend on a rejected suggestion.
+  await expect(
+    page.getByText(/informed by client-submitted input/).first(),
+  ).toBeVisible({ timeout: 30000 });
+
   // Remediation gaps surface and the 12-month roadmap sequences them by month.
   await expect(
     page.getByRole("heading", { name: "Remediation gaps" }),

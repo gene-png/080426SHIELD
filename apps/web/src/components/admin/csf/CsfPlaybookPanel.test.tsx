@@ -340,6 +340,17 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
     expect(alert).toHaveTextContent("invented_later");
   });
 
+  it("renders the AI-provenance notice alongside the accounting (#68)", async () => {
+    // Wiring proof, not copy proof: the component has its own test. This fails
+    // if the notice is not rendered beside the panel. CSF's prompt carries the
+    // client's interview answers, so the provenance vector is identical to ZT's
+    // and covering only ZT would be an unstated exemption.
+    await runAi(result({ suggestions_received: 2, suggestions_applied: 2 }));
+    expect(
+      screen.getByText(/informed by client-submitted input/),
+    ).toBeInTheDocument();
+  });
+
   it("renders an inherited Object property as an unrecognized reason", async () => {
     // The twin of the ZT test. `DROP_REASON_LABEL["toString"]` resolves to an
     // inherited FUNCTION, which `??` does not catch and React renders as
