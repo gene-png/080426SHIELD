@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ZtDroppedSuggestion, ZtRunAiResponse } from "@/lib/zt/types";
 
-import { ZtRunAiAccounting } from "./ZtRunAiAccounting";
+import { lostValueCount, ZtRunAiAccounting } from "./ZtRunAiAccounting";
 
 // No client mocking needed: this component is pure. That is why it lives in its
 // own file — the VALIDATION drop branches are unreachable through a fixture-mode
@@ -257,8 +257,11 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(/AI applied\s*0\s*of 74/);
     expect(alert).toHaveTextContent(/Nothing was applied/);
+    // Quantified over what was LOST, not over what was received — `received`
+    // includes by-design skips, so "every suggestion received was rejected"
+    // overstates the failure whenever anything was merely skipped.
     expect(headline(container)).toMatch(
-      /every suggestion this run received was rejected or unrecognized/,
+      /74 suggested values were rejected or unrecognized/,
     );
   });
 
@@ -375,7 +378,7 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     );
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(/Nothing was applied/);
-    expect(alert).toHaveTextContent(/all 74 suggested values/);
+    expect(alert).toHaveTextContent(/74 suggested values were rejected/);
     // The misleading token is gone from this state specifically.
     expect(alert).not.toHaveTextContent(
       /Some suggestions could not be applied/,
@@ -486,6 +489,192 @@ describe("ZtRunAiAccounting (W1, issue #44)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       /unrecognized reason "toString"/,
     );
+  });
+
+  // --- severity matrix ------------------------------------------------------
+  //
+  // The severity rule has been wrong in three consecutive rounds, each time in
+  // a state the previous round's tests did not enumerate: total drift (round
+  // 3), an all-by-design-skip run (round 4), and a wholly-lost response (round
+  // 5). Case-by-case tests kept missing the next case, so this enumerates the
+  // space instead.
+  //
+  // The rule: an assertive alert fires iff the response carried nothing at all,
+  // OR something was actually LOST. By-design skips are never losses.
+  describe("severity matrix", () => {
+    const F = () =>
+      drop({ reason: "out_of_range", key: "ID-1", field: "current" });
+    const U = () =>
+      drop({ reason: "unknown_field", key: "ID-2", field: "maturity" });
+    const S = () => drop({ reason: "protected", key: "ID-3", values: 2 });
+
+    const cases: {
+      name: string;
+      received: number;
+      applied: number;
+      dropped: ZtDroppedSuggestion[];
+      alert: boolean;
+    }[] = [
+      // received === 0 — a wholly-lost response is never clean.
+      {
+        name: "no suggestions at all",
+        received: 0,
+        applied: 0,
+        dropped: [],
+        alert: true,
+      },
+      // Nothing applied, something lost -> alert, whichever bucket it is in.
+      {
+        name: "all lost to failures",
+        received: 1,
+        applied: 0,
+        dropped: [F()],
+        alert: true,
+      },
+      {
+        name: "all lost to drift",
+        received: 1,
+        applied: 0,
+        dropped: [U()],
+        alert: true,
+      },
+      {
+        name: "all lost, both kinds",
+        received: 2,
+        applied: 0,
+        dropped: [F(), U()],
+        alert: true,
+      },
+      {
+        name: "lost and skipped together",
+        received: 3,
+        applied: 0,
+        dropped: [F(), S()],
+        alert: true,
+      },
+      {
+        name: "drift and skipped together",
+        received: 3,
+        applied: 0,
+        dropped: [U(), S()],
+        alert: true,
+      },
+      // Nothing applied, NOTHING lost -> calm. The all-protected offline run.
+      {
+        name: "all skipped by design",
+        received: 2,
+        applied: 0,
+        dropped: [S()],
+        alert: false,
+      },
+      // Something applied.
+      { name: "clean run", received: 2, applied: 2, dropped: [], alert: false },
+      {
+        name: "applied with failures",
+        received: 3,
+        applied: 2,
+        dropped: [F()],
+        alert: true,
+      },
+      {
+        name: "applied with drift only",
+        received: 3,
+        applied: 2,
+        dropped: [U()],
+        alert: false,
+      },
+      {
+        name: "applied with skips only",
+        received: 4,
+        applied: 2,
+        dropped: [S()],
+        alert: false,
+      },
+      {
+        name: "applied, drift and skips",
+        received: 5,
+        applied: 2,
+        dropped: [U(), S()],
+        alert: false,
+      },
+      {
+        name: "applied, failures and skips",
+        received: 5,
+        applied: 2,
+        dropped: [F(), S()],
+        alert: true,
+      },
+    ];
+
+    for (const c of cases) {
+      it(`${c.alert ? "alerts" : "stays calm"}: ${c.name}`, () => {
+        render(
+          <ZtRunAiAccounting
+            result={result({
+              suggestions_received: c.received,
+              suggestions_applied: c.applied,
+              dropped: c.dropped,
+            })}
+          />,
+        );
+        const alerts = screen.queryAllByRole("alert");
+        expect(alerts).toHaveLength(c.alert ? 1 : 0);
+      });
+    }
+
+    it("never renders two assertive regions", () => {
+      for (const c of cases) {
+        const { unmount } = render(
+          <ZtRunAiAccounting
+            result={result({
+              suggestions_received: c.received,
+              suggestions_applied: c.applied,
+              dropped: c.dropped,
+            })}
+          />,
+        );
+        expect(screen.queryAllByRole("alert").length).toBeLessThanOrEqual(1);
+        unmount();
+      }
+    });
+  });
+
+  describe("lostValueCount", () => {
+    // `ZtWorkspace` decides step completion with this, and it had no test at
+    // all — so reverting the done-rule to either of its two previously-wrong
+    // forms passed every gate.
+    it("counts only what was actually lost, never by-design skips", () => {
+      expect(
+        lostValueCount(
+          result({
+            dropped: [
+              drop({ reason: "locked", values: 4 }),
+              drop({ reason: "protected", values: 6 }),
+            ],
+          }),
+        ),
+      ).toBe(0);
+    });
+
+    it("sums values, not records, across failure and drift", () => {
+      expect(
+        lostValueCount(
+          result({
+            dropped: [
+              drop({ reason: "out_of_range", values: 3 }),
+              drop({ reason: "unknown_field", values: 5 }),
+              drop({ reason: "locked", values: 99 }),
+            ],
+          }),
+        ),
+      ).toBe(8);
+    });
+
+    it("is 0 for a wholly-lost response, which is why `done` cannot rely on it alone", () => {
+      // received === 0 implies dropped === [] structurally: every drop path
+      // also increments received. So "nothing was lost" is vacuously true here.
+      expect(lostValueCount(result({ suggestions_received: 0 }))).toBe(0);
+    });
   });
 
   it("shows an unmapped reason code instead of an empty bullet", () => {

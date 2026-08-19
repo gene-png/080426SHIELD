@@ -446,13 +446,25 @@ export function ZtWorkspace({
             // success badge and a "— done" heading directly above "AI applied 0
             // of 74". The step is complete when the AI actually drafted
             // something, not merely when a request returned.
-            // Done when the AI drafted something, OR when nothing was lost —
-            // an offline run over a fully client-submitted assessment applies
-            // nothing and preserves everything, which is success, not failure.
-            // Gating on `suggestions_applied > 0` alone left Step 1 permanently
-            // un-done for that workflow, on every re-run.
+            // This rule has now been wrong in three different ways, so it is
+            // written as the three conditions it actually needs rather than as
+            // whichever disjunct fixed the last bug:
+            //
+            //   1. a run happened at all;
+            //   2. the response carried suggestions — `received === 0` is a
+            //      wholly-lost response, and because every drop path also
+            //      increments `received`, `dropped` is then necessarily empty,
+            //      so a "nothing was lost" test passes vacuously and marks the
+            //      step DONE over the red "returned no suggestions at all"
+            //      alert. That was round 4 re-opening round 3's defect;
+            //   3. either the AI drafted something, or nothing was lost — an
+            //      offline run over a fully client-submitted assessment applies
+            //      nothing and preserves everything, which is success. Gating
+            //      on `applied > 0` alone left Step 1 permanently un-done for
+            //      that workflow, which was round 3's defect.
             done={
               runResult !== null &&
+              runResult.suggestions_received > 0 &&
               (runResult.suggestions_applied > 0 ||
                 lostValueCount(runResult) === 0)
             }

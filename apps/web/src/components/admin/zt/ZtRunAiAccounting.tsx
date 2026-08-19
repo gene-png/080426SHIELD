@@ -29,12 +29,14 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
   // hands the model the exact code list, so an unknown key means the model
   // invented a code and the consultant can neither fix its spelling nor seed
   // anything. Say what they CAN do instead.
-  // Not "set it by hand": every catalogue capability is seeded as a row when the
-  // assessment is created, so an unknown key means the model invented a code
-  // this framework does not contain. There is no row to go and set. Say what
-  // actually happened instead of advising something impossible.
-  unknown_key:
-    "no matching capability — the model invented a code this framework does not have",
+  // Describes what happened, and does not assert why. "Set it by hand" was
+  // wrong (every catalogue capability is already seeded as a row, so there is
+  // no row to go to), and "the model invented a code" overcorrected into an
+  // accusation nothing enforces: the lookup is against the rows seeded when
+  // THIS assessment was created, not against the live catalogue, so a code
+  // added to the catalogue later — or a code valid for the other framework —
+  // lands here too.
+  unknown_key: "no matching capability in this assessment",
   unknown_field: "field name this run does not recognize",
   entry_shape: "could not be read as a suggestion",
   // Not "was not a number": `1.9` and `true` are refused here too, and both are
@@ -175,6 +177,10 @@ export function ZtRunAiAccounting({
   // `lostValues` counts only what was actually lost: by-design skips are not
   // losses and must never raise severity.
   const lostValues = sumValues(failed) + sumValues(unrecognized);
+  // By-design skips. Deliberately NOT part of `lostValues` — nothing was lost —
+  // but the copy has to know about them, because every sentence that quantifies
+  // over "every suggestion" is false while these exist and were never evaluated.
+  const skippedValues = sumValues(skipped);
   const nothingApplied = result.suggestions_applied === 0 && lostValues > 0;
   // Applied values are not changed fields: a value equal to what was already
   // recorded applies and changes nothing. Common on a re-run, where "changing 0
@@ -238,10 +244,12 @@ export function ZtRunAiAccounting({
         {result.changed.length === 1 ? "" : "s"} across {changedRows} capabilit
         {changedRows === 1 ? "y" : "ies"}.
         {nothingApplied
-          ? " Nothing was applied — every suggestion this run received was rejected or unrecognized. The detail below says which."
+          ? ` Nothing was applied. ${lostValues} suggested value${lostValues === 1 ? " was" : "s were"} rejected or unrecognized; the detail below says which.`
           : null}
         {agreedThroughout
-          ? " Every suggestion matched what was already recorded, so nothing needed changing."
+          ? skippedValues > 0
+            ? " Every suggestion this run evaluated matched what was already recorded, so nothing needed changing. The skipped ones below were never evaluated."
+            : " Every suggestion matched what was already recorded, so nothing needed changing."
           : null}
       </p>
 
@@ -259,7 +267,7 @@ export function ZtRunAiAccounting({
                 // screen-reader user heard "some"; a sighted one read "0 of 74"
                 // in the line above. The visual fix re-derived the original
                 // defect in the channel nobody had looked at.
-                `Nothing was applied — all ${result.suggestions_received} suggested value${result.suggestions_received === 1 ? "" : "s"} this run received were rejected or unrecognized:`
+                `Nothing was applied — ${lostValues} suggested value${lostValues === 1 ? " was" : "s were"} rejected or unrecognized:`
               : failedValues > 0
                 ? `${failedValues} suggested value${failedValues === 1 ? "" : "s"} could not be applied:`
                 : // A failure record can legitimately account for zero values —

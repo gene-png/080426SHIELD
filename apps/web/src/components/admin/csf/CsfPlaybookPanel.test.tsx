@@ -340,6 +340,34 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
     expect(alert).toHaveTextContent("invented_later");
   });
 
+  it("renders an inherited Object property as an unrecognized reason", async () => {
+    // The twin of the ZT test. `DROP_REASON_LABEL["toString"]` resolves to an
+    // inherited FUNCTION, which `??` does not catch and React renders as
+    // nothing — the empty bullet the guard exists to prevent. The neighbouring
+    // test uses "invented_later", which is `undefined` and so passes under the
+    // OLD form too: it cannot detect the hardening it sits beside. Round 4
+    // fixed exactly this in ZT and then shipped the CSF port with only the
+    // defective test.
+    await runAi(
+      result({
+        suggestions_received: 1,
+        suggestions_applied: 0,
+        dropped: [
+          {
+            reason: "toString" as CsfRunAiResponse["dropped"][number]["reason"],
+            key: "high|GV.OC-01",
+            field: null,
+            values: 1,
+            value: null,
+          },
+        ],
+      }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /unrecognized reason "toString"/,
+    );
+  });
+
   it("keeps a locked-row skip out of the failure alert (#31)", async () => {
     // A human locking a row is the system working. Folding it in with the
     // failures builds a warning that fires during normal work and gets trained

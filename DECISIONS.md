@@ -2143,6 +2143,103 @@ the security boundary and what a person sees, round 4 the workflow the fixes
 themselves broke and the channel nobody had listened to. Anyone reading this to
 decide whether to stop at four should read the yield, not the count.
 
+### What the adversarial pass changed (round 5)
+
+Two lenses: PERSISTENCE/EXPORT, which nothing had audited, and a regression hunt
+on round 4. Both were high-yield, and between them they produced the two most
+important results of the whole exercise — one about the product, one about this
+component's design.
+
+**The export layer discards the values this feature exists to account for.**
+`finalize_zt_deliverable` calls `analyze_gaps(cat_fw, stage_map, notes=notes_map)`
+with no `targets` and no `target_stage`, while the `/gap-analysis` route the
+consultant reviews and approves from passes both. So `analyze_gaps` falls back to
+`DEFAULT_TARGET_STAGE = 3` for every capability, and the exported PDF/XLSX/DOCX
+lists a different gap set than the consultant approved, under a heading stating a
+target the engagement never agreed to. A capability stored as
+`maturity_stage=1, target_stage=2` exports a "Target stage" cell reading **3** —
+a number the database does not contain and the client never chose. `intake.py`
+makes the ZT target mandatory and carries the comment "we re-check server-side so
+the target is never silently dropped (the consultant relies on it)"; the export is
+exactly where it is silently dropped. Pre-existing and filed as **#73**, with the
+companion truncation defect (**the exported gap plan is capped at 20 with
+`total_gap_count` rendered nowhere**, while the on-screen list discloses it) as
+**#75**. Neither is fixed here: they change the content of client-facing
+deliverables and belong in a change whose subject is the exporter.
+
+The lens also confirmed the thing worth knowing: **apply → database → score is
+exact.** Every input was traced — `2.0`, `"2"`, `2.0000000001`, `True`, `"1e400"`,
+a 400-digit integer, `"nan"`, `4` on DoD — and none diverges; 1-4 are exactly
+representable as doubles so `int(n)` is exact whenever `n == int(n)`; SQLite and
+Postgres agree on `SmallInteger`. The audit accounting is durable (JSONB, no
+truncation) and correctly reaches no exporter. A released deliverable is a true
+byte snapshot and cannot be changed by a later edit. The divergence is entirely at
+score → document.
+
+**And the severity rule was wrong for the third consecutive round — which is the
+finding.** Round 4's `done` fix re-opened round 3's defect in a new state: with
+`received === 0` the response is wholly lost, and because every drop path also
+increments `received`, `dropped` is then necessarily empty, so "nothing was lost"
+passes vacuously and the step rendered a green ✓ and "— done" directly above the
+red "the AI returned no suggestions at all" alert. Round 3's rule returned false
+there; round 4 widened the disjunct to fix the all-protected workflow and swept
+this in.
+
+Two more of the same shape: the alert lead quantified over `suggestions_received`,
+which is charged BEFORE the lock and protection checks, so a run with 60 skipped
+and 14 lost values announced "all 74 suggested values were rejected or
+unrecognized" — overstating the failure five-fold and contradicting the block
+below it. And `agreedThroughout` said "every suggestion matched what was already
+recorded" over 60 suggestions that were declined unseen. Both now quantify over
+what was actually lost or evaluated.
+
+**The response is a truth table, not another conditional.** The predicate has
+changed shape three times — `applied === 0`, then `applied === 0 &&
+failed.length === 0`, then `applied === 0 && lostValues > 0` — and each version
+was right about the case that prompted it and wrong about one nobody had listed.
+The inputs are four booleans, so the whole space is thirteen renderable states.
+Those are now enumerated in a table-driven `describe("severity matrix")` asserting
+alert presence in each, plus an invariant that two assertive regions are never
+reachable. `lostValueCount` — which `ZtWorkspace` uses to decide step completion,
+and which had **no test at all**, so reverting the done-rule to either of its two
+previously-wrong forms passed every gate — now has its own. The general lesson is
+recorded in `CLAUDE.md`: write the matrix first, because a matrix written after
+the fix only pins the fix.
+
+**Round 4 committed the exact failure it had just diagnosed.** It found that the
+`Object.hasOwn` vitest used `"invented_later"` — `undefined`, and so satisfied by
+the old `??` form — and fixed that in ZT. In the same pass it ported the hardening
+to CSF with only the defective test, in the file whose own docstring it quotes as
+"the reference implementation everyone ports from". CSF now has the `"toString"`
+twin. That is the fifth instance this session of a test that agrees with itself by
+construction, and the reason **#72** proposes a systematic sweep rather than
+another lesson.
+
+**Also corrected:** the `unknown_key` label. Round 4 rewrote it from unfollowable
+advice ("set it by hand", when every catalogue capability is already a seeded row)
+into an accusation nothing enforces ("the model invented a code this framework
+does not have") — the lookup is against the rows seeded when THIS assessment was
+created, not the live catalogue, so a later catalogue addition or a code valid for
+the other framework lands there too. It now describes rather than diagnoses. And
+two claims in round 4's own record were narrowed: the "single-alert enumeration
+sound across five combinations" omitted the skipped dimension, which is precisely
+where this round's findings lived.
+
+**Stated, not fixed:** the severity threshold is still a cliff at `applied === 0`.
+A run applying 37 of 74 with the other 37 lost to drift renders entirely calm. The
+unrecognized block still explains the loss in words, and #31 argues against making
+a run that produced real work assertive — so this is a deliberate choice, recorded
+here because round 4's record implied the state space was covered when it had not
+been enumerated. **#74** carries the CSF port of this whole severity model, which
+never happened and which D-047 had not admitted.
+
+Five rounds. The yield has not fallen, and the classes have not repeated: the
+arithmetic, the claims, the security boundary and what a person sees, the workflow
+the fixes broke, and now the document a client actually receives. What changed at
+round 5 is the kind of conclusion available — for the first time the finding is
+not "here is another defect" but "this predicate is the wrong shape", which is the
+signal that patching should stop and enumeration should start.
+
 **Ref:** `apps/api/app/routes/zt.py` (`_as_number`, `_hidden_value_count`,
 `_bounded`, `_bounded_key`, the apply loop), `apps/api/app/schemas/zt.py`
 (`ZtDroppedSuggestion`, `ZtRunAiResponse`), `apps/api/app/ai/jobs.py`
