@@ -1,7 +1,7 @@
 # Gene — current status
 
 _Owner: Gene (gene-png). Only Gene's sessions write this file._
-_Last updated: 2026-08-19 (W1 ZT merged as PR #66; #44 and W3 resolved; #2/#67 shipped, awaiting audit)_
+_Last updated: 2026-08-19 (PR #78 open for #2/#67, CI running; #77 filed; CSF dashboard greenlit)_
 
 Keep this short and current: your sessions overwrite it freely (it's yours
 alone, so it never merge-conflicts). Dave's agents read it at `/pickup` to
@@ -9,22 +9,29 @@ know what you have in flight without digging through branches.
 
 ## Branch / in flight
 
-**Nothing merged since ZT plus this file's own refresh.** `main` is at
-`b5c4ca4`, CI green.
+**`main` is at `ef73f65`** (this file's last refresh). CI is running on
+PR #78, nothing else has merged.
 
-**PR #76 is ready to merge** — docs-only, corrects CONTEXT.md's stale "#66 in
-flight" claim, 5/5 checks green, no conflicts. Still not merged; still your
-click, not the agent's.
+**PR #78 open** — shape guards (`mitre_map`, `risk_synthesize`) + #67 (CSF
+provenance protection, migration 0042). Correctly based on `ef73f65` after a
+branching mishap (briefly forked off the docs PR instead of main; rebased,
+fixed). CI running as of this writing.
 
-**#2 shipped on a branch, awaiting audit before commit.** Shape guards landed
-on all five AI jobs (`mitre_map` + `risk_synthesize` joined `csf_score`/
-`zt_score`; `parse_json_object` is now dead and was removed with a note).
-#67 implemented: migration 0042, consultant stamp, `protected_keys` wired
-into CSF's run, a new `protected` reason through schema/TS/panel. Caught one
-bug not in the original plan: CSF's skip copy hardcoded "you locked those
-rows," which would have mislabeled protected-reason skips as locked —
-regrouped by reason. Tests green (44 CSF pytest, 25 attack/risk/fixtures, 204
-web). Hold for the audit before merging, same as every other step this arc.
+**#77 filed, not yet fixed:** `tech_debt_extract` turns out to be the last AI
+job without a shape guard — needs per-item coercion, not a blanket
+substitution, since its parsing shape differs from the other four. Caught
+because the agent went back and corrected its own claim that "every
+registered job now carries a shape guard" before that line landed in a doc —
+the self-correction working as intended, worth noting. **Recommend folding
+#77 into item 4's Tech Debt export/persistence audit pass** rather than a
+standalone PR — same code, same visit, no reason to context-switch twice.
+
+**Green light given: start the CSF client dashboard now**, in parallel with
+#78's CI and the audit queue. Don't wait for #78 to merge first — that was
+the whole point of calling it a parallel track.
+
+**PR #76** is still open, still unrelated to gene.md's own commits, won't
+conflict with any of this. Still needs your click, not the agent's.
 
 ## MVP prioritization — decided, do not re-litigate from memory
 
@@ -36,17 +43,18 @@ older handoffs):
 
 1. **Provider live key — Gene's own action, not the agent's.** Root `.env` key
 still 401s. Nothing on live-AI validation (#51) moves until this is fixed.
-2. **Shape-guard + #67 — SHIPPED on a branch, awaiting audit.** See above.
-3. **CSF client dashboard — start now, in parallel with #4, not after it.**
-`dashboardPathFor` returns null for `nist_csf`; the largest service and the
-one with the most AI investment has no client-facing results page at all.
-4. **One focused persistence/export audit pass per service** (Tech Debt,
-ATT&CK, CSF, Risk — ZT's already done, five rounds). Use the export lens
-specifically, the one that found #73/#75 on ZT. Escalate only if a pass finds
-something serious — do not default to the full multi-lens treatment on all
-four, there isn't time before MVP.
-5. **W3 → W2 → W1-ATT&CK on a second session, run in parallel with 1-4 — now
-UNBLOCKED, both decisions below are resolved.** Sized against comparable
+2. **Shape-guard + #67 — PR #78 open, CI running.** #77 (tech_debt_extract's
+guard) recommended folded into item 4 rather than shipped separately.
+3. **CSF client dashboard — IN PROGRESS**, started in parallel per the
+green light above. `dashboardPathFor` returns null for `nist_csf`; the
+largest service and the one with the most AI investment has no client-facing
+results page at all.
+4. **One focused persistence/export audit pass per service** (Tech Debt —
+fold in #77 here, ATT&CK, CSF, Risk — ZT's already done, five rounds). Use
+the export lens specifically, the one that found #73/#75 on ZT. Escalate
+only if a pass finds something serious.
+5. **W3 → W2 → W1-ATT&CK on a second session, run in parallel with 1-4 —
+UNBLOCKED**, both #44 and W3 resolved (see below). Sized against comparable
 merged work: W3 ~1-1.5 sessions, W2 ~2-3 sessions (the big one), W1-ATT&CK
 ~1 session. ~4-6 sessions total, the long pole — everything else combined is
 ~2-3. File contention is low; the one overlap is ATT&CK's exporter —
