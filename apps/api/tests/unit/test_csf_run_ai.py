@@ -1262,3 +1262,185 @@ def test_csf_run_ai_ordinary_key_is_not_mangled_by_the_escaping(app_client) -> N
     r = c.post(f"/csf/services/{svc_id}/run-ai", headers=h)
     d = _only_dropped(r.json())
     assert d["key"] == "high|GV.OC-1", d
+
+
+# --- #67: CSF fixture runs must not overwrite hand-typed dimension scores ----
+
+
+@pytest.mark.unit
+def test_fixture_run_ai_leaves_consultant_typed_scores_untouched(app_client) -> None:
+    """The CSF half of migration 0035's rule, missing until now (#67).
+
+    ZT has protected non-AI answers from offline output since the 2026-08-04
+    incident, in which a fixture run replaced a real client self-assessment with
+    canned demo values (average maturity 2.14 -> 1.49, Identity 3.00 -> 1) and
+    nothing afterwards could tell the two apart. `protected_keys` had exactly one
+    caller - `routes/zt.py` - so pressing Run AI with no key loaded silently
+    overwrote a consultant's hand-typed Working Profile scores.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    code = SUBCATEGORIES[0].code
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    sid = next(x["id"] for x in rows if x["subcategory_code"] == code)
+    # A consultant types a score by hand.
+    c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={"governance": 2})
+
+    body = _run_ai(
+        c, provider, h, svc_id, [{"tier": "high", "subcategory_code": code, "governance": 0}]
+    )
+
+    assert _row(body, code)["governance"] == 2, "offline output overwrote a hand-typed score"
+    d = _only_dropped(body)
+    assert d["reason"] == "protected", d
+    assert d["key"] == f"high|{code}", d
+    # Distinct from `locked` - nobody locked this row, and telling a consultant
+    # it is locked would be a false statement about who decided.
+    assert d["reason"] != "locked"
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_fixture_run_ai_still_populates_an_untouched_playbook(app_client) -> None:
+    """The counterweight, and the reason `is_answered` cannot key on a value.
+
+    CSF dimension scores default to 0, so "has a value" is true for every seeded
+    row from the moment the profile is created. Protecting those would stop a
+    fixture run populating an empty Playbook at all - which is exactly what the
+    D-017 demos and the e2e suite depend on. Protection therefore keys on
+    "somebody actually wrote this", not on the value.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    code = SUBCATEGORIES[0].code
+
+    body = _run_ai(
+        c, provider, h, svc_id, [{"tier": "high", "subcategory_code": code, "governance": 2}]
+    )
+
+    assert _row(body, code)["governance"] == 2
+    assert body["dropped"] == [], body["dropped"]
+    assert body["suggestions_applied"] == 1
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_live_run_ai_may_draft_over_a_consultant_score(app_client, monkeypatch) -> None:
+    """Protection is an OFFLINE rule. A live run drafting over a consultant's
+    score is the consultant workflow, and it shows a diff for review."""
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    code = SUBCATEGORIES[0].code
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    sid = next(x["id"] for x in rows if x["subcategory_code"] == code)
+    c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={"governance": 2})
+
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    body = _run_ai(
+        c, provider, h, svc_id, [{"tier": "high", "subcategory_code": code, "governance": 0}]
+    )
+
+    assert _row(body, code)["governance"] == 0, "a live run must be able to draft"
+    assert all(d["reason"] != "protected" for d in body["dropped"]), body["dropped"]
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_ai_written_scores_are_not_protected_from_a_later_fixture_run(app_client) -> None:
+    """Fixture may refresh output it wrote itself - the same rule ZT encodes.
+
+    Otherwise the first offline run would freeze the Playbook permanently.
+
+    CHARACTERISATION ONLY, stated because the adversarial round called it filler
+    and was right: an AI run leaves `answer_source` NULL, and NULL is unprotected
+    for the same reason "ai" would be, so this passes whether or not the stamp
+    exists. It constrains the PREDICATE (protection must not key on a value), not
+    the stamp. The stamp's absence is pinned by
+    `test_a_live_narrative_edit_does_not_strip_protection_from_hand_typed_scores`.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    code = SUBCATEGORIES[0].code
+
+    first = _run_ai(
+        c, provider, h, svc_id, [{"tier": "high", "subcategory_code": code, "governance": 1}]
+    )
+    assert _row(first, code)["governance"] == 1
+
+    second = _run_ai(
+        c, provider, h, svc_id, [{"tier": "high", "subcategory_code": code, "governance": 2}]
+    )
+    assert _row(second, code)["governance"] == 2, "fixture may refresh its own output"
+    assert all(d["reason"] != "protected" for d in second["dropped"]), second["dropped"]
+    _assert_invariant(second)
+
+
+@pytest.mark.unit
+def test_a_live_narrative_edit_does_not_strip_protection_from_hand_typed_scores(
+    app_client, monkeypatch
+) -> None:
+    """The defect the first cut of #67 shipped, found by the adversarial round.
+
+    Protection is per-ROW; `_RUN_FIELDS` is six fields. Stamping `SOURCE_AI`
+    whenever ANY of them changed meant a live run that rewrote only
+    `what_we_found` converted the row to `ai` and stripped protection from five
+    hand-typed scores the model had merely agreed with. The next offline run
+    then overwrote them and reported it as an applied change - #67's own
+    incident, reproduced by #67's fix.
+
+    This is a MODE-FLIP test: consultant edit, then a LIVE run, then an OFFLINE
+    run. No single-mode test can express it, which is why the first suite stayed
+    green over it.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    code = SUBCATEGORIES[0].code
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    sid = next(x["id"] for x in rows if x["subcategory_code"] == code)
+    c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={"governance": 2})
+
+    # A LIVE run touches only the narrative, agreeing with the score.
+    monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
+    _run_ai(
+        c,
+        provider,
+        h,
+        svc_id,
+        [{"tier": "high", "subcategory_code": code, "what_we_found": "Okta is in place."}],
+    )
+
+    # Back offline. The hand-typed score must STILL be protected.
+    monkeypatch.setattr(type(provider), "name", "fixture", raising=False)
+    body = _run_ai(
+        c, provider, h, svc_id, [{"tier": "high", "subcategory_code": code, "governance": 0}]
+    )
+    assert _row(body, code)["governance"] == 2, "a narrative edit stripped score protection"
+    assert any(d["reason"] == "protected" for d in body["dropped"]), body["dropped"]
+    _assert_invariant(body)
+
+
+@pytest.mark.unit
+def test_clearing_a_narrative_by_hand_protects_the_row(app_client) -> None:
+    """An explicit clear is a deliberate consultant act.
+
+    Gating the stamp on `data[f] is not None` skipped it, so a consultant who
+    DELETED an AI narrative left the row unprotected and the next offline run
+    repopulated the text they had just removed.
+    """
+    c, provider = app_client
+    h, svc_id = _bootstrap(c)
+    code = SUBCATEGORIES[0].code
+    rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
+    sid = next(x["id"] for x in rows if x["subcategory_code"] == code)
+    c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={"what_we_found": None})
+
+    body = _run_ai(
+        c,
+        provider,
+        h,
+        svc_id,
+        [{"tier": "high", "subcategory_code": code, "what_we_found": "canned text"}],
+    )
+    assert _row(body, code)["what_we_found"] is None, "an offline run undid a deliberate clear"
+    assert any(d["reason"] == "protected" for d in body["dropped"]), body["dropped"]
+    _assert_invariant(body)

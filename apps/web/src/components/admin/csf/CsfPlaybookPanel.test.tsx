@@ -310,8 +310,10 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
         ],
       }),
     );
-    const skipped = screen.getByText(/skipped because/);
-    expect(skipped).toHaveTextContent(/Suggestions skipped because/);
+    // Grouped by reason since #67 — the copy no longer hardcodes "you locked
+    // those rows", because `protected` is a by-design skip nobody locked.
+    const skipped = screen.getByText(/skipped —/);
+    expect(skipped).toHaveTextContent(/Suggestions across 1 row skipped/);
     expect(skipped).not.toHaveTextContent(/0 suggested value/);
   });
 
@@ -349,6 +351,42 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
     expect(
       screen.getByText(/informed by client-submitted input/),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a protected-score skip apart from a locked one (#67)", async () => {
+    // Two by-design skips with different causes. Neither may raise an alert,
+    // and neither may borrow the other's explanation — telling a consultant a
+    // row is locked when nobody locked it is a false statement about who
+    // decided, which is why the copy is grouped by reason rather than one
+    // hardcoded sentence.
+    await runAi(
+      result({
+        suggestions_received: 8,
+        suggestions_applied: 4,
+        dropped: [
+          {
+            reason: "locked",
+            key: "high|GV.OC-01",
+            field: null,
+            values: 2,
+            value: null,
+          },
+          {
+            reason: "protected",
+            key: "high|GV.OC-02",
+            field: null,
+            values: 2,
+            value: null,
+          },
+        ],
+      }),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    const items = screen
+      .getAllByRole("listitem")
+      .map((li) => li.textContent ?? "");
+    expect(items.some((t) => /skipped —.*row is locked/.test(t))).toBe(true);
+    expect(items.some((t) => /skipped —.*typed by hand/.test(t))).toBe(true);
   });
 
   it("renders an inherited Object property as an unrecognized reason", async () => {
@@ -403,8 +441,8 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
     // deliberately different from the record count, so a revert of
     // `skippedValues` to `skipped.length` — the same undercount the failure
     // headline is pinned against — fails here instead of passing silently.
-    expect(await screen.findByText(/skipped because/)).toHaveTextContent(
-      "2 suggested values skipped",
+    expect(await screen.findByText(/skipped —/)).toHaveTextContent(
+      "2 suggested values across 1 row skipped",
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -483,8 +521,8 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
     expect(screen.getByText(/does not recognize/)).toHaveTextContent(
       "4 values came back",
     );
-    expect(screen.getByText(/skipped because/)).toHaveTextContent(
-      "2 suggested values skipped",
+    expect(screen.getByText(/skipped —/)).toHaveTextContent(
+      "2 suggested values across 1 row skipped",
     );
   });
 

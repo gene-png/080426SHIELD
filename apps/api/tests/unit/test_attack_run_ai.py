@@ -278,3 +278,65 @@ def test_run_ai_marks_documents_stale(app_client) -> None:
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
     assert latest.status_code == 200, latest.text
     assert latest.json()["documents_stale"] is True  # Work Order C3
+
+
+@pytest.mark.unit
+def test_run_ai_non_list_techniques_is_an_error_not_a_silent_empty_run(app_client) -> None:
+    """A non-list `techniques` must be refused, not treated as "nothing to say".
+
+    `attack.py` reads `(data.get("techniques") or [])`, so a scalar collapsed to
+    an empty list and the run reported zero changes — indistinguishable from a
+    model that genuinely had no suggestions. That is a default-value fallback on
+    a bad shape, which FAIL LOUDLY forbids, and it is the same defect
+    `parse_json_object_with_list` was written to close for csf_score (#41) and
+    zt_score (D-047).
+
+    Note what this does NOT do. mitre_map is BATCHED, and `run_ai` counts a
+    failed batch and continues, raising only when every batch failed. So one
+    malformed batch of 26 still returns 200 with `batches_failed=1`, and that
+    field is rendered nowhere in the web app (plan finding F7) — the consultant
+    sees a clean coverage page with 25 techniques quietly missing. This test
+    covers the all-batches-fail path only; the partial case remains silent and
+    is not this change's to fix.
+    """
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["CrowdStrike Falcon"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme ATT&CK"}
+    ).json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+
+    provider.register_static("mitre_map", LLMResponse('{"techniques": 0}'))
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["reason"] == "ai_call_failed"
+    assert "drifted apart" in r.json()["error"]["message"]
+
+
+@pytest.mark.unit
+def test_run_ai_object_techniques_is_refused_not_iterated_as_keys(app_client) -> None:
+    """The subtler half: a dict is TRUTHY, so `or []` did not catch it.
+
+    `for t in {"T1003": ...}` iterates the KEYS — strings — which the
+    `isinstance(t, dict)` filter then discards one by one. Zero changes, no
+    error, no trace. A scalar at least had the decency to be falsy.
+    """
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["CrowdStrike Falcon"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme ATT&CK"}
+    ).json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+
+    provider.register_static(
+        "mitre_map", LLMResponse('{"techniques": {"T1003": {"status": "covered"}}}')
+    )
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["reason"] == "ai_call_failed"

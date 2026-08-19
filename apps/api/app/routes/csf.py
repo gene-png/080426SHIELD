@@ -33,6 +33,7 @@ from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
+from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
 from app.audit import audit
 from app.csf import playbook_export as csf_playbook_export
 from app.csf.catalog import (
@@ -1071,6 +1072,18 @@ def patch_dimension_score(
             setattr(row, f, data[f])
         elif f in data and f in ("rationale", "what_we_found", "target_level"):
             setattr(row, f, None)  # explicit clear allowed for nullable text/target
+    # Provenance (#67, migration 0042). A human wrote this row, so an OFFLINE run
+    # must not replace it with canned output. Keyed on a value actually being
+    # written, not on `locked` — locking is a separate, deliberate choice, and a
+    # consultant should not have to lock every row to keep their own work.
+    #
+    # `locked` alone is excluded on purpose: toggling a lock says nothing about
+    # who authored the score.
+    # An explicit CLEAR counts: deleting an AI narrative is a deliberate act,
+    # and gating on `is not None` left that row unprotected so the next offline
+    # run repopulated the text the consultant had just removed.
+    if any(f in data for f in _RUN_FIELDS):
+        row.answer_source = SOURCE_CONSULTANT
     # Issue #37. Its sibling `patch_answer` has always audited; this route did
     # not, so a change to a Working Profile score had no actor and no timestamp
     # anywhere — including on an assessment that had already been approved.
@@ -1508,7 +1521,9 @@ def _verbatim_key(sugg: dict) -> str | None:
 
 
 def _apply_suggestions(
-    data: dict, rows: dict[str, CsfDimensionScore]
+    data: dict,
+    rows: dict[str, CsfDimensionScore],
+    protected: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[int, int, list[CsfDroppedSuggestion]]:
     """Apply the csf_score suggestions, accounting for every one of them (W1).
 
@@ -1628,6 +1643,15 @@ def _apply_suggestions(
             # A by-design skip, NOT a defect. Kept distinct from unknown_key so
             # the two never render as one number (#31 alert fatigue).
             dropped.append(CsfDroppedSuggestion(reason="locked", key=key, values=recognized_values))
+            continue
+        if row_key in protected:
+            # An OFFLINE run declining to overwrite a score a human typed (#67).
+            # A separate reason from `locked` on purpose: different cause,
+            # different fix, and telling a consultant a row is locked when
+            # nobody locked it is a false statement about who decided.
+            dropped.append(
+                CsfDroppedSuggestion(reason="protected", key=key, values=recognized_values)
+            )
             continue
 
         for field in fields:
@@ -1835,11 +1859,44 @@ def run_ai(
     # changes, which read as the model agreeing with everything.
     data = result.data
 
-    received, applied, dropped = _apply_suggestions(data, rows)
+    # Offline output must never overwrite what a human typed (#67, migration
+    # 0042). `protected_keys` returns an empty set off-fixture, so a LIVE run may
+    # still draft over a consultant's score — that is the consultant workflow and
+    # it shows a diff for review.
+    #
+    # `is_answered` is "somebody wrote this", not "has a value": every dimension
+    # is NOT NULL DEFAULT 0, so a value test would protect every seeded row and
+    # stop a fixture run populating an empty Playbook at all.
+    protected = protected_keys(
+        ((k, r.answer_source, r.answer_source is not None) for k, r in rows.items()),
+        is_fixture=llm.provider.name == "fixture",
+    )
+    received, applied, dropped = _apply_suggestions(data, rows, protected)
 
     db.flush()
     after = _snap()
     diffs = diff_keyed_rows(before, after, list(_RUN_FIELDS), locked_keys=locked_keys)
+
+    # NO `SOURCE_AI` STAMP HERE, deliberately — and this is where CSF must NOT
+    # copy ZT (adversarial round, #67).
+    #
+    # ZT stamps `ai` because its `is_answered` keys on `maturity_stage is not
+    # None`: a row the AI answered IS answered, so without the stamp it would be
+    # protected from the AI's own next run. CSF's `is_answered` keys on the
+    # source column itself, so the predicate collapses to `answer_source ==
+    # "consultant"`. NULL and "ai" are both unprotected, which means writing
+    # "ai" can only ever REMOVE protection — never add it.
+    #
+    # And it removed too much. Protection is per-ROW while `_RUN_FIELDS` is six
+    # fields, so a live run that rewrote only `what_we_found` stamped the whole
+    # row `ai` and stripped protection from five hand-typed scores the model had
+    # merely agreed with. The next offline run then overwrote them with canned
+    # values and reported it as an applied change — issue #67's own incident,
+    # reproduced by its fix, through the path `zt.py` wrote a comment to close.
+    #
+    # Leaving the row NULL after an AI run gives the same "fixture may refresh
+    # its own output" behaviour with none of that. A consultant re-editing the
+    # row restamps `consultant` and restores protection.
     if not diffs:
         # FAIL LOUDLY: a run that parsed but changed nothing is the exact
         # symptom of the T0 schema-drift bug (a compliant response silently
