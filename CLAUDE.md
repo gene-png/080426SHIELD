@@ -75,7 +75,14 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   loop gate — and ruff's `# noqa: S1xx` does NOT suppress it. A string bandit
   flags needs its own `# nosec BXXX` marker too (Sprint 6 shipped a red CI on
   exactly this: a `"password_reset"` purpose label flagged as B105).
-- Seed: `docker compose exec -T api python scripts/seed_demo.py` (idempotent).
+- Seed: `docker compose exec -T api python scripts/seed_demo.py` — **NOT
+  idempotent, despite what it prints (#65).** The guard is "does ANY `Service`
+  row exist, for any tenant" — one service minted by an e2e spec aborts the
+  whole seed with "Services already present; skipping seeding." and exit 0. A
+  drifted dev DB therefore can never be repaired by re-seeding; the only
+  recovery is `docker compose down -v`. CI never hits this because its runners
+  start with empty volumes, so CI stays green on specs that cannot run
+  locally.
 
 ## Environment gotchas (learned the hard way)
 
@@ -145,6 +152,20 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   The shape to watch: a conditional whose false branch drops the record instead
   of emitting it under a different reason. Make the false branch emit something —
   a zero-value record that names the fault is honest, and silence never is.
+- **A rule you have rewritten three times is a design problem, not a bug list.
+  Enumerate the state space instead of patching the case in front of you.** W1's
+  ZT run-AI severity rule was wrong in three consecutive adversarial rounds, and
+  every time the fix was correct for the case that prompted it and wrong for a
+  case nobody had listed: round 3 made a total loss alert and thereby shouted
+  over an all-by-design-skip run; round 4 fixed that and thereby marked a
+  wholly-lost response "done"; each round's tests covered the state it had just
+  fixed. The tell is not the defect count, it is that the same predicate keeps
+  changing shape — `applied === 0`, then `applied === 0 && failed.length === 0`,
+  then `applied === 0 && lostValues > 0`. When you see that, stop adding
+  conditionals and write the truth table: the inputs here were four booleans, so
+  the whole space was thirteen renderable states and fits in one table-driven
+  test. Do the matrix FIRST, then change the logic — a matrix written after the
+  fix only pins the fix.
 - **A test that supplies its own expected value — or its own precondition — from
   the thing under test cannot fail.** The AI-fixture rule above is one instance
   of this; this is the general shape, and it turned up twice on 2026-08-18 in

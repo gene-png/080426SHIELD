@@ -1412,9 +1412,33 @@ constraint is about the audit/log channel, not about the product.)
 **Scope of the two integers, stated because the UI sentence reads like a
 completeness claim.** They count values suggested for SCORING ROWS. The
 response's top-level `executive_summary` is outside them — and is not persisted
-by CSF at all, though ZT persists its equivalent (`routes/zt.py`). That
+by CSF at all, ~~though ZT persists its equivalent (`routes/zt.py`)~~. That
 asymmetry is pre-existing and is NOT resolved here; the copy says "score
 values" so the panel stops implying otherwise, and the gap is filed separately.
+
+> **Correction (2026-08-18, W1's ZT step).** The struck clause above is FALSE.
+> **ZT does not persist its equivalent.** `ZtAssessment` has no
+> `pillar_narratives`, `executive_summary` or `roadmap_summary` column, no
+> migration adds one, `zt/exporters.py` never reads them, and across all of
+> `apps/web/src` the only occurrence is the type declaration in
+> `lib/zt/types.ts`. The citation pointed at `routes/zt.py`, which _returned_
+> the values; nothing wrote them anywhere.
+>
+> The error is worth naming, not just fixing: this is a claim about a design
+> that was intended and never finished, written down as though it described the
+> schema, and never checked against it. Nothing in the codebase contradicted it
+> loudly, because a field that is returned and ignored looks exactly like a
+> field that is returned and stored, from the route.
+>
+> It was load-bearing. This sentence was the stated basis for scoping ZT's
+> narratives INTO W1's suggestion accounting — the reasoning being that a
+> dropped narrative would be a real lost value. Once the premise failed, so did
+> the conclusion: those values were discarded unconditionally, valid or not, so
+> a "dropped narrative" count would report loss where a validation failure lost
+> nothing that was not already thrown away by design, and a counter implying the
+> harm of a real dropped score trains the reader to discount the counters that
+> matter (the #31 constraint). The fields were removed from `_ZT_SCORE_PROMPT`
+> instead — see **D-047** and issue **#64**. CSF's half remains open as **#60**.
 
 ### What the adversarial pass changed (same day, before merge)
 
@@ -1675,3 +1699,549 @@ the guard.
 the four finalize routes (`csf.py`, `zt.py`, `attack.py`, `tech_debt.py`);
 `test_deliverable_release.py`, `test_tech_debt_dashboard.py`,
 `test_zt_dashboard.py`, `test_attack_dashboard.py`.
+
+## D-047 — ZT accounts for every suggested stage, and stops asking for narratives nobody reads
+
+**Date:** 2026-08-18 · **Workstream:** W1, ZT step · **Issues:** #44, #64 · **Supersedes nothing; corrects D-045's ZT-persistence claim in place.**
+
+W1's second service. The shape is D-045's, carried over intact: every suggested
+value is either applied or itemized, counted in VALUES, with the invariant
+
+```
+received == applied + sum(d.values for d in dropped)
+```
+
+What follows is only what differs from CSF, plus the one decision that is not a
+port.
+
+**The narrative fields were removed, not counted.** `_ZT_SCORE_PROMPT` asked for
+`pillar_narratives`, `executive_summary` and `roadmap_summary` on every run.
+`routes/zt.py` parsed all three and returned them; `lib/zt/types.ts` declared
+them; and that was the end of the road. No column on `ZtAssessment`, no
+migration, no reader in `zt/exporters.py`, and no reference anywhere in
+`apps/web/src` outside the type declaration itself.
+
+They were briefly scoped INTO this accounting, on the strength of D-045's claim
+that ZT persisted them. That claim was false and is corrected in place above.
+Once the premise went, the conclusion went with it, and the replacement argument
+— "a value the model wrote and the run discarded is the defect family regardless
+of storage" — does not hold either. **The defect W1 exists to catch is content
+that would otherwise have been KEPT vanishing silently.** These values vanished
+unconditionally, valid or not. A validation failure lost nothing that was not
+already being thrown away by design, so a per-reason drop count for them would
+have measured a quantity with no consumer and reported it in the same register
+as a genuinely lost score. That is the #31 alert-fatigue constraint arriving
+from a new direction: a counter that reports harm where none occurred teaches
+the reader to discount the counters that report harm where it did.
+
+So this was never an invariant-scope question. It was a waste question, and the
+answer is to stop paying for the tokens: the three fields are gone from the
+prompt, the response schema, the fixture and the TS types. **Not deprecated and
+left empty** — a dead field implying a live one is its own defect (#62). If a
+narrative or an executive summary should ever appear in the ZT workspace or the
+exported report, that is a real feature needing a column, a migration, an
+exporter change and a UI surface; re-adding the prompt text is the LAST step of
+that work, not the first. CSF's half of the same waste is open as #60.
+
+**`protected` is a reason code, distinct from `locked`.** ZT has a skip CSF does
+not: an offline run declines to overwrite a non-AI answer (migration 0035).
+`if row.locked or code in protected: continue` recorded nothing for either. They
+are now two records with two reasons. Folding them together was rejected: both
+are by-design skips that must render away from the failure alert, but telling a
+consultant a row is "locked" when nobody locked it is a false statement about
+who did what, and the two have different fixes.
+
+**A non-list `capabilities` is a 502, not a pile of drops.** The old path did
+`raw_caps = []` after a warning — a default-value fallback on a bad shape, which
+FAIL LOUDLY forbids, and which made a structurally broken response
+indistinguishable from a model with nothing to say. `zt_score` now uses
+`parse_json_object_with_list("capabilities")`, matching `csf_score`. Counting it
+as drops was the alternative and is wrong: there are no entries to enumerate, so
+any per-entry number would be invented. A MISSING key is still untouched — that
+is #46, deliberately outside this.
+
+**No `wrong_type`.** CSF needed it for a narrative field. Every value ZT applies
+is a stage, so the vocabulary is `entry_shape | unknown_key | unknown_field |
+unparseable | out_of_range | superseded | locked | protected`.
+
+**`suggested` gains a code only where a value landed.** The F9 provenance
+settlement loop iterates that set. Adding a code on a rejected suggestion would
+hand the settlement a row the model never wrote and re-open the defect PR #39
+closed.
+
+**The log moved below the D-031 re-read**, and the audit row gained
+`suggestions_received`, `suggestions_applied` and `dropped_by_reason` in values.
+Both follow the rule D-045 records the reviewers enforcing on CSF: a record
+saying "this happened" goes below the guard that makes it true.
+
+**Four log lines lost their model content.** `zt.py` logged
+`received=repr(raw_caps)[:120]`, `entry=repr(sugg)[:120]`,
+`capability_code=repr(code)[:120]` and `value=repr(raw)[:120]` — AI output in a
+log line, against #44 constraint 1. The per-event warnings are gone entirely,
+along with `_MAX_REJECT_LOGS`, which existed only to bound them. What they
+carried now reaches the admin through `dropped` on the response, which is the
+channel allowed to hold verbatim keys and values.
+
+**One pre-existing test changed on purpose, and one assertion was removed.**
+`test_a_malformed_response_does_not_500_and_changes_nothing` asserted a 200 for
+a non-list `capabilities`; that encodes the fail-soft path being deleted, so the
+case moved to its own 502 assertion. `test_zt_run_ai_applies_current_and_target`
+asserted the narratives were echoed back; that behaviour is deliberately gone.
+Neither was wrong about the old code — both are recorded here rather than
+quietly edited, because "fix the code, not the test" only permits touching a
+test when the behaviour it pins is itself the thing being changed.
+
+### What the adversarial pass changed (round 1, same day, before merge)
+
+Two reviewers, one on the engine's arithmetic and one on the removal's blast
+radius. **One real defect, five stale artifacts, and three test gaps.** Every one
+was invisible to a green suite, and the suite was green when the round started.
+
+**The defect: a container under a recognized key broke the invariant.**
+`received` charged every key the leaves it hides, but the three per-field drop
+records passed no `values` at all, defaulting to 1. So
+`{"code": "CISA.ID.01", "current": {"stage": 2, "confidence": 0.8}}` charged
+`received=2` and itemized 1 — one suggested value gone with no record, which is
+precisely the silent loss this feature exists to end. Widened, it scales:
+`{"current": [1,2,3], "target": [1,2,3]}` lost four. The CSF sibling had this
+right (`csf.py:1641-1676` passes `values=field_values[field]` on every per-field
+record) **and had a regression test for it**; the ZT port copied the enumeration
+and not the charge. The tell was `field_values` being computed per field and then
+never read per field — only summed. Two of the three records were only
+accidentally safe, since a container cannot currently reach `out_of_range` or the
+non-whole branch; they were fixed anyway, because "unreachable today" is an
+unstated carve-out.
+
+**The removal left five things behind, and the worst of them reached a human.**
+`ZtWorkspace.tsx` still told the consultant Run AI produces "the per-pillar
+narrative", in an always-visible step description — the copy outlived the field
+it described, which is the same "dead thing implying a live one" this decision
+cites #62 to avoid. The `run_ai` docstring, which FastAPI renders as the endpoint
+description at `/docs`, still promised narratives in the response, contradicting
+the response model on the same page. `s6` delegated its uncovered drop branches
+to `ZtWorkspace.test.tsx`, **a file that has never existed** — the real one is
+`ZtRunAiAccounting.test.tsx`. Only two of the three removed fields were pinned
+absent, leaving `roadmap_summary` — the likeliest to be re-added alone, since a
+roadmap feature genuinely exists — free to come back green. And the by-design
+skip bullet had no zero-guard, so field drift on a locked row renders
+"0 suggested values skipped", the same contradiction the failure block above it
+had already been fixed to avoid.
+
+**Three test gaps, each of which would have let a revert pass green.** The
+`protected` branch was exercised only by a test asserting
+`preserved_client_answers`, never `dropped` — reverting it to a bare `continue`
+left the suite green over a two-value silent loss, one branch over from where
+that shape was already defended. The `superseded` record claims to name the value
+that was LOST, and nothing pinned it, so recording the winner instead — the
+natural mistake — would have told a consultant the opposite of the truth,
+greenly. And the second `entry_shape` branch had no test at all.
+
+Also hardened: `unknown_field.field` echoed the model's JSON key unbounded, while
+`code` beside it was bounded to 80 characters by a helper whose docstring names
+the threat. A key is model output too.
+
+**What held.** The invariant was hand-traced over roughly twenty payload shapes —
+empty entries, unhashable codes, `inf`/`nan`, a 400-digit integer, depth-5
+nesting, duplicate JSON keys, 3→4→3 round-trips — and holds everywhere else.
+`applied` cannot go negative. The F9 settlement loop cannot `KeyError`, because
+`suggested` only gains codes that resolved to a real row. `int(n)` cannot raise,
+because range is judged first. No model text reaches any log or audit row. And
+the removal genuinely has no consumer: no column, no migration, no exporter
+reader, no wholesale serialisation of the AI payload, and nothing in `apps/web`
+beyond the type declaration.
+
+The honest reading is the one D-045 reached for CSF: not "round 1 made it
+correct", but that an audit gate keeps finding what a green suite cannot. This
+step budgeted four rounds on that basis.
+
+### What the adversarial pass changed (round 2)
+
+Two lenses again: one attacking round 1's own fixes, one asking what was still
+missing. **Round 1's six changes all held** — the `values=field_values[field]`
+charge cannot double-count, because the `unknown_key` / `locked` / `protected`
+branches `continue` before the per-field loop is ever reached, so the two charges
+are mutually exclusive by control flow rather than by luck. What round 2 found
+was in the artifacts around the change, in one test that could not fail, and in a
+claim this decision itself asserted without checking.
+
+**A claim in round 1's own record was false.** Round 1 wrote that ZT's skip
+bullet reproduced "the contradiction the failure block above it had already been
+fixed to avoid" — implying the CSF sibling it was mirroring had the guard. It did
+not. `CsfPlaybookPanel.tsx` printed **"0 suggested values skipped because you
+locked those rows"** whenever every field on a locked row was also misnamed, which
+is the realistic prompt-prose drift shape CSF's own test calls out by name. So the
+sentence asserting nothing was lost printed at the moment the most was, live, in
+shipped CSF code. Fixed here with the ZT fix rather than filed, because it is the
+same defect and leaving a false statement in front of a consultant to preserve
+PR scope is the wrong trade.
+
+**"Fixture mode structurally cannot produce a drop" is FALSE for ZT.** It was
+written in four places — the component header, the vitest header, `s6`'s comment,
+and #51's framing — and it is inherited from CSF, where it is true. ZT has a
+reason CSF does not: `protected` is reachable **only** in fixture mode, because
+`protected_keys` returns an empty set off-fixture (`app/ai/provenance.py`). So the
+blanket claim is backwards for exactly one reason code, and it matters twice
+over: `protected` can never be observed live at all, and `s6` **could** have
+proven a drop branch end to end had it not deliberately minted a blank draft. All
+four sites now say what is actually true. The precise live-verification scope now
+lives on #51 rather than as a vague "never observed".
+
+**The audit-row test could not tell values from records.** It asserted
+`dropped_by_reason == {"unknown_field": 1}` over a scalar, where values and
+records are both 1 — so a refactor to `+= 1` would have passed it while writing
+`{"unparseable": 1}` over three lost stages into the durable record that outlives
+the response. This is round 1's own "ported the enumeration and not the charge"
+defect, one layer up, and round 1 did not look there. The payload now hides three
+values behind one key, and the test asserts the durable row's arithmetic closes
+against itself. CSF had already done both, deliberately.
+
+**Five behaviours were correct but unpinned**, each of which a revert would have
+carried green: the row-level record emitted at `values=0` (ZT's nearest test used
+a recognized field, so `if recognized_values:` would still have passed it); field
+drift surviving the lock check; the `OverflowError` guard whose absence is a bare
+500 that costs money and writes no ledger row; a two-level wrapper counting leaves
+rather than the wrapper; and the same field on two capabilities not reading as a
+supersede. Plus one the response could never pin: the _prompt_ no longer asking
+for narratives — `assert "roadmap_summary" not in body` only fires on a schema
+re-add, since `response_model` strips unknown keys, and the change that costs
+money is a re-add to the prompt.
+
+**The depth cap's comment was wrong, in the direction that matters.** It claimed
+"the undercount is bounded and stated". It is bounded in RECORDS and unbounded in
+VALUES: a list of 10,000 stages nested below `_MAX_NEST_DEPTH` is charged 1 on
+both sides, so the invariant closes over 9,999 lost values. It is the only path
+where the invariant holds vacuously — in the feature built to stop exactly that.
+No real model nests five deep, so it is accepted rather than fixed, but an
+accepted exclusion belongs on the record and not only in a comment. Corrected in
+both services.
+
+**Also corrected:** `IMPLEMENTATION.md`, which declares itself verified against
+live code, still described `zt_score` as producing pillar narratives — a sixth
+stale artifact of the same shape as round 1's five. A test-file docstring still
+pointed readers at a `zt_run_ai_suggestions_dropped` log line, and at a rationale
+for deliberately withholding the count, both of which this step deleted. And the
+round-1 test-block header claimed all five of its tests failed first; only three
+did, the other two characterising already-correct behaviour that had no test —
+a distinction worth keeping straight, because only the first kind proves a fix.
+
+**Stated, not fixed:** `response_shape` from #44's shared vocabulary is
+implemented by neither CSF nor ZT. The reason is real — a condition that can never
+coexist with an applied suggestion belongs in the error path, not a per-item drop
+list, which is what `parse_json_object_with_list` does — but it lived only in a
+parser comment, so a future agent building Risk or ATT&CK would read #44, find a
+ninth reason code, and either add it or spend a round working out why it is
+absent. Also unaccounted and now stated: duplicate JSON keys inside one entry, and
+extra top-level keys alongside a correct `capabilities` (the latter is adjacent to
+#46 but not the same defect).
+
+Two rounds, and the pattern D-045 recorded holds: the defect rate did not fall,
+it moved. Round 1 found the code; round 2 found the claims about the code.
+
+### What the adversarial pass changed (round 3)
+
+Three lenses this time, two of which nothing had used: a regression hunt on
+round 2, a SECURITY and tenancy pass, and a CONSULTANT-REALITY pass that worked
+out the exact text a person sees in five real scenarios. Round 3 found more than
+rounds 1 and 2 together, and round 2's code changes all held — as round 1's had.
+The pattern is now unmistakable: each round's fixes survive, and each round finds
+a class of defect the previous round was not looking for.
+
+**A 500 after a successful commit.** `_bounded_key` claimed in its own docstring
+to share `_bounded`'s echo-back path. It did not: `_bounded` runs everything
+through `repr()`, which escapes every non-printable code point; `_bounded_key`
+returned the model's `str` RAW, and that is the only branch a well-formed `code`
+can take. `json.loads` accepts an unpaired surrogate escape, so such a `code`
+reached `dropped[].key` intact, `db.commit()` SUCCEEDED — suggestions applied,
+provenance stamped, audit row written, `llm_calls` marked COMPLETED — and only
+then did the response encoder raise. The consultant saw "an internal error
+occurred" over a database that had already been rewritten, and `ZtWorkspace`'s
+catch does not re-fetch, so the grid kept showing pre-run values. A 500 after the
+commit is worse than a refusal. The cheaper variant needs no exotic encoding at
+all: a right-to-left override in `code` renders in the admin alert with the
+override live, because React escapes markup characters and not control ones.
+Fixed by escaping non-printables while leaving printable codes untouched, in ZT
+and in CSF's identical `_bounded_key_part`.
+
+**Two user-facing severity bugs, both of which reported success over failure.**
+A run losing 100% of its values to field-name drift routed every record to the
+deliberately-quiet `NOT_UNDERSTOOD` block: "AI applied 0 of 74" in calm secondary
+grey, no alert anywhere — while "applied 0 of 0" got one. The quiet block's own
+comment justifies it only for runs where everything asked for WAS applied, and
+nothing enforced that; this is the #31 constraint inverted. Worse, `WorkflowStep`
+took `done={runResult !== null}`, so a green success badge and a "— done" heading
+sat directly above that line. Severity is now derived from whether anything was
+applied, with EXACTLY one assertive region: the failure block when there is one,
+the headline when there is not. Two alerts announce over each other, which is why
+the first attempt at this — escalating the quiet records into the alert — was
+rewritten rather than kept.
+
+**A remedy that could not work.** `update_answer` sets `locked` and never writes
+`answer_source`, so every locked row whose stage was never AI-written is
+simultaneously `locked` and `protected`. (Round 4 correction: this said "every
+consultant-typed locked row", which overstates it — a row the AI drafted keeps
+`answer_source = "ai"` through a consultant's correction, so `protected_keys`
+excludes it. The workspace copy had this right where the decision record did
+not.) The skip bullet said "row is locked" while the paragraph below
+counted the same row and instructed "Load an API key to run real analysis over
+them" — but live runs skip locked rows too. A consultant following that advice
+pays for a call and gets the identical result with no explanation. The paragraph
+now says the two blocks describe the same rows, and scopes the remedy to exclude
+locked ones.
+
+**Two numbers about the same rows, in different units, with no bridge.** In the
+commonest demo flow the panel showed "10 suggested values skipped" beside "5
+answers left untouched" — a factor of two, because ZT charges `current` and
+`target` per row, stated nowhere. The skip bullet now carries its row count as
+well as its value count, which is also what makes it reconcilable when the ratio
+is not 2 (a model that suggests for only some protected rows).
+
+**Also fixed:** `unknown_key`'s label was ported from CSF and lost the half that
+made it actionable — CSF asks "is that tier seeded?", and seeding is a button on
+that page, whereas ZT has no such action and the consultant cannot fix a model's
+spelling. It now says what they can do: set it by hand. `describeReason` looked
+up an untrusted reason on an object literal, so `"toString"` resolved to an
+inherited function and rendered as the empty bullet the guard exists to prevent.
+`d.key ?? …` let an empty-string code render as a blank.
+
+**Round 2's own claims needed three corrections**, which is the same shape round
+2 found in round 1. Its `protected`-is-fixture-only fix left a fifth site
+contradicting the four it fixed. Its depth-cap comment said the cap was "the only
+path where the invariant holds vacuously"; duplicate JSON keys inside one entry
+are a second and likelier one, since `json.loads` keeps the last and the earlier
+value is gone before this code sees it — no hostile nesting required. And its
+"exact" #51 scope was off by one in the expensive direction: `locked` needs no
+live run, because `build_zt_ai_request` sends every row including locked ones, so
+a fixture run over an API-locked row surfaces that reason end to end today. Six
+of eight, not seven.
+
+**Prompt-injection reach is real, new, and now stated.** A client-role user's
+`notes` go into the egress payload verbatim; the model's reply now lands on the
+consultant's screen through `dropped[].key`. ~800 characters of tenant-chosen
+prose can render inside the panel the consultant uses to judge whether the AI
+draft is trustworthy. Bounded, escaped, no privilege gained, and #44 sanctions
+`key`/`value` in the response — but before W1 that field never left the server.
+The schema docstring justified it as "same trust boundary as the run result",
+which is true of the MODEL and skips that a lower-privileged user seeds the
+model's input. That is the unstated-carve-out shape, and it belongs here rather
+than nowhere.
+
+**What held.** Tenant isolation is clean: every query is anchored to the
+tenant-verified service, the D-031 re-read cannot re-scope, and `dropped` is
+built only from model output and hardcoded literals, so it cannot carry another
+tenant's data. Logs and audit rows are counts-only, `dropped_by_reason`'s keys
+cannot be attacker-controlled because the `Literal` validates at construction,
+and the tests proving both are not vacuous. No new `llm_calls` hole. No DoS —
+`_MAX_OUTPUT_TOKENS` is the real ceiling, though nothing in `zt.py` would notice
+if it were raised the way `mitre_map`'s was. And the CSF zero-guard round 2 added
+did not change the non-zero copy by so much as a space.
+
+**Filed, not fixed:** #67 — CSF has no provenance protection at all, so an
+offline run silently overwrites hand-typed dimension scores where ZT protects the
+equivalent work. Pre-existing, and made more likely by this step, because a
+consultant who learns ZT's behaviour will assume it on CSF.
+
+Three rounds, and the honest reading is unchanged from D-045: not "round 3 made
+it correct", but that an audit gate keeps finding what a green suite cannot —
+and that the classes of defect keep moving. Round 1 found the arithmetic, round 2
+the claims, round 3 the security boundary and what a person actually sees.
+
+### What the adversarial pass changed (round 4)
+
+Two lenses: a regression hunt on round 3, and an ACCESSIBILITY pass nobody had
+run. **Round 4's yield was as high as round 3's**, which is the opposite of what
+"CSF needed four rounds" would predict — four was CSF's observed yield curve, not
+a law, and this one has not flattened. Both lenses independently found the same
+thing: **round 3's severity fix was half-right and half-backwards, and each half
+failed in the channel the other half was not tested in.**
+
+**Round 3 re-opened #31 in the exact workflow `protected` exists for.** Gating
+severity on `applied === 0` alone meant an offline run in which every suggestion
+was preserved BY DESIGN — a client submits all 37 capabilities, a consultant
+presses Run AI with no key — rendered a red assertive alert reading "Nothing was
+applied, every suggestion this run received was rejected or unrecognized", over a
+run in which nothing whatsoever went wrong. Three elements below it the grey
+block correctly said the same 74 values were skipped by design. And
+`done={… suggestions_applied > 0}` left Step 1 permanently un-done for that
+workflow, on every re-run: a guard that refuses to fire when it should. Severity
+now derives from `lostValues` — what was actually lost — with by-design skips
+excluded, and `ZtWorkspace` imports the same predicate so two places cannot
+decide "did this run go well" by different rules.
+
+**And the same fix under-fired in the audio channel.** `headlineIsAlert` demotes
+the headline to polite whenever a failure block exists, so with failures AND
+nothing applied the only assertive utterance was the failure block — which, by
+its own zero-guard, says "**Some** suggestions could not be applied". A
+screen-reader user heard "some" over a total loss while a sighted user read
+"0 of 74" in the line above. The alert has to be a SUPERSET of the headline, not
+a sibling of it; it now states the total when nothing applied. The round-3
+invariant — "exactly one assertive region" — was correct about count and silent
+about content, and the word "Some" that made the audio version wrong was chosen
+in round 3 to fix the visual version.
+
+**`agreedThroughout` claimed agreement over a shortfall.** Gated on
+`applied > 0 && changed === 0` and not on losses, so a re-run where the model
+volunteered a `confidence` key per capability printed "Every suggestion matched
+what was already recorded" one paragraph above "these are part of the shortfall
+in the line above". Now requires `lostValues === 0`.
+
+**Three smaller ones, all the same shape — a fix that reads as coverage and is
+not.** The `unknown_key` label round 3 rewrote to be actionable advises setting
+the capability by hand; every catalogue capability is seeded as a row at
+assessment creation, so an unknown key means the model invented a code the
+framework does not have and there is no row to go to. It now says that. The skip
+bullet's row count counted RECORDS, so two entries naming one locked code read as
+two capabilities — in the number added specifically to reconcile with
+`preserved_client_answers`, which counts rows. And the vitest added beside the
+`Object.hasOwn` hardening used `"invented_later"`, which is `undefined` and
+passes under `??` too — it could not detect the change it was added for. The
+inherited-function case (`"toString"`) now has its own test.
+
+**Round 3 ported one hardening to CSF and not the other, and tested neither.**
+`_bounded_key_part` got the escaping fix with no test at all — reverting it left
+the whole suite green over the commit-then-500 path. CSF now has the same three
+tests ZT has. `describeReason`'s prototype lookup was left on the `??` form in
+the file whose own docstring calls it "the reference implementation everyone
+ports from" — fixes travelling from copy to original and not back is how a
+codebase ends up with the original being the worst version of itself.
+
+**Two claims corrected.** The preserved-answers sentence round 3 added — "these
+are the same rows counted in the skipped line above" — is false whenever a
+protected row is also locked, because the lock check runs first and wins, which
+is precisely the overlap round 3 wrote the sentence to explain. And D-047's own
+round-3 text said "every consultant-typed locked row is simultaneously `locked`
+and `protected`"; a row the AI drafted keeps `answer_source = "ai"` through a
+consultant's correction, so `protected_keys` excludes it. The workspace copy had
+this right where the decision record did not.
+
+**What held.** The escaping fix itself survived a determined attack: `repr(c)`
+always uses single quotes for non-printables so the `[1:-1]` slice is always
+correct; `' '.isprintable()` is `True` so codes with spaces pass through;
+combining marks and astral characters are preserved; lone surrogates are the only
+unencodable code points in a Python `str` and they are always escaped, so the
+output is guaranteed encodable. The single-alert enumeration is structurally
+sound across all five combinations. `#51`'s corrected six-of-eight scope is
+accurate. `CLAUDE.md`'s new seed paragraph is accurate. No double announcement is
+reachable. Severity is stated in words as well as colour everywhere, contrast
+passes, and `WorkflowStep`'s done state is in the heading's accessible name
+rather than only the ✓ badge.
+
+**Filed, not fixed:** #69 (every admin live region is mounted with its text, so
+`role="alert"` fires and `aria-live="polite"` almost certainly never does —
+failures announce and successes do not; plus `role="alert"` wrapping an unbounded
+itemized list, since `ITEM_CAP` caps per reason group and not overall). #70
+(`AttackWorkspace` still marks its step done for a run that applied nothing — the
+rule ZT just adopted, unstated exemption). #71 (`csf.py` stores `what_we_found`
+unescaped — the one raw-model-string path round 3's fix did not reach, and the
+only durable one). #68 (the prompt-injection surface, documented in round 3 and
+not mitigated — filed because "documented" was doing work "mitigated" should have
+been doing).
+
+Four rounds, and the honest reading is unchanged and getting sharper: the audit
+gate keeps finding what a green suite cannot, the classes keep moving, and **the
+yield has not fallen**. Round 1 found the arithmetic, round 2 the claims, round 3
+the security boundary and what a person sees, round 4 the workflow the fixes
+themselves broke and the channel nobody had listened to. Anyone reading this to
+decide whether to stop at four should read the yield, not the count.
+
+### What the adversarial pass changed (round 5)
+
+Two lenses: PERSISTENCE/EXPORT, which nothing had audited, and a regression hunt
+on round 4. Both were high-yield, and between them they produced the two most
+important results of the whole exercise — one about the product, one about this
+component's design.
+
+**The export layer discards the values this feature exists to account for.**
+`finalize_zt_deliverable` calls `analyze_gaps(cat_fw, stage_map, notes=notes_map)`
+with no `targets` and no `target_stage`, while the `/gap-analysis` route the
+consultant reviews and approves from passes both. So `analyze_gaps` falls back to
+`DEFAULT_TARGET_STAGE = 3` for every capability, and the exported PDF/XLSX/DOCX
+lists a different gap set than the consultant approved, under a heading stating a
+target the engagement never agreed to. A capability stored as
+`maturity_stage=1, target_stage=2` exports a "Target stage" cell reading **3** —
+a number the database does not contain and the client never chose. `intake.py`
+makes the ZT target mandatory and carries the comment "we re-check server-side so
+the target is never silently dropped (the consultant relies on it)"; the export is
+exactly where it is silently dropped. Pre-existing and filed as **#73**, with the
+companion truncation defect (**the exported gap plan is capped at 20 with
+`total_gap_count` rendered nowhere**, while the on-screen list discloses it) as
+**#75**. Neither is fixed here: they change the content of client-facing
+deliverables and belong in a change whose subject is the exporter.
+
+The lens also confirmed the thing worth knowing: **apply → database → score is
+exact.** Every input was traced — `2.0`, `"2"`, `2.0000000001`, `True`, `"1e400"`,
+a 400-digit integer, `"nan"`, `4` on DoD — and none diverges; 1-4 are exactly
+representable as doubles so `int(n)` is exact whenever `n == int(n)`; SQLite and
+Postgres agree on `SmallInteger`. The audit accounting is durable (JSONB, no
+truncation) and correctly reaches no exporter. A released deliverable is a true
+byte snapshot and cannot be changed by a later edit. The divergence is entirely at
+score → document.
+
+**And the severity rule was wrong for the third consecutive round — which is the
+finding.** Round 4's `done` fix re-opened round 3's defect in a new state: with
+`received === 0` the response is wholly lost, and because every drop path also
+increments `received`, `dropped` is then necessarily empty, so "nothing was lost"
+passes vacuously and the step rendered a green ✓ and "— done" directly above the
+red "the AI returned no suggestions at all" alert. Round 3's rule returned false
+there; round 4 widened the disjunct to fix the all-protected workflow and swept
+this in.
+
+Two more of the same shape: the alert lead quantified over `suggestions_received`,
+which is charged BEFORE the lock and protection checks, so a run with 60 skipped
+and 14 lost values announced "all 74 suggested values were rejected or
+unrecognized" — overstating the failure five-fold and contradicting the block
+below it. And `agreedThroughout` said "every suggestion matched what was already
+recorded" over 60 suggestions that were declined unseen. Both now quantify over
+what was actually lost or evaluated.
+
+**The response is a truth table, not another conditional.** The predicate has
+changed shape three times — `applied === 0`, then `applied === 0 &&
+failed.length === 0`, then `applied === 0 && lostValues > 0` — and each version
+was right about the case that prompted it and wrong about one nobody had listed.
+The inputs are four booleans, so the whole space is thirteen renderable states.
+Those are now enumerated in a table-driven `describe("severity matrix")` asserting
+alert presence in each, plus an invariant that two assertive regions are never
+reachable. `lostValueCount` — which `ZtWorkspace` uses to decide step completion,
+and which had **no test at all**, so reverting the done-rule to either of its two
+previously-wrong forms passed every gate — now has its own. The general lesson is
+recorded in `CLAUDE.md`: write the matrix first, because a matrix written after
+the fix only pins the fix.
+
+**Round 4 committed the exact failure it had just diagnosed.** It found that the
+`Object.hasOwn` vitest used `"invented_later"` — `undefined`, and so satisfied by
+the old `??` form — and fixed that in ZT. In the same pass it ported the hardening
+to CSF with only the defective test, in the file whose own docstring it quotes as
+"the reference implementation everyone ports from". CSF now has the `"toString"`
+twin. That is the fifth instance this session of a test that agrees with itself by
+construction, and the reason **#72** proposes a systematic sweep rather than
+another lesson.
+
+**Also corrected:** the `unknown_key` label. Round 4 rewrote it from unfollowable
+advice ("set it by hand", when every catalogue capability is already a seeded row)
+into an accusation nothing enforces ("the model invented a code this framework
+does not have") — the lookup is against the rows seeded when THIS assessment was
+created, not the live catalogue, so a later catalogue addition or a code valid for
+the other framework lands there too. It now describes rather than diagnoses. And
+two claims in round 4's own record were narrowed: the "single-alert enumeration
+sound across five combinations" omitted the skipped dimension, which is precisely
+where this round's findings lived.
+
+**Stated, not fixed:** the severity threshold is still a cliff at `applied === 0`.
+A run applying 37 of 74 with the other 37 lost to drift renders entirely calm. The
+unrecognized block still explains the loss in words, and #31 argues against making
+a run that produced real work assertive — so this is a deliberate choice, recorded
+here because round 4's record implied the state space was covered when it had not
+been enumerated. **#74** carries the CSF port of this whole severity model, which
+never happened and which D-047 had not admitted.
+
+Five rounds. The yield has not fallen, and the classes have not repeated: the
+arithmetic, the claims, the security boundary and what a person sees, the workflow
+the fixes broke, and now the document a client actually receives. What changed at
+round 5 is the kind of conclusion available — for the first time the finding is
+not "here is another defect" but "this predicate is the wrong shape", which is the
+signal that patching should stop and enumeration should start.
+
+**Ref:** `apps/api/app/routes/zt.py` (`_as_number`, `_hidden_value_count`,
+`_bounded`, `_bounded_key`, the apply loop), `apps/api/app/schemas/zt.py`
+(`ZtDroppedSuggestion`, `ZtRunAiResponse`), `apps/api/app/ai/jobs.py`
+(`_ZT_SCORE_PROMPT`), `apps/api/app/ai/fixtures.py` (`_fixture_zt_score`),
+`apps/web/src/lib/zt/types.ts`, `apps/api/tests/unit/test_zt_run_ai.py`.

@@ -1,7 +1,8 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-17 (cross-service integrity; PRs #34, #35, #36, #39, #42,
-#45, #48, #54 merged, `main` at `61d90e3`, CI green). NOTE: this
+_Last updated: 2026-08-18 (cross-service integrity; PRs #34, #35, #36, #39, #42,
+#45, #48, #54, #56, #58, #63 merged and #66 in flight, `main` at `15c7088`, CI
+green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
 `main` carrying the working tree through `v3.7.0`; the PR numbers cited in the
 sprint history below belong to the upstream repo, not to this one. This file
@@ -33,9 +34,22 @@ record**, with workstreams W0–W8. Read it before picking any of this up.
 | #42 | **W0** — CSF dimension-score edits are audited; the freeze stayed an open decision |
 | #45 | **#41** — a top-level non-dict AI response is refused, not silently discarded |
 | #54 | **W1, CSF step** — every AI suggestion is applied or itemized (**D-045**) |
+| #56 | state-of-main refresh for the cross-service integrity stretch |
+| #58 | **W4** — release assigns RELEASED to the parent and records which parent (**D-046**, migration 0041) |
+| #63 | `CLAUDE.md`: a test that supplies its own expected value cannot fail |
+| #66 | **W1, ZT step** — in flight, not merged (**D-047**) |
 
-**W1 is one service of four.** CSF is done; ZT, Risk and ATT&CK are outstanding,
-in that order, and ATT&CK is gated on W2 landing. Its shape, settled on #44:
+**W1 is two services of four.** CSF (#54) is on `main`; ZT (#66) is in flight and NOT yet merged; Risk
+and ATT&CK are outstanding, in that order, and ATT&CK is gated on W2 landing.
+ZT removed its narrative fields rather than counting them — nothing consumed
+them (#64) — and corrected D-045's false claim that ZT persisted them.
+
+**W4 landed, and it unblocks W5.** That is the only ordering change `47b841f`
+caused, and nothing recorded it until now. W0's freeze decision is also
+unblocked, though it still needs Part 3 reopen scoped for CSF (which is W5).
+Note D-046 is explicit that the lock W4 creates is PARTIAL: CSF's
+`patch_dimension_score`, `profiles/seed` and `upsert_gap_action` still have no
+parent-status guard. Its shape, settled on #44:
 
 ```
 suggestions_received / suggestions_applied / dropped: [{reason, key, field, values, value}]
@@ -69,7 +83,13 @@ rewrite lands plus a clean adversarial audit.
 | #43 | `CsfDimensionScore` locked-row semantics + empty/null PATCH bodies |
 | #46 | A response under the wrong top-level KEY is still silent — explicitly outside W1's invariant |
 | #47 | `llm_calls` records COMPLETED for a response rejected after parsing |
-| #51 | **W1's CSF accounting has never been observed against a real provider** — fixture mode structurally cannot produce a drop, so a green e2e proves nothing about it |
+| #51 | **W1's accounting has never been observed against a real provider — CSF _and_ ZT.** Fixture mode cannot produce a validation drop, so a green e2e proves nothing about it. Exact ZT scope: **six** of the eight reason codes need a live run to be seen at all (`entry_shape`, `unknown_key`, `unknown_field`, `unparseable`, `out_of_range`, `superseded`); `protected` is fixture-ONLY (`protected_keys` returns an empty set off-fixture) so it can never be observed live; `locked` needs no live run either — `build_zt_ai_request` sends every row including locked ones, so a fixture run over an API-locked row surfaces it end to end today |
+| #59 | Release repair path is a permanent no-op for multi-version parents — `parent_version` never becomes known. **In scope for W5**, and the 0041 backfill has never run against data on any engine (the seed bypasses `release_deliverable` entirely) |
+| #60 | `csf_score` requests an `executive_summary` on every call and nothing reads it — paid for, discarded, counted nowhere |
+| #61 | W4's parent-flip log sits above its commit; the repair branch flips parent state with no audit row |
+| #62 | `Service.released_at` is written only by the seed and read by nothing — settle with the deferred `ServiceStatus.RELEASED` question |
+| #64 | ZT asked the model for three narrative fields nothing consumed (third instance of #60). Fixed in #66 |
+| #65 | `seed_demo.py` is all-or-nothing, not idempotent — one stray Service aborts the whole seed, so a drifted dev DB can never be repaired, and CI never hits it |
 | #52 | `charged_likely` is true for auth-rejected calls that cannot have been billed (N-019 inverted, all four services) |
 | #53 | `llm_calls` is flushed, not committed — any exception in the endpoint's post-call region discards a paid-for egress row, and the D-031 409 guard reaches it **by design** |
 

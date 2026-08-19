@@ -197,11 +197,39 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
     expect(v).toBeLessThanOrEqual(3);
   }
 
-  // The workspace echoes the "Updated N fields across M capabilities" summary.
+  // The panel accounts for every suggestion the run received (W1, issue #44),
+  // not just the ones that landed — this replaced the old "Updated N fields
+  // across M capabilities" line.
+  //
+  // NOTE: this spec mints a BLANK draft, so every row is unanswered and nothing
+  // is protected; the fixture then echoes the payload keys back with in-range
+  // values, so this run has zero drops and can only prove the accounting line
+  // renders. The VALIDATION drop branches are covered in
+  // ZtRunAiAccounting.test.tsx and the API unit tests.
+  //
+  // Round 2 correction: "fixture mode cannot produce a drop" is false for ZT.
+  // `protected` is fixture-ONLY (`protected_keys` returns an empty set
+  // off-fixture), so a run over a client-submitted assessment WOULD surface a
+  // drop here end to end. This spec deliberately avoids that state, so the one
+  // reason it could prove, it does not. Worth a spec of its own.
+  //
+  // The wording is "suggested values", NOT CSF's "suggested score values": ZT's
+  // narrative fields were removed rather than counted (#64), so there is no
+  // non-score category here to distinguish against.
   const summary = page
-    .locator("p", { hasText: "Updated" })
+    .locator("p", { hasText: /AI applied \d+ of \d+ suggested value/ })
     .filter({ hasText: "capabilit" });
-  await expect(summary).toBeVisible({ timeout: 30000 });
+  await expect(summary.first()).toBeVisible({ timeout: 30000 });
+
+  // The AI-provenance notice stands beside the accounting on every run (#68).
+  // This is the ZT wiring proof — there is no ZtWorkspace vitest harness, so
+  // the component's own tests cannot show it is actually rendered here.
+  //
+  // Unlike the drop branches, fixture mode CAN prove this one end to end: the
+  // notice is unconditional, so it does not depend on a rejected suggestion.
+  await expect(
+    page.getByText(/informed by client-submitted input/).first(),
+  ).toBeVisible({ timeout: 30000 });
 
   // Remediation gaps surface and the 12-month roadmap sequences them by month.
   await expect(

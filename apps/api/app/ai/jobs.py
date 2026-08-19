@@ -89,15 +89,37 @@ assessment for the stated framework (CISA ZTMM 2.0 or DoD ZTRA). From the
 questionnaire answers and evidence, SUGGEST a draft only.
 
 For each capability return a suggested current maturity level and a suggested
-target level, on the framework's own scale (CISA 1-4, DoD 1-3), plus a per-pillar
-"what we found" narrative. Do NOT compute pillar roll-ups, overall posture, gaps,
-or the roadmap — code does that. Return strictly JSON:
-{"capabilities": [{"code": "...", "current": int, "target": int}],
-"pillar_narratives": {"<pillar_code>": "..."}, "executive_summary": "...",
-"roadmap_summary": "..."}
+target level, on the framework's own scale (CISA 1-4, DoD 1-3). Do NOT compute
+pillar roll-ups, overall posture, gaps, or the roadmap — code does that. Return
+strictly JSON:
+{"capabilities": [{"code": "...", "current": int, "target": int}]}
 """
 
-register_job(AIJob(name="zt_score", prompt=_ZT_SCORE_PROMPT, parser=parse_json_object))
+# `pillar_narratives`, `executive_summary` and `roadmap_summary` were removed
+# from this prompt (issue #64). All three were parsed and returned, and NOTHING
+# consumed them: no column on `ZtAssessment`, no migration, no reader in
+# `zt/exporters.py`, and no reference anywhere in `apps/web/src` beyond the type
+# declaration itself. The run paid output tokens for them on every call.
+#
+# They were briefly scoped into W1's suggestion accounting instead, on the
+# strength of D-045's claim that ZT persisted them — which was false, and is
+# corrected there. Counting them was the wrong fix: these values were discarded
+# unconditionally, valid or not, so a "dropped narrative" number would report
+# loss where a validation failure lost nothing that was not already being thrown
+# away by design. A counter that implies the harm of a real dropped score, for
+# content with no consumer, trains the reader to discount the counters that
+# matter (the #31 constraint). Re-adding them is the LAST step of building a
+# consumer, not the first.
+
+# "capabilities" must be a list — W1 counts the entries in it, so a non-list
+# would be counted as noise rather than refused (matching csf_score above).
+register_job(
+    AIJob(
+        name="zt_score",
+        prompt=_ZT_SCORE_PROMPT,
+        parser=parse_json_object_with_list("capabilities"),
+    )
+)
 
 
 # --- MITRE ATT&CK coverage suggestions -------------------------------------

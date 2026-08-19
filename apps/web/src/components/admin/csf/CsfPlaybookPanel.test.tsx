@@ -281,6 +281,40 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
     );
   });
 
+  it("never says '0 suggested values skipped' over a run that lost everything", async () => {
+    // A `locked` record accounts for ZERO values when every field on the locked
+    // row was ALSO misnamed — those values are counted under the drifted names
+    // they arrived with. The panel then asserted nothing was lost at the moment
+    // the most was. Found by W1's ZT step (D-047 round 1), which ported this
+    // block and hit the zero case there first; the sibling it was mirroring had
+    // the same hole. Fixture mode cannot produce it.
+    await runAi(
+      result({
+        suggestions_received: 2,
+        suggestions_applied: 0,
+        dropped: [
+          {
+            reason: "unknown_field",
+            key: "high|GV.OC-01",
+            field: "policy_and_process",
+            values: 2,
+            value: null,
+          },
+          {
+            reason: "locked",
+            key: "high|GV.OC-01",
+            field: null,
+            values: 0,
+            value: null,
+          },
+        ],
+      }),
+    );
+    const skipped = screen.getByText(/skipped because/);
+    expect(skipped).toHaveTextContent(/Suggestions skipped because/);
+    expect(skipped).not.toHaveTextContent(/0 suggested value/);
+  });
+
   it("shows an unmapped reason code instead of an empty bullet", async () => {
     // `reason` is a union by convention only — the payload is JSON. An unmapped
     // code used to index to undefined and render nothing, leaving a bullet with
@@ -304,6 +338,45 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("invented_later");
+  });
+
+  it("renders the AI-provenance notice alongside the accounting (#68)", async () => {
+    // Wiring proof, not copy proof: the component has its own test. This fails
+    // if the notice is not rendered beside the panel. CSF's prompt carries the
+    // client's interview answers, so the provenance vector is identical to ZT's
+    // and covering only ZT would be an unstated exemption.
+    await runAi(result({ suggestions_received: 2, suggestions_applied: 2 }));
+    expect(
+      screen.getByText(/informed by client-submitted input/),
+    ).toBeInTheDocument();
+  });
+
+  it("renders an inherited Object property as an unrecognized reason", async () => {
+    // The twin of the ZT test. `DROP_REASON_LABEL["toString"]` resolves to an
+    // inherited FUNCTION, which `??` does not catch and React renders as
+    // nothing — the empty bullet the guard exists to prevent. The neighbouring
+    // test uses "invented_later", which is `undefined` and so passes under the
+    // OLD form too: it cannot detect the hardening it sits beside. Round 4
+    // fixed exactly this in ZT and then shipped the CSF port with only the
+    // defective test.
+    await runAi(
+      result({
+        suggestions_received: 1,
+        suggestions_applied: 0,
+        dropped: [
+          {
+            reason: "toString" as CsfRunAiResponse["dropped"][number]["reason"],
+            key: "high|GV.OC-01",
+            field: null,
+            values: 1,
+            value: null,
+          },
+        ],
+      }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /unrecognized reason "toString"/,
+    );
   });
 
   it("keeps a locked-row skip out of the failure alert (#31)", async () => {

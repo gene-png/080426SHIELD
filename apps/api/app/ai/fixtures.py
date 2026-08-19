@@ -146,24 +146,15 @@ def _fixture_zt_score(payload: dict[str, Any]) -> LLMResponse:
     max_stage = 3 if "dod" in framework else 4
     codes = sorted(_strs(payload.get("capabilities")))
     capabilities: list[dict[str, Any]] = []
-    pillar_narratives: dict[str, str] = {}
     for i, code in enumerate(codes):
         current = (i % 2) + 1  # 1 or 2 -> early-stage posture with room to grow
         target = min(current + 2, max_stage)  # DoD caps at 3, CISA at 4
         capabilities.append({"code": code, "current": current, "target": target})
-        pillar = code.split(".", 1)[0] if "." in code else code[:2]
-        pillar_narratives.setdefault(pillar, f"Fixture-mode narrative for the {pillar} pillar.")
-    body: dict[str, Any] = {
-        "capabilities": capabilities,
-        "pillar_narratives": pillar_narratives,
-        "executive_summary": (
-            "Fixture-mode Zero Trust draft: current posture is early-stage with "
-            "clear near-term targets across the pillars."
-        ),
-        "roadmap_summary": (
-            "Prioritize the identity and device pillars in the first two quarters."
-        ),
-    }
+    # Narrative keys were removed from `_ZT_SCORE_PROMPT` (issue #64) because
+    # nothing consumed them, so the fixture must not emit them either — a
+    # fixture richer than the prompt teaches the parser to expect fields a real
+    # model will never be asked for.
+    body: dict[str, Any] = {"capabilities": capabilities}
     return _resp(body)
 
 

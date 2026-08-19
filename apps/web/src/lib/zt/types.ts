@@ -72,12 +72,45 @@ export interface ZtCapabilityChange {
   new: unknown;
 }
 
+/**
+ * One suggestion the zt_score run did NOT apply, and why (W1, issue #44).
+ *
+ * `locked` and `protected` are by-design skips, not failures, and render
+ * separately from the rest — folding them into one "N dropped" number rebuilds
+ * the alert-fatigue problem issue #31 rejected.
+ *
+ * Keep this union in step with the Python `Literal` in `app/schemas/zt.py`.
+ */
+export interface ZtDroppedSuggestion {
+  reason:
+    | "entry_shape"
+    | "unknown_key"
+    | "unknown_field"
+    | "unparseable"
+    | "out_of_range"
+    | "superseded"
+    | "locked"
+    | "protected";
+  /** The capability code exactly as the model wrote it, or null. */
+  key: string | null;
+  /** "current" or "target", for drops attributable to one value. */
+  field: string | null;
+  /** How many suggested values this record accounts for. Sum this, never count records. */
+  values: number;
+  /** The offending model output, bounded. */
+  value?: unknown;
+}
+
 export interface ZtRunAiResponse {
   changed: ZtCapabilityChange[];
   answers: ZtAnswer[];
-  pillar_narratives: Record<string, string>;
-  executive_summary: string | null;
-  roadmap_summary: string | null;
+  /**
+   * received === applied + sum(d.values for d in dropped). Counted in VALUES
+   * (one field on one capability), not entries — D-045.
+   */
+  suggestions_received: number;
+  suggestions_applied: number;
+  dropped: ZtDroppedSuggestion[];
   /**
    * Answers the AI did not write that an offline run left alone — submitted,
    * in progress, or consultant-entered. 0 for a live run.

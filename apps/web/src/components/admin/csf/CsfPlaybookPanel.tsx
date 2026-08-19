@@ -20,6 +20,7 @@ import {
 } from "@/lib/csf/client";
 
 import { AiPreviewButton } from "../AiPreviewButton";
+import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
 import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
@@ -98,10 +99,15 @@ const NOT_UNDERSTOOD: ReadonlySet<string> = new Set(["unknown_field"]);
 function describeReason(reason: string): string {
   // The payload is JSON, so `reason` is only a union by convention. An unmapped
   // code must show as itself — an empty bullet reads as "no reason given".
-  return (
-    DROP_REASON_LABEL[reason as CsfDroppedSuggestion["reason"]] ??
-    `unrecognized reason "${reason}"`
-  );
+  // `Object.hasOwn`, not `??`: a bare index resolves "toString"/"constructor"
+  // to an inherited FUNCTION, which `??` does not catch and React renders as
+  // nothing — the empty bullet this guard exists to prevent. Ported from ZT
+  // (round 3), because this file is the reference implementation everyone
+  // copies and a hardening applied to the copy and not the original inverts
+  // the direction fixes are supposed to travel.
+  return Object.hasOwn(DROP_REASON_LABEL, reason)
+    ? DROP_REASON_LABEL[reason as CsfDroppedSuggestion["reason"]]
+    : `unrecognized reason "${reason}"`;
 }
 
 function describeItem(d: CsfDroppedSuggestion): string {
@@ -171,7 +177,14 @@ function groupByReason(
  * SCOPE, stated because the sentence reads like a completeness claim: this
  * accounts for values suggested for SCORING ROWS. The response's top-level
  * `executive_summary` is not counted here and is not persisted by CSF at all
- * (ZT does persist its equivalent) — hence "score values", not "values".
+ * — hence "score values", not "values".
+ *
+ * This used to add "(ZT does persist its equivalent)". That was FALSE, and it
+ * was load-bearing: D-045 carried the same claim and it became the stated basis
+ * for scoping ZT's narratives into W1's accounting, a decision that cost a round
+ * to unwind. ZT persists nothing of the kind; its narrative fields were removed
+ * outright (#64, D-047). Corrected here because this panel is the reference
+ * implementation everyone ports from, so a false claim here re-derives itself.
  */
 function RunAiAccounting({
   result,
@@ -273,8 +286,19 @@ function RunAiAccounting({
 
       {skipped.length > 0 ? (
         <p className="text-sm text-ink-tertiary">
-          {skippedValues} suggested value{skippedValues === 1 ? "" : "s"}{" "}
-          skipped because{" "}
+          {/* Zero-guard, for the same reason the failure block above has one: a
+              `locked` record legitimately accounts for ZERO values when every
+              field on the locked row was also misnamed, because those values
+              are counted under the names they arrived with. "0 suggested values
+              skipped because you locked those rows" is a sentence asserting
+              nothing was lost, printed at the moment the most was — the
+              prompt-prose drift shape `test_csf_run_ai_model_following_the_
+              prompt_prose_loses_everything_loudly` calls realistic. Found by
+              W1's ZT step, which ported this block and hit the zero case there
+              first (D-047 round 1). */}
+          {skippedValues > 0
+            ? `${skippedValues} suggested value${skippedValues === 1 ? "" : "s"} skipped because `
+            : "Suggestions skipped because "}
           {skipped.length === 1
             ? "you locked that row"
             : "you locked those rows"}
@@ -533,6 +557,9 @@ export function CsfPlaybookPanel({
           ) : null}
 
           {runResult ? <RunAiAccounting result={runResult} /> : null}
+          {/* CSF's prompt carries the client's interview answers, so the
+              provenance vector is identical to ZT's (#68). */}
+          {runResult ? <AiDraftProvenanceNotice /> : null}
 
           {loading ? (
             <p className="text-sm text-ink-tertiary">Loading…</p>

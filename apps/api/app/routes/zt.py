@@ -22,7 +22,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, or_, select, update
@@ -68,6 +68,7 @@ from app.schemas.zt import (
     ZtAnswerResponse,
     ZtAssessmentResponse,
     ZtCapabilityChange,
+    ZtDroppedSuggestion,
     ZtInterviewQuestion,
     ZtQuestionnaireResponse,
     ZtRunAiResponse,
@@ -106,10 +107,122 @@ _admin_required = Depends(require_role(UserRole.ADMIN))
 
 _log = get_logger(__name__)
 
-# Per-run cap on drop-detail log lines. `capabilities` is unbounded, so a
-# hallucinating or hostile response could otherwise flood the log with model
-# output. The aggregate line still carries the exact event count.
-_MAX_REJECT_LOGS = 20
+# W1 (issue #44, D-045): every suggested value is applied or itemized.
+#
+# The per-event warning logs this module used to emit are gone, along with the
+# cap that bounded them. They carried `repr(raw)[:120]` of the model's output —
+# AI content in a log line, against #44 constraint 1, which says the response
+# may carry `key`/`value` and the audit row and logs get reason codes and counts
+# ONLY. The information they held now reaches the admin through `dropped` on the
+# run response, where it belongs.
+_ZT_ROW_FIELDS = ("current", "target")
+_ROW_KEY_FIELDS = ("code",)
+# One capability entry's worth of suggestions. Used when an entry is too broken
+# to enumerate what it meant to set, so an unreadable entry is never cheaper to
+# lose than a readable one that failed validation.
+_ROW_VALUE_SLOTS = len(_ZT_ROW_FIELDS)
+_MAX_NEST_DEPTH = 4
+
+
+def _bounded(raw: Any) -> str:
+    """Model output for an admin to read, truncated. An unparseable value can be
+    arbitrarily large, and this is echoed back in the response — never stored.
+    """
+    return repr(raw)[:120]
+
+
+def _bounded_key(raw: Any) -> str:
+    """A capability code, escaped and truncated for the response.
+
+    This used to claim "same echo-back path as `_bounded`". It was not.
+    `_bounded` runs everything through `repr()`, which escapes every
+    non-printable code point; this returned the model's `str` RAW. The gap was
+    reachable and expensive (round 3):
+
+    * `json.loads` accepts an unpaired surrogate escape, so a `code` containing
+      one reached `dropped[].key` intact, `db.commit()` SUCCEEDED, and only then
+      did Starlette encode the response to UTF-8 and raise. The consultant saw
+      "an internal error occurred" over a database that had already been
+      rewritten - a 500 AFTER the commit, which is worse than a refusal, because
+      the UI does not re-fetch on that path and keeps showing pre-run values.
+    * No exotic encoding is needed for the cheaper variant: a right-to-left
+      override in `code` renders in the admin alert with the override live.
+      React escapes angle brackets, ampersands and quotes - not control
+      characters.
+
+    So: escape what is not printable, keep what is. A real capability code is
+    plain ASCII and passes through unchanged, which is what every test asserting
+    `key == code` depends on.
+    """
+    if not isinstance(raw, str):
+        return repr(raw)[:80]
+    # `repr(c)[1:-1]` is c's escaped form minus repr's surrounding quotes.
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in raw)[:80]
+
+
+def _hidden_value_count(raw: Any, _depth: int = 0) -> int:
+    """How many suggested values ONE key could be hiding.
+
+    A scalar is one value. A container is the dangerous case: a wrapper key
+    holding several stages is several values wearing one name, and charging it
+    as 1 lets the rest fall out of both sides of the invariant — the vacuous
+    hold this design exists to prevent. Counts LEAVES, to a bounded depth.
+    """
+    if _depth >= _MAX_NEST_DEPTH:
+        # Deeper than any real suggestion. Stop rather than recurse a hostile
+        # payload.
+        #
+        # BE PRECISE ABOUT WHAT THIS COSTS: the undercount is bounded in
+        # RECORDS, not in values. A list of 10,000 stages below the cap is
+        # charged 1 on both sides, so the invariant closes over 9,999 lost
+        # values. No real model nests this deep, which is why it is accepted
+        # rather than fixed — but "bounded" was the wrong word.
+        #
+        # It is NOT the only vacuous path, and round 2's comment saying so was
+        # wrong (round 3). Duplicate keys inside one entry are a second, and a
+        # likelier one: `json.loads` keeps the last, so the earlier value is
+        # gone before this code sees it — charged nothing, recorded nothing,
+        # invariant intact. That needs no hostile nesting, just ordinary
+        # generated-JSON sloppiness. Both exclusions are on the record in D-047;
+        # do not read this comment as an exhaustive list.
+        return 1
+    if isinstance(raw, dict):
+        return sum(_hidden_value_count(v, _depth + 1) for v in raw.values()) or 1
+    if isinstance(raw, list):
+        return sum(_hidden_value_count(v, _depth + 1) for v in raw) or 1
+    return 1
+
+
+def _as_number(raw: Any) -> float | None:
+    """The suggested maturity stage as a number, or None if it is not one.
+
+    `int()` was doing this job and is not a validator. `int(True)` is 1,
+    `int(1.9)` is 1 — each landed on the row and produced no record, so the run
+    reported full fidelity over a value that changed on the way in.
+
+    Returns a float so the caller can judge RANGE before wholeness: `4.9` on a
+    1-4 ladder is both out of range and not whole, and "out of range" is the
+    more useful thing to tell a reader. `2.0` and `"2"` are whole numbers
+    written differently and are accepted — refusing a value the model plainly
+    meant would lose real work. `true` is refused: bool is an int subclass, but
+    `True` is not a stage.
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            return float(raw)
+        except OverflowError:
+            # A JSON integer too large for a float. An uncaught raise this far
+            # down is a bare 500 that rolls back the flushed `llm_calls` row —
+            # money spent, no ledger entry (the N-019 shape).
+            return None
+    if isinstance(raw, str):
+        try:
+            return float(raw.strip())
+        except ValueError:
+            return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -437,8 +550,8 @@ def run_ai(
     _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
 ) -> ZtRunAiResponse:
     """The ZT 'Run AI'. Suggests a current and target maturity level per
-    capability (on the framework's own scale) plus per-pillar narratives. AI
-    suggests; locked rows are untouched; code does the pillar roll-up + roadmap.
+    capability, on the framework's own scale. AI suggests; locked rows are
+    untouched; code does the pillar roll-up + roadmap.
     Returns a 'what changed' list.
     """
     svc = require_service_in_tenant(db, service_id, client.id)
@@ -471,13 +584,6 @@ def run_ai(
         is_fixture=llm.provider.name == "fixture",
     )
 
-    def _coerce(v: object) -> int | None:
-        try:
-            iv = int(v)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return None
-        return iv if 1 <= iv <= max_stage else None
-
     # A provider failure here must stay typed and leave an llm_calls row.
     with ai_call_boundary(db, llm, purpose=req.preview.job_name):
         result = run_job(
@@ -496,114 +602,177 @@ def run_ai(
     # changes, which read as the model agreeing with everything.
     data = result.data
 
-    dropped = 0
+    received = 0
+    applied = 0
+    dropped: list[ZtDroppedSuggestion] = []
     suggested: set[str] = set()
-    # `capabilities` is whatever the model returned — `parse_json` does no schema
-    # validation — so a scalar or object here would raise TypeError out of the
-    # `for` and surface as an untyped 500 on a well-formed request.
-    raw_caps = data.get("capabilities")
-    if not isinstance(raw_caps, list):
-        if raw_caps is not None:
-            dropped += 1
-            _log.warning(
-                "zt_run_ai_capabilities_not_a_list",
-                assessment_id=str(a.id),
-                received=repr(raw_caps)[:120],
-            )
-        raw_caps = []
+    # slot -> the raw value applied to it, so a supersede can name the value it
+    # LOST rather than the one that won. Without this guard the second write is
+    # invisible: `applied` counts both, the row holds the last, and the first is
+    # gone with no record.
+    written: dict[tuple[str, str], Any] = {}
+
+    # `parse_json_object_with_list("capabilities")` guarantees a list or raises
+    # a typed 502. A non-list `capabilities` is a broken response, not a pile of
+    # drops — enumerating it per entry would report a drop rate for something
+    # that never had entries. A MISSING key is untouched here (issue #46).
+    raw_caps = data.get("capabilities", [])
+
     for sugg in raw_caps:
         if not isinstance(sugg, dict):
-            # Counted, not skipped in silence: a response that is entirely
-            # unreadable would otherwise leave no trace at all.
-            dropped += 1
-            if dropped <= _MAX_REJECT_LOGS:
-                _log.warning(
-                    "zt_run_ai_entry_not_an_object",
-                    assessment_id=str(a.id),
-                    entry=repr(sugg)[:120],
+            # Charged the full row width, not 1: an unreadable entry must never
+            # be cheaper to lose than a readable one that failed validation.
+            received += _ROW_VALUE_SLOTS
+            dropped.append(
+                ZtDroppedSuggestion(
+                    reason="entry_shape",
+                    values=_ROW_VALUE_SLOTS,
+                    value=f"(a JSON {type(sugg).__name__}, not an object)",
                 )
+            )
             continue
-        code = sugg.get("code")
-        # An unhashable code (list/dict) would raise `unhashable type` out of
-        # `rows.get` and surface as a 500 on a well-formed request. Other
-        # non-string types miss harmlessly and fall to the unknown-code log.
-        row = rows.get(code) if isinstance(code, str) else None
-        if row is None:
-            # A code that matches no capability applies nowhere, and must not
-            # disappear without a trace.
-            dropped += 1
-            if dropped <= _MAX_REJECT_LOGS:
-                _log.warning(
-                    "zt_run_ai_unknown_capability_code",
-                    assessment_id=str(a.id),
-                    capability_code=repr(code)[:120],
-                )
-            continue
-        if row.locked or code in protected:
-            continue
-        cur = _coerce(sugg.get("current"))
-        tgt = _coerce(sugg.get("target"))
-        # Provenance follows the VALUE, not the attempt (issue #38).
-        #
-        # `_coerce` rejects anything outside 1..max_stage, so a suggestion can
-        # apply nothing at all. Stamping it anyway claimed the model authored a
-        # row it never touched — and where that row was the client's own
-        # submission it destroyed the SOURCE_CLIENT stamp irrecoverably
-        # (`submit_self_assessment` refuses once the assessment leaves DRAFT)
-        # and re-opened the fixture door migration 0035 closed, because
-        # `protected_keys` protects only non-AI rows.
-        #
-        # An ACCEPTED value that equals what was already there is the same
-        # non-authorship: the model agreed, it did not answer. That case is the
-        # likelier one, because `build_zt_ai_request` hands the model
-        # `{"current": r.maturity_stage}` for every capability — so echoing the
-        # client's own number back is the expected response, not an edge case.
-        #
-        # Provenance is therefore NOT decided here. Deciding it per suggestion
-        # means comparing against a row this loop is still mutating, so two
-        # entries for the same code that round-trip (3 -> 4 -> 3) each look like
-        # a change, both stamp, and the net effect is zero — reproducing the
-        # original defect with no diff row and no counter. It is settled after
-        # the loop, from the before/after snapshot, which is immune to how many
-        # times a code appeared.
-        for field, raw in (("current", sugg.get("current")), ("target", sugg.get("target"))):
-            if raw is not None and _coerce(raw) is None:
-                dropped += 1
-                # Detail lines are capped (see _MAX_REJECT_LOGS); the
-                # aggregate below still carries the exact event count.
-                if dropped <= _MAX_REJECT_LOGS:
-                    _log.warning(
-                        "zt_run_ai_stage_value_rejected",
-                        assessment_id=str(a.id),
-                        capability_code=code,
-                        field=field,
-                        value=repr(raw)[:120],
-                        max_stage=max_stage,
-                    )
-        if cur is not None:
-            row.maturity_stage = cur
-        if tgt is not None:
-            row.target_stage = tgt
-        suggested.add(code)
 
-    if dropped:
-        # Logged, deliberately NOT returned and NOT audited. `dropped_events`
-        # mixes units on purpose — a whole discarded `capabilities` payload, an
-        # unreadable entry, an unusable code and a single out-of-range stage
-        # each count one — so it can say "something was discarded, go read the
-        # detail lines" and nothing more. It is not a suggestion count and must
-        # not be presented as one.
-        #
-        # A user-facing number has to state exactly what it does and does not
-        # cover; every attempt to do that in one integer on this PR produced a
-        # sentence that was true for the case it was written for and false for
-        # an adjacent one. The honest per-reason breakdown is W1 (PR #35).
-        _log.warning(
-            "zt_run_ai_suggestions_dropped",
-            assessment_id=str(a.id),
-            dropped_events=dropped,
-            detail_logs_capped_at=_MAX_REJECT_LOGS,
-        )
+        raw_code = sugg.get("code")
+        # Never the literal "None" — that fabricates a capability nobody named.
+        key = _bounded_key(raw_code) if raw_code is not None else None
+        fields = [f for f in _ZT_ROW_FIELDS if f in sugg]
+        unknown_fields = [k for k in sugg if k not in _ZT_ROW_FIELDS and k not in _ROW_KEY_FIELDS]
+
+        if not fields and not unknown_fields:
+            # Names a capability and suggests nothing. Charged the full width
+            # rather than zero — a zero satisfies the invariant vacuously.
+            received += _ROW_VALUE_SLOTS
+            dropped.append(
+                ZtDroppedSuggestion(
+                    reason="entry_shape",
+                    key=key,
+                    values=_ROW_VALUE_SLOTS,
+                    value="(named a capability but suggested no values)",
+                )
+            )
+            continue
+
+        # `received` is enumerated from what the model WROTE, charging every key
+        # the leaves it hides, so a wrapper holding three stages is three.
+        field_values = {f: _hidden_value_count(sugg[f]) for f in fields}
+        unknown_values = {k: _hidden_value_count(sugg[k]) for k in unknown_fields}
+        received += sum(field_values.values()) + sum(unknown_values.values())
+        recognized_values = sum(field_values.values())
+
+        # Field drift is itemized BEFORE the row is resolved and BEFORE the lock
+        # and protection checks. An entry can name an unseeded capability AND
+        # misspell a field; reporting only the first loses the signal that the
+        # prompt and the parser have drifted apart.
+        for k, n_hidden in unknown_values.items():
+            dropped.append(
+                ZtDroppedSuggestion(
+                    reason="unknown_field",
+                    key=key,
+                    field=_bounded_key(k),
+                    values=n_hidden,
+                    value=_bounded(sugg[k]),
+                )
+            )
+
+        # An unhashable code (list/dict) would raise out of `rows.get`; other
+        # non-string types miss and fall through to `unknown_key`.
+        row = rows.get(raw_code) if isinstance(raw_code, str) else None
+        if row is None:
+            # Emitted even when `recognized_values` is 0, so the row fault is
+            # NAMED rather than double-charged against the field records above.
+            # A false branch that drops the record instead of emitting it under
+            # a different reason is the shape that has bitten this code twice.
+            dropped.append(
+                ZtDroppedSuggestion(reason="unknown_key", key=key, values=recognized_values)
+            )
+            continue
+        if row.locked:
+            dropped.append(ZtDroppedSuggestion(reason="locked", key=key, values=recognized_values))
+            continue
+        if raw_code in protected:
+            # An offline run declining to overwrite a non-AI answer (migration
+            # 0035). A separate reason from `locked` on purpose: different
+            # cause, different fix. Both are by-design skips and must not read
+            # as failures (#31), but folding them together would tell a
+            # consultant a row is locked when nobody locked it.
+            dropped.append(
+                ZtDroppedSuggestion(reason="protected", key=key, values=recognized_values)
+            )
+            continue
+
+        # Provenance follows the VALUE, not the attempt (issue #38), and is
+        # settled after the loop from the before/after snapshot — see below.
+        # `suggested` therefore gains a code only where a value actually landed;
+        # adding one on a rejected suggestion would re-open the F9 defect by
+        # handing the settlement loop a row the model never wrote.
+        for field in fields:
+            raw = sugg[field]
+            n = _as_number(raw)
+            if n is None:
+                # `values=field_values[field]`, NOT 1. `received` charged this
+                # key every leaf it hides, so a flat 1 here drops the rest out
+                # of both sides of the invariant with no record — the silent
+                # loss this feature exists to end, reached through the one line
+                # not ported from the CSF sibling. Found by the round-1
+                # adversarial pass; `csf.py` had it right and a test for it.
+                dropped.append(
+                    ZtDroppedSuggestion(
+                        reason="unparseable",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
+                    )
+                )
+                continue
+            # RANGE before wholeness: `4.9` on a 1-4 ladder is both out of range
+            # and not whole, and out-of-range is the more useful thing to say.
+            # It also keeps `inf`/`nan` away from `int()`.
+            if not 1 <= n <= max_stage:
+                dropped.append(
+                    ZtDroppedSuggestion(
+                        reason="out_of_range",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
+                    )
+                )
+                continue
+            if n != int(n):
+                dropped.append(
+                    ZtDroppedSuggestion(
+                        reason="unparseable",
+                        key=key,
+                        field=field,
+                        value=_bounded(raw),
+                        values=field_values[field],
+                    )
+                )
+                continue
+
+            slot = (raw_code, field)
+            if slot in written:
+                # Names the value that was LOST, not the one that won.
+                dropped.append(
+                    ZtDroppedSuggestion(
+                        reason="superseded",
+                        key=key,
+                        field=field,
+                        value=_bounded(written[slot]),
+                    )
+                )
+                applied -= 1
+            written[slot] = raw
+            setattr(row, "maturity_stage" if field == "current" else "target_stage", int(n))
+            applied += 1
+            suggested.add(raw_code)
+
+    # Values, not records: an entry-level drop states the whole row it lost, so
+    # counting records here would understate it.
+    dropped_by_reason: dict[str, int] = {}
+    for drop in dropped:
+        dropped_by_reason[drop.reason] = dropped_by_reason.get(drop.reason, 0) + drop.values
 
     db.flush()
     after = _snap()
@@ -640,9 +809,6 @@ def run_ai(
         for d in diffs
         for ch in d.changes
     ]
-    narratives = data.get("pillar_narratives")
-    narratives = narratives if isinstance(narratives, dict) else {}
-
     # D-031 concurrency: a discard racing this run must win. Re-read the parent
     # status before committing so suggestions never land in a discarded (or
     # newly locked) assessment.
@@ -662,6 +828,19 @@ def run_ai(
             },
         )
 
+    # BELOW the D-031 re-read on purpose. Above it, a run that lost the discard
+    # race logged "applied=N" for a transaction that then rolled back — a record
+    # asserting something the database does not contain. Counts only: no key, no
+    # model text (#44 constraint 1).
+    _log.info(
+        "zt_run_ai_suggestions_accounted",
+        service_id=str(svc.id),
+        assessment_id=str(a.id),
+        received=received,
+        applied=applied,
+        dropped_by_reason=dropped_by_reason,
+    )
+
     a.documents_stale = True  # Work Order C3
     audit(
         db,
@@ -669,7 +848,15 @@ def run_ai(
         target_type="zt_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"changed_rows": len(diffs)},
+        # Reason codes and value counts only — never a capability code and never
+        # model output (#44 constraint 1, Master Spec §12.1). The response
+        # carries the verbatim key and value; the durable record does not.
+        details={
+            "changed_rows": len(diffs),
+            "suggestions_received": received,
+            "suggestions_applied": applied,
+            "dropped_by_reason": dropped_by_reason,
+        },
     )
     db.commit()
 
@@ -680,9 +867,9 @@ def run_ai(
     return ZtRunAiResponse(
         changed=changes,
         answers=answers_out,
-        pillar_narratives={str(k): str(v) for k, v in narratives.items()},
-        executive_summary=(data.get("executive_summary") or None),
-        roadmap_summary=(data.get("roadmap_summary") or None),
+        suggestions_received=received,
+        suggestions_applied=applied,
+        dropped=dropped,
         preserved_client_answers=len(protected),
     )
 

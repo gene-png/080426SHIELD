@@ -41,8 +41,10 @@ import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
+import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
 
 import { ZtDeliverableCard } from "./ZtDeliverableCard";
+import { lostValueCount, ZtRunAiAccounting } from "./ZtRunAiAccounting";
 import { ZtGapList } from "./ZtGapList";
 import { ZtRoadmapCard } from "./ZtRoadmapCard";
 import { ZtQuestionnaire } from "./ZtQuestionnaire";
@@ -287,6 +289,13 @@ export function ZtWorkspace({
 
   async function onRunAi(): Promise<void> {
     setBusy("run");
+    // LOAD-BEARING for accessibility, not just for clearing the panel.
+    // This unmounts the accounting subtree, so the next render creates the
+    // live region fresh. `ZtRunAiAccounting`'s headline switches between
+    // role="alert" and aria-live="polite"; swapping that attribute on a
+    // PERSISTENT node is the least reliable live-region transition there is.
+    // Keeping the panel mounted across a re-run would silently break the
+    // announcement without breaking a single test.
     setRunResult(null);
     const seq = ++assessmentSeq.current;
     try {
@@ -433,8 +442,33 @@ export function ZtWorkspace({
           <WorkflowStep
             number={1}
             title="Draft the maturity scoring with AI"
-            description="Claude suggests a current and target maturity stage for each capability on this framework's scale, plus the per-pillar narrative. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
-            done={runResult !== null}
+            description="Claude suggests a current and target maturity stage for each capability on this framework's scale. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
+            // Not `runResult !== null`: a run that applied NOTHING put a green
+            // success badge and a "— done" heading directly above "AI applied 0
+            // of 74". The step is complete when the AI actually drafted
+            // something, not merely when a request returned.
+            // This rule has now been wrong in three different ways, so it is
+            // written as the three conditions it actually needs rather than as
+            // whichever disjunct fixed the last bug:
+            //
+            //   1. a run happened at all;
+            //   2. the response carried suggestions — `received === 0` is a
+            //      wholly-lost response, and because every drop path also
+            //      increments `received`, `dropped` is then necessarily empty,
+            //      so a "nothing was lost" test passes vacuously and marks the
+            //      step DONE over the red "returned no suggestions at all"
+            //      alert. That was round 4 re-opening round 3's defect;
+            //   3. either the AI drafted something, or nothing was lost — an
+            //      offline run over a fully client-submitted assessment applies
+            //      nothing and preserves everything, which is success. Gating
+            //      on `applied > 0` alone left Step 1 permanently un-done for
+            //      that workflow, which was round 3's defect.
+            done={
+              runResult !== null &&
+              runResult.suggestions_received > 0 &&
+              (runResult.suggestions_applied > 0 ||
+                lostValueCount(runResult) === 0)
+            }
           >
             <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
@@ -456,26 +490,15 @@ export function ZtWorkspace({
                 )}
               </RunAiGuard>
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
-              {runResult ? (
-                <p className="text-sm text-ink-secondary" aria-live="polite">
-                  Updated{" "}
-                  <span className="font-semibold text-ink-primary">
-                    {runResult.changed.length}
-                  </span>{" "}
-                  field
-                  {runResult.changed.length === 1 ? "" : "s"} across{" "}
-                  {
-                    new Set(runResult.changed.map((c) => c.capability_code))
-                      .size
-                  }{" "}
-                  capabilit
-                  {new Set(runResult.changed.map((c) => c.capability_code))
-                    .size === 1
-                    ? "y"
-                    : "ies"}
-                  .
-                </p>
-              ) : null}
+              {/* Replaces the old "Updated N fields across M capabilities"
+                  line, which reported only what LANDED — a run that lost every
+                  suggestion rendered identically to one the model had nothing
+                  to say about (W1, issue #44). The accounting states the same
+                  change counts and the shortfall alongside them. */}
+              {runResult ? <ZtRunAiAccounting result={runResult} /> : null}
+              {/* Sibling, not a child: the accounting component's severity
+                  logic stays untouched (#68). */}
+              {runResult ? <AiDraftProvenanceNotice /> : null}
               {runResult?.preserved_client_answers ? (
                 /* The skip must be visible, not silent. The population is every
                    answer the AI did not write — `protected_keys` keys on
@@ -491,10 +514,12 @@ export function ZtWorkspace({
                   written by the AI — submitted, still in progress, or
                   consultant-entered —{" "}
                   {runResult.preserved_client_answers === 1 ? "was" : "were"}{" "}
-                  left untouched. Offline output is never written over{" "}
-                  {runResult.preserved_client_answers === 1 ? "it" : "them"}.
-                  Load an API key to run real analysis over{" "}
-                  {runResult.preserved_client_answers === 1 ? "it" : "them"}.
+                  left untouched by this offline run. Rows you also locked are
+                  reported above as locked rather than preserved, so this count
+                  and the skipped lines above overlap without matching. A run
+                  with a real API key will draft over{" "}
+                  {runResult.preserved_client_answers === 1 ? "it" : "them"} —
+                  except any row you locked, which is respected in every mode.
                 </p>
               ) : null}
             </div>
