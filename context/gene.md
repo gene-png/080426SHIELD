@@ -1,80 +1,67 @@
 # Gene's Context — 080426SHIELD
 
-**Last updated:** 2026-08-19 (PR #81 delivers the MVP completion path; two open questions sent back; merge order given)
+**Last updated:** 2026-08-19 (Five PRs merged; item 0 confirmed blocked on Gene's key; session-length measured from git history)
 
 This file is owner-write-only. It exists so any session (mine or a relay) can pick up the real state of the project without reconstructing it from scattered chat history. Update it after every substantive decision.
 
 ## Branch / in flight
 
-`main` is at `265071e`. Seven PRs open: **#81** (MVP completion path doc + CLAUDE.md convention row — see below), **#80** (CSF dashboard, CI re-running after the s31 home-links fix), **#78** (shape guards + CSF provenance, green), **#76** (docs sync, green), **#49**/**#50** (dependabot, green), **#29** (do-not-merge, parked pending W2 + clean audit — now also stated as a dependency in DELIVERY_PLAN.md itself, not just here).
+`main` now has **#78, #80, #76, #49, #50 merged**, in the order given. **#81 (MVP plan doc) is rebased, statuses updated, CI running** — merges automatically once green per the agent's own plan, no objection raised. Only **#29** remains parked (do-not-merge, gated on W2 + clean audit, stated independently in both this file and DELIVERY_PLAN.md).
 
-**Merge order given, not yet executed by me:** #78 first (foundational — other suggestion-job work likely sits on it), #80 next once CI is actually green, then #76/#49/#50 in any order, #81 last. #29 stays parked. Nothing merged yet — this is guidance sent back, not an action taken.
+**Next action after #81 lands:** start the export-target trio (#73/#75/#79) — item 1 in the MVP path table, no dependencies, can run any time.
 
-## MVP completion path — now a real doc, not just this file (2026-08-19)
+## Item 0 (#51, live-AI verification) — confirmed blocked on Gene, not the agent
 
-Asked the other agent to stop tracking the MVP path only through relayed decisions and put it in the repo. **PR #81** does this: adds a "MVP completion path" section to `DELIVERY_PLAN.md` (order/status/blocker/size table, dependency graph, honest "nothing in the AI layer has run against a real model" callout as item 0) and adds a row to `CLAUDE.md`'s doc table making that section LIVING by convention — status updates in the same PR that lands the item, not after. I verified both files directly on the `docs/mvp-completion-plan` branch before responding, not just from the relayed paste (which came through with a garbled table).
+Real diagnosis, not a shrug: `ANTHROPIC_API_KEY` is present, well-formed (108 chars, `sk-ant-` prefix), and returns 401 anyway — expired, revoked, or wrong-account, not missing. No OpenAI/Gemini fallback configured. `.env` already has `SHIELD_LLM_MODE=live`, `SHIELD_LLM_MODEL=claude-opus-5`. The agent correctly refused to procure or touch a credential — same boundary I operate under. **This is genuinely on Gene, not a stalled agent.**
 
-**The table, as verified:**
+**What Gene needs to do, and what I told him:** replace the value directly in `.env` (or via the other Claude Code session, on his own machine) — **never paste the key value into chat with me**, credential material doesn't travel through a relay conversation. Before swapping, check two separate things in the Anthropic console, since a revoked key and a valid-but-wrong-tier key both 401 identically: (1) is the key itself still active, (2) does that key's account actually have access to `claude-opus-5` specifically, with billing/credits attached. `live_llm_readiness()` fails fast at startup, so a bad key/model pair surfaces immediately rather than mid-run — fast feedback once it's swapped.
 
-| # | Item | Status | Blocked by | Size |
-|---|---|---|---|---|
-| 0 | Live-AI verification (#51) | BLOCKED | working provider key, `.env` key 401s | 1 session once a key exists |
-| 1 | Export-target trio — #73/#75/#79 | Not started | nothing | 0.5–1 session |
-| 2 | CSF client dashboard | IN REVIEW (PR #80) | CI | done bar review |
-| 3 | Export/persistence audit — Tech Debt, ATT&CK | Not started | ATT&CK's pass should follow W2, not race it | 0.5 each + unknowns |
-| 4 | W3 — Tech Debt approval snapshot | Not started | nothing (Option A decided) | 1–1.5 sessions |
-| 5 | W2 — ATT&CK resolver rewrite + tri-state | Not started | W3 (item 4) | 2–3 sessions |
-| 6 | W1 Risk step | Not started | nothing | 1–1.5 sessions |
-| 7 | W1 ATT&CK step | Not started | W2 (item 5) | 1 session |
-| 8 | W6 — Risk export/publish split | Not started | nothing | 0.5–1 session |
+**Status: open, waiting on Gene.** Once resolved, item 0 is ~1 session: 6 of 8 ZT reason codes and the CSF ones have never been observed against a real model, plus the two new shape-guard 502 paths. Two reason codes flagged as **can't be exercised this way at all**, noted rather than faked: `protected` is fixture-only by construction, `locked` needs an API-seeded lock. Real token cost involved.
 
-Headline: **roughly 7–11 focused sessions, called two to three weeks**, with the W3→W2→W1-ATT&CK chain over half of it. Items 1, 6, 8 are independent and can run in parallel with the chain.
+## Session length — measured from git history, not estimated
 
-### Two things I pushed back on rather than just accepting
+Three data points: W1 ZT (#66), 5 rounds, ~8.5h dense elapsed to round 3 plus 2-3h for rounds 4-5. CSF dashboard (#80), 1 round, ~4h. Shape guards + #67 (#78), 1 round, ~2-3h. Conclusion stated in the doc: **1 session ≈ 4-8 hours of continuous work**, varying with adversarial rounds at roughly 1-3h each. On that basis, **6-10 remaining sessions ≈ 35-65 hours ≈ 7-12 working days at 5h/day** — this is where "two to three weeks" came from, now traceable rather than asserted.
 
-1. **Item 0 has no owner and no next action.** Every other row is engineering work someone can pick up. Item 0 is "needs a real provider key" and isn't wired into the dependency graph as blocking anything else — it just sits there. That means the 2-3 week estimate covers everything except the one thing that actually gates whether this is an MVP. Sent back: is procuring a live key in flight, and if not, what's needed from Gene to unblock it. **Open — answer pending.**
-2. **"Session" has no stated wall-clock length.** 7-11 sessions becoming "two to three weeks" is a conversion I can't check. Asked for hours-per-session so the estimate is something to hold them to. **Open — answer pending.**
+Two caveats the agent wrote into the doc itself, unprompted: this is an agent's throughput with parallel subagents, not a human developer's rate, don't size someone else's week against it. And **W2 is the estimate most likely to be wrong, upward** — largest item, touches scoring, and every scoring-adjacent item so far has taken 4-5 rounds instead of 1. Also self-corrected an earlier framing: raw commit-timestamp gaps include idle time, not effort, and the doc now says so explicitly.
+
+**My read:** the range itself is trustworthy — measured, not guessed, with the direction of likely error flagged rather than hidden. The exact 4-8h/session figure isn't cleanly re-derivable from the three data points shown (they cluster closer to 2-4h individually), which reads as "session" bundling more than one round in places. Minor, not worth blocking on — the W2-will-run-long warning is the more important part and I trust it.
+
+## MVP completion path — table, dependencies, still current
+
+See PR #81 / DELIVERY_PLAN.md for the full table (order, status, blocker, size per item). Unchanged from the last entry except: #80 is now MERGED (was IN REVIEW), and #81 itself is rebased/pending its own merge. Everything else in the 9-row table (items 1, 3-8) is still Not started, per the plan doc's own convention of updating status in the PR that lands the item.
 
 ## #44 — needs_review placement (resolved, reversed from my original call)
 
-I originally recommended `needs_review` live inside `dropped` with its own reason code. The other agent pushed back with a rigorous argument grounded in the actual W2 plan §5.1 text: `applied` in W1's accounting means "written to the record," not "contributed to the score," and for ATT&CK specifically §5.1 states "needs review" changes nothing about the score on its own. I conceded — that's correct.
-
-**Final: needs_review counts as applied. The tri-state (applied / needs_review / dropped) is reported as a separate count, not folded into the dropped reason vocabulary.** Now also codified in DELIVERY_PLAN.md's dependency notes as settled.
+I originally recommended `needs_review` live inside `dropped` with its own reason code. The other agent pushed back with a rigorous argument grounded in the actual W2 plan §5.1 text: `applied` means "written to the record," not "contributed to the score." I conceded — correct. **Final: needs_review counts as applied, tri-state reported as a separate count.** Codified in DELIVERY_PLAN.md.
 
 ## W3 (resolved)
 
-Option A — approval-time capability-list membership snapshot, now item 4 in the MVP path table, no longer blocked. Re-approval behavior still needs to be explicitly stated before implementation — not yet specified by the other agent as of last update, flag this if implementation starts before it's answered.
+Option A — approval-time capability-list membership snapshot, item 4 in the MVP path table. Re-approval behavior still needs to be explicitly stated before implementation, not yet specified — flag if implementation starts before it's answered.
 
 ## Risk / W6 (resolved)
 
-Yes — Risk needs the same release guarantees as the other four services for MVP. Now items 6 and 8 in the MVP path table, both independent, both not started.
-
-## CSF client dashboard — PR #80 open, CI re-running
-
-Full audit came back clean except the three-surface tier inconsistency, decided: ship the dashboard as built (correct), twin issue filed paired with ZT's #73/#75 fix at the front of the item-4 audit queue (now item 3 in the formal table). Pre-launch confirmed with evidence (see prior entries) closed the urgency question — first-in-queue, not fire-drill.
-
-PR #80 itself had a red E2E (s31-home-service-links hardcoded which dashboard kinds a "Report ready" card may link to; CSF joining `dashboardPathFor` broke it). Root-caused correctly: greeped source consumers but not `e2e/` assertions on the route map, a data-structure instance of the "grep before you change anything a spec asserts on" rule. Fixed, passing locally (3/3), CI re-running. Merge order above puts this second, after #78.
+Yes — Risk needs the same release guarantees as the other four services. Items 6 and 8 in the MVP path table, both independent, both not started.
 
 ## Open decisions — NOT to be reconstructed from memory
 
-- Item 0 ownership / live-AI key status — **just opened, see above**
-- Session-to-hours conversion — **just opened, see above**
+- **Item 0 / live-AI key** — blocked on Gene, see above. Do not let anyone (agent or me) attempt to handle the credential value directly.
 - #57 — client read behavior for a released ATT&CK assessment
 - `ServiceStatus.RELEASED` (#62)
-- W0's freeze shape (now explicitly stated in DELIVERY_PLAN.md as blocked on W5's Part 3 reopen scope)
+- W0's freeze shape (blocked on W5's Part 3 reopen scope per DELIVERY_PLAN.md)
 
 ## Environment notes (standing)
 
 - Postgres migrations: [carried forward from prior entry — see commit `8533f10` history for exact gotcha text if needed]
-- Provider live key / root `.env` key issue: **still open** — this is the same key referenced as item 0's blocker above, not a separate resolved issue. Correcting prior entry which said this was resolved; it was not.
+- Provider live key: **the same item 0 blocker above.** A prior entry in this file said this was resolved — it was not; corrected.
 
 ## Do not merge
 
-PR #29 — explicitly marked do-not-merge by Gene. DELIVERY_PLAN.md now independently states the same constraint (can't merge until W2 lands plus a clean adversarial audit). Do not touch without direct instruction.
+PR #29 — explicitly marked do-not-merge by Gene, independently stated as a dependency in DELIVERY_PLAN.md (can't merge until W2 lands plus a clean adversarial audit). Do not touch without direct instruction.
 
 ## Recurring defect shapes to watch for (CLAUDE.md)
 
-- A test that supplies its own expected value or precondition from the thing under test cannot fail. At least 6 confirmed instances of this pattern so far (the "#72 pattern"). #72 itself now attaches to W8 (adversarial audit in CI, half done) per DELIVERY_PLAN.md.
+- A test that supplies its own expected value or precondition from the thing under test cannot fail. At least 6 confirmed instances (the "#72 pattern"), attaches to W8 (adversarial audit in CI, half done).
 - A conditional written to stop double-counting whose false branch silently drops the record.
-- An AI-suggested value that fails validation is dropped silently, making the run indistinguishable from a run where the model had nothing to say — root defect family behind #73/#75/CSF-twin.
-- A status line that is wrong is worse than none — now the stated rationale for making DELIVERY_PLAN.md's MVP path section LIVING by convention (CLAUDE.md doc table), not just a principle applied ad hoc.
+- An AI-suggested value that fails validation is dropped silently, indistinguishable from the model having nothing to say — root defect family behind #73/#75/CSF-twin.
+- A status line that is wrong is worse than none — the stated rationale for DELIVERY_PLAN.md's MVP path section being LIVING by convention.
+- Credential material never travels through a relay conversation, even when explicitly offered. Same boundary for the agent and for me.
