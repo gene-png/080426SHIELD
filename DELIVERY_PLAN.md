@@ -55,7 +55,7 @@ fixture mode already demos all five.
 
 | # | Item | Status | Blocked by | Rough size |
 | --- | --- | --- | --- | --- |
-| 0 | **Live-AI verification (#51)** | **BLOCKED** | A working provider key. The `.env` key returns 401 | 1 session once a key exists |
+| 0 | **Live-AI verification (#51)** | **DONE** (2026-08-19) | — | — |
 | 1 | **Export-target trio — #73 + #75 + #79** | Not started | Nothing | 0.5–1 session |
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
 | 3 | **Export/persistence audit — Tech Debt, ATT&CK** | Not started | ATT&CK's pass should follow W2 (item 5), not race it | 0.5 session each + unknown fixes |
@@ -65,7 +65,7 @@ fixture mode already demos all five.
 | 7 | **W1 ATT&CK step** | Not started | **W2** (item 5) | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
 
-**Total remaining: roughly 6–10 focused sessions** (item 2 landed), plus whatever items 0 and 3
+**Total remaining: roughly 5–9 focused sessions** (items 0 and 2 landed), plus whatever items 0 and 3
 surface. Call it **two to three weeks** of concentrated work, not days — and the
 W3 → W2 → W1-ATT&CK chain is over half of it.
 
@@ -128,14 +128,43 @@ chain touches `attack.py`, `tech_debt.py` and `citations.py`; the parallel track
 touches `risk.py`, `csf.py` and the web dashboards. File contention is low, and
 the two decisions the chain was waiting on are now made.
 
-### The one thing no amount of work here closes
+### Live-AI verification — DONE 2026-08-19, and what it does NOT claim
 
-**Nothing in the AI layer has ever run against a real model.** All five jobs are
-proven only against fixtures that echo the parser's own keys back, which
-structurally cannot produce a drop, a shape error, or a drift. Six of eight ZT
-reason codes have never been observed; the CSF ones have not either. That is
-**item 0**, it needs a key rather than engineering, and no amount of review
-substitutes for it. Treat MVP as not-reached until it is done.
+The AI layer has now run against a real model.
+`apps/api/tests/live/test_live_accounting.py` (opt-in, `pytest -m live`,
+self-skips without a key) exercises the accounting loop through the real route
+in three labelled tiers, because "verified live" would otherwise blur three
+different claims:
+
+- **Tier A — natural.** A real Anthropic call through `POST /zt/.../run-ai`:
+  `received=74 applied=74 dropped={}`, invariant held. Every prior live test
+  called `run_job` **directly**, so the accounting loop had never seen a real
+  response — that was the actual gap. Worth recording separately: the real model
+  produced **no drift at all**, so no drop reason occurs naturally on this
+  prompt.
+- **Tier B — corrupt-after-live.** The real provider is called (real cost,
+  latency, egress, redaction) and the returned body is mutated before parsing.
+  Covers `entry_shape`, `unknown_key`, `unknown_field`, `unparseable`,
+  `out_of_range`, `superseded`, `locked`, and the
+  `parse_json_object_with_list` 502.
+- **Tier C — impossible live.** `protected` can NEVER be observed against a real
+  provider: `protected_keys()` returns an empty set when `is_fixture` is false,
+  by construction. Permanently fixture-only in ZT and CSF alike, and asserted as
+  such rather than carried as an open item forever.
+
+**What this does NOT claim.** Tier B proves OUR HANDLING against a real response
+body. It does not prove a real model emits these faults at any rate. Tier A is
+the only evidence here about real model behaviour, and it says: none observed on
+this prompt, in this run.
+
+Separately, `scripts.smoke_live_ai` confirmed the redaction seam against live
+output — `{'email': 2, 'name': 2, 'client_org': 2}` stripped before egress, with
+a completed `llm_calls` row carrying real token counts.
+
+**Mode discipline, decided rather than inherited:** fixture is the resting state;
+live is opt-in per run. `s6` and `s7` perform Run-AI and assert
+fixture-deterministic outcomes, so an ambient-live e2e run would cost real tokens
+and probably fail. `.env` is back on `fixture`; the key stays for opt-in runs.
 
 ### Recently landed (context for the above)
 
