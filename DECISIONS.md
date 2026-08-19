@@ -2035,7 +2035,7 @@ and the tests proving both are not vacuous. No new `llm_calls` hole. No DoS —
 if it were raised the way `mitre_map`'s was. And the CSF zero-guard round 2 added
 did not change the non-zero copy by so much as a space.
 
-**Filed, not fixed:** #67 — CSF has no provenance protection at all, so an
+**Filed, not fixed** (at the time; #67 shipped in D-048): #67 — CSF has no provenance protection at all, so an
 offline run silently overwrites hand-typed dimension scores where ZT protects the
 equivalent work. Pre-existing, and made more likely by this step, because a
 consultant who learns ZT's behaviour will assume it on CSF.
@@ -2245,3 +2245,106 @@ signal that patching should stop and enumeration should start.
 (`ZtDroppedSuggestion`, `ZtRunAiResponse`), `apps/api/app/ai/jobs.py`
 (`_ZT_SCORE_PROMPT`), `apps/api/app/ai/fixtures.py` (`_fixture_zt_score`),
 `apps/web/src/lib/zt/types.ts`, `apps/api/tests/unit/test_zt_run_ai.py`.
+
+## D-048 — Every suggestion job refuses a wrong-shaped list, and CSF protects hand-typed scores
+
+**Date:** 2026-08-19 · **Issues:** #67, #77 · **Migration:** 0042
+
+Two correctness-only changes, no new features, taken together because both are
+"the AI layer must not lose work silently" and neither has dependencies.
+
+**All four suggestion jobs now refuse a non-list.** `mitre_map` and
+`risk_synthesize` joined `csf_score` and `zt_score` on
+`parse_json_object_with_list(<key>)`. Both were broken, in opposite directions:
+ATT&CK's `(data.get("techniques") or [])` turned a scalar into an empty batch and
+a dict into an iteration over its KEYS, contributing nothing with no error; Risk's
+batching loop did the same, and only a truthy non-iterable reached a TypeError
+that escaped as an untyped 500. The first draft of this decision claimed Risk
+produced a bare 500 for a scalar — that was wrong, and is corrected in the code
+comments rather than left as the rationale a future reader inherits.
+
+**Scope stated, because it was overstated once.** `mitre_map` is BATCHED and
+`attack.py` counts a failed batch and continues, raising only when every batch
+fails. So the guard turns a silently-empty batch into a counted one; it does not
+fail the run. One bad batch of 26 still returns 200 with `batches_failed=1`, and
+that field is rendered nowhere in the web app. The ledger improved; what the
+consultant sees did not.
+
+**`tech_debt_extract` is deliberately NOT included** and is the last unguarded
+parser (#77). It needs per-item coercion the generic parser does not do, so the
+fix is a composition rather than a substitution. Its blast radius is smaller
+because `reconcile_rows` reports every uploaded row as excluded when extraction
+returns nothing — loud-ish rather than clean. The claim "every registered job now
+carries a shape guard" was written and then narrowed; it is not true and should
+not be written again until #77 lands.
+
+**CSF protects hand-typed dimension scores from offline runs (#67).** ZT has done
+this since the 2026-08-04 incident, in which a fixture run replaced a real client
+self-assessment with canned demo values — average maturity 2.14 → 1.49, Identity
+3.00 → 1 — unrecoverably. `protected_keys` had exactly one caller, so pressing
+Run AI with no key loaded silently overwrote a consultant's Working Profile.
+
+Migration 0042 adds `csf_dimension_scores.answer_source`, and **this reverses a
+stated rationale in 0035**, which said the column was "Zero Trust ONLY,
+deliberately" because CSF's Run-AI never touches `csf_answers`. That reasoning was
+right about the question it asked — the CLIENT's submission was never at risk on
+the CSF side. It did not consider the other population: `csf_dimension_scores` is
+where a CONSULTANT types the Working Profile by hand.
+
+**Why a column rather than a value test.** ZT can ask "is this row answered?"
+because `maturity_stage` is nullable. Every CSF dimension is `NOT NULL DEFAULT 0`
+and 0 is a legitimate score, so "has a value" is true for every seeded row the
+moment a profile is created. Protection has to key on "somebody actually wrote
+this", which nothing recorded.
+
+**CSF does NOT stamp `SOURCE_AI`, and must not — this is where it diverges from
+ZT on purpose.** ZT stamps because its `is_answered` keys on the value, so a row
+the AI answered would otherwise be protected from the AI's own next run. CSF's
+`is_answered` keys on the source column, so the predicate collapses to
+`answer_source == "consultant"`: NULL and `"ai"` are both unprotected, and writing
+`"ai"` can only ever REMOVE protection.
+
+The first cut of this change stamped `SOURCE_AI` from the before/after diff,
+copying ZT. The adversarial round caught it, and the defect was the one #67
+exists to prevent, reintroduced by #67's fix: protection is per-ROW while
+`_RUN_FIELDS` is six fields, so a live run that rewrote only `what_we_found`
+stamped the whole row `ai` and stripped protection from five hand-typed scores the
+model had merely agreed with. The next offline run overwrote them and reported it
+as an applied change. `zt.py` carries a comment warning against exactly this
+shape — "a run that merely proposes a target has not answered the assessment and
+must not strip a stamp from a value it never wrote" — and the port omitted the
+narrowing at six times the granularity.
+
+Pinned by a MODE-FLIP test (consultant edit → live run → offline run). No
+single-mode test can express it, which is why the first suite was green over it.
+The characterisation test that looked like coverage for the stamp is labelled as
+characterisation-only in place, rather than deleted, because it does constrain the
+predicate even though it cannot see the stamp.
+
+**An explicit clear counts as consultant work.** Gating the stamp on
+`data[f] is not None` meant a consultant DELETING an AI narrative left the row
+unprotected, so the next offline run repopulated the text they had just removed.
+
+**Pre-0042 rows are not protected**, and no backfill can help: existing
+hand-typed scores are indistinguishable from seeded defaults. They become
+protected the first time they are edited again. Backfilling "everything existing
+is consultant work" would freeze every seeded row against offline runs and break
+the demos the NULL semantics exist to keep working.
+
+**CSF's skip copy is now grouped by reason.** It hardcoded "you locked that row",
+which was true while `locked` was the only by-design skip and a false statement
+about who decided the moment `protected` joined it. It also counted records where
+it meant rows. Both fixed together, because adding the reason without the copy
+change would have shipped the false statement.
+
+**Known and not fixed here:** `llm_calls` records COMPLETED for a response
+rejected after parsing (#47), and this change extends that to two more purposes —
+both batched, where each batch is separately billable and the failure path commits
+the row precisely so the evidence survives. The evidence that survives is wrong.
+Named here rather than left to be rediscovered.
+
+**Ref:** `apps/api/app/ai/jobs.py`, `apps/api/app/routes/csf.py`
+(`patch_dimension_score`, `_apply_suggestions`, `run_ai`),
+`apps/api/app/models/csf_profile.py`, `apps/api/alembic/versions/0042_*.py`,
+`apps/api/app/schemas/csf.py`, `apps/web/src/lib/csf/types.ts`,
+`apps/web/src/components/admin/csf/CsfPlaybookPanel.tsx`.

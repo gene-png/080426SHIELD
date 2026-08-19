@@ -64,6 +64,18 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     # Work Order C2: locked rows are untouched by a Run-AI rerun.
     locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Provenance (migration 0042): 'ai' | 'consultant', NULL when unknown.
+    #
+    # `locked` is a consultant's deliberate "never touch this again"; this is the
+    # different fact of who wrote the value, and an offline run keys on it to
+    # avoid replacing hand-typed work with canned demo output (#67).
+    #
+    # NULL means nobody has explicitly written the row, which is the state every
+    # seeded profile starts in — deliberately NOT protected, so a fixture run can
+    # still populate an empty Playbook. "Has a value" cannot serve here: every
+    # dimension is NOT NULL DEFAULT 0, and 0 is a legitimate score.
+    answer_source: Mapped[str | None] = mapped_column(String(16))
+
 
 class CsfGapAction(UUIDPKMixin, TimestampMixin, Base):
     """POA&M / action-plan annotation for one enterprise gap (Sprint 5 T5).

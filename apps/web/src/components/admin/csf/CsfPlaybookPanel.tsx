@@ -69,6 +69,7 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
   wrong_type: "narrative came back as something other than text",
   superseded: "overwritten by a later suggestion for the same field",
   locked: "row is locked",
+  protected: "score was typed by hand, and an offline run left it",
 };
 
 /**
@@ -80,7 +81,9 @@ const DROP_REASON_LABEL: Record<CsfDroppedSuggestion["reason"], string> = {
  * red "could not be applied" alert and rebuilt the #31 alert-fatigue problem.
  * (Hardening — with today's vocabulary the two forms behave identically.)
  */
-const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set(["locked"]);
+// Named allow-list, so adding a by-design skip server-side is a deliberate
+// choice about which side it belongs on. `protected` joined it with #67.
+const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set(["locked", "protected"]);
 
 /**
  * Reasons that mean "we did not understand this", not "we lost a value you
@@ -285,25 +288,35 @@ function RunAiAccounting({
       ) : null}
 
       {skipped.length > 0 ? (
-        <p className="text-sm text-ink-tertiary">
-          {/* Zero-guard, for the same reason the failure block above has one: a
-              `locked` record legitimately accounts for ZERO values when every
-              field on the locked row was also misnamed, because those values
-              are counted under the names they arrived with. "0 suggested values
-              skipped because you locked those rows" is a sentence asserting
-              nothing was lost, printed at the moment the most was — the
-              prompt-prose drift shape `test_csf_run_ai_model_following_the_
-              prompt_prose_loses_everything_loudly` calls realistic. Found by
-              W1's ZT step, which ported this block and hit the zero case there
-              first (D-047 round 1). */}
-          {skippedValues > 0
-            ? `${skippedValues} suggested value${skippedValues === 1 ? "" : "s"} skipped because `
-            : "Suggestions skipped because "}
-          {skipped.length === 1
-            ? "you locked that row"
-            : "you locked those rows"}
-          .
-        </p>
+        // Grouped by reason, not one sentence. The copy used to hardcode "you
+        // locked that row" — true while `locked` was the only by-design skip,
+        // and a false statement about who decided the moment `protected` joined
+        // it (#67). Two skips with different causes must not share one
+        // explanation.
+        //
+        // Zero-guard retained: a skip record legitimately accounts for ZERO
+        // values when every field on the row was also misnamed, because those
+        // values are counted under the names they arrived with. "0 suggested
+        // values skipped" asserts nothing was lost at the moment the most was.
+        //
+        // Row count, not record count: two drop records on one subcategory are
+        // ONE row, and this number has to reconcile with how a human counts
+        // rows on the page.
+        <ul className="list-disc pl-5 text-sm text-ink-tertiary">
+          {groupByReason(skipped).map(([reason, items]) => {
+            const values = items.reduce((n, d) => n + d.values, 0);
+            const rowCount = new Set(items.map((d) => d.key ?? "")).size;
+            return (
+              <li key={reason}>
+                {values > 0
+                  ? `${values} suggested value${values === 1 ? "" : "s"}`
+                  : "Suggestions"}{" "}
+                across {rowCount} row{rowCount === 1 ? "" : "s"} skipped —{" "}
+                {describeReason(reason)}
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
     </div>
   );

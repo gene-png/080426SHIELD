@@ -6,15 +6,26 @@ per-domain pure functions and is never asked of the model.
 
 The prompt bodies here are the engine-level skeletons. The service phases
 (D2/D3/D4/E) refine the exact suggestion schema each job emits; the parser is
-`parse_json_object` for the four suggestion jobs, so a response whose top
-level is not an object is refused rather than silently discarded (issue #41).
+`parse_json_object_with_list(<key>)` for all four suggestion jobs, so a response
+whose top level is not an object (issue #41) — or whose list key is not a list —
+is refused rather than silently discarded.
 """
 
 from __future__ import annotations
 
 from app.ai.engine import (
     AIJob,
-    parse_json_object,
+    # `parse_json_object` is deliberately NOT imported any more: all four
+    # SUGGESTION jobs now carry a top-level shape guard, so reaching for the
+    # unguarded parser here would be a step backwards rather than a default.
+    #
+    # NOT "every registered job" — `tech_debt_extract` has its own parser
+    # (`tech_debt/extract.py`), which still does
+    # `decoded.get("items", []) if isinstance(decoded, dict) else []` and still
+    # iterates the keys of a non-list `items`. It is partly self-reporting,
+    # because `reconcile_rows` then flags every uploaded row as excluded, so a
+    # silent empty extraction is loud-ish rather than clean. Tracked separately;
+    # do not read this import as covering it.
     parse_json_object_with_list,
     register_job,
 )
@@ -137,7 +148,25 @@ Return strictly JSON:
 "rationale": "..."}], "executive_summary": "...", "top_blind_spots": [...]}
 """
 
-register_job(AIJob(name="mitre_map", prompt=_MITRE_MAP_PROMPT, parser=parse_json_object))
+# "techniques" must be a list. A scalar collapsed to `[]` via the route's
+# `or []`, and a DICT is truthy so it iterated its KEYS — strings, discarded one
+# by one by the per-entry `isinstance(t, dict)` filter. Both contributed nothing
+# with no error, indistinguishable from a model that had nothing to say.
+#
+# SCOPE, stated precisely because the first draft of this comment overstated it:
+# mitre_map is BATCHED, and `attack.py` counts a failed batch and continues,
+# raising only when EVERY batch failed. So this guard turns a silently-empty
+# batch into a counted one — it does not fail the run. One bad batch of 26 still
+# returns 200 with `batches_failed=1`, and that field is not rendered anywhere
+# in the web app (plan finding F7). The guard improves the ledger, not yet what
+# the consultant sees.
+register_job(
+    AIJob(
+        name="mitre_map",
+        prompt=_MITRE_MAP_PROMPT,
+        parser=parse_json_object_with_list("techniques"),
+    )
+)
 
 
 # --- Risk Register synthesis -----------------------------------------------
@@ -161,5 +190,21 @@ strictly JSON:
 """
 
 register_job(
-    AIJob(name="risk_synthesize", prompt=_RISK_SYNTHESIZE_PROMPT, parser=parse_json_object)
+    # "entries" must be a list.
+    #
+    # CORRECTED from the first draft of this comment, which claimed a scalar
+    # produced a bare 500. It does not: the batching loop reads
+    # `(data.get("entries") or [])`, so `0` and `""` collapse to an empty list
+    # and generate an EMPTY REGISTER reporting success — the silent shape, not
+    # the loud one. A dict is truthy and iterates its keys, same outcome. Only a
+    # truthy non-iterable reaches a TypeError, and that one escapes the
+    # per-future try as an untyped 500.
+    #
+    # Both failure modes are wrong in different directions; the guard replaces
+    # them with one typed 502.
+    AIJob(
+        name="risk_synthesize",
+        prompt=_RISK_SYNTHESIZE_PROMPT,
+        parser=parse_json_object_with_list("entries"),
+    )
 )

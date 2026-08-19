@@ -393,3 +393,45 @@ def test_generate_fails_loudly_when_every_batch_fails(app_client) -> None:
     assert err["charged_likely"] is False  # fixture provider bills nothing
     # And no half-built register was left behind.
     assert c.get(f"/risk/clients/{cid}/register/latest", headers=bh).status_code == 404
+
+
+@pytest.mark.unit
+def test_generate_non_list_entries_is_a_typed_error_not_a_500(app_client) -> None:
+    """A non-list `entries` must be a typed 502, not an untyped 500.
+
+    Precisely: the batching loop reads `(data.get("entries") or [])`, so this
+    payload did NOT 500 — `0 or []` is `[]`, and the run generated an empty
+    register reporting success. (Only a truthy non-iterable reaches a TypeError,
+    which then escapes as an untyped 500. Both are wrong, in opposite
+    directions.) The guard replaces both with one typed 502, matching csf_score
+    and zt_score.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    provider.register_static("risk_synthesize", LLMResponse('{"entries": 0}'))
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["reason"] == "ai_call_failed"
+    assert "drifted apart" in r.json()["error"]["message"]
+
+
+@pytest.mark.unit
+def test_generate_object_entries_is_refused_not_iterated_as_keys(app_client) -> None:
+    """A dict is truthy and iterable, so it did not raise — it iterated KEYS.
+
+    `for raw in {"e1": {...}}` yields the string "e1", which then fails the
+    per-entry shape checks and is discarded. The register generates empty and
+    reports success.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    provider.register_static("risk_synthesize", LLMResponse('{"entries": {"e1": {"title": "x"}}}'))
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["reason"] == "ai_call_failed"
