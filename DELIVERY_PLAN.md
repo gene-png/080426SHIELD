@@ -57,7 +57,7 @@ fixture mode already demos all five.
 | --- | --- | --- | --- | --- |
 | 0 | **Live-AI verification (#51)** | **BLOCKED** | A working provider key. The `.env` key returns 401 | 1 session once a key exists |
 | 1 | **Export-target trio — #73 + #75 + #79** | Not started | Nothing | 0.5–1 session |
-| 2 | **CSF client dashboard** | **IN REVIEW** (PR #80) | CI | Done bar review |
+| 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
 | 3 | **Export/persistence audit — Tech Debt, ATT&CK** | Not started | ATT&CK's pass should follow W2 (item 5), not race it | 0.5 session each + unknown fixes |
 | 4 | **W3 — Tech Debt approval snapshot** | Not started | Nothing. Decision made: **Option A**, approval-time membership snapshot | 1–1.5 sessions |
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) | 2–3 sessions |
@@ -65,7 +65,7 @@ fixture mode already demos all five.
 | 7 | **W1 ATT&CK step** | Not started | **W2** (item 5) | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
 
-**Total remaining: roughly 7–11 focused sessions**, plus whatever items 0 and 3
+**Total remaining: roughly 6–10 focused sessions** (item 2 landed), plus whatever items 0 and 3
 surface. Call it **two to three weeks** of concentrated work, not days — and the
 W3 → W2 → W1-ATT&CK chain is over half of it.
 
@@ -119,6 +119,9 @@ substitutes for it. Treat MVP as not-reached until it is done.
 - **Shape guards + CSF provenance** (PR #78, D-048) — all four suggestion jobs
   refuse a wrong-shaped list; offline runs no longer overwrite hand-typed CSF
   scores.
+- **CSF client dashboard** (PR #80) — the last assessment service without one.
+  Ships reading the client's intake target, which is why #79 exists and is first
+  in the queue.
 
 ### Deferred, and NOT part of MVP — listed so they are not silently dropped
 
