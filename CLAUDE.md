@@ -295,6 +295,7 @@ mechanism; docs carry only what git can't show.
 | `DECISIONS.md` | Append-only decision log (D-numbers) | Both — append in the PR that makes the decision |
 | `docs/architecture.md` | Structure | Updated in the PR that changes architecture |
 | `SPRINT_<n>.md` | Per-sprint plan (immutable once the sprint closes) | Sprint author |
+| `DELIVERY_PLAN.md` | Path to MVP: order, status, blockers, sizes. The **MVP completion path** section is LIVING — update an item's status in the PR that lands it, never afterwards. Sprint sections below it are historical | Both |
 | `SMOKE_TEST.md` | QA checklist — a box is checked ONLY if a green committed spec proves it, annotated with the spec filename | Both, honesty convention enforced |
 
 Rules of the road:
