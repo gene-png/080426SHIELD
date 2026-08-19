@@ -69,6 +69,32 @@ fixture mode already demos all five.
 surface. Call it **two to three weeks** of concentrated work, not days — and the
 W3 → W2 → W1-ATT&CK chain is over half of it.
 
+### What a "session" is, in hours
+
+Measured from this repo's own git history rather than estimated:
+
+| Unit of work | Rounds | Dense elapsed |
+| --- | --- | --- |
+| W1 ZT step (PR #66) — red tests through round 5 | 5 | ~8.5h continuous for red → round 3, plus ~2–3h for rounds 4–5 |
+| CSF client dashboard (PR #80) — API + frontend + e2e | 1 | ~4h |
+| Shape guards + CSF provenance (PR #78) | 1 | ~2–3h |
+
+So **one "session" ≈ 4–8 hours of continuous work**, and the variance is almost
+entirely adversarial rounds: each round costs roughly 1–3h including the fixes it
+generates. W1-ZT's elapsed span looks like 23h in the log, but two of those gaps
+are idle time, not work — do not read commit timestamps as effort.
+
+**6–10 sessions ≈ 35–65 hours ≈ 7–12 working days** at 5–6 productive hours a
+day. That is where "two to three weeks" comes from.
+
+Two caveats that matter for planning:
+
+- These are throughput numbers for an agent working with parallel subagents, not
+  a human developer's rate. Do not use them to size someone else's week.
+- **W2 is the estimate most likely to be wrong**, and wrong upward. It is the
+  largest item, it touches scoring, and items that touch scoring in this repo
+  have needed four to five adversarial rounds rather than one.
+
 ### Dependencies, stated rather than implied
 
 ```
