@@ -6,11 +6,26 @@ explicitly. Sprint docs: `SPRINT_<n>.md`._
 
 ## Where we are
 
-The v2 Developer Work Order (Parts A–F) is merged to `main` (PR #1, v3.0.0). All
-local CI gates were green at merge, but **nothing has been verified at runtime by
-a human or a browser**. `SMOKE_TEST.md` is the gate before prod and is entirely
-unchecked. Session 2026-07-02 established the runtime works (stack up, sign-in,
-onboarding flows) and surfaced the first defects — see CONTEXT.md.
+**Current as of 2026-08-19.** The MVP path is tracked in the section below, which
+is maintained rather than archival. Sprint sections further down are historical
+and are left as written.
+
+Five services are built and running (Tech Debt, ATT&CK, Zero Trust, NIST CSF,
+Risk Register), all with exporters, deliverables and client dashboards. 43
+Playwright specs plus ~900 backend and ~220 web unit tests run in CI. Since
+2026-08-08 the work has been the **cross-service integrity stretch**
+(`docs/plans/2026-08-08-cross-service-integrity.md`, W0–W8) rather than new
+features: making AI-suggested values impossible to lose silently, and making
+approval and release mean what they say.
+
+The 2026-07-02 framing below — "nothing has been verified at runtime" — no longer
+holds and is kept only as history. What is still true, and is the single largest
+gap, is that **no part of the AI layer has ever run against a real model**; see
+item 0 in the MVP path.
+
+_Original 2026-07-02 entry: the v2 Developer Work Order (Parts A–F) is merged to
+`main` (PR #1, v3.0.0); all local CI gates were green at merge but nothing was
+runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## Guiding rules
 
@@ -24,6 +39,140 @@ onboarding flows) and surfaced the first defects — see CONTEXT.md.
   are tracked here as **needs-David**, never silently dropped.
 - "AI suggests, code computes" is inviolable: no fix may move scoring into
   prompts or fixtures into human-reachable paths.
+
+## MVP completion path (LIVING — update as items land)
+
+_Added 2026-08-19. **This section is maintained, not archival.** When an item
+lands, change its status here in the same PR that lands it — the same rule
+`CONTEXT.md` follows. A status line that is wrong is worse than none, because
+this is the document someone reads to decide what to work on._
+
+**MVP means:** all five services usable for real client engagements, producing
+correct documents, with the AI layer working end to end. Not the seeded demo —
+fixture mode already demos all five.
+
+### Order, status, and what blocks what
+
+| # | Item | Status | Blocked by | Rough size |
+| --- | --- | --- | --- | --- |
+| 0 | **Live-AI verification (#51)** | **BLOCKED** | A working provider key. The `.env` key returns 401 | 1 session once a key exists |
+| 1 | **Export-target trio — #73 + #75 + #79** | Not started | Nothing | 0.5–1 session |
+| 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
+| 3 | **Export/persistence audit — Tech Debt, ATT&CK** | Not started | ATT&CK's pass should follow W2 (item 5), not race it | 0.5 session each + unknown fixes |
+| 4 | **W3 — Tech Debt approval snapshot** | Not started | Nothing. Decision made: **Option A**, approval-time membership snapshot | 1–1.5 sessions |
+| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) | 2–3 sessions |
+| 6 | **W1 Risk step** | Not started | Nothing | 1–1.5 sessions |
+| 7 | **W1 ATT&CK step** | Not started | **W2** (item 5) | 1 session |
+| 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
+
+**Total remaining: roughly 6–10 focused sessions** (item 2 landed), plus whatever items 0 and 3
+surface. Call it **two to three weeks** of concentrated work, not days — and the
+W3 → W2 → W1-ATT&CK chain is over half of it.
+
+### What a "session" is, in hours
+
+Measured from this repo's own git history rather than estimated:
+
+| Unit of work | Rounds | Dense elapsed |
+| --- | --- | --- |
+| W1 ZT step (PR #66) — red tests through round 5 | 5 | ~8.5h continuous for red → round 3, plus ~2–3h for rounds 4–5 |
+| CSF client dashboard (PR #80) — API + frontend + e2e | 1 | ~4h |
+| Shape guards + CSF provenance (PR #78) | 1 | ~2–3h |
+
+So **one "session" ≈ 4–8 hours of continuous work**, and the variance is almost
+entirely adversarial rounds: each round costs roughly 1–3h including the fixes it
+generates. W1-ZT's elapsed span looks like 23h in the log, but two of those gaps
+are idle time, not work — do not read commit timestamps as effort.
+
+**6–10 sessions ≈ 35–65 hours ≈ 7–12 working days** at 5–6 productive hours a
+day. That is where "two to three weeks" comes from.
+
+Two caveats that matter for planning:
+
+- These are throughput numbers for an agent working with parallel subagents, not
+  a human developer's rate. Do not use them to size someone else's week.
+- **W2 is the estimate most likely to be wrong**, and wrong upward. It is the
+  largest item, it touches scoring, and items that touch scoring in this repo
+  have needed four to five adversarial rounds rather than one.
+
+### Dependencies, stated rather than implied
+
+```
+W3 ──> W2 ──> W1 ATT&CK          (the long pole; ~4-5.5 sessions end to end)
+                └─> ATT&CK export audit
+
+#73 ─┬─> (independent)
+#75 ─┤
+#79 ─┘
+
+W1 Risk ──> (independent)
+W6      ──> (independent)
+#51     ──> (independent, but gates "MVP" itself)
+```
+
+- **W3 before W2** — narrow-confirmed is unsound against a mutable approved list,
+  and the snapshot is what discharges that. Do not assume the dependency is
+  satisfied by the ADD-path carve-out; it is not.
+- **W2 before W1-ATT&CK** — building counters against a resolver that is about to
+  be replaced means building them twice. Also settled: **#44's fork resolves to
+  `applied` + a separate tri-state count**, not a reason code inside `dropped`.
+- **W2 before the ATT&CK export audit** — same files, and the audit wants the
+  post-rewrite shape.
+- **#29 must not merge** until W2 lands plus a clean adversarial audit.
+- Items 1, 6 and 8 depend on nothing and can run in parallel with the chain.
+
+### Why the chain is worth a second session in parallel
+
+Items 4, 5 and 7 are ~4–5.5 sessions; everything else combined is ~2–3. The
+chain touches `attack.py`, `tech_debt.py` and `citations.py`; the parallel track
+touches `risk.py`, `csf.py` and the web dashboards. File contention is low, and
+the two decisions the chain was waiting on are now made.
+
+### The one thing no amount of work here closes
+
+**Nothing in the AI layer has ever run against a real model.** All five jobs are
+proven only against fixtures that echo the parser's own keys back, which
+structurally cannot produce a drop, a shape error, or a drift. Six of eight ZT
+reason codes have never been observed; the CSF ones have not either. That is
+**item 0**, it needs a key rather than engineering, and no amount of review
+substitutes for it. Treat MVP as not-reached until it is done.
+
+### Recently landed (context for the above)
+
+- **W1 CSF** (PR #54, D-045) and **W1 ZT** (PR #66, D-047) — every AI suggestion
+  applied or itemized. ZT took five adversarial rounds.
+- **W4** (PR #58, D-046) — release assigns RELEASED to the parent. Unblocked W5.
+- **Shape guards + CSF provenance** (PR #78, D-048) — all four suggestion jobs
+  refuse a wrong-shaped list; offline runs no longer overwrite hand-typed CSF
+  scores.
+- **CSF client dashboard** (PR #80) — the last assessment service without one.
+  Ships reading the client's intake target, which is why #79 exists and is first
+  in the queue.
+
+### Deferred, and NOT part of MVP — listed so they are not silently dropped
+
+| Item | Status | Note |
+| --- | --- | --- |
+| **W0 freeze** | Open decision | Unblocked by W4, but needs Part 3 reopen scoped for CSF (that is W5). D-046 is explicit the W4 lock is PARTIAL |
+| **W5 — reopen ×4 + release-staleness guard** | Not started | Unblocked by W4. **#59 is in scope for it** |
+| **W7 — watermarking** | Not started | Gated on W5 |
+| **W8 — adversarial audit in CI** | Half done | Agent file landed (PR #36); the CI job was never built. **#72** (sweep for tests that cannot fail) attaches here |
+| **#67 recurrence risk** | Fixed for CSF (PR #78) | — |
+| Production runway | Unscheduled | See the section below; still gated on cloud/account decisions |
+
+### Open issues by theme (as of 2026-08-19)
+
+- **Export correctness:** #73, #75, #79 — item 1
+- **AI ledger:** #47, #52, #53 — `llm_calls` says COMPLETED for rejected calls,
+  is flushed-not-committed, and marks unbillable calls charged
+- **Silent discard:** #46, #60, #77 — wrong top-level key, CSF's unread
+  `executive_summary`, `tech_debt_extract`'s unguarded parser
+- **Accessibility:** #69 — live regions mounted with their text, so failures
+  announce and successes never do
+- **Dev loop:** #65 — `seed_demo.py` is all-or-nothing, so a drifted dev DB
+  cannot be repaired by re-seeding
+- **Policy, needs a human:** #57 (client read of a released ATT&CK assessment),
+  #62 (`ServiceStatus.RELEASED`)
 
 ## Sprint 1 — Smoke-test automation sweep + defect burn-down (COMPLETE 2026-07-03)
 
