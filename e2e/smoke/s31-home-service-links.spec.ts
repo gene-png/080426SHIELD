@@ -67,7 +67,11 @@ test("client home: every service card is a link, routed by its own phase", async
       expect(
         href,
         `a "Report ready" card must open a dashboard or the results list (got ${href})`,
-      ).toMatch(/^\/(dashboards\/(attack|zt|tech-debt)\/|results)/);
+        // Keep this in step with `dashboardPathFor` (lib/dashboards/routes.ts).
+        // `csf` joined the list when CSF got a client dashboard — this spec is
+        // the only place the allowed set is written out again, so a new service
+        // kind fails HERE rather than on the page.
+      ).toMatch(/^\/(dashboards\/(attack|zt|tech-debt|csf)\/|results)/);
     } else if (text.includes("in progress")) {
       sawInProgress = true;
       expect(

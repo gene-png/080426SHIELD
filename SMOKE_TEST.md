@@ -63,6 +63,7 @@ documents, live AI). Work top-to-bottom in one sitting.
 - [x] **Run AI (zt_score)** → current/target suggestions applied (DoD clamps to ≤3). (s6-zt.spec.ts)
 - [x] Gap list reflects per-capability targets; **12-month roadmap** card groups gaps by month. (s6-zt.spec.ts — spot-checks: gap list renders against the target stage + roadmap shows "Month N" groups; not every capability/month is cross-checked)
 - [x] After **release**, the CLIENT opens the Zero Trust maturity dashboard from `/documents` ("View dashboard") → KPI cards, current-vs-target maturity radar, and per-pillar deep-dive cards render (D-035). (s28-zt-dashboard.spec.ts)
+- [x] After **release**, the CLIENT opens the NIST CSF 2.0 dashboard → KPI cards, per-function current-vs-target bars, and a prioritized remediation list that **states how many gaps are not shown** when the list is truncated. CSF was the only assessment service with no client dashboard. (s43-csf-dashboard.spec.ts)
 
 ## 7. CSF full Playbook (D4)
 

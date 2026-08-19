@@ -23,7 +23,10 @@ from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
+from app.csf.gap import DEFAULT_TARGET_TIER as CSF_DEFAULT_TARGET_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
+from app.csf.scoring import _label_from_average as csf_label_from_average
+from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
@@ -44,6 +47,7 @@ from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentSta
 from app.models.deliverable import Deliverable
 from app.models.risk_register import RiskEntry, RiskRegister
 from app.models.service import Service, ServiceKind
+from app.models.service_request import ServiceRequest
 from app.models.user import User, UserRole
 from app.models.zt_assessment import (
     ZtAnswer,
@@ -69,6 +73,9 @@ from app.schemas.clients import (
     AttackTacticCoverage,
     ClientDeliverableListResponse,
     ClientDeliverableResponse,
+    CsfDashboardResponse,
+    CsfFunctionDashboard,
+    CsfGapDashboard,
     RiskDashboardEntry,
     RiskDashboardResponse,
     RiskMatrixCell,
@@ -210,6 +217,36 @@ def _released_service_ids_by_kind(
     for sid, kind in rows:
         out.setdefault(kind, []).append(sid)
     return out
+
+
+def _csf_function_label(average_tier: float | None) -> str:
+    """ "Unscored" when a function has no answers, else its tier band.
+
+    ZT has `_zt_pillar_label` for exactly this. Without it a function nobody
+    assessed renders as an em dash and sorts to the TOP of a list ordered by
+    "largest move required" — because its gap is computed against 0 — with
+    "0 gaps" beside it. A client reads their worst function as one that was
+    never scored.
+    """
+    if average_tier is None:
+        return "Unscored"
+    return csf_label_from_average(average_tier)
+
+
+def _csf_client_target_tier(db: Session, service_id: uuid.UUID) -> int | None:
+    """The CSF target tier the client chose at intake, via the source request.
+
+    Deliberately duplicated from `routes/csf.py::_client_target_tier` rather
+    than imported: that one is private to the admin router, and a router
+    importing another router's underscore helper is how import cycles start.
+    Three lines, one query, and the duplication is stated here so the next
+    reader does not "fix" it by reaching across.
+    """
+    svc = db.get(Service, service_id)
+    if svc is None or svc.source_request_id is None:
+        return None
+    sr = db.get(ServiceRequest, svc.source_request_id)
+    return sr.csf_target_tier if sr is not None else None
 
 
 def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
@@ -951,5 +988,155 @@ def risk_dashboard(
                 recommended_action=e.recommended_action,
             )
             for e in entries
+        ],
+    )
+
+
+@router.get(
+    "/{client_id}/csf/{service_id}/dashboard",
+    response_model=CsfDashboardResponse,
+    summary="Released NIST CSF 2.0 dashboard for the client (client + admin)",
+)
+def csf_dashboard(
+    client_id: uuid.UUID,
+    service_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CsfDashboardResponse:
+    """Per-function current-vs-target maturity for a released CSF service.
+
+    Release-gated on the deliverable, tenant-enforced — the same contract the
+    other four dashboards use. Deterministic: every figure comes from
+    `csf/scoring.py` and `csf/gap.py`; no LLM output reaches this payload.
+    """
+    if client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    released_csf_ids = _released_service_ids_by_kind(db, client.id).get(ServiceKind.NIST_CSF, [])
+    resolved = _dashboard_deliverable(
+        db, service_id=service_id, user=user, released_service_ids=released_csf_ids
+    )
+    not_released = HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={
+            "reason": "dashboard_not_released",
+            "message": "No released NIST CSF report for this service yet.",
+        },
+    )
+    if resolved is None:
+        raise not_released
+    deliv, is_released = resolved
+
+    svc = db.get(Service, service_id)
+    assessment = _latest_finalized(
+        db,
+        CsfAssessment,
+        service_id,
+        (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED),
+    )
+    if svc is None or assessment is None:
+        raise not_released
+
+    rows = (
+        db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == assessment.id))
+        .scalars()
+        .all()
+    )
+    answers: dict[str, int | None] = {r.subcategory_code: r.maturity_tier for r in rows}
+
+    # The client's OWN target, not the engine default.
+    #
+    # #73 is open because the ZT exporter has computed gaps against a hardcoded
+    # 3 for the life of the repo while the client had chosen 4 at intake — so
+    # the delivered document listed a different gap set than the consultant
+    # approved, and a stored target of 2 printed as 3. Reading the intake choice
+    # here is that lesson applied before the same defect can be built, and
+    # `target_tier_source` says which one was used so a fallback is never
+    # mistaken for a decision.
+    chosen = _csf_client_target_tier(db, service_id)
+    target_tier = chosen if chosen is not None else CSF_DEFAULT_TARGET_TIER
+    target_tier_source = "client" if chosen is not None else "default"
+
+    score = csf_compute(answers)
+    gap = csf_analyze_gaps(answers, target_tier=target_tier)
+
+    max_tier = 4  # CSF 2.0 tiers run 1..4
+    target_pct = round(target_tier / max_tier * 100, 1)
+
+    functions: list[CsfFunctionDashboard] = []
+    largest_gap_function: str | None = None
+    largest_gap_pct = 0.0
+    for fn in score.by_function:
+        current_pct = (
+            round(fn.average_tier / max_tier * 100, 1) if fn.average_tier is not None else None
+        )
+        gap_pct = round(max(0.0, target_pct - (current_pct or 0.0)), 1)
+        if current_pct is not None and gap_pct > largest_gap_pct:
+            largest_gap_pct = gap_pct
+            largest_gap_function = fn.function_name
+        functions.append(
+            CsfFunctionDashboard(
+                code=str(fn.function.value),
+                name=fn.function_name,
+                subcategory_count=fn.subcategory_count,
+                answered_count=fn.answered_count,
+                coverage_pct=fn.coverage_pct,
+                current_tier=fn.average_tier,
+                current_pct=current_pct,
+                current_label=_csf_function_label(fn.average_tier),
+                target_pct=target_pct,
+                gap_pct=gap_pct,
+                gap_count=gap.gap_count_by_function.get(str(fn.function.value), 0),
+                weakest=list(fn.weakest_subcategory_codes),
+            )
+        )
+
+    _log.info(
+        "client.csf_dashboard.built",
+        client_id=str(client.id),
+        service_id=str(svc.id),
+        actor_user_id=str(user.id),
+        released=is_released,
+        total_gap_count=gap.total_gap_count,
+        # The two values you would want when a client disputes the numbers, and
+        # the two this endpoint is most likely to be wrong about.
+        target_tier=target_tier,
+        target_tier_source=target_tier_source,
+    )
+    return CsfDashboardResponse(
+        service_id=svc.id,
+        service_title=svc.title,
+        released_at=_dashboard_stamp(deliv, is_released),
+        released=is_released,
+        deliverable_version=deliv.version,
+        overall_label=score.overall_maturity_label,
+        current_tier=score.average_tier,
+        current_pct=(
+            round(score.average_tier / max_tier * 100, 1)
+            if score.average_tier is not None
+            else None
+        ),
+        coverage_pct=score.coverage_pct,
+        target_tier=target_tier,
+        target_label=gap.target_label,
+        target_pct=target_pct,
+        target_tier_source=target_tier_source,
+        total_gap_count=gap.total_gap_count,
+        largest_gap_function=largest_gap_function,
+        largest_gap_pct=largest_gap_pct,
+        functions=functions,
+        top_gaps=[
+            CsfGapDashboard(
+                code=g.code,
+                name=g.name,
+                function=str(g.function.value),
+                function_name=g.function_name,
+                current_tier=g.current_tier,
+                target_tier=g.target_tier,
+                gap_size=g.gap_size,
+                priority_score=g.priority_score,
+            )
+            for g in gap.gaps
         ],
     )
