@@ -249,6 +249,19 @@ def _csf_client_target_tier(db: Session, service_id: uuid.UUID) -> int | None:
     return sr.csf_target_tier if sr is not None else None
 
 
+def _zt_client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
+    """The ZT target stage the client chose at intake, via the source request.
+
+    Twin of `_csf_client_target_tier` above, and duplicated from
+    `routes/zt.py::_client_target_stage` for the same reason stated there.
+    """
+    svc = db.get(Service, service_id)
+    if svc is None or svc.source_request_id is None:
+        return None
+    sr = db.get(ServiceRequest, svc.source_request_id)
+    return sr.zt_target_stage if sr is not None else None
+
+
 def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
     if not service_ids:
         return None
@@ -266,7 +279,13 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
         found = True
         rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
         answers: dict[str, int | None] = {r.subcategory_code: r.maturity_tier for r in rows}
-        total += csf_analyze_gaps(answers).total_gap_count
+        # Per-service client tier, same as the dashboard and the exporter (#79).
+        # This card sits one click from the dashboard; reporting a different
+        # number for the same assessment is what made the inconsistency visible.
+        tier = _csf_client_target_tier(db, sid)
+        total += csf_analyze_gaps(
+            answers, **({"target_tier": tier} if tier is not None else {})
+        ).total_gap_count
     return total if found else None
 
 
@@ -293,7 +312,19 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
         rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == a.id)).scalars().all()
         answers: dict[str, int | None] = {r.capability_code: r.maturity_stage for r in rows}
         targets: dict[str, int | None] = {r.capability_code: r.target_stage for r in rows}
-        total += zt_analyze_gaps(fw, answers, targets=targets).total_gap_count
+        # Both targets, exactly as the exporter resolves them (#73/#79). Passing
+        # `targets` alone left every capability with no per-row override on
+        # DEFAULT_TARGET_STAGE, so a client on stage 4 with everything scored at
+        # 3 saw "0 gaps" on this card while their released report listed 37.
+        # That is #79's symptom in the service #73 was filed against, and this
+        # function sat directly below the CSF twin that was fixed for it.
+        stage = _zt_client_target_stage(db, sid)
+        total += zt_analyze_gaps(
+            fw,
+            answers,
+            targets=targets,
+            **({"target_stage": stage} if stage is not None else {}),
+        ).total_gap_count
     return total if found else None
 
 

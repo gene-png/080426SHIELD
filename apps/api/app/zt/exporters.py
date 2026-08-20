@@ -33,6 +33,35 @@ class ZtDeliverableContext:
     gap: GapAnalysis
 
 
+def _gap_plan_caption(gap: GapAnalysis) -> str:
+    """What the Gap Plan is showing, and what it is NOT (#75).
+
+    `analyze_gaps` truncates to `top_n` while keeping the true count in
+    `total_gap_count`, and every renderer here printed only the slice. The
+    on-screen list states the total; the client's document did not, so they read
+    20 of 37 remediation items with no way to tell anything was omitted. Silence
+    is not an option here — it misrepresents the assessment.
+
+    The caption does NOT claim a single target for every row. `analyze_gaps`
+    honours a per-capability `target_stage` wherever the consultant set one, so
+    `gap.target_stage` is the ENGAGEMENT target and rows may legitimately differ
+    from it — a headline "at target S4" printed over a row reading S2 is the
+    same class of contradiction #79 was filed about, one document down.
+    """
+    shown, total = len(gap.gaps), gap.total_gap_count
+    remaining = total - shown
+    target = (
+        f"Engagement target S{gap.target_stage}; each row shows the target "
+        f"applied to that capability."
+    )
+    if shown >= total:
+        return f"All {total} gap{'' if total == 1 else 's'} listed. {target}"
+    return (
+        f"Showing the {shown} highest-priority of {total} gaps; "
+        f"{remaining} further gap{'' if remaining == 1 else 's'} not listed. {target}"
+    )
+
+
 def build_context(
     *,
     client_legal_name: str | None,
@@ -162,9 +191,16 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         "Priority",
         "Notes",
     ]
+    # Caption first, so a client reading top-down learns the list is a slice
+    # BEFORE reading it. That puts the header on row 2 — every row index below
+    # is offset accordingly. Trade-off accepted knowingly: a machine reader that
+    # assumes row 1 is the header (`pandas.read_excel`, Excel's "Format as
+    # Table") will take the caption as column names. Nothing in this repo reads
+    # this sheet, and the disclosure is for a human, so visibility wins.
+    ws3.append([_gap_plan_caption(ctx.gap)])
     ws3.append(headers3)
     for col in range(1, len(headers3) + 1):
-        cell = ws3.cell(row=1, column=col)
+        cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
     for g in ctx.gap.gaps:
@@ -182,7 +218,11 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         )
     if not ctx.gap.gaps:
         ws3.append(["—", "", "No gaps at target stage", "", ctx.gap.target_stage, 0, 0, ""])
-        ws3.cell(row=2, column=3).font = italic
+        # Row 1 is the caption and row 2 the header, so the placeholder is row 3.
+        # This said row 2 until the caption was inserted above it — which styled
+        # the "Name" HEADER italic and dropped its bold, because assigning
+        # `.font` replaces the whole Font object rather than merging into it.
+        ws3.cell(row=3, column=3).font = italic
     for w, col in zip([18, 10, 36, 14, 14, 12, 12, 50], range(1, 9), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
 
@@ -241,6 +281,7 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
     )
 
     add_heading(doc, f"Top remediation gaps (target S{ctx.gap.target_stage})")
+    doc.add_paragraph(_gap_plan_caption(ctx.gap))
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -332,6 +373,7 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
     story.append(PageBreak())
 
     story.append(Paragraph(f"Top remediation gaps (target S{ctx.gap.target_stage})", h2))
+    story.append(Paragraph(_gap_plan_caption(ctx.gap), styles["BodyText"]))
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

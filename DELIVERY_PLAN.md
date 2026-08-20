@@ -56,7 +56,7 @@ fixture mode already demos all five.
 | # | Item | Status | Blocked by | Rough size |
 | --- | --- | --- | --- | --- |
 | 0 | **Live-AI verification (#51)** | **DONE** (2026-08-19) | — | — |
-| 1 | **Export-target trio — #73 + #75 + #79** | Not started | Nothing | 0.5–1 session |
+| 1 | **Export-target trio — #73 + #75 + #79** | **IN REVIEW** (D-049) | CI | Done bar review |
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
 | 3 | **Export/persistence audit — Tech Debt, ATT&CK** | Not started | ATT&CK's pass should follow W2 (item 5), not race it | 0.5 session each + unknown fixes |
 | 4 | **W3 — Tech Debt approval snapshot** | Not started | Nothing. Decision made: **Option A**, approval-time membership snapshot | 1–1.5 sessions |
@@ -166,6 +166,14 @@ live is opt-in per run. `s6` and `s7` perform Run-AI and assert
 fixture-deterministic outcomes, so an ambient-live e2e run would cost real tokens
 and probably fail. `.env` is back on `fixture`; the key stays for opt-in runs.
 
+**The lens outlives the milestone.** Fixtures echo the parser's own keys back by
+construction, which is why a green fixture suite proves nothing about a drop, a
+shape error, or a drift — the #72 pattern. The #73/#75/#79 audit found two more
+instances of it (2026-08-20) in tests written the same day by someone who had
+just written the rule down, which is the case for mechanising the sweep (W8)
+rather than trusting anyone to remember it.
+
+
 ### Recently landed (context for the above)
 
 - **W1 CSF** (PR #54, D-045) and **W1 ZT** (PR #66, D-047) — every AI suggestion
@@ -177,6 +185,11 @@ and probably fail. `.env` is back on `fixture`; the key stays for opt-in runs.
 - **CSF client dashboard** (PR #80) — the last assessment service without one.
   Ships reading the client's intake target, which is why #79 exists and is first
   in the queue.
+- **Live-AI verification** (PR #82) — a working key was installed 2026-08-19 and
+  all five purposes ran against a real provider with redaction confirmed. The
+  drop paths, which fixture mode structurally cannot reach, are now exercised by
+  a corrupting-provider live test. Resting mode is back to `fixture`; live is
+  opt-in per run.
 
 ### Deferred, and NOT part of MVP — listed so they are not silently dropped
 
@@ -191,7 +204,11 @@ and probably fail. `.env` is back on `fixture`; the key stays for opt-in runs.
 
 ### Open issues by theme (as of 2026-08-19)
 
-- **Export correctness:** #73, #75, #79 — item 1
+- **Export correctness:** #73, #75, #79 — item 1, **in review**. Two more filed
+  out of its audit: **#84** (`risk.py` compares against a hardcoded target, so
+  client-facing risk findings use a gap set no other surface agrees with) and
+  **#85** (self-assessment submit accepts a target of 1 where intake enforces
+  `>= 2` — inert until the trio made stored targets load-bearing)
 - **AI ledger:** #47, #52, #53 — `llm_calls` says COMPLETED for rejected calls,
   is flushed-not-committed, and marks unbillable calls charged
 - **Silent discard:** #46, #60, #77 — wrong top-level key, CSF's unread

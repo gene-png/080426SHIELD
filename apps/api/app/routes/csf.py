@@ -2250,7 +2250,20 @@ def finalize_csf_deliverable(
         r.subcategory_code: r.notes for r in answers if r.subcategory_code in valid
     }
     score = compute_score(tier_map)
-    gap = analyze_gaps(tier_map, notes=notes_map)
+    # The client's intake tier, not the engine default (#79 — the CSF twin of
+    # #73). The client dashboard already reads this; the exporter did not, so
+    # for any client whose tier is not 3 the released PDF and the dashboard
+    # reported different gap sets for the same assessment.
+    #
+    # Same scope note as the ZT twin: this follows the CONTRACTED tier, not the
+    # `/gap-analysis` selector, which finalize never receives. The audit row
+    # below records which tier was used and whether the client chose it.
+    engagement_tier = _client_target_tier(db, svc.id)
+    gap = analyze_gaps(
+        tier_map,
+        notes=notes_map,
+        **({"target_tier": engagement_tier} if engagement_tier is not None else {}),
+    )
 
     client_name = client.legal_name
     if client_name == "(pending intake)":
@@ -2365,6 +2378,9 @@ def finalize_csf_deliverable(
             "average_tier": score.average_tier,
             "coverage_pct": score.coverage_pct,
             "gap_count": gap.total_gap_count,
+            # See the ZT twin: a gap count without its target is uninterpretable.
+            "target_tier": gap.target_tier,
+            "target_tier_source": ("client" if engagement_tier is not None else "default"),
         },
     )
     assessment.documents_stale = False  # Work Order C3

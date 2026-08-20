@@ -219,6 +219,31 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   re-read and so reported values applied for transactions that then rolled back.
   When adding any "it worked" record, find the line that makes it true and put
   the record below it.
+- **A defect found in one service exists in its twins until you have checked.**
+  CSF, ZT, ATT&CK, Tech Debt and Risk are five copies of the same shapes, so a
+  fix filed against one is a fix owed by all of them. #75 was filed against ZT
+  and fixed there; CSF truncated identically, through the same
+  `DEFAULT_TOP_N = 20`, in the same three renderers, and the first
+  implementation left it — inside the PR that was also fixing #79, which exists
+  *because* an earlier change fixed one surface and not its twin. The same round
+  found `_zt_gap_total` untouched twelve lines below the `_csf_gap_total` that
+  was fixed. Half-fixes are worse than none here: raising CSF's target to the
+  client's tier increases its gap count, so leaving the disclosure out hid MORE
+  than before the "fix". Before opening a PR, grep the sibling services for the
+  function you just changed, and when you deliberately leave a twin alone, say
+  so in the code — an unstated exemption reads as an oversight to everyone who
+  finds it later, including you.
+- **Verify each assertion red-on-revert, one fix at a time.** A suite that goes
+  green after a change proves the change did not break anything; it says nothing
+  about whether the new tests can fail. Revert each fix individually and confirm
+  its own test fails with the message you wrote for it. In the export trio this
+  turned four green tests into four discriminating ones and caught two more
+  instances of the #72 pattern (the eighth and ninth) — one where `str(count) in summary` was satisfied
+  by an unrelated coverage fraction (`106/106 subcategories scored` contains
+  `106`), and one where an entire keyword argument was deletable with the whole
+  suite passing. Both were written by someone who had logged that pattern the
+  same day, which is the point: knowing the shape does not prevent producing it,
+  only checking does.
 - **Assert what must APPEAR before what must not.** `toHaveCount(0)` on a page
   still mid-fetch passes vacuously — the element it forbids simply has not
   rendered yet. Wait on the positive state first (`toBeVisible`), then assert the
