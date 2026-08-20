@@ -340,3 +340,253 @@ def test_run_ai_object_techniques_is_refused_not_iterated_as_keys(app_client) ->
     r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
     assert r.status_code == 502, r.text
     assert r.json()["error"]["reason"] == "ai_call_failed"
+
+
+# --- W2: citations are resolved and ACCOUNTED FOR, not silently dropped -----
+
+
+def _run_with_citations(c, TestSession, tools: list[str], cited: list[str]) -> dict:
+    """One technique, `cited` as its detection_tools, against `tools`."""
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], tools)
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    code = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0][
+        "technique_code"
+    ]
+    import json as _json
+
+    provider = c.app.dependency_overrides  # noqa: F841 - provider set by fixture
+    return (
+        code,
+        svc_id,
+        h,
+        _json.dumps(
+            {
+                "techniques": [
+                    {
+                        "technique_code": code,
+                        "status": "covered",
+                        "detection_tools": cited,
+                        "prevention_tools": [],
+                        "response_tools": [],
+                        "rationale": "r",
+                    }
+                ]
+            }
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_a_near_miss_citation_is_resolved_and_flagged_not_dropped(app_client) -> None:
+    """The defect this exists to close.
+
+    Exact match dropped "CrowdStrike" against `CrowdStrike Falcon Enterprise`
+    silently: no count, no reason, and the technique kept its `covered` status
+    with an EMPTY tool list. A reader cannot tell that from a client who owns
+    nothing.
+    """
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(
+        c, TestSession, ["CrowdStrike Falcon Enterprise"], ["CrowdStrike"]
+    )
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == ["CrowdStrike Falcon Enterprise"], "the citation was dropped"
+    # `mitre_map` runs concurrent BATCHES and the fixture answers each one with
+    # the same payload, so this citation is resolved once per batch. Pin the
+    # count to `batches_total` rather than `> 0`: the first version asserted
+    # `> 0`, which cannot tell 1 from 26 from 500, so a real inflation of the
+    # number shown on the panel would never have failed a test.
+    assert body["citations_confirmed"] == 0
+    assert body["citations_needs_review"] == body["batches_total"]
+    assert body["citations_rejected"] == 0
+    assert body["citations_needs_review_tools"] == ["CrowdStrike Falcon Enterprise"]
+
+
+@pytest.mark.unit
+def test_an_exact_citation_is_confirmed_not_flagged(app_client) -> None:
+    """#11: a verbatim citation must not be reported as a near miss. With the
+    counter surfaced, that is a false statement a consultant can act on."""
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(c, TestSession, ["Tenable.io"], ["Tenable.io"])
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    assert body["citations_confirmed"] == body["batches_total"]
+    assert body["citations_needs_review"] == 0, "a verbatim citation was called an inference"
+
+
+@pytest.mark.unit
+def test_an_unknown_citation_is_counted_and_quoted_verbatim(app_client) -> None:
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(
+        c, TestSession, ["Splunk Enterprise"], ["Qradar"]
+    )
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == []
+    assert body["citations_rejected"] == body["batches_total"]
+    assert body["citations_rejected_examples"] == ["Qradar"]
+    assert body["citations_confirmed"] == 0
+
+
+@pytest.mark.unit
+def test_an_ambiguous_citation_is_refused_rather_than_attributed(app_client) -> None:
+    """Two Splunk products. The accuracy tiebreak: a dropped citation is counted
+    and visible, a wrong attribution is invisible and reaches the client."""
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(
+        c, TestSession, ["Splunk Enterprise", "Splunk Phantom"], ["Splunk"]
+    )
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == []
+    assert body["citations_rejected"] == body["batches_total"]
+    assert body["citations_needs_review"] == 0, "guessed between two Splunk products"
+
+
+@pytest.mark.unit
+def test_a_rejected_citation_leaves_the_status_the_model_gave_it(app_client) -> None:
+    """The consequence the panel has to describe honestly.
+
+    `run_ai` assigns `row.status` independently of what happens to that row's
+    citations, so a technique whose every citation was rejected keeps `covered`
+    with an EMPTY tool list and carries full weight in coverage_pct and the
+    client PDF. The panel used to say such a technique "reads as uncovered",
+    which is the inverse — and understated the harm, because the real risk is
+    coverage OVERSTATED with nothing behind it.
+
+    Pinned so the copy and the behaviour cannot drift apart again. 5.1's
+    `pending_review` enforcement is the fix and is not in W2.
+    """
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(
+        c, TestSession, ["Splunk Enterprise"], ["Qradar"]
+    )
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == []
+    assert row["status"] == "covered", (
+        "if this ever becomes 'gap' or a pending state, 5.1 landed and the panel "
+        "copy must be revisited"
+    )
+    assert body["citations_rejected"] > 0
+
+
+@pytest.mark.unit
+def test_a_wrong_shaped_tool_list_is_counted_not_silently_dropped(app_client) -> None:
+    """A bare string where a list belongs overwrote the row's tools with [] and
+    reported nothing — indistinguishable from the model citing nothing."""
+    import json as _json
+
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Splunk Enterprise"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    code = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0][
+        "technique_code"
+    ]
+    provider.register_static(
+        "mitre_map",
+        LLMResponse(
+            _json.dumps(
+                {
+                    "techniques": [
+                        {
+                            "technique_code": code,
+                            "status": "covered",
+                            "detection_tools": "Splunk Enterprise",
+                            "rationale": "r",
+                        }
+                    ]
+                }
+            )
+        ),
+    )
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    assert body["citations_unusable"] > 0, "a wrong-shaped tool list vanished uncounted"
+
+
+@pytest.mark.unit
+def test_the_same_tool_spelled_two_ways_across_lists_is_not_made_ambiguous(app_client) -> None:
+    """A regression the audit caught before it shipped.
+
+    A client can have two Tech Debt lists, one extracted from an all-caps table,
+    so the allow-list holds both `Splunk` and `SPLUNK`. Deduping on the exact
+    string kept both, `_by_norm["splunk"]` then held two names, and the resolver
+    called the citation AMBIGUOUS and rejected it — while `main`'s
+    `frozenset(t.lower() ...)` collapsed the pair and kept it. The client would
+    have lost evidence they used to get, and the panel would have said the tool
+    "is not on the list" when it is on it twice.
+    """
+    import uuid as _uuid
+
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Splunk"])
+
+    # A second list for the same client, same tool, different casing.
+    with TestSession() as db:
+        svc = Service(
+            kind=ServiceKind.TECH_DEBT,
+            status=ServiceStatus.IN_PROGRESS,
+            title="Second inventory",
+            client_id=_uuid.UUID(cid),
+            opened_by=_uuid.UUID(me["id"]),
+        )
+        db.add(svc)
+        db.flush()
+        cl = CapabilityList(service_id=svc.id, version=1, status=CapabilityListStatus.APPROVED)
+        db.add(cl)
+        db.flush()
+        db.add(CapabilityItem(capability_list_id=cl.id, name="SPLUNK"))
+        db.commit()
+
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    code = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0][
+        "technique_code"
+    ]
+    import json as _json
+
+    provider.register_static(
+        "mitre_map",
+        LLMResponse(
+            _json.dumps(
+                {
+                    "techniques": [
+                        {
+                            "technique_code": code,
+                            "status": "covered",
+                            "detection_tools": ["Splunk"],
+                            "rationale": "r",
+                        }
+                    ]
+                }
+            )
+        ),
+    )
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] != [], "a citation main would have kept was rejected"
+    assert body["citations_rejected"] == 0

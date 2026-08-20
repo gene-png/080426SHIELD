@@ -180,20 +180,36 @@ def approved_membership_stale(db: Session, cap_list: CapabilityList) -> bool:
     """
     if cap_list.approved_membership is None:
         return False
-    approved = {(e.get("name") or "").strip() for e in cap_list.approved_membership}
-    approved.discard("")
+
+    # Compare NAME AND VENDOR. W2 made the vendor load-bearing — the citation
+    # resolver uses it to decide whether a cited string is unambiguous — and
+    # `patch_capability_item` can edit `vendor` on an approved list. Comparing
+    # names only meant correcting a vendor left the list reporting "not stale",
+    # so nothing prompted a re-approval and the resolver kept resolving against
+    # the old vendor indefinitely.
+    #
+    # Snapshots written between W3 and W2 carry no `vendor` key. `.get` yields
+    # None for those, which matches a row whose vendor is genuinely blank and
+    # differs from one that has a vendor — so such a list reads as stale exactly
+    # when the vendor column would change a resolution, which is the point.
+    def _key(name: object, vendor: object) -> tuple[str, str | None]:
+        return ((str(name or "")).strip(), (str(vendor or "")).strip() or None)
+
+    approved = {
+        _key(e.get("name"), e.get("vendor"))
+        for e in cap_list.approved_membership
+        if (e.get("name") or "").strip()
+    }
     current = {
-        (n or "").strip()
-        for n in db.execute(
-            select(CapabilityItem.name).where(
+        _key(n, v)
+        for n, v in db.execute(
+            select(CapabilityItem.name, CapabilityItem.vendor).where(
                 CapabilityItem.capability_list_id == cap_list.id,
                 security_scope_filter(),
             )
-        )
-        .scalars()
-        .all()
+        ).all()
+        if (n or "").strip()
     }
-    current.discard("")
     return approved != current
 
 
@@ -829,7 +845,10 @@ def approve_capability_list(
     # workflow, and the fix is to make the change explicit and audited rather
     # than to forbid it.
     membership = [
-        {"item_id": str(i.id), "name": i.name}
+        # `vendor` too (W2): the citation resolver uses it to judge whether a
+        # cited string is unambiguous, so a vendor edited after approval would
+        # move the allow-list exactly the way a name edit does.
+        {"item_id": str(i.id), "name": i.name, "vendor": i.vendor}
         for i in db.execute(
             select(CapabilityItem)
             .where(CapabilityItem.capability_list_id == cap_list.id)

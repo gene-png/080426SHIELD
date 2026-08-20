@@ -123,6 +123,31 @@ class AttackRunAiResponse(BaseModel):
     # consultant must be told the draft is incomplete and which slice is missing.
     batches_total: int = 0
     batches_failed: int = 0
+    # W2 citation accounting. Additive + defaulted (C0). Every usable cited
+    # string lands in exactly one of these three, so a reader can check the
+    # numbers add up rather than trusting them.
+    #
+    # `citations_confirmed` matched with no inference — case and whitespace
+    # only. `citations_needs_review` was RESOLVED and APPLIED, but the resolver
+    # had to change or assume something, and inference is not confirmation.
+    # `citations_rejected` had no unique candidate and is gone.
+    citations_confirmed: int = 0
+    citations_needs_review: int = 0
+    citations_rejected: int = 0
+    # Verbatim and bounded: "Tenable io" tells a consultant the list holds
+    # "Tenable.io". A bare count tells them nothing they can act on.
+    citations_rejected_examples: list[str] = Field(default_factory=list)
+    citations_needs_review_tools: list[str] = Field(default_factory=list)
+    # Keyed by WHY. A vendor guess made against a list with MISSING vendors is
+    # not the same risk as a punctuation rescue, and reporting them identically
+    # made the nullable-vendor guard inert — it computed a reason nothing read.
+    citations_needs_review_by_reason: dict[str, list[str]] = Field(default_factory=dict)
+    # Entries that were not usable strings at all (a bare string where a list
+    # belongs, a null). Deliberately NOT folded into `rejected`, which means
+    # "the model named a tool we could not place" — but counted, because the
+    # row's tools are overwritten either way and a silent discard is the defect
+    # this whole change exists to end.
+    citations_unusable: int = 0
 
 
 class AttackCoveragePatch(BaseModel):
