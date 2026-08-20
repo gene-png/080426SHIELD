@@ -488,22 +488,62 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
       list is a normal order of work. Superseded versions also still count,
       which is arguably wrong but is pre-existing behaviour and not this
       change's business.
+    * **Approved membership (W3).** For a list that has been approved, the
+      APPROVED SNAPSHOT is the membership, not the live rows. An approved list
+      stays editable until release — `_editable_list_or_404` blocks RELEASED and
+      DISCARDED only — and two of those doors change what this function returns:
+      `patch_capability_item` can rename an item, and the security-classification
+      confirm queue removes a row from security scope BY DESIGN. Reading live
+      rows meant a citation "confirmed against the approved list" was checked
+      against whatever the list had since become, which is the premise #32
+      recorded as deferred and W2's narrow-confirmed would otherwise rest on.
+      A list with no recorded membership (a DRAFT, or one approved before
+      migration 0043) still reads live — NULL means nobody recorded it, which is
+      not the same as nothing having been approved.
     """
-    names = (
+    lists = (
         db.execute(
-            select(CapabilityItem.name)
-            .join(CapabilityList, CapabilityItem.capability_list_id == CapabilityList.id)
+            select(CapabilityList)
             .join(Service, CapabilityList.service_id == Service.id)
             .where(
                 Service.client_id == client_id,
                 Service.kind == ServiceKind.TECH_DEBT,
                 CapabilityList.status != CapabilityListStatus.DISCARDED,
-                security_scope_filter(),
             )
         )
         .scalars()
         .all()
     )
+
+    names: list[str] = []
+    # Lists whose approved membership was never recorded still read live: a DRAFT
+    # by design (mapping ATT&CK before approving the tech-debt list is a normal
+    # order of work, per the docstring above), and a pre-0043 list because NULL
+    # means "nobody recorded this", which is not the same as "nothing was
+    # approved" — the C0 pattern. Inventing a membership for those would assert
+    # something no consultant ever did.
+    live_ids = [cl.id for cl in lists if not cl.approved_membership]
+    for cap_list in lists:
+        # W3: for an APPROVED list the snapshot IS the membership. The list stays
+        # editable until release through five doors — one of which can rename an
+        # item, and one of which (the confirm queue) removes a row from security
+        # scope by design — so reading live rows here meant every "confirmed
+        # against the approved list" citation was checked against whatever the
+        # list had since become.
+        if cap_list.approved_membership:
+            names.extend(e.get("name") or "" for e in cap_list.approved_membership)
+
+    if live_ids:
+        names.extend(
+            db.execute(
+                select(CapabilityItem.name).where(
+                    CapabilityItem.capability_list_id.in_(live_ids),
+                    security_scope_filter(),
+                )
+            )
+            .scalars()
+            .all()
+        )
     return sorted({n.strip() for n in names if n and n.strip()})
 
 

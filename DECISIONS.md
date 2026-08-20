@@ -2646,3 +2646,65 @@ exporters iterate the full item list with no `top_n` (no #75 twin here);
 `costed[:5]` is a "top-cost" card that names its own bound and publishes
 `total_items` alongside; Tech Debt has no maturity-target concept, so #73/#79
 have no twin in it.
+
+## D-053 — W3: approving a Tech Debt list records WHAT was approved, and the ATT&CK allow-list reads that
+
+**Date:** 2026-08-20 · **Issues:** #32 (closed by this) · **Migration:** 0043 · **Unblocks:** W2
+
+DELIVERY_PLAN item 4, and the head of the long pole. **Option A, the
+approval-time membership snapshot**, as the plan of record scoped it.
+
+**The problem, restated from `main` rather than from the plan.**
+`_editable_list_or_404` blocks RELEASED and DISCARDED only, so the entire window
+between approval and release is mutable through five doors. Two of them change
+what the ATT&CK allow-list contains: `patch_capability_item` can rewrite `name`,
+and the security-classification confirm queue removes a row from
+`security_scope_filter` **by design**. `attack.py::_client_tool_names` turns
+those names into a HARD allow-list whose own module docstring states the stakes —
+"Drop a real security tool from it and the model cannot name it, so the technique
+it covers reads as uncovered. That is a fabricated gap." So "confirmed against
+the approved list" was checked against whatever the list had since become.
+
+**W4 made the window real rather than theoretical.** Release now flips the list
+to RELEASED (D-046), which is what brought `_editable_list_or_404`'s lock to
+life; before that the lock was dead code and the list was mutable forever. The
+window is now APPROVED → released, and ATT&CK runs happen inside it.
+
+**Migration 0043 adds `capability_lists.approved_membership`** —
+`[{item_id, name}]` for every item in security scope at the moment of approval.
+Approval writes it; `_client_tool_names` reads it for any list that has one.
+Item ids are stored alongside names because a name alone cannot be traced back to
+its row once the name has changed, which is the failure this exists to survive.
+
+**It is a snapshot, not a lock, and that is the decision.** Editing an approved
+list is a real workflow — the confirm queue exists on purpose and excluded-row
+recovery is a first-class feature. #32 deferred this precisely because making
+APPROVED immutable would break both. What was actually wrong is that the edit
+silently rewrote history. Re-approval refreshes the snapshot, so the escape
+hatch is explicit and audited; the audit row records
+`approved_membership_count` AND `replaced_membership_count`, because a count
+alone cannot say whether a re-approval changed the allow-list.
+
+**Lists with no recorded membership still read live**, and the distinction is
+deliberate: a DRAFT because mapping ATT&CK before approving the tech-debt list is
+a normal order of work, and a pre-0043 list because NULL means "nobody recorded
+this", which is not "nothing was approved". Inventing a membership for those
+would assert something no consultant ever did (the C0 pattern).
+
+**#32 closes.** Its failure scenario — "a list is approved with 20 reviewed
+tools, someone adds 4 free-text rows via the excluded-rows recovery UI, all 4
+enter the ATT&CK allow-list and egress to the model immediately, while
+`approved_by`/`approved_at` still point at the earlier review" — no longer
+happens: those rows are absent from the allow-list until someone re-approves.
+
+**A claim in the plan of record does NOT hold on `main`, and is corrected rather
+than acted on.** §7 asserts that `include_excluded_row` writing
+`confidence_pct=None` makes "a row nobody reviewed render a green pill reading
+'Human-curated' — an affirmative false claim". That is not true of this code:
+`IncludeExcludedRowRequest` documents "the consultant supplies the values;
+nothing is inferred from the raw row", and the route's own docstring says
+re-parsing the raw row "would be guessing at exactly the point a human has
+stepped in". All three writers of `confidence_pct=None` — excluded-row recovery,
+add-components, and manual curation — are human-supplied values, so the badge is
+accurate. No change made. Recorded here because the plan is the document the next
+person will read.

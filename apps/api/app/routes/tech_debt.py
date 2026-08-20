@@ -64,6 +64,7 @@ from app.tech_debt.filename import (
 )
 from app.tech_debt.overlap import analyze_overlap
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
+from app.tech_debt.security_scope import security_scope_filter
 from app.tenant import (
     require_artifact_in_tenant,
     require_service_in_tenant,
@@ -770,13 +771,48 @@ def approve_capability_list(
     cap_list.status = CapabilityListStatus.APPROVED
     cap_list.approved_at = utcnow()
     cap_list.approved_by = user.id
+    # W3: record WHAT was approved, not merely that approval happened.
+    #
+    # An APPROVED list stays editable until release — `_editable_list_or_404`
+    # blocks RELEASED and DISCARDED only — through five doors, one of which
+    # (`patch_capability_item`) can change `name`, and one of which (the
+    # security-classification confirm queue) changes allow-list membership BY
+    # DESIGN. `attack.py::_client_tool_names` turns these names into a hard
+    # allow-list, so without this every "confirmed against the approved list"
+    # claim was checked against whatever the list had since become.
+    #
+    # Re-approval overwrites deliberately: editing an approved list is a real
+    # workflow, and the fix is to make the change explicit and audited rather
+    # than to forbid it.
+    membership = [
+        {"item_id": str(i.id), "name": i.name}
+        for i in db.execute(
+            select(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == cap_list.id)
+            .where(security_scope_filter())
+            .order_by(CapabilityItem.name)
+        )
+        .scalars()
+        .all()
+    ]
+    previous = cap_list.approved_membership
+    cap_list.approved_membership = membership
     audit(
         db,
         action="capability_list.approved",
         target_type="capability_list",
         target_id=cap_list.id,
         actor_user_id=user.id,
-        details={"service_id": str(cap_list.service_id), "version": cap_list.version},
+        details={
+            "service_id": str(cap_list.service_id),
+            "version": cap_list.version,
+            # The count alone is uninterpretable on a RE-approval — "12" says
+            # nothing about whether the allow-list just changed. `replaced` is
+            # what distinguishes a first approval from one that overwrote an
+            # earlier membership (D-049's lesson, applied here).
+            "approved_membership_count": len(membership),
+            "replaced_membership_count": len(previous) if previous is not None else None,
+        },
     )
     db.commit()
     db.refresh(cap_list)

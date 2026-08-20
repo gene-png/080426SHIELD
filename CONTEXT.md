@@ -57,6 +57,16 @@ pytest; `scripts/mutation_sweep.py` runs nightly over changed files. Neither
 closes #72 and D-051 says which instances each is blind to. Its first run filed
 **#92**.
 
+**W3 landed: approving a Tech Debt list now records WHAT was approved (D-053,
+migration 0043).** An APPROVED list stays editable until release through five
+doors, two of which change ATT&CK allow-list membership — a rename, and the
+confirm queue that drops a row from security scope by design. The allow-list is
+hard: a tool missing from it cannot be cited, so its technique reads as
+uncovered. Approval now snapshots the security-scope membership and
+`_client_tool_names` reads that; re-approval refreshes it, audited. **Closes #32
+and unblocks W2.** One claim in the plan of record (§7's "Human-curated" pill)
+does not hold on main and is corrected in D-053 rather than acted on.
+
 **Tech Debt's audit closed #77 and stopped the reconciliation vanishing (D-052).**
 Every registered job now carries a top-level shape guard — a sentence that could
 not be written before. Separately, both surfaces measured the NAMED excluded
