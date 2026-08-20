@@ -1,48 +1,57 @@
 # Gene's Context — 080426SHIELD
 
-**Last updated:** 2026-08-19 (#86 merged, all five checks green; PR #88 open answering all four sent-back questions — W8 split, #84 folds into W1 Risk, methodology fix tested and confirmed, #87 filed with a recommendation)
+**Last updated:** 2026-08-20 (#91 open, docs-only, D-050 decided: Option A confirmed; #90/#89/#85 filed as required follow-ups; #85 re-weighted)
 
 This file is owner-write-only. It exists so any session (mine or a relay) can pick up the real state of the project without reconstructing it from scattered chat history. Update it after every substantive decision. **This file lives in the repo, not on any one machine — a local computer restart does not affect it.**
 
 ## Branch / in flight
 
-`main` has **#78, #80, #76, #49, #50, #81, #82, #86 merged** (#86 merged as `b4d8ab5`, all five checks green). Only **#29** remains open (do-not-merge, parked pending W2 + clean audit) plus **#88** (answers to the four questions below, checks not yet confirmed green — verify before assuming mergeable) and **#84, #85, #87 filed**, all open and tracked.
+`main` has **#78, #80, #76, #49, #50, #81, #82, #86, #88 merged**. Only **#29** remains open (do-not-merge, parked pending W2 + clean audit) plus **#91** (D-050 docs, checks running as of this entry — verify before assuming mergeable) and **#84, #85, #87, #89, #90 filed**, all open and tracked.
 
-**Next action: merge #88 once its checks pass.** No objection to that from this side.
+**Merge #91 when green — no objection.** After that: DELIVERY_PLAN item 2a (W8a) and item 3 (Tech Debt/ATT&CK export audits), per the stated queue. Two open product calls (#87's follow-on #90, and the still-owed test) below, neither blocks #91.
 
-## PR #88 — all four sent-back questions answered
+## D-050 — #87 decided: Option A (contracted target), confirmed and recorded
 
-1. **W8 split, not deferred whole.** W8a is the mechanized #72-pattern sweep, in two measured tiers: a cheap static check (**measured** to catch only ~3-4 of the 9 known instances — explicitly not oversold as full coverage) plus diff-scoped mutation testing (catches the full class, but runs nightly non-blocking rather than gating a PR, since it's too slow to gate). W8a moves up to DELIVERY_PLAN.md item **2a**. W8b stays deferred, with a stated reason rather than silent parking.
-2. **#84 folds into W1 Risk (item 6)**, not sequenced after it — and the justification is stronger than either of us had said: accounting-code-first would bake the wrong target into every fixture written against it, and the actual client-facing consequence is worse than "wrong numbers" — CSF tier-4 clients get **zero** risk findings, not just miscounted ones.
-3. **Methodology fix tested, not just adopted.** Rather than taking the grep-for-symptom suggestion on faith, the other side tested it directly with specific `grep -rnE` commands against the known #72 instances and confirmed it actually surfaces the inline-reimplementation case that the callers-only sweep missed. That's the right way to handle a secondhand suggestion.
-4. **#87 filed and tracked**, not left implicit. Read the issue in full: it's a genuine product/policy call (contracted target vs. the target the consultant reviewed against), not a technical question, so this is offered as a recommendation, not a decision made on Gene's behalf. **Recommendation: Option A, the contracted target.** The document should reflect what the client is being held to, not what happened to be on screen when the consultant clicked submit — the on-screen selection is closer to a UI/workflow bug (the reviewer should be reviewing against the contracted target in the first place) than a legitimate alternate source of truth. **If Option A is confirmed, it likely needs a UI follow-up** so the review screen itself defaults to and highlights the contracted target, rather than leaving the mismatch for someone to notice later.
+Went with the recommendation given last round. **No business reason found for the alternative (B, the on-screen/reviewed target)** — the strongest case for B (a mid-engagement re-scope, e.g. contracted S4 renegotiated to a phased S3) doesn't actually argue for wiring the selector into the document; it argues a re-scope should be a recorded, deliberate change, which is the opposite of "whatever the selector said at click time." D-050 recorded in DECISIONS.md: no behavior change (confirms what #86/D-049 already shipped by implication), but makes the choice explicit and load-bearing rather than an artifact of a bug fix.
 
-## Item 0 (#51) — DONE, PR #82 merged (2026-08-19, see prior entries for full detail)
+**#89 carries the required UI work**, not optional. Labeling the selector alone isn't enough — it's exploration-only and doesn't reach Finalize (`zt.py:1400`, `csf.py:865` take it as a query param only). The part that actually prevents confusion is surfacing the divergence **at Finalize**, the one moment the consultant can act on it. Without that, a screen showing 12 gaps at S3 and a document showing 37 gaps at S4 with no explanation reads as a permanent bug, not a policy decision.
 
-Live AI verified end to end via Tier A/B/C methodology. Live mode reverted to fixture by default afterward, on purpose, documented in DELIVERY_PLAN.md.
+## #90 (new) — Option A has no consultant-side write path at all
+
+Confirming D-050 surfaced a real gap, filed and tracked rather than used to reopen the decision. The only two writes to the contracted target anywhere in the codebase are in the client self-assessment submit (`app/routes/csf.py:664`, `app/routes/zt.py:1186`), both gated on `DRAFT`. `admin.py` only reads. So the value governing every deliverable is: set by the client at intake, amendable exactly once by the client at submit, then frozen forever — **no consultant-side amendment route exists**, short of a direct DB edit or a new service. A re-scoped engagement literally cannot produce a correct document under Option A as it stands today. Three options offered in the issue (consultant-side amend route with audit trail; leave client-only but surface the change to the consultant; snapshot the target at approval, same shape as W3's approval-time snapshot). **This is a product call, not a technical one — my read below.**
+
+**#85 re-weighted, not just re-triaged.** Originally filed as a narrow API edge case (self-assessment submit accepts `target = 1` where intake enforces `>= 2`). It's now understood as a bug in the *sole amendment path* for the value governing every deliverable — producing a document reading "0 gap(s) at target T1," the failure mode that looks most like success. Correctly folded into #90's fix rather than left as a separate low-priority ticket.
+
+**Still owed, flagged rather than assumed:** no test pins either reading of the D-050 policy (document follows contracted target, not the selector). Should land with #89. Given nine confirmed instances of the can't-fail-test pattern in this repo, writing this down now is the right call — an unpinned decision is exactly the kind of thing that drifts back the first time someone "fixes" the mismatch by wiring the selector into finalize.
+
+## My read on #90 (offered as input, not a decision)
+
+Of the three options, the snapshot approach (option 3) is worth taking seriously alongside the audited-amend route (option 1), and I'd lean toward the two together rather than either alone: snapshot the target at approval so a finalized document is reproducible even if the underlying request is later touched, *and* require a consultant-side amend-with-reason route for the pre-approval case, rather than leaving the client as the only writer. Leaving it "client-only, but surfaced" (option 2) doesn't fix the actual problem #90 describes — a re-scoped engagement still can't produce a correct document without a workaround. This is a bigger product/workflow question than #87 was (it touches who owns changes to a contractual value mid-engagement), so treat this as a starting opinion, not a recommendation carrying the same weight as the #87 one.
+
+## Item 0 (#51) — DONE, PR #82 merged; export trio (#86) DONE; W8/#84/methodology (#88) DONE — see prior entries for full detail
 
 ## Session length — measured from git history (unchanged, see prior entries)
 
-1 session ≈ 4-8 hours. Estimate was 5-9 sessions after item 0 closed; still needs revision once #84's W1-Risk fold-in and W8a's actual cost are both landed and measured.
+1 session ≈ 4-8 hours. Still needs revision once #84's W1-Risk fold-in, W8a's actual cost, and now #90's scope are all landed and measured.
 
-## MVP completion path — table, dependencies (DELIVERY_PLAN.md, merged via #81)
+## MVP completion path — table, dependencies (DELIVERY_PLAN.md, merged via #81, updated via #88)
 
-Item 0 → DONE. Item 2 (CSF dashboard) → DONE. Item 1 (export trio) → DONE, merged via #86. Item **2a** (W8a mechanized sweep, two tiers) → new, added via #88, Not started. Items 3-8 still Not started; item 6 (W1 Risk) now explicitly scoped to include #84's fix once #88 merges. Confirm DELIVERY_PLAN.md's table reflects this exactly once #88 lands — don't assume the paste matches the live table.
+Item 0 → DONE. Item 2 (CSF dashboard) → DONE. Item 1 (export trio) → DONE, merged via #86. Item 2a (W8a mechanized sweep, two tiers) → Not started, next in queue. Item 3 (Tech Debt/ATT&CK export audits) → Not started, queued after 2a. Item 6 (W1 Risk) → scoped to include #84's fix; #90's resolution may also land there or as its own item, unclear yet. Confirm DELIVERY_PLAN.md's table reflects #91 exactly once it lands.
 
 ## #44 / W3 / Risk-W6 — all resolved, unchanged, see prior entries for full detail
 
 ## Open decisions — NOT to be reconstructed from memory
 
-- **#87 (contracted vs. reviewed target)** — recommendation given (Option A), not yet confirmed by Gene. If confirmed, needs a UI follow-up flagged above.
+- **#90 (consultant-side amendment path for the contracted target)** — product call, my starting read given above (snapshot + audited amend route), not yet decided by Gene.
+- **Test pinning the D-050 policy** — flagged as still owed, should land with #89, not yet done.
 - #57 — client read behavior for a released ATT&CK assessment
 - `ServiceStatus.RELEASED` (#62)
 - W0's freeze shape (blocked on W5's Part 3 reopen scope)
 
-## Resolved this round (were open, now answered via #88)
+## Resolved as of this round
 
-- W8 priority — split into W8a (moved up, item 2a) / W8b (deferred, stated reason).
-- #84 scope — folds into W1 Risk (item 6), stronger justification recorded above.
-- Audit methodology (grep symptom vs. shared-function callers) — tested and confirmed working, not just adopted on faith.
+- #87 — decided: Option A, recorded as D-050.
+- W8 priority, #84 scope, audit methodology — all resolved via #88 (see prior entry).
 
 ## Environment notes (standing)
 
@@ -55,10 +64,11 @@ PR #29 — explicitly marked do-not-merge by Gene, independently stated as a dep
 
 ## Recurring defect shapes to watch for (CLAUDE.md)
 
-- A test that supplies its own expected value or precondition from the thing under test cannot fail — **9 confirmed instances**, most recent two 2026-08-19 in the #86 audit pass itself. W8a (via #88) is the first mechanized attempt to catch this class in CI rather than relying on audits finding it after the fact — measured honestly at partial coverage for the cheap tier, full coverage only on the slower nightly tier.
-- **A defect in one service/function exists in its twins until checked** — proven true at same-file distance (12 lines) as well as cross-service. Grepping for one shared function's callers is not sufficient; an inline reimplementation of the same logic hides from that sweep (see #84, and the methodology fix above).
+- A test that supplies its own expected value or precondition from the thing under test cannot fail — **9 confirmed instances**. D-050's policy is currently unpinned by any test — flagged above as still owed, not yet a 10th instance since nothing has broken it yet, but the same shape of risk.
+- **A defect in one service/function exists in its twins until checked** — proven true at same-file distance as well as cross-service (see #84, #88).
 - A conditional written to stop double-counting whose false branch silently drops the record.
 - An AI-suggested value that fails validation is dropped silently, indistinguishable from the model having nothing to say.
 - A status line that is wrong is worse than none.
 - Credential material never travels through a relay conversation, even when explicitly offered.
-- Test behavior changes get called out explicitly in the test itself, never silently adjusted — and the callout should cover every property the change affects, not just the one already being asserted (see the font-regression, PR #86).
+- Test behavior changes get called out explicitly in the test itself, never silently adjusted — and the callout should cover every property the change affects, not just the one already being asserted.
+- **A value with exactly one writer and no amendment path becomes load-bearing for everything downstream without anyone deciding that on purpose** — new this round (#90): the contracted target was "just" an intake field until D-050 made every deliverable depend on it, at which point its one-way, client-only write path became a real constraint nobody had chosen deliberately.
