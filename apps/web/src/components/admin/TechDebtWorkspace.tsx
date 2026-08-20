@@ -533,8 +533,18 @@ Components carry no cost of their own — this licence keeps its full value.`,
 
               `included` likewise counts SOURCE-derived rows only, so
               decomposition can never move the reconciliation arithmetic. */}
+            {/* Gate on the DERIVED count, not on the named list. `reconcile.py`
+              withholds the names when the provider did not attribute every item
+              to a source row — so `excluded_rows` is empty in exactly the case
+              where rows WERE excluded and nobody can say which, and measuring
+              the named list concluded nothing was excluded. That is the
+              2026-08-04 defect reachable through the mechanism added to prevent
+              it. The count is `received - source-derived items` and is exact in
+              both regimes; the exporter derives it the same way. */}
             {typeof list.source_rows_total === "number" &&
-            (list.excluded_rows?.length ?? 0) > 0 ? (
+            list.source_rows_total -
+              list.items.filter((i) => !i.parent_item_id).length >
+              0 ? (
               <div
                 className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
                 role="status"
@@ -543,8 +553,17 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 <p className="font-semibold text-status-warning-fg">
                   {list.source_rows_total} rows received ·{" "}
                   {list.items.filter((i) => !i.parent_item_id).length} included
-                  · {list.excluded_rows?.length ?? 0} excluded
+                  ·{" "}
+                  {list.source_rows_total -
+                    list.items.filter((i) => !i.parent_item_id).length}{" "}
+                  excluded
                 </p>
+                {(list.excluded_rows?.length ?? 0) === 0 ? (
+                  <p className="mt-1 text-ink-secondary">
+                    The excluded rows were not attributed individually, so they
+                    cannot be listed below. The count above is exact.
+                  </p>
+                ) : null}
                 <p className="mt-1 text-ink-secondary">
                   Totals below cover the included rows only, not the whole
                   upload.

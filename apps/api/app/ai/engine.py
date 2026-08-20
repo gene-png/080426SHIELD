@@ -145,11 +145,35 @@ def parse_json_object(content: str) -> dict:
     in `jobs.py`. That half is tracked separately; do not read this function as
     covering it.
     """
-    data = parse_json(content)
+    return require_json_object(parse_json(content))
+
+
+def require_json_object(data: Any) -> dict:
+    """The container guard, on ALREADY-DECODED data.
+
+    Split out from `parse_json_object` so a job with its own decoding step can
+    reuse the guard instead of reimplementing it (#77). `tech_debt_extract`
+    retries by slicing between the outermost braces when a provider wraps the
+    JSON in prose — tolerance `parse_json` does not have — so it cannot call
+    `parse_json_object` without losing it. Sharing the CHECK rather than the
+    whole parse is what makes "every registered job carries a top-level shape
+    guard" true without breaking a provider that already works.
+    """
     if not isinstance(data, dict):
         raise AIResponseShapeError(
             f"The AI response must be a JSON object, but the top level was a "
             f"{type(data).__name__}. Nothing was applied."
+        )
+    return data
+
+
+def require_list_at(data: dict, key: str) -> dict:
+    """The list guard, on already-decoded data. See `require_json_object`."""
+    value = data.get(key, [])
+    if not isinstance(value, list):
+        raise AIResponseShapeError(
+            f'The AI response\'s "{key}" must be a JSON array, but it was a '
+            f"{type(value).__name__}. Nothing was applied."
         )
     return data
 
@@ -174,14 +198,7 @@ def parse_json_object_with_list(key: str) -> Callable[[str], dict]:
     """
 
     def _parse(content: str) -> dict:
-        data = parse_json_object(content)
-        value = data.get(key, [])
-        if not isinstance(value, list):
-            raise AIResponseShapeError(
-                f'The AI response\'s "{key}" must be a JSON array, but it was a '
-                f"{type(value).__name__}. Nothing was applied."
-            )
-        return data
+        return require_list_at(parse_json_object(content), key)
 
     return _parse
 

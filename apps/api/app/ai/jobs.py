@@ -8,24 +8,26 @@ The prompt bodies here are the engine-level skeletons. The service phases
 (D2/D3/D4/E) refine the exact suggestion schema each job emits; the parser is
 `parse_json_object_with_list(<key>)` for all four suggestion jobs, so a response
 whose top level is not an object (issue #41) — or whose list key is not a list —
-is refused rather than silently discarded.
+is refused rather than silently discarded. `tech_debt_extract` keeps its own
+parser but calls the same guards (#77), so the invariant now holds for every
+registered job.
 """
 
 from __future__ import annotations
 
 from app.ai.engine import (
     AIJob,
-    # `parse_json_object` is deliberately NOT imported any more: all four
-    # SUGGESTION jobs now carry a top-level shape guard, so reaching for the
-    # unguarded parser here would be a step backwards rather than a default.
+    # `parse_json_object` is deliberately NOT imported any more: every job now
+    # carries a top-level shape guard, so reaching for the unguarded parser here
+    # would be a step backwards rather than a default.
     #
-    # NOT "every registered job" — `tech_debt_extract` has its own parser
-    # (`tech_debt/extract.py`), which still does
-    # `decoded.get("items", []) if isinstance(decoded, dict) else []` and still
-    # iterates the keys of a non-list `items`. It is partly self-reporting,
-    # because `reconcile_rows` then flags every uploaded row as excluded, so a
-    # silent empty extraction is loud-ish rather than clean. Tracked separately;
-    # do not read this import as covering it.
+    # This note previously carved out `tech_debt_extract` as the one exception.
+    # #77 closed that: it keeps its own parser, because the per-item coercion
+    # and the wrap-in-prose retry are not things the generic parser does, but it
+    # now calls the SHARED guards (`require_json_object` / `require_list_at`)
+    # rather than reimplementing the fallbacks they exist to replace. Sharing
+    # the check instead of the whole parse is what made the invariant true
+    # without removing tolerance a working provider depends on.
     parse_json_object_with_list,
     register_job,
 )

@@ -16,7 +16,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from app.tech_debt.exporters import DeliverableContext, cost_label, reconciliation_line
+from app.tech_debt.exporters import (
+    DeliverableContext,
+    build_context,
+    cost_label,
+    reconciliation_line,
+)
 
 
 @dataclass
@@ -25,17 +30,39 @@ class _FakeList:
     excluded_rows: list | None
 
 
+@dataclass
+class _FakeItem:
+    """Minimal source-derived item.
+
+    `build_context` reads costs and `parent_item_id`, so the bare `object()`
+    stubs this file used before no longer suffice — the trade for exercising the
+    real derivation instead of asserting a number the test handed in.
+    """
+
+    annual_cost_usd: float | None = None
+    disposition: object | None = None
+    parent_item_id: object | None = None
+
+
 def _ctx(*, received: int | None, excluded: int, included: int) -> DeliverableContext:
-    return DeliverableContext(
+    """Build through `build_context` rather than constructing the context directly.
+
+    Changed deliberately, and worth stating: the previous version passed
+    `excluded_count=excluded` straight in, so it asserted the rendering of a
+    number the test itself supplied — the code that DERIVES that number was not
+    exercised at all. `build_context` now derives it from
+    `source_rows_total - source-derived items`, which is the behaviour these
+    assertions are really about, so the fixture should build the world and let
+    the code produce the outcome.
+
+    `excluded` still shapes the fake list's NAMED rows, which is what
+    distinguishes "we know which rows" from "we know how many".
+    """
+    return build_context(
         client_legal_name="UX-E2E-Validation",
         service_title="Technical Debt Review",
         cap_list=_FakeList(received, [{"index": i} for i in range(excluded)]),
-        items=[object()] * included,
-        total_cost=3_368_000.0,
-        estimated_savings=0.0,
-        savings_cost_known=True,
-        source_rows_total=received,
-        excluded_count=excluded,
+        items=[_FakeItem() for _ in range(included)],
     )
 
 

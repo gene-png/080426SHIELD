@@ -28,6 +28,14 @@ automatically a defect — some mutants are semantically equivalent, and some
 touch genuinely untested-by-design paths. It is a question worth answering,
 which is the most this tool should ever claim.
 
+**A survivor is only meaningful relative to `--tests`.** Narrowing the target
+manufactures survivors that a wider run kills: the first dogfood run of this
+tool reported `exporters.py:102 FlipCompare` as surviving against one test file,
+and `--tests tests/unit/test_exporters.py -k savings` killed it immediately. So
+a narrow sweep is for asking "do THESE tests pin this code", never for
+concluding a line is untested. The scheduled workflow runs the whole unit suite
+for that reason.
+
 Usage:
     python -m scripts.mutation_sweep --paths app/routes/zt.py --tests tests/unit/test_export_targets.py
     python -m scripts.mutation_sweep --paths app/zt/exporters.py --tests tests/unit -k exporter --limit 20

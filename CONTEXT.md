@@ -50,6 +50,22 @@ self-skipping without a key). What remains true is the reason it mattered:
 fixture responses echo the parser's own keys back, so they can never express a
 drop, a shape error, or a drift.
 
+**Two gates now check whether a test can fail at all (D-051, PR #93).** The #72
+pattern reached nine instances, two of them produced inside the audit hunting
+for them. `scripts/check_test_integrity.py` is static and runs in CI ahead of
+pytest; `scripts/mutation_sweep.py` runs nightly over changed files. Neither
+closes #72 and D-051 says which instances each is blind to. Its first run filed
+**#92**.
+
+**Tech Debt's audit closed #77 and stopped the reconciliation vanishing (D-052).**
+Every registered job now carries a top-level shape guard — a sentence that could
+not be written before. Separately, both surfaces measured the NAMED excluded
+rows, so a provider that did not attribute every item to a source row produced no
+disclosure at all and an unqualified "Total annual cost" over a partial figure:
+the 2026-08-04 incident, reachable through the mechanism added to prevent it. The
+count is now derived rather than measured off the named list, on the exporter and
+the workspace together.
+
 **Exports use the client's target and disclose what they omit (D-049).** #73,
 #75 and #79 were one defect — `analyze_gaps` called without the target every
 other surface resolves — plus a truncation nobody disclosed. Both finalize audit

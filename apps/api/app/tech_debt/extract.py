@@ -25,6 +25,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.ai.engine import require_json_object, require_list_at
 from app.ai.llm import LLMClient
 from app.models.artifact import Artifact
 from app.models.capability import SecurityFunction
@@ -128,19 +129,60 @@ def _load_artifact_bytes(storage: StorageBackend, artifact: Artifact) -> bytes:
     return storage.get(artifact.file_storage_key)
 
 
+def _decode_wrapped_in_prose(content: str, exc: json.JSONDecodeError) -> Any:
+    """Recover JSON a provider wrapped in prose despite the instruction.
+
+    Considers BOTH `{...}` and `[...]`, which the brace-only version did not.
+    That mattered: a bare list wrapped in prose — the likeliest drift, the model
+    returning the array it was told to nest — sliced down to the first ITEM's
+    braces and decoded as a single object with no `items` key, so the run
+    reported one capability found or zero, and the shape guard never saw a list
+    at all. Widening the retry is what lets `require_json_object` observe the
+    real shape and refuse.
+
+    Candidates are tried in the order they appear, and the first that decodes
+    wins: prose like "see [1] for details {...}" would otherwise slice from an
+    unrelated bracket and raise an uncaught decode error.
+    """
+    spans = [
+        (content.find(open_c), content.rfind(close_c))
+        for open_c, close_c in (("{", "}"), ("[", "]"))
+    ]
+    candidates = sorted(
+        (first, content[first : last + 1]) for first, last in spans if first != -1 and last > first
+    )
+    for _, snippet in candidates:
+        try:
+            return json.loads(snippet)
+        except json.JSONDecodeError:
+            continue
+    raise ValueError(f"LLM response was not parseable JSON: {exc}") from exc
+
+
 def _parse_response(content: str) -> list[ExtractedCapability]:
+    """#77: the last AI parser without a top-level shape guard.
+
+    It carried both halves of the family `AIResponseShapeError` exists for — a
+    `if isinstance(decoded, dict) else []` fallback that swallowed a bare-list
+    top level whole, and a `for item in raw_items` that iterated the KEYS of a
+    non-list `items` and then dropped each one. Either reported zero extracted
+    capabilities, indistinguishable from an inventory holding nothing the model
+    recognised. This path feeds the ATT&CK allow-list, where an empty capability
+    list once produced 607 fabricated `gap` rows.
+
+    It reuses `require_json_object` / `require_list_at` rather than switching to
+    `parse_json_object_with_list`, because the prose retry below is tolerance
+    `parse_json` does not have and a wholesale swap would have silently removed
+    it — turning providers that work today into hard failures. Sharing the CHECK
+    and keeping the DECODE is what closes #77 without that regression.
+    """
     try:
         decoded = json.loads(content)
     except json.JSONDecodeError as exc:
-        # Some providers wrap the JSON in prose despite the instruction.
-        # Strip everything outside the outermost {...} and retry once.
-        first = content.find("{")
-        last = content.rfind("}")
-        if first == -1 or last == -1 or last <= first:
-            raise ValueError(f"LLM response was not parseable JSON: {exc}") from exc
-        decoded = json.loads(content[first : last + 1])
+        decoded = _decode_wrapped_in_prose(content, exc)
 
-    raw_items = decoded.get("items", []) if isinstance(decoded, dict) else []
+    require_list_at(require_json_object(decoded), "items")
+    raw_items = decoded.get("items", [])
     return [_coerce_item(item) for item in raw_items if isinstance(item, dict)]
 
 
