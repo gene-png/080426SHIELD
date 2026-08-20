@@ -829,7 +829,10 @@ def approve_capability_list(
     # workflow, and the fix is to make the change explicit and audited rather
     # than to forbid it.
     membership = [
-        {"item_id": str(i.id), "name": i.name}
+        # `vendor` too (W2): the citation resolver uses it to judge whether a
+        # cited string is unambiguous, so a vendor edited after approval would
+        # move the allow-list exactly the way a name edit does.
+        {"item_id": str(i.id), "name": i.name, "vendor": i.vendor}
         for i in db.execute(
             select(CapabilityItem)
             .where(CapabilityItem.capability_list_id == cap_list.id)

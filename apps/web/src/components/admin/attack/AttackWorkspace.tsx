@@ -41,6 +41,7 @@ import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
+import { AttackCitationAccounting } from "./AttackCitationAccounting";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
@@ -461,6 +462,9 @@ export function AttackWorkspace({
                   .{" "}
                   {`${runResult.tools_available} tool${runResult.tools_available === 1 ? "" : "s"} available for mapping.`}
                 </p>
+              ) : null}
+              {runResult ? (
+                <AttackCitationAccounting result={runResult} />
               ) : null}
               {runBlocked ? (
                 <p

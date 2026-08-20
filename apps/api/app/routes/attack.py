@@ -38,6 +38,12 @@ from app.attack.catalog import (
 from app.attack.catalog import (
     all_codes as attack_all_codes,
 )
+from app.attack.citations import (
+    Candidate,
+    CitationOutcome,
+    CitationResolver,
+    resolve_citations,
+)
 from app.attack.coverage import COVERAGE_DEFINITIONS, CoverageStatus
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import render_docx as render_attack_docx
@@ -467,8 +473,12 @@ def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
     return LLMClient.from_db(db)
 
 
-def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
-    """Security tool names from the client's Tech Debt capability list(s).
+def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
+    """Security capabilities from the client's Tech Debt capability list(s).
+
+    Returns name AND vendor: the citation resolver needs the vendor column to
+    judge whether a cited string is unambiguous, and a MISSING vendor is itself
+    information — it makes a vendor-shaped match unverifiable rather than false.
 
     ATT&CK maps the client's security tooling to techniques; the canonical
     source is the Tech Debt capability list (Work Order D2).
@@ -497,6 +507,9 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
       rows meant a citation "confirmed against the approved list" was checked
       against whatever the list had since become, which is the premise #32
       recorded as deferred and W2's narrow-confirmed would otherwise rest on.
+      The snapshot also carries the VENDOR (W2): the citation resolver uses it
+      to judge whether a cited string is unambiguous, so a vendor edited after
+      approval would move the allow-list exactly the way a name edit does.
       A list with no recorded membership (a DRAFT, or one approved before
       migration 0043) still reads live — NULL means nobody recorded it, which is
       not the same as nothing having been approved.
@@ -515,7 +528,7 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
         .all()
     )
 
-    names: list[str] = []
+    pairs: list[tuple[str, str | None]] = []
     # Lists whose approved membership was never recorded still read live: a DRAFT
     # by design (mapping ATT&CK before approving the tech-debt list is a normal
     # order of work, per the docstring above), and a pre-0043 list because NULL
@@ -538,20 +551,41 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
         # against the approved list" citation was checked against whatever the
         # list had since become.
         if cap_list.approved_membership is not None:
-            names.extend(e.get("name") or "" for e in cap_list.approved_membership)
+            pairs.extend(
+                # A snapshot written before W2 carries no `vendor` key. Reading
+                # that as UNKNOWN rather than as "no vendor" is the cautious
+                # direction: the resolver flags a vendor-shaped match it cannot
+                # verify instead of resolving it confidently.
+                (e.get("name") or "", e.get("vendor"))
+                for e in cap_list.approved_membership
+            )
 
     if live_ids:
-        names.extend(
+        pairs.extend(
             db.execute(
-                select(CapabilityItem.name).where(
+                select(CapabilityItem.name, CapabilityItem.vendor).where(
                     CapabilityItem.capability_list_id.in_(live_ids),
                     security_scope_filter(),
                 )
-            )
-            .scalars()
-            .all()
+            ).all()
         )
-    return sorted({n.strip() for n in names if n and n.strip()})
+
+    # De-duplicate on the NAME, keeping the first vendor seen for it. Two lists
+    # can carry the same tool; emitting it twice would make every citation of it
+    # ambiguous and reject every one of them.
+    by_name: dict[str, str | None] = {}
+    for name, vendor in pairs:
+        clean = (name or "").strip()
+        if not clean:
+            continue
+        if clean not in by_name or by_name[clean] is None:
+            by_name[clean] = (vendor or "").strip() or None
+    return [Candidate(name=n, vendor=by_name[n]) for n in sorted(by_name)]
+
+
+def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
+    """Just the names, for callers that only need allow-list membership."""
+    return [c.name for c in _client_capabilities(db, client_id)]
 
 
 _VALID_STATUSES = {s.value for s in CoverageStatus}
@@ -578,6 +612,11 @@ class AttackAiRequest:
     rows: dict[str, AttackCoverage]
     locked_keys: frozenset[str]
     valid_tools: frozenset[str]
+    # W2: the same allow-list carrying vendors, for the citation resolver. A
+    # near miss used to be dropped SILENTLY by the exact-match filter, so a
+    # technique the client covers read as a gap — or kept a `covered` status
+    # with an empty tool list.
+    capabilities: list[Candidate]
     preview: AiPreviewPayload
 
 
@@ -596,7 +635,8 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
 
-    tools = _client_tool_names(db, client.id)
+    capabilities = _client_capabilities(db, client.id)
+    tools = [c.name for c in capabilities]
     rows = {
         r.technique_code: r
         for r in db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -610,6 +650,7 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         rows=rows,
         locked_keys=locked_keys,
         valid_tools=frozenset(t.lower() for t in tools),
+        capabilities=capabilities,
         preview=AiPreviewPayload(
             job_name="mitre_map",
             inputs={"capability_list": tools, "technique_codes": sorted(rows)},
@@ -759,12 +800,17 @@ def run_ai(
     """
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
     req = build_attack_ai_request(db, svc, client)
-    a, rows, locked_keys, valid_tools = (
+    a, rows, locked_keys = (
         req.assessment,
         req.rows,
         req.locked_keys,
-        req.valid_tools,
     )
+    # `req.valid_tools` is no longer consulted: the resolver owns matching now,
+    # and an exact-match frozenset beside it would be a second, laxer answer to
+    # the same question. The field stays on the request because the preview
+    # payload and its tests read it.
+    resolver = CitationResolver(req.capabilities)
+    citations = CitationOutcome()
     tools = req.preview.inputs["capability_list"]
 
     # An empty allow-list cannot produce an assessment — only a fabricated one.
@@ -826,10 +872,28 @@ def run_ai(
     result = _BatchedResult(data={"techniques": suggestions})
 
     def _validate_tools(names: object) -> list[str]:
-        if not isinstance(names, list):
-            return []
-        # Only tools that actually appear in the client's capability list.
-        return [t for t in names if isinstance(t, str) and t.lower() in valid_tools]
+        """Resolve the cited names against the allow-list, and ACCOUNT for each.
+
+        This was `t.lower() in valid_tools` â€” exact match, and every near miss
+        dropped silently with no count and no reason. The technique kept
+        whatever status the model gave it, so a citation that missed by a word
+        left a `covered` technique with an empty tool list, or a `gap` on a
+        control the client owns. A fabricated gap is the failure N-033 shipped.
+
+        Accumulates into the run-level `citations` outcome so the numbers reach
+        the consultant instead of a log line nobody reads.
+        """
+        out = resolve_citations(names, resolver)
+        citations.confirmed += out.confirmed
+        citations.needs_review += out.needs_review
+        citations.rejected += out.rejected
+        for tool in out.needs_review_tools:
+            if tool not in citations.needs_review_tools:
+                citations.needs_review_tools.append(tool)
+        for example in out.rejected_examples:
+            if len(citations.rejected_examples) < 5 and example not in citations.rejected_examples:
+                citations.rejected_examples.append(example)
+        return out.tools
 
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
@@ -900,6 +964,11 @@ def run_ai(
         coverage=coverage,
         batches_total=batches_total,
         batches_failed=batches_failed,
+        citations_confirmed=citations.confirmed,
+        citations_needs_review=citations.needs_review,
+        citations_rejected=citations.rejected,
+        citations_rejected_examples=list(citations.rejected_examples),
+        citations_needs_review_tools=list(citations.needs_review_tools),
     )
 
 
