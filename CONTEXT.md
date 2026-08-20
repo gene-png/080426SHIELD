@@ -65,10 +65,14 @@ for them, minutes after the seventh was written down. W8a — the mechanised swe
 deferred with a stated reason (manual invocation is what caught every #86
 finding; automating the working half is lower value than automating the failing
 one). **#84 is folded into W1 Risk** rather than sequenced after it: it sets the
-input population of the very job W1 Risk instruments. **#87** records the one
-thing #86 settled by implication rather than by decision — whether an exported
-document should use the contracted target or the one the consultant reviewed
-against.
+input population of the very job W1 Risk instruments. **#87 is now decided (D-050): the contracted
+target**, confirming what #86 shipped by implication. Confirming it surfaced a
+gap it creates — **#90**, no consultant-side write path to that target exists
+anywhere; the only two writes are in the client self-assessment submit, gated on
+DRAFT, so the value is client-writable once and then frozen. That re-weights
+**#85** from a narrow API edge case to the sole amendment path for the value
+governing every deliverable. **#89** (the selector is exploration-only; Finalize
+must surface the divergence) is a required follow-up, not optional.
 
 **W1 is two services of four.** CSF (#54) and ZT (#66) are on `main`; Risk
 and ATT&CK are outstanding, in that order, and ATT&CK is gated on W2 landing.

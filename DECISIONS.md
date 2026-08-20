@@ -2422,3 +2422,51 @@ load-bearing (#85).
 all three fixes are proven by unit tests that attach a `ServiceRequest` by direct
 DB write. That is also why nothing caught the defect for the life of the repo:
 the fixtures could not express it.
+
+## D-050 — An exported document uses the contracted target, and the gap-analysis selector affects nothing but the screen
+
+**Date:** 2026-08-20 · **Issues:** #87 (the decision), #89 + #90 + #85 (required follow-ups) · **Follows:** D-049
+
+D-049 shipped this behaviour by implication while fixing #73/#79. It was
+corrected in a comment and then filed as #87 rather than left settled by the
+correction, because the behaviour shipping is not the same as the choice being
+made.
+
+**Decided: the document uses the CONTRACTED target from intake**, not the
+`/gap-analysis` selector. The deliverable is a contractual artifact, not a
+snapshot of exploratory UI state. The rejected alternative — the target the
+consultant last had on screen — produces output that silently depends on ambient
+UI state at the moment of a click, so two consultants reviewing the same
+assessment could produce different documents and neither could reproduce the
+other's. That is a worse defect than the one D-049 fixed.
+
+**No behaviour change: this confirms what D-049 already shipped.** What it adds
+is the obligations, which is the point of deciding it explicitly.
+
+**The selector affects nothing but the screen, and the UI must say so (#89 —
+required, not optional).** A consultant who moves the selector to discuss a
+phased goal, leaves it, and finalizes gets a 12-gap S3 screen and a 37-gap S4
+document with nothing explaining the difference. The behaviour is correct; the
+silence is what makes it read as a permanent bug. The load-bearing part of #89
+is surfacing the divergence **at Finalize** — labelling the selector alone leaves
+it discoverable only by whoever reads carefully before clicking.
+
+**The gap this decision creates, found while confirming it (#90).** There is no
+consultant-side write path to the contracted target anywhere in the codebase.
+The only two writes are in the client self-assessment submit (`csf.py:664`,
+`zt.py:1186`), both gated on `DRAFT`, so the value is set at intake, amendable
+exactly once by the CLIENT, and then frozen — `admin.py` only reads it. A
+re-scoped engagement therefore cannot produce a document against the agreed new
+target at all. This is not a reason to reopen the decision; a re-scope should be
+a recorded deliberate change, which is the opposite of the rejected alternative.
+It needs its own answer.
+
+**It re-weights #85.** Filed as narrow and API-only, it is in fact the sole
+amendment path for the value that now governs every deliverable, and it accepts
+`target = 1` where intake enforces `>= 2` — producing a document reading
+`0 gap(s) at target T1` with no gaps at all. Fix it with #90, not separately.
+
+**Still owed: no test pins either reading.** One asserting the document follows
+the contracted target and NOT the selector should land with #89, or this drifts
+back the first time someone "fixes" the mismatch by wiring the selector into
+finalize. An unpinned decision is the same class of thing as an untested fix.

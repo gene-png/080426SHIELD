@@ -169,12 +169,18 @@ adjacent defect in a shared file; it sets the **input population** of the job
 whose output W1 Risk accounts for, so building the accounting first means every
 fixture encodes the wrong population and then has to be rebuilt.
 
-It is also worse than #84 originally stated. ZT falls back to a literal
-(`else 3`) but at least honours a stored per-capability target; **CSF has no
-per-row target at all**, so `maturity_tier < 3` ignores the client's tier
-unconditionally. For a client contracted at tier 4, every subcategory at tier 3
-is a real gap that generates no risk finding — under-reporting risk, which is the
-failure direction that reads most like success.
+It is also worse than #84 originally stated, and the severity belongs here
+rather than only in the issue. ZT falls back to a literal (`else 3`) but at
+least honours a stored per-capability target; **CSF has no per-row target at
+all**, so `maturity_tier < 3` ignores the client's tier unconditionally.
+
+**For a tier-4 client this is total silent omission, not a miscount.** Every
+subcategory sitting at tier 3 is a real gap that generates **zero** risk
+findings — the Risk Register does not under-count them, it does not mention them.
+Nothing on any surface indicates the omission. Whoever scopes W1 Risk should
+treat #84 as "the Risk Register is silent about a class of real risk for most
+clients", not as an off-by-one in a target comparison; the two justify very
+different amounts of care, and the second reading is the one that gets deferred.
 
 ### Why the chain is worth a second session in parallel
 
@@ -273,10 +279,12 @@ rather than trusting anyone to remember it.
 - **Dev loop:** #65 — `seed_demo.py` is all-or-nothing, so a drifted dev DB
   cannot be repaired by re-seeding
 - **Policy, needs a human:** #57 (client read of a released ATT&CK assessment),
-  #62 (`ServiceStatus.RELEASED`), **#87 (contracted vs. reviewed export target —
-  #86 picked the contracted target by implication while fixing #73/#79; that is
-  probably right but was never actually decided, and no test pins either
-  reading)**
+  #62 (`ServiceStatus.RELEASED`), **#87 — DECIDED 2026-08-20 (D-050): the
+  contracted target. Required follow-ups #89 (UI: the selector is
+  exploration-only, and Finalize must surface the divergence) and #90 (no
+  consultant-side amendment path exists at all — the only writer is the client
+  self-assessment submit, which re-weights #85 from narrow to load-bearing).
+  Still owed: no test pins either reading)**
 
 ## Sprint 1 — Smoke-test automation sweep + defect burn-down (COMPLETE 2026-07-03)
 
