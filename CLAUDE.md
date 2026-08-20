@@ -233,6 +233,18 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   function you just changed, and when you deliberately leave a twin alone, say
   so in the code — an unstated exemption reads as an oversight to everyone who
   finds it later, including you.
+- **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
+  Grepping for callers of the function you just fixed finds every copy that went
+  through that function and misses every REIMPLEMENTATION of it. #84 escaped the
+  #73/#75/#79 sweep exactly that way: `risk.py` never calls `analyze_gaps`, it
+  re-derives the comparison inline, so a complete call-site sweep reported clean
+  over a file that computes client-facing risk findings against a hardcoded
+  target. Grep for what the defect LOOKS like — the literal default values, the
+  truncation constant, the magic number, the shape of the comparison. Concretely,
+  on the trio: `grep -rnE "(maturity_tier|maturity_stage) *< *[0-9]"` returns
+  `risk.py:177` on the first try, and `grep -rnE "is not None else [0-9]"`
+  returns `risk.py:193`. Neither appears in any list of `analyze_gaps` callers.
+  A reimplementation shares the symptom, never the symbol.
 - **Verify each assertion red-on-revert, one fix at a time.** A suite that goes
   green after a change proves the change did not break anything; it says nothing
   about whether the new tests can fail. Revert each fix individually and confirm

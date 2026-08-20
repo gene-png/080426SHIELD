@@ -56,12 +56,13 @@ fixture mode already demos all five.
 | # | Item | Status | Blocked by | Rough size |
 | --- | --- | --- | --- | --- |
 | 0 | **Live-AI verification (#51)** | **DONE** (2026-08-19) | — | — |
-| 1 | **Export-target trio — #73 + #75 + #79** | **IN REVIEW** (D-049) | CI | Done bar review |
+| 1 | **Export-target trio — #73 + #75 + #79** | **DONE** (PR #86, D-049, merged 2026-08-20) | — | — |
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
+| 2a | **W8a — the #72 sweep (tests that cannot fail)** | Not started | Nothing | ~1.5 sessions |
 | 3 | **Export/persistence audit — Tech Debt, ATT&CK** | Not started | ATT&CK's pass should follow W2 (item 5), not race it | 0.5 session each + unknown fixes |
 | 4 | **W3 — Tech Debt approval snapshot** | Not started | Nothing. Decision made: **Option A**, approval-time membership snapshot | 1–1.5 sessions |
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) | 2–3 sessions |
-| 6 | **W1 Risk step** | Not started | Nothing | 1–1.5 sessions |
+| 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
 | 7 | **W1 ATT&CK step** | Not started | **W2** (item 5) | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
 
@@ -120,6 +121,60 @@ W6      ──> (independent)
   post-rewrite shape.
 - **#29 must not merge** until W2 lands plus a clean adversarial audit.
 - Items 1, 6 and 8 depend on nothing and can run in parallel with the chain.
+
+### W8 is split, and half of it moved into the path (decided 2026-08-20)
+
+**This was deferred and is no longer.** The #72 pattern — a test that passes
+whether or not the fix it guards is present — has now produced **nine**
+instances, two of them inside the audit that was specifically hunting for them,
+written by the session that had logged the seventh minutes earlier. Nine
+failures of a documented discipline is a mechanism problem, and the rule living
+in `CLAUDE.md` demonstrably does not prevent new instances.
+
+So W8 splits along the line where the two halves actually differ:
+
+- **W8a — the #72 sweep. Item 2a above, in the path.** Deterministic, no LLM.
+- **W8b — the adversarial reviewer as a CI job. Stays deferred, with a reason:**
+  it is non-deterministic and expensive per PR, and invoking it manually is
+  demonstrably working — it is what caught every #86 finding. Automating the
+  thing that already works is lower value than automating the thing that keeps
+  failing.
+
+**W8a is two tiers, and the catch rates are stated because overstating them
+would itself be the #72 pattern one level up:**
+
+| Tier | Mechanism | Measured against today's suite | Catches |
+| --- | --- | --- | --- |
+| 1 | Static: flag test modules importing private names from the module under test, and bare substring assertions on stringified values | **5 + 2 hits across 868 unit tests, 3 files** — near-zero noise, allowlistable | ~3–4 of the 9 |
+| 2 | Diff-scoped mutation testing — the automation of red-on-revert | Full suite is 13–16 min, so 50–150 mutants cannot be a blocking per-PR gate | the class |
+
+Tier 1 cannot see instance 2 (setup performs the step under test) or instance 9
+(a deletable keyword argument) — neither has a static signature. **Tier 2 runs
+nightly or on a label, not as a blocking gate:** a non-blocking mechanism that
+runs beats a blocking one that gets disabled.
+
+**Why it moves up rather than sitting at the end.** Every remaining item — W3,
+W2, W1 Risk, W1 ATT&CK, W6 — ships new tests. Landing this first means five
+workstreams get the guarantee as they are written; landing it last means
+retroactively auditing five workstreams' worth of tests. The argument is about
+sequencing, not severity. It does not make a service usable for a client
+engagement, so it is item **2a** rather than item 1 — real, ordered, and not
+pretending to be user-facing.
+
+### #84 is taken as part of W1 Risk, not sequenced after it
+
+`_gather_findings` (`routes/risk.py:171-202`) builds the finding set **fed into
+`risk_synthesize`** — the job W1's Risk step exists to instrument. This is not an
+adjacent defect in a shared file; it sets the **input population** of the job
+whose output W1 Risk accounts for, so building the accounting first means every
+fixture encodes the wrong population and then has to be rebuilt.
+
+It is also worse than #84 originally stated. ZT falls back to a literal
+(`else 3`) but at least honours a stored per-capability target; **CSF has no
+per-row target at all**, so `maturity_tier < 3` ignores the client's tier
+unconditionally. For a client contracted at tier 4, every subcategory at tier 3
+is a real gap that generates no risk finding — under-reporting risk, which is the
+failure direction that reads most like success.
 
 ### Why the chain is worth a second session in parallel
 
@@ -198,7 +253,7 @@ rather than trusting anyone to remember it.
 | **W0 freeze** | Open decision | Unblocked by W4, but needs Part 3 reopen scoped for CSF (that is W5). D-046 is explicit the W4 lock is PARTIAL |
 | **W5 — reopen ×4 + release-staleness guard** | Not started | Unblocked by W4. **#59 is in scope for it** |
 | **W7 — watermarking** | Not started | Gated on W5 |
-| **W8 — adversarial audit in CI** | Half done | Agent file landed (PR #36); the CI job was never built. **#72** (sweep for tests that cannot fail) attaches here |
+| **W8b — adversarial reviewer as a CI job** | Deferred, with a reason | Agent file landed (PR #36); the CI job was never built. Stays deferred: non-deterministic and expensive per PR, and invoking it manually is demonstrably working — it is what caught the #86 findings. **W8a (#72) split out and moved into the path above** |
 | **#67 recurrence risk** | Fixed for CSF (PR #78) | — |
 | Production runway | Unscheduled | See the section below; still gated on cloud/account decisions |
 
@@ -218,7 +273,10 @@ rather than trusting anyone to remember it.
 - **Dev loop:** #65 — `seed_demo.py` is all-or-nothing, so a drifted dev DB
   cannot be repaired by re-seeding
 - **Policy, needs a human:** #57 (client read of a released ATT&CK assessment),
-  #62 (`ServiceStatus.RELEASED`)
+  #62 (`ServiceStatus.RELEASED`), **#87 (contracted vs. reviewed export target —
+  #86 picked the contracted target by implication while fixing #73/#79; that is
+  probably right but was never actually decided, and no test pins either
+  reading)**
 
 ## Sprint 1 — Smoke-test automation sweep + defect burn-down (COMPLETE 2026-07-03)
 

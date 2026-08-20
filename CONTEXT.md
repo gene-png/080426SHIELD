@@ -56,7 +56,19 @@ other surface resolves — plus a truncation nobody disclosed. Both finalize aud
 rows now record the target AND whether the client chose it, because a gap count
 became uninterpretable the moment the target stopped being a constant. The
 audit that gated it filed #84 (`risk.py` still compares against a hardcoded 3)
-and #85 (self-assessment accepts a target intake rejects).
+and #85 (self-assessment accepts a target intake rejects). Landed as PR #86.
+
+**W8 is split and half of it is now in the MVP path (2026-08-20).** The #72
+pattern reached **nine** instances, two of them produced inside the audit hunting
+for them, minutes after the seventh was written down. W8a — the mechanised sweep
+— becomes DELIVERY_PLAN item 2a; W8b, the adversarial reviewer as a CI job, stays
+deferred with a stated reason (manual invocation is what caught every #86
+finding; automating the working half is lower value than automating the failing
+one). **#84 is folded into W1 Risk** rather than sequenced after it: it sets the
+input population of the very job W1 Risk instruments. **#87** records the one
+thing #86 settled by implication rather than by decision — whether an exported
+document should use the contracted target or the one the consultant reviewed
+against.
 
 **W1 is two services of four.** CSF (#54) and ZT (#66) are on `main`; Risk
 and ATT&CK are outstanding, in that order, and ATT&CK is gated on W2 landing.
