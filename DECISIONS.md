@@ -2422,3 +2422,85 @@ load-bearing (#85).
 all three fixes are proven by unit tests that attach a `ServiceRequest` by direct
 DB write. That is also why nothing caught the defect for the life of the repo:
 the fixtures could not express it.
+
+## D-050 — An exported document uses the contracted target, and the gap-analysis selector affects nothing but the screen
+
+**Date:** 2026-08-20 · **Issues:** #87 (the decision), #89 + #90 + #85 (required follow-ups) · **Follows:** D-049
+
+D-049 shipped this behaviour by implication while fixing #73/#79. It was
+corrected in a comment and then filed as #87 rather than left settled by the
+correction, because the behaviour shipping is not the same as the choice being
+made.
+
+**Decided: the document uses the CONTRACTED target from intake**, not the
+`/gap-analysis` selector. The deliverable is a contractual artifact, not a
+snapshot of exploratory UI state. The rejected alternative — the target the
+consultant last had on screen — produces output that silently depends on ambient
+UI state at the moment of a click, so two consultants reviewing the same
+assessment could produce different documents and neither could reproduce the
+other's. That is a worse defect than the one D-049 fixed.
+
+**No behaviour change: this confirms what D-049 already shipped.** What it adds
+is the obligations, which is the point of deciding it explicitly.
+
+**The selector affects nothing but the screen, and the UI must say so (#89 —
+required, not optional).** A consultant who moves the selector to discuss a
+phased goal, leaves it, and finalizes gets a 12-gap S3 screen and a 37-gap S4
+document with nothing explaining the difference. The behaviour is correct; the
+silence is what makes it read as a permanent bug. The load-bearing part of #89
+is surfacing the divergence **at Finalize** — labelling the selector alone leaves
+it discoverable only by whoever reads carefully before clicking.
+
+**The gap this decision creates (#90).** There is no consultant-side write path
+to the contracted target. The only two writes are in the client self-assessment
+submit (`csf.py:664`, `zt.py:1186`); `admin.py` only reads it.
+
+An earlier draft of this record said the value was therefore "amendable exactly
+once and then frozen." **That was wrong and is corrected here.** The 409 guard is
+on the LATEST ASSESSMENT's status, not a global one-time lock, and
+`POST /services/{id}/assessments` — admin-only — cuts a new assessment version
+once the prior one has moved on. A new version starts DRAFT, so the client's
+self-assessment submit is reachable again and writes the target again. A re-scope
+IS achievable today: the consultant cuts a new cycle, the client re-submits with
+the agreed target.
+
+**What is actually wrong with that path** is the price, not its absence:
+
+- It **discards the completed assessment**. New versions seed blank answer rows
+  (`ZtAnswer(assessment_id=…, capability_code=…)` with no stage), so changing one
+  number costs all 87/106 answers and the work behind them.
+- It **cannot be completed by the consultant alone** — the client must re-submit.
+  An unresponsive client means the target cannot change.
+- The client can set a target the consultant never agreed to, and it silently
+  governs the deliverable.
+
+So the mechanism exists and is unusable for its purpose, which is a different
+finding from "no mechanism exists" and points at the same fix.
+
+**Direction on #90: a consultant-side amend route AND an approval-time target
+snapshot, together.** They are not alternatives. The amend route is how a
+legitimate change gets made; the snapshot is what stops an already-approved
+report drifting when the underlying request is edited later. Without the
+snapshot, adding the amend route makes things WORSE — a consultant edit would
+retroactively change what a released deliverable claims it was measured against.
+The snapshot is the same shape and the same lifecycle moment as W3's
+approval-time membership snapshot, so they should be built together rather than
+inventing a second mechanism.
+
+**The test pinning this decision is required scope for #89, not a follow-on.**
+#89 exists because the selector/document divergence reads as a bug, and the
+obvious "fix" for anyone who has not read this record is to wire the selector
+into finalize — silently reversing the decision, breaking nothing, caught by no
+current test. The assertion must name the TARGET (`gap(s) at target T4`), not a
+bare gap count: `str(count) in summary` is precisely how instance 8 of the #72
+pattern passed vacuously in this same area.
+
+**It re-weights #85.** Filed as narrow and API-only, it is in fact the sole
+amendment path for the value that now governs every deliverable, and it accepts
+`target = 1` where intake enforces `>= 2` — producing a document reading
+`0 gap(s) at target T1` with no gaps at all. Fix it with #90, not separately.
+
+**No test pins either reading yet — and that is #89's required scope**, per the
+paragraph above rather than a hope. An unpinned decision is the same class of
+thing as an untested fix, and this repo has nine recorded instances of the
+second.
