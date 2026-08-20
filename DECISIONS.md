@@ -2348,3 +2348,77 @@ Named here rather than left to be rediscovered.
 `apps/api/app/models/csf_profile.py`, `apps/api/alembic/versions/0042_*.py`,
 `apps/api/app/schemas/csf.py`, `apps/web/src/lib/csf/types.ts`,
 `apps/web/src/components/admin/csf/CsfPlaybookPanel.tsx`.
+
+## D-049 — An exported document uses the client's contracted target, discloses what it omits, and records which target it used
+
+**Date:** 2026-08-20 · **Issues:** #73, #75, #79 (filed out of it: #84, #85)
+
+Three issues, one defect: `analyze_gaps` called without the target the rest of
+the product resolves, and a truncation nobody disclosed. They merge together
+because splitting them would have shipped the half-fix the third one is about.
+
+**The exporters now use the engagement target.** `finalize_zt_deliverable` called
+`analyze_gaps` with neither `targets` nor `target_stage`, and the CSF twin with
+no `target_tier`, for the life of the repo. Every exported document was computed
+against `DEFAULT_TARGET_STAGE`/`TIER` (3) while the dashboards used the client's
+choice — and intake makes that choice MANDATORY, so roughly two-thirds of
+engagements had a document that disagreed with every screen showing the same
+assessment. A capability stored with target 2 printed as 3: a number the database
+does not contain and nobody chose.
+
+**Which target, precisely.** The document follows the CONTRACTED target from
+intake, not the `/gap-analysis` target selector. The selector is a query
+parameter the consultant moves freely to explore a phased goal, and finalize
+never receives it, so leaving it on 3 and finalizing yields an S3 screen and an
+S4 document. That is the intended reading — the artefact belongs to the
+engagement, not to the last thing anyone clicked — but it is a policy rather
+than a consequence, so both finalize audit rows now record `target_*` and
+`target_*_source` ("client" vs "default"). A `gap_count` without its target was
+uninterpretable the moment the target stopped being a constant, and a fallback
+that happens to equal a choice must not read as one. The first draft of the ZT
+comment claimed the fix tracked "the view the consultant reviews and signs off";
+it does not, and the comment was corrected rather than left as inherited
+rationale.
+
+**Truncation is disclosed in all three renderers, for both services.**
+`analyze_gaps` slices to `DEFAULT_TOP_N = 20` while keeping the true count, and
+XLSX/DOCX/PDF printed only the slice, so a client read 20 of 106 remediation
+items with no way to tell. ATT&CK has always disclosed this in its heading; CSF
+and ZT now do too, and no exporter truncates a client-facing list silently.
+
+**#75 was filed against ZT and is fixed for both.** The first implementation
+fixed ZT alone. The audit caught it, and correctly noted that the CSF half was
+made _worse_ rather than merely left alone: raising CSF's target from the engine
+default to the client's tier INCREASES the gap count, so more is hidden exactly
+where the disclosure started mattering more. `test_csf_exporters.py` had asserted
+the truncation as intended behaviour (`ws.max_row == 21` over a 106-gap fixture)
+without ever asking whether the document said so.
+
+**The ZT caption does not name a single target for every row.** ZT honours a
+per-capability `target_stage`, so `gap.target_stage` is the engagement value and
+rows may legitimately differ; a headline "at target S4" over a row reading S2
+would be the same contradiction one document down. The caption names the
+engagement target and points at the per-row column. CSF takes a single tier with
+no override, so its caption can and does name one target.
+
+**Two of the tests written for this could not fail**, both caught by the audit
+rather than by any gate — the eighth and ninth instances of the #72 pattern.
+The CSF assertion `str(dash["total_gap_count"]) in doc_summary` was satisfied by
+the coverage fraction: with the fix reverted the summary reads `106/106
+subcategories scored; 0 gap(s) at target T3`, and `"106" in ...` is True. The ZT
+per-capability half (`targets=`) was deletable with the whole suite green,
+because the only test touching it left every `target_stage` NULL. Every
+assertion in this change was subsequently verified red-on-revert individually,
+and that verification is the practice #72 should mechanise.
+
+**Out of scope, filed rather than folded in:** `routes/risk.py` re-derives the
+comparison inline against a hardcoded 3 and so fell outside the `analyze_gaps`
+sweep (#84); the self-assessment submit schemas accept a target of 1 where
+intake enforces `>= 2`, which was inert until this change made stored targets
+load-bearing (#85).
+
+**Known coverage gap:** `seed_demo.py` creates services with no
+`source_request_id`, so no seeded service and no e2e spec exercises any of this —
+all three fixes are proven by unit tests that attach a `ServiceRequest` by direct
+DB write. That is also why nothing caught the defect for the life of the repo:
+the fixtures could not express it.

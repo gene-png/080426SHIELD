@@ -78,6 +78,32 @@ def _subcategory_meta(code: str) -> Subcategory | None:
     return None
 
 
+def _gap_plan_caption(gap: GapAnalysis) -> str:
+    """What the Gap Plan is showing, and what it is NOT (#75).
+
+    The twin of `app.zt.exporters._gap_plan_caption`. #75 was filed against Zero
+    Trust; CSF truncates to the same `DEFAULT_TOP_N = 20` through the same
+    `analyze_gaps` and disclosed it in exactly as few places, so fixing one and
+    leaving the other would have reproduced the half-fix that made #79
+    necessary. ATT&CK has always disclosed its own truncation in the heading
+    ("Top remediation gaps (50 of N shown)") — after this, no exporter truncates
+    a client-facing list silently.
+
+    Unlike ZT, CSF's `analyze_gaps` takes a single engagement `target_tier` with
+    no per-subcategory override, so naming one target here cannot contradict a
+    row.
+    """
+    shown, total = len(gap.gaps), gap.total_gap_count
+    remaining = total - shown
+    if shown >= total:
+        return f"All {total} gap{'' if total == 1 else 's'} at target T{gap.target_tier}."
+    return (
+        f"Showing the {shown} highest-priority of {total} gaps at target "
+        f"T{gap.target_tier}; {remaining} further gap"
+        f"{'' if remaining == 1 else 's'} not listed."
+    )
+
+
 def _fmt_tier(value: float | None) -> str:
     if value is None:
         return "—"
@@ -189,9 +215,13 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
         "Priority",
         "Notes",
     ]
+    # Caption first, so a client reading top-down learns the list is a slice
+    # BEFORE reading it. That puts the header on row 2 — every row index below
+    # is offset accordingly.
+    ws3.append([_gap_plan_caption(ctx.gap)])
     ws3.append(headers3)
     for col in range(1, len(headers3) + 1):
-        cell = ws3.cell(row=1, column=col)
+        cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
     for g in ctx.gap.gaps:
@@ -222,7 +252,8 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 "",
             ]
         )
-        ws3.cell(row=2, column=4).font = italic
+        # Row 1 is the caption, row 2 the header, so the placeholder is row 3.
+        ws3.cell(row=3, column=4).font = italic
     for w, col in zip([14, 10, 10, 32, 14, 14, 12, 12, 50], range(1, 10), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
 
@@ -277,6 +308,7 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
     )
 
     add_heading(doc, f"Top remediation gaps (target T{ctx.gap.target_tier})")
+    add_paragraphs(doc, [_gap_plan_caption(ctx.gap)])
     if not ctx.gap.gaps:
         add_paragraphs(
             doc,
@@ -368,6 +400,7 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
     story.append(PageBreak())
 
     story.append(Paragraph(f"Top remediation gaps (target T{ctx.gap.target_tier})", h2))
+    story.append(Paragraph(_gap_plan_caption(ctx.gap), body))
     if not ctx.gap.gaps:
         story.append(
             Paragraph(

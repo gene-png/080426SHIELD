@@ -1592,7 +1592,37 @@ def finalize_zt_deliverable(
         r.capability_code: r.notes for r in answers if r.capability_code in valid
     }
     score = compute_score(cat_fw, stage_map)
-    gap = analyze_gaps(cat_fw, stage_map, notes=notes_map)
+    # The CLIENT'S CONTRACTED target, not the engine default (#73).
+    #
+    # This called `analyze_gaps` with neither argument for the life of the repo,
+    # so every exported document computed gaps against DEFAULT_TARGET_STAGE. A
+    # client on stage 4 received a document listing a different gap set than the
+    # dashboard showed, and a capability stored with target 2 printed as 3: a
+    # number the database does not contain and nobody chose.
+    #
+    # Precisely what this does and does not guarantee: the document now matches
+    # the intake stage and the stored per-capability targets. It does NOT track
+    # the `/gap-analysis` target SELECTOR, which is a query parameter the
+    # consultant can move freely to explore a phased goal and which finalize
+    # never receives. If they leave it on 3 and finalize, the screen shows the
+    # S3 gap set and the document carries the contracted S4 one. That is the
+    # intended reading — the artefact belongs to the engagement, not to the last
+    # thing anyone clicked — but it is a policy, so the audit row below records
+    # which target was used rather than leaving it to be inferred.
+    #
+    # `intake.py` makes the ZT stage MANDATORY, so this is the normal case, not
+    # an edge one.
+    targets_map: dict[str, int | None] = {
+        r.capability_code: r.target_stage for r in answers if r.capability_code in valid
+    }
+    engagement_target = _client_target_stage(db, svc.id)
+    gap = analyze_gaps(
+        cat_fw,
+        stage_map,
+        notes=notes_map,
+        targets=targets_map,
+        **({"target_stage": engagement_target} if engagement_target is not None else {}),
+    )
 
     client_name = client.legal_name
     if client_name == "(pending intake)":
@@ -1708,6 +1738,13 @@ def finalize_zt_deliverable(
             "overall_stage_label": score.overall_stage_label,
             "average_stage": score.average_stage,
             "gap_count": gap.total_gap_count,
+            # A gap count is uninterpretable without the target it was computed
+            # against, and that target is now per-engagement where it used to be
+            # a constant. `target_stage_source` distinguishes a client's decision
+            # from a fallback that happens to equal it — the same distinction the
+            # CSF dashboard already publishes as `target_tier_source`.
+            "target_stage": gap.target_stage,
+            "target_stage_source": ("client" if engagement_target is not None else "default"),
         },
     )
     assessment.documents_stale = False  # Work Order C3

@@ -153,8 +153,20 @@ def test_xlsx_handles_empty_gap_list_with_placeholder() -> None:
     ctx = _ctx(ZtFrameworkCode.CISA_ZTMM_2_0, stage=4, target=3)
     wb = load_workbook(io.BytesIO(render_xlsx(ctx)))
     ws = wb["Gap Plan"]
-    assert ws.max_row == 2
-    assert ws.cell(row=2, column=3).value == "No gaps at target stage"
+    # Rows shifted by one when #75 added the caption row above the header: the
+    # sheet now opens by stating what it is showing and what it is omitting.
+    # The placeholder behaviour itself is unchanged, which is the point of this
+    # test — only its position moved.
+    assert ws.cell(row=1, column=1).value.startswith("All 0 gaps listed.")
+    assert ws.max_row == 3
+    assert ws.cell(row=3, column=3).value == "No gaps at target stage"
+    # The one property the shifted index actually controls, and the reason this
+    # test walked past the bug the first time: the italic emphasis must land on
+    # the PLACEHOLDER, not on the header the caption pushed into its old slot.
+    assert ws.cell(row=3, column=3).font.italic, "placeholder lost its emphasis"
+    header = ws.cell(row=2, column=3)
+    assert header.value == "Name"
+    assert header.font.bold and not header.font.italic, "the header was styled as the placeholder"
 
 
 @pytest.mark.unit

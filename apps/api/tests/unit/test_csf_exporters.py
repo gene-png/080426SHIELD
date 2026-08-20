@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from app.csf.catalog import SUBCATEGORIES
-from app.csf.exporters import build_context, render_pdf, render_xlsx
+from app.csf.exporters import build_context, render_docx, render_pdf, render_xlsx
 from app.csf.gap import analyze as analyze_gaps
 from app.csf.scoring import compute as compute_score
 from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
@@ -93,8 +93,35 @@ def test_xlsx_gap_plan_contains_top_gaps_when_target_is_adaptive(
     raw = render_xlsx(context_with_full_tier3)
     wb = load_workbook(io.BytesIO(raw))
     ws = wb["Gap Plan"]
-    # Default top_n=20 with target=4 produces 20 gap rows + 1 header.
-    assert ws.max_row == 21
+    # Default top_n=20 with target=4 produces 20 gap rows + 1 header + the #75
+    # caption row. This test previously asserted the truncation as intended
+    # behaviour without ever asking whether the document disclosed it; the
+    # caption assertion is the half that was missing.
+    assert ws.max_row == 22
+    total = context_with_full_tier3.gap.total_gap_count
+    assert f"of {total} gaps" in ws.cell(row=1, column=1).value
+
+
+@pytest.mark.unit
+def test_docx_gap_plan_discloses_truncation(context_with_full_tier3) -> None:
+    """#75 in the renderer a client actually reads.
+
+    The XLSX assertion above is not enough on its own: `render_docx` had no
+    unit coverage in this file at all, so the caption there was proven only by
+    "finalize did not raise". A client is sent the DOCX and the PDF far more
+    often than the spreadsheet, and those are the surfaces #75 is about.
+    """
+    import zipfile
+
+    raw = render_docx(context_with_full_tier3)
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        xml = z.read("word/document.xml").decode("utf-8")
+
+    total = context_with_full_tier3.gap.total_gap_count
+    assert total > 20, "fixture must truncate, or this proves nothing"
+    assert (
+        f"of {total} gaps" in xml
+    ), f"the DOCX Gap Plan renders a slice of {total} gaps and never states the total"
 
 
 @pytest.mark.unit
@@ -160,9 +187,13 @@ def test_xlsx_handles_empty_gap_list_with_placeholder_row() -> None:
     )
     wb = load_workbook(io.BytesIO(render_xlsx(ctx)))
     ws = wb["Gap Plan"]
-    # Header + 1 placeholder row.
-    assert ws.max_row == 2
-    assert ws.cell(row=2, column=4).value == "No gaps at target tier"
+    # Caption + header + 1 placeholder row (#75 added the caption).
+    assert ws.max_row == 3
+    assert ws.cell(row=3, column=4).value == "No gaps at target tier"
+    assert ws.cell(row=3, column=4).font.italic, "placeholder lost its emphasis"
+    header = ws.cell(row=2, column=4)
+    assert header.value == "Name"
+    assert header.font.bold and not header.font.italic, "the header was styled as the placeholder"
 
 
 @pytest.mark.unit

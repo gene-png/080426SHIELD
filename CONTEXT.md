@@ -1,7 +1,8 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-18 (cross-service integrity; PRs #34, #35, #36, #39, #42,
-#45, #48, #54, #56, #58, #63, #66 merged, `main` at `68ca6c9`, CI green). NOTE: this
+_Last updated: 2026-08-20 (cross-service integrity; PRs #34, #35, #36, #39, #42,
+#45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
+CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
 `main` carrying the working tree through `v3.7.0`; the PR numbers cited in the
 sprint history below belong to the upstream repo, not to this one. This file
@@ -37,6 +38,25 @@ record**, with workstreams W0–W8. Read it before picking any of this up.
 | #58 | **W4** — release assigns RELEASED to the parent and records which parent (**D-046**, migration 0041) |
 | #63 | `CLAUDE.md`: a test that supplies its own expected value cannot fail |
 | #66 | **W1, ZT step** — every AI suggestion applied or itemized; narrative fields removed (**D-047**, five adversarial rounds) |
+| #78 | Shape guards on all four suggestion jobs + CSF hand-typed score protection (**D-048**, migration 0042) |
+| #80 | **CSF client dashboard** — the last assessment service without one |
+| #81 | `DELIVERY_PLAN.md` gains a living MVP completion path (order, status, blockers, sizes) |
+| #82 | **Live-AI verification (#51)** — all five purposes run against a real provider; a corrupting-provider test reaches the drop paths fixture mode cannot |
+
+**The AI layer has now run live.** A working provider key was installed
+2026-08-19 and every purpose was exercised end to end with redaction confirmed.
+Resting mode is back to `fixture`; live is opt-in per run (`pytest -m live`,
+self-skipping without a key). What remains true is the reason it mattered:
+fixture responses echo the parser's own keys back, so they can never express a
+drop, a shape error, or a drift.
+
+**Exports use the client's target and disclose what they omit (D-049).** #73,
+#75 and #79 were one defect — `analyze_gaps` called without the target every
+other surface resolves — plus a truncation nobody disclosed. Both finalize audit
+rows now record the target AND whether the client chose it, because a gap count
+became uninterpretable the moment the target stopped being a constant. The
+audit that gated it filed #84 (`risk.py` still compares against a hardcoded 3)
+and #85 (self-assessment accepts a target intake rejects).
 
 **W1 is two services of four.** CSF (#54) and ZT (#66) are on `main`; Risk
 and ATT&CK are outstanding, in that order, and ATT&CK is gated on W2 landing.
