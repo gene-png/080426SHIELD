@@ -114,9 +114,20 @@ def build_context(
     # the names when the provider did not attribute every item to a source row,
     # so `len(named)` is 0 in exactly the case where rows WERE excluded and
     # nobody can say which — the 2026-08-04 defect, reachable through the
-    # mechanism added to prevent it. The count is trustworthy in both regimes and
-    # equals `len(named)` whenever attribution is complete, so deriving it needs
-    # no second stored counter to drift on the include-an-excluded-row path.
+    # mechanism added to prevent it. It equals `len(named)` whenever attribution
+    # is complete, so deriving it needs no second stored counter to drift on the
+    # include-an-excluded-row path.
+    #
+    # NOT trustworthy in every regime, and an earlier version of this comment
+    # claimed it was. When the model emits at least as many items as there were
+    # source rows — two items sharing one `source_row_index`, say — `max(..., 0)`
+    # reports ZERO, and a genuinely excluded row goes undisclosed while
+    # `cost_label` prints "Total annual cost". Strictly better than measuring the
+    # named list, which was 0 in that case too; still short of honest. Closing it
+    # needs `reconcile.py`'s `attribution_complete` persisted so the renderer can
+    # say "the reconciliation does not balance" rather than "nothing was
+    # excluded" — a zero-value record that names the fault, per the CLAUDE.md
+    # rule. Tracked, not silently accepted.
     excluded_count = max(received - included, 0) if received is not None else 0
     return DeliverableContext(
         source_rows_total=received,

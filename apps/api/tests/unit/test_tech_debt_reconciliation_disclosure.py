@@ -2,10 +2,16 @@
 
 `reconcile_rows` deliberately produces two different things:
 
-- `excluded` — a COUNT, `received - included`, trustworthy in every case;
+- `excluded` — a COUNT, `received - included`. Trustworthy whenever fewer items
+  came back than rows went in, which is the normal case. NOT when items
+  outnumber source rows: the arithmetic then cannot distinguish "nothing was
+  excluded" from "a row was excluded and another row produced two items". See
+  the KNOWN_GAP test at the bottom of this file — an earlier version of this
+  docstring said "trustworthy in every case" and was contradicted by its own
+  test 150 lines below it.
 - `excluded_rows` — the NAMED rows, populated **only** when every extracted item
-  attributed itself to a valid source row. Its own comment says the naming is
-  "withheld rather than guessed" and that "the count stays honest".
+  attributed itself to a valid source row. The naming is "withheld rather than
+  guessed".
 
 The count did not stay honest, because nothing persisted it. The route stores
 `source_rows_total` and the named list; `Reconciliation.excluded` and
@@ -156,7 +162,21 @@ def test_decomposed_children_do_not_move_the_arithmetic() -> None:
 
 
 @pytest.mark.unit
-def test_more_items_than_source_rows_never_reports_a_negative_exclusion() -> None:
+def test_more_items_than_source_rows_reports_zero_and_that_is_a_KNOWN_GAP() -> None:
+    """Pins current behaviour, and names it as incomplete rather than correct.
+
+    The first version of this test was called "never reports a negative
+    exclusion" — true, and it read as though zero were the right answer. It is
+    not. When the model emits at least as many items as there were source rows
+    (two items sharing one `source_row_index`), a genuinely excluded row goes
+    undisclosed and `cost_label` prints "Total annual cost" over a partial
+    figure — N-010's failure, arriving from the other side of the arithmetic.
+
+    Still strictly better than measuring the named list, which was also 0 here.
+    Closing it needs `attribution_complete` persisted so the renderer can say
+    "the reconciliation does not balance". Named here so the next reader does
+    not mistake a pinned gap for a guarantee.
+    """
     ctx = _ctx(received=5, named=[], items=[_Item(f"cap{i}") for i in range(9)])
     assert ctx.excluded_count == 0
     assert reconciliation_line(ctx) is None
