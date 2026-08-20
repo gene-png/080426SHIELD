@@ -1,62 +1,53 @@
 # Gene's Context — 080426SHIELD
 
-**Last updated:** 2026-08-19 (Item 0 unblocked — live AI verified end to end; two open questions sent before #51 runs)
+**Last updated:** 2026-08-19 (Item 0 DONE, #82 merged; export trio red→green locally, adversarial audit + full suite still in flight, no PR yet)
 
 This file is owner-write-only. It exists so any session (mine or a relay) can pick up the real state of the project without reconstructing it from scattered chat history. Update it after every substantive decision. **This file lives in the repo, not on any one machine — a local computer restart does not affect it.**
 
 ## Branch / in flight
 
-`main` has **#78, #80, #76, #49, #50 merged**. **#81 (MVP plan doc) status unknown as of this entry** — check PR #81 directly for current merge state, last confirmed at 4/5 checks green with the Demo job cancelled on an infra flake. Only **#29** remains parked (do-not-merge, gated on W2 + clean audit).
+`main` has **#78, #80, #76, #49, #50, #81, #82 all merged**. Only **#29** remains open (do-not-merge, parked pending W2 + clean audit). **No PR exists yet for the export trio** — verified directly, issue search and PR list both confirm this, work is local/in-progress only.
 
-**Directed next action: run #51's live verification pass, not the export trio** — see reasoning below. Trio (#73/#75/#79) is queued after.
+**Current work: export-target trio (#73/#75/#79), IN FLIGHT, not yet a PR.** All three fixed locally (red→green), but the agent has NOT called this done — full backend suite running, adversarial audit pass in progress. Two things it flagged as specifically unsure of and is auditing before calling this finished: (1) whether the conditional-kwarg pattern leaves some state where exporter and dashboard still disagree, (2) whether CSF's exporter has the same undisclosed-truncation defect #75 was filed against ZT for — if so, the trio only closed half of CSF's exposure and a fourth issue is needed. **Wait for the audit report before treating this as landed.**
 
-## Item 0 (#51) — KEY WORKS, LIVE AI VERIFIED END TO END (2026-08-19)
+## Item 0 (#51) — DONE (2026-08-19), PR #82 merged
 
-No longer blocked. A real `csf_score` call to `claude-opus-5` completed: 573 in / 1218 out tokens, 19.6s, `status = completed`, `error_message = None`. Redaction seam held on real output (`redacted_counts` populated, model's own response referenced "redacted identifiers", confirming PII stripped pre-egress not post). "AI suggests, code computes" respected — dimension scores returned, totals/roll-ups computed downstream, not by the model.
+Live AI verified end to end. Tier A (natural real call): ZT accounting received=74 applied=74, no drops observed on that prompt — expected, not a gap. Tier B (corrupt-after-live, my suggestion, adopted): real call, then mutate body before parsing — covers entry_shape, unknown_key, unknown_field, unparseable, out_of_range, superseded, locked, plus the shape-guard 502. Caught its own bug mid-build: passing name/model through would've silently flipped the call to FIXTURE mode, protecting the rows it was supposed to test. Tier C: `protected` stays permanently live-unverifiable by construction, asserted in a test rather than left ambiguous. 10 tests, ~9 real calls, 2m33s, self-skip in fixture mode, excluded from `-m unit` so no ambient CI cost. Live mode reverted to fixture on purpose afterward, verified from inside the container, documented in DELIVERY_PLAN.md. Key stays available for opt-in runs only.
 
-**Credential handling — done right, worth trusting as a pattern:** key found in a local file outside the repo, `.env`'s gitignore status verified *before* writing to it, written via a script so the value never touched tool output, an unignored `.env.bak` backup was caught and deleted rather than left in the tree, one command was blocked by a permission classifier and the agent respected that rather than working around it. No secret ever appeared in any relayed output. This is the standard.
+**#82's E2E check hit the same apt-mirror Chromium-install timeout as #81's Demo job** (two occurrences now) — rerun came back clean, confirming transient infra flake, not a real failure. Worth fixing (cache/pin the Chromium install) but not urgent.
 
-**What's NOT yet verified, and why it matters — flagged before running #51, not after:** a well-behaved model won't produce malformed output on request. Live verification proves the happy path; it does not exercise the six ZT reason codes, CSF's equivalents, or the two shape-guard 502 paths — which are specifically about drops and bad shapes, the core defect family this entire stretch exists to catch. **Sent back, not yet answered:**
+## Recurring #72 pattern — now with a sharper argument for automating it
 
-1. **How do the drop paths get exercised?** Pushed for corrupting a real response after a genuine live call (real cost/latency, injected bad shape) over leaving these permanently fixture-only. If infeasible for some reason codes, that needs to be stated explicitly in DELIVERY_PLAN.md rather than let "item 0 done, 1 session" quietly cover a partial result. **Open.**
-2. **Is live mode staying on, or flipping back to fixture after this pass?** Any later `docker compose up` touching web now keeps live mode; every Run-AI from here costs real tokens. Fine if intentional, needs to be a decision, not a leftover default. **Open.**
+The trio work produced a live example: the first #75 test asserted against a summary line that already carried the true total, so it would pass whether the defect existed or not. Caught and rewritten to assert against actual rendered XLSX rows. **This was the seventh instance of the #72 pattern in one session, produced roughly ten minutes after logging the sixth.** Stated plainly by the agent itself: knowing the pattern does not prevent producing it. The manual adversarial-audit pass is catching these before merge, which is working, but only because someone remembers to run it every time — that's the concrete argument for W8's mechanized CI sweep, currently sitting in DELIVERY_PLAN.md's deferred/non-MVP table. Not escalating MVP scope over this alone, but flagged here so it isn't forgotten.
 
-Two reason codes were already flagged (prior entry) as untestable this way regardless: `protected` (fixture-only by construction), `locked` (needs an API-seeded lock).
+Also: one existing test (`test_xlsx_handles_empty_gap_list_with_placeholder`) had its `max_row == 2` pin updated because the new caption row shifts everything down one — behavior unchanged, position only, called out explicitly in the test rather than silently adjusted. Good practice, matches the standard.
 
-Migration note: `alembic upgrade` ran through to 0042 on this container — the earlier Postgres-migration lesson applied cleanly here.
+## Session length — measured from git history (unchanged, see prior entries for full detail)
 
-## Session length — measured from git history (unchanged, see prior entry for full detail)
+1 session ≈ 4-8 hours. Item 0 closing dropped the remaining estimate to roughly 5-9 sessions (was 6-10). W2 still flagged as most likely to run long.
 
-1 session ≈ 4-8 hours measured from three data points (W1 ZT, CSF dashboard, shape guards). 6-10 remaining sessions ≈ 35-65 hours ≈ 7-12 working days. W2 flagged as most likely to run long. Full reasoning and caveats in commit history if needed.
+## MVP completion path — table, dependencies (DELIVERY_PLAN.md, now merged via #81)
 
-## MVP completion path — table, dependencies (PR #81 / DELIVERY_PLAN.md)
+Item 0 (live-AI) → DONE. Item 2 (CSF dashboard) → DONE (#80 merged). Item 1 (export trio) → in flight, not yet landed. Items 3–8 still Not started. Confirm DELIVERY_PLAN.md's own table reflects item 0 and item 1's true state once the trio actually lands — per its own LIVING convention, status updates in the PR that lands the item.
 
-Full table: order/status/blocker/size per item. Item 0 status changes from BLOCKED to done (or partially-done, pending the two open questions above) — this should land in the plan doc's own table per its own LIVING convention, confirm it did when #51 wraps.
+## #44 / W3 / Risk-W6 — all resolved, unchanged, see prior entries for full detail
 
-## #44 — needs_review placement (resolved, reversed from my original call)
-
-Final: needs_review counts as applied, tri-state reported as a separate count. Codified in DELIVERY_PLAN.md.
-
-## W3 (resolved)
-
-Option A — approval-time capability-list membership snapshot, item 4 in the MVP path table. Re-approval behavior still needs to be explicitly stated before implementation.
-
-## Risk / W6 (resolved)
-
-Yes — Risk needs the same release guarantees as the other four services. Items 6 and 8, both independent, both not started.
+- #44: needs_review counts as applied, tri-state reported separately. Codified in DELIVERY_PLAN.md.
+- W3: Option A, approval-time snapshot. Re-approval behavior still needs explicit statement before implementation.
+- Risk/W6: yes, same release guarantees as the other four services.
 
 ## Open decisions — NOT to be reconstructed from memory
 
-- **Drop-path test methodology for #51** — just opened, see above.
-- **Live mode default going forward** — just opened, see above.
+- **Whether CSF's exporter shares #75's truncation defect** — just opened, see above, audit result pending.
+- **Whether the conditional-kwarg pattern leaves exporter/dashboard disagreement in some state** — just opened, see above, audit result pending.
 - #57 — client read behavior for a released ATT&CK assessment
 - `ServiceStatus.RELEASED` (#62)
-- W0's freeze shape (blocked on W5's Part 3 reopen scope per DELIVERY_PLAN.md)
+- W0's freeze shape (blocked on W5's Part 3 reopen scope)
 
 ## Environment notes (standing)
 
-- Postgres migrations: confirmed clean through 0042 as of this entry (2026-08-19), see item 0 above.
-- Provider live key: **RESOLVED as of 2026-08-19.** Working key installed, live mode verified end to end. (Earlier entries tracked this as open/blocked — now closed.)
+- Postgres migrations: confirmed clean through 0042 as of 2026-08-19.
+- Provider live key: **RESOLVED.** Working key installed, live mode verified end to end, reverted to fixture-by-default afterward on purpose.
 
 ## Do not merge
 
@@ -64,8 +55,9 @@ PR #29 — explicitly marked do-not-merge by Gene, independently stated as a dep
 
 ## Recurring defect shapes to watch for (CLAUDE.md)
 
-- A test that supplies its own expected value or precondition from the thing under test cannot fail. At least 6 confirmed instances (the "#72 pattern").
+- A test that supplies its own expected value or precondition from the thing under test cannot fail — **7 confirmed instances now**, most recent 2026-08-19 in #75's first test draft, caught before merge.
 - A conditional written to stop double-counting whose false branch silently drops the record.
-- An AI-suggested value that fails validation is dropped silently, indistinguishable from the model having nothing to say — root defect family behind #73/#75/CSF-twin, and the exact reason live-AI verification of the happy path alone isn't sufficient for item 0.
+- An AI-suggested value that fails validation is dropped silently, indistinguishable from the model having nothing to say.
 - A status line that is wrong is worse than none.
-- Credential material never travels through a relay conversation, even when explicitly offered. Same boundary for the agent and for me. The 2026-08-19 key install followed this correctly — verify gitignore before writing, never let the value touch tool output, clean up any unignored copy.
+- Credential material never travels through a relay conversation, even when explicitly offered.
+- Test behavior changes (like a shifted row position) get called out explicitly in the test itself, never silently adjusted to keep it green.
