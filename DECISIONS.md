@@ -2477,12 +2477,30 @@ the agreed target.
 So the mechanism exists and is unusable for its purpose, which is a different
 finding from "no mechanism exists" and points at the same fix.
 
+**Direction on #90: a consultant-side amend route AND an approval-time target
+snapshot, together.** They are not alternatives. The amend route is how a
+legitimate change gets made; the snapshot is what stops an already-approved
+report drifting when the underlying request is edited later. Without the
+snapshot, adding the amend route makes things WORSE — a consultant edit would
+retroactively change what a released deliverable claims it was measured against.
+The snapshot is the same shape and the same lifecycle moment as W3's
+approval-time membership snapshot, so they should be built together rather than
+inventing a second mechanism.
+
+**The test pinning this decision is required scope for #89, not a follow-on.**
+#89 exists because the selector/document divergence reads as a bug, and the
+obvious "fix" for anyone who has not read this record is to wire the selector
+into finalize — silently reversing the decision, breaking nothing, caught by no
+current test. The assertion must name the TARGET (`gap(s) at target T4`), not a
+bare gap count: `str(count) in summary` is precisely how instance 8 of the #72
+pattern passed vacuously in this same area.
+
 **It re-weights #85.** Filed as narrow and API-only, it is in fact the sole
 amendment path for the value that now governs every deliverable, and it accepts
 `target = 1` where intake enforces `>= 2` — producing a document reading
 `0 gap(s) at target T1` with no gaps at all. Fix it with #90, not separately.
 
-**Still owed: no test pins either reading.** One asserting the document follows
-the contracted target and NOT the selector should land with #89, or this drifts
-back the first time someone "fixes" the mismatch by wiring the selector into
-finalize. An unpinned decision is the same class of thing as an untested fix.
+**No test pins either reading yet — and that is #89's required scope**, per the
+paragraph above rather than a hope. An unpinned decision is the same class of
+thing as an untested fix, and this repo has nine recorded instances of the
+second.

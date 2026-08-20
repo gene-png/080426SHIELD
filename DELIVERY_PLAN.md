@@ -280,11 +280,17 @@ rather than trusting anyone to remember it.
   cannot be repaired by re-seeding
 - **Policy, needs a human:** #57 (client read of a released ATT&CK assessment),
   #62 (`ServiceStatus.RELEASED`), **#87 — DECIDED 2026-08-20 (D-050): the
-  contracted target. Required follow-ups #89 (UI: the selector is
-  exploration-only, and Finalize must surface the divergence) and #90 (no
-  consultant-side amendment path exists at all — the only writer is the client
-  self-assessment submit, which re-weights #85 from narrow to load-bearing).
-  Still owed: no test pins either reading)**
+  contracted target. Required follow-up #89 (UI: the selector is
+  exploration-only, Finalize must surface the divergence, **and the test pinning
+  D-050 lands in the same PR** — an unpinned decision reverses the first time
+  someone "fixes" the mismatch by wiring the selector into finalize, and no
+  current test would catch it). #90 is the amendment path: a re-scope IS
+  reachable today by cutting a new assessment cycle, but that discards all
+  87/106 answers and needs the client to act, so **build a consultant-side amend
+  route AND an approval-time target snapshot together** — the snapshot composes
+  with W3 (item 4), and without it an amend route would retroactively change what
+  a released deliverable claims. #85 sits on the client write path that stays
+  reachable every cycle, so it is load-bearing rather than narrow)**
 
 ## Sprint 1 — Smoke-test automation sweep + defect burn-down (COMPLETE 2026-07-03)
 
