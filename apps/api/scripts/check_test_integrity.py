@@ -14,6 +14,20 @@ catches roughly a third of the recorded instances. It is structurally blind to:
 - instance 9 — a keyword argument deletable with the whole suite green. Nothing
   in the test's text is wrong; the omission is in what it never exercised.
 
+And two evasions that are one line each, listed because a blind-spot section
+that omits the EASIEST ways past it will be read as exhaustive:
+
+- **TI001 sees only `from X import Y`.** `import app.routes.csf as csf` followed
+  by `csf._DIM_FIELDS` is invisible — plain `Import` is not visited and attribute
+  access is not inspected.
+- **TI002 needs the `str(...)` at the comparison site.** `needle = str(total)` on
+  one line and `assert needle in blob` on the next is not flagged, because
+  `test.left` is then a bare `Name`.
+
+Neither is exploited today and both are inherent to a two-second AST pass. They
+are recorded rather than fixed: widening TI002 to bare names was measured at 36
+false positives against 2 real ones, and a rule that noisy gets muted.
+
 Those need diff-scoped mutation testing, which is tier 2 and runs on a schedule
 rather than as a gate (the full unit suite is 13-16 min, so 50-150 mutants
 cannot sit in front of a PR). A non-blocking mechanism that runs beats a

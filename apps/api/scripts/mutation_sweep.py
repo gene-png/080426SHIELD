@@ -73,6 +73,14 @@ class _Collector(ast.NodeVisitor):
         self.path = path
         self.original = original
         self.mutants: list[Mutant] = []
+        self._normalised_original = _normalised(original)
+        # Identity by walk index, not by source position — see `_node_at`.
+        # Populated by `collect` from the SAME tree this visitor walks: `id()` is
+        # only meaningful within a single parse.
+        self._index: dict[int, int] = {}
+
+    def index_tree(self, tree: ast.AST) -> None:
+        self._index = {id(n): i for i, n in enumerate(ast.walk(tree))}
 
     # -- DropKeyword: instance 9's shape ------------------------------------
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
@@ -109,8 +117,11 @@ class _Collector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _emit(self, node: ast.AST, *, operator: str, description: str, **change) -> None:
+        index = self._index.get(id(node))
+        if index is None:  # pragma: no cover - every visited node is indexed
+            return
         tree = ast.parse(self.original, filename=str(self.path))
-        target = _find_same(tree, node)
+        target = _node_at(tree, index, type(node))
         if target is None:
             return
         if "remove_keyword" in change:
@@ -123,7 +134,9 @@ class _Collector(ast.NodeVisitor):
             source = ast.unparse(ast.fix_missing_locations(tree))
         except Exception:  # noqa: BLE001 - an unparseable mutant is simply skipped
             return
-        if source == self.original:
+        # Compare STRUCTURE against structure. Against raw file text this could
+        # never be true, so every no-op mutant was emitted and then scored.
+        if source == self._normalised_original:
             return
         self.mutants.append(
             Mutant(
@@ -136,22 +149,44 @@ class _Collector(ast.NodeVisitor):
         )
 
 
-def _find_same(tree: ast.AST, node: ast.AST) -> ast.AST | None:
-    """Locate the node at the same position/type in a freshly parsed tree."""
-    for candidate in ast.walk(tree):
-        if (
-            type(candidate) is type(node)
-            and getattr(candidate, "lineno", None) == getattr(node, "lineno", None)
-            and getattr(candidate, "col_offset", None) == getattr(node, "col_offset", None)
-        ):
-            return candidate
+def _normalised(source: str) -> str:
+    """Round-trip through the AST so two sources compare on STRUCTURE.
+
+    The no-op guard used to read `ast.unparse(tree) == self.original`, comparing
+    generated output against raw file text — different comments, different
+    whitespace, never equal. It was dead, which is why the no-op mutants below
+    sailed through it.
+    """
+    return ast.unparse(ast.parse(source))
+
+
+def _node_at(tree: ast.AST, index: int, expected: type) -> ast.AST | None:
+    """The node at `index` in this tree's walk order.
+
+    Position is NOT a usable identity. In CPython a `Call`'s `lineno`/`col_offset`
+    are those of its FUNC expression and an `Attribute`'s are those of its VALUE,
+    so every call in `update(X).where(...).values(...).execution_options(...)`
+    reports the same position. The old matcher compared (type, lineno, col_offset)
+    and `ast.walk` is breadth-first, so the OUTERMOST call always won: the
+    mutation landed on the wrong node, changed nothing, and the resulting no-op
+    mutant was reported as SURVIVED — sending a reader hunting for a missing test
+    on a line that was fine, while the real mutant for it was never built.
+
+    `ast.walk` is deterministic for a given tree, and both trees here are parses
+    of the same source, so the walk index IS a stable identity.
+    """
+    for i, candidate in enumerate(ast.walk(tree)):
+        if i == index:
+            return candidate if type(candidate) is expected else None
     return None
 
 
 def collect(path: Path) -> list[Mutant]:
     original = path.read_text(encoding="utf-8")
+    tree = ast.parse(original, filename=str(path))
     collector = _Collector(path, original)
-    collector.visit(ast.parse(original, filename=str(path)))
+    collector.index_tree(tree)
+    collector.visit(tree)
     return collector.mutants
 
 
@@ -165,7 +200,25 @@ def _run_tests(tests: str, extra: list[str]) -> bool:
     return proc.returncode == 0
 
 
+class BaselineNotGreen(RuntimeError):
+    """The selected tests do not pass BEFORE any mutation is applied."""
+
+
 def run(paths: list[Path], tests: str, extra: list[str], limit: int | None) -> list[Mutant]:
+    # Establish a green baseline FIRST. `_run_tests` reports "killed" for any
+    # non-zero exit, and pytest exits non-zero for collection errors, import
+    # errors and no-tests-collected alike — so a suite that never ran an
+    # assertion scored every mutant as killed and printed "no surviving
+    # mutants". A tool whose whole purpose is certifying that tests CAN fail had
+    # no way to notice that it could not itself fail.
+    print("baseline: running the selected tests unmutated...")
+    if not _run_tests(tests, extra):
+        raise BaselineNotGreen(
+            f"the selected tests do not pass before any mutation: {tests} {' '.join(extra)}. "
+            "Every mutant would score as 'killed' and the sweep would report a "
+            "perfect result for a suite that never ran."
+        )
+
     mutants: list[Mutant] = []
     for path in paths:
         mutants.extend(collect(path))
@@ -176,13 +229,23 @@ def run(paths: list[Path], tests: str, extra: list[str], limit: int | None) -> l
     survivors: list[Mutant] = []
     for i, m in enumerate(mutants, 1):
         original = m.path.read_text(encoding="utf-8")
-        # Write atomically and ALWAYS restore — a crashed sweep must not leave a
-        # mutated source tree behind.
+        # Restore in a `finally`, and leave a recovery copy while mutated.
+        #
+        # "ALWAYS restore" was overstated: `finally` runs for KeyboardInterrupt
+        # but NOT for SIGTERM (which is what a cancelled CI job sends), SIGKILL,
+        # or a hard crash. And the file written meanwhile is `ast.unparse`
+        # output — every comment stripped and all formatting normalised, which
+        # in this codebase means losing the record of every prior finding.
+        # The sidecar makes that state detectable and recoverable instead of
+        # silent; `main` refuses to start if one is already present.
+        sidecar = m.path.with_suffix(m.path.suffix + ".sweep-orig")
+        _atomic_write(sidecar, original)
         try:
             _atomic_write(m.path, m.source)
             passed = _run_tests(tests, extra)
         finally:
             _atomic_write(m.path, original)
+            sidecar.unlink(missing_ok=True)
         status = "SURVIVED" if passed else "killed"
         print(f"  [{i}/{len(mutants)}] {status}  {m.path}:{m.line} {m.operator} — {m.description}")
         if passed:
@@ -207,12 +270,27 @@ def main(argv: list[str] | None = None) -> int:
 
     extra = ["-k", args.k] if args.k else []
     paths = [Path(p) for p in args.paths]
+    stale = [p for p in paths if p.with_suffix(p.suffix + ".sweep-orig").is_file()]
+    if stale:
+        names = ", ".join(str(p) for p in stale)
+        print(
+            f"a previous sweep did not finish and left a recovery copy for: {names}. "
+            "Those files may be comment-stripped `ast.unparse` output. Restore each "
+            "from its .sweep-orig sidecar (or git) and delete the sidecar before "
+            "running again.",
+            file=sys.stderr,
+        )
+        return 2
     missing = [p for p in paths if not p.is_file()]
     if missing:
         print(f"no such file(s): {', '.join(str(p) for p in missing)}", file=sys.stderr)
         return 2
 
-    survivors = run(paths, args.tests, extra, args.limit)
+    try:
+        survivors = run(paths, args.tests, extra, args.limit)
+    except BaselineNotGreen as exc:
+        print(f"BASELINE NOT GREEN: {exc}", file=sys.stderr)
+        return 2
     print()
     if survivors:
         print(f"{len(survivors)} surviving mutant(s) — each is a change no test noticed:")
