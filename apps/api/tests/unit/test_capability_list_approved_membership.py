@@ -123,6 +123,14 @@ def _list_with_items(c: TestClient, h: dict, names: list[str]) -> tuple[str, lis
         return str(cap_list.id), item_ids
 
 
+def _service_of(list_id: str) -> str:
+    from app.models.capability import CapabilityList
+
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        return str(s.get(CapabilityList, uuid.UUID(list_id)).service_id)
+
+
 def _membership(list_id: str) -> list | None:
     from app.models.capability import CapabilityList
 
@@ -326,3 +334,128 @@ def test_the_snapshot_excludes_rows_already_out_of_security_scope(app_client) ->
     c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
     assert [e["name"] for e in _membership(list_id)] == ["Splunk"]
     assert _allow_list(c) == ["Splunk"]
+
+
+# --- the snapshot must not silently NARROW the allow-list either ------------
+#
+# Found by an adversarial retro-audit of #95 after it merged. W3 closed #32 —
+# a post-approval row silently WIDENING a hard allow-list — and opened the
+# mirror defect: two first-class workflows silently narrow it, which produces a
+# fabricated gap, "an absence the report presents as assessed".
+
+
+@pytest.mark.unit
+def test_overturning_a_wrong_non_security_call_is_reported_as_stale(app_client) -> None:
+    """`override_security_classification` exists to undo a wrong call.
+
+    Its own docstring promises such a row "must not keep a stale sign-off that
+    would silently re-exclude it". After approval the snapshot re-excluded it
+    anyway, one layer up: the restored tool could not be cited, and every
+    technique it covers came back a gap. The list must SAY its approved
+    membership is out of date.
+    """
+    from app.models.capability import CapabilityItem, CapabilityList
+
+    c = app_client
+    h = _admin(c)
+    list_id, _ = _list_with_items(c, h, ["Splunk"])
+
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        cap_list = s.get(CapabilityList, uuid.UUID(list_id))
+        s.add(
+            CapabilityItem(
+                capability_list_id=cap_list.id,
+                name="Zscaler Internet Access",
+                security_related=False,
+                security_class_confirmed=True,
+            )
+        )
+        s.commit()
+
+    r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert r.json()["approved_membership_stale"] is False
+    assert _allow_list(c) == ["Splunk"]
+
+    # The consultant realises the classification was wrong and overturns it.
+    with sessionmaker(bind=eng, future=True)() as s:
+        item = s.query(CapabilityItem).filter_by(name="Zscaler Internet Access").one()  # noqa: F821
+        item_id = str(item.id)
+    r = c.post(
+        f"/tech-debt/capability-items/{item_id}/security-classification/override",
+        headers=h,
+        json={"security_functions": ["prevent"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["approved_membership_stale"] is True, (
+        "the restored tool is uncitable and nothing says so — every technique it "
+        "covers now reports a fabricated gap"
+    )
+
+
+@pytest.mark.unit
+def test_a_list_whose_scope_has_not_moved_is_not_reported_stale(app_client) -> None:
+    """The signal has to mean something, or it gets tuned away (#31)."""
+    c = app_client
+    h = _admin(c)
+    list_id, _ = _list_with_items(c, h, ["Splunk", "CrowdStrike"])
+    r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert r.json()["approved_membership_stale"] is False
+
+
+@pytest.mark.unit
+def test_an_unapproved_list_is_never_stale(app_client) -> None:
+    """A DRAFT reads live, so there is nothing to be out of date with."""
+    from app.models.capability import CapabilityList
+
+    c = app_client
+    h = _admin(c)
+    list_id, _ = _list_with_items(c, h, ["Splunk"])
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        assert s.get(CapabilityList, uuid.UUID(list_id)).approved_membership is None
+    r = c.get(f"/tech-debt/services/{_service_of(list_id)}/capability-lists/latest", headers=h)
+    assert r.json()["approved_membership_stale"] is False
+
+
+@pytest.mark.unit
+def test_an_empty_snapshot_is_not_the_same_as_no_snapshot(app_client) -> None:
+    """`[]` is falsy. `approved_membership` was tested with `if not ...`, so a
+    portfolio approved with ZERO security tools fell back to reading LIVE rows —
+    the one case where #32's hole stayed open. Nothing pinned the distinction,
+    and `is None` versus `not x` is exactly the edit a reviewer would suggest.
+    """
+    from app.models.capability import CapabilityItem, CapabilityList
+
+    c = app_client
+    h = _admin(c)
+    list_id, _ = _list_with_items(c, h, [])
+
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        cap_list = s.get(CapabilityList, uuid.UUID(list_id))
+        s.add(
+            CapabilityItem(
+                capability_list_id=cap_list.id,
+                name="Payroll",
+                security_related=False,
+                security_class_confirmed=True,
+            )
+        )
+        s.commit()
+
+    c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    with sessionmaker(bind=eng, future=True)() as s:
+        assert s.get(CapabilityList, uuid.UUID(list_id)).approved_membership == []
+
+    # Now overturn it. Under `if not snapshot` this list read LIVE rows, so the
+    # unapproved name entered the hard allow-list immediately.
+    with sessionmaker(bind=eng, future=True)() as s:
+        item = s.query(CapabilityItem).filter_by(name="Payroll").one()
+        item_id = str(item.id)
+    c.post(
+        f"/tech-debt/capability-items/{item_id}/security-classification/override",
+        headers=h,
+        json={"security_functions": ["prevent"]},
+    )
+    assert _allow_list(c) == [], "an empty snapshot fell back to live rows"

@@ -522,7 +522,14 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
     # means "nobody recorded this", which is not the same as "nothing was
     # approved" — the C0 pattern. Inventing a membership for those would assert
     # something no consultant ever did.
-    live_ids = [cl.id for cl in lists if not cl.approved_membership]
+    # `is None`, NOT falsy. An approved list with ZERO in-scope items stores
+    # `[]`, and `not []` is True — so under the falsy test that list fell back to
+    # reading LIVE rows, which is the one case where #32's hole stayed open. The
+    # model docstring and this one both say the rule is NULL; the falsy spelling
+    # did not implement it. Pinned by
+    # `test_an_empty_snapshot_is_not_the_same_as_no_snapshot`, because `not x` is
+    # exactly the simplification a reviewer would suggest back.
+    live_ids = [cl.id for cl in lists if cl.approved_membership is None]
     for cap_list in lists:
         # W3: for an APPROVED list the snapshot IS the membership. The list stays
         # editable until release through five doors — one of which can rename an
@@ -530,7 +537,7 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
         # scope by design — so reading live rows here meant every "confirmed
         # against the approved list" citation was checked against whatever the
         # list had since become.
-        if cap_list.approved_membership:
+        if cap_list.approved_membership is not None:
             names.extend(e.get("name") or "" for e in cap_list.approved_membership)
 
     if live_ids:
