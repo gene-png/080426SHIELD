@@ -362,6 +362,14 @@ mechanism; docs carry only what git can't show.
 
 Rules of the road:
 
+- **Never put a closing keyword near an issue number you are NOT closing.**
+  GitHub's parser matches `fix(e[sd])?|close[sd]?|resolve[sd]?` followed by
+  `#N` and does not read the words around it. A W2 commit body said
+  `Filed, not fixed: #101` — the parser saw `fixed: #101` and closed the issue
+  whose entire point was that it had NOT been fixed. "does not fix #N",
+  "partially fixes #N" and "not resolved: #N" all trip it the same way. Write
+  `filed as #N`, `see #N`, or `tracked in #N`, and save the closing keyword for
+  the PR that actually closes it.
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
