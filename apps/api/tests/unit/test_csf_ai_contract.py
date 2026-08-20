@@ -28,9 +28,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+# test-integrity: the PROMPT is the spec this test checks against, not a
+# shortcut into the parser — reading it is the whole point of a contract test.
 from app.ai.jobs import _CSF_SCORE_PROMPT
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import SUBCATEGORIES
+
+# test-integrity: KNOWN ONE-DIRECTIONAL, tracked as #92. The static test below
+# derives parser keys from this and checks them against the prompt, which is
+# sound. The end-to-end half builds its response body from it too, so that half
+# agrees with the parser by construction and cannot see prompt->parser drift —
+# instance 1 of #72, recorded in CLAUDE.md.
 from app.routes.csf import _DIM_FIELDS
 
 # The exact keys routes/csf.py:run_ai depends on when parsing the response.

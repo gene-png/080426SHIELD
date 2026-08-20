@@ -596,6 +596,9 @@ def test_every_service_kind_has_a_parent_to_release() -> None:
     than skipping the flip, but the raise only fires at release time on a real
     tenant. This turns that into a collection error instead.
     """
+    # test-integrity: the expected value comes from ServiceKind, an INDEPENDENT
+    # source — this asserts the map is complete against the enum, so it fails
+    # when a kind is added without a parent record. Not self-referential.
     from app.deliverable_release import _PARENTS
     from app.models.service import ServiceKind
 

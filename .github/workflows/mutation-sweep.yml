@@ -1,0 +1,101 @@
+name: Mutation sweep (W8a tier 2)
+
+# Does the suite actually notice when the code changes? (#72)
+#
+# NOT a PR gate, deliberately. Every mutant costs a full run of the selected
+# tests, and the unit suite is 13-16 minutes, so 50-150 mutants cannot sit in
+# front of a merge. A non-blocking mechanism that runs beats a blocking one that
+# gets disabled.
+#
+# Scoped to what changed, because mutating the whole tree is neither affordable
+# nor useful — the question is whether the tests written THIS WEEK can fail.
+
+on:
+  schedule:
+    # 06:00 UTC daily, after the previous day's merges have settled.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: "Space-separated source files to mutate (default: changed in the last day)"
+        required: false
+        type: string
+      tests:
+        description: "pytest target to run per mutant"
+        required: false
+        default: "tests/unit"
+        type: string
+      limit:
+        description: "Cap the number of mutants"
+        required: false
+        default: "40"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: Mutation sweep
+    runs-on: ubuntu-latest
+    # A survivor is a question to answer, not a build failure. This job reports;
+    # it never blocks anything.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install API
+        working-directory: apps/api
+        run: pip install -e ".[dev]"
+
+      - name: Choose what to mutate
+        id: scope
+        working-directory: apps/api
+        run: |
+          if [ -n "${{ inputs.paths }}" ]; then
+            PATHS="${{ inputs.paths }}"
+          else
+            # Files under app/ touched in the last day. `|| true` so an empty
+            # result is a clean no-op rather than a red job.
+            PATHS=$(git log --since="1 day ago" --name-only --pretty=format: -- 'apps/api/app/**/*.py' \
+              | sort -u | grep -E '^apps/api/app/.*\.py$' | sed 's|^apps/api/||' || true)
+          fi
+          # shellcheck disable=SC2086
+          echo "paths=$(echo $PATHS | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          echo "Mutating: $PATHS"
+
+      - name: Sweep
+        if: steps.scope.outputs.paths != ''
+        working-directory: apps/api
+        run: |
+          python -m scripts.mutation_sweep \
+            --paths ${{ steps.scope.outputs.paths }} \
+            --tests "${{ inputs.tests || 'tests/unit' }}" \
+            --limit "${{ inputs.limit || '40' }}" \
+            | tee sweep.txt
+
+      - name: Report
+        if: always() && steps.scope.outputs.paths != ''
+        working-directory: apps/api
+        run: |
+          {
+            echo "## Mutation sweep"
+            echo
+            echo '```'
+            tail -40 sweep.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo
+            echo "A **surviving** mutant is a change no test noticed. That is a question,"
+            echo "not a verdict — some mutants are semantically equivalent and some paths"
+            echo "are untested by design. Answer each one."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nothing changed
+        if: steps.scope.outputs.paths == ''
+        run: echo "No app/ changes in the last day — nothing to mutate." >> "$GITHUB_STEP_SUMMARY"

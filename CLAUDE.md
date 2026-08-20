@@ -233,6 +233,20 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   function you just changed, and when you deliberately leave a twin alone, say
   so in the code — an unstated exemption reads as an oversight to everyone who
   finds it later, including you.
+- **Two gates now check whether a test can fail at all (#72, D-051).**
+  `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
+  is a two-second static pass and **runs in CI before pytest** — it flags a test
+  importing a private CONSTANT from the module it tests, and a containment
+  assertion whose needle carries no literal text (`str(n) in blob` rather than
+  `f"of {n} gaps" in blob`). Neither is forbidden; both demand a written
+  `# test-integrity: <reason>` on the line or in the comment block above it, and
+  an empty reason is not a reason. `scripts/mutation_sweep.py` is the other
+  half — `--paths <files> --tests <target>` applies one change at a time and
+  reports what no test noticed. Its `DropKeyword` operator exists because
+  instance 9 was a deletable `targets=` argument, which off-the-shelf mutation
+  tools do not model. Neither gate closes #72: tier 1 cannot see a test whose
+  SETUP performs the step under test, and a surviving mutant is a question
+  rather than a verdict.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
