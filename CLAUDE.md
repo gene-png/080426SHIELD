@@ -247,6 +247,17 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   tools do not model. Neither gate closes #72: tier 1 cannot see a test whose
   SETUP performs the step under test, and a surviving mutant is a question
   rather than a verdict.
+- **A snapshot beats a lock when the workflow legitimately mutates.** Tech Debt's
+  APPROVED capability list stays editable until release, and that is on purpose —
+  the security-classification confirm queue and excluded-row recovery are both
+  first-class features. #32 sat deferred for months because the obvious fix,
+  making APPROVED immutable, would have broken them. What was actually wrong was
+  that the edit silently rewrote history: the ATT&CK allow-list read live rows,
+  so a citation "confirmed against the approved list" was checked against
+  whatever the list had since become. D-053 records the membership at approval
+  instead (migration 0043) and lets re-approval refresh it, audited with both the
+  new and replaced counts. When a guarantee and a workflow collide, ask whether
+  the guarantee needs the state frozen or only needs to know what the state WAS.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the

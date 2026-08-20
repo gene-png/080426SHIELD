@@ -61,8 +61,8 @@ fixture mode already demos all five.
 | 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — |
 | 3a | **Export/persistence audit — Tech Debt (+ #77)** | **IN REVIEW** (D-052) | CI | Done bar review |
 | 3b | **Export/persistence audit — ATT&CK** | Not started | **W2** (item 5) — same files, and the audit wants the post-rewrite shape | 0.5 session + unknown fixes |
-| 4 | **W3 — Tech Debt approval snapshot** | Not started | Nothing. Decision made: **Option A**, approval-time membership snapshot | 1–1.5 sessions |
-| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) | 2–3 sessions |
+| 4 | **W3 — Tech Debt approval snapshot** | **IN REVIEW** (PR pending, D-053, migration 0043) | CI | Done bar review |
+| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) — **unblocked once D-053 merges** | 2–3 sessions |
 | 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
 | 7 | **W1 ATT&CK step** | Not started | **W2** (item 5) | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |

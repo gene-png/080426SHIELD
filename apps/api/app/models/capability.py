@@ -102,6 +102,16 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # honest and the naming is withheld rather than guessed.
     excluded_rows: Mapped[list | None] = mapped_column(JSON)
 
+    # [{item_id, name}] — the security-scope membership as it stood at approval
+    # (migration 0043, W3). An APPROVED list stays editable through five doors
+    # until release, and `attack.py::_client_tool_names` turns these names into a
+    # HARD allow-list: a tool missing from it cannot be cited, so the technique it
+    # covers reads as uncovered. Without this, "confirmed against the approved
+    # list" was checked against whatever the list had since become.
+    # NULL on pre-0043 lists, which keep reading live rows rather than having a
+    # membership invented for them.
+    approved_membership: Mapped[list | None] = mapped_column(JSON)
+
 
 class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "capability_items"
