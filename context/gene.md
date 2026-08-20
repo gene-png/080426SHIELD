@@ -1,45 +1,57 @@
 # Gene's Context — 080426SHIELD
 
-**Last updated:** 2026-08-19 (Item 0 DONE, #82 merged; export trio red→green locally, adversarial audit + full suite still in flight, no PR yet)
+**Last updated:** 2026-08-19 (PR #86 open, checks running; audit caught CSF-truncation twin + 2 more can't-fail tests; W8/#84/methodology questions sent back)
 
 This file is owner-write-only. It exists so any session (mine or a relay) can pick up the real state of the project without reconstructing it from scattered chat history. Update it after every substantive decision. **This file lives in the repo, not on any one machine — a local computer restart does not affect it.**
 
 ## Branch / in flight
 
-`main` has **#78, #80, #76, #49, #50, #81, #82 all merged**. Only **#29** remains open (do-not-merge, parked pending W2 + clean audit). **No PR exists yet for the export trio** — verified directly, issue search and PR list both confirm this, work is local/in-progress only.
+`main` has **#78, #80, #76, #49, #50, #81, #82 merged**. Only **#29** remains open (do-not-merge, parked pending W2 + clean audit) plus **#86** (export trio, checks running as of this entry — verify current state before assuming still open). **#84 and #85 filed, both open, both verified directly** — real issues, correctly scoped out of #86 rather than folded in or dismissed.
 
-**Current work: export-target trio (#73/#75/#79), IN FLIGHT, not yet a PR.** All three fixed locally (red→green), but the agent has NOT called this done — full backend suite running, adversarial audit pass in progress. Two things it flagged as specifically unsure of and is auditing before calling this finished: (1) whether the conditional-kwarg pattern leaves some state where exporter and dashboard still disagree, (2) whether CSF's exporter has the same undisclosed-truncation defect #75 was filed against ZT for — if so, the trio only closed half of CSF's exposure and a fourth issue is needed. **Wait for the audit report before treating this as landed.**
+**Merge #86 when green — no objection to that part.** Three real questions sent back before anything after that starts.
 
-## Item 0 (#51) — DONE (2026-08-19), PR #82 merged
+## PR #86 — the audit was the valuable part, not the fixes
 
-Live AI verified end to end. Tier A (natural real call): ZT accounting received=74 applied=74, no drops observed on that prompt — expected, not a gap. Tier B (corrupt-after-live, my suggestion, adopted): real call, then mutate body before parsing — covers entry_shape, unknown_key, unknown_field, unparseable, out_of_range, superseded, locked, plus the shape-guard 502. Caught its own bug mid-build: passing name/model through would've silently flipped the call to FIXTURE mode, protecting the rows it was supposed to test. Tier C: `protected` stays permanently live-unverifiable by construction, asserted in a test rather than left ambiguous. 10 tests, ~9 real calls, 2m33s, self-skip in fixture mode, excluded from `-m unit` so no ambient CI cost. Live mode reverted to fixture on purpose afterward, verified from inside the container, documented in DELIVERY_PLAN.md. Key stays available for opt-in runs only.
+The three original fixes (#73/#75/#79) were correct, but the audit caught what would otherwise have shipped wrong:
 
-**#82's E2E check hit the same apt-mirror Chromium-install timeout as #81's Demo job** (two occurrences now) — rerun came back clean, confirming transient infra flake, not a real failure. Worth fixing (cache/pin the Chromium install) but not urgent.
+- **CSF shares #75's exact defect** — same `DEFAULT_TOP_N = 20`, same three renderers, undisclosed truncation. Worse: the #79 fix raised CSF's target to the client's tier, which increased the gap count, so the undisclosed truncation hid *more* after the "fix" than before it.
+- **Same shape found 12 lines away** — `_zt_gap_total` had the identical bug sitting next to the `_csf_gap_total` just fixed. Twins-until-checked now proven at same-file distance, not just cross-service.
+- **8th and 9th instances of the #72 pattern**, both in this same audit pass. One asserted a count appeared in text, satisfied by an unrelated number already in that text regardless of whether the fix worked.
+- **A real font-regression** introduced by the earlier row-shift fix — the test updated for the shift checked caption and value, not the one font property the shift actually broke.
+- **Two new issues filed correctly, not folded in or dropped:**
+  - **#84** — `risk.py` hardcodes target=3, ignoring the client's intake target. Affects roughly two-thirds of engagements (any target ≠ 3). Escaped the trio's sweep because `risk.py` re-derives the comparison inline instead of calling `analyze_gaps` — a methodology gap, not a coverage gap. **Question sent: should this fold into W1 Risk (item 6) rather than come after it, since both touch the same file?**
+  - **#85** — self-assessment submit schemas allow target=1 where intake enforces ≥2; not UI-reachable but produces a vacuously-empty "0 gaps" document, the failure mode that reads most like success. Correctly triaged as low-severity, not dismissed.
+- **Self-corrected their own PR body** — original claim was the fix "tracks the view the consultant reviewed and signed off." Not true, the selector is a query param finalize never sees; the document follows the contracted target instead. Flagged as a policy question, not silently resolved. **Sent back: track this explicitly as an open decision, don't let the correcting sentence quietly settle it.**
+- Rebase onto #82 hit a DELIVERY_PLAN.md conflict in the live-AI section — kept main's version (better) and appended only the new observation, rather than overwrite. Good instinct, no objection.
 
-## Recurring #72 pattern — now with a sharper argument for automating it
+## Three open questions sent back, none answered yet
 
-The trio work produced a live example: the first #75 test asserted against a summary line that already carried the true total, so it would pass whether the defect existed or not. Caught and rewritten to assert against actual rendered XLSX rows. **This was the seventh instance of the #72 pattern in one session, produced roughly ten minutes after logging the sixth.** Stated plainly by the agent itself: knowing the pattern does not prevent producing it. The manual adversarial-audit pass is catching these before merge, which is working, but only because someone remembers to run it every time — that's the concrete argument for W8's mechanized CI sweep, currently sitting in DELIVERY_PLAN.md's deferred/non-MVP table. Not escalating MVP scope over this alone, but flagged here so it isn't forgotten.
+1. **W8 (mechanized adversarial-audit sweep) needs an actual decision, not continued deferral.** Nine #72-pattern instances now, two from this very audit. The agent's own conclusion, "this is a mechanism problem, not a discipline problem," is correct — discipline has failed nine times including against the same agent minutes after writing the rule down. Does W8 move up in DELIVERY_PLAN.md's ordering, or stay deferred with a stated reason? **Open.**
+2. **Does #84 fold into W1 Risk rather than sequence after it?** Same file, and #84 is a real client-facing correctness gap, not a nice-to-have. **Open.**
+3. **Audit methodology blind spot** — #84 escaped the sweep because `risk.py` reimplements the comparison inline rather than calling the shared function. Should future "exists in its twins" passes also grep for the symptom (literal defaults, truncation constants), not just the shared function's callers? **Open.**
 
-Also: one existing test (`test_xlsx_handles_empty_gap_list_with_placeholder`) had its `max_row == 2` pin updated because the new caption row shifts everything down one — behavior unchanged, position only, called out explicitly in the test rather than silently adjusted. Good practice, matches the standard.
+Plus the policy-question item above (contracted target vs. consultant's on-screen selection) — also open, not yet added to the tracked list below at time of writing, add once answered or confirmed as its own line.
 
-## Session length — measured from git history (unchanged, see prior entries for full detail)
+## Item 0 (#51) — DONE, PR #82 merged (2026-08-19, see prior entry for full detail)
 
-1 session ≈ 4-8 hours. Item 0 closing dropped the remaining estimate to roughly 5-9 sessions (was 6-10). W2 still flagged as most likely to run long.
+Live AI verified end to end via Tier A/B/C methodology. Live mode reverted to fixture by default afterward, on purpose, documented in DELIVERY_PLAN.md.
 
-## MVP completion path — table, dependencies (DELIVERY_PLAN.md, now merged via #81)
+## Session length — measured from git history (unchanged, see prior entries)
 
-Item 0 (live-AI) → DONE. Item 2 (CSF dashboard) → DONE (#80 merged). Item 1 (export trio) → in flight, not yet landed. Items 3–8 still Not started. Confirm DELIVERY_PLAN.md's own table reflects item 0 and item 1's true state once the trio actually lands — per its own LIVING convention, status updates in the PR that lands the item.
+1 session ≈ 4-8 hours. Estimate was 5-9 sessions after item 0 closed; will need revision once #84/#85's scope is decided and W8's status is settled.
+
+## MVP completion path — table, dependencies (DELIVERY_PLAN.md, merged via #81)
+
+Item 0 → DONE. Item 2 (CSF dashboard) → DONE. Item 1 (export trio) → PR #86 open, not yet merged. Items 3-8 still Not started, though #84 may now be in-scope for item 6 (W1 Risk) pending the question above. Confirm DELIVERY_PLAN.md's table reflects true state once #86 lands.
 
 ## #44 / W3 / Risk-W6 — all resolved, unchanged, see prior entries for full detail
 
-- #44: needs_review counts as applied, tri-state reported separately. Codified in DELIVERY_PLAN.md.
-- W3: Option A, approval-time snapshot. Re-approval behavior still needs explicit statement before implementation.
-- Risk/W6: yes, same release guarantees as the other four services.
-
 ## Open decisions — NOT to be reconstructed from memory
 
-- **Whether CSF's exporter shares #75's truncation defect** — just opened, see above, audit result pending.
-- **Whether the conditional-kwarg pattern leaves exporter/dashboard disagreement in some state** — just opened, see above, audit result pending.
+- **W8 priority decision** — just opened, see above.
+- **#84 scope: fold into W1 Risk or sequence after** — just opened, see above.
+- **Audit methodology: grep for symptom vs. shared-function callers** — just opened, see above.
+- **Contracted target vs. consultant's on-screen selection (policy)** — just opened, see above.
 - #57 — client read behavior for a released ATT&CK assessment
 - `ServiceStatus.RELEASED` (#62)
 - W0's freeze shape (blocked on W5's Part 3 reopen scope)
@@ -55,9 +67,10 @@ PR #29 — explicitly marked do-not-merge by Gene, independently stated as a dep
 
 ## Recurring defect shapes to watch for (CLAUDE.md)
 
-- A test that supplies its own expected value or precondition from the thing under test cannot fail — **7 confirmed instances now**, most recent 2026-08-19 in #75's first test draft, caught before merge.
+- A test that supplies its own expected value or precondition from the thing under test cannot fail — **9 confirmed instances now**, most recent two 2026-08-19 in the #86 audit pass itself.
+- **A defect in one service/function exists in its twins until checked** — now proven true at same-file distance (12 lines), not just cross-service. Grepping for one shared function's callers is not sufficient; an inline reimplementation of the same logic hides from that sweep (see #84).
 - A conditional written to stop double-counting whose false branch silently drops the record.
 - An AI-suggested value that fails validation is dropped silently, indistinguishable from the model having nothing to say.
 - A status line that is wrong is worse than none.
 - Credential material never travels through a relay conversation, even when explicitly offered.
-- Test behavior changes (like a shifted row position) get called out explicitly in the test itself, never silently adjusted to keep it green.
+- Test behavior changes get called out explicitly in the test itself, never silently adjusted — and the callout should cover every property the change affects, not just the one already being asserted (see the font-regression above).
