@@ -58,8 +58,9 @@ fixture mode already demos all five.
 | 0 | **Live-AI verification (#51)** | **DONE** (2026-08-19) | — | — |
 | 1 | **Export-target trio — #73 + #75 + #79** | **DONE** (PR #86, D-049, merged 2026-08-20) | — | — |
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
-| 2a | **W8a — the #72 sweep (tests that cannot fail)** | **IN REVIEW** (D-051) | CI | Done bar review |
-| 3 | **Export/persistence audit — Tech Debt, ATT&CK** | Not started | ATT&CK's pass should follow W2 (item 5), not race it | 0.5 session each + unknown fixes |
+| 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — |
+| 3a | **Export/persistence audit — Tech Debt (+ #77)** | **IN REVIEW** (D-052) | CI | Done bar review |
+| 3b | **Export/persistence audit — ATT&CK** | Not started | **W2** (item 5) — same files, and the audit wants the post-rewrite shape | 0.5 session + unknown fixes |
 | 4 | **W3 — Tech Debt approval snapshot** | Not started | Nothing. Decision made: **Option A**, approval-time membership snapshot | 1–1.5 sessions |
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) | 2–3 sessions |
 | 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
@@ -272,8 +273,9 @@ rather than trusting anyone to remember it.
   `>= 2` — inert until the trio made stored targets load-bearing)
 - **AI ledger:** #47, #52, #53 — `llm_calls` says COMPLETED for rejected calls,
   is flushed-not-committed, and marks unbillable calls charged
-- **Silent discard:** #46, #60, #77 — wrong top-level key, CSF's unread
-  `executive_summary`, `tech_debt_extract`'s unguarded parser
+- **Silent discard:** #46, #60 — wrong top-level key, CSF's unread
+  `executive_summary`. **#77 closed (D-052)**: every registered job now carries a
+  top-level shape guard, which is a sentence that could not be written before
 - **Accessibility:** #69 — live regions mounted with their text, so failures
   announce and successes never do
 - **Dev loop:** #65 — `seed_demo.py` is all-or-nothing, so a drifted dev DB

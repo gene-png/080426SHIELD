@@ -2573,3 +2573,76 @@ response body from the parser's own constants. The static half is sound and the
 import is justified in place with a marker naming the issue — so the gate stays
 green without the finding becoming invisible, which is the behaviour a
 justification mechanism has to have to be worth anything.
+
+## D-052 — Tech Debt: the shape guard closes, and the reconciliation stops vanishing when it cannot name rows
+
+**Date:** 2026-08-20 · **Issues:** #77 · **Follows:** D-048, D-051
+
+DELIVERY_PLAN item 3, Tech Debt half. ATT&CK's half stays blocked on W2 per the
+plan — same files, and the audit wants the post-rewrite shape.
+
+**#77 closes, and the invariant is now true.** `tech_debt_extract` was the last
+AI parser with no top-level shape guard, carrying both halves of the family:
+`decoded.get("items", []) if isinstance(decoded, dict) else []` swallowed a
+bare-list top level whole, and `for item in raw_items` iterated the KEYS of a
+non-list `items`. Either reported zero capabilities, indistinguishable from an
+inventory holding nothing recognisable — and this path feeds the ATT&CK
+allow-list, where an empty capability list once produced 607 fabricated `gap`
+rows.
+
+**The fix shares the CHECK, not the whole parse.** #77 proposed composing
+`parse_json_object_with_list`. That would have been a regression:
+`_parse_response` recovers JSON a provider wrapped in prose, tolerance
+`parse_json` does not have, so a wholesale swap would have turned working
+providers into hard failures with no test noticing. `require_json_object` and
+`require_list_at` were split out of the existing parsers and are now called by
+both. `jobs.py`'s carve-out comment is removed: every registered job carries a
+top-level shape guard, and that sentence is now writable.
+
+**The prose retry had its own hole, found by the test written for the guard.** It
+considered `{...}` only, so a bare list wrapped in prose sliced down to the first
+ITEM's braces and decoded as one object with no `items` key — the guard never saw
+a list, and the run reported one capability or zero. It now considers `[...]`
+too, first-decoding-candidate wins so an unrelated citation bracket cannot
+hijack the slice.
+
+**The reconciliation disappeared exactly when it mattered most.**
+`reconcile_rows` deliberately produces two things: `excluded`, a COUNT that is
+trustworthy in every case, and `excluded_rows`, the NAMED rows, populated only
+when every item attributed itself to a source row — its comment says the naming
+is "withheld rather than guessed" and "the count stays honest". The count did not
+stay honest, because nothing persisted it. Both surfaces measured the NAMED list
+(`len(cap_list.excluded_rows or [])`; `(list.excluded_rows?.length ?? 0) > 0`),
+so a provider omitting `source_row_index` on one item produced an empty list, no
+disclosure at all, and an unqualified **"Total annual cost"** over a partial
+figure. That is the 2026-08-04 incident — 21 rows / $1,634,236 presented as 12 /
+$891,796 — reachable through the mechanism added to prevent it, and the third
+recorded instance of a false branch dropping the record instead of emitting it
+under a different reason.
+
+**Derived, not stored.** `source_rows_total - source-derived items` equals
+`len(excluded_rows)` whenever attribution is complete and recovers the true count
+when it is not. A persisted counter would need decrementing on the
+include-an-excluded-row path and would be a second source of truth to drift, so
+no migration was added. Children of a decomposed bundle carry `parent_item_id`
+and are not counted — the same correction the workspace made after `28 > 32`
+went false and unmounted the disclosure permanently. When the rows cannot be
+named, both surfaces now say so rather than showing a bare number that reads as
+a rendering bug.
+
+**Fixed on both surfaces in the same change**, per the twins rule that #86 was
+caught violating.
+
+**One existing test was rewritten, and the reason is stated rather than
+implied.** `test_deliverable_reconciliation.py` constructed `DeliverableContext`
+directly with `excluded_count=excluded` passed in, so it asserted the rendering
+of a number it had supplied and never exercised the code that derives it. It now
+builds through `build_context`. That is the #72 shape, found while changing the
+code underneath it.
+
+**Audited and found sound**, recorded so the next pass does not redo it: the
+exporters iterate the full item list with no `top_n` (no #75 twin here);
+`cost_label` already refuses to call a partial figure a total; `overlap.py`'s
+`costed[:5]` is a "top-cost" card that names its own bound and publishes
+`total_items` alongside; Tech Debt has no maturity-target concept, so #73/#79
+have no twin in it.

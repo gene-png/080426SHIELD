@@ -39,6 +39,12 @@ class DeliverableContext:
     # rows were worth $240,000. Defaulted so older callers still construct.
     source_rows_total: int | None = None
     excluded_count: int = 0
+    # Source-derived items only — children of a decomposed bundle are excluded,
+    # so splitting can never move the reconciliation arithmetic.
+    included_count: int = 0
+    # False when the excluded rows exist but could not be named individually.
+    # The count is exact either way; only the naming is withheld.
+    excluded_rows_named: bool = False
 
 
 def reconciliation_line(ctx: DeliverableContext) -> str | None:
@@ -51,10 +57,17 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
     """
     if not ctx.excluded_count or ctx.source_rows_total is None:
         return None
-    return (
-        f"{ctx.source_rows_total} rows received · {len(ctx.items)} included · "
+    line = (
+        f"{ctx.source_rows_total} rows received · {ctx.included_count} included · "
         f"{ctx.excluded_count} excluded"
     )
+    if not ctx.excluded_rows_named:
+        # A count with no accompanying list reads as a rendering bug unless it
+        # says why. `reconcile.py` withholds the names rather than guessing when
+        # the provider did not attribute every item to a source row; the count is
+        # still exact, and saying so is what keeps it usable.
+        line += " (excluded rows were not attributed individually)"
+    return line
 
 
 def cost_label(ctx: DeliverableContext) -> str:
@@ -91,10 +104,25 @@ def build_context(
                 savings_known = False
             else:
                 estimated_savings += float(it.annual_cost_usd)
-    excluded = list(getattr(cap_list, "excluded_rows", None) or [])
+    named = list(getattr(cap_list, "excluded_rows", None) or [])
+    received = getattr(cap_list, "source_rows_total", None)
+    # Rows that came from the upload. Children of a decomposed bundle carry a
+    # parent and are NOT source rows — counting them made `28 > 32` false in the
+    # workspace and unmounted the whole disclosure until 2026-08-07.
+    included = sum(1 for it in items_list if getattr(it, "parent_item_id", None) is None)
+    # Derive the count; do not measure the NAMED list. `reconcile.py` withholds
+    # the names when the provider did not attribute every item to a source row,
+    # so `len(named)` is 0 in exactly the case where rows WERE excluded and
+    # nobody can say which — the 2026-08-04 defect, reachable through the
+    # mechanism added to prevent it. The count is trustworthy in both regimes and
+    # equals `len(named)` whenever attribution is complete, so deriving it needs
+    # no second stored counter to drift on the include-an-excluded-row path.
+    excluded_count = max(received - included, 0) if received is not None else 0
     return DeliverableContext(
-        source_rows_total=getattr(cap_list, "source_rows_total", None),
-        excluded_count=len(excluded),
+        source_rows_total=received,
+        excluded_count=excluded_count,
+        included_count=included,
+        excluded_rows_named=bool(named),
         client_legal_name=client_legal_name or "Client",
         service_title=service_title,
         cap_list=cap_list,
