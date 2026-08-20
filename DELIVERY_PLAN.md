@@ -58,7 +58,7 @@ fixture mode already demos all five.
 | 0 | **Live-AI verification (#51)** | **DONE** (2026-08-19) | — | — |
 | 1 | **Export-target trio — #73 + #75 + #79** | **DONE** (PR #86, D-049, merged 2026-08-20) | — | — |
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
-| 2a | **W8a — the #72 sweep (tests that cannot fail)** | Not started | Nothing | ~1.5 sessions |
+| 2a | **W8a — the #72 sweep (tests that cannot fail)** | **IN REVIEW** (D-051) | CI | Done bar review |
 | 3 | **Export/persistence audit — Tech Debt, ATT&CK** | Not started | ATT&CK's pass should follow W2 (item 5), not race it | 0.5 session each + unknown fixes |
 | 4 | **W3 — Tech Debt approval snapshot** | Not started | Nothing. Decision made: **Option A**, approval-time membership snapshot | 1–1.5 sessions |
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) | 2–3 sessions |
@@ -145,8 +145,8 @@ would itself be the #72 pattern one level up:**
 
 | Tier | Mechanism | Measured against today's suite | Catches |
 | --- | --- | --- | --- |
-| 1 | Static: flag test modules importing private names from the module under test, and bare substring assertions on stringified values | **5 + 2 hits across 868 unit tests, 3 files** — near-zero noise, allowlistable | ~3–4 of the 9 |
-| 2 | Diff-scoped mutation testing — the automation of red-on-revert | Full suite is 13–16 min, so 50–150 mutants cannot be a blocking per-PR gate | the class |
+| 1 | Static: private CONSTANT imports from the module under test; containment assertions whose needle carries no literal text | **5 + 2 real hits** — but the first implementation flagged 41 + 38, and narrowing to the measured shape is what made it usable | ~3–4 of the 9 |
+| 2 | Mutation sweep — the automation of red-on-revert. Purpose-built, because `DropKeyword` is what catches instance 9 and mutmut has no such operator | Every mutant costs a full test run, so nightly over changed files, never a PR gate | the class |
 
 Tier 1 cannot see instance 2 (setup performs the step under test) or instance 9
 (a deletable keyword argument) — neither has a static signature. **Tier 2 runs

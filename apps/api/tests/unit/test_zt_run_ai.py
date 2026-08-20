@@ -1053,6 +1053,8 @@ def test_zt_score_prompt_does_not_ask_for_narratives() -> None:
     someone adds a schema field. This is the one that fires if someone starts
     paying for narrative tokens again (issue #64).
     """
+    # test-integrity: the PROMPT is the spec being checked. See #92 — ZT's
+    # contract test should be audited for the same one-directionality as CSF's.
     from app.ai.jobs import _ZT_SCORE_PROMPT
 
     for key in ("pillar_narratives", "executive_summary", "roadmap_summary"):

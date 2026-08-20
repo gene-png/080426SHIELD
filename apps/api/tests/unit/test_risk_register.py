@@ -19,6 +19,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.risk.exporters import build_context as build_risk_context
 from app.risk.exporters import render_docx, render_pdf
+
+# test-integrity: the constant DEFINES the boundary under test — seeding
+# `_RISK_BATCH_SIZE + 1` gaps is what forces a second batch, and asserting
+# `max(batch_sizes) <= _RISK_BATCH_SIZE` is the invariant itself. Hardcoding a
+# literal here would silently stop exercising batching if the constant changed.
 from app.routes.risk import _RISK_BATCH_SIZE
 
 

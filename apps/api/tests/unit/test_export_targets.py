@@ -215,7 +215,7 @@ def test_zt_export_states_the_true_gap_total_when_it_truncates(app_client) -> No
 
     shown = ws.max_row - 2  # minus the caption row AND the header
     assert shown < total, f"fixture did not truncate: shown={shown} total={total}"
-    assert str(total) in blob, (
+    assert f"of {total} gaps" in blob, (
         f"the Gap Plan shows {shown} of {total} gaps and never states the total — "
         "a client cannot tell anything was omitted"
     )
@@ -372,7 +372,7 @@ def test_csf_export_states_the_true_gap_total_when_it_truncates(app_client) -> N
 
     shown = ws.max_row - 2  # minus the caption row AND the header
     assert shown < total, f"fixture did not truncate: shown={shown} total={total}"
-    assert str(total) in blob, (
+    assert f"of {total} gaps" in blob, (
         f"the CSF Gap Plan shows {shown} of {total} gaps and never states the total — "
         "a client cannot tell anything was omitted"
     )

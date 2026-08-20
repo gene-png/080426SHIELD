@@ -40,6 +40,13 @@ jobs:
         working-directory: apps/api
         run: black --check .
 
+      # W8a tier 1 (#72): tests that cannot fail. Runs BEFORE pytest — it is a
+      # two-second static pass, and a suite that is green for the wrong reason
+      # should be caught before spending 13 minutes proving it is green.
+      - name: test-integrity sweep
+        working-directory: apps/api
+        run: python -m scripts.check_test_integrity tests
+
       - name: pytest -m unit
         working-directory: apps/api
         run: pytest -m unit tests/unit

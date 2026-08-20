@@ -2504,3 +2504,72 @@ amendment path for the value that now governs every deliverable, and it accepts
 paragraph above rather than a hope. An unpinned decision is the same class of
 thing as an untested fix, and this repo has nine recorded instances of the
 second.
+
+## D-051 — W8a: the #72 sweep is two tiers, and each states what it cannot catch
+
+**Date:** 2026-08-20 · **Issues:** #72 (the sweep), #92 (filed by its first run) · **Follows:** D-049, D-050
+
+Nine recorded instances of a test that passes whether or not the fix it guards
+is present. The rule has been in `CLAUDE.md` since instance 2; instances 8 and 9
+were written anyway, by someone who had read it that day. **That is a mechanism
+problem, and W8 was split so half of it could be built now** rather than deferred
+behind five workstreams that each ship new tests.
+
+**Tier 1 — `scripts/check_test_integrity.py`, static, blocking, in CI.** Two
+signals, both derived from real instances:
+
+- **TI001** — a test importing a private CONSTANT from the module it tests
+  (instance 1: `_PARSER_ROW_KEYS = (..., *_DIM_FIELDS, ...)`).
+- **TI002** — a containment assertion whose needle carries no literal text
+  (instance 8: `str(dash["total_gap_count"]) in doc_summary`, satisfied by the
+  coverage fraction `106/106 subcategories scored`).
+
+Neither forbids the pattern; both demand a written `# test-integrity:` reason,
+because the same syntax is sometimes correct. Importing `_CSF_SCORE_PROMPT` into
+a contract test is RIGHT — the prompt is the spec. Importing `_DIM_FIELDS` to
+build the expected response is the defect. No static rule separates them, so the
+checker makes someone say which one it is.
+
+**Both rules were narrowed after measuring, and the measurement is the point.**
+The first implementation flagged every private import and every bare `x in y`:
+**41 + 38 findings, of which 5 + 2 were real.** Restricting TI001 to
+constant-style names drops 36 FastAPI dependency-override handles
+(`_llm_dep`, `_storage_dep`) that say nothing about what a test asserts;
+restricting TI002 to explicit `str(...)`/f-string stringification drops 36
+assertions that cannot be told from `key in mapping` without type information.
+A rule whose signal is 12% of its output gets muted, and a muted rule is worth
+nothing. One of the checker's own tests demanded the broad behaviour and was
+**wrong**; it is inverted now, and says so in its docstring.
+
+**Tier 2 — `scripts/mutation_sweep.py`, scheduled, non-blocking.** Change the
+code, does a test go red — the automation of the revert-each-fix-individually
+practice that found instances 8 and 9 by hand.
+
+**It is purpose-built rather than mutmut, and the decisive reason is
+`DropKeyword`.** Instance 9 was `targets=` being deletable from
+`finalize_zt_deliverable` with the entire suite green: a MISSING ARGUMENT, not a
+wrong operator. mutmut mutates expressions, not call signatures, so it would not
+have caught it either. Validated end to end against that exact case — the tool
+independently generates the `drop targets=` mutant at `zt.py:1619` and confirms
+the test added in D-049 kills it.
+
+**Not a PR gate, deliberately.** Every mutant costs a full run of the selected
+tests and the unit suite is 13-16 minutes, so 50-150 mutants cannot sit in front
+of a merge. It runs nightly over files changed in the last day, plus manual
+dispatch. A non-blocking mechanism that runs beats a blocking one that gets
+disabled.
+
+**What neither tier catches, stated because overstating it would be this exact
+defect one level up.** Tier 1 is structurally blind to instance 2 (a test whose
+SETUP performs the step the code under test is supposed to perform) — no static
+signature exists for it. A surviving mutant is a QUESTION, not a verdict: some
+mutants are semantically equivalent and some paths are untested by design. **This
+does not close #72**, and #72 should not be closed on the basis that a checker
+exists.
+
+**The sweep's first run filed #92.** `test_csf_ai_contract.py` checks
+parser→prompt but never prompt→parser, and its end-to-end half builds its
+response body from the parser's own constants. The static half is sound and the
+import is justified in place with a marker naming the issue — so the gate stays
+green without the finding becoming invisible, which is the behaviour a
+justification mechanism has to have to be worth anything.
