@@ -68,8 +68,10 @@ one). **#84 is folded into W1 Risk** rather than sequenced after it: it sets the
 input population of the very job W1 Risk instruments. **#87 is now decided (D-050): the contracted
 target**, confirming what #86 shipped by implication. Confirming it surfaced a
 gap it creates — **#90**, no consultant-side write path to that target exists
-anywhere; the only two writes are in the client self-assessment submit, gated on
-DRAFT, so the value is client-writable once and then frozen. That re-weights
+anywhere; the only two writes are in the client self-assessment submit. A
+re-scope IS reachable — an admin cuts a new assessment version, which re-opens
+the client's write — but that discards the completed assessment, since new
+versions seed blank answer rows. That re-weights
 **#85** from a narrow API edge case to the sole amendment path for the value
 governing every deliverable. **#89** (the selector is exploration-only; Finalize
 must surface the divergence) is a required follow-up, not optional.

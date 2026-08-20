@@ -2451,15 +2451,31 @@ silence is what makes it read as a permanent bug. The load-bearing part of #89
 is surfacing the divergence **at Finalize** — labelling the selector alone leaves
 it discoverable only by whoever reads carefully before clicking.
 
-**The gap this decision creates, found while confirming it (#90).** There is no
-consultant-side write path to the contracted target anywhere in the codebase.
-The only two writes are in the client self-assessment submit (`csf.py:664`,
-`zt.py:1186`), both gated on `DRAFT`, so the value is set at intake, amendable
-exactly once by the CLIENT, and then frozen — `admin.py` only reads it. A
-re-scoped engagement therefore cannot produce a document against the agreed new
-target at all. This is not a reason to reopen the decision; a re-scope should be
-a recorded deliberate change, which is the opposite of the rejected alternative.
-It needs its own answer.
+**The gap this decision creates (#90).** There is no consultant-side write path
+to the contracted target. The only two writes are in the client self-assessment
+submit (`csf.py:664`, `zt.py:1186`); `admin.py` only reads it.
+
+An earlier draft of this record said the value was therefore "amendable exactly
+once and then frozen." **That was wrong and is corrected here.** The 409 guard is
+on the LATEST ASSESSMENT's status, not a global one-time lock, and
+`POST /services/{id}/assessments` — admin-only — cuts a new assessment version
+once the prior one has moved on. A new version starts DRAFT, so the client's
+self-assessment submit is reachable again and writes the target again. A re-scope
+IS achievable today: the consultant cuts a new cycle, the client re-submits with
+the agreed target.
+
+**What is actually wrong with that path** is the price, not its absence:
+
+- It **discards the completed assessment**. New versions seed blank answer rows
+  (`ZtAnswer(assessment_id=…, capability_code=…)` with no stage), so changing one
+  number costs all 87/106 answers and the work behind them.
+- It **cannot be completed by the consultant alone** — the client must re-submit.
+  An unresponsive client means the target cannot change.
+- The client can set a target the consultant never agreed to, and it silently
+  governs the deliverable.
+
+So the mechanism exists and is unusable for its purpose, which is a different
+finding from "no mechanism exists" and points at the same fix.
 
 **It re-weights #85.** Filed as narrow and API-only, it is in fact the sole
 amendment path for the value that now governs every deliverable, and it accepts
