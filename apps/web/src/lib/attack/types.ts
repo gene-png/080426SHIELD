@@ -82,6 +82,29 @@ export interface AttackRunAiResponse {
   tools_available: number;
   changed: CoverageChange[];
   coverage: AttackCoverageRow[];
+  // mitre_map runs as concurrent batches. Returned by the API since D-048 and
+  // still rendered nowhere — a known gap recorded there, not this change's
+  // business, but declared so the next reader sees it exists.
+  batches_total?: number;
+  batches_failed?: number;
+  // W2 citation accounting. Optional so a stored payload from before the
+  // resolver parses unchanged (C0).
+  //
+  // Every usable cited string lands in exactly one of the three:
+  //   confirmed    — matched with no inference (case/whitespace only)
+  //   needs_review — APPLIED, but the resolver had to change or assume
+  //                  something. Inference is not confirmation.
+  //   rejected     — no unique candidate; the citation is gone.
+  citations_confirmed?: number;
+  citations_needs_review?: number;
+  citations_rejected?: number;
+  citations_rejected_examples?: string[];
+  citations_needs_review_tools?: string[];
+  // Keyed by WHY — `incomplete_vendor_data` is a materially different risk from
+  // `punctuation`, and collapsing them is what made that guard inert.
+  citations_needs_review_by_reason?: Record<string, string[]>;
+  // Entries that were not usable tool names at all. Not folded into `rejected`.
+  citations_unusable?: number;
 }
 
 export interface TacticHeatmapEntry {
