@@ -98,8 +98,11 @@ class CapabilityList(UUIDPKMixin, TimestampMixin, Base):
     # NULL on pre-0036 lists, which render no claim at all.
     source_rows_total: Mapped[int | None] = mapped_column(Integer)
     # [{index, summary}] for rows that produced no capability. Empty when the
-    # provider did not attribute every item to a source row — the counts stay
-    # honest and the naming is withheld rather than guessed.
+    # provider did not attribute every item to a source row — the naming is
+    # withheld rather than guessed. The derived COUNT stays honest except when
+    # items outnumber source rows, where the arithmetic cannot distinguish
+    # "nothing was excluded" from "a row was excluded and another row produced
+    # two items" — see `tech_debt/exporters.py`.
     excluded_rows: Mapped[list | None] = mapped_column(JSON)
 
     # [{item_id, name}] — the security-scope membership as it stood at approval

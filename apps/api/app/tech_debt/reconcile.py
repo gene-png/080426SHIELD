@@ -36,7 +36,16 @@ class Reconciliation:
     excluded: int
     excluded_rows: list[ExcludedRow] = field(default_factory=list)
     # False when the model did not attribute every item to a source row, so the
-    # COUNT is trustworthy but the specific rows cannot all be named.
+    # specific rows cannot all be named.
+    #
+    # The count is trustworthy whenever fewer items came back than rows went in,
+    # which is the normal case. It is NOT when items outnumber source rows: two
+    # items sharing one `source_row_index` make `max(received - included, 0)`
+    # report zero, and the arithmetic then cannot distinguish "nothing was
+    # excluded" from "a row was excluded and another row produced two items".
+    # Persisting THIS flag is what would let a renderer say "the reconciliation
+    # does not balance" instead. An earlier comment here said the count was
+    # trustworthy full stop; it is not.
     attribution_complete: bool = True
 
 

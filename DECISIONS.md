@@ -2541,6 +2541,23 @@ A rule whose signal is 12% of its output gets muted, and a muted rule is worth
 nothing. One of the checker's own tests demanded the broad behaviour and was
 **wrong**; it is inverted now, and says so in its docstring.
 
+**Correction (2026-08-20): W8b's deferral reasoning was wrong within a day.**
+The reasoning is not in this record — it lives in `DELIVERY_PLAN.md` (the W8b
+bullet in the W8-split section, and the W8b row of the deferred table), which is
+the LIVING document people plan from. Both copies are annotated there; saying
+"below" here pointed at text that was in another file, so the append-only log
+carried the correction while the document people act from carried the falsehood.
+It read "invoking it manually is demonstrably working". Three consecutive CODE PRs then merged with the §14
+audit silently skipped (#93, #94, #95), each green, each putting a defect on
+`main` that the audit found afterwards — including a client-facing fabricated
+gap. The evidence used to defer the mechanism was false. That is this decision's
+own argument (mechanism beats discipline) applied to the gate that enforces it,
+and got backwards. The response is NOT full W8b: a deterministic merge-blocking
+check now requires recorded audit evidence on any code PR
+(`scripts/check_audit_evidence.py`), which closes the silent-skip failure mode
+without taking on the per-PR cost and non-determinism W8b was rightly deferred
+for. Whether W8b itself moves up remains open.
+
 **Tier 2 — `scripts/mutation_sweep.py`, scheduled, non-blocking.** Change the
 code, does a test go red — the automation of the revert-each-fix-individually
 practice that found instances 8 and 9 by hand.

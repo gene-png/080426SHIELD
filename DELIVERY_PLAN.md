@@ -135,11 +135,17 @@ in `CLAUDE.md` demonstrably does not prevent new instances.
 So W8 splits along the line where the two halves actually differ:
 
 - **W8a — the #72 sweep. Item 2a above, in the path.** Deterministic, no LLM.
-- **W8b — the adversarial reviewer as a CI job. Stays deferred, with a reason:**
-  it is non-deterministic and expensive per PR, and invoking it manually is
-  demonstrably working — it is what caught every #86 finding. Automating the
-  thing that already works is lower value than automating the thing that keeps
-  failing.
+- **W8b — the adversarial reviewer as a CI job. Deferral reason CORRECTED
+  2026-08-20:** it is non-deterministic and expensive per PR, which still holds.
+  What does NOT hold is the rest of the original sentence — "invoking it manually
+  is demonstrably working". Within a day, three consecutive code PRs (#93, #94,
+  #95) merged with the audit silently skipped, each green, each putting a defect
+  on `main` that the audit found afterwards, including a client-facing fabricated
+  gap. A deterministic merge check now requires RECORDED audit evidence on any
+  code PR (`scripts/check_audit_evidence.py`), which closes the silent-skip
+  failure mode without W8b's cost. Whether W8b itself moves up is open — but it
+  must not be re-deferred on the manual-process-works argument, which is the
+  argument that failed. See D-051.
 
 **W8a is two tiers, and the catch rates are stated because overstating them
 would itself be the #72 pattern one level up:**
@@ -260,7 +266,7 @@ rather than trusting anyone to remember it.
 | **W0 freeze** | Open decision | Unblocked by W4, but needs Part 3 reopen scoped for CSF (that is W5). D-046 is explicit the W4 lock is PARTIAL |
 | **W5 — reopen ×4 + release-staleness guard** | Not started | Unblocked by W4. **#59 is in scope for it** |
 | **W7 — watermarking** | Not started | Gated on W5 |
-| **W8b — adversarial reviewer as a CI job** | Deferred, with a reason | Agent file landed (PR #36); the CI job was never built. Stays deferred: non-deterministic and expensive per PR, and invoking it manually is demonstrably working — it is what caught the #86 findings. **W8a (#72) split out and moved into the path above** |
+| **W8b — adversarial reviewer as a CI job** | Deferred; **reason corrected 2026-08-20** | Agent file landed (PR #36); the CI job was never built. Still non-deterministic and expensive per PR. But "invoking it manually is demonstrably working" was FALSE within a day — #93/#94/#95 all merged with the audit silently skipped. A deterministic merge check now requires recorded audit evidence (`scripts/check_audit_evidence.py`); do not re-defer W8b on the manual-process argument. See D-051. **W8a (#72) split out and moved into the path above** |
 | **#67 recurrence risk** | Fixed for CSF (PR #78) | — |
 | Production runway | Unscheduled | See the section below; still gated on cloud/account decisions |
 

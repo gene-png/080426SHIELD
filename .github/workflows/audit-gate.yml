@@ -1,0 +1,59 @@
+name: Audit gate
+
+# Plan §14 — "every workstream merges on a clean adversarial-reviewer audit, not
+# on a green suite" — was skipped on three consecutive code PRs (#93, #94, #95),
+# each green, each putting a defect on main that the audit found afterwards.
+#
+# A SEPARATE workflow from ci.yml on purpose. This needs `edited` in its
+# triggers: without it, pasting the audit section into the description does not
+# re-run the check, so a legitimately-fixed PR stays red and can only be cleared
+# by pushing an empty commit — and a compliant body edited to remove the section
+# after a green run is never re-checked. Putting `edited` on ci.yml instead would
+# re-run the 20-minute Playwright suite every time someone fixes a typo in a PR
+# description.
+#
+# IMPORTANT: a workflow job only REPORTS. It blocks merging only once
+# "Adversarial audit recorded" is registered in the branch protection rules for
+# `main` as a required status check. That registration is a GitHub setting, not
+# a file in this repo — see DECISIONS.md D-051. Until it is done, this is a
+# visible red X and nothing more.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  audit-gate:
+    name: Adversarial audit recorded
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed for `origin/<base>` to exist so the three-dot diff resolves.
+          # If it is ever shallow, `git diff` exits non-zero and `bash -e` fails
+          # the step — red, not a false green.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect the changed paths
+        run: |
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt
+          echo "changed paths:"; cat /tmp/changed.txt
+
+      - name: Read the PR body
+        env:
+          # Via env, not inline: a PR body is untrusted text, and interpolating
+          # it into a shell line is a script-injection hole.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > /tmp/body.md
+
+      - name: Require recorded audit evidence
+        working-directory: apps/api
+        run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
