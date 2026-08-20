@@ -1,4 +1,4 @@
-"""Tech Debt service routes (Master Spec §15 Phase 3).
+"""Tech Debt service routes (Master Spec Â§15 Phase 3).
 
 This stage (Phase 3 stage 4) ships the spine:
   - POST /tech-debt/services         (open a service workspace; admin-only)
@@ -154,6 +154,49 @@ def _max_list_version(db: Session, service_id: uuid.UUID) -> int:
     )
 
 
+def approved_membership_stale(db: Session, cap_list: CapabilityList) -> bool:
+    """True when the approved snapshot no longer matches current security scope.
+
+    W3 froze allow-list membership at approval so a post-approval edit could not
+    silently rewrite what a citation was "confirmed against" (#32). The snapshot
+    is deliberately NOT auto-refreshed â€” silently ADDING an unreviewed row to a
+    hard allow-list is the defect #32 records.
+
+    But the same silence cuts the other way, and that half was missed:
+    `override_security_classification` exists to undo a wrong non-security call,
+    and its own docstring promises such a row "must not keep a stale sign-off
+    that would silently re-exclude it". Once the list is approved, the snapshot
+    re-excluded it anyway, one layer up â€” so a tool the consultant just restored
+    could not be cited, and every technique it covers came back a fabricated gap.
+    `add_capability_components` has the same shape: decomposing an approved
+    bundle produced children invisible to the mapping, which is the exact
+    regression that feature was built to fix.
+
+    Auto-refreshing would trade #32's defect back. Refusing the edit would break
+    two first-class workflows. So the list REPORTS that its approved membership
+    is out of date, and re-approval remains the one deliberate, audited way to
+    change what the model may cite. Silence in either direction is the thing to
+    avoid.
+    """
+    if cap_list.approved_membership is None:
+        return False
+    approved = {(e.get("name") or "").strip() for e in cap_list.approved_membership}
+    approved.discard("")
+    current = {
+        (n or "").strip()
+        for n in db.execute(
+            select(CapabilityItem.name).where(
+                CapabilityItem.capability_list_id == cap_list.id,
+                security_scope_filter(),
+            )
+        )
+        .scalars()
+        .all()
+    }
+    current.discard("")
+    return approved != current
+
+
 def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> CapabilityListResponse:
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
@@ -161,12 +204,13 @@ def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> Capabil
         .all()
     )
     # Built FROM THE MODEL, not field-by-field. The hand-written version silently
-    # dropped a newly-added column twice — `source_rows_total`, then `confirmed`
-    # — each time reading as null in the UI with nothing failing. A new column on
+    # dropped a newly-added column twice â€” `source_rows_total`, then `confirmed`
+    # â€” each time reading as null in the UI with nothing failing. A new column on
     # CapabilityList now flows through automatically; only `items` is filled by
     # hand, because it is a separate query rather than an attribute.
     resp = CapabilityListResponse.model_validate(cap_list, from_attributes=True)
     resp.items = [CapabilityItemResponse.model_validate(i, from_attributes=True) for i in items]
+    resp.approved_membership_stale = approved_membership_stale(db, cap_list)
     return resp
 
 
@@ -197,11 +241,11 @@ def extract_capability_list(
 
     # Draft-exists guard (Sprint 8 T1, ported from CSF / ATT&CK / Zero Trust):
     # this route used to mint a new version and fire a fresh LLM extraction on
-    # EVERY call, so a double-click on "extract" produced unbounded v2, v3, v4…
+    # EVERY call, so a double-click on "extract" produced unbounded v2, v3, v4â€¦
     # drafts and burned an AI call per click. The guard sits AFTER service/
     # artifact validation but BEFORE extract_capabilities() so a second POST
     # while a draft is open does NOT invoke the LLM. If an unsubmitted draft is
-    # already open, return it idempotently (HTTP 200) untouched — NO
+    # already open, return it idempotently (HTTP 200) untouched â€” NO
     # re-extraction, NO clear-and-repopulate, so consultant edits/locks on the
     # open draft survive. A new version is only cut once the prior list has
     # moved on (approved/released). A POST with a different artifact_id while a
@@ -384,7 +428,7 @@ def include_excluded_row(
     """Recover a row the extractor wrongly skipped (UX finding 4).
 
     Disclosure told the consultant nine rows were dropped; this is how they act
-    on it. The consultant supplies the values — the raw row is free text the
+    on it. The consultant supplies the values â€” the raw row is free text the
     extractor already declined to interpret, so re-parsing it here would be
     guessing at exactly the point a human has stepped in.
     """
@@ -436,8 +480,8 @@ def confirm_excluded_row(
 ) -> CapabilityListResponse:
     """Acknowledge an exclusion as correct.
 
-    The row STAYS listed — the reconciliation has to keep telling the truth
-    about what was uploaded — but the workspace can stop flagging it as
+    The row STAYS listed â€” the reconciliation has to keep telling the truth
+    about what was uploaded â€” but the workspace can stop flagging it as
     outstanding.
     """
     cap_list = _editable_list_or_404(db, list_id, client)
@@ -494,7 +538,7 @@ def confirm_security_classification(
 
     Until this runs, the model's "not security-related" call is provisional and
     the row stays in the ATT&CK subset (app.tech_debt.security_scope). This is
-    the only thing that takes it out, and it takes a human to do it — a wrongly
+    the only thing that takes it out, and it takes a human to do it â€” a wrongly
     dropped security tool becomes uncitable in the mapping, so its absence would
     read as an assessed gap rather than a missing input.
 
@@ -545,7 +589,7 @@ def override_security_classification(
 
     The consultant supplies which of prevent / detect / respond it serves; the
     model is not re-asked. Clearing `security_class_confirmed` matters on the
-    path back — a row confirmed non-security and later overturned must not keep
+    path back â€” a row confirmed non-security and later overturned must not keep
     a stale sign-off that would silently re-exclude it if it were reclassified.
     """
     item, cap_list = _editable_item_or_404(db, item_id, client)
@@ -587,7 +631,7 @@ def add_capability_components(
     analysis and to the ATT&CK tool mapping.
 
     The CONSULTANT names the components. The model is never asked what is inside
-    a bundle — that would be fabricated detail, which is exactly what the AI seam
+    a bundle â€” that would be fabricated detail, which is exactly what the AI seam
     exists to prevent.
 
     Components carry no cost: the parent keeps the whole licence value, so
@@ -773,8 +817,8 @@ def approve_capability_list(
     cap_list.approved_by = user.id
     # W3: record WHAT was approved, not merely that approval happened.
     #
-    # An APPROVED list stays editable until release — `_editable_list_or_404`
-    # blocks RELEASED and DISCARDED only — through five doors, one of which
+    # An APPROVED list stays editable until release â€” `_editable_list_or_404`
+    # blocks RELEASED and DISCARDED only â€” through five doors, one of which
     # (`patch_capability_item`) can change `name`, and one of which (the
     # security-classification confirm queue) changes allow-list membership BY
     # DESIGN. `attack.py::_client_tool_names` turns these names into a hard
@@ -806,7 +850,7 @@ def approve_capability_list(
         details={
             "service_id": str(cap_list.service_id),
             "version": cap_list.version,
-            # The count alone is uninterpretable on a RE-approval — "12" says
+            # The count alone is uninterpretable on a RE-approval â€” "12" says
             # nothing about whether the allow-list just changed. `replaced` is
             # what distinguishes a first approval from one that overwrote an
             # earlier membership (D-049's lesson, applied here).
@@ -1114,7 +1158,7 @@ def finalize_deliverable(
     # `!= APPROVED`, which was harmless only while nothing ever assigned
     # RELEASED: once W4 flips the parent on release, `!= APPROVED` would make
     # releasing a tech-debt deliverable permanently block finalizing any further
-    # version for that service. CI could not have caught it — the only spec
+    # version for that service. CI could not have caught it â€” the only spec
     # covering release-then-finalize (`s17-documents`) runs on CSF, which already
     # accepted RELEASED. The ATT&CK plan's claim that all four services
     # "hard-gate finalize on APPROVED/RELEASED" was false here, and only here.
@@ -1206,7 +1250,7 @@ def finalize_deliverable(
 
     summary_line = (
         f"{len(items)} capabilities reviewed; "
-        f"{'≥ ' if not ctx.savings_cost_known else ''}"
+        f"{'â‰¥ ' if not ctx.savings_cost_known else ''}"
         f"${ctx.estimated_savings:,.0f} estimated annual savings."
     )
 
