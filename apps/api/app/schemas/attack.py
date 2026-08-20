@@ -123,6 +123,21 @@ class AttackRunAiResponse(BaseModel):
     # consultant must be told the draft is incomplete and which slice is missing.
     batches_total: int = 0
     batches_failed: int = 0
+    # W2 citation accounting. Additive + defaulted (C0). Every usable cited
+    # string lands in exactly one of these three, so a reader can check the
+    # numbers add up rather than trusting them.
+    #
+    # `citations_confirmed` matched with no inference — case and whitespace
+    # only. `citations_needs_review` was RESOLVED and APPLIED, but the resolver
+    # had to change or assume something, and inference is not confirmation.
+    # `citations_rejected` had no unique candidate and is gone.
+    citations_confirmed: int = 0
+    citations_needs_review: int = 0
+    citations_rejected: int = 0
+    # Verbatim and bounded: "Tenable io" tells a consultant the list holds
+    # "Tenable.io". A bare count tells them nothing they can act on.
+    citations_rejected_examples: list[str] = Field(default_factory=list)
+    citations_needs_review_tools: list[str] = Field(default_factory=list)
 
 
 class AttackCoveragePatch(BaseModel):

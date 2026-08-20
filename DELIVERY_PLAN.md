@@ -42,7 +42,7 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
-_Added 2026-08-19. **This section is maintained, not archival.** When an item
+_Added 2026-08-19, current as of 2026-08-20. **This section is maintained, not archival.** When an item
 lands, change its status here in the same PR that lands it — the same rule
 `CONTEXT.md` follows. A status line that is wrong is worse than none, because
 this is the document someone reads to decide what to work on._
@@ -59,10 +59,10 @@ fixture mode already demos all five.
 | 1 | **Export-target trio — #73 + #75 + #79** | **DONE** (PR #86, D-049, merged 2026-08-20) | — | — |
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
 | 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — |
-| 3a | **Export/persistence audit — Tech Debt (+ #77)** | **IN REVIEW** (D-052) | CI | Done bar review |
+| 3a | **Export/persistence audit — Tech Debt (+ #77)** | **DONE** (PR #94, D-052, merged 2026-08-20) | — | — |
 | 3b | **Export/persistence audit — ATT&CK** | Not started | **W2** (item 5) — same files, and the audit wants the post-rewrite shape | 0.5 session + unknown fixes |
-| 4 | **W3 — Tech Debt approval snapshot** | **IN REVIEW** (PR pending, D-053, migration 0043) | CI | Done bar review |
-| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | Not started | **W3** (item 4) — **unblocked once D-053 merges** | 2–3 sessions |
+| 4 | **W3 — Tech Debt approval snapshot** | **DONE** (PR #95, D-053, migration 0043, merged 2026-08-20). Regression fixed by **#96** | — | — |
+| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **IN PROGRESS** — resolver + tri-state + run-AI wiring done (42 tests); UI half outstanding | Unblocked (W3 landed) | ~1 session left |
 | 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
 | 7 | **W1 ATT&CK step** | Not started | **W2** (item 5) | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
@@ -242,6 +242,23 @@ just written the rule down, which is the case for mechanising the sweep (W8)
 rather than trusting anyone to remember it.
 
 
+### Live risk: `main` has NO branch protection (2026-08-20)
+
+Checked directly in Settings → Branches: **zero rules**, not even force-push
+blocking. Consequences, in order of how much they cost:
+
+- The **"Adversarial audit recorded"** check from #98 (D-054) reports and does
+  not block, so a code PR can merge with the §14 audit skipped exactly the way
+  #93/#94/#95 did. #98 made the skip visible; visible-and-ignorable is not
+  enforcement.
+- None of the five CI checks are required either. A red suite can merge.
+- `main`'s history is force-pushable.
+
+**Owed: register "Adversarial audit recorded" plus the five CI checks as
+required, and block force-push.** That is a GitHub settings change no file in
+this repo can make or verify — which is exactly why it is written down here
+rather than assumed done.
+
 ### Recently landed (context for the above)
 
 - **W1 CSF** (PR #54, D-045) and **W1 ZT** (PR #66, D-047) — every AI suggestion
@@ -253,6 +270,15 @@ rather than trusting anyone to remember it.
 - **CSF client dashboard** (PR #80) — the last assessment service without one.
   Ships reading the client's intake target, which is why #79 exists and is first
   in the queue.
+- **The §14 audit gate** (PR #98, **D-054**) — a deterministic merge check
+  requiring recorded audit evidence on any code PR. Built after the gate was
+  silently skipped three times running; its own audit found eight defects in it.
+  **Not enforcing until branch protection is configured** — see the live risk
+  above.
+- **Two retro-audit fixes** — **#96**, the W3 snapshot silently NARROWING the
+  ATT&CK allow-list (client-facing fabricated gaps, live on main for ~1h), and
+  **#97**, the mutation sweep mutating the wrong node on chained calls and
+  scoring every mutant "killed" when the suite never ran.
 - **Live-AI verification** (PR #82) — a working key was installed 2026-08-19 and
   all five purposes ran against a real provider with redaction confirmed. The
   drop paths, which fixture mode structurally cannot reach, are now exercised by

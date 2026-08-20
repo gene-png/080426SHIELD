@@ -340,3 +340,116 @@ def test_run_ai_object_techniques_is_refused_not_iterated_as_keys(app_client) ->
     r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
     assert r.status_code == 502, r.text
     assert r.json()["error"]["reason"] == "ai_call_failed"
+
+
+# --- W2: citations are resolved and ACCOUNTED FOR, not silently dropped -----
+
+
+def _run_with_citations(c, TestSession, tools: list[str], cited: list[str]) -> dict:
+    """One technique, `cited` as its detection_tools, against `tools`."""
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], tools)
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    code = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"][0][
+        "technique_code"
+    ]
+    import json as _json
+
+    provider = c.app.dependency_overrides  # noqa: F841 - provider set by fixture
+    return (
+        code,
+        svc_id,
+        h,
+        _json.dumps(
+            {
+                "techniques": [
+                    {
+                        "technique_code": code,
+                        "status": "covered",
+                        "detection_tools": cited,
+                        "prevention_tools": [],
+                        "response_tools": [],
+                        "rationale": "r",
+                    }
+                ]
+            }
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_a_near_miss_citation_is_resolved_and_flagged_not_dropped(app_client) -> None:
+    """The defect this exists to close.
+
+    Exact match dropped "CrowdStrike" against `CrowdStrike Falcon Enterprise`
+    silently: no count, no reason, and the technique kept its `covered` status
+    with an EMPTY tool list. A reader cannot tell that from a client who owns
+    nothing.
+    """
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(
+        c, TestSession, ["CrowdStrike Falcon Enterprise"], ["CrowdStrike"]
+    )
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == ["CrowdStrike Falcon Enterprise"], "the citation was dropped"
+    # `mitre_map` runs concurrent BATCHES and the fixture answers each one with
+    # the same payload, so the citation is resolved once per batch. Assert the
+    # discrimination — which bucket it lands in — not the batch count, which is
+    # a fixture artifact rather than behaviour.
+    assert body["citations_confirmed"] == 0
+    assert body["citations_needs_review"] > 0
+    assert body["citations_rejected"] == 0
+    assert body["citations_needs_review_tools"] == ["CrowdStrike Falcon Enterprise"]
+
+
+@pytest.mark.unit
+def test_an_exact_citation_is_confirmed_not_flagged(app_client) -> None:
+    """#11: a verbatim citation must not be reported as a near miss. With the
+    counter surfaced, that is a false statement a consultant can act on."""
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(c, TestSession, ["Tenable.io"], ["Tenable.io"])
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    assert body["citations_confirmed"] > 0
+    assert body["citations_needs_review"] == 0, "a verbatim citation was called an inference"
+
+
+@pytest.mark.unit
+def test_an_unknown_citation_is_counted_and_quoted_verbatim(app_client) -> None:
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(
+        c, TestSession, ["Splunk Enterprise"], ["Qradar"]
+    )
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == []
+    assert body["citations_rejected"] > 0
+    assert body["citations_rejected_examples"] == ["Qradar"]
+    assert body["citations_confirmed"] == 0
+
+
+@pytest.mark.unit
+def test_an_ambiguous_citation_is_refused_rather_than_attributed(app_client) -> None:
+    """Two Splunk products. The accuracy tiebreak: a dropped citation is counted
+    and visible, a wrong attribution is invisible and reaches the client."""
+    c, TestSession, provider = app_client
+    code, svc_id, h, payload = _run_with_citations(
+        c, TestSession, ["Splunk Enterprise", "Splunk Phantom"], ["Splunk"]
+    )
+    provider.register_static("mitre_map", LLMResponse(payload))
+
+    body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
+    row = next(t for t in body["coverage"] if t["technique_code"] == code)
+    assert row["detection_tools"] == []
+    assert body["citations_rejected"] > 0
+    assert body["citations_needs_review"] == 0, "guessed between two Splunk products"
