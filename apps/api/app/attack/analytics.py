@@ -7,7 +7,7 @@ heatmap UI can render directly.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from app.attack.catalog import TACTICS, TECHNIQUES, parent_techniques
@@ -25,6 +25,12 @@ class TacticCoverage:
     gap: int
     not_applicable: int
     unscored: int
+    # #102 / plan 5.1: a status exists but its supporting citations are
+    # unconfirmed. Its OWN state — never collapsed into `gap` (which says
+    # nothing was found) and never folded into `unscored` (which says no status
+    # was assigned). Excluded from `addressable`, so it withholds a claim rather
+    # than scoring a zero.
+    pending_review: int
     coverage_pct: float  # (covered + 0.5*partial) / addressable * 100
 
 
@@ -38,6 +44,7 @@ class CoverageRollup:
     partial: int
     gap: int
     not_applicable: int
+    pending_review: int
     coverage_pct: float
     by_tactic: tuple[TacticCoverage, ...]
 
@@ -65,26 +72,66 @@ def _pct(numer: float, denom: float) -> float:
     return round(numer / denom * 100, 1)
 
 
-def _coverage_for_codes(codes: list[str], coverage_map: Mapping[str, str | None]) -> dict[str, int]:
+#: Statuses that a pending-review flag can hold back: the ones that make a
+#: POSITIVE claim, and so are the only ones that can be unsupported.
+#:
+#: `not_applicable` is already outside `addressable`, so flagging its evidence
+#: changes nothing about a claim that was never made, and `None` (unscored) has
+#: no claim to withhold.
+#:
+#: `gap` was in this tuple and has been REMOVED. A gap is an ABSENCE claim --
+#: its evidence is the lack of a citation, so there is nothing to withhold --
+#: and withholding one is not neutral: `addressable` is the denominator, so
+#: dropping a gap out of it RAISES `coverage_pct` while deleting a finding. Ten
+#: covered beside ten gaps went from 50% to 100% when the gaps were flagged.
+#: That is 5.1 invariant 1 read backwards. See
+#: `test_withholding_a_gap_would_raise_the_score`, and `app/attack/pending.py`,
+#: which never emits a gap code in the first place -- this tuple is the second
+#: of the two locks, not the only one.
+_WITHHOLDABLE = (CoverageStatus.COVERED, CoverageStatus.PARTIAL)
+
+
+def _tally(
+    codes: list[str],
+    coverage_map: Mapping[str, str | None],
+    pending_codes: frozenset[str],
+) -> dict[str, int]:
     counts = {s.value: 0 for s in _STATUS_BUCKETS}
     counts["unscored"] = 0
+    counts["pending_review"] = 0
     for code in codes:
         status = _validated(coverage_map.get(code))
         if status is None:
             counts["unscored"] += 1
+        elif code in pending_codes and status in _WITHHOLDABLE:
+            counts["pending_review"] += 1
         else:
             counts[status.value] += 1
     return counts
 
 
-def compute(coverage_map: Mapping[str, str | None]) -> CoverageRollup:
+def compute(
+    coverage_map: Mapping[str, str | None],
+    pending_codes: Iterable[str] | None = None,
+) -> CoverageRollup:
+    """Roll coverage up per tactic and overall.
+
+    `pending_codes` are techniques whose supporting citations are unconfirmed
+    (#102). They are DERIVED here rather than written over `status`: 5.1 requires
+    that clearing a flag moves the technique into whichever of covered/partial/
+    gap its stored status says, so that status has to survive underneath.
+
+    A code with no status, or one marked `not_applicable`, is never pending —
+    there is no claim to withhold.
+    """
+    pending = frozenset(pending_codes or ())
     by_tactic: list[TacticCoverage] = []
     for ta in TACTICS:
         # Parent techniques mapped to this tactic.
         parent_codes = [t.id for t in parent_techniques() if ta.id in t.tactics]
         sub_codes = [t.id for t in TECHNIQUES if t.is_sub_technique and ta.id in t.tactics]
         all_codes = parent_codes + sub_codes
-        counts = _coverage_for_codes(all_codes, coverage_map)
+        counts = _tally(all_codes, coverage_map, pending)
         addressable = (
             counts[CoverageStatus.COVERED.value]
             + counts[CoverageStatus.PARTIAL.value]
@@ -102,19 +149,13 @@ def compute(coverage_map: Mapping[str, str | None]) -> CoverageRollup:
                 gap=counts[CoverageStatus.GAP.value],
                 not_applicable=counts[CoverageStatus.NOT_APPLICABLE.value],
                 unscored=counts["unscored"],
+                pending_review=counts["pending_review"],
                 coverage_pct=_pct(weighted, addressable),
             )
         )
 
     # Overall (uses every catalog entry exactly once).
-    overall_counts = {s.value: 0 for s in _STATUS_BUCKETS}
-    overall_counts["unscored"] = 0
-    for t in TECHNIQUES:
-        status = _validated(coverage_map.get(t.id))
-        if status is None:
-            overall_counts["unscored"] += 1
-        else:
-            overall_counts[status.value] += 1
+    overall_counts = _tally([t.id for t in TECHNIQUES], coverage_map, pending)
     addressable_total = (
         overall_counts[CoverageStatus.COVERED.value]
         + overall_counts[CoverageStatus.PARTIAL.value]
@@ -124,7 +165,13 @@ def compute(coverage_map: Mapping[str, str | None]) -> CoverageRollup:
         overall_counts[CoverageStatus.COVERED.value]
         + 0.5 * overall_counts[CoverageStatus.PARTIAL.value]
     )
-    scored_count = sum(overall_counts[s.value] for s in _STATUS_BUCKETS)
+    # A withheld claim is still an ASSIGNED status, so it counts as scored.
+    # `AttackHeatmapCard` renders `{scored_count}/{scored_count + unscored_count}`
+    # -- leaving pending out would shrink the catalogue total on screen every
+    # time more evidence was doubted.
+    scored_count = (
+        sum(overall_counts[s.value] for s in _STATUS_BUCKETS) + overall_counts["pending_review"]
+    )
 
     parents = parent_techniques()
     sub_total = len(TECHNIQUES) - len(parents)
@@ -137,6 +184,7 @@ def compute(coverage_map: Mapping[str, str | None]) -> CoverageRollup:
         partial=overall_counts[CoverageStatus.PARTIAL.value],
         gap=overall_counts[CoverageStatus.GAP.value],
         not_applicable=overall_counts[CoverageStatus.NOT_APPLICABLE.value],
+        pending_review=overall_counts["pending_review"],
         coverage_pct=_pct(weighted_total, addressable_total),
         by_tactic=tuple(by_tactic),
     )

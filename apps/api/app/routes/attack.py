@@ -50,6 +50,12 @@ from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
+from app.attack.pending import CLAIMS_SUPPORT as _STATUS_CLAIMS_SUPPORT
+from app.attack.pending import NO_CITATION as _NO_CITATION
+from app.attack.pending import TOOL_FIELDS as _TOOL_FIELDS
+from app.attack.pending import confirm_all as confirm_attack_citations
+from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.pending import row_tools as attack_row_tools
 from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
@@ -106,28 +112,23 @@ _log = get_logger(__name__)
 
 
 def _serialize_coverage(rows: Iterable[AttackCoverage]) -> list[AttackCoverageResponse]:
-    ordered = sorted(rows, key=lambda r: r.technique_code)
-    out: list[AttackCoverageResponse] = []
-    for r in ordered:
-        status_enum = CoverageStatus(r.status) if r.status is not None else None
-        out.append(
-            AttackCoverageResponse(
-                id=r.id,
-                assessment_id=r.assessment_id,
-                technique_code=r.technique_code,
-                status=status_enum,
-                notes=r.notes,
-                evidence_artifact_id=r.evidence_artifact_id,
-                locked=r.locked,
-                detection_tools=r.detection_tools,
-                prevention_tools=r.prevention_tools,
-                response_tools=r.response_tools,
-                rationale=r.rationale,
-                answered_by=r.answered_by,
-                answered_at=r.answered_at,
-            )
-        )
-    return out
+    """Every coverage row on the wire goes through here.
+
+    This used to name each field by hand, and `patch_coverage` did the same
+    thing a second time. Adding `unconfirmed_citations` (#101) to the schema and
+    to `run_ai` therefore left BOTH of these still returning `null` for it -- and
+    because `pending_review` is derived from that field, the omission did not
+    read as a missing field, it read as "every technique is pending review".
+
+    `model_validate(..., from_attributes=True)` is what `run_ai` already used and
+    is why `run_ai` was the one path that worked. Three copies of a field list is
+    the twins problem CLAUDE.md keeps recording; one construction has no twin to
+    forget.
+    """
+    return [
+        AttackCoverageResponse.model_validate(r, from_attributes=True)
+        for r in sorted(rows, key=lambda r: r.technique_code)
+    ]
 
 
 def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentResponse:
@@ -435,6 +436,34 @@ def patch_coverage(
     for f in ("detection_tools", "prevention_tools", "response_tools", "rationale"):
         if f in data:
             setattr(row, f, data[f])
+    # #102. Setting the status or curating the tools by hand makes the ADMIN the
+    # author of this row's claim, not a reviewer of the model's -- so the model's
+    # outstanding inferences and rejections stop being what the claim rests on,
+    # and are stamped as vouched for. 5.1's second definition of "confirmed" is
+    # exactly this: a human cleared it.
+    #
+    # Scoped to those four fields on purpose. Editing `notes`, `rationale`,
+    # `locked` or the evidence pointer says nothing about whether a cited tool
+    # name was the right one, and clearing a review queue as a side effect of a
+    # typo fix would be a silent loss of the disclosure.
+    #
+    # Entries are stamped, never deleted: "a human accepted this" and "nobody
+    # ever cited it" are different answers to why a technique counts.
+    authored = {"status", "detection_tools", "prevention_tools", "response_tools"} & set(data)
+    if authored:
+        before_uncleared = len(row.unconfirmed_citations or []) - sum(
+            1 for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is not None
+        )
+        row.unconfirmed_citations = confirm_attack_citations(
+            row.unconfirmed_citations, at=utcnow().isoformat()
+        )
+        _log.info(
+            "attack.coverage.citations_confirmed_by_hand",
+            coverage_id=str(row.id),
+            technique_code=row.technique_code,
+            fields=sorted(authored),
+            cleared=before_uncleared,
+        )
     row.answered_by = user.id
     row.answered_at = utcnow()
     audit(
@@ -446,26 +475,17 @@ def patch_coverage(
         details={
             "technique_code": row.technique_code,
             "fields": sorted(data.keys()),
+            # Recorded because this is the one path that CLEARS a review queue,
+            # and "why does this technique count now" has to be answerable later
+            # from the audit trail rather than from the row's current state.
+            "citations_confirmed_by_hand": len(row.unconfirmed_citations or []) if authored else 0,
         },
     )
     db.commit()
     db.refresh(row)
-    status_enum = CoverageStatus(row.status) if row.status is not None else None
-    return AttackCoverageResponse(
-        id=row.id,
-        assessment_id=row.assessment_id,
-        technique_code=row.technique_code,
-        status=status_enum,
-        notes=row.notes,
-        evidence_artifact_id=row.evidence_artifact_id,
-        locked=row.locked,
-        detection_tools=row.detection_tools,
-        prevention_tools=row.prevention_tools,
-        response_tools=row.response_tools,
-        rationale=row.rationale,
-        answered_by=row.answered_by,
-        answered_at=row.answered_at,
-    )
+    # The second of the two hand-built copies this response used to have. See
+    # `_serialize_coverage` for why neither is hand-built any more.
+    return AttackCoverageResponse.model_validate(row, from_attributes=True)
 
 
 def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
@@ -801,6 +821,96 @@ def _run_mitre_map_batched(
 
 
 @router.post(
+    "/coverage/{coverage_id}/confirm-citations",
+    response_model=AttackCoverageResponse,
+    summary="Vouch for a technique's inferred citations so its status may score (admin)",
+)
+def confirm_coverage_citations(
+    coverage_id: uuid.UUID,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackCoverageResponse:
+    """5.1's second definition of CONFIRMED: a human cleared it (#101 / #102).
+
+    #101's complaint was that "queued for a human" was neither queued nor
+    retrievable. Persisting the flags answered the second half; this answers the
+    first -- a queue a consultant cannot work through is a list, not a queue.
+
+    Deliberately separate from `patch_coverage`, which also clears a row's
+    outstanding entries. The two say different things and both are worth being
+    able to read back out of the audit trail later: confirming says *the model's
+    inference was correct*, patching a status says *here is my own answer*. Only
+    the first is a review of what the AI did.
+
+    It does NOT touch `status` or the tool lists. The claim is unchanged; what
+    changes is that its evidence now has a human behind it.
+    """
+    row = db.get(AttackCoverage, coverage_id)
+    if row is None or row.client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Coverage row not found.",
+        )
+    a = db.get(AttackAssessment, row.assessment_id)
+    if a is None or a.status in (
+        AttackAssessmentStatus.APPROVED,
+        AttackAssessmentStatus.RELEASED,
+        AttackAssessmentStatus.DISCARDED,
+    ):
+        # Same guard as every other write to a coverage row. Clearing a queue
+        # RAISES coverage, so allowing it after sign-off would change a delivered
+        # figure without a new version.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This assessment is locked.",
+        )
+    outstanding = [e for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is None]
+    if not outstanding:
+        # Refused rather than returned as a cheerful no-op. A 200 here would write
+        # an audit row putting this user's name against a review that did not
+        # happen, which is the same class of untruth as a ledger row recording a
+        # success above the commit that makes it true.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "nothing_to_confirm",
+                "message": (
+                    "This technique has no citations awaiting review. Either they were "
+                    "already confirmed, or nothing about this row was ever inferred."
+                ),
+            },
+        )
+    row.unconfirmed_citations = confirm_attack_citations(
+        row.unconfirmed_citations, at=utcnow().isoformat()
+    )
+    audit(
+        db,
+        action="attack.coverage.citations_confirmed",
+        target_type="attack_coverage",
+        target_id=row.id,
+        actor_user_id=user.id,
+        details={
+            "technique_code": row.technique_code,
+            "confirmed": len(outstanding),
+            # The names as well as the count: "why does this technique count" is
+            # answered by WHICH inference a human accepted, not by how many.
+            "tools": sorted({e.get("tool") for e in outstanding if e.get("tool")}),
+            "reasons": sorted({e.get("reason") for e in outstanding if e.get("reason")}),
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    _log.info(
+        "attack.coverage.citations_confirmed",
+        coverage_id=str(row.id),
+        technique_code=row.technique_code,
+        confirmed=len(outstanding),
+    )
+    return AttackCoverageResponse.model_validate(row, from_attributes=True)
+
+
+@router.post(
     "/services/{service_id}/run-ai",
     response_model=AttackRunAiResponse,
     summary="Run the mitre_map AI job: suggest coverage + D/P/R per technique (admin)",
@@ -891,7 +1001,7 @@ def run_ai(
     )
     result = _BatchedResult(data={"techniques": suggestions})
 
-    def _validate_tools(names: object) -> list[str]:
+    def _validate_tools(names: object, field: str, row_flags: list[dict]) -> list[str]:
         """Resolve the cited names against the allow-list, and ACCOUNT for each.
 
         This was `t.lower() in valid_tools` â€” exact match, and every near miss
@@ -922,6 +1032,21 @@ def run_ai(
                 and example not in citations.rejected_examples
             ):
                 citations.rejected_examples.append(example)
+        # #101: the same outcomes, per ROW, so they outlive the response. The
+        # run-level lists above are a summary a consultant reads once; these are
+        # the queue they work through, and until migration 0044 they existed only
+        # in React state.
+        #
+        # REJECTIONS are recorded as well as inferences, with `tool: None`. A
+        # rejected citation applies no tool, so at first glance there is nothing
+        # to store -- but without it a row whose every citation was dropped is
+        # byte-identical to a row nobody ever cited anything for, and #102 has to
+        # withhold the first while leaving the second alone. See
+        # `app/attack/pending.py`.
+        for entry in out.inferred:
+            row_flags.append({**entry, "field": field, "cleared_at": None})
+        for entry in out.rejected_details:
+            row_flags.append({"tool": None, **entry, "field": field, "cleared_at": None})
         return out.tools
 
     for sugg in (result.data or {}).get("techniques", []):
@@ -933,12 +1058,81 @@ def run_ai(
         st = sugg.get("status")
         if isinstance(st, str) and st in _VALID_STATUSES:
             row.status = st
-        if "detection_tools" in sugg:
-            row.detection_tools = _validate_tools(sugg["detection_tools"])
-        if "prevention_tools" in sugg:
-            row.prevention_tools = _validate_tools(sugg["prevention_tools"])
-        if "response_tools" in sugg:
-            row.response_tools = _validate_tools(sugg["response_tools"])
+        # #101 / #102: record what happened to this row's citations, per FIELD.
+        #
+        # `row_flags` starts EMPTY, not None. An empty list is a positive claim --
+        # "the resolver looked and nothing is outstanding" -- and NULL is reserved
+        # for rows nobody ever resolved, which score as pending. The two are not
+        # interchangeable; see migration 0044.
+        #
+        # A re-resolved field REPLACES its own entries, `cleared_at` stamps
+        # included. A clearance is a human vouching for one inference; a new run
+        # is a new set of inferences, and carrying the stamp across by matching
+        # (tool, field, reason) would be inferring that the judgement still
+        # applies -- inference is exactly what is not confirmation here. It costs
+        # re-review after a rerun, and the plan's tiebreak spends that: "an
+        # understated coverage number is a conservative claim a consultant can
+        # raise after review; an overstated one is a false assurance already
+        # delivered to a client."
+        #
+        # A field the model did NOT send keeps both its tools and its entries.
+        # See the block below the loop for why that is not symmetry-for-its-own-
+        # sake.
+        row_flags: list[dict] = []
+        resolved_fields: set[str] = set()
+        for tool_field in _TOOL_FIELDS:
+            if tool_field in sugg:
+                setattr(row, tool_field, _validate_tools(sugg[tool_field], tool_field, row_flags))
+                resolved_fields.add(tool_field)
+
+        # PER-FIELD, not per-row. `row.<field>` is only overwritten for the
+        # fields the model actually sent, so a rerun that omits one leaves that
+        # field's tools in place -- and replacing the whole citation record would
+        # then say "resolved, nothing outstanding" about tools this run never
+        # looked at. A row withheld for an inferred `response_tools` citation
+        # would flip to scoring because a later run happened to re-resolve
+        # `detection_tools`, with no human anywhere in the loop.
+        #
+        # That is this change's own guard turning into the fail-open it was
+        # written to close, which CLAUDE.md records twice: "a guard against
+        # DOUBLE-counting will quietly become a guard against counting at all."
+        prior = row.unconfirmed_citations
+        # `no_citation` (field None) is a ROW-level marker, so it has no field to
+        # be scoped by and is never carried -- it is re-derived below from what
+        # this run actually left behind. Carrying it would leave the panel saying
+        # no tool was named while a tool sits in the Detection row above it.
+        carried = [
+            e
+            for e in (prior or [])
+            if e.get("field") is not None and e.get("field") not in resolved_fields
+        ]
+
+        # Fields this run did not resolve, that hold tools nothing on record
+        # accounts for. While the column is NULL those tools were never checked
+        # at all, so the row cannot be described as resolved yet -- writing any
+        # list would be the fail-closed-to-fail-open flip one step further out.
+        unaccounted = [
+            f for f in _TOOL_FIELDS if f not in resolved_fields and getattr(row, f, None)
+        ]
+        if prior is not None or not unaccounted:
+            merged = carried + row_flags
+            # A positive claim with nothing cited for it anywhere. Not a rejection
+            # (nothing was named) and not an inference (nothing was resolved), so
+            # neither loop above emits anything -- and an empty list here would say
+            # "resolved, nothing outstanding", which is the answer a HAND-CURATED
+            # row gets and the one thing this row must not be confused with.
+            # Record the omission where it happens.
+            if row.status in _STATUS_CLAIMS_SUPPORT and not merged and not attack_row_tools(row):
+                merged.append(
+                    {
+                        "tool": None,
+                        "cited": None,
+                        "reason": _NO_CITATION,
+                        "field": None,
+                        "cleared_at": None,
+                    }
+                )
+            row.unconfirmed_citations = merged
         if isinstance(sugg.get("rationale"), str):
             row.rationale = sugg["rationale"]
         row.answered_by = user.id
@@ -973,13 +1167,39 @@ def run_ai(
         )
 
     a.documents_stale = True  # Work Order C3
+    # Computed HERE, below the D-031 re-read that decides this run is allowed to
+    # land at all. CLAUDE.md: a record that says "this happened" belongs after
+    # the guard that makes it true, or it eventually asserts something the
+    # database does not contain -- W1's accounting log claimed `applied=N` above
+    # this same re-read and reported values applied for transactions that then
+    # rolled back.
+    pending = attack_pending_codes(rows.values())
+    _log.info(
+        "attack.run_ai.citations_resolved",
+        service_id=str(svc.id),
+        confirmed=citations.confirmed,
+        needs_review=citations.needs_review,
+        rejected=citations.rejected,
+        unusable=citations.unusable,
+        pending_review_rows=len(pending),
+    )
     audit(
         db,
         action="attack.run_ai",
         target_type="attack_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"tools_available": len(tools), "changed_rows": len(diffs)},
+        details={
+            "tools_available": len(tools),
+            "changed_rows": len(diffs),
+            # #102. The audit row is where "why did coverage drop" gets answered
+            # months later, and the citation numbers were only ever in a response
+            # nobody keeps.
+            "citations_confirmed": citations.confirmed,
+            "citations_needs_review": citations.needs_review,
+            "citations_rejected": citations.rejected,
+            "pending_review_rows": len(pending),
+        },
     )
     db.commit()
 
@@ -1002,6 +1222,7 @@ def run_ai(
             k: list(v) for k, v in citations.needs_review_by_reason.items()
         },
         citations_unusable=citations.unusable,
+        pending_review_rows=len(pending),
     )
 
 
@@ -1150,7 +1371,7 @@ def heatmap(
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
     }
-    rollup = compute_heatmap(coverage_map)
+    rollup = compute_heatmap(coverage_map, attack_pending_codes(rows))
     return AttackHeatmap(
         assessment_id=a.id,
         version=a.version,
@@ -1162,6 +1383,7 @@ def heatmap(
         partial=rollup.partial,
         gap=rollup.gap,
         not_applicable=rollup.not_applicable,
+        pending_review=rollup.pending_review,
         coverage_pct=rollup.coverage_pct,
         by_tactic=[
             TacticHeatmapEntry(
@@ -1174,6 +1396,7 @@ def heatmap(
                 gap=tc.gap,
                 not_applicable=tc.not_applicable,
                 unscored=tc.unscored,
+                pending_review=tc.pending_review,
                 coverage_pct=tc.coverage_pct,
             )
             for tc in rollup.by_tactic
@@ -1286,7 +1509,11 @@ def finalize_attack_deliverable(
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in coverage if r.technique_code in valid
     }
-    rollup = compute_heatmap(coverage_map)
+    # The SAME derivation the heatmap uses. The PDF is the surface that reaches
+    # the client, so a deliverable computed off an un-withheld rollup would be
+    # the one place the whole rule does not apply -- which is the only place it
+    # has to.
+    rollup = compute_heatmap(coverage_map, attack_pending_codes(coverage))
 
     client_name = client.legal_name
     if client_name == "(pending intake)":

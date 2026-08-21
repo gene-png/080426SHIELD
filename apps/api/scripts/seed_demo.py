@@ -50,6 +50,9 @@ from app.attack.exporters import (  # noqa: E402
 from app.attack.exporters import (  # noqa: E402
     render_xlsx as render_attack_xlsx,
 )
+from app.attack.pending import CLAIMS_SUPPORT  # noqa: E402
+from app.attack.pending import pending_codes as attack_pending_codes  # noqa: E402
+from app.attack.pending import row_tools as attack_row_tools  # noqa: E402
 from app.audit import audit  # noqa: E402
 from app.csf.catalog import SUBCATEGORIES as CSF_SUBS  # noqa: E402
 from app.csf.exporters import build_context as build_csf_context  # noqa: E402
@@ -781,6 +784,19 @@ def _attack_status_for(index: int, is_sub: bool) -> str | None:
     return None
 
 
+def _attack_tools_for(status_value: str | None) -> tuple[list[str] | None, list[str] | None]:
+    """(detection_tools, response_tools) for a seeded coverage status.
+
+    Only the POSITIVE statuses get tools. A `gap` naming a control would
+    contradict itself, and `not_applicable` makes no claim to support.
+    """
+    if status_value == CoverageStatus.COVERED.value:
+        return ["CrowdStrike Falcon", "Splunk Enterprise"], ["Splunk Enterprise"]
+    if status_value == CoverageStatus.PARTIAL.value:
+        return ["Splunk Enterprise"], None
+    return None, None
+
+
 def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client) -> Service:
     svc = Service(
         kind=ServiceKind.ATTACK_COVERAGE,
@@ -808,6 +824,13 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
     parent_ids = {t.id for t in parent_techniques()}
     for idx, tech in enumerate(TECHNIQUES):
         status_value = _attack_status_for(idx, tech.id not in parent_ids)
+        # #102: a positive claim needs a named control behind it. These rows
+        # previously carried a `covered` status with EMPTY tool lists, which is
+        # precisely the unsupported-coverage shape 5.1 put in scope -- the demo
+        # was modelling the defect. The names are drawn from `_TD_ITEMS` above,
+        # so they resolve against this client's own approved capability list
+        # exactly as a real run's citations would.
+        detection, response = _attack_tools_for(status_value)
         coverage_rows.append(
             AttackCoverage(
                 assessment_id=assessment.id,
@@ -819,6 +842,14 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
                     if status_value == "covered" and idx % 25 == 0
                     else None
                 ),
+                detection_tools=detection,
+                response_tools=response,
+                # `[]`, never NULL. A deliberate single-place assertion that
+                # seeded demo data is CONFIRMED, rather than every seeded row
+                # being grandfathered in by a default nobody chose -- NULL means
+                # "the citations were never resolved" and scores as pending
+                # (migration 0044).
+                unconfirmed_citations=[],
                 answered_by=admin.id,
                 answered_at=utcnow(),
             )
@@ -827,7 +858,28 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
     db.flush()
 
     coverage_map = {r.technique_code: r.status for r in coverage_rows}
-    rollup = compute_attack(coverage_map)
+    # Asserted on the PROPERTY, not through `is_pending_review`. The first
+    # version of this guard called the predicate -- and could never fire, because
+    # every row here is written with `unconfirmed_citations=[]`, which is case 3
+    # ("nothing was ever cited") and is never pending whatever its status or
+    # tools. The guard supplied its own precondition from the block it was
+    # guarding, so deleting the tool lists entirely still passed it. The §14
+    # audit caught it; the #72 pattern, one layer out from the code it guards.
+    unbacked = [
+        r.technique_code
+        for r in coverage_rows
+        if r.status in CLAIMS_SUPPORT and not attack_row_tools(r)
+    ]
+    if unbacked:
+        raise RuntimeError(
+            f"seed_demo wrote {len(unbacked)} ATT&CK rows claiming {sorted(CLAIMS_SUPPORT)} "
+            f"with no tool naming the control (e.g. {sorted(unbacked)[:3]}). The demo would "
+            "report a coverage number its own data does not support -- give the status a "
+            "tool or drop the status."
+        )
+    pending = attack_pending_codes(coverage_rows)
+    assert not pending, f"seeded rows the scoring rule would withhold: {sorted(pending)[:3]}"
+    rollup = compute_attack(coverage_map, pending)
 
     today = date.today()
     pdf_name = deliverable_filename(

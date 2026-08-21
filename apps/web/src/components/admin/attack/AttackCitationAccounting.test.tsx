@@ -66,16 +66,52 @@ describe("AttackCitationAccounting", () => {
     );
   });
 
-  it("says a flagged citation counts exactly as a confirmed one does", () => {
-    // Nothing discounts a flagged citation — 5.1's enforcement is not in W2.
+  it("says a flagged citation is held OUT of the coverage score", () => {
+    // This test used to assert the exact opposite — "count toward the coverage
+    // score exactly as a confirmed citation does" — and it was correct when it
+    // was written: W2 shipped the resolver and deliberately left 5.1's
+    // enforcement out, so nothing discounted a flagged citation. #102 is that
+    // enforcement, so the sentence became false the moment it landed and the
+    // assertion had to move with it. Note it is the CODE that changed, not the
+    // test that was weakened: the claim is stronger now, not looser.
     render(
       <AttackCitationAccounting
         result={result({ citations_needs_review: 1 })}
       />,
     );
-    expect(screen.getByTestId("attack-citations-review")).toHaveTextContent(
-      /count toward the coverage score exactly as a confirmed citation does/,
+    const el = screen.getByTestId("attack-citations-review");
+    expect(el).toHaveTextContent(/held out of the coverage score/);
+    // And still not the OTHER wrong answer. 5.1 rejected collapsing pending into
+    // gap: gap says nothing was found, pending says something was found and is
+    // not confirmed, and the first sends a consultant hunting for a control the
+    // client already owns.
+    expect(el).toHaveTextContent(/not as a gap/);
+    expect(el).not.toHaveTextContent(/exactly as a confirmed citation does/);
+  });
+
+  it("counts the TECHNIQUES held back, not just the citations", () => {
+    // A consultant works through techniques. One flagged tool cited by forty
+    // techniques is one citation and forty pieces of work, and only the second
+    // number tells them how much of the score is being withheld.
+    render(
+      <AttackCitationAccounting
+        result={result({ citations_needs_review: 1, pending_review_rows: 12 })}
+      />,
     );
+    const el = screen.getByTestId("attack-citations-pending");
+    expect(el).toHaveTextContent(
+      /12 techniques are held out of the coverage score/,
+    );
+    // The percentage is a ratio over what can be claimed, so it is not
+    // self-describing — the count has to travel with it.
+    expect(el).toHaveTextContent(
+      /ratio over the techniques that can be claimed/,
+    );
+    // And says how to act on it. A disclosure that names a problem with no route
+    // to the fix is where "queued for a human" started -- the copy claimed a
+    // queue that did not exist, and a queue nobody can find is the same thing
+    // one step later.
+    expect(el).toHaveTextContent(/confirm it/);
   });
 
   it("singles out a vendor guess made against incomplete vendor data", () => {
@@ -125,20 +161,27 @@ describe("AttackCitationAccounting", () => {
     expect(el).toHaveTextContent(/Qradar/);
   });
 
-  it("describes the ACTUAL consequence of a rejection, which is overstated coverage", () => {
+  it("describes the ACTUAL consequence of a rejection, now a withheld claim", () => {
     render(
       <AttackCitationAccounting result={result({ citations_rejected: 1 })} />,
     );
-    // The first version asserted "reads as uncovered" — the INVERSE of what the
-    // route does. `run_ai` assigns `row.status` independently of citations, so
-    // the technique keeps `covered` with an empty tool list and carries full
-    // weight in coverage_pct and the client PDF.
+    // Third wording, and worth recording why. v1 said the technique "reads as
+    // uncovered" — the INVERSE of what the route did. v2 corrected it to "can
+    // still read as covered with nothing behind it", which was true right up
+    // until #102 made the score withhold that row. Both earlier versions were
+    // this same sentence describing a route it had drifted from, which is the
+    // argument for asserting it here at all.
+    //
+    // The status still SURVIVES — clearing the citation has to be able to put
+    // the technique back into whichever of covered/partial/gap it says, so the
+    // status is what pending is withheld FROM, not something pending replaces.
     const el = screen.getByTestId("attack-citations-rejected");
     expect(el).toHaveTextContent(/keeps whatever status the model gave it/);
     expect(el).toHaveTextContent(
-      /can still read as covered with nothing behind it/,
+      /held out of the coverage score as pending review/,
     );
     expect(el).not.toHaveTextContent(/reads as uncovered/);
+    expect(el).not.toHaveTextContent(/can still read as covered/);
   });
 
   it("uses role=alert only for the outcome that loses evidence", () => {

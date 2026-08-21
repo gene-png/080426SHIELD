@@ -200,3 +200,82 @@ def test_attack_release_flips_the_assessment_to_released(app_client) -> None:
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h)
     assert latest.status_code == 200, latest.text
     assert latest.json()["status"] == "released"
+
+
+@pytest.mark.unit
+def test_client_dashboard_withholds_the_same_rows_the_released_pdf_does(app_client) -> None:
+    """#102, found by the §14 audit of the branch that added it.
+
+    `finalize_attack_deliverable` and `heatmap` were wired to withhold unbacked
+    claims; **this route was not**, and it is the one the CLIENT reads. The two
+    surfaces are gated to appear together -- this dashboard is visible exactly
+    when the released PDF is -- so one assessment could hand a client a PDF
+    saying 0.0% and an in-app dashboard saying 100%.
+
+    The miss came from checking one function instead of the file.
+    `_attack_uncovered_total` in the same module carries a comment reading "If
+    this ever starts reading `covered`, `partial` or `coverage_pct`, it MUST
+    pass them" -- and `attack_dashboard`, 240 lines below, reads all three.
+    Grepping the call sites of the function just changed finds every copy that
+    went through it and misses every other caller in the same file.
+
+    The existing dashboard tests could not catch this: they build covered rows
+    through `PATCH /attack/coverage/{id}`, which takes authorship and stamps the
+    citations confirmed, so no fixture in that file can produce a pending row.
+
+    The state written here IS reachable in production: Run-AI leaves inferred
+    citations on a draft, approval does not stamp them (that was the separate
+    decision D-056 deliberately did NOT take), and migration 0045 only
+    grandfathers rows whose column is NULL.
+    """
+    from sqlalchemy.orm import Session as _Session
+
+    from app.models.attack_assessment import AttackCoverage
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+
+    svc_id = _seed_finalize_release(c, bearer_admin, release=True)
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with _Session(engine) as db:
+        rows = db.query(AttackCoverage).filter(AttackCoverage.status == "covered").all()
+        assert rows, "fixture produced no covered rows"
+        # The shape a Run-AI leaves when every citation had to be INFERRED: the
+        # tool is applied, and nobody has vouched for it.
+        for r in rows:
+            r.detection_tools = ["CrowdStrike Falcon"]
+            r.unconfirmed_citations = [
+                {
+                    "tool": "CrowdStrike Falcon",
+                    "cited": "CrowdStrike",
+                    "reason": "substring",
+                    "field": "detection_tools",
+                    "cleared_at": None,
+                }
+            ]
+        withheld = len(rows)
+        db.commit()
+
+    c.headers["X-Client-Id"] = client_id
+    r = c.get(
+        f"/clients/{client_id}/attack/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    rollup = r.json()["rollup"]
+
+    assert rollup["covered"] == 0, (
+        "the client dashboard counted an unconfirmed claim as covered while the "
+        "released PDF withheld it -- two numbers for one assessment"
+    )
+    assert rollup["pending_review"] == withheld, (
+        "withholding without saying how much was withheld narrows the denominator "
+        "silently, which is the false assurance the rule exists to prevent"
+    )
+    touched = [t for t in rollup["by_tactic"] if t["pending_review"] > 0]
+    assert touched, "the per-tactic breakdown dropped the pending count"

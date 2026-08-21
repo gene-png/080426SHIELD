@@ -2791,3 +2791,183 @@ suite green), `edited` missing from the workflow triggers (so a fixed PR stayed
 red with no way to clear it), and `**Findings:**` in this repo's own prose style
 being rejected. The gate caught its own defects only because it was audited; it
 would not have caught them itself.
+
+## D-055 — Unconfirmed support withholds a claim; it never becomes a gap, and it never withholds one
+
+**Date:** 2026-08-21 · **Issues:** #101 (persistence), #102 (scoring) · **Plan:** `docs/plans/2026-08-08-attack-citation-resolver.md` §5.1, owner-confirmed 2026-08-08 · **Migration:** 0044
+
+5.1 settled the rule — _a technique's status counts toward the score only when it
+is backed by a CONFIRMED citation_ — and left three things for the
+implementation. Each turned out to be a decision rather than a detail, and the
+state matrix was written before the wiring specifically to surface them
+(CLAUDE.md: "a matrix written after the fix only pins the fix"). It found two of
+the three before any code moved.
+
+### `gap` is NOT withholdable, and the first implementation had it backwards
+
+`analytics._WITHHOLDABLE` shipped as `(COVERED, PARTIAL, GAP)`. Withholding a gap
+looks conservative and is the opposite: `coverage_pct` is
+`(covered + 0.5·partial) / (covered + partial + gap)`, so dropping a gap out of
+`addressable` shrinks the **denominator** only. Ten covered beside ten gaps
+reports 50%; flag every gap and the same assessment reports **100%**, with ten
+findings deleted. A run in which more evidence was doubted claimed twice the
+coverage.
+
+A gap is an ABSENCE claim. Its evidence is the lack of a citation, so there is
+nothing to withhold. `covered` and `partial` are the only statuses that assert
+something a citation could fail to support. Locked in two places on purpose —
+`app/attack/pending.py` never emits a gap code, and `_WITHHOLDABLE` would refuse
+it if it did.
+
+### Three states of evidence, not two — and this is what makes the rule usable
+
+The first predicate was "pending unless a confirmed tool backs the status". It
+was correct for every AI case and broke the entire manual workflow:
+`test_heatmap_reflects_coverage_after_patches` set ten techniques to `covered`ﾠby
+hand and the heatmap reported **zero** covered, 0% coverage, and nothing anywhere
+in the product that could ever clear it. A consultant curating the matrix is the
+AUTHOR of the claim, not a reviewer of the model's; 5.1 is about inferences, and
+they made none.
+
+So a row's citation record answers with three values:
+
+1. **cited and confirmed** — a tool in one of the lists that no uncleared entry
+   names. Backed.
+2. **cited and not confirmed** — inferred (awaiting a human), rejected (resolved
+   to nothing), or claimed with nothing cited at all. Withheld.
+3. **never cited** — no entries. The status stands on whoever assigned it.
+
+Cases 2 and 3 look identical on the stored row — `[]` over empty tool lists —
+unless the outcomes that resolve to NO tool are recorded too. So they are:
+rejections carry `tool: null` plus the string the model actually sent, and a
+positive status the model cited nothing for gets a `no_citation` entry. Neither
+has a tool to store, which is exactly why both must be stored. That is what makes
+the plan's related defect ("a technique can read `covered` with EMPTY tool
+lists") enforceable at all, by both of its routes.
+
+### NULL is not `[]`, and NULL scores as pending
+
+Migration 0044's tri-state. An earlier draft said #102 should "leave such a
+technique scoring exactly as it does today" — the fail-open reading, and the same
+shape D-054 rejected on the nullable-vendor default one layer up. Absence of
+evidence is not evidence of confirmation. Affordable because **zero** ATT&CK
+assessments have ever been RELEASED and there is no production deployment;
+verified, not assumed.
+
+### The exemption, stated rather than left to be found
+
+`coverage_pct` is a ratio over what can currently be CLAIMED, so withholding a
+row leaves both the numerator and the denominator. Invariant 1 ("a run whose
+citations are ALL flagged scores no higher") holds — every positive claim is
+withheld, `addressable` empties, the answer is 0%. Under PARTIAL flagging it does
+not: nine confirmed `covered` beside one flagged `partial` reads 95% before and
+100% after. No arrangement of exclude-from-addressable avoids this, and the
+alternative — scoring a withheld row as zero — understates coverage rather than
+declining to claim it, which 5.1 rejects as a different wrong answer.
+
+The consequence is that **the percentage is not self-describing**, so
+`pending_review` is rendered beside it on every surface that shows it: the rollup
+card, the per-tactic table, and all three exporters. `test_narrowing_the_
+denominator_can_raise_the_ratio_and_that_is_stated` is the test that says so, and
+it exists to stop the count being quietly dropped from one of them later.
+
+### How a withheld row is cleared
+
+Three ways, all of them 5.1's second definition of confirmed ("a human cleared
+it"): vouch for the entry, name a tool that resolves cleanly, or set the status
+or tool lists through `patch_coverage` — which stamps the row's outstanding
+entries as cleared, because the admin has taken authorship. Scoped to those four
+fields: clearing a review queue as a side effect of fixing a typo in `notes`
+would be a silent loss of the disclosure, which is #101 all over again.
+
+Entries are STAMPED, never deleted. "A human accepted this" and "nobody ever
+cited it" are different answers to why a technique counts, and an auditor needs
+to be able to tell them apart.
+
+A re-run **replaces** the list rather than carrying `cleared_at` forward. Matching
+old clearances to new inferences by (tool, field, reason) would be inferring that
+the judgement still applies, and inference is precisely what is not confirmation
+here. It costs re-review after a rerun; the plan's tiebreak spends that.
+
+### The demo data was modelling the defect
+
+`seed_demo.py` wrote `covered` and `partial` rows with EMPTY tool lists — the
+exact shape #102 withholds. It now cites real names from its own `_TD_ITEMS`
+capability list, writes `[]` explicitly, and **raises** if any row it created
+would be withheld, rather than letting the demo report a coverage number its own
+data does not support.
+
+## D-056 — A locked assessment cannot be re-run, so its pre-resolver citations are grandfathered once
+
+**Date:** 2026-08-21 · **Migration:** 0045 · **Follows:** [[D-055]], migration 0044 · **Issues:** #101, #102
+
+D-055 made `unconfirmed_citations IS NULL` score as PENDING. Migration 0044
+priced that as affordable: "what it costs is one Run-AI on each of the existing
+drafts, which is exactly the work that was never done for them."
+
+**APPROVED assessments are not drafts, and nothing can reach them.** Every write
+path refuses a locked parent — `run_ai` re-reads the assessment status before
+committing and raises `assessment_not_editable`, `patch_coverage` raises "This
+assessment is locked", and the new `confirm-citations` endpoint does the same.
+An assessment approved before the resolver existed was therefore pinned at 0%
+coverage permanently, with no action available anywhere in the product.
+
+0044's affordability check verified **zero RELEASED** assessments. It never asked
+about APPROVED. Measured on the dev database: **14 approved assessments holding
+8,862 NULL-citation rows**, and 29 of 48 assessments dropping from ~62% to 0%.
+The gap was in the reasoning, not the code — the code did exactly what it said.
+
+### The decision, taken narrowly
+
+Migration 0045 sets `unconfirmed_citations = []` for rows whose parent is locked
+against every write path (`approved`, `released`) **and** whose column is still
+NULL.
+
+- **Only `IS NULL`.** A locked row that already carries an outstanding flag keeps
+  it. A blanket `SET ... = '[]'` would erase the review queue #101 exists to
+  persist — a worse defect than the one being fixed.
+- **Not `draft`.** Reachable by Run-AI, which is the work 0044 said was owed.
+  Grandfathering drafts would spend the fail-closed guarantee to save a click.
+- **Not `discarded`.** Equally unreachable, but soft-deleted and unread; writing
+  "confirmed" onto it asserts something no human checked, for no benefit.
+- **`released` included despite a zero count.** The criterion is the PROPERTY
+  ("locked against every write path"), not today's row count. Right by
+  construction rather than by coincidence.
+
+### What this is explicitly NOT
+
+**Not a decision that approval counts as citation confirmation.** Whether
+`approve_assessment` should stamp its rows' citations from here on is a real,
+separate design question and gets its own D-number if the answer is yes. This is
+a one-time backfill of rows that predate the rule. Kept apart deliberately, so
+"we grandfathered old data" never quietly becomes "sign-off is evidence".
+
+### The casing trap, and why the log line is the only reason it was caught
+
+The first version of 0045 matched `status IN ('approved', 'released')`,
+grandfathered **zero** of the 8,862 rows, and reported success.
+`AttackAssessment.status` is a `SAEnum(..., native_enum=False)`, and
+SQLAlchemy's `Enum` persists the member's **NAME** — the column holds
+`'APPROVED'`, while `AttackAssessmentStatus.APPROVED.value` is `'approved'`.
+
+Two deliberate choices caught it, and no test did:
+
+1. **The migration prints its row count.** "Touched nothing" and "correctly had
+   nothing to do" are indistinguishable afterwards; the number is the only
+   evidence of which happened.
+2. **It was applied to the dev database instead of being trusted from green
+   tests.** CLAUDE.md already records that a new migration does not reach dev
+   Postgres on its own; the corollary is that running it there is a test no unit
+   suite performs.
+
+**The test could not have caught it, and that is the reusable lesson.** Its
+fixture inserted `'approved'` by hand, so it agreed with the migration by
+construction — CLAUDE.md's standing rule about a test that supplies its own
+precondition from the thing under test, now instance ten. The fixture seeds
+through the ORM, so the stored representation comes from the same code path
+production uses, and a test pins the literal `'APPROVED'` against a raw read.
+
+The migration matches `upper(status)` rather than either casing: the stored
+representation belongs to SQLAlchemy, and a migration is pinned to history while
+the model is free to change, so importing the enum here would couple this file
+to a model that may not exist in this shape later.

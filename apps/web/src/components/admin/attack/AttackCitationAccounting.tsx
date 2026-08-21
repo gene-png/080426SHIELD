@@ -74,6 +74,10 @@ export function AttackCitationAccounting({
     result.citations_needs_review_by_reason?.incomplete_vendor_data ?? [];
   const unusable = result.citations_unusable ?? 0;
   const rejectedExamples = result.citations_rejected_examples ?? [];
+  // Rows, not citations. `needsReview` counts CITATIONS and a consultant works
+  // through TECHNIQUES: one flagged tool cited by forty techniques is one number
+  // above and forty pieces of work here.
+  const pendingRows = result.pending_review_rows ?? 0;
 
   return (
     <div
@@ -92,15 +96,31 @@ export function AttackCitationAccounting({
         rejected.
       </p>
 
+      {pendingRows > 0 ? (
+        <p
+          className="text-status-warning-fg"
+          data-testid="attack-citations-pending"
+        >
+          {pendingRows === 1
+            ? "1 technique is held out of the coverage score"
+            : `${pendingRows} techniques are held out of the coverage score`}{" "}
+          until their evidence is confirmed. Coverage % is a ratio over the
+          techniques that can be claimed right now, so it is reported beside a
+          pending-review count rather than on its own. Open a flagged technique
+          in the matrix below to see what was cited and confirm it.
+        </p>
+      ) : null}
+
       {needsReview > 0 ? (
         <p
           className="text-status-warning-fg"
           data-testid="attack-citations-review"
         >
           Applied, but the name had to be resolved rather than matched
-          {reviewTools.length > 0 ? `: ${joinCapped(reviewTools)}` : ""}. These
-          count toward the coverage score exactly as a confirmed citation does —
-          nothing discounts them, so check them before release.
+          {reviewTools.length > 0 ? `: ${joinCapped(reviewTools)}` : ""}. Until
+          someone confirms them, every technique whose only evidence is one of
+          these is held out of the coverage score — reported as pending review,
+          not as a gap.
           {vendorGuesses.length > 0 ? (
             <>
               {" "}
@@ -128,9 +148,10 @@ export function AttackCitationAccounting({
           {rejectedExamples.length > 0
             ? `, e.g. ${joinCapped(rejectedExamples)}`
             : ""}
-          . The technique keeps whatever status the model gave it, so one whose
-          only evidence was dropped can still read as covered with nothing
-          behind it. Check those before release.
+          . The technique keeps whatever status the model gave it — clearing the
+          citation has to be able to put it back — but with nothing left behind
+          that status, it is held out of the coverage score as pending review
+          rather than counted as covered.
         </p>
       ) : null}
 

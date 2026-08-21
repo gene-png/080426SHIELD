@@ -60,11 +60,12 @@ fixture mode already demos all five.
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
 | 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — |
 | 3a | **Export/persistence audit — Tech Debt (+ #77)** | **DONE** (PR #94, D-052, merged 2026-08-20) | — | — |
-| 3b | **Export/persistence audit — ATT&CK** | Not started | **W2** (item 5) — same files, and the audit wants the post-rewrite shape | 0.5 session + unknown fixes |
+| 3b | **Export/persistence audit — ATT&CK** | Not started | **item 5a** — same files, and the audit wants the post-#102 shape (the three renderers and `finalize` all changed) | 0.5 session + unknown fixes |
 | 4 | **W3 — Tech Debt approval snapshot** | **DONE** (PR #95, D-053, migration 0043, merged 2026-08-20). Regression fixed by **#96** | — | — |
-| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **IN PROGRESS** — resolver + tri-state + run-AI wiring + panel done (52 tests); PR pending audit | Unblocked (W3 landed) | ~0.5 session left |
+| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **DONE** (PR #103, merged 2026-08-20). Scoped to the resolver; the two gaps it left honest rather than implied are #101 + #102, item 5a | — | — |
+| 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **IN PROGRESS** — migration 0044, `attack/pending.py`, run-AI + patch + heatmap + finalize + all 3 exporters + panel/matrix/rollup UI, `seed_demo` (D-055). **IN PROGRESS** (PR #110). Code complete: migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit run: 6 findings, 5 fixed, 1 filed (#109). CI green on the branch — all six checks incl. the full E2E suite at 17m28s. **Held open on local e2e**: `s2-management` and `s33-admin-remove:84` both time out on clean containers, reproducibly, and are tracked as #111. Not this branch's code (its diff cannot reach `routes/admin.py`) but not called noise either — a spec that cannot run locally is a real cost even when CI is green | Unblocked | #111 |
 | 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
-| 7 | **W1 ATT&CK step** | Not started | **W2** (item 5) | 1 session |
+| 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it | **item 5a** | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
 
 **Total remaining: roughly 5–9 focused sessions** (items 0 and 2 landed), plus whatever items 0 and 3

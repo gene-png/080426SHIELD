@@ -87,7 +87,10 @@ export function AttackMatrix({
       </header>
       <p className="text-xs text-ink-tertiary">
         Click any technique cell to set its coverage status + notes in the side
-        panel. Cells show the current status; greyed cells are unscored.
+        panel. Cells show the current status; greyed cells are unscored. A cell
+        marked pending review has a status whose supporting citation is
+        unconfirmed — it is held out of the coverage score until someone
+        confirms it, and it is not a gap.
       </p>
       <div className="overflow-x-auto rounded-md border border-border-subtle">
         <table className="min-w-full border-collapse text-xs">
@@ -147,7 +150,10 @@ export function AttackMatrix({
                                   : "text-[11px]",
                               ].join(" ")}
                             >
-                              <StatusBadge status={cov?.status ?? null} />
+                              <StatusBadge
+                                status={cov?.status ?? null}
+                                pendingReview={cov?.pending_review ?? false}
+                              />
                               <span className="flex flex-col">
                                 <span className="font-mono text-[10px] text-ink-tertiary">
                                   {tech.id}

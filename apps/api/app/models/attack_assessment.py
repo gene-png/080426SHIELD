@@ -106,6 +106,24 @@ class AttackCoverage(UUIDPKMixin, TimestampMixin, Base):
     # Work Order C2: a locked row is never changed by a Run-AI rerun.
     locked: Mapped[bool] = mapped_column(default=False, nullable=False)
 
+    # [{tool, cited, reason, field, cleared_at}] — every citation outcome on this
+    # row that is NOT a confirmation, and whether a human has since vouched for
+    # each (migration 0044, #101). W2 made the distinction and kept it only in
+    # the transient run-AI response, so it vanished on reload while the copy
+    # called it "queued for a human".
+    #
+    # NULL = never resolved (predates the resolver). [] = resolved, nothing
+    # outstanding. Non-empty = one entry per inference, per rejected citation
+    # (`tool` NULL, `cited` set), and for a positive status the model cited
+    # nothing at all for (`reason` "no_citation", both NULL).
+    #
+    # NULL scores as PENDING, not confirmed (#102). Reading it as confirmed
+    # because nothing on record contradicts it is the fail-open shape D-054
+    # rejected on the nullable-vendor default. Affordable because no ATT&CK
+    # assessment has ever been RELEASED; the cost is one Run-AI per existing
+    # draft, which is the work that was never done for them.
+    unconfirmed_citations: Mapped[list | None] = mapped_column(JSON)
+
     # Work Order D2: which listed tools provide detection / prevention /
     # response for this technique. Tool names drawn from the client's
     # capability list; AI suggests, admin curates. NULL = not yet mapped.

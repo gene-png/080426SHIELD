@@ -19,6 +19,7 @@ import {
   fetchHeatmap,
   fetchLatestAssessment,
   fetchLatestDeliverable,
+  confirmCoverageCitations,
   patchCoverage,
   runAttackAi,
 } from "@/lib/attack/client";
@@ -237,6 +238,37 @@ export function AttackWorkspace({
       const seq = ++assessmentSeq.current;
       const a = await fetchLatestAssessment(serviceId);
       if (seq === assessmentSeq.current) setAssessment(a);
+    }
+  }
+
+  /**
+   * #101 / #102. Vouch for a technique's outstanding citations so its status may
+   * score again.
+   *
+   * No optimistic update, unlike `onPatch`. `pending_review` is DERIVED
+   * server-side from the row's citations and its tool lists, so guessing the new
+   * value here would mean reimplementing the rule in the browser -- a second,
+   * laxer answer to the question `app/attack/pending.py` exists to answer once.
+   * The round trip is one request on a deliberate click.
+   */
+  async function onConfirmCitations(coverageId: string): Promise<void> {
+    assessmentSeq.current += 1;
+    try {
+      const next = await confirmCoverageCitations(coverageId);
+      setAssessment((curr) =>
+        curr
+          ? {
+              ...curr,
+              coverage: curr.coverage.map((c) =>
+                c.id === coverageId ? next : c,
+              ),
+            }
+          : curr,
+      );
+      // The whole point is that the score changes at this moment and not before.
+      await refreshHeatmap();
+    } catch (err) {
+      setLoadError(describeError(err));
     }
   }
 
@@ -493,6 +525,10 @@ export function AttackWorkspace({
                 onPatch={(patch) => {
                   if (!selectedCoverage) return;
                   return onPatch(selectedCoverage.id, patch);
+                }}
+                onConfirmCitations={() => {
+                  if (!selectedCoverage) return;
+                  return onConfirmCitations(selectedCoverage.id);
                 }}
               />
               <AttackMatrix
