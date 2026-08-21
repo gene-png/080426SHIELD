@@ -242,22 +242,73 @@ just written the rule down, which is the case for mechanising the sweep (W8)
 rather than trusting anyone to remember it.
 
 
-### Live risk: `main` has NO branch protection (2026-08-20)
+### Branch protection: configured 2026-08-20, verified 2026-08-21
 
-Checked directly in Settings → Branches: **zero rules**, not even force-push
-blocking. Consequences, worst first:
+**Resolved.** This section previously read "`main` has NO branch protection —
+zero rules, not even force-push blocking", and stayed that way after the setting
+was actually made. Re-checked against the GitHub API
+(`gh api repos/.../branches/main/protection`) rather than from memory:
 
-- The **"Adversarial audit recorded"** check from #98 (D-054) reports and does
-  not block, so a code PR can merge with the §14 audit skipped exactly the way
-  #93/#94/#95 did. #98 made the skip visible; visible-and-ignorable is not
-  enforcement.
-- None of the five CI checks are required either. **A red suite can merge.**
-- `main`'s history is force-pushable.
+- **Six required status checks**, including **"Adversarial audit recorded"** —
+  the condition D-054 said it was waiting on. The other five are Python (ruff +
+  black + pytest + bandit), Web (prettier + eslint + typecheck + build), E2E
+  (Playwright smoke suite), Demo (hosted-demo reset + journey spec), and Secret
+  scan (gitleaks).
+- Force-pushes **blocked**. Branch deletion **blocked**.
 
-**Owed: register "Adversarial audit recorded" plus the five CI checks as
-required, and block force-push.** A GitHub settings change no file in this repo
-can make or verify — which is exactly why it is written down rather than
-assumed done.
+**What that actually binds — stated precisely, because the short version is
+wrong.** An earlier draft of this section said "the §14 gate now blocks" and "a
+red suite can no longer merge". Both are overstatements, and an adversarial
+audit caught them contradicting the three bullets directly below them:
+
+- Required checks bind **a non-admin merging via a pull request**. This repo has
+  no such person today.
+- `enforce_admins` is **false** — both developers are admins and bypass every
+  check above.
+- **A pull request is not required** to push to `main`, and
+  `.github/workflows/audit-gate.yml` triggers on `pull_request` only. A commit
+  pushed straight to `main` therefore produces no "Adversarial audit recorded"
+  check run **at all** — there is nothing to require. This is the largest
+  remaining gap, and it is what makes the two sentences above false rather than
+  merely optimistic.
+
+So: the gate is a guardrail on the PR path, not a wall around `main`.
+
+**Also open, and listed rather than left implied:**
+
+- `required_conversation_resolution` is **not set** — the most relevant omission
+  here, given §14 is about audit findings not being silently dropped: an
+  unresolved review thread does not block a merge.
+- `strict` is **false**, so a branch need not be up to date with `main` before
+  merging — two PRs that are individually green can still break `main` together.
+- Even once a PR is required, `required_approving_review_count`,
+  `require_last_push_approval` and `dismiss_stale_reviews` are all unset, so a
+  solo author still self-merges and a post-approval push is unreviewed.
+  "Require a PR" is roughly half the fix, not the whole of it.
+- `required_signatures` is **not set**. Defensible for now; not invisible for a
+  product targeting FedRAMP Moderate/High.
+- **Tags are not protected at all**, and protection covers `main` only — a
+  release tag can be moved.
+- `restrictions` (who may push) is org-repo-only, so on a personal repo it is
+  **unavailable** rather than unset. "We cannot" and "we chose not to" are
+  different facts and this is the first.
+
+**Caveat on the verification itself.** `gh api .../branches/main/protection`
+reads **classic** branch protection only. It neither shows nor reconciles
+repository **rulesets**, which can add or — via bypass actors — subtract
+enforcement independently. The read-back below is necessary evidence, not
+sufficient; a full answer needs `gh api repos/.../rulesets` as well.
+
+A GitHub settings change no file in this repo can make or verify, which is why
+the state is recorded here with the command that reads it back:
+
+```
+gh api repos/gene-png/080426SHIELD/branches/main/protection
+```
+
+One nuance the check names hide: `pip-audit` and `pnpm audit` both run with
+`continue-on-error: true`, so a vulnerable dependency never reddens the Python
+or Web check.
 
 ### Recently landed (context for the above)
 
@@ -273,8 +324,19 @@ assumed done.
 - **The §14 audit gate** (PR #98, **D-054**) — a deterministic merge check
   requiring recorded audit evidence on any code PR. Built after the gate was
   silently skipped three times running; its own audit found eight defects in it.
-  **Not enforcing until branch protection is configured** — see the live risk
-  above.
+  **Registered as a required status check** on `main` (2026-08-20, verified
+  2026-08-21), which binds a non-admin merging via a PR and nothing else — see
+  the branch-protection section above for what that does and does not cover.
+  D-054 carries a dated correction pointing here, following the same in-entry
+  convention D-045 and D-051 already use.
+
+  **Owed, and tracked rather than done here:** the gate's own source
+  (`check_audit_evidence.py`, `audit-gate.yml`) still tells its reader it "only
+  REPORTS", and points at D-051 instead of D-054. Both are now false and both
+  are more authoritative than this file for anyone opening the gate — #108.
+  Its `docs/` exemption is also a whole-subtree carve-out that exempts §14's own
+  definition — #106. And a body wrapped in an HTML comment satisfies it while
+  rendering blank — #107.
 - **Two retro-audit fixes** — **#96**, the W3 snapshot silently NARROWING the
   ATT&CK allow-list (client-facing fabricated gaps, live on main for ~1h), and
   **#97**, the mutation sweep mutating the wrong node on chained calls and
