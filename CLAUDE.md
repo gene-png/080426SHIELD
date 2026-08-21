@@ -370,6 +370,11 @@ Rules of the road:
   "partially fixes #N" and "not resolved: #N" all trip it the same way. Write
   `filed as #N`, `see #N`, or `tracked in #N`, and save the closing keyword for
   the PR that actually closes it.
+  **And do not QUOTE such a phrase with a real issue number in it.** The commit
+  that added this very rule re-closed the same issue: its body quoted the
+  offending sentence verbatim to explain it, and the parser sees raw text —
+  quotation marks and code fences are not exempt. Use a placeholder number in
+  examples.
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
