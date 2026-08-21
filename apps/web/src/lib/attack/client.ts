@@ -95,6 +95,21 @@ export async function patchCoverage(
   );
 }
 
+/**
+ * #101 / #102. The consultant's half of the review queue: "I checked this
+ * citation and the resolver got it right." Distinct from `patchCoverage` on
+ * purpose — that one says "here is my own answer", and both end up making the
+ * row score, so the audit trail has to be able to tell them apart.
+ */
+export async function confirmCoverageCitations(
+  coverageId: string,
+): Promise<AttackCoverageRow> {
+  return jsonRequest<AttackCoverageRow>(
+    `/api/proxy/attack/coverage/${coverageId}/confirm-citations`,
+    { method: "POST" },
+  );
+}
+
 export async function approveAssessment(
   assessmentId: string,
 ): Promise<AttackAssessment> {

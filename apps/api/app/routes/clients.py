@@ -349,6 +349,13 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | 
             .all()
         )
         coverage_map: dict[str, str | None] = {r.technique_code: r.status for r in rows}
+        # No `pending_codes` here, and that is deliberate rather than an
+        # oversight (#102). This reads `.gap` only, and `gap` is not a
+        # withholdable status -- see `analytics._WITHHOLDABLE` and
+        # `attack/pending.py` for why withholding an absence claim would delete a
+        # finding while raising the coverage ratio. Passing the codes in would be
+        # a guaranteed no-op on this number. If this ever starts reading
+        # `covered`, `partial` or `coverage_pct`, it MUST pass them.
         total += attack_compute(coverage_map).gap
     return total if found else None
 

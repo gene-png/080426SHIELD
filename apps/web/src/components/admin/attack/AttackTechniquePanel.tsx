@@ -15,6 +15,7 @@ import type {
   CatalogCoverageDefinition,
   CatalogTechnique,
   CoverageStatus,
+  UnconfirmedCitation,
 } from "@/lib/attack/types";
 
 import { StatusBadge } from "./StatusBadge";
@@ -58,12 +59,35 @@ function ToolRow({
   );
 }
 
+/**
+ * How one citation outcome reads to a consultant. `cited` is what the model
+ * actually wrote and is the part they act on -- "Qradar" tells them the approved
+ * list holds something else, where the resolved name tells them nothing about
+ * why the citation needed rescuing.
+ */
+function citationLine(c: UnconfirmedCitation): string {
+  if (c.reason === "no_citation") {
+    return "The model claimed this status and cited no tool at all.";
+  }
+  if (c.tool === null) {
+    return `Cited "${c.cited ?? "\u2014"}" \u2014 not on the approved list, so nothing was applied.`;
+  }
+  return `Cited "${c.cited ?? c.tool}" \u2014 resolved to ${c.tool} (${c.reason.replace(/_/g, " ")}).`;
+}
+
 export interface AttackTechniquePanelProps {
   technique: CatalogTechnique | null;
   coverage: AttackCoverageRow | null;
   coverageDefinitions: CatalogCoverageDefinition[];
   readOnly?: boolean;
   onPatch: (patch: AttackCoveragePatch) => void | Promise<void>;
+  /**
+   * #101 / #102. Vouch for every outstanding citation on this row so its status
+   * may score again. Distinct from `onPatch` deliberately: this says "the
+   * resolver got it right", a status edit says "here is my own answer", and both
+   * make the row score.
+   */
+  onConfirmCitations?: () => void | Promise<void>;
 }
 
 export function AttackTechniquePanel({
@@ -72,6 +96,7 @@ export function AttackTechniquePanel({
   coverageDefinitions,
   readOnly = false,
   onPatch,
+  onConfirmCitations,
 }: AttackTechniquePanelProps): JSX.Element {
   if (!technique) {
     return (
@@ -86,6 +111,12 @@ export function AttackTechniquePanel({
     );
   }
 
+  // Cleared entries are rendered too, not just outstanding ones: "a human
+  // accepted this" and "nobody ever cited it" are different answers to why this
+  // technique counts, and this panel is where that question gets asked.
+  const citations = coverage?.unconfirmed_citations ?? [];
+  const outstanding = citations.filter((c) => c.cleared_at === null).length;
+
   return (
     <Card>
       <CardHeader>
@@ -96,7 +127,10 @@ export function AttackTechniquePanel({
             </span>{" "}
             · {technique.name}
           </CardTitle>
-          <StatusBadge status={coverage?.status ?? null} />
+          <StatusBadge
+            status={coverage?.status ?? null}
+            pendingReview={coverage?.pending_review ?? false}
+          />
         </div>
         <CardDescription>
           Tactics: {technique.tactics.join(", ")}
@@ -160,6 +194,51 @@ export function AttackTechniquePanel({
           <ToolRow label="Prevention" tools={coverage?.prevention_tools} />
           <ToolRow label="Response" tools={coverage?.response_tools} />
         </div>
+        {citations.length > 0 ? (
+          <div
+            className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3"
+            data-testid="attack-citation-queue"
+          >
+            <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+              Citation review
+            </span>
+            <ul className="flex flex-col gap-1 text-sm text-ink-secondary">
+              {citations.map((c, i) => (
+                <li
+                  key={`${c.tool ?? "none"}-${c.cited ?? i}-${c.field ?? ""}`}
+                >
+                  {citationLine(c)}{" "}
+                  {c.cleared_at === null ? (
+                    <span className="font-medium text-status-info-fg">
+                      Awaiting review.
+                    </span>
+                  ) : (
+                    <span className="font-medium text-status-success-fg">
+                      Confirmed by a reviewer.
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {outstanding > 0 ? (
+              <p className="text-xs text-ink-tertiary">
+                While anything here is awaiting review and nothing else on this
+                technique is confirmed, the coverage score holds this status
+                back \u2014 it is not counted as covered, and it is not a gap.
+              </p>
+            ) : null}
+            {outstanding > 0 && !readOnly && onConfirmCitations ? (
+              <button
+                type="button"
+                onClick={() => void onConfirmCitations()}
+                className="self-start rounded-md border border-border bg-surface-card px-2 py-1 text-xs font-medium text-ink-primary hover:bg-surface-sunken focus:outline-2 focus:outline-brand-500"
+              >
+                Confirm this evidence
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {coverage?.rationale ? (
           <p className="text-sm text-ink-secondary">
             <span className="font-medium text-ink-primary">Rationale: </span>

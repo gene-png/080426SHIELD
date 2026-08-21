@@ -46,22 +46,34 @@ client.
 ## Scope note
 
 This module decides what a citation MEANS. It does not decide what a technique is
-WORTH, and **nothing else does either yet.**
+WORTH -- `app/attack/pending.py` does, and `analytics.compute` applies it.
 
-An earlier version of this note said 5.1's rule — that unconfirmed support must
-not feed the coverage score — "is enforced on the technique STATUS in
-`analytics.py`". That was false. `analytics.py` scores on `status` alone,
-`CoverageStatus` has no `pending_review` member, and no code anywhere consults a
-citation's outcome when computing coverage. Describing a control that does not
-exist is worse than deferring one, because it reads to the next person as
-covered.
+That sentence has now been wrong in both directions, which is why it is spelled
+out rather than assumed:
 
-So, precisely: `run_ai` assigns `row.status` from the model INDEPENDENTLY of what
-happens to that row's citations (`routes/attack.py`). A technique whose every
-citation was rejected therefore keeps the status the model gave it — typically
-`covered` — with an EMPTY tool list, and carries full weight in `coverage_pct`
-and in the client PDF. That is the failure this module's opening paragraph names,
-and this change does not fix it. 5.1's enforcement is the fix and is not here.
+* One draft claimed 5.1 "is enforced on the technique STATUS in `analytics.py`"
+  while no code anywhere consulted a citation's outcome. Describing a control
+  that does not exist is worse than deferring one, because it reads to the next
+  person as covered.
+* The correction to that then said the enforcement "is the fix and is not here",
+  and described a technique whose every citation was rejected keeping `covered`
+  with an EMPTY tool list and carrying full weight in `coverage_pct` and the
+  client PDF. That was true of W2 and false from #102 onward.
+
+What holds now: `run_ai` still assigns `row.status` from the model independently
+of what happens to that row's citations, and it MUST -- clearing a citation has
+to be able to put the technique back into whichever status it says, so the status
+has to survive underneath. What changed is that the status no longer scores on
+its own.
+
+For that to be decidable at all, the outcomes are persisted per row
+(`attack_coverage.unconfirmed_citations`, migration 0044) instead of living in
+the run response, which is what finally made "queued for a human" a true
+statement -- see `CitationOutcome.inferred` and `.rejected_details`. Note that
+`rejected_details` exists even though a rejection resolves to no tool name: it is
+the only thing separating "we dropped this row's evidence" from "nobody ever
+cited anything for this row", and those two must score differently.
+
 """
 
 from __future__ import annotations
@@ -244,6 +256,19 @@ class CitationOutcome:
     #: Verbatim, bounded. "GV.OC-1" tells you the catalogue holds "GV.OC-01";
     #: a bare count tells you nothing.
     rejected_examples: list[str] = field(default_factory=list)
+    #: Per-citation records for the two outcomes that are NOT confirmations, in
+    #: the shape `attack_coverage.unconfirmed_citations` stores (#101). The
+    #: summary fields above are deduplicated and bounded because they are read
+    #: once by a human; these are unbounded and keep the string the model
+    #: ACTUALLY sent, because they are the row's audit record and "Qradar" is the
+    #: part a consultant acts on -- `needs_review_tools` only carries what the
+    #: resolver turned it into.
+    #:
+    #: `inferred` entries name the tool they applied. `rejected` entries carry
+    #: `tool: None`: they applied nothing, and a rejection that could pass for a
+    #: tool name would cancel out a real one.
+    inferred: list[dict] = field(default_factory=list)
+    rejected_details: list[dict] = field(default_factory=list)
 
 
 def resolve_citations(names: object, resolver: CitationResolver) -> CitationOutcome:
@@ -274,6 +299,9 @@ def resolve_citations(names: object, resolver: CitationResolver) -> CitationOutc
             out.rejected += 1
             if len(out.rejected_examples) < _MAX_REJECTED_EXAMPLES:
                 out.rejected_examples.append(cited)
+            out.rejected_details.append(
+                {"cited": cited, "reason": f"rejected_{res.rejected_reason}"}
+            )
             continue
         if res.confirmed:
             out.confirmed += 1
@@ -286,4 +314,5 @@ def resolve_citations(names: object, resolver: CitationResolver) -> CitationOutc
                 out.needs_review_tools.append(res.name)
                 reason = res.review_reason.value if res.review_reason else "unknown"
                 out.needs_review_by_reason.setdefault(reason, []).append(res.name)
+                out.inferred.append({"tool": res.name, "cited": cited, "reason": reason})
     return out

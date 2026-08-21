@@ -219,6 +219,46 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   re-read and so reported values applied for transactions that then rolled back.
   When adding any "it worked" record, find the line that makes it true and put
   the record below it.
+- **Withholding a value from a RATIO can raise it. Check which side of the
+  fraction you took it out of.** #102 withholds a technique whose evidence is
+  unconfirmed, and the obvious reading — "it is uncertain, so leave it out of
+  both numerator and denominator, exactly as `unscored` already works" — shipped
+  `gap` as withholdable. But `coverage_pct` is
+  `(covered + 0.5·partial) / (covered + partial + gap)`, so a gap contributes to
+  the DENOMINATOR only: ten covered beside ten gaps reported 50%, and flagging
+  every gap reported **100%** with ten findings deleted. A run in which more
+  evidence was doubted claimed twice the coverage. Only values that carry
+  numerator weight can be withheld conservatively; withholding a pure-denominator
+  value is a strictly optimistic move wearing a cautious one's clothes. And even
+  for the rest it is not unconditional — withholding one `partial` from nine
+  confirmed `covered` takes 95% to 100%, because narrowing a denominator changes
+  what the ratio is a ratio OF. **A percentage over a withheld population is not
+  self-describing: render the withheld count beside it, everywhere, and test that
+  you did.** CSF, ZT and Risk all compute the same shape of fraction.
+- **A rule that withholds a claim must separate "the evidence failed" from "no
+  evidence was offered" — and if the store cannot tell them apart, fix the
+  store.** #102's first predicate was "pending unless a confirmed citation backs
+  the status", which is right for every AI-authored row and withheld every
+  hand-curated one: a consultant typing `covered` into the matrix has made no
+  inference, and the rule was about inferences. The heatmap reported zero covered
+  over ten curated techniques with nothing in the product able to clear it, and
+  the test that caught it (`test_heatmap_reflects_coverage_after_patches`)
+  predated the feature by months. The fix was not a special case but a missing
+  state: outcomes that resolve to NOTHING — a rejected citation, and a status the
+  model cited nothing for at all — now get persisted rows of their own, because otherwise
+  "we dropped the model's evidence" and "nobody ever cited anything" are the same
+  stored bytes. **Before writing a withholding rule, ask what the absence of a
+  record means, and make sure the writer records absence on purpose rather than
+  by not writing.**
+- **Missing data defaults to UNCONFIRMED, never to confirmed.** Standing rule,
+  recorded after the third occurrence: D-054's nullable-vendor default, migration
+  0044's NULL citations, and the fail-open draft of #102 that would have let an
+  assessment whose citations were never checked read as fully confirmed because
+  nothing on record contradicted it. Absence of evidence is not evidence of
+  confirmation. The cost of fail-closed is rework a human can clear; the cost of
+  fail-open is a false assurance already delivered to a client, and only one of
+  those is recoverable. When fail-closed looks unaffordable, check the blast
+  radius rather than assuming — for 0044 it was zero RELEASED assessments.
 - **A defect found in one service exists in its twins until you have checked.**
   CSF, ZT, ATT&CK, Tech Debt and Risk are five copies of the same shapes, so a
   fix filed against one is a fix owed by all of them. #75 was filed against ZT

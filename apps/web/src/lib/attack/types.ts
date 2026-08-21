@@ -47,6 +47,27 @@ export interface AttackCoverageRow {
   rationale?: string | null;
   answered_by: string | null;
   answered_at: string | null;
+  // #101. Citations the resolver had to INFER rather than match, and whether a
+  // human has since vouched for each. `null` is NOT the same as `[]`: null means
+  // this row's citations were never resolved at all, and it scores as pending.
+  unconfirmed_citations?: UnconfirmedCitation[] | null;
+  // #102, computed server-side: this row's status makes a claim its evidence
+  // does not back, so the score withholds it. Derived rather than stored --
+  // the status survives underneath so clearing a flag can put the technique
+  // back into whichever of covered/partial/gap it says.
+  pending_review?: boolean;
+}
+
+export interface UnconfirmedCitation {
+  /** The capability this was applied as, or null when it resolved to nothing. */
+  tool: string | null;
+  /** What the model actually wrote. Null when it cited nothing at all. */
+  cited: string | null;
+  reason: string;
+  /** Which of detection_tools / prevention_tools / response_tools it supported. */
+  field: string | null;
+  /** null until a human vouches for the inference. */
+  cleared_at: string | null;
 }
 
 export interface AttackAssessment {
@@ -105,6 +126,9 @@ export interface AttackRunAiResponse {
   citations_needs_review_by_reason?: Record<string, string[]>;
   // Entries that were not usable tool names at all. Not folded into `rejected`.
   citations_unusable?: number;
+  // #102. TECHNIQUES this run left unbacked, not citations: one flagged tool
+  // cited by forty techniques is one citation and forty pieces of review work.
+  pending_review_rows?: number;
 }
 
 export interface TacticHeatmapEntry {
@@ -117,6 +141,7 @@ export interface TacticHeatmapEntry {
   gap: number;
   not_applicable: number;
   unscored: number;
+  pending_review?: number;
   coverage_pct: number;
 }
 
@@ -131,6 +156,11 @@ export interface AttackHeatmap {
   partial: number;
   gap: number;
   not_applicable: number;
+  // #102. Techniques whose status is withheld from `coverage_pct` until their
+  // evidence is confirmed. `coverage_pct` is a ratio over what can currently be
+  // CLAIMED, so withholding narrows its denominator -- this count must be
+  // rendered beside it, never dropped.
+  pending_review?: number;
   coverage_pct: number;
   by_tactic: TacticHeatmapEntry[];
 }

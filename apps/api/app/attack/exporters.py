@@ -99,7 +99,13 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
             f"{ctx.rollup.scored_count}/{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
         ]
     )
-    for row in ws.iter_rows(min_row=1, max_row=5, min_col=1, max_col=1):
+    # #102. Beside the percentage, never instead of it and never omitted: the
+    # percentage is a ratio over what can currently be CLAIMED, so a withheld row
+    # leaves both sides of it. An assessment whose every positive claim is
+    # withheld renders 0.0% here, which without this line is indistinguishable
+    # from a client who owns no controls at all.
+    ws.append(["Pending review", ctx.rollup.pending_review])
+    for row in ws.iter_rows(min_row=1, max_row=6, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
     ws.append([])
@@ -113,6 +119,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         "Gap",
         "N/A",
         "Unscored",
+        "Pending review",
         "Coverage %",
     ]
     ws.append(headers)
@@ -132,10 +139,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 tc.gap,
                 tc.not_applicable,
                 tc.unscored,
+                tc.pending_review,
                 tc.coverage_pct,
             ]
         )
-    widths = [10, 28, 12, 14, 10, 10, 8, 8, 12, 14]
+    widths = [10, 28, 12, 14, 10, 10, 8, 8, 12, 15, 14]
     for w, col in zip(widths, range(1, len(widths) + 1), strict=True):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -225,7 +233,8 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
             f"Scored: {ctx.rollup.scored_count}/"
             f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
             f"Covered {ctx.rollup.covered}, Partial {ctx.rollup.partial}, "
-            f"Gap {ctx.rollup.gap}, N/A {ctx.rollup.not_applicable}",
+            f"Gap {ctx.rollup.gap}, N/A {ctx.rollup.not_applicable}, "
+            f"Pending review {ctx.rollup.pending_review}",
         ],
     )
 
@@ -308,7 +317,8 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
             f"Covered <b>{ctx.rollup.covered}</b>, "
             f"Partial <b>{ctx.rollup.partial}</b>, "
             f"Gap <b>{ctx.rollup.gap}</b>, "
-            f"N/A <b>{ctx.rollup.not_applicable}</b>",
+            f"N/A <b>{ctx.rollup.not_applicable}</b>, "
+            f"Pending review <b>{ctx.rollup.pending_review}</b>",
             body,
         )
     )

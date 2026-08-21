@@ -106,14 +106,16 @@ class AttackCoverage(UUIDPKMixin, TimestampMixin, Base):
     # Work Order C2: a locked row is never changed by a Run-AI rerun.
     locked: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    # [{tool, reason, field, cleared_at}] — citations the resolver had to INFER
-    # rather than match, and whether a human has since vouched for each
-    # (migration 0044, #101). W2 made the distinction and kept it only in the
-    # transient run-AI response, so it vanished on reload while the copy called
-    # it "queued for a human".
+    # [{tool, cited, reason, field, cleared_at}] — every citation outcome on this
+    # row that is NOT a confirmation, and whether a human has since vouched for
+    # each (migration 0044, #101). W2 made the distinction and kept it only in
+    # the transient run-AI response, so it vanished on reload while the copy
+    # called it "queued for a human".
     #
     # NULL = never resolved (predates the resolver). [] = resolved, nothing
-    # inferred. Non-empty = these were inferred.
+    # outstanding. Non-empty = one entry per inference, per rejected citation
+    # (`tool` NULL, `cited` set), and for a positive status the model cited
+    # nothing at all for (`reason` "no_citation", both NULL).
     #
     # NULL scores as PENDING, not confirmed (#102). Reading it as confirmed
     # because nothing on record contradicts it is the fail-open shape D-054

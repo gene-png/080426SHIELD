@@ -72,10 +72,23 @@ def _pct(numer: float, denom: float) -> float:
     return round(numer / denom * 100, 1)
 
 
-#: Statuses that a pending-review flag can hold back. `not_applicable` is
-#: already outside `addressable`, so flagging its evidence changes nothing about
-#: a claim that was never made, and `None` (unscored) has no claim to withhold.
-_WITHHOLDABLE = (CoverageStatus.COVERED, CoverageStatus.PARTIAL, CoverageStatus.GAP)
+#: Statuses that a pending-review flag can hold back: the ones that make a
+#: POSITIVE claim, and so are the only ones that can be unsupported.
+#:
+#: `not_applicable` is already outside `addressable`, so flagging its evidence
+#: changes nothing about a claim that was never made, and `None` (unscored) has
+#: no claim to withhold.
+#:
+#: `gap` was in this tuple and has been REMOVED. A gap is an ABSENCE claim --
+#: its evidence is the lack of a citation, so there is nothing to withhold --
+#: and withholding one is not neutral: `addressable` is the denominator, so
+#: dropping a gap out of it RAISES `coverage_pct` while deleting a finding. Ten
+#: covered beside ten gaps went from 50% to 100% when the gaps were flagged.
+#: That is 5.1 invariant 1 read backwards. See
+#: `test_withholding_a_gap_would_raise_the_score`, and `app/attack/pending.py`,
+#: which never emits a gap code in the first place -- this tuple is the second
+#: of the two locks, not the only one.
+_WITHHOLDABLE = (CoverageStatus.COVERED, CoverageStatus.PARTIAL)
 
 
 def _tally(
@@ -95,10 +108,6 @@ def _tally(
         else:
             counts[status.value] += 1
     return counts
-
-
-def _coverage_for_codes(codes: list[str], coverage_map: Mapping[str, str | None]) -> dict[str, int]:
-    return _tally(codes, coverage_map, frozenset())
 
 
 def compute(
@@ -156,7 +165,13 @@ def compute(
         overall_counts[CoverageStatus.COVERED.value]
         + 0.5 * overall_counts[CoverageStatus.PARTIAL.value]
     )
-    scored_count = sum(overall_counts[s.value] for s in _STATUS_BUCKETS)
+    # A withheld claim is still an ASSIGNED status, so it counts as scored.
+    # `AttackHeatmapCard` renders `{scored_count}/{scored_count + unscored_count}`
+    # -- leaving pending out would shrink the catalogue total on screen every
+    # time more evidence was doubted.
+    scored_count = (
+        sum(overall_counts[s.value] for s in _STATUS_BUCKETS) + overall_counts["pending_review"]
+    )
 
     parents = parent_techniques()
     sub_total = len(TECHNIQUES) - len(parents)
