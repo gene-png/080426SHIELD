@@ -241,7 +241,11 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
     add_heading(doc, "Per-tactic rollup")
     add_table(
         doc,
-        ["Tactic", "Name", "Covered", "Partial", "Gap", "N/A", "Coverage %"],
+        # `Pending review` sits BEFORE `Coverage %` in all three renderers.
+        # Withholding a row narrows `addressable`, so a per-tactic percentage can
+        # read 100% over two withheld claims -- the count is what stops the
+        # number being a lie, and XLSX carried it while these two did not.
+        ["Tactic", "Name", "Covered", "Partial", "Gap", "N/A", "Pending review", "Coverage %"],
         [
             [
                 tc.tactic_id,
@@ -250,6 +254,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
                 tc.partial,
                 tc.gap,
                 tc.not_applicable,
+                tc.pending_review,
                 f"{tc.coverage_pct}%",
             ]
             for tc in ctx.rollup.by_tactic
@@ -325,7 +330,8 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
 
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [
-        ["Tactic", "Name", "Covered", "Partial", "Gap", "N/A", "Coverage %"]
+        # See the DOCX table above: the count travels with the percentage.
+        ["Tactic", "Name", "Covered", "Partial", "Gap", "N/A", "Pending review", "Coverage %"]
     ]
     for tc in ctx.rollup.by_tactic:
         tactic_table_data.append(
@@ -336,17 +342,22 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 tc.partial,
                 tc.gap,
                 tc.not_applicable,
+                tc.pending_review,
                 f"{tc.coverage_pct}%",
             ]
         )
+    # Eight columns since #102 added `Pending review`. A width list shorter than
+    # the header list silently drops the last column's sizing in reportlab, so
+    # this has to move with the table above it.
     tactic_col_widths = [
         0.8 * inch,
-        1.9 * inch,
-        0.7 * inch,
-        0.7 * inch,
-        0.6 * inch,
-        0.6 * inch,
-        0.9 * inch,
+        1.7 * inch,
+        0.65 * inch,
+        0.65 * inch,
+        0.55 * inch,
+        0.5 * inch,
+        0.95 * inch,
+        0.85 * inch,
     ]
     tactic_table = Table(
         tactic_table_data,

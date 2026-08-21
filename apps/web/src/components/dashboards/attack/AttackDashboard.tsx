@@ -356,7 +356,14 @@ export function AttackDashboard({
           </Section>
           <Section
             title="Overall coverage mix"
-            desc={`Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`}
+            desc={
+              (data.rollup.pending_review ?? 0) > 0
+                ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
+                  `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
+                  `held out of this figure pending evidence review, so it is a percentage of what can be ` +
+                  `claimed today — not of the whole catalogue.`
+                : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`
+            }
           >
             <div style={{ position: "relative", height: 340 }}>
               <CoverageMixDonut rollup={data.rollup} />

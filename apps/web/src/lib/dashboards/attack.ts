@@ -17,6 +17,8 @@ export interface DashTactic {
   gap: number;
   not_applicable: number;
   unscored: number;
+  /** #102: status assigned, supporting citation unconfirmed, withheld from the %. */
+  pending_review?: number;
   coverage_pct: number;
 }
 
@@ -37,6 +39,13 @@ export interface DashRollup {
   partial: number;
   gap: number;
   not_applicable: number;
+  /**
+   * #102. Techniques whose status is withheld from `coverage_pct` because their
+   * supporting citation is unconfirmed. Withholding narrows the DENOMINATOR, so
+   * the percentage is not self-describing and this count must be rendered
+   * beside it — the same rule the released PDF follows.
+   */
+  pending_review?: number;
   coverage_pct: number;
   by_tactic: DashTactic[];
 }

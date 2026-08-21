@@ -23,6 +23,7 @@ from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
+from app.attack.pending import pending_codes as attack_pending_codes
 from app.csf.gap import DEFAULT_TARGET_TIER as CSF_DEFAULT_TARGET_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
 from app.csf.scoring import _label_from_average as csf_label_from_average
@@ -356,6 +357,12 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | 
         # finding while raising the coverage ratio. Passing the codes in would be
         # a guaranteed no-op on this number. If this ever starts reading
         # `covered`, `partial` or `coverage_pct`, it MUST pass them.
+        #
+        # `attack_dashboard` below DOES read all three, and shipped without
+        # them; the §14 audit caught it. This comment was written for THIS
+        # function and read as though it covered the file. Checking the callers
+        # of what you just changed finds every copy that went through it and
+        # misses every other caller sitting beside it.
         total += attack_compute(coverage_map).gap
     return total if found else None
 
@@ -592,7 +599,11 @@ def attack_dashboard(
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
     }
-    rollup = attack_compute(coverage_map)
+    # The SAME derivation `heatmap` and `finalize_attack_deliverable` use. This
+    # route reads `covered`, `partial` and `coverage_pct`, so it is exactly the
+    # case `_attack_uncovered_total`'s comment names above -- and it is the one
+    # a CLIENT reads, gated to appear when the released PDF does.
+    rollup = attack_compute(coverage_map, attack_pending_codes(rows))
 
     techniques: list[AttackDashboardTechnique] = []
     for r in rows:
@@ -635,6 +646,7 @@ def attack_dashboard(
             partial=rollup.partial,
             gap=rollup.gap,
             not_applicable=rollup.not_applicable,
+            pending_review=rollup.pending_review,
             coverage_pct=rollup.coverage_pct,
             by_tactic=[
                 AttackTacticCoverage(
@@ -645,6 +657,7 @@ def attack_dashboard(
                     gap=tc.gap,
                     not_applicable=tc.not_applicable,
                     unscored=tc.unscored,
+                    pending_review=tc.pending_review,
                     coverage_pct=tc.coverage_pct,
                 )
                 for tc in rollup.by_tactic

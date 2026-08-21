@@ -284,3 +284,63 @@ def test_the_review_reason_reaches_the_outcome() -> None:
     assert out.needs_review == 2
     assert out.needs_review_by_reason["incomplete_vendor_data"] == ["Cisco Umbrella"]
     assert out.needs_review_by_reason["punctuation"] == ["Tenable.io"]
+
+
+@pytest.mark.unit
+def test_a_confirmed_citation_retracts_an_earlier_inference_of_the_same_tool() -> None:
+    """Citation ORDER must not decide whether a technique scores (#102).
+
+    Found by the §14 audit. `resolve_citations` de-duplicates on the resolved
+    name and kept whichever outcome arrived FIRST, so the same two citations
+    produced opposite results depending on the order the model happened to list
+    them:
+
+    * `["CrowdStrike", "CrowdStrike Falcon"]` -- the substring inference is
+      recorded, the later EXACT match is discarded as a duplicate, and the row
+      is withheld from the coverage score.
+    * `["CrowdStrike Falcon", "CrowdStrike"]` -- the exact match lands first,
+      the inference is suppressed, and the row scores.
+
+    While this only fed a display counter it was a curiosity. #102 promoted it
+    to a client-facing coverage number, which is the shape CLAUDE.md records as
+    a latent quirk made consequential by a later fix.
+
+    A CONFIRMED citation is the strongest evidence available for a capability:
+    the model named the approved string exactly, so there is nothing to be wrong
+    about. Arriving second makes it no weaker.
+    """
+    resolver = CitationResolver([Candidate(name="CrowdStrike Falcon")])
+
+    inferred_first = resolve_citations(["CrowdStrike", "CrowdStrike Falcon"], resolver)
+    exact_first = resolve_citations(["CrowdStrike Falcon", "CrowdStrike"], resolver)
+
+    assert inferred_first.tools == exact_first.tools == ["CrowdStrike Falcon"]
+    assert inferred_first.inferred == [], (
+        "an exact citation of the same capability arrived later and did not "
+        "retract the inference -- the row is withheld on list order alone"
+    )
+    assert exact_first.inferred == []
+    # The per-citation counters still describe what the MODEL sent: it really
+    # did write one name that had to be rescued. Only the row-level record --
+    # the thing that decides scoring -- is retracted.
+    assert inferred_first.confirmed == exact_first.confirmed == 1
+    assert inferred_first.needs_review == exact_first.needs_review == 1
+    # And the surfaced tool list must not name a tool with nothing behind it.
+    assert inferred_first.needs_review_tools == []
+
+
+@pytest.mark.unit
+def test_an_inference_that_is_never_confirmed_still_stands() -> None:
+    """The retraction must not become a guard against recording anything.
+
+    CLAUDE.md: "a guard against DOUBLE-counting will quietly become a guard
+    against counting at all." Two different capabilities, one inferred and one
+    exact, must leave the inference on record.
+    """
+    resolver = CitationResolver(
+        [Candidate(name="CrowdStrike Falcon"), Candidate(name="Splunk Enterprise")]
+    )
+    out = resolve_citations(["CrowdStrike", "Splunk Enterprise"], resolver)
+    assert out.tools == ["CrowdStrike Falcon", "Splunk Enterprise"]
+    assert [e["tool"] for e in out.inferred] == ["CrowdStrike Falcon"]
+    assert out.needs_review_tools == ["CrowdStrike Falcon"]

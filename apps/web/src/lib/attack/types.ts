@@ -66,7 +66,15 @@ export interface UnconfirmedCitation {
   reason: string;
   /** Which of detection_tools / prevention_tools / response_tools it supported. */
   field: string | null;
-  /** null until a human vouches for the inference. */
+  /**
+   * null until a human vouches for the inference.
+   *
+   * Compare with `(x ?? null) === null`, not `x === null`. Every backend
+   * reader uses `entry.get("cleared_at") is None`, so a MISSING key means
+   * uncleared; a bare `=== null` here would read the same entry as cleared
+   * and hide an outstanding review item. Not reachable through the API
+   * today (pydantic always emits the key), which is why it is written down.
+   */
   cleared_at: string | null;
 }
 

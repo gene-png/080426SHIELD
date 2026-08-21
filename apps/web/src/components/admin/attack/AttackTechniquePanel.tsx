@@ -115,7 +115,17 @@ export function AttackTechniquePanel({
   // accepted this" and "nobody ever cited it" are different answers to why this
   // technique counts, and this panel is where that question gets asked.
   const citations = coverage?.unconfirmed_citations ?? [];
-  const outstanding = citations.filter((c) => c.cleared_at === null).length;
+  const outstanding = citations.filter(
+    (c) => (c.cleared_at ?? null) === null,
+  ).length;
+  // A row is ALSO withheld when `unconfirmed_citations` is null — the
+  // pre-resolver state, where nobody ever checked this row's citations. There
+  // is nothing to list and nothing to confirm, so gating the whole block on
+  // `citations.length` left a red badge over an empty panel with no route out.
+  // Reachable today: a locked row in a draft assessment is skipped by Run-AI,
+  // skipped by migration 0045, and 409s on confirm-citations.
+  const pendingWithoutRecord =
+    (coverage?.pending_review ?? false) && citations.length === 0;
 
   return (
     <Card>
@@ -194,7 +204,7 @@ export function AttackTechniquePanel({
           <ToolRow label="Prevention" tools={coverage?.prevention_tools} />
           <ToolRow label="Response" tools={coverage?.response_tools} />
         </div>
-        {citations.length > 0 ? (
+        {citations.length > 0 || pendingWithoutRecord ? (
           <div
             className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3"
             data-testid="attack-citation-queue"
@@ -202,13 +212,26 @@ export function AttackTechniquePanel({
             <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
               Citation review
             </span>
+            {pendingWithoutRecord ? (
+              <p className="text-sm text-ink-secondary">
+                This technique&rsquo;s citations were{" "}
+                <span className="font-medium text-status-info-fg">
+                  never resolved
+                </span>{" "}
+                &mdash; it predates the citation resolver, so nothing on record
+                says what its evidence was checked against. It is held out of
+                the coverage score until someone vouches for it, and it is not a
+                gap. There is nothing stored to confirm here: set the status or
+                the tools yourself to take authorship of the claim.
+              </p>
+            ) : null}
             <ul className="flex flex-col gap-1 text-sm text-ink-secondary">
               {citations.map((c, i) => (
                 <li
                   key={`${c.tool ?? "none"}-${c.cited ?? i}-${c.field ?? ""}`}
                 >
                   {citationLine(c)}{" "}
-                  {c.cleared_at === null ? (
+                  {(c.cleared_at ?? null) === null ? (
                     <span className="font-medium text-status-info-fg">
                       Awaiting review.
                     </span>

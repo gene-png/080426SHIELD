@@ -58,16 +58,23 @@ So the row's citation record answers a question with three answers, not two:
    it, and for a hand-curated row that is a consultant, whose judgement is not an
    AI inference and was never what 5.1 was about.
 
-Everything in case 2 is stored, including the two outcomes that resolve to no
-tool name at all -- a REJECTED citation (`reason` one of `rejected_*`, carrying
-the string the model sent) and a positive status the model cited NOTHING for
-(`reason` `no_citation`, carrying neither). Neither has a tool to record, which
-is exactly why they have to be recorded: without them, "the model cited Qradar
-and we dropped it" and "the model claimed coverage and named nothing" both store
-as `[]` over empty tool lists, which is byte-identical to a consultant's own
-hand-curated `covered` -- and that third one must NOT be withheld. Case 3 is
-therefore reached only by a row a human authored, or one where every citation
-landed cleanly.
+Case 2 stores two outcomes that resolve to no tool name at all -- a REJECTED
+citation (`reason` one of `rejected_*`, carrying the string the model sent) and
+a positive status the model cited NOTHING for (`reason` `no_citation`, carrying
+neither). Neither has a tool to record, which is exactly why they have to be
+recorded: without them, "the model cited Qradar and we dropped it" and "the
+model claimed coverage and named nothing" both store as `[]` over empty tool
+lists, which is byte-identical to a consultant's own hand-curated `covered` --
+and that third one must NOT be withheld.
+
+**There is a third such outcome and it is NOT stored yet: `unusable`** -- a bare
+string where a list belongs, a null, an empty name (`resolve_citations` counts
+these and emits no record). Scoring is unaffected, because a row left with no
+tools at all still gets a `no_citation` entry; what is lost is the per-row
+DISCLOSURE when the row also carries a usable tool from another field. Named
+here rather than left for a reader to discover the count and the record
+disagreeing -- an earlier version of this paragraph said "the two outcomes",
+which read as complete. Tracked separately.
 
 That fidelity is what makes the plan's "related defect" enforceable at all: "a
 technique can currently read `covered` with EMPTY tool lists ... treat it as in

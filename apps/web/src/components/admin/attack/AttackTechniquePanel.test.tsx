@@ -145,3 +145,48 @@ describe("AttackTechniquePanel — the review queue (#101)", () => {
     ).toBeNull();
   });
 });
+
+describe("AttackTechniquePanel — a pending row with NO stored entries", () => {
+  it("explains why it is withheld instead of showing a bare badge", () => {
+    // Found by the §14 audit. A row is also pending when
+    // `unconfirmed_citations` is NULL — the pre-resolver state — and the whole
+    // review block was gated on `citations.length > 0`. The consultant saw a
+    // "Pending review" badge, an empty panel, and no route out.
+    //
+    // This row really is reachable: a LOCKED row inside a DRAFT assessment is
+    // skipped by Run-AI, skipped by migration 0045 (its parent is a draft), and
+    // 409s on confirm-citations because nothing is outstanding.
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ pending_review: true, unconfirmed_citations: null })}
+        coverageDefinitions={[]}
+        onPatch={vi.fn()}
+        onConfirmCitations={vi.fn()}
+      />,
+    );
+    const queue = screen.getByTestId("attack-citation-queue");
+    expect(queue).toHaveTextContent(/never resolved/i);
+    expect(queue).toHaveTextContent(/held out of the coverage score/i);
+    // And it names the action that actually works, which is not "confirm" —
+    // there is nothing stored to confirm.
+    expect(queue).toHaveTextContent(/set the status or the tools/i);
+    expect(
+      screen.queryByRole("button", { name: /confirm this evidence/i }),
+    ).toBeNull();
+  });
+
+  it("stays silent for a row that is neither pending nor flagged", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ pending_review: false, unconfirmed_citations: null })}
+        coverageDefinitions={[]}
+        onPatch={vi.fn()}
+        onConfirmCitations={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/OS Credential Dumping/)).toBeInTheDocument();
+    expect(screen.queryByTestId("attack-citation-queue")).toBeNull();
+  });
+});

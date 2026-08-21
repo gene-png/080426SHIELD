@@ -69,6 +69,10 @@ class AttackTacticCoverage(BaseModel):
     gap: int
     not_applicable: int
     unscored: int
+    # #102. Additive + defaulted (C0). A status whose supporting citation is
+    # unconfirmed is withheld from `coverage_pct` -- which narrows its
+    # denominator, so this count has to be rendered beside it and never dropped.
+    pending_review: int = 0
     coverage_pct: float
 
 
@@ -94,6 +98,10 @@ class AttackDashboardRollup(BaseModel):
     partial: int
     gap: int
     not_applicable: int
+    # #102. The CLIENT-facing half of the rule. This route is gated to appear
+    # exactly when the released PDF does, so a rollup computed without
+    # withholding hands the same client two numbers for one assessment.
+    pending_review: int = 0
     coverage_pct: float
     by_tactic: list[AttackTacticCoverage]
 

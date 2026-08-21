@@ -271,6 +271,25 @@ class CitationOutcome:
     rejected_details: list[dict] = field(default_factory=list)
 
 
+def _retract_inference(out: CitationOutcome, name: str) -> None:
+    """Drop the row-level record that `name` was inferred, keeping the counters.
+
+    `confirmed` / `needs_review` describe what the MODEL sent, and it really did
+    write one name that had to be rescued -- those stay. What is retracted is the
+    per-row evidence record, which is the thing #102 scores on and the thing a
+    consultant is asked to review. Leaving a review item for a capability the
+    model also cited exactly would queue work with no question in it.
+    """
+    out.inferred = [e for e in out.inferred if e["tool"] != name]
+    out.needs_review_tools = [t for t in out.needs_review_tools if t != name]
+    for reason, tools in list(out.needs_review_by_reason.items()):
+        remaining = [t for t in tools if t != name]
+        if remaining:
+            out.needs_review_by_reason[reason] = remaining
+        else:
+            del out.needs_review_by_reason[reason]
+
+
 def resolve_citations(names: object, resolver: CitationResolver) -> CitationOutcome:
     """Resolve a list of cited tool names, preserving order and de-duplicating.
 
@@ -315,4 +334,16 @@ def resolve_citations(names: object, resolver: CitationResolver) -> CitationOutc
                 reason = res.review_reason.value if res.review_reason else "unknown"
                 out.needs_review_by_reason.setdefault(reason, []).append(res.name)
                 out.inferred.append({"tool": res.name, "cited": cited, "reason": reason})
+        elif res.confirmed:
+            # A CONFIRMED citation of a capability something earlier in this list
+            # only INFERRED. It retracts the inference: the model named the
+            # approved string exactly, so there is nothing left to be wrong
+            # about, and arriving second makes that no weaker.
+            #
+            # Without this, list ORDER decided whether the technique scored --
+            # `["CrowdStrike", "CrowdStrike Falcon"]` withheld the row and the
+            # reverse order scored it, on identical evidence. Harmless while it
+            # fed a display counter; #102 promoted it to a client-facing coverage
+            # number. Found by the §14 audit.
+            _retract_inference(out, res.name)
     return out

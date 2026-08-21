@@ -50,7 +50,9 @@ from app.attack.exporters import (  # noqa: E402
 from app.attack.exporters import (  # noqa: E402
     render_xlsx as render_attack_xlsx,
 )
+from app.attack.pending import CLAIMS_SUPPORT  # noqa: E402
 from app.attack.pending import pending_codes as attack_pending_codes  # noqa: E402
+from app.attack.pending import row_tools as attack_row_tools  # noqa: E402
 from app.audit import audit  # noqa: E402
 from app.csf.catalog import SUBCATEGORIES as CSF_SUBS  # noqa: E402
 from app.csf.exporters import build_context as build_csf_context  # noqa: E402
@@ -856,14 +858,27 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
     db.flush()
 
     coverage_map = {r.technique_code: r.status for r in coverage_rows}
-    pending = attack_pending_codes(coverage_rows)
-    if pending:
+    # Asserted on the PROPERTY, not through `is_pending_review`. The first
+    # version of this guard called the predicate -- and could never fire, because
+    # every row here is written with `unconfirmed_citations=[]`, which is case 3
+    # ("nothing was ever cited") and is never pending whatever its status or
+    # tools. The guard supplied its own precondition from the block it was
+    # guarding, so deleting the tool lists entirely still passed it. The §14
+    # audit caught it; the #72 pattern, one layer out from the code it guards.
+    unbacked = [
+        r.technique_code
+        for r in coverage_rows
+        if r.status in CLAIMS_SUPPORT and not attack_row_tools(r)
+    ]
+    if unbacked:
         raise RuntimeError(
-            f"seed_demo wrote {len(pending)} ATT&CK rows whose status is not backed by a "
-            f"confirmed citation (e.g. {sorted(pending)[:3]}). The demo would show a "
-            "coverage number the demo's own data does not support -- give the status a "
+            f"seed_demo wrote {len(unbacked)} ATT&CK rows claiming {sorted(CLAIMS_SUPPORT)} "
+            f"with no tool naming the control (e.g. {sorted(unbacked)[:3]}). The demo would "
+            "report a coverage number its own data does not support -- give the status a "
             "tool or drop the status."
         )
+    pending = attack_pending_codes(coverage_rows)
+    assert not pending, f"seeded rows the scoring rule would withhold: {sorted(pending)[:3]}"
     rollup = compute_attack(coverage_map, pending)
 
     today = date.today()
