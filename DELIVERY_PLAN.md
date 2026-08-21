@@ -242,22 +242,34 @@ just written the rule down, which is the case for mechanising the sweep (W8)
 rather than trusting anyone to remember it.
 
 
-### Live risk: `main` has NO branch protection (2026-08-20)
+### Branch protection: configured 2026-08-20, verified 2026-08-21
 
-Checked directly in Settings → Branches: **zero rules**, not even force-push
-blocking. Consequences, worst first:
+**Resolved.** This section previously read "`main` has NO branch protection —
+zero rules, not even force-push blocking", and stayed that way after the setting
+was actually made. Re-checked against the GitHub API
+(`gh api repos/.../branches/main/protection`) rather than from memory:
 
-- The **"Adversarial audit recorded"** check from #98 (D-054) reports and does
-  not block, so a code PR can merge with the §14 audit skipped exactly the way
-  #93/#94/#95 did. #98 made the skip visible; visible-and-ignorable is not
-  enforcement.
-- None of the five CI checks are required either. **A red suite can merge.**
-- `main`'s history is force-pushable.
+- **Six required status checks**, including **"Adversarial audit recorded"** —
+  so the §14 gate now blocks rather than merely reporting, which is the
+  condition D-054 said it was waiting on. The other five are Python (ruff +
+  black + pytest + bandit), Web (prettier + eslint + typecheck + build), E2E
+  (Playwright smoke suite), Demo (hosted-demo reset + journey spec), and Secret
+  scan (gitleaks). **A red suite can no longer merge.**
+- Force-pushes **blocked**. Branch deletion **blocked**.
 
-**Owed: register "Adversarial audit recorded" plus the five CI checks as
-required, and block force-push.** A GitHub settings change no file in this repo
-can make or verify — which is exactly why it is written down rather than
-assumed done.
+**Still open, and deliberately listed rather than left implied:**
+
+- `enforce_admins` is **false** — a repo admin can bypass every check above.
+  That is a two-person project's escape hatch, not an oversight, but it means
+  the gate is a guardrail rather than a wall.
+- **A pull request is not required** to push to `main`. "Never commit directly
+  to `main`" is still convention only; nothing enforces it. This is the largest
+  remaining gap.
+- `strict` is **false**, so a branch need not be up to date with `main` before
+  merging — two PRs that are individually green can still break `main` together.
+
+A GitHub settings change no file in this repo can make or verify, which is why
+the state is recorded here with the command that reads it back.
 
 ### Recently landed (context for the above)
 
@@ -273,8 +285,11 @@ assumed done.
 - **The §14 audit gate** (PR #98, **D-054**) — a deterministic merge check
   requiring recorded audit evidence on any code PR. Built after the gate was
   silently skipped three times running; its own audit found eight defects in it.
-  **Not enforcing until branch protection is configured** — see the live risk
-  above.
+  **Now enforcing:** registered as a required status check on `main`
+  (2026-08-20, verified 2026-08-21) — see the branch-protection section above.
+  D-054's own text still says "not enforcing yet"; that was true when written
+  and is the caveat it was right to record. It is superseded here rather than
+  edited, because `DECISIONS.md` is append-only.
 - **Two retro-audit fixes** — **#96**, the W3 snapshot silently NARROWING the
   ATT&CK allow-list (client-facing fabricated gaps, live on main for ~1h), and
   **#97**, the mutation sweep mutating the wrong node on chained calls and
