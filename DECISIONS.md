@@ -2757,6 +2757,26 @@ that it happened or was any good. Same honesty convention as `SMOKE_TEST.md`.
 What changes is that skipping becomes deliberate and visible instead of silent,
 and all three misses were silent.
 
+**Correction (2026-08-21): it is enforcing now, and this entry said otherwise
+for a day.** "Adversarial audit recorded" was registered as a required status
+check on `main` on 2026-08-20, along with the five CI checks and force-push
+blocking. The paragraph below was true when written and is kept intact; what it
+is missing is that the condition it names was met.
+
+Two things the correction must not overstate, because the first draft of the
+`DELIVERY_PLAN.md` update did: required checks bind **a non-admin merging via a
+pull request**, `enforce_admins` is false so both developers bypass them, and a
+PR is not required — and `audit-gate.yml` triggers on `pull_request` only, so a
+direct push to `main` produces no check run at all. The gate is a guardrail on
+the PR path, not a wall around `main`. Current state, what it covers, and what
+it does not: `DELIVERY_PLAN.md`, "Branch protection: configured 2026-08-20".
+
+Recorded here rather than only in the living document, which is the mistake
+D-051's own correction records making in the opposite direction — "the
+append-only log carried the correction while the document people act from
+carried the falsehood". Append-only forbids rewriting history, not annotating
+it; D-045 and D-051 both do exactly this.
+
 **It is not enforcing yet, and that is the load-bearing caveat.** A workflow job
 only reports. It blocks only once "Adversarial audit recorded" is a required
 status check in `main`'s branch protection — and as of 2026-08-20 `main` has NO
