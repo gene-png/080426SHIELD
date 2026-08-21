@@ -2876,3 +2876,78 @@ exact shape #102 withholds. It now cites real names from its own `_TD_ITEMS`
 capability list, writes `[]` explicitly, and **raises** if any row it created
 would be withheld, rather than letting the demo report a coverage number its own
 data does not support.
+
+## D-056 — A locked assessment cannot be re-run, so its pre-resolver citations are grandfathered once
+
+**Date:** 2026-08-21 · **Migration:** 0045 · **Follows:** [[D-055]], migration 0044 · **Issues:** #101, #102
+
+D-055 made `unconfirmed_citations IS NULL` score as PENDING. Migration 0044
+priced that as affordable: "what it costs is one Run-AI on each of the existing
+drafts, which is exactly the work that was never done for them."
+
+**APPROVED assessments are not drafts, and nothing can reach them.** Every write
+path refuses a locked parent — `run_ai` re-reads the assessment status before
+committing and raises `assessment_not_editable`, `patch_coverage` raises "This
+assessment is locked", and the new `confirm-citations` endpoint does the same.
+An assessment approved before the resolver existed was therefore pinned at 0%
+coverage permanently, with no action available anywhere in the product.
+
+0044's affordability check verified **zero RELEASED** assessments. It never asked
+about APPROVED. Measured on the dev database: **14 approved assessments holding
+8,862 NULL-citation rows**, and 29 of 48 assessments dropping from ~62% to 0%.
+The gap was in the reasoning, not the code — the code did exactly what it said.
+
+### The decision, taken narrowly
+
+Migration 0045 sets `unconfirmed_citations = []` for rows whose parent is locked
+against every write path (`approved`, `released`) **and** whose column is still
+NULL.
+
+- **Only `IS NULL`.** A locked row that already carries an outstanding flag keeps
+  it. A blanket `SET ... = '[]'` would erase the review queue #101 exists to
+  persist — a worse defect than the one being fixed.
+- **Not `draft`.** Reachable by Run-AI, which is the work 0044 said was owed.
+  Grandfathering drafts would spend the fail-closed guarantee to save a click.
+- **Not `discarded`.** Equally unreachable, but soft-deleted and unread; writing
+  "confirmed" onto it asserts something no human checked, for no benefit.
+- **`released` included despite a zero count.** The criterion is the PROPERTY
+  ("locked against every write path"), not today's row count. Right by
+  construction rather than by coincidence.
+
+### What this is explicitly NOT
+
+**Not a decision that approval counts as citation confirmation.** Whether
+`approve_assessment` should stamp its rows' citations from here on is a real,
+separate design question and gets its own D-number if the answer is yes. This is
+a one-time backfill of rows that predate the rule. Kept apart deliberately, so
+"we grandfathered old data" never quietly becomes "sign-off is evidence".
+
+### The casing trap, and why the log line is the only reason it was caught
+
+The first version of 0045 matched `status IN ('approved', 'released')`,
+grandfathered **zero** of the 8,862 rows, and reported success.
+`AttackAssessment.status` is a `SAEnum(..., native_enum=False)`, and
+SQLAlchemy's `Enum` persists the member's **NAME** — the column holds
+`'APPROVED'`, while `AttackAssessmentStatus.APPROVED.value` is `'approved'`.
+
+Two deliberate choices caught it, and no test did:
+
+1. **The migration prints its row count.** "Touched nothing" and "correctly had
+   nothing to do" are indistinguishable afterwards; the number is the only
+   evidence of which happened.
+2. **It was applied to the dev database instead of being trusted from green
+   tests.** CLAUDE.md already records that a new migration does not reach dev
+   Postgres on its own; the corollary is that running it there is a test no unit
+   suite performs.
+
+**The test could not have caught it, and that is the reusable lesson.** Its
+fixture inserted `'approved'` by hand, so it agreed with the migration by
+construction — CLAUDE.md's standing rule about a test that supplies its own
+precondition from the thing under test, now instance ten. The fixture seeds
+through the ORM, so the stored representation comes from the same code path
+production uses, and a test pins the literal `'APPROVED'` against a raw read.
+
+The migration matches `upper(status)` rather than either casing: the stored
+representation belongs to SQLAlchemy, and a migration is pinned to history while
+the model is free to change, so importing the enum here would couple this file
+to a model that may not exist in this shape later.
