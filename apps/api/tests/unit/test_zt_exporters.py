@@ -14,7 +14,7 @@ from app.models.zt_assessment import (
     ZtFramework,
 )
 from app.zt.catalog import capabilities
-from app.zt.exporters import build_context, render_pdf, render_xlsx
+from app.zt.exporters import build_context, render_docx, render_pdf, render_xlsx
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.scoring import analyze_gaps, compute
 
@@ -185,3 +185,77 @@ def test_build_context_falls_back_when_client_none() -> None:
         gap=gap,
     )
     assert ctx.client_legal_name == "Client"
+
+
+def _pdf_text(raw: bytes) -> str:
+    from pypdf import PdfReader
+
+    return "".join(page.extract_text() for page in PdfReader(io.BytesIO(raw)).pages)
+
+
+@pytest.mark.unit
+def test_every_renderer_discloses_the_gap_plan_truncation() -> None:
+    """#75's disclosure in ZT, which nothing asserted.
+
+    Found by the MVP item-9 twin-sweep. `_gap_plan_caption` has two branches and
+    only the OTHER one was covered: `test_xlsx_handles_empty_gap_list_with_
+    placeholder` asserts `"All 0 gaps listed."`, the branch taken when nothing is
+    truncated. The branch that exists *because* of #75 — the one a client sees on
+    a real assessment — was asserted by nothing in any renderer, so deleting it
+    left the suite green.
+
+    That makes this a worse instance than its ATT&CK twin, which had no caption
+    test at all and was therefore visible to a grep. Here a passing test points
+    at the wrong branch, so the coverage reads as complete. CSF, the third twin,
+    is pinned properly in both its renderers — D-049 pinned one, left one, and
+    the camouflage is why nobody noticed.
+
+    Asserted with the literal words and BOTH numbers, per the test-integrity
+    gate: `str(n) in blob` would be satisfied by any unrelated occurrence of the
+    same digits, and these documents are full of counts.
+    """
+    ctx = _ctx(ZtFrameworkCode.CISA_ZTMM_2_0, stage=1, target=4)
+    shown, total = len(ctx.gap.gaps), ctx.gap.total_gap_count
+    assert total > shown, "the fixture does not truncate, so this proves nothing"
+    remaining = total - shown
+    expected = (
+        f"Showing the {shown} highest-priority of {total} gaps; "
+        f"{remaining} further gaps not listed."
+    )
+
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(render_xlsx(ctx)))["Gap Plan"]
+    assert expected in (ws.cell(row=1, column=1).value or ""), ws.cell(row=1, column=1).value
+
+    from docx import Document
+
+    doc = Document(io.BytesIO(render_docx(ctx)))
+    assert expected in "\n".join(p.text for p in doc.paragraphs)
+
+    assert expected in _pdf_text(render_pdf(ctx))
+
+
+@pytest.mark.unit
+def test_the_untruncated_caption_still_says_so_in_every_renderer() -> None:
+    """The other branch, in all three rather than one.
+
+    The pre-existing coverage asserted this only in XLSX and only for the
+    zero-gap case. A caption that silently stopped rendering in the DOCX or PDF
+    would still have passed.
+    """
+    ctx = _ctx(ZtFrameworkCode.CISA_ZTMM_2_0, stage=4, target=2)
+    assert ctx.gap.total_gap_count == len(ctx.gap.gaps), "fixture must NOT truncate"
+    expected = f"All {ctx.gap.total_gap_count} gap"
+
+    from openpyxl import load_workbook
+
+    ws = load_workbook(io.BytesIO(render_xlsx(ctx)))["Gap Plan"]
+    assert expected in (ws.cell(row=1, column=1).value or "")
+
+    from docx import Document
+
+    doc = Document(io.BytesIO(render_docx(ctx)))
+    assert expected in "\n".join(p.text for p in doc.paragraphs)
+
+    assert expected in _pdf_text(render_pdf(ctx))
