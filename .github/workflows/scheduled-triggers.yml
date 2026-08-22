@@ -1,0 +1,47 @@
+name: Scheduled triggers
+
+# A deferred item with no trigger is a wish. This makes the trigger fire itself.
+#
+# This repo has four things "tracked but not scheduled" (#59, #111, and now the
+# post-MVP audit item), and the pattern that put them there is the same one
+# D-051 recorded for the §14 gate: a rule that depends on someone remembering has
+# failed here nine recorded times. "Post-MVP" and "later" are not triggers —
+# nothing observes them, so nothing ever fires.
+#
+# So: an issue labelled `scheduled-trigger` carries a `Trigger-date:` line in its
+# body. Once that date passes, this posts ONE comment and applies
+# `trigger-fired`, which is also the guard against posting again. A human still
+# decides what to do; what changes is that the decision is put in front of them
+# instead of waiting to be rediscovered.
+#
+# NOT a gate. It cannot block anything and it cannot fail a merge — it only
+# raises its hand. A non-blocking mechanism that runs beats a blocking one that
+# gets turned off (the mutation sweep's own reasoning).
+
+on:
+  schedule:
+    # 07:00 UTC Mondays. After the mutation sweep, and on a day someone reads.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fire-due-triggers:
+    name: Fire due scheduled triggers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Comment on any issue whose trigger date has passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        working-directory: apps/api
+        run: python -m scripts.fire_scheduled_triggers
