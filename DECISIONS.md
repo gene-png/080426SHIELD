@@ -2785,6 +2785,15 @@ configured the gate is a visible red X and nothing more. Recorded here because
 the first version of the gate's own docstring claimed it "blocks the merge",
 which was false and was the #72 pattern one level up.
 
+**Correction (2026-08-22): the "reject a CLAUDE.md rule" reasoning is partly
+superseded.** D-057 adds a `CLAUDE.md` rule requiring the reviewer to be RUN, not
+merely recorded. That is a different proposition from the one rejected here —
+this entry rejected documenting a mechanism that already existed, where the red X
+did the work. Nothing enforces _running_ it, so there is no mechanism to point
+at. The caveat below about what this gate proves is exactly why: three PRs and a
+sweep passed it on self-audits, and re-auditing that sweep overturned four of its
+six verdicts. See D-057.
+
 **Its own adversarial audit found eight defects in it**, all fixed before merge —
 including `main()` having zero test coverage (inverting its exit code left the
 suite green), `edited` missing from the workflow triggers (so a fixed PR stayed
@@ -2971,3 +2980,69 @@ The migration matches `upper(status)` rather than either casing: the stored
 representation belongs to SQLAlchemy, and a migration is pinned to history while
 the model is free to change, so importing the enum here would couple this file
 to a model that may not exist in this shape later.
+
+## D-057 — Run the reviewer on every PR, which reverses part of D-054
+
+**Date:** 2026-08-22 · **Reverses:** part of [[D-054]] · **Issues:** #108 · **Follows:** D-051
+
+D-054 recorded, and rejected, "document the gate in `CLAUDE.md`":
+
+> **The first proposed fix was to document the gate in `CLAUDE.md`. Rejected by
+> Gene, correctly.** That is a discipline fix, and discipline against this exact
+> shape has failed nine recorded times (#72). Visibility was never the binding
+> constraint.
+
+**That reasoning stands, and this is a different proposition.** D-054 rejected
+documenting a _mechanism that already existed_ — the gate was built, so writing
+about it added nothing a red X did not. What is being added now is the
+requirement to run the reviewer at all, which no mechanism enforces and W8b (the
+reviewer as a CI job) is still deferred.
+
+**Recorded because the alternative was a rule in the auto-loaded file that
+silently contradicted the append-only log.** That divergence has bitten three
+times, most recently D-051's own correction, which exists because "the
+append-only log carried the correction while the document people act from carried
+the falsehood". Leaving this as a CLAUDE.md bullet alone would have been the same
+shape a fourth time, pointing the other way.
+
+### What the drift cost, measured rather than argued
+
+Three PRs (#112, #113, #119) and the item-9 cross-service sweep were self-audited.
+The §14 gate passed all of them, because — as D-054 states outright — it proves
+an audit was RECORDED, not that it happened.
+
+Pointed at that sweep, the reviewer overturned **four of its six** clean verdicts.
+One had reported "no twin" over a defect written up as F6 in
+`docs/plans/2026-08-08-cross-service-integrity.md` two weeks earlier and still
+live. The MVP total moved from 5–6.5 sessions to 8–10.5 as a direct result.
+
+The diagnosis is why more care would not have helped: the sweep generalised
+ATT&CK's _vocabulary_ (`pending_review`, "withheld") instead of its _shape_ — an
+aggregate applying an exclusion the per-row rendering does not. Grepping the word
+found nothing; the shape was in three services. A self-audit cannot reach that,
+because the blind spot and the reviewer are the same mind.
+
+### The honest caveat, stated in the rule itself
+
+**This is unenforceable and unobservable.** Nothing records whether the reviewer
+ran or when, and the gate cannot see who wrote the findings. It is weaker than
+the gate it supplements, because the gate at least produces a red X. It is
+therefore exactly the "discipline against a known shape" D-051 says has failed
+nine times here — written down anyway, because the alternative is nothing and
+because this time the cost of not doing it was counted.
+
+W8b remains the mechanism that would bind it, and remains deferred.
+
+### Also settled here
+
+- **Docs-only PRs are exempt from the GATE and not from the RULE.** The gate's
+  "one defensible skip" is about a merge check; a wrong claim in `CLAUDE.md`,
+  `DELIVERY_PLAN.md` or `DECISIONS.md` is where this project's defects actually
+  live. The review that produced this decision found eleven in two markdown
+  files.
+- **Re-audit after substantive changes, not once at open.** PR #29's plan records
+  two consecutive patches that each looked done and each were wrong, both caught
+  only by re-auditing while CI stayed green.
+- The rule closes the `CLAUDE.md` half of **#108**. The other half — the gate's
+  own source still saying it "only REPORTS" and citing D-051 instead of D-054 —
+  is untouched and still open.

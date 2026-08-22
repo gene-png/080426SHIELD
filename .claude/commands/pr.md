@@ -63,6 +63,17 @@ Write a PR description in this format:
 - [ ] New tests added for: [list what's covered]
 - [ ] Tested manually: [list any scenarios that were manually verified]
 
+## Adversarial audit
+
+Findings: <n, or "none">
+Disposition: <what was fixed here, what was filed, what was accepted>
+
+<!-- REQUIRED on any PR touching code. The check is "Adversarial audit
+recorded" (apps/api/scripts/check_audit_evidence.py) and it wants these literal
+lines -- prose describing an audit is explicitly not enough. Run
+.claude/agents/adversarial-reviewer.md BEFORE opening the PR so the findings
+land here rather than as a follow-up. See CLAUDE.md, "Rules of the road". -->
+
 ## Known limitations / follow-up work
 [Anything deliberately deferred, edge cases not handled, or follow-up tickets needed. If none, say "None — this is complete."]
 ```
