@@ -259,6 +259,29 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   fail-open is a false assurance already delivered to a client, and only one of
   those is recoverable. When fail-closed looks unaffordable, check the blast
   radius rather than assuming — for 0044 it was zero RELEASED assessments.
+- **A guard that cannot read its input must FAIL CLOSED, and the tell is a
+  positive-sounding message on an empty read.** `check_audit_evidence.py` shipped
+  with `is_code_change([])` returning False, so an empty changed-file list printed
+  "documentation-only change, exempt" and exited **0** — a green gate, with an
+  encouraging sentence, from input that supported neither reading. Not reachable
+  through its own workflow (`fetch-depth: 0` plus `bash -e` turn a failed diff
+  into a red step), which is exactly why it survived review: the hole opens the
+  day someone changes the checkout depth or adds a `|| true`.
+
+  The general shape: a checker's "nothing to complain about" branch and its
+  "I could not look" branch must not be the same branch. Every gate in this repo
+  now returns a distinct non-zero (2) for unreadable input, separate from the 1 it
+  returns for a real violation.
+
+  **Recorded because this is the one case where writing it down demonstrably
+  worked.** `check_issue_references.py` was written months later by someone who
+  had read this entry, and its fail-closed path and the test pinning it were in
+  the first committed version — the defect never existed in it. Set that against
+  the closing-keyword rule three entries down, which was rewritten three times
+  and violated a fourth. The difference worth noticing is not diligence: the
+  fail-closed lesson is a rule about code you are *writing on purpose*, and the
+  closing-keyword one is a rule about prose you are *not thinking about*. Only the
+  second kind needs a machine.
 - **A defect found in one service exists in its twins until you have checked.**
   CSF, ZT, ATT&CK, Tech Debt and Risk are five copies of the same shapes, so a
   fix filed against one is a fix owed by all of them. #75 was filed against ZT
@@ -426,7 +449,7 @@ Rules of the road:
   in the PR description — bare numbers, no `#`, because a marker containing the
   word "close" beside `#N` would itself be an instance of the bug:
 
-      Auto-close-approved: 123, 456
+      Auto-close-approved: <issue numbers, bare>
 
   **Why this is mechanised rather than documented.** The same issue was closed by
   accident three times. Each fix was a better-worded rule; the second incident

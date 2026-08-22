@@ -14,7 +14,13 @@ from alembic.config import Config
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.ai.engine import parse_json, registered_jobs, run_job
+from app.ai.engine import (
+    AIResponseShapeError,
+    get_job,
+    parse_json,
+    registered_jobs,
+    run_job,
+)
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.llm_call import LLMCall, LLMCallStatus
 
@@ -157,3 +163,61 @@ def test_parse_json_object_refuses_a_non_object_top_level() -> None:
         # from a prompt bug. Asserting on "object" alone would pass on the
         # constant prefix even if the type were dropped from the message.
         assert type(json.loads(payload)).__name__ in str(exc.value), payload
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("job_name", registered_jobs())
+def test_every_registered_job_rejects_a_bare_list_top_level(job_name: str) -> None:
+    """D-052's invariant, mechanised. Found unpinned by the item-3b audit.
+
+    D-052 states: "`jobs.py`'s carve-out comment is removed: every registered job
+    carries a top-level shape guard, and that sentence is now writable." Nothing
+    checked it. `test_ai_engine` asserted the five job NAMES are registered and
+    stopped there, so a future `AIJob(name=..., parser=parse_json)` reopens the
+    hole with the whole suite green — the #72 shape applied to an invariant
+    rather than to a single behaviour.
+
+    Parametrised over `registered_jobs()` rather than a hardcoded list, so a
+    SIXTH job is covered the day it is added instead of the day someone
+    remembers. That is the point: the failure mode is a job nobody thought about.
+
+    The two shapes are D-052's own: a bare list where an object belongs
+    (`decoded.get("items", []) if isinstance(decoded, dict) else []` swallowed it
+    whole), and a non-list under the expected key (`for item in raw_items`
+    iterated the KEYS). Either reported zero, indistinguishable from a real
+    inventory holding nothing recognisable — and for `mitre_map` that feeds the
+    ATT&CK allow-list, where an empty capability list once produced 607
+    fabricated `gap` rows.
+    """
+    parser = get_job(job_name).parser
+    with pytest.raises(AIResponseShapeError):
+        parser('[{"a": 1}]')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("job_name", registered_jobs())
+def test_every_registered_job_rejects_a_non_list_under_its_own_key(job_name: str) -> None:
+    """The other half of the same guard.
+
+    The key each job expects is not knowable from here without importing the
+    module's private constants -- which is precisely what the test-integrity gate
+    forbids -- so this drives the parser with a payload whose EVERY plausible
+    list key holds a dict. A parser that guards its key raises; one that does
+    `data.get(key) or []` iterates the dict's keys and returns junk.
+
+    **A `DID NOT RAISE` here means one of two things and both need a human.**
+    Either a job lost its shape guard, or a NEW job uses a list key this payload
+    does not carry — in which case `require_list_at`'s `data.get(key, [])`
+    default returned an empty list and the guard was never reached. That second
+    case is #46 (a wrong top-level key collapses to zero, silently), and it is
+    why the payload must be extended rather than the test relaxed. Writing this
+    test surfaced it immediately: the first draft omitted `scores` and `csf_score`
+    reported DID NOT RAISE without any guard being missing.
+    """
+    payload = (
+        '{"items": {"0": "x"}, "techniques": {"0": "x"}, "scores": {"0": "x"}, '
+        '"capabilities": {"0": "x"}, "entries": {"0": "x"}, "rows": {"0": "x"}}'
+    )
+    parser = get_job(job_name).parser
+    with pytest.raises(AIResponseShapeError):
+        parser(payload)

@@ -126,6 +126,38 @@ describe("attack dashboard transforms", () => {
     expect(d.respond.pct).toBe(25);
   });
 
+  it("dprCoverage: a withheld technique's unconfirmed tools do not count as posture", () => {
+    // #102, found by the item-3b audit. A leg counted whenever a tool list was
+    // non-empty — and the tools on a withheld row are exactly the UNCONFIRMED
+    // ones, since the resolver applies them and flags them. So a run whose every
+    // citation had to be inferred reported "Detect 100%" on the same page whose
+    // rollup said 0 covered.
+    //
+    // A withheld technique leaves BOTH sides of the fraction, like `unscored`
+    // and for the same reason: it is a claim not being made, not a claim of
+    // absence. Scoring it as a zero would understate posture rather than decline
+    // to state it.
+    const confirmed = tech({ code: "T1", detection_tools: ["Splunk"] });
+    const withheld = tech({
+      code: "T2",
+      detection_tools: ["CrowdStrike Falcon"],
+      pending_review: true,
+    });
+    const dpr = dprCoverage([confirmed, withheld]);
+    expect(dpr.total).toBe(1);
+    expect(dpr.detect.n).toBe(1);
+    expect(dpr.detect.pct).toBe(100);
+  });
+
+  it("dprCoverage: withholding everything reports no posture, not full posture", () => {
+    const dpr = dprCoverage([
+      tech({ detection_tools: ["CrowdStrike Falcon"], pending_review: true }),
+    ]);
+    expect(dpr.total).toBe(0);
+    expect(dpr.detect.n).toBe(0);
+    expect(dpr.detect.pct).toBe(0);
+  });
+
   it("blindSpots: only gap techniques", () => {
     const b = blindSpots(DATA.techniques);
     expect(b.map((t) => t.code)).toEqual(["T1610"]);

@@ -27,6 +27,11 @@ export interface DashTechnique {
   name: string;
   tactic_name: string;
   status: CoverageStatus;
+  /**
+   * #102: the status is assigned but its supporting citation is unconfirmed, so
+   * the rollup withholds it. Carried beside `status`, never over it.
+   */
+  pending_review?: boolean;
   detection_tools: string[];
   prevention_tools: string[];
   response_tools: string[];
@@ -108,14 +113,23 @@ export interface DprCoverage {
  * Detect / Prevent / Respond posture: a leg counts for an evaluated technique
  * when that technique lists at least one tool for it. SHIELD stores explicit
  * tool lists, so this is a direct non-empty check (no string heuristics).
+ *
+ * Techniques the rollup is WITHHOLDING are excluded from both the numerator and
+ * the denominator (#102). The tools on a withheld row are precisely the
+ * unconfirmed ones — the resolver applies a rescued citation and flags it — so
+ * counting them made a run whose every citation was inferred report "Detect
+ * 100%" on the same page whose rollup said zero covered.
+ *
+ * Out of BOTH sides, like `unscored` and for the same reason: it is a claim not
+ * being made, not a claim of absence. Scoring it as a zero would understate the
+ * posture rather than decline to state it.
  */
 export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
-  const total = techniques.length;
-  const detect = techniques.filter((t) => t.detection_tools.length > 0).length;
-  const prevent = techniques.filter(
-    (t) => t.prevention_tools.length > 0,
-  ).length;
-  const respond = techniques.filter((t) => t.response_tools.length > 0).length;
+  const claimable = techniques.filter((t) => !t.pending_review);
+  const total = claimable.length;
+  const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
+  const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;
+  const respond = claimable.filter((t) => t.response_tools.length > 0).length;
   return {
     total,
     detect: { n: detect, pct: pctOf(detect, total) },

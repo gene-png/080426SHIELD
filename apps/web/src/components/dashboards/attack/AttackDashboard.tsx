@@ -161,10 +161,32 @@ const STATUS_CHIP: Record<string, { bg: string; fg: string; label: string }> = {
   partial: { bg: "rgba(245,158,11,.18)", fg: "#fde68a", label: "Partial" },
   gap: { bg: "rgba(239,68,68,.18)", fg: "#fecaca", label: "Uncovered" },
   not_applicable: { bg: "rgba(152,162,196,.18)", fg: "#cbd5e1", label: "N/A" },
+  // #102. Its OWN state, and deliberately NOT the red of `gap`: a reader takes
+  // the colour before the word, so reusing red would collapse "nothing was
+  // found" into "something was found and is not confirmed" exactly where the
+  // distinction matters. The underlying status is named in the label so the
+  // reader can see what it will become once the evidence is confirmed.
+  pending_review: {
+    bg: "rgba(59,130,246,.18)",
+    fg: "#bfdbfe",
+    label: "Pending review",
+  },
 };
 
-function Chip({ status }: { status: string }): JSX.Element {
-  const s = STATUS_CHIP[status] ?? STATUS_CHIP.not_applicable;
+function Chip({
+  status,
+  pendingReview,
+}: {
+  status: string;
+  pendingReview?: boolean;
+}): JSX.Element {
+  const base = STATUS_CHIP[status] ?? STATUS_CHIP.not_applicable;
+  const s = pendingReview
+    ? {
+        ...STATUS_CHIP.pending_review,
+        label: `Pending review (${base.label.toLowerCase()})`,
+      }
+    : base;
   return (
     <span
       style={{
@@ -741,7 +763,7 @@ function MatrixRow({ t }: { t: DashTechnique }): JSX.Element {
         </span>
       </td>
       <td style={cell()}>
-        <Chip status={t.status} />
+        <Chip status={t.status} pendingReview={t.pending_review} />
       </td>
       <td style={cell()}>
         <span style={{ display: "inline-flex", gap: 4 }}>

@@ -606,6 +606,8 @@ def attack_dashboard(
     rollup = attack_compute(coverage_map, attack_pending_codes(rows))
 
     techniques: list[AttackDashboardTechnique] = []
+    # The SAME set the rollup above was built from, not a second derivation.
+    withheld = attack_pending_codes(rows)
     for r in rows:
         if r.status is None or r.technique_code not in valid:
             continue
@@ -617,6 +619,7 @@ def attack_dashboard(
                 name=tech.name,
                 tactic_name=tactic_name,
                 status=r.status,
+                pending_review=r.technique_code in withheld,
                 detection_tools=list(r.detection_tools or []),
                 prevention_tools=list(r.prevention_tools or []),
                 response_tools=list(r.response_tools or []),
