@@ -67,9 +67,9 @@ fixture mode already demos all five.
 | 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
 | 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it | **item 5a** | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
-| 9 | **Correctness defects only a code review catches** | Not started — **MVP-blocking, reclassified 2026-08-22.** #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below | Nothing | 1.5–2 sessions |
+| 9 | **Correctness defects only a code review catches** | Not started — **MVP-blocking, reclassified 2026-08-22.** #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **Includes the targeted twin-sweep** of confirmed defect shapes across CSF/ZT/Risk (~0.5–1 session); the open-ended audits of those three are #118, deferred with a firing trigger rather than to a backlog | Nothing | 2–2.5 sessions |
 
-**Total remaining: roughly 4.5–6 focused sessions** — items 6, 7, 8 and 9. The
+**Total remaining: roughly 5–6.5 focused sessions** — items 6, 7, 8 and 9. The
 W3 → W2 → W1-ATT&CK chain that was "over half of it" is done: 5a was its last
 link, so **nothing is blocked by anything now** and all four remaining items are
 independently startable.
