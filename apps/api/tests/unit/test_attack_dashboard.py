@@ -279,3 +279,16 @@ def test_client_dashboard_withholds_the_same_rows_the_released_pdf_does(app_clie
     )
     touched = [t for t in rollup["by_tactic"] if t["pending_review"] > 0]
     assert touched, "the per-tactic breakdown dropped the pending count"
+
+    # The per-TECHNIQUE array, which the first version of this test did not look
+    # at — found by the item-3b audit. The rollup said "Covered 0, 5 pending"
+    # while the matrix beside it listed those same five as `covered`, with the
+    # unconfirmed tool named under Detection. One page, two answers.
+    body = r.json()
+    withheld = [t for t in body["techniques"] if t.get("pending_review")]
+    assert (
+        len(withheld) == rollup["pending_review"]
+    ), "the technique matrix disagrees with the rollup about which rows are withheld"
+    # The status still travels — clearing the citation puts the technique back
+    # into it — so the flag is carried BESIDE the status, never over it.
+    assert {t["status"] for t in withheld} == {"covered"}

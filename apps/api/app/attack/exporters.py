@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from app.attack.analytics import CoverageRollup
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
 from app.attack.coverage import CoverageStatus, coverage_label
+from app.attack.pending import pending_codes as attack_pending_codes
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
 if TYPE_CHECKING:
@@ -33,6 +34,13 @@ class AttackDeliverableContext:
     assessment: AttackAssessment
     coverage: list[AttackCoverage]
     rollup: CoverageRollup
+    #: Technique codes whose status the rollup is WITHHOLDING (#102).
+    #:
+    #: Derived once, here, and read by both the summary and the per-technique
+    #: sheet. `rollup.pending_review` is only a count, so a renderer needing to
+    #: mark individual rows would otherwise re-derive the set — a second source
+    #: of truth for the same fact, which is the drift D-052 rejected.
+    pending_codes: frozenset[str] = frozenset()
 
 
 def build_context(
@@ -43,12 +51,17 @@ def build_context(
     coverage: Iterable[AttackCoverage],
     rollup: CoverageRollup,
 ) -> AttackDeliverableContext:
+    rows = list(coverage)
     return AttackDeliverableContext(
         client_legal_name=client_legal_name or "Client",
         service_title=service_title,
         assessment=assessment,
-        coverage=list(coverage),
+        coverage=rows,
         rollup=rollup,
+        # The SAME function the caller used to build `rollup`, over the same
+        # rows, so the sheet and the summary cannot disagree about which
+        # techniques are withheld.
+        pending_codes=attack_pending_codes(rows),
     )
 
 
@@ -149,7 +162,13 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
 
     # --- Coverage (per-technique) ---
     ws2 = wb.create_sheet("Coverage")
-    headers2 = ["Technique", "Name", "Tactic(s)", "Type", "Status", "Notes"]
+    # `Pending review` sits beside `Status`, not instead of it. #102 withholds
+    # the CLAIM while the status survives underneath — clearing the citation puts
+    # the technique back into it — so a sheet that overwrote the status would
+    # destroy the thing the rule is built on. Before this column the summary tab
+    # read `Covered 0 / Pending review N` while this tab listed those same N rows
+    # as `Covered`: one workbook, two answers, on adjacent tabs.
+    headers2 = ["Technique", "Name", "Tactic(s)", "Type", "Status", "Pending review", "Notes"]
     ws2.append(headers2)
     for col in range(1, len(headers2) + 1):
         cell = ws2.cell(row=1, column=col)
@@ -168,10 +187,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 tactic_str,
                 "sub" if tech.is_sub_technique else "parent",
                 _status_or_unscored(cov.status if cov else None),
+                "Yes" if tech.id in ctx.pending_codes else "",
                 (cov.notes if cov and cov.notes else "") or "",
             ]
         )
-    widths2 = [14, 38, 28, 8, 12, 60]
+    widths2 = [14, 38, 28, 8, 12, 15, 60]
     for w, col in zip(widths2, range(1, len(widths2) + 1), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
 

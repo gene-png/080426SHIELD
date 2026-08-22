@@ -84,6 +84,14 @@ class AttackDashboardTechnique(BaseModel):
     name: str
     tactic_name: str
     status: str  # CoverageStatus value: covered | partial | gap | not_applicable
+    # #102. The rollup beside this array withholds unbacked claims; without this
+    # flag the matrix listed those same techniques as `covered`, naming the
+    # unconfirmed tool under Detection. One page, two answers.
+    #
+    # Carried BESIDE `status`, never over it: clearing the citation puts the
+    # technique back into whichever status it says, so the status is what the
+    # claim is withheld FROM, not something pending replaces.
+    pending_review: bool = False
     detection_tools: list[str]
     prevention_tools: list[str]
     response_tools: list[str]

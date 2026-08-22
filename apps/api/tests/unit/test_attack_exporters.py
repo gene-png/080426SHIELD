@@ -265,3 +265,91 @@ def test_xlsx_states_the_pending_count_and_carries_it_per_tactic() -> None:
     )
     headers = [ws.cell(row=header_row, column=col).value for col in range(1, 13)]
     assert "Pending review" in headers
+
+
+@pytest.mark.unit
+def test_the_gap_truncation_disclosure_is_actually_printed() -> None:
+    """D-049 rests on "ATT&CK has always disclosed this in its heading" — and
+    until now nothing checked.
+
+    Found by the item-3b audit. Both narrative renderers cap the gap list at 50
+    and say so; deleting the `(N of M shown)` half of the heading left the whole
+    suite green. That is exactly #75's defect — a client-facing truncation with
+    no disclosure — sitting unpinned in the service D-049 cited as the good
+    example.
+
+    Asserted with the literal words AND both numbers, per the test-integrity
+    gate: `str(n) in blob` would be satisfied by any unrelated occurrence of the
+    same digits, and this document is full of counts.
+    """
+    a, coverage, _ = _build_inputs(default_status=CoverageStatus.GAP.value)
+    rollup = compute_heatmap({c.technique_code: c.status for c in coverage})
+    ctx = build_context(
+        client_legal_name="Atlas Defense Solutions",
+        service_title="MITRE ATT&CK Coverage",
+        assessment=a,
+        coverage=coverage,
+        rollup=rollup,
+    )
+    total = rollup.gap
+    assert total > 50, "fixture must exceed the cap or this proves nothing"
+    expected = f"Top remediation gaps (50 of {total} shown)"
+
+    assert expected in _pdf_text(render_pdf(ctx))
+
+    import io as _io
+
+    from docx import Document
+
+    doc = Document(_io.BytesIO(render_docx(ctx)))
+    assert expected in "\n".join(p.text for p in doc.paragraphs)
+
+
+@pytest.mark.unit
+def test_the_xlsx_gap_sheet_does_not_truncate_and_so_makes_no_claim() -> None:
+    """The deliberate asymmetry, stated so it is not read as an oversight.
+
+    The workbook is the machine-readable artifact and lists every gap, so it
+    carries no "of M shown" heading — there is nothing withheld to disclose.
+    """
+    from openpyxl import load_workbook
+
+    ctx = _ctx(default_status=CoverageStatus.GAP.value)
+    ws = load_workbook(io.BytesIO(render_xlsx(ctx)))["Gaps"]
+    assert ws.max_row == len(TECHNIQUES) + 1
+
+
+@pytest.mark.unit
+def test_the_per_technique_sheet_marks_a_withheld_row() -> None:
+    """#102's rule reached the summary and stopped at the sheet beside it.
+
+    Found by the item-3b audit. `Heatmap Summary` reported `Covered 0 /
+    Pending review N` while the `Coverage` sheet in the SAME workbook listed
+    those N techniques as `Covered`, because it printed `cov.status` raw. One
+    document, two answers, and the contradiction is visible on adjacent tabs.
+
+    The status still prints — it must, because clearing a citation puts the
+    technique back into it. What is added is the column saying the claim is
+    being withheld.
+    """
+    from openpyxl import load_workbook
+
+    ctx, rollup = _pending_ctx()
+    wb = load_workbook(io.BytesIO(render_xlsx(ctx)))
+    ws = wb["Coverage"]
+    headers = [ws.cell(row=1, column=c).value for c in range(1, 9)]
+    assert "Pending review" in headers, headers
+    col = headers.index("Pending review") + 1
+    status_col = headers.index("Status") + 1
+
+    flagged = [
+        r
+        for r in range(2, ws.max_row + 1)
+        if (ws.cell(row=r, column=col).value or "").strip().lower() == "yes"
+    ]
+    assert (
+        len(flagged) == rollup.pending_review
+    ), "the sheet disagrees with the summary about how many rows are withheld"
+    # And the underlying status survives on those rows, as its rendered label
+    # (`coverage_label`), which is what a reader sees.
+    assert {ws.cell(row=r, column=status_col).value for r in flagged} == {"Covered"}

@@ -36,9 +36,13 @@ one of the three incidents.
 It does not ask GitHub whether the referenced issue exists. That sounds like the
 precise version of "a REAL issue number" and it is the wrong trade twice over: it
 puts a network call inside a merge gate, and it is unsound, because **issue
-numbers only go up**. `closes #500` written in a repo whose newest issue is #112
-is inert today and a live closing reference the day the repo reaches 500. A
-number that is safe now is not safe later.
+numbers only go up**. A closing keyword beside an invented number is inert today
+and a live closing reference the day the repo reaches it. A number that is safe
+now is not safe later.
+
+(This paragraph originally made that point with a literal number, which made it
+the sixth instance of the bug, inside the file written to prevent it. Caught by
+running this checker over its own source.)
 
 The sound alternative is a placeholder with **no digits** — `#NNN`. GitHub's
 parser needs digits, so it cannot match, and it cannot become live. That is what
@@ -50,7 +54,7 @@ CLAUDE.md permits a closing keyword on the PR that genuinely closes the issue, s
 this is not a prohibition — it is a demand that the intent be **stated**. Declare
 it in the PR description:
 
-    Auto-close-approved: 101, 102
+    Auto-close-approved: <issue numbers, bare>
 
 Bare numbers, no `#`. A marker containing the word "close" beside `#N` would
 itself be an instance of the bug it guards.
@@ -97,7 +101,18 @@ def find_closing_references(text: str) -> list[int]:
 
 
 def approved_numbers(body: str) -> set[int]:
-    """Numbers the PR author declared they intend to close."""
+    """Numbers the PR author declared they intend to close.
+
+    Only bare digits count. That is also why every EXAMPLE of this marker -- here,
+    in the module docstring, and in CLAUDE.md -- uses a non-numeric placeholder.
+    An example carrying real digits is an auto-approving incantation: quote it
+    into a PR description and it silently pre-approves closing those issues. The
+    first draft of this file used `101, 102`, which are real. And issue numbers
+    only go up, so invented digits approve nothing today and something later --
+    the same argument this module makes about `#NNN`, one layer out.
+
+    Found by running this checker over the documentation that describes it.
+    """
     out: set[int] = set()
     for m in _APPROVED.finditer(body):
         for token in re.split(r"[,\s]+", m.group(1).strip()):

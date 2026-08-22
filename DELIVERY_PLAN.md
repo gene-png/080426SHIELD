@@ -42,7 +42,7 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
-_Added 2026-08-19, current as of 2026-08-20. **This section is maintained, not archival.** When an item
+_Added 2026-08-19, current as of 2026-08-22. **This section is maintained, not archival.** When an item
 lands, change its status here in the same PR that lands it — the same rule
 `CONTEXT.md` follows. A status line that is wrong is worse than none, because
 this is the document someone reads to decide what to work on._
@@ -60,7 +60,7 @@ fixture mode already demos all five.
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
 | 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — |
 | 3a | **Export/persistence audit — Tech Debt (+ #77)** | **DONE** (PR #94, D-052, merged 2026-08-20) | — | — |
-| 3b | **Export/persistence audit — ATT&CK** | Not started | **item 5a** — same files, and the audit wants the post-#102 shape (the three renderers and `finalize` all changed) | 0.5 session + unknown fixes |
+| 3b | **Export/persistence audit — ATT&CK** | **DONE** (this PR). §14 audit run against the post-#102 shape: D-052's shape-guard invariant **confirmed** for all five jobs and now mechanically pinned; three defects fixed (per-technique surfaces contradicted the rollup in the same document; the top-50 gap truncation disclosure was pinned by no test; D/P/R posture counted unconfirmed tools); two filed — #114 (dashboard recomputes from latest APPROVED while labelled with the released version, suspected CSF/ZT twins) and #115 (a partially-failed run is indistinguishable from a complete one) | — | — |
 | 4 | **W3 — Tech Debt approval snapshot** | **DONE** (PR #95, D-053, migration 0043, merged 2026-08-20). Regression fixed by **#96** | — | — |
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **DONE** (PR #103, merged 2026-08-20). Scoped to the resolver; the two gaps it left honest rather than implied are #101 + #102, item 5a | — | — |
 | 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — |
@@ -68,9 +68,10 @@ fixture mode already demos all five.
 | 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it | **item 5a** | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
 
-**Total remaining: roughly 5–9 focused sessions** (items 0 and 2 landed), plus whatever items 0 and 3
-surface. Call it **two to three weeks** of concentrated work, not days — and the
-W3 → W2 → W1-ATT&CK chain is over half of it.
+**Total remaining: roughly 3.5–5 focused sessions** — items 3b, 6, 7 and 8. The
+W3 → W2 → W1-ATT&CK chain that was "over half of it" is done: 5a was its last
+link, so **nothing is blocked by anything now** and all four remaining items are
+independently startable.
 
 ### What a "session" is, in hours
 
