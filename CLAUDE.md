@@ -284,7 +284,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   half — `--paths <files> --tests <target>` applies one change at a time and
   reports what no test noticed. Its `DropKeyword` operator exists because
   instance 9 was a deletable `targets=` argument, which off-the-shelf mutation
-  tools do not model. Neither gate closes #72: tier 1 cannot see a test whose
+  tools do not model. Neither gate is enough to call #72 done: tier 1 cannot see a test whose
   SETUP performs the step under test, and a surviving mutant is a question
   rather than a verdict.
 - **A snapshot beats a lock when the workflow legitimately mutates.** Tech Debt's
@@ -402,19 +402,39 @@ mechanism; docs carry only what git can't show.
 
 Rules of the road:
 
-- **Never put a closing keyword near an issue number you are NOT closing.**
-  GitHub's parser matches `fix(e[sd])?|close[sd]?|resolve[sd]?` followed by
-  `#N` and does not read the words around it. A W2 commit body said
-  `Filed, not fixed: #101` — the parser saw `fixed: #101` and closed the issue
-  whose entire point was that it had NOT been fixed. "does not fix #N",
-  "partially fixes #N" and "not resolved: #N" all trip it the same way. Write
-  `filed as #N`, `see #N`, or `tracked in #N`, and save the closing keyword for
-  the PR that actually closes it.
-  **And do not QUOTE such a phrase with a real issue number in it.** The commit
-  that added this very rule re-closed the same issue: its body quoted the
-  offending sentence verbatim to explain it, and the parser sees raw text —
-  quotation marks and code fences are not exempt. Use a placeholder number in
-  examples.
+- **A closing keyword beside an issue number closes it — and CI now enforces
+  this, so it is a check rather than a rule you have to remember.** GitHub's
+  parser matches `fix(e[sd])?|close[sd]?|resolve[sd]?` followed by `#N` and does
+  not read the words around it. `does not fix #NNN`, `partially fixes #NNN`,
+  `Filed, not fixed: #NNN` and `not resolved: #NNN` all close the issue. Write
+  `filed as #NNN`, `see #NNN`, or `tracked in #NNN` instead.
+
+  **It reads three places, not one: the PR title, the PR description, and every
+  commit message.** The description is parsed independently of the commits — the
+  third accidental close in this repo came from a PR body while every rule up to
+  then targeted commit bodies, and the squash commit contained no match at all.
+
+  **Quotes, code fences and HTML comments are not exempt**, and in examples use
+  `#NNN` — a placeholder with **no digits**. Not a made-up number: issue numbers
+  only go up, so a keyword beside an invented number is inert today and live the
+  day the repo reaches it. (This paragraph originally illustrated that with a
+  literal number and thereby became a fifth instance, caught by the check rather
+  than by a merge.)
+
+  The mechanism is `apps/api/scripts/check_issue_references.py`, wired as the
+  required check **"No accidental issue closes"**. If a close is intended, say so
+  in the PR description — bare numbers, no `#`, because a marker containing the
+  word "close" beside `#N` would itself be an instance of the bug:
+
+      Auto-close-approved: 123, 456
+
+  **Why this is mechanised rather than documented.** The same issue was closed by
+  accident three times. Each fix was a better-worded rule; the second incident
+  was the PR that documented the first, and the third was a sentence warning
+  about the second. Three rounds of documentation produced a fourth incident.
+  That is #72's finding applied to prose: discipline against a known shape has
+  failed nine recorded times here, including instances written minutes after the
+  rule was logged.
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
