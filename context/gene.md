@@ -2,67 +2,64 @@
 
 ## Pick up here
 
-Two things need your decision, not just your read.
+Both open decisions from last round are settled and confirmed live on GitHub. PR #117 (item 9) is merged. Item 9 is now on `main` in DELIVERY_PLAN.md exactly as described: #114/#115/#46/#109 reclassified MVP-blocking, #59 stays deferred with a measured justification (0 NULL `parent_version` rows exist, 0 multi-version services exist, so #114 ships a loud typed error instead of a silent fallback), #46 folded into item 9 as the root of half of #115.
 
-1. **#59 dependency risk, found independently, not raised by the dev's relay.** Item 9's centerpiece fix (#114) is supposed to resolve the deliverable from `parent_version` instead of "latest finalized." But `parent_version` is NULL for any pre-existing multi-version parent, because the only repair path for that (#59) is a confirmed permanent no-op, and #59 sits in DELIVERY_PLAN.md's **Deferred, NOT part of MVP** table under W5. So item 9 is now MVP-blocking, but its main fix depends on something explicitly scoped outside MVP. The dev already named the fallback options in #114's own thread (fail loudly on NULL, or backfill first) but hasn't picked one, and #59 itself hasn't been pulled into the MVP path. Needs a decision: pull #59 in, or confirm the fail-loudly fallback ships instead and #59 stays deferred.
-2. **Item 9 scope: should it also cover CSF/ZT/Risk audits (3a/3b only covered Tech Debt and ATT&CK)?** The dev recommends yes, same session. Worth asking for a size estimate before agreeing, given #114 alone just went from "2 suspected twins" to "4 confirmed plus 4 more lesser instances" once someone actually checked — the unaudited services are exactly where that pattern would repeat.
+One new decision made this round: **sweep now, full audits post-MVP**, per the dev's own recommendation and mine. Told the dev to go ahead. The one condition attached: the post-MVP full-audit item needs an actual trigger (a date or a concrete kickoff condition) when it's filed, not just "post-MVP" sitting in a backlog next to #59 and #111 where it can quietly never come up. Not yet confirmed whether the dev has filed that item with a trigger attached.
 
-Otherwise: PR #116 (item 3b) is **merged**, confirmed directly (commit 1573529, 7 checks passed). PR #117 (item 9: reclassifies #114/#115/#109 as mvp-blocking) is open, not yet merged as of this check. #46 is genuinely NOT fixed, confirmed by the dev in detail: `require_list_at` still returns `[]` on a missing key, silently. The dev wants to fold #46 into item 9's work rather than fix separately, but has not actually labelled #46 `mvp-blocking` or added it to #117's body — worth confirming that's not just a dropped intention.
-
-**Last updated:** 2026-08-22 (PR #116 merged and independently confirmed; PR #117 opened for item 9, docs-only, matches relay; #114 twin-check confirmed at 4 dashboards not 2, plus a second lesser 4-site instance, both independently verified against the issue thread; #59's "deferred, not MVP" status creates an unstated dependency conflict with item 9's own mvp-blocking status; #46 confirmed still genuinely broken, not just newly caught)
+**Last updated:** 2026-08-22 (PR #117 merged and confirmed directly, commit 634f6ea, 9 checks passed; item 9 confirmed live in DELIVERY_PLAN.md with exact language matching the relay; audit-expansion sizing comment on #117 read directly and matches the relay precisely; sweep-now/full-audit-post-MVP decision made and relayed)
 
 This file is owner-write-only. It exists so any session (mine or a relay) can pick up the real state of the project without reconstructing it from scattered chat history. Update it after every substantive decision. **This file lives in the repo, not on any one machine — a local computer restart does not affect it.**
 
-## This round — verified against GitHub directly, not relayed as-is
+## This round — verified against GitHub directly
 
-**PR #116 merged.** `gene-png merged commit 1573529 into main`, 7 checks passed. Confirmed on the PR page itself, not inferred from the relay.
+**PR #117 merged.** `gene-png merged commit 634f6ea into main`, 9 checks passed (up from 7 required checks; this PR shows more because the merge check set has grown, not a discrepancy). Confirmed on the PR page itself.
 
-**PR #117 opened for item 9, and its body matches the relay closely.** Docs-only (`+29 -1`, one file). Moves #114, #115, #109 to `mvp-blocking`, adds item 9 to DELIVERY_PLAN.md, and states explicitly that item 9 is **not exhaustive** — the audits that surfaced these (3a, 3b) covered Tech Debt and ATT&CK only, CSF/ZT/Risk have had no equivalent pass. Adversarial audit disposition: none, docs-only, no code touched, recorded rather than relying on the `.md`-path exemption. Not yet merged: 4 checks (Demo, E2E, Python, Web) were still in progress, 3 passed (Audit gate, No accidental issue closes, Secret scan), at last look.
+**Both scope decisions from last round are real, on `main`, and hold up.** Read DELIVERY_PLAN.md's item 9 row directly: "Not started — MVP-blocking, reclassified 2026-08-22" with the #114/#115/#46/#109 description and the #59 fallback note, matching PR #117's body verbatim in substance. The measurement behind the #59 decision (4 of 4 finalize paths set `parent_version` at creation, 0 dev-DB rows with it NULL, 0 multi-version services, no production deployment) was read directly from the merged PR body, not taken on the relay's word.
 
-**#46: confirmed genuinely unfixed, not just newly caught.** Read the issue directly; it's still Open with no labels. The dev's explanation (require_list_at's `data.get(key, [])` default silently returns empty on a missing key, and the new test from #116 only covers "key present, wrong type") is consistent with #116's own PR body, which already said the same thing in different words. What's NOT yet reflected anywhere on GitHub: the dev's stated intent to fold #46 into item 9. #46 has no `mvp-blocking` label and isn't named in #117's body. Worth a direct question rather than assuming it's tracked.
+**The audit-expansion sizing exists and matches exactly.** It's a comment on PR #117, posted by the dev, read in full. Targeted twin-sweep: ~0.5-1 session, item 9 stays ~2-2.5, sweeps seven named known defect shapes across CSF/ZT/Risk, explicitly does NOT find novel shapes (the dev states this limitation directly, not left implicit). Full audits: 2-3 sessions to audit plus 1-3 to fix (the fix half called out as the volatile part, since #114 alone turned into 8 call sites off one root cause), total 3-6, taking item 9 to 5-8 and MVP to 8-12, "close to doubling." Recommendation: sweep inside item 9 now, full audits as an honest post-MVP item rather than absorbed into a number that moves again.
 
-**#114: twins confirmed, and worse than suspected.** Read the issue thread directly, including the dev's follow-up comment. Original suspicion was 2 twins (CSF, ZT). Confirmed: **4 of 4** client dashboards have the identical defect (attack, zt, tech_debt, csf) — Tech Debt wasn't even suspected originally, which the dev correctly calls the same #79 shape (a sweep that stops at the two services someone happened to name). Plus a second, lower-severity instance: 4 more call sites (`_csf_gap_total`, `_zt_gap_total`, `_attack_uncovered_total`, `_tech_debt_savings`) feed the `/home` value-loop card off the same stale-resolution pattern, no false version label but same root cause. Total scope: 8 call sites, 1 root cause. All independently verified against the actual issue text, not taken from the relay.
+**Decision made this round: take the recommendation.** Sweep now, inside item 9. Full audits post-MVP, but flagged one condition: that post-MVP item needs a real trigger when filed (a date or concrete kickoff condition), not just a backlog entry next to #59 and #111 that never comes up. Relayed to the dev; not yet confirmed whether the trigger condition was actually added when the item gets filed.
 
-**#59, read directly: this is a real constraint on item 9, not a footnote.** Confirmed Open, and DELIVERY_PLAN.md's own "Deferred, NOT part of MVP" table lists it under W5, explicitly separate from the MVP path. The issue itself documents, with a specific failure scenario, that the repair path for `parent_version` is a permanent no-op for any service with more than one parent version — meaning #114's suggested fix (resolve from `parent_version` instead of latest-finalized) will silently do nothing for exactly the rows most likely to need it, unless it fails loudly or #59 lands first. Neither has been decided yet. This is the dependency flagged in "Pick up here."
-
-**#109: confirmed labelled `mvp-blocking`.** Matches #117's stated scope.
-
-**DELIVERY_PLAN.md on `main`, read directly: stale in one place.** Item 3b is now correctly marked DONE with the full defect list. But the "Total remaining: roughly 3.5-5 focused sessions" line right below the table still lists "items 3b, 6, 7 and 8" as remaining, unchanged from before 3b merged. Minor, same status-line-lag pattern already logged from the #73/#79 round, not urgent, but should get fixed in the same PR that lands item 9's totals.
+**Process note from the dev, worth keeping as-is.** Three cross-reference failures this session, in three different documents (a PR body pointing at a comment that didn't exist yet, DELIVERY_PLAN pointing at a stale branch-protection state, D-054 pointing at a no-longer-true caveat). Content was right each time, the pointer was wrong. No mechanical check currently catches this class, and the dev says so plainly rather than proposing a fix that doesn't exist yet. Worth remembering as an acknowledged gap, not a solved one.
 
 ## Branch / in flight
 
-`main` has **#110, #113, #116** merged, verified directly on GitHub. Open: **#117** (item 9, docs-only, checks were in progress at last look). Labelled `mvp-blocking` and confirmed: **#109, #114**. Not yet labelled despite being discussed as in-scope: **#46**.
+`main` has **#110, #113, #116, #117** merged, verified directly on GitHub. Nothing open blocking right now. Item 9's sweep work has not yet started as of this log (decision was just made this round).
 
 ## MVP tracking — DELIVERY_PLAN.md
 
-9 of 12 items done on `main` now that #116 (item 3b) is merged, confirmed directly. Item 9 will formalize once #117 merges. Remaining: item 6 (W1 Risk + #84), item 7 (W1 ATT&CK), item 8 (W6 Risk export/publish), item 9 (#114/#115/#109, and possibly a wider CSF/ZT/Risk audit if you approve the dev's suggestion). Per #117: totals now 4-5.5 sessions across items 6, 7, 8, 9. **Not folded into that estimate:** #59 if it needs to land before #114's fix, and #46 if it's genuinely being done as part of item 9's work rather than separately.
+9 of 13 items done, confirmed directly against `main`. Remaining: item 6 (W1 Risk + #84, 1.5-2 sessions), item 7 (W1 ATT&CK, 1 session), item 8 (W6 Risk export/publish, 0.5-1 session), item 9 (code-review-only defects, 1.5-2 sessions, now includes the twin-sweep per this round's decision, pushing it toward ~2-2.5). Total roughly 4.5-6 sessions before the sweep decision, likely closer to 5-6.5 once the sweep is folded in, not yet re-quoted by the dev. **Separately tracked, not in the above total:** full CSF/ZT/Risk audits, now explicitly a post-MVP item per this round's decision, needs a real trigger when filed.
 
 ## D-054, D-055, D-056, D-052 — decisions log
 
-Unchanged from prior entries. D-052 confirmed to hold for ATT&CK via item 3b, mechanically pinned via `registered_jobs()`, verified in the merged PR.
+Unchanged from prior entries.
 
 ## Open decisions — NOT to be reconstructed from memory
 
-**New this round:** whether #59 gets pulled into MVP scope or #114 ships with a documented fail-loud fallback instead, your call, not yet made either way. Whether item 9 expands to cover CSF/ZT/Risk audits (dev recommends yes; worth a size estimate first). Whether #46 is actually being folded into item 9's work or just informally mentioned, needs a direct confirmation since the tracker doesn't show it. Whether #111 (admin-console N+1) gets pulled ahead of item 7, still undecided.
+**New this round:** whether the post-MVP full-audit item actually gets filed with a real trigger (date or condition), per the condition I attached to approving the sweep-now path. Whether #111 (admin-console N+1) gets pulled ahead of item 7, still undecided.
 
 **Still open, unchanged:** path-scoped branch-protection exemption for `context/gene.md`, not yet requested. What "addressable" coverage means for #102's exclusion of `pending_review`. Local-device mirror of this file. #90's build, #89's pin test, #92's contract-test fix. #57, `ServiceStatus.RELEASED` (#62), W0's freeze shape. Whether to parallelize item 6.
 
 ## Resolved as of this round
 
-PR #116 (item 3b) merged and independently confirmed on the PR page. PR #117 opened for item 9 and its content verified against the relay, matches closely. #109 and #114 both confirmed labelled `mvp-blocking`. #114's twin scope confirmed directly from the issue thread at 4 dashboards plus 4 lesser call sites, not taken on the dev's word alone.
+PR #117 (item 9) merged and independently confirmed. Both scope decisions (#59 deferred with a loud fallback, #46 folded into item 9) verified live on `main` in DELIVERY_PLAN.md, not just in a PR body. Audit-expansion sizing read directly from #117's comment and matches the relay exactly. Sweep-now/full-audit-post-MVP decision made.
 
 ## MVP-complete vs. client-ready — standing distinction
 
-Unchanged from last round. Gene's plan: finish MVP, then a dedicated testing pass focused on UI and AI-output consistency, with code-level-only-catchable defects carved out and pushed into MVP-blocking scope instead. Item 9 is the first real application of that policy, and #59's dependency issue is a direct example of why: it's not visible from the UI, it would not surface in a UI-focused pass, and it was only found because someone read the actual repair-path code.
+Unchanged. Worth restating given this round's outcome: even after item 9's sweep, full CSF/ZT/Risk audits remain a post-MVP item, meaning novel per-service defects in three of five services will not be found before MVP completion. That's a stated, deliberate trade-off, not an oversight, but it belongs in the client-ready conversation later, not forgotten by then.
+
+## Adversarial-reviewer and Playwright
+
+Unchanged from prior entries.
 
 ## Environment notes (standing)
 
-Unchanged. Open issue count last confirmed at 34; not rechecked this round.
+Unchanged. Open issue count last confirmed at 34, not rechecked this round.
 
 ## Do not merge
 
-None blocking `main`. #117 was not yet fully green as of this check, verify before merging.
+Nothing open blocking `main` as of this log.
 
 ## Recurring defect shapes to watch for (CLAUDE.md)
 
-Unchanged core list. **New this round:** the #79 shape (a sweep that stops at the services someone happened to name) recurred again inside #114 itself, at a new scale, Tech Debt was not in the original suspicion and turned out to have the identical defect. And: a fix scoped as MVP-blocking can still depend on something scoped as NOT-MVP (#114 depends on #59) without that dependency being stated anywhere until someone reads both issues side by side, worth watching for elsewhere in items 6-9.
+Unchanged core list, plus item 9's seven named known shapes now formally enumerated in #117's sizing comment (worth treating that comment as the canonical list going forward rather than re-deriving it). **New this round:** a reference/cross-reference between documents can be wrong even when the content on both ends is correct, three real instances surfaced this session alone (PR body to comment, DELIVERY_PLAN to branch-protection state, D-054 to caveat), and there is currently no mechanical check for this class, unlike the closing-keyword problem which got one. Named as an open gap, not a solved one.
