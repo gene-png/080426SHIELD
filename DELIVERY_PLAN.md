@@ -67,11 +67,39 @@ fixture mode already demos all five.
 | 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
 | 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it | **item 5a** | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
+| 9 | **Correctness defects only a code review catches** | Not started — **MVP-blocking, reclassified 2026-08-22.** #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment), #115 (a partially-failed AI run is indistinguishable from a complete one) and #109 (an `unusable` citation leaves no per-row record). See the note below for why these are not backlog | Nothing | 1–1.5 sessions |
 
-**Total remaining: roughly 3.5–5 focused sessions** — items 3b, 6, 7 and 8. The
+**Total remaining: roughly 4–5.5 focused sessions** — items 6, 7, 8 and 9. The
 W3 → W2 → W1-ATT&CK chain that was "over half of it" is done: 5a was its last
 link, so **nothing is blocked by anything now** and all four remaining items are
 independently startable.
+
+### Why item 9 exists (added 2026-08-22)
+
+**MVP means all five services usable for real client engagements, producing
+correct documents.** A defect that makes a document say something untrue is
+therefore MVP-blocking whether or not it is on a feature list — and this class
+has a specific property that keeps it out of one:
+
+> "These are things only a detailed code review catches, and my own pre-launch
+> pass is going to be focused on UI and on the AI producing consistent, accurate
+> outputs, not code-level review."
+
+None of the three is visible from the UI, and none produces a wrong-looking
+number. #114 shows a *plausible* coverage figure under a *plausible* version
+label — the two simply come from different records. #115 reports a citation total
+that is internally consistent and silently covers a fraction of the catalogue.
+#109 loses a disclosure while the score stays correct. A pre-launch pass looking
+for things that look wrong will pass all three.
+
+So they do not go in a backlog to be caught later, because the mechanism that
+would catch them is the one not being run. They are scheduled.
+
+**Not exhaustive.** Item 9 names the three found so far; the audits that produced
+them (items 3a and 3b) covered Tech Debt and ATT&CK only. CSF, ZT and Risk have
+had no equivalent pass, and #114 is already evidence that these defects come in
+sets of four — it was filed against ATT&CK and confirmed in all four dashboards,
+including one nobody suspected.
 
 ### What a "session" is, in hours
 
