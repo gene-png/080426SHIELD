@@ -458,6 +458,47 @@ Rules of the road:
   That is #72's finding applied to prose: discipline against a known shape has
   failed nine recorded times here, including instances written minutes after the
   rule was logged.
+- **Run the adversarial reviewer on every PR, and do it BEFORE you open it.**
+  `.claude/agents/adversarial-reviewer.md` via the Agent tool. Not on request,
+  not only when something feels risky, and never a self-audit instead. Findings
+  go in the PR body, which is why it runs first.
+
+  **The §14 gate cannot tell the difference, which is the whole problem.** D-054
+  says outright that it proves an audit was *recorded*, not that it happened or
+  was any good — so a self-audit passes a required check. Three PRs and a
+  cross-service sweep went that way before anyone noticed.
+
+  **What the drift cost, measured.** When the reviewer was finally pointed at
+  that sweep it overturned **four of seven** "clean" verdicts, including one
+  where the sweep reported "no twin" over a defect documented in
+  `docs/plans/2026-08-08-cross-service-integrity.md` (F6) for two weeks, and
+  still live. The diagnosis is the reusable part: the sweep had generalised
+  ATT&CK's *vocabulary* (`pending_review`, "withheld") instead of ATT&CK's
+  *shape* — an aggregate applying an exclusion the per-row rendering does not.
+  Grepping the word found nothing; the shape was in three services.
+
+  A self-audit cannot catch that, because the blind spot and the reviewer are the
+  same mind. It is not a discipline problem and more care will not fix it.
+
+  Three things that make the run worth its cost:
+
+  - **When the work is itself a review, a sweep or an audit, point the reviewer
+    at the VERDICTS and the METHOD, not at the code.** A sweep that finds nothing
+    is indistinguishable from a sweep that looked in the wrong places, and "right
+    answer, wrong method" does not survive the next change.
+  - **Re-verify every finding before acting on it.** The reviewer is confidently
+    wrong often enough to matter, and it says so — it runs read-only and executes
+    nothing, so every claim is static reading.
+  - **A finding it upholds is a result worth recording**, not a null. "The shape
+    guard holds for all five jobs" is what told us the invariant needed pinning
+    rather than fixing.
+
+  If running it ever conflicts with another instruction, **say so out loud rather
+  than resolving it quietly** — resolving that conflict silently is the exact
+  failure D-054 was written about, and it has now happened twice.
+
+  (This is also the `CLAUDE.md` half of #108: before this, the file that IS
+  auto-loaded every session contained zero occurrences of "adversarial audit".)
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
