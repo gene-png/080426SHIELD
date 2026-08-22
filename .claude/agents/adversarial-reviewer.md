@@ -1,6 +1,6 @@
 ---
 name: adversarial-reviewer
-description: Audits a finding, fix, or claim before it is trusted — tries to falsify it rather than summarise it. Use after a bug is diagnosed, a fix is written, or a validation result is reported, and before merging or acting on any of them. Hunts five specific failure shapes: silent failures that read as valid results, unstated exemptions, guards keyed on fields that are never set, fixes that break earlier fixes, and claims verified only against fixtures.
+description: Audits a finding, fix, claim, PR or review before it is trusted — tries to falsify it rather than summarise it. Run it on every PR before opening it, and again after any substantive change to the branch; never substitute a self-audit. When the work under review is itself a sweep, audit or set of verdicts, point it at the VERDICTS and the METHOD rather than the code. Hunts five specific failure shapes: silent failures that read as valid results, unstated exemptions, guards keyed on fields that are never set, fixes that break earlier fixes, and claims verified only against fixtures.
 tools: Read, Grep, Glob
 model: opus
 ---

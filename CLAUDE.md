@@ -458,47 +458,75 @@ Rules of the road:
   That is #72's finding applied to prose: discipline against a known shape has
   failed nine recorded times here, including instances written minutes after the
   rule was logged.
-- **Run the adversarial reviewer on every PR, and do it BEFORE you open it.**
-  `.claude/agents/adversarial-reviewer.md` via the Agent tool. Not on request,
-  not only when something feels risky, and never a self-audit instead. Findings
-  go in the PR body, which is why it runs first.
+- **Run the adversarial reviewer, and record the audit in the PR body.**
+  `.claude/agents/adversarial-reviewer.md` via the Agent tool. Run it before you
+  open the PR where you can, and **again after any substantive change to the
+  branch** — PR #29's plan records two consecutive patches that each looked done
+  and each were wrong, both caught only by re-auditing while CI stayed green. A
+  rule that fires once at open would have missed both.
 
-  **The §14 gate cannot tell the difference, which is the whole problem.** D-054
-  says outright that it proves an audit was *recorded*, not that it happened or
-  was any good — so a self-audit passes a required check. Three PRs and a
-  cross-service sweep went that way before anyone noticed.
+  **Never a self-audit instead.** D-054's gate cannot tell the difference: it
+  proves an audit was *recorded*, not that it happened. Three PRs and a
+  cross-service sweep passed a required check that way before anyone noticed.
 
-  **What the drift cost, measured.** When the reviewer was finally pointed at
-  that sweep it overturned **four of seven** "clean" verdicts, including one
-  where the sweep reported "no twin" over a defect documented in
-  `docs/plans/2026-08-08-cross-service-integrity.md` (F6) for two weeks, and
-  still live. The diagnosis is the reusable part: the sweep had generalised
-  ATT&CK's *vocabulary* (`pending_review`, "withheld") instead of ATT&CK's
-  *shape* — an aggregate applying an exclusion the per-row rendering does not.
-  Grepping the word found nothing; the shape was in three services.
+  **What the gate needs, so following this rule does not produce a red X.** The
+  required check is **"Adversarial audit recorded"**
+  (`apps/api/scripts/check_audit_evidence.py`), and it wants a literal section —
+  prose describing an audit is explicitly not enough
+  (`test_merely_mentioning_the_words_is_not_evidence`):
 
-  A self-audit cannot catch that, because the blind spot and the reviewer are the
-  same mind. It is not a discipline problem and more care will not fix it.
+      ## Adversarial audit
+      Findings: none
+      Disposition: nothing to act on
+
+  **Docs-only PRs are exempt from the gate and NOT exempt from this rule**, and
+  the two are different things. The gate skips a pure-docs change deliberately —
+  its own comment calls that "the one defensible skip". This rule still asks for
+  the reviewer, because `CLAUDE.md`, `DELIVERY_PLAN.md` and `DECISIONS.md` are
+  where wrong claims do their damage, and the review that produced this very
+  bullet found eleven defects in two markdown files. Use judgement on a typo;
+  do not use judgement on a document that states a number or a rule.
+
+  **This rule is unenforceable, and unobservable, and it is written down anyway.**
+  Nothing records whether the reviewer ran, or when. The gate reads a body and
+  cannot see who wrote the findings. W8b — the reviewer as a CI job — is the
+  mechanism that would bind it and is still deferred. So this is exactly the
+  "discipline against a known shape" that D-051 says has failed nine times here,
+  and it is weaker than the gate it supplements, because the gate at least
+  produces a red X. It is here because the alternative is nothing, and because
+  the cost of the last drift was measured rather than imagined. Do not read it as
+  a mechanism.
+
+  **What the drift cost.** Pointed at that sweep, the reviewer overturned **four
+  of its six** "clean" verdicts, including one reported as "no twin" over a defect
+  written up in `docs/plans/2026-08-08-cross-service-integrity.md` (F6) two weeks
+  earlier and still live. The diagnosis is the reusable part: the sweep had
+  generalised ATT&CK's *vocabulary* (`pending_review`, "withheld") instead of
+  ATT&CK's *shape* — an aggregate applying an exclusion the per-row rendering does
+  not. Grepping the word found nothing; the shape was in three services. A
+  self-audit cannot catch that, because the blind spot and the reviewer are the
+  same mind.
 
   Three things that make the run worth its cost:
 
   - **When the work is itself a review, a sweep or an audit, point the reviewer
     at the VERDICTS and the METHOD, not at the code.** A sweep that finds nothing
-    is indistinguishable from a sweep that looked in the wrong places, and "right
-    answer, wrong method" does not survive the next change.
-  - **Re-verify every finding before acting on it.** The reviewer is confidently
-    wrong often enough to matter, and it says so — it runs read-only and executes
-    nothing, so every claim is static reading.
+    is indistinguishable from a sweep that looked in the wrong places.
+  - **Re-verify every finding before acting on it.** It runs read-only and
+    executes nothing, so every claim is static reading, and it is confidently
+    wrong often enough to matter — the review of this bullet marked one finding
+    CONFIRMED that was simply wrong, because it could not read a GitHub issue.
   - **A finding it upholds is a result worth recording**, not a null. "The shape
-    guard holds for all five jobs" is what told us the invariant needed pinning
-    rather than fixing.
+    guard holds for all five jobs" is what told us to pin an invariant rather
+    than fix it.
 
   If running it ever conflicts with another instruction, **say so out loud rather
-  than resolving it quietly** — resolving that conflict silently is the exact
-  failure D-054 was written about, and it has now happened twice.
+  than resolving it quietly** — that silent resolution is the exact failure D-054
+  was written about, and it has now happened twice.
 
-  (This is also the `CLAUDE.md` half of #108: before this, the file that IS
-  auto-loaded every session contained zero occurrences of "adversarial audit".)
+  (Decision recorded as **D-057**, which reverses part of D-054. Closes the
+  `CLAUDE.md` half of #108; the other half — the gate's own source still saying
+  it "only REPORTS" and citing D-051 — is untouched and still open.)
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from

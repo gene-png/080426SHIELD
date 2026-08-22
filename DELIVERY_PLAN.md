@@ -67,7 +67,7 @@ fixture mode already demos all five.
 | 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **3–4 sessions** |
 | 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it | **item 5a** | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** |
-| 9 | **Correctness defects only a code review catches** | Not started — **MVP-blocking, reclassified 2026-08-22.** #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **Includes the targeted twin-sweep** of confirmed defect shapes across CSF/ZT/Risk (~0.5–1 session); the open-ended audits of those three are #118, deferred with a firing trigger rather than to a backlog Sweep DONE; it found one ZT defect directly and, once its own verdicts were adversarially reviewed, three more: **#124** (ZT client dashboard ignores the engagement target — "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one) | Nothing | **3–4 sessions** |
+| 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **3–4 sessions** (fixes only) |
 
 **Total remaining: roughly 8–10.5 focused sessions** — items 6, 7, 8 and 9. The
 W3 → W2 → W1-ATT&CK chain that was "over half of it" is done: 5a was its last
@@ -173,7 +173,7 @@ entirely adversarial rounds: each round costs roughly 1–3h including the fixes
 generates. W1-ZT's elapsed span looks like 23h in the log, but two of those gaps
 are idle time, not work — do not read commit timestamps as effort.
 
-**6–10 sessions ≈ 35–65 hours ≈ 7–12 working days** at 5–6 productive hours a
+**8–10.5 sessions ≈ 32–84 hours ≈ 7–15 working days** at 5–6 productive hours a
 day. That is where "two to three weeks" comes from.
 
 Two caveats that matter for planning:
@@ -187,7 +187,7 @@ Two caveats that matter for planning:
 ### Dependencies, stated rather than implied
 
 ```
-W3 ──> W2 ──> W1 ATT&CK          (the long pole; ~4-5.5 sessions end to end)
+W3 ──> W2 ──> W1 ATT&CK          (WAS the long pole; W3 and W2 are DONE, item 7 is 1 session)
                 └─> ATT&CK export audit
 
 #73 ─┬─> (independent)
@@ -207,7 +207,7 @@ W6      ──> (independent)
   `applied` + a separate tri-state count**, not a reason code inside `dropped`.
 - **W2 before the ATT&CK export audit** — same files, and the audit wants the
   post-rewrite shape.
-- **#29 must not merge** until W2 lands plus a clean adversarial audit.
+- **#29 must not merge** until a clean adversarial audit. (W2 landed as PR #103 on 2026-08-20; the resolver half of #29 is superseded, the `/ai-inputs` panel half is item 7.)
 - Items 1, 6 and 8 depend on nothing and can run in parallel with the chain.
 
 ### W8 is split, and half of it moved into the path (decided 2026-08-20)

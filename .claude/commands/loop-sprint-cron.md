@@ -138,6 +138,12 @@ Agent({
 > 3. **Refresh CONTEXT.md.** Overwrite with a complete end-of-sprint snapshot: what shipped (each task with its commit sha), what got deferred (any T7/T8 halts the user has not applied), known issues, lessons learned. Format follows the existing CONTEXT.md style.
 > 4. **Commit cleanups.** If steps 1-3 produced any changes, commit them on the current branch as `chore(<queue.sprint>): final audit and CONTEXT refresh`.
 > 5. **Push the branch.** Run `gh auth status` first to confirm `queue.expected_gh_user` is the active account (`gh auth switch --user <queue.expected_gh_user>` if not). Then `git push origin <branch>`. The push triggers the pre-commit hook on staged files but git push does not run it again, so this is safe.
+> **Preserve the `## Adversarial audit` section when rewriting the body.**
+> `gh pr edit --body` REPLACES the description wholesale, and `audit-gate.yml`
+> re-runs on `edited` — so dropping that section flips a green required check
+> red at the end of an unattended sprint, with the cause several steps
+> upstream. Read the existing body first and carry the section across.
+
 > 6. **Update the pull request.** If `queue.scratch` references a PR for this sprint, read the full commit log on this branch (`git log <branch> ^main --oneline`), then run `gh pr edit <pr-number> --body "$(...)"` with a refreshed body that includes: a new Summary section reflecting ALL commits on the branch (not just the original partial scope), the full task table from the queue (id, title, commit, status), a Test plan section covering the six gates + Playwright e2e + audit posture, an Out-of-scope section listing any halts still pending user apply. Preserve the existing PR title. If no PR exists yet, skip this step — the dev opens the sprint PR themselves.
 > 7. **Append log.** Write `agent_stage=shutdown result=<pass|fixed|failed> pushed=<true|false> pr_updated=<true|false>` to `.claude/scheduler-debug.log`.
 > 8. **Return one line summary** to the orchestrator with the final commit sha, push outcome, and PR url.
