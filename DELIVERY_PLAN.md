@@ -67,9 +67,9 @@ fixture mode already demos all five.
 | 6 | **W1 Risk step (+ #84)** | Not started | Nothing | 1.5–2 sessions |
 | 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it | **item 5a** | 1 session |
 | 8 | **W6 — Risk export/publish split** | Not started | Nothing | 0.5–1 session |
-| 9 | **Correctness defects only a code review catches** | Not started — **MVP-blocking, reclassified 2026-08-22.** #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment), #115 (a partially-failed AI run is indistinguishable from a complete one) and #109 (an `unusable` citation leaves no per-row record). See the note below for why these are not backlog | Nothing | 1–1.5 sessions |
+| 9 | **Correctness defects only a code review catches** | Not started — **MVP-blocking, reclassified 2026-08-22.** #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below | Nothing | 1.5–2 sessions |
 
-**Total remaining: roughly 4–5.5 focused sessions** — items 6, 7, 8 and 9. The
+**Total remaining: roughly 4.5–6 focused sessions** — items 6, 7, 8 and 9. The
 W3 → W2 → W1-ATT&CK chain that was "over half of it" is done: 5a was its last
 link, so **nothing is blocked by anything now** and all four remaining items are
 independently startable.
@@ -100,6 +100,35 @@ them (items 3a and 3b) covered Tech Debt and ATT&CK only. CSF, ZT and Risk have
 had no equivalent pass, and #114 is already evidence that these defects come in
 sets of four — it was filed against ATT&CK and confirmed in all four dashboards,
 including one nobody suspected.
+
+#### Two scope decisions, stated rather than left to be discovered
+
+**#59 stays deferred. #114's fix ships a loud fallback instead.** #114 depends on
+`Deliverable.parent_version`, and #59 documents that the repair path for it is a
+permanent no-op on multi-version parents — so on the face of it item 9 could not
+complete. Measured before deciding:
+
+- All four finalize paths (`attack.py`, `csf.py`, `zt.py`, `tech_debt.py`) set
+  `parent_version=<assessment>.version` **at creation**. Every deliverable made
+  since migration 0041 has it.
+- NULL is therefore only possible on rows finalized **before 0041**.
+- The dev database holds **0** such rows and **0** services with more than one
+  deliverable version, and there is no production deployment.
+
+So the un-repairable case cannot be created any more and does not currently
+exist. #114's fix raises a **typed error** when `parent_version` is NULL rather
+than falling back to "latest finalized" — a silent fallback would reintroduce
+this exact defect for precisely the rows most likely to have several versions.
+If that error ever fires it has named a genuinely un-repairable legacy row, which
+is when #59 stops being deferrable.
+
+**#46 is in item 9's scope, not separate.** It is the root of half of #115: a
+wrong top-level key passes the shape guard, collapses to zero, and for the
+batched `mitre_map` job is counted as a batch SUCCESS — invisible even in the
+ledger. Fixing #115 without it fixes the visible half only. Note the fix is a
+real behaviour change (a provider omitting the key on an empty result goes from
+silent zero to hard failure), which is the correct direction under FAIL LOUDLY
+but is a deliberate call, not a tidy-up.
 
 ### What a "session" is, in hours
 
