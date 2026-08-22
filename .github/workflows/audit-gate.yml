@@ -57,3 +57,44 @@ jobs:
       - name: Require recorded audit evidence
         working-directory: apps/api
         run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
+
+  # A SEPARATE job, so it reports as its own check rather than folding a
+  # different failure into "Adversarial audit recorded". It shares this
+  # workflow's `edited` trigger, which this check needs more than the audit gate
+  # does: the usual fix is to reword the PR description, and without `edited`
+  # that would leave the PR red with no way to clear it.
+  issue-close-guard:
+    name: No accidental issue closes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `origin/<base>` must exist for the three-dot range below to resolve.
+          # A shallow clone makes `git log` fail, and `bash -e` turns that into a
+          # red step rather than an empty commit list that would read as clean.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect the title, description and every commit message
+        env:
+          # Via env, never inline. A PR title or body is untrusted text and
+          # interpolating it into a shell line is a script-injection hole -- the
+          # same reasoning the audit-gate job already documents for the body.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s' "$PR_TITLE" > /tmp/pr_title.txt
+          printf '%s' "$PR_BODY"  > /tmp/pr_body.txt
+          git log --format=%B "origin/${{ github.base_ref }}...HEAD" > /tmp/pr_commits.txt
+          echo "commit messages collected:"; wc -l < /tmp/pr_commits.txt
+
+      - name: Reject undeclared issue closes
+        working-directory: apps/api
+        run: |
+          python -m scripts.check_issue_references \
+            --title /tmp/pr_title.txt \
+            --body /tmp/pr_body.txt \
+            --commits /tmp/pr_commits.txt
