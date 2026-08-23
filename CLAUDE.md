@@ -321,6 +321,40 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   instead (migration 0043) and lets re-approval refresh it, audited with both the
   new and replaced counts. When a guarantee and a workflow collide, ask whether
   the guarantee needs the state frozen or only needs to know what the state WAS.
+- **Before reporting a sweep complete, name the SHAPE you searched for and one
+  place it could hide that shares no vocabulary with the original.** Keyword
+  sweeps keep coming back clean over live defects because the second instance
+  was written by someone using different words. `risk.py` re-derived a
+  gap comparison instead of calling `analyze_gaps` (#84); it also reimplements
+  the ATT&CK citation drop as a two-line list comprehension with no counter
+  (#132), found only because the sweep asked "where else does a model's string
+  get compared to a stored value and the misses discarded?" rather than "where
+  else is `_validate_tools` called?". Write the shape down in the PR body next to
+  the grep you ran. If you cannot describe the defect without naming the function
+  it was found in, you have not generalised it yet and the sweep will miss.
+- **A derived lookup key belongs in its OWN tier, below the authoritative one.**
+  #33 finding 5 needed the resolver to recognise a tool under the placeholder the
+  model was shown, so the redacted form was indexed as an alias — into the same
+  `_by_norm` dict as real capability names. But a client's list can hold both
+  spellings of one tool (the extractor redacts its own input, so
+  `[CLIENT] SOC Platform` is the normal product of a later extraction), and the
+  alias then collided with a real name: the only string the model can cite became
+  `ambiguous`, and under the #102 withholding rule that pulled the technique out
+  of the coverage denominator. Strictly worse than the defect being fixed. Real
+  names are exact matches on what is stored; aliases are reversals of a
+  transformation. Keep them in separate indexes and consult the authoritative one
+  first, so an alias can only decide what the real key could not.
+- **"Uses the same X as the Y path" is a claim to enforce by CALLING X, never by
+  reimplementing it.** `_redacted_form` said in its docstring that it used "the
+  SAME redactor the egress path uses" and then called `redact_org_name` — one
+  rule out of the eight in `redact_for_ai`. The docstring even argued the point
+  correctly ("a second copy would drift") while the code below it was the second
+  copy. It was wrong immediately, not eventually: the address rule rewrites
+  ordinary product names, so `Flowmon` egresses as a bare `[ADDRESS]` (#130) and
+  had the exact disease the fix was for. When a function must agree with another
+  function, import it and pass it the same inputs — including the MODE and any
+  optional arguments, because a parity claim covers those too.
+
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the

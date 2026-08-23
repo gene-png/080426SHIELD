@@ -95,12 +95,47 @@ def _strs(value: object) -> list[str]:
 # mitre_map: ATT&CK coverage + Detection/Prevention/Response tool citations
 # ---------------------------------------------------------------------------
 
+
+def _capability_names(value: object) -> list[str]:
+    """Tool names from either payload shape.
+
+    `capability_list` carries enriched OBJECTS since plan part 1B — name, vendor,
+    category, security_functions — and carried bare strings before it. Both are
+    read here on purpose: a stored payload written before the change (an
+    `llm_calls` row replayed, an older preview) is still a list of strings, and
+    the C0 pattern says those must keep parsing.
+
+    This is the single highest-risk line in that change. The previous version was
+    `_strs(...)`, which keeps only `isinstance(v, str)` — so the moment objects
+    arrived it returned `[]`, fixture mode cited zero tools, and fixture mode is
+    what CI runs. Every existing assertion about tool citations would have gone
+    red at once with the cause three files away.
+
+    An entry with no usable name is dropped rather than becoming a citation of
+    the empty string, which the resolver would otherwise count as unusable on
+    every technique.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for entry in value:
+        if isinstance(entry, str):
+            name = entry
+        elif isinstance(entry, dict):
+            name = entry.get("name") or ""
+        else:
+            continue
+        if isinstance(name, str) and name.strip():
+            out.append(name)
+    return out
+
+
 _MITRE_STATUS_CYCLE = ("covered", "partial", "gap", "covered", "not_applicable")
 
 
 def _fixture_mitre_map(payload: dict[str, Any]) -> LLMResponse:
     codes = sorted(_strs(payload.get("technique_codes")))
-    tools = _strs(payload.get("capability_list"))
+    tools = _capability_names(payload.get("capability_list"))
     techniques: list[dict[str, Any]] = []
     for i, code in enumerate(codes):
         status = _MITRE_STATUS_CYCLE[i % len(_MITRE_STATUS_CYCLE)]

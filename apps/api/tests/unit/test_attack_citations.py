@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.ai.redact import redact_for_ai, redact_payload
 from app.attack.citations import (
     Candidate,
     CitationResolver,
@@ -344,3 +345,282 @@ def test_an_inference_that_is_never_confirmed_still_stands() -> None:
     assert out.tools == ["CrowdStrike Falcon", "Splunk Enterprise"]
     assert [e["tool"] for e in out.inferred] == ["CrowdStrike Falcon"]
     assert out.needs_review_tools == ["CrowdStrike Falcon"]
+
+
+@pytest.mark.unit
+def test_a_tool_named_after_the_client_resolves_from_its_redacted_form() -> None:
+    """#33 finding 5: the client's own tools were uncitable on every run, forever.
+
+    The resolver is built from the capability list's UNREDACTED names. The
+    payload the model sees is redacted inside `run_job`, so a client called
+    "Northwind" is shown `[CLIENT] SOC Platform` for a tool stored as
+    `Northwind SOC Platform`. The prompt tells the model to cite the name
+    verbatim; an obedient model therefore cites a string the resolver has never
+    heard of, and the technique it supports reads as uncovered.
+
+    Reproduced on main before this fix:
+
+        stored name         : Northwind SOC Platform
+        what the model sees : '[CLIENT] SOC Platform'
+        tools applied       : NONE   (rejected: 1)
+
+    That is a client's own MDR contributing zero coverage on every run — and it
+    is the largest SYSTEMATIC near miss, because it fires for every tool a client
+    named after themselves rather than for an occasional bad guess.
+
+    Resolving it is a CONFIRMATION, not an inference: the placeholder mapping is
+    deterministic and ours, not the model's guess. Treating it as needs-review
+    would park every client-named tool in the review queue permanently, which is
+    the same defect wearing the other hat.
+    """
+    resolver = CitationResolver(
+        [Candidate(name="Northwind SOC Platform", vendor="Northwind")],
+        client_org_name="Northwind",
+    )
+
+    # The cited string is what the EGRESS PATH produces, not a literal typed
+    # here. `redact_payload` is the function `run_job` actually calls, applied to
+    # the shape `_capability_payload` actually sends. A hand-written
+    # "[CLIENT] SOC Platform" would agree with `_redacted_form` by construction
+    # and could never catch the two disagreeing -- which is the ONLY thing this
+    # test exists to catch. (CLAUDE.md: derive the expected value from the spec.)
+    sent, _ = redact_payload(
+        [{"name": "Northwind SOC Platform", "vendor": "Northwind"}],
+        mode="strict",
+        client_org_name="Northwind",
+    )
+    cited = sent[0]["name"]
+    assert cited != "Northwind SOC Platform", (
+        "redaction did not change this name, so the test is not exercising the "
+        "defect it is named for"
+    )
+    out = resolve_citations([cited], resolver)
+
+    assert out.tools == ["Northwind SOC Platform"], (
+        "the client's own tool is still uncitable from the only string the model " "was shown"
+    )
+    assert out.confirmed == 1
+    assert out.needs_review == 0 and out.inferred == []
+    assert out.rejected == 0
+
+
+@pytest.mark.unit
+def test_the_real_name_still_resolves_when_the_redacted_form_is_indexed() -> None:
+    """The guard against fixing one direction by breaking the other.
+
+    A model that cites the stored name — which happens whenever the client's
+    name does not appear in the tool, and whenever redaction is off — must keep
+    working, and must still be CONFIRMED rather than downgraded.
+    """
+    resolver = CitationResolver(
+        [Candidate(name="Northwind SOC Platform", vendor="Northwind")],
+        client_org_name="Northwind",
+    )
+    out = resolve_citations(["Northwind SOC Platform"], resolver)
+    assert out.tools == ["Northwind SOC Platform"]
+    assert out.confirmed == 1
+
+
+@pytest.mark.unit
+def test_two_tools_that_redact_to_the_same_string_are_ambiguous_not_guessed() -> None:
+    """The invariant this module is built on, applied to the alias tier.
+
+    Reversing a placeholder is only deterministic while it maps to ONE
+    candidate. Where it does not, the answer is the same as everywhere else
+    here: refuse, count it, and let a human see the string that could not be
+    placed.
+
+    The first version of this test asserted the invariant in its NAME and its
+    docstring and then used `Northwind Gateway` / `Northwind Secure Gateway`,
+    which redact to `[CLIENT] Gateway` and `[CLIENT] Secure Gateway` -- no
+    collision at all -- and asserted a SUCCESSFUL resolve. Deleting the
+    ambiguity branch left it green. That is #72 exactly, produced in the same
+    change that was fixing #72's cousins.
+
+    The collision here is real and comes from the redactor rather than from a
+    contrived pair: the address rule over-matches, so `Flowmon` and `Fleet` BOTH
+    egress as a bare `[ADDRESS]` (#130). Two distinct capabilities, one shown
+    string. Asserted below, from the redactor itself, before the resolver is
+    ever consulted -- so if #130 is fixed and the collision disappears, this test
+    FAILS LOUDLY rather than quietly passing while testing nothing.
+    """
+    left, right = "Flowmon", "Fleet"
+    a, _ = redact_for_ai(left, mode="strict", client_org_name="Northwind")
+    b, _ = redact_for_ai(right, mode="strict", client_org_name="Northwind")
+    assert a == b, (
+        f"precondition gone: {left!r} and {right!r} no longer redact to the same "
+        f"string ({a!r} vs {b!r}). If #130 was fixed, rewrite this test around a "
+        f"pair that still collides -- do not delete it."
+    )
+
+    resolver = CitationResolver(
+        [Candidate(name=left, vendor="Kemp"), Candidate(name=right, vendor="Fleetdm")],
+        client_org_name="Northwind",
+    )
+    out = resolve_citations([a], resolver)
+
+    assert out.tools == [], f"guessed between two capabilities: {out.tools}"
+    assert out.rejected == 1
+    assert out.confirmed == 0
+
+
+@pytest.mark.unit
+def test_a_real_name_beats_another_capabilitys_redacted_form() -> None:
+    """The regression the alias tier exists to prevent, and it is not exotic.
+
+    A client's list can legitimately hold BOTH spellings of one tool. The
+    extractor redacts its own inventory input, so before the tenant has a legal
+    name it stores `Northwind SOC Platform`, and a later extraction of a
+    corrected inventory stores `[CLIENT] SOC Platform`. Both lists contribute,
+    and the two strings do not dedupe -- they are not equal casefolded.
+
+    Indexing the alias alongside real names made `[CLIENT] SOC Platform` match
+    two candidates, so the ONLY string an obedient model can cite became
+    `ambiguous`. Under the #102 withholding rule that then pulls the technique
+    out of the coverage denominator entirely -- strictly worse than the defect
+    the alias was added to fix.
+
+    A real name is an exact match on what is stored; an alias is a reversal of a
+    transformation. When both are available the real name wins.
+    """
+    resolver = CitationResolver(
+        [
+            Candidate(name="Northwind SOC Platform", vendor="Northwind"),
+            Candidate(name="[CLIENT] SOC Platform", vendor="Northwind"),
+        ],
+        client_org_name="Northwind",
+    )
+    out = resolve_citations(["[CLIENT] SOC Platform"], resolver)
+
+    assert out.tools == ["[CLIENT] SOC Platform"], (
+        "the stored spelling lost to another capability's alias -- the citation "
+        f"resolved to {out.tools} instead of the row that literally matches"
+    )
+    assert out.confirmed == 1
+    assert out.rejected == 0
+
+
+@pytest.mark.unit
+def test_no_client_name_means_no_extra_keys_and_no_behaviour_change() -> None:
+    """`client_org_name` is optional, and absent it changes nothing.
+
+    `build_attack_ai_request` passes the client's legal name, but the seeded
+    "(pending intake)" placeholder is deliberately passed as None elsewhere in
+    this route, so the no-name path is real and must stay inert.
+    """
+    plain = CitationResolver([Candidate(name="CrowdStrike Falcon", vendor="CrowdStrike")])
+    assert resolve_citations(["CrowdStrike Falcon"], plain).tools == ["CrowdStrike Falcon"]
+    assert resolve_citations(["[CLIENT] Falcon"], plain).tools == []
+
+
+@pytest.mark.unit
+def test_a_tool_redacted_by_a_rule_other_than_the_org_name_still_resolves() -> None:
+    """The alias must reverse the WHOLE redactor, not the org-name rule alone.
+
+    `_redacted_form` originally called `redact_org_name` while its docstring
+    claimed to use "the SAME redactor the egress path uses". That was true of one
+    rule out of eight, and the difference is not academic: the address rule
+    over-matches badly (#130), so `Flowmon` -- a real NDR product, no client name
+    in it anywhere -- egresses as a bare `[ADDRESS]`.
+
+    A tool in that state has exactly the #33-finding-5 disease: the only string
+    the model is shown is one the resolver has never heard of. Indexing only the
+    org-name form left it broken while the docstring said otherwise.
+
+    This test discriminates the two implementations directly, which the
+    ambiguity test above does not: with an org-only `_redacted_form` there is no
+    alias for `Flowmon` at all, so the citation rejects.
+    """
+    name = "Flowmon"
+    shown, counts = redact_for_ai(name, mode="strict", client_org_name="Northwind")
+    assert shown != name and "client_org" not in counts, (
+        "precondition gone: this test needs a name rewritten by a NON-org rule, "
+        f"got {shown!r} with counts {counts!r}"
+    )
+
+    resolver = CitationResolver(
+        [Candidate(name=name, vendor="Kemp")],
+        client_org_name="Northwind",
+    )
+    out = resolve_citations([shown], resolver)
+
+    assert out.tools == [name], (
+        f"the model was shown {shown!r} and cited it verbatim, and the resolver "
+        f"could not place it: {out.tools}"
+    )
+    assert out.confirmed == 1
+    assert out.rejected == 0
+
+
+@pytest.mark.unit
+def test_the_resolver_is_inert_when_the_egress_mode_does_not_redact() -> None:
+    """Mode is part of "what the model was shown", not a detail.
+
+    `redact_for_ai` applies the org-name and address rules ONLY in strict mode.
+    A resolver hard-coded to strict while the egress ran `standard` would index
+    placeholders that were never sent -- inventing aliases for strings the model
+    could not have seen. `run_ai` passes the settings value both places.
+    """
+    lenient = CitationResolver(
+        [Candidate(name="Northwind SOC Platform", vendor="Northwind")],
+        client_org_name="Northwind",
+        redaction_mode="standard",
+    )
+    assert resolve_citations(["Northwind SOC Platform"], lenient).tools == [
+        "Northwind SOC Platform"
+    ]
+    assert resolve_citations(["[CLIENT] SOC Platform"], lenient).tools == [], (
+        "indexed a placeholder the model was never shown -- in standard mode the "
+        "org name is not redacted"
+    )
+
+
+@pytest.mark.unit
+def test_a_client_built_tools_vendor_resolves_from_its_placeholder() -> None:
+    """The vendor half of #33 finding 5, which the first fix left out.
+
+    For a tool the client BUILT, the vendor is the client -- so the payload now
+    carries `vendor: "[CLIENT]"` and the prompt names that field. Indexing only
+    the unredacted vendor fixed the name half and left this broken, an unstated
+    exemption in a fix that read as complete.
+
+    Resolves as an INFERENCE, not confirmed: reversing the placeholder is
+    deterministic, but "the model named a vendor" was only ever a guess about
+    WHICH tool was meant, and undoing a redaction does not upgrade that.
+    """
+    resolver = CitationResolver(
+        [Candidate(name="SOC Platform", vendor="Northwind")],
+        client_org_name="Northwind",
+    )
+    out = resolve_citations(["[CLIENT]"], resolver)
+
+    assert out.tools == ["SOC Platform"], (
+        f"a client-built tool is uncitable by its vendor, which is the only "
+        f"vendor string the model is shown: {out.tools}"
+    )
+    assert out.confirmed == 0, "a vendor match is an inference, not a confirmation"
+    assert out.needs_review == 1
+
+
+@pytest.mark.unit
+def test_a_redacted_tool_resolves_even_when_the_client_has_no_legal_name() -> None:
+    """Aliasing is conditioned on the REDACTOR, not on the client having a name.
+
+    `_redacted_form` originally returned early when there was no client org name
+    and no name hints. But in strict mode the address rule fires regardless of
+    both, so a tenant still on "(pending intake)" -- which is precisely when
+    `client_org_name` is None -- would have had `Flowmon` egress as `[ADDRESS]`
+    with no alias indexed, and the tool uncitable.
+
+    The question is never "is there a name to redact", it is "did the redactor
+    change this string".
+    """
+    shown, _ = redact_for_ai("Flowmon", mode="strict")
+    assert shown != "Flowmon", "precondition gone; see #130"
+
+    resolver = CitationResolver([Candidate(name="Flowmon", vendor="Kemp")])
+    out = resolve_citations([shown], resolver)
+    assert out.tools == [
+        "Flowmon"
+    ], f"a tenant with no legal name cannot cite its own tool: {out.tools}"
+    assert out.confirmed == 1

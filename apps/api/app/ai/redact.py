@@ -163,8 +163,15 @@ def _redact_addresses(text: str) -> tuple[str, int]:
     return combined.sub(PLACEHOLDER_ADDRESS, text), count
 
 
-def _redact_org_name(text: str, org_name: str) -> tuple[str, int]:
-    """Replace the client's legal name (case-insensitive, whole-token)."""
+def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
+    """Replace the client's legal name (case-insensitive, whole-token).
+
+    Public since #33 finding 5, when the ATT&CK citation resolver needed to know
+    what a tool name looks like after redaction. That resolver now calls
+    `redact_for_ai` instead — the whole pipeline rather than this one rule —
+    because this rule is only one of eight and the others also rewrite tool
+    names (see #130). Kept public: it is a coherent unit and is tested directly.
+    """
     if not org_name.strip():
         return text, 0
     pat = re.compile(rf"\b{re.escape(org_name)}\b", re.IGNORECASE)
@@ -240,7 +247,7 @@ def redact_for_ai(
         if c:
             counts["address"] = c
         if client_org_name:
-            cleaned, c = _redact_org_name(cleaned, client_org_name)
+            cleaned, c = redact_org_name(cleaned, client_org_name)
             if c:
                 counts["client_org"] = c
 
