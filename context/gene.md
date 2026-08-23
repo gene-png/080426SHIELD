@@ -2,66 +2,101 @@
 
 ## Pick up here
 
-PR #129 confirmed merged, 7/7 checks green. That closes out the process-only run: six PRs in a row (#116, #117, #119, #127, #128, #129) with zero feature work. Item 7 has now actually started. The dev reproduced issue #33 finding 5 on `main` before writing anything (a client whose own tool name collides with the redaction placeholder gets zero citation coverage, forever), wrote a fix (index the redacted form as an alias, wire it into the call site that was inert without it), and reports the citation and redaction test suites green. Nothing pushed yet: 0 commits ahead, 4 files drafted locally, no branch, no PR. Confirmed on GitHub: 0 open PRs, no branch matching "redact" or "citation" other than the pre-existing `docs/attack-citation-resolver-plan` (unrelated, already merged as #34).
+**PR #133 is merged.** Item 7's backend half is on `main` — all 7 checks green. Nothing is mid-edit; the working tree is clean and everything is pushed.
 
-Separately, the dev responded point by point to the four-theme critique I drafted for Gene last round. All four were accepted. Two got concrete process fixes rather than agreement-only: a required "searched for: <symptom, not the keyword>" line in sweep output (folded into item 7's PR, not spent as its own PR), and a decision table splitting the stale-cross-reference problem into three checkable classes (doc file paths, D-NNN references, `path.py:NNN` line refs) versus one that isn't (semantic staleness, like a session-count claim going stale after the number it depended on changed), to be filed as a real CI trigger, scheduled after item 7.
+The three things to do, in order:
 
-**Last updated:** 2026-08-23 (PR #129 merged 7/7 confirmed on GitHub; issue #33 finding 5 confirmed real and matching the dev's reproduction almost verbatim; item 7 started but nothing pushed, confirmed via 0 open PRs and no matching branch; four-theme critique answered in full by the dev)
+1. **Start #130** — the highest-value open bug, unblocked, and the one most likely to be invisible to a UI-focused pre-launch pass.
+2. **Item 7 part 2** — the `/ai-inputs` endpoint + `AttackAiInputsPanel`.
+3. Then items 6, 8, 9.
 
-This file is owner-write-only. It exists so any session (mine or a relay) can pick up the real state of the project without reconstructing it from scattered chat history. Update it after every substantive decision. **This file lives in the repo, not on any one machine; a local computer restart does not affect it.**
+**Last updated:** 2026-08-23 (item 7 backend merged as PR #133; adversarial reviewer run on real feature work for the first time and it overturned the branch's central claim; three new mvp-blocking issues filed — #130, #131, #132)
 
-## This round, verified against GitHub directly
+This file is owner-write-only. **This round it was written by the agent at Gene's explicit request** ("give me instructions so we can pick back up"), which is an exception rather than a new default. It also merges a relay session's update (`88983b2`) that landed on `main` mid-round; that content is preserved below rather than overwritten. **This file lives in the repo, not on any one machine; a local computer restart does not affect it.**
 
-**PR #129 confirmed merged, 7 checks passed.** Matches the relay's "all seven green" exactly.
+## What we did this round
 
-**Issue #33 finding 5 confirmed, and it matches the dev's reproduction closely.** Read the issue in full: "The resolver is built from unredacted names... The prompt now says 'CITE THE name VALUE EXACTLY AND VERBATIM', so an obedient model cites '[CLIENT] Secure Gateway'... rejected on every run, forever." The issue's own example client is Northwind ("Northwind SOC Platform... contributes zero coverage on every run"), the same example the dev used in the relayed reproduction output. The issue's own suggested fix ("build the resolver from the redacted names, or resolve against both forms") matches what the dev says they built (index the redacted form as an alias).
+### Item 7 backend — PR #133, merged, 7/7 green
 
-**Nothing pushed yet, confirmed.** 0 open PRs on the repo. Branch search for "redact" returned nothing; search for "citation" returned only `docs/attack-citation-resolver-plan`, a pre-existing, already-merged docs branch (PR #34), unrelated to this fix. This matches the dev's own "0 commits ahead, 4 files drafted, nothing pushed" framing exactly, not just approximately.
+Branch `feat/attack-client-named-tools`, two commits (`09a57e3` then `5a88431`), squashed as `ed96486`.
 
-**The four-theme critique got a full, specific response, not just agreement.** Theme 1 (process crowding out features): accepted, item 7 named as the correction. Theme 2 (status ahead of truth): accepted, pushed-vs-drafted framing adopted starting with this update. Theme 3 (vocabulary sweeps over shape sweeps): accepted, with a concrete mechanism proposed, a required "searched for: <shape>" line in sweep output, reasoned as fixing a process problem (advice that reads as background, not a step) rather than repeating the same prose warning a third time. Theme 4 (stale cross-references): accepted, with a table splitting the problem into structural classes (checkable now) and one semantic class (not mechanically checkable), scheduled as real CI work after item 7 rather than left as "no mechanical fix" again.
+- **#33 finding 5 fixed.** A tool named after the client was uncitable on every run, forever. The resolver is built from UNREDACTED capability names while the payload is redacted in `run_job`, and the prompt says cite the name verbatim — so an obedient model cited a string the resolver had never heard of. Reproduced on `main` first: `[CLIENT] SOC Platform` rejected, the same tool under its stored name resolving fine.
+- **Enrichment.** The payload now carries `name` / `vendor` / `category` / `security_functions` instead of a bare string. The extractor already computed "Falcon does detect + respond" and the pipeline threw it away. (The relay's flagged landmine — `_fixture_mitre_map` keeping only `isinstance(v, str)` — fired exactly as predicted and was fixed.)
+- **The D-053 split.** `name`/`vendor` from the approved snapshot (they define membership), `category`/`security_functions` read live via the snapshot's `item_id` (they only describe).
 
-## Open question worth raising with the dev
+### The adversarial reviewer's first run on real feature work
 
-The new "searched for: <shape>" line is self-attested free text, not something the reviewer or CI checks against the actual search performed. That is the same shape as the authority-admission gap PR #129 just fixed elsewhere ("no script reads the line"). Worth asking directly whether the adversarial reviewer will be told to check that the line actually names a shape and not a repeated keyword, or whether it is transparency-only for now with enforcement deferred.
+The part worth remembering. **10 findings; 6 fixed, 3 filed, 1 accepted.** Three were defects the agent had just introduced, in a slice already reported to Gene as done and gate-green.
+
+- The redacted-form **alias was indexed into `_by_norm` alongside real names.** A client's list can hold both spellings of one tool (the extractor redacts its own inventory input, so `[CLIENT] SOC Platform` is the normal product of any extraction after intake), so the alias collided with a real name — the only citable string became `ambiguous`, and under #102 that pulls the technique out of the coverage denominator. **Worse than the bug it fixed.** Aliases now sit in their own tier below real names.
+- **`_redacted_form` claimed parity with the egress path and implemented 1 rule of 8.** Its docstring argued correctly that a second copy would drift, directly above the second copy.
+- **Four tests that could not fail.** The worst named the invariant in its title, described a collision in its docstring, used candidates that do not collide, and asserted a *successful* resolve.
+
+Every fix verified **red-on-revert individually** (7 of them). The most valuable: renaming `item_id` in the writer now breaks the enrichment tests — it did not before, because the fixture hand-wrote the snapshot under a comment promising it matched the writer. Tests now seed through `build_approved_membership`, extracted from `approve_capability_list` for exactly that reason.
+
+**The relay called this one in advance.** Last round's entry named a candidate defect shape: *"a redaction/aliasing scheme correct only as long as two code paths are kept in sync by hand"*, noting it was good self-awareness but "not yet a guarded property." That is precisely finding 2. The prediction was right, and the gap between noticing a fragility and guarding it was one PR wide.
+
+### Three new mvp-blocking issues, split by owning item
+
+Deliberately NOT absorbed into item 7, so no item hides another's cost:
+
+- **#130 — redaction over-matches. The big one.** `redact.py:158`'s suite pattern has no trailing boundary and `[\s.#]*` matches empty, so `Fl`/`Ste`/`Apt`/`Unit`/`Floor` swallow the rest of any word. Verified in-container on `main`: `Flat network segmentation` → `[ADDRESS] network segmentation`; `Flag any unencrypted volumes` → `[ADDRESS] any…`; `Flowmon`, `Fleet`, `Flashpoint`, `Unitrends`, `Steadfast`, `Fluency` all → a bare `[ADDRESS]`. Single egress path, so **all five services and every AI purpose**. Security prose is unusually rich in "fl" (flat, flag, flaw, flow). Suggested fix and the residual `Unit 42` collision are on the issue.
+- **#131 — D-053 leak.** An unapproved draft's vendor and spelling override the approved snapshot, and the winning spelling reaches the client deliverable. Pre-existing.
+- **#132 — `risk.py` drops technique/control links silently.** No counter, no reason, nothing in the audit row. Belongs to **item 6's** family alongside #121/#122/#84. Found by grepping the *shape*, not the call sites — `risk.py` never calls `_validate_tools`, it reimplements it inline.
+
+Also corrected **#33 finding 12**: non-ASCII tool names are NOT uncitable. Exact citations resolve (`_norm` doesn't strip non-ASCII); only the near-miss rescue fails. Real gap, wrong severity — that changes its priority.
+
+### CLAUDE.md
+
+Three lessons added, each from a confirmed finding: derived lookup keys belong in their own tier below the authoritative one; a parity claim is enforced by CALLING the other function, not restating it; and the sweep rule below.
+
+## The four-theme critique: where each theme stands
+
+Recorded by the relay last round, updated with what actually landed.
+
+| Theme | Response | Status now |
+|---|---|---|
+| 1. Process crowding out features | Item 7 named as the correction | **Done** — #133 is the first feature PR since #116 |
+| 2. Status ahead of truth | Pushed-vs-drafted framing adopted | **In use** every update since |
+| 3. Vocabulary sweeps over shape sweeps | Required "searched for: `<shape>`" line in sweep output, folded into item 7's PR | **Landed** in CLAUDE.md and used in #133's body; it found #132 |
+| 4. Stale cross-references | Table splitting structural (checkable) from semantic (not) classes, to be filed as a CI trigger | **Still not filed.** Scheduled after item 7; item 7 part 2 is still open, so this has not slipped yet — but it is the one to watch |
+
+### Open question the relay raised, now answerable
+
+*"The 'searched for: `<shape>`' line is self-attested free text, not something the reviewer or CI checks. Same shape as the authority-admission gap. Is the reviewer going to be told to check it, or is it transparency-only?"*
+
+**Answer as of this round: transparency-only, enforcement not built.** Nothing reads the line. But it is not worthless — this round the line forced the sweep to be phrased as *"a model's string compared against a stored value, misses discarded"* rather than *"callers of `_validate_tools`"*, and that rephrasing is what surfaced #132 in a file that shares no vocabulary with ATT&CK. So: the mechanism worked as a thinking aid on its first use, and remains unenforced. Worth deciding whether the reviewer gets told to check it, rather than letting it drift into the same "prose nobody reads" category.
 
 ## Branch / in flight
 
-`main` has #127, #128, #129 merged since last round (in addition to everything already listed). Item 7 work exists only as local, unpushed drafts as of this check: no branch, no PR. Next steps per the dev, in order: the `/ai-inputs` endpoint and panel, then the enrichment payload (flagged landmine: `_fixture_mitre_map` currently keeps only `isinstance(v, str)` and would silently drop citations in CI-run mode), then the adversarial reviewer, then the PR.
+`main` has #110, #113, #116, #117, #119, #127, #128, #129, #133 merged. **Working tree clean, nothing local, nothing mid-edit.**
 
-## MVP tracking: DELIVERY_PLAN.md
+## Open mvp-blocking issues (13)
 
-Unchanged this round. Item 7 is in progress but nothing has landed against it yet.
-
-## D-054, D-055, D-056, D-057, D-052: decisions log
-
-Unchanged this round. The stale-cross-reference CI trigger, once filed, will likely need its own D-number; not yet requested or written.
+`#132 #131 #130` (new this round) · `#126 #125 #124 #123` (dashboards) · `#122 #121` (Risk, item 6) · `#115 #114 #109` · `#46`
 
 ## Open decisions: NOT to be reconstructed from memory
 
-**New this round:** whether the "searched for: <shape>" line gets checked by the reviewer or stays self-attested (see above). Whether the stale-cross-reference CI trigger gets its own tracking issue now or waits until it's actually filed after item 7.
+**New this round:** whether #130 gets pulled ahead of item 7 part 2 (agent's recommendation: yes — it corrupts every AI input platform-wide and fails quietly, which is exactly what a UI-focused pre-launch pass will not catch). Whether #131's fix needs provenance carried through `pairs` (approved vs live) rather than reconstructed from the tuple. Whether the "searched for: `<shape>`" line gets enforced or stays transparency-only (see above).
 
-**Still open, unchanged:** whether #111 (admin-console N+1) gets pulled ahead of item 7's remaining steps. Whether #106/#107's root fixes (stripping HTML comments, narrowing the docs/ prefix match, guarding against renames) get their own scheduled work or stay parked behind "worked around, issue stays open." Path-scoped branch-protection exemption for `context/gene.md`, not yet requested. What "addressable" coverage means for #102's exclusion of `pending_review`. Local-device mirror of this file. #90's build, #89's pin test, #92's contract-test fix. #57, `ServiceStatus.RELEASED` (#62), W0's freeze shape. Whether to parallelize item 6. Whether #84 gets the `mvp-blocking` label. First real unattended cron run (the Monday after 2026-08-22), worth confirming it actually fired.
+**Still open, unchanged:** whether #111 (admin-console N+1) gets pulled ahead. Whether the stale-cross-reference CI trigger gets a tracking issue now or waits until filed. Path-scoped branch-protection exemption for `context/gene.md`, not yet requested. What "addressable" coverage means for #102's exclusion of `pending_review`. Local-device mirror of this file. #90's build, #89's pin test, #92's contract-test fix. #57, `ServiceStatus.RELEASED` (#62), W0's freeze shape. Whether to parallelize item 6. Whether #84 gets the `mvp-blocking` label. First real unattended cron run (the Monday after 2026-08-22), worth confirming it actually fired. #106/#107 root fixes still parked behind "worked around, issue stays open".
 
-## Resolved as of this round
+## Adversarial-reviewer
 
-PR #129 confirmed merged, 7/7 green. Issue #33 finding 5 confirmed real and matching the reproduction. The four-theme critique confirmed delivered and answered point by point, with two themes getting concrete mechanisms rather than agreement alone.
+**Third use, and the first on real feature work rather than on its own rules.** It overturned the branch's central claim. The headline: a slice that passed ruff, black, prettier, `check_test_integrity` and a full green suite was carrying a regression worse than the bug it fixed, plus four tests that could not fail. No mechanical gate saw any of it.
+
+Re-verify every finding before acting — it runs read-only and executes nothing, so every claim is static reading. This round two claims needed in-container verification before being acted on; both held, and one (#130) turned out worse than reported.
+
+## Recurring defect shapes to watch for (CLAUDE.md)
+
+**#72 (tests that cannot fail): four more instances this round, all produced by the agent in the same change where it was fixing that pattern's cousins.** Instances 10–13. CLAUDE.md's line — *knowing the shape does not prevent producing it, only checking does* — is now the most heavily evidenced sentence in the file, and it is the argument for the reviewer being a standing rule rather than a habit.
+
+**The relay's candidate shape from last round is now confirmed and recorded in CLAUDE.md**: a scheme correct only while two code paths are kept in sync by hand. The guarded form is "call the other function, do not restate it."
+
+## Environment notes (standing)
+
+Background/foreground test runs kept getting killed by the harness wrapper this round. Reliable pattern: `docker compose exec -d api sh -lc '… > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'` then poll for the exit file. The detached pytest survives even when the wrapper is killed.
 
 ## MVP-complete vs. client-ready: standing distinction
 
 Unchanged.
-
-## Adversarial-reviewer and Playwright
-
-Unchanged this round; item 7's PR (not yet opened) will be its third real use.
-
-## Environment notes (standing)
-
-Unchanged. Open issue count last confirmed at 34 pre-#121-126; six new issues since (#121-#126); #106, #107, #108 remain open with updated evidence, not new issues. Issue #33 (opened earlier, pre-existing) newly relevant this round as the source of the finding-5 fix.
-
-## Do not merge
-
-Nothing open to merge. PR #129 is merged. Item 7 has no PR yet.
-
-## Recurring defect shapes to watch for (CLAUDE.md)
-
-Unchanged. Worth noting a new candidate for this list once item 7's PR lands: "a redaction/aliasing scheme correct only as long as two code paths are kept in sync by hand." The dev flagged this fragility themselves in the relay (a second, drifted copy of the placeholder logic would silently break the alias), which is good self-awareness but not yet a guarded property.
