@@ -82,7 +82,7 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.ai.redact import redact_org_name
+from app.ai.redact import RedactionMode, redact_for_ai
 
 _PUNCT = re.compile(r"[^a-z0-9]+")
 _WS = re.compile(r"\s+")
@@ -146,7 +146,13 @@ class CitationResolver:
     once per cited string across ~633 techniques.
     """
 
-    def __init__(self, candidates: list[Candidate], client_org_name: str | None = None) -> None:
+    def __init__(
+        self,
+        candidates: list[Candidate],
+        client_org_name: str | None = None,
+        redaction_mode: RedactionMode = "strict",
+        name_hints: tuple[str, ...] = (),
+    ) -> None:
         """`client_org_name` closes #33 finding 5, and it is not cosmetic.
 
         The resolver is built from the capability list's UNREDACTED names, while
@@ -178,6 +184,14 @@ class CitationResolver:
         self._by_norm: dict[str, set[str]] = {}
         self._by_fold: dict[str, set[str]] = {}
         self._by_vendor: dict[str, set[str]] = {}
+        self._redaction_mode: RedactionMode = redaction_mode
+        self._name_hints = tuple(name_hints)
+        #: The forms the model is actually SHOWN, kept in their own tier rather
+        #: than mixed into `_by_norm`. A redacted form can collide with another
+        #: capability's REAL name -- see `resolve` -- and the real name must win,
+        #: so these cannot share an index with them.
+        self._by_alias_norm: dict[str, set[str]] = {}
+        self._by_alias_fold: dict[str, set[str]] = {}
         #: Candidates with no vendor recorded. Their vendor COULD be the cited
         #: string, so any vendor-shaped resolution is unverifiable while one of
         #: these is on the list — the nullable-vendor bypass, defect 1.
@@ -190,25 +204,62 @@ class CitationResolver:
             # obedient model can cite for a client-named tool.
             redacted = self._redacted_form(c.name)
             if redacted is not None:
-                self._by_norm.setdefault(_norm(redacted), set()).add(c.name)
-                self._by_fold.setdefault(_fold(redacted), set()).add(c.name)
+                self._by_alias_norm.setdefault(_norm(redacted), set()).add(c.name)
+                self._by_alias_fold.setdefault(_fold(redacted), set()).add(c.name)
             if c.vendor and c.vendor.strip():
                 self._by_vendor.setdefault(_fold(c.vendor), set()).add(c.name)
+                # The vendor is redacted on the way out too, and for a
+                # client-BUILT tool the vendor IS the client -- so the model is
+                # shown `vendor: "[CLIENT]"` and `ReviewReason.VENDOR` exists
+                # precisely because models cite vendors. Indexing only the
+                # unredacted vendor left the name half of #33 finding 5 fixed and
+                # the vendor half broken.
+                #
+                # This goes in `_by_vendor`, NOT the confirmed alias tier: the
+                # reversal is deterministic, but "the model named a vendor" was
+                # already only an inference about WHICH tool was meant, and
+                # reversing a placeholder does not make it a stronger claim.
+                redacted_vendor = self._redacted_form(c.vendor)
+                if redacted_vendor is not None:
+                    self._by_vendor.setdefault(_fold(redacted_vendor), set()).add(c.name)
             else:
                 self._vendorless.add(c.name)
 
     def _redacted_form(self, name: str) -> str | None:
         """`name` as the model sees it, or None when redaction changes nothing.
 
-        Uses the SAME redactor the egress path uses rather than a local
-        reimplementation of it: a second copy of the placeholder rule would drift
-        from `redact_payload`, and this alias is only correct while the two agree
-        about what the model was shown.
+        Calls `redact_for_ai` -- the WHOLE pipeline, with the same mode and name
+        hints the egress path uses -- rather than the org-name rule alone.
+
+        The first version called `redact_org_name` directly while its docstring
+        claimed to use "the SAME redactor the egress path uses". That was false
+        for seven of the eight rules, and the gap is not theoretical: the address
+        rule rewrites ordinary product names, so `Stellar Cyber` egresses as
+        `[ADDRESS] Cyber` and `Flowmon` as a bare `[ADDRESS]`. Those tools have
+        exactly the #33-finding-5 disease and none of the cure, and indexing only
+        the org-name form would have left them broken while claiming otherwise.
+        That over-redaction is a defect in its own right, tracked in #130; this
+        function is correct either way, because it ASKS the redactor what it does
+        rather than reimplementing a guess about it.
+
+        Returns None when redaction is a no-op, so the common case adds no keys.
+
+        Deliberately NOT short-circuited on "there is no client name". The first
+        draft returned early when `client_org_name` and `name_hints` were both
+        empty, which is wrong for the same reason the org-only version was: in
+        strict mode the ADDRESS rule fires regardless of either, so a tenant
+        still on "(pending intake)" -- who has no legal name by definition --
+        would have had `Flowmon` egress as `[ADDRESS]` with no alias indexed.
+        The condition for aliasing is "did the redactor change this string", and
+        the only way to know that is to ask it.
         """
-        if not self._client_org_name:
-            return None
-        redacted, count = redact_org_name(name, self._client_org_name)
-        return redacted if count else None
+        redacted, counts = redact_for_ai(
+            name,
+            mode=self._redaction_mode,
+            client_org_name=self._client_org_name or None,
+            name_hints=self._name_hints,
+        )
+        return redacted if counts and redacted != name else None
 
     def resolve(self, cited: str) -> Resolution:
         if not isinstance(cited, str) or not cited.strip():
@@ -221,6 +272,28 @@ class CitationResolver:
         if exact:
             # Two capabilities differing only by case or whitespace. Refusing to
             # guess between them IS the invariant.
+            return Resolution(name=None, rejected_reason="ambiguous")
+
+        # --- CONFIRMED (alias): the form the model was SHOWN -----------------
+        #
+        # Strictly below real names, and that ordering is the whole point. A
+        # client's list can legitimately hold BOTH spellings of one tool: the
+        # pre-intake `Northwind SOC Platform` and the post-intake
+        # `[CLIENT] SOC Platform` the extractor stores once the tenant has a legal
+        # name (`tech_debt/extract.py` redacts its own inventory input, so the
+        # placeholder spelling is the NORMAL product of a later extraction, not
+        # an oddity). Indexing aliases alongside real names made those two
+        # collide, so the only string an obedient model can cite became
+        # `ambiguous` -- and under the #102 withholding rule that then pulled the
+        # technique out of the coverage denominator entirely. Strictly worse than
+        # the defect it was fixing.
+        #
+        # With a real-name tier first, that case resolves on the exact match and
+        # never reaches here. Aliases decide only what real names could not.
+        alias = self._by_alias_norm.get(_norm(cited))
+        if alias and len(alias) == 1:
+            return Resolution(name=next(iter(alias)), confirmed=True)
+        if alias:
             return Resolution(name=None, rejected_reason="ambiguous")
 
         key = _fold(cited)
@@ -238,7 +311,7 @@ class CitationResolver:
         # separately and to neither together.
         #
         # Uniqueness is a property of the UNION. Judge it once, on the union.
-        by_fold = self._by_fold.get(key, set())
+        by_fold = self._by_fold.get(key, set()) | self._by_alias_fold.get(key, set())
         by_vendor = self._by_vendor.get(key, set())
         by_substring = {
             c.name

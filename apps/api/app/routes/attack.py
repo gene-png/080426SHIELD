@@ -57,6 +57,7 @@ from app.attack.pending import confirm_all as confirm_attack_citations
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.attack.pending import row_tools as attack_row_tools
 from app.audit import audit
+from app.config import get_settings
 from app.db.session import get_db
 from app.deliverable_release import release_deliverable
 from app.dependencies import current_client, current_user, require_role
@@ -737,46 +738,16 @@ def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[Capabil
     return out
 
 
-def _unapproved_contributing_names(db: Session, client_id: uuid.UUID) -> list[str]:
-    """Tools being SENT that come from a list nobody has approved.
-
-    Deliberately not the function #29 had. That branch reported tools "excluded
-    until approved" and counted DRAFT rows -- but on `main` a draft list
-    CONTRIBUTES (`_client_capability_inputs`: "Only DISCARDED is excluded here:
-    DRAFT still counts, because mapping ATT&CK before approving the tech-debt
-    list is a normal order of work"). #33 finding 7 records the two branches
-    diverging on exactly this, and porting the old copy would have told the
-    consultant the opposite of what the code does.
-
-    So the honest disclosure is the inverse, and it is the more useful one: not
-    "these are held back" but "these are going, and no one has signed them off".
-    That is a fact a consultant can act on before spending a run.
-
-    A name is only listed once, matched case-insensitively against what is in
-    scope, for the same reason `_client_capability_inputs` dedupes that way.
-    """
-    in_scope = {c.name.casefold(): c.name for c in _client_capability_inputs(db, client_id)}
-    unapproved = (
-        db.execute(
-            select(CapabilityItem.name)
-            .join(CapabilityList, CapabilityItem.capability_list_id == CapabilityList.id)
-            .join(Service, CapabilityList.service_id == Service.id)
-            .where(
-                Service.client_id == client_id,
-                Service.kind == ServiceKind.TECH_DEBT,
-                CapabilityList.status == CapabilityListStatus.DRAFT,
-                security_scope_filter(),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    hits: dict[str, str] = {}
-    for name in unapproved:
-        key = (name or "").strip().casefold()
-        if key and key in in_scope:
-            hits.setdefault(key, in_scope[key])
-    return sorted(hits.values())
+# `_unapproved_contributing_names` lived here and moved to item 7's SECOND PR.
+# The adversarial reviewer found it unwired -- no route, schema or component
+# called it, so a disclosure documented as "a fact a consultant can act on"
+# reached nobody -- and independently wrong: it flagged a tool as unapproved
+# whenever it appeared on a draft list, even when it was ALSO on an approved
+# one. A client with an open v2 draft re-listing the same 40 tools would have
+# seen all 40 reported as unsigned-off.
+#
+# It belongs with `AttackAiInputsPanel`, where it has a consumer and where the
+# approved-list exclusion can be asserted end to end.
 
 
 def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
@@ -1110,7 +1081,18 @@ def run_ai(
     # is None for the "(pending intake)" placeholder, which is exactly when there
     # is no name to redact -- the same condition `build_attack_ai_request` uses
     # for the preview payload.
-    resolver = CitationResolver(req.capabilities, client_org_name=req.preview.client_org_name)
+    #
+    # The mode and hints matter as much as the name. `redact_for_ai` applies the
+    # org-name and address rules ONLY in strict mode, so a resolver told "strict"
+    # while the egress ran "standard" would index placeholders the model was
+    # never shown. Both come from the same places `run_job` reads them from
+    # below, so the two cannot disagree.
+    resolver = CitationResolver(
+        req.capabilities,
+        client_org_name=req.preview.client_org_name,
+        redaction_mode=get_settings().shield_redaction_mode,
+        name_hints=tuple(req.preview.name_hints or ()),
+    )
     citations = CitationOutcome()
     tools = req.preview.inputs["capability_list"]
 

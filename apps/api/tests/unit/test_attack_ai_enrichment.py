@@ -83,10 +83,20 @@ def _seed_list(
             rows.append(row)
         db.flush()
         if snapshot:
-            # Exactly the shape `approve_capability_list` writes.
-            cl.approved_membership = [
-                {"item_id": str(r.id), "name": r.name, "vendor": r.vendor} for r in rows
-            ]
+            # Seeded through the PRODUCTION writer, not a hand-written copy of
+            # its shape. The first version of this fixture built the dicts here
+            # under the comment "exactly the shape `approve_capability_list`
+            # writes" -- which is a promise the fixture cannot keep. Rename
+            # `item_id` in the writer and every test in this file would stay
+            # green while the live join silently returned nothing and every tool
+            # lost its category and security functions.
+            #
+            # Calling the real writer also picks up `security_scope_filter()`,
+            # which the hand-written version skipped, so the snapshot-vs-scope
+            # interaction is now exercised rather than assumed.
+            from app.routes.tech_debt import build_approved_membership
+
+            cl.approved_membership = build_approved_membership(db, cl.id)
         db.commit()
 
 
@@ -271,92 +281,30 @@ def test_the_hard_allow_list_is_unchanged_by_enrichment(db_and_client) -> None:
         names = _client_tool_names(db, cid)
         enriched = [c.name for c in _client_capability_inputs(db, cid)]
 
+    # Derived from what was SEEDED, not from the function under test. The first
+    # version asserted `set(names) == set(enriched)` -- but `_client_tool_names`
+    # is a projection of `_client_capability_inputs`, so that compared a function
+    # with itself and was true by construction. It would have passed with the
+    # allow-list empty, which is the one outcome it exists to forbid (N-033: an
+    # empty allow-list once wrote 607 fabricated gaps).
+    assert names == ["Okta Workforce Identity", "Wiz"], names
     assert names == sorted(names), "callers rely on a stable order"
-    assert set(names) == set(enriched)
+    assert set(names) == set(enriched), "the two views of one query disagree"
 
 
-@pytest.mark.unit
-def test_unapproved_contributing_names_reports_what_is_actually_sent(db_and_client) -> None:
-    """#33 finding 6/7, re-derived rather than ported -- and the port would have
-    been backwards.
-
-    #29's branch reported tools "excluded until approved" and counted DRAFT rows.
-    On `main` a DRAFT list CONTRIBUTES: `_client_capability_inputs` says so in
-    terms -- "Only DISCARDED is excluded here: DRAFT still counts". Porting that
-    copy would have told the consultant the exact opposite of what the code does,
-    and #33 finding 7 is the record of the two branches diverging on it.
-
-    So the disclosure is inverted: not "these are held back" but "these are going
-    out, and nobody has signed them off". That is actionable before a run is
-    spent; the other is a false alarm.
-
-    The first draft of this test asserted #29's model and returned `[]`, which is
-    how the divergence was caught.
-    """
-    from app.routes.attack import _unapproved_contributing_names
-
-    TestSession, cid = db_and_client
-    _seed_list(
-        TestSession,
-        cid,
-        status=CapabilityListStatus.APPROVED,
-        snapshot=True,
-        items=[{"name": "Wiz"}, {"name": "Splunk Enterprise"}],
-    )
-    _seed_list(
-        TestSession,
-        cid,
-        status=CapabilityListStatus.DRAFT,
-        items=[{"name": "Tenable.io"}],
-    )
-
-    with TestSession() as db:
-        sent = {
-            c.name
-            for c in __import__("app.routes.attack", fromlist=["x"])._client_capability_inputs(
-                db, cid
-            )
-        }
-        unapproved = _unapproved_contributing_names(db, cid)
-
-    assert "Tenable.io" in sent, "a DRAFT list contributes on main; the fixture is wrong"
-    assert unapproved == [
-        "Tenable.io"
-    ], "the draft-sourced tool being sent was not disclosed as unapproved"
-
-
-@pytest.mark.unit
-def test_unapproved_disclosure_matches_case_insensitively(db_and_client) -> None:
-    """`SPLUNK` on a draft and `Splunk` in scope are the same tool.
-
-    Reported ONCE, under the spelling actually being sent. Which spelling that
-    is comes from the existing dedupe in `_client_capability_inputs`: it sorts
-    and keeps the first, so `SPLUNK ENTERPRISE` beats `Splunk Enterprise` on
-    ASCII ordering and the DRAFT's capitalisation is what the model sees, even
-    though the approved list spells it differently.
-
-    That is pre-existing and cosmetic -- the resolver dedupes case-insensitively,
-    so a citation of either spelling resolves -- but it is worth knowing that an
-    approved list does not win the spelling contest. Asserted here as the
-    behaviour rather than the preference, because this test's first draft
-    asserted the preference and was simply wrong about what the code does.
-    """
-    from app.routes.attack import _unapproved_contributing_names
-
-    TestSession, cid = db_and_client
-    _seed_list(
-        TestSession,
-        cid,
-        status=CapabilityListStatus.APPROVED,
-        snapshot=True,
-        items=[{"name": "Splunk Enterprise"}],
-    )
-    _seed_list(
-        TestSession,
-        cid,
-        status=CapabilityListStatus.DRAFT,
-        items=[{"name": "SPLUNK ENTERPRISE"}],
-    )
-
-    with TestSession() as db:
-        assert _unapproved_contributing_names(db, cid) == ["SPLUNK ENTERPRISE"]
+# The `_unapproved_contributing_names` disclosure and its two tests moved OUT of
+# this PR. The reviewer found them unwired -- nothing in any route, schema or
+# component called the function, so a "fact a consultant can act on" reached
+# nobody -- and, separately, wrong: it reports a tool as unapproved whenever it
+# appears on a draft list, even when it is ALSO on an approved one, which for a
+# client with an open v2 draft re-listing the same 40 tools would flag all 40.
+#
+# Shipping it unwired would have been a guard that cannot fire; shipping it wired
+# would have been a false alarm. It belongs with `AttackAiInputsPanel` in item
+# 7's second PR, where it has a consumer and where the approved-list exclusion
+# can be asserted end to end.
+#
+# The lesson it was carrying is preserved in #33's comment thread: #29's branch
+# reported these tools as "excluded until approved", and on `main` a DRAFT list
+# CONTRIBUTES, so a straight port would have told the consultant the opposite of
+# what the code does.

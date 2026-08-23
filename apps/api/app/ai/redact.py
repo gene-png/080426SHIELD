@@ -166,11 +166,11 @@ def _redact_addresses(text: str) -> tuple[str, int]:
 def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
     """Replace the client's legal name (case-insensitive, whole-token).
 
-    Public because the ATT&CK citation resolver needs the EXACT transformation
-    the egress path applies, to recognise a tool the model was shown under its
-    placeholder (#33 finding 5). A second implementation of the placeholder rule
-    would drift from this one, and that alias is only correct while the two agree
-    about what the model actually saw.
+    Public since #33 finding 5, when the ATT&CK citation resolver needed to know
+    what a tool name looks like after redaction. That resolver now calls
+    `redact_for_ai` instead — the whole pipeline rather than this one rule —
+    because this rule is only one of eight and the others also rewrite tool
+    names (see #130). Kept public: it is a coherent unit and is tested directly.
     """
     if not org_name.strip():
         return text, 0

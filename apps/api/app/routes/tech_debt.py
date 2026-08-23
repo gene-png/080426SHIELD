@@ -800,6 +800,33 @@ def patch_capability_item(
     return CapabilityItemResponse.model_validate(item, from_attributes=True)
 
 
+def build_approved_membership(db: Session, capability_list_id: uuid.UUID) -> list[dict]:
+    """The D-053 snapshot: WHAT was approved, not merely that approval happened.
+
+    Extracted from `approve_capability_list` so it is callable without a request,
+    a user or a tenant -- which is what lets the ATT&CK enrichment tests seed a
+    snapshot through the REAL writer instead of hand-writing its shape. A test
+    that hand-writes the snapshot agrees with the reader by construction: rename
+    `item_id` here and every such test stays green while the live join silently
+    returns nothing and every tool loses its description.
+
+    `vendor` is in here (W2) because the citation resolver uses it to judge
+    whether a cited string is unambiguous, so a vendor edited after approval
+    would move the allow-list exactly the way a name edit does.
+    """
+    return [
+        {"item_id": str(i.id), "name": i.name, "vendor": i.vendor}
+        for i in db.execute(
+            select(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == capability_list_id)
+            .where(security_scope_filter())
+            .order_by(CapabilityItem.name)
+        )
+        .scalars()
+        .all()
+    ]
+
+
 @router.post(
     "/capability-lists/{list_id}/approve",
     response_model=CapabilityListResponse,
@@ -844,20 +871,7 @@ def approve_capability_list(
     # Re-approval overwrites deliberately: editing an approved list is a real
     # workflow, and the fix is to make the change explicit and audited rather
     # than to forbid it.
-    membership = [
-        # `vendor` too (W2): the citation resolver uses it to judge whether a
-        # cited string is unambiguous, so a vendor edited after approval would
-        # move the allow-list exactly the way a name edit does.
-        {"item_id": str(i.id), "name": i.name, "vendor": i.vendor}
-        for i in db.execute(
-            select(CapabilityItem)
-            .where(CapabilityItem.capability_list_id == cap_list.id)
-            .where(security_scope_filter())
-            .order_by(CapabilityItem.name)
-        )
-        .scalars()
-        .all()
-    ]
+    membership = build_approved_membership(db, cap_list.id)
     previous = cap_list.approved_membership
     cap_list.approved_membership = membership
     audit(
