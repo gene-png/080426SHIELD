@@ -82,6 +82,8 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.ai.redact import redact_org_name
+
 _PUNCT = re.compile(r"[^a-z0-9]+")
 _WS = re.compile(r"\s+")
 
@@ -144,8 +146,35 @@ class CitationResolver:
     once per cited string across ~633 techniques.
     """
 
-    def __init__(self, candidates: list[Candidate]) -> None:
+    def __init__(self, candidates: list[Candidate], client_org_name: str | None = None) -> None:
+        """`client_org_name` closes #33 finding 5, and it is not cosmetic.
+
+        The resolver is built from the capability list's UNREDACTED names, while
+        the payload the model sees is redacted inside `run_job`. So a client
+        called "Northwind" is shown `[CLIENT] SOC Platform` for a tool stored as
+        `Northwind SOC Platform` -- and the prompt tells the model to cite the
+        name verbatim. An obedient model therefore cited a string this resolver
+        had never heard of, every run, forever, and the client's own MDR
+        contributed zero coverage.
+
+        That is the largest SYSTEMATIC near miss in this module: it fires for
+        every tool a client named after themselves, not for an occasional bad
+        guess. Reproduced on main before the fix -- `[CLIENT] SOC Platform`
+        rejected, the same tool under its stored name resolving fine.
+
+        The redacted form is therefore indexed as an ALIAS for the same
+        capability, resolving to its real name. Deliberately a CONFIRMATION and
+        not an inference: the placeholder mapping is deterministic and OURS, not
+        the model's guess -- there is nothing to be wrong about. Treating it as
+        needs-review would park every client-named tool in the review queue
+        permanently, which is this defect wearing the other hat.
+
+        Uniqueness still governs. Two capabilities that redact to the same string
+        are ambiguous and are refused, exactly as two that collide on any other
+        key are.
+        """
         self._candidates = list(candidates)
+        self._client_org_name = (client_org_name or "").strip()
         self._by_norm: dict[str, set[str]] = {}
         self._by_fold: dict[str, set[str]] = {}
         self._by_vendor: dict[str, set[str]] = {}
@@ -156,10 +185,30 @@ class CitationResolver:
         for c in candidates:
             self._by_norm.setdefault(_norm(c.name), set()).add(c.name)
             self._by_fold.setdefault(_fold(c.name), set()).add(c.name)
+            # The form the MODEL is actually shown, indexed as an alias of the
+            # same capability. See the docstring: this is the only string an
+            # obedient model can cite for a client-named tool.
+            redacted = self._redacted_form(c.name)
+            if redacted is not None:
+                self._by_norm.setdefault(_norm(redacted), set()).add(c.name)
+                self._by_fold.setdefault(_fold(redacted), set()).add(c.name)
             if c.vendor and c.vendor.strip():
                 self._by_vendor.setdefault(_fold(c.vendor), set()).add(c.name)
             else:
                 self._vendorless.add(c.name)
+
+    def _redacted_form(self, name: str) -> str | None:
+        """`name` as the model sees it, or None when redaction changes nothing.
+
+        Uses the SAME redactor the egress path uses rather than a local
+        reimplementation of it: a second copy of the placeholder rule would drift
+        from `redact_payload`, and this alias is only correct while the two agree
+        about what the model was shown.
+        """
+        if not self._client_org_name:
+            return None
+        redacted, count = redact_org_name(name, self._client_org_name)
+        return redacted if count else None
 
     def resolve(self, cited: str) -> Resolution:
         if not isinstance(cited, str) or not cited.strip():

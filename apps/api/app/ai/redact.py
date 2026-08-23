@@ -163,8 +163,15 @@ def _redact_addresses(text: str) -> tuple[str, int]:
     return combined.sub(PLACEHOLDER_ADDRESS, text), count
 
 
-def _redact_org_name(text: str, org_name: str) -> tuple[str, int]:
-    """Replace the client's legal name (case-insensitive, whole-token)."""
+def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
+    """Replace the client's legal name (case-insensitive, whole-token).
+
+    Public because the ATT&CK citation resolver needs the EXACT transformation
+    the egress path applies, to recognise a tool the model was shown under its
+    placeholder (#33 finding 5). A second implementation of the placeholder rule
+    would drift from this one, and that alias is only correct while the two agree
+    about what the model actually saw.
+    """
     if not org_name.strip():
         return text, 0
     pat = re.compile(rf"\b{re.escape(org_name)}\b", re.IGNORECASE)
@@ -240,7 +247,7 @@ def redact_for_ai(
         if c:
             counts["address"] = c
         if client_org_name:
-            cleaned, c = _redact_org_name(cleaned, client_org_name)
+            cleaned, c = redact_org_name(cleaned, client_org_name)
             if c:
                 counts["client_org"] = c
 

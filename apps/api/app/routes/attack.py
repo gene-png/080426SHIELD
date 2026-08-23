@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -494,7 +494,52 @@ def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
     return LLMClient.from_db(db)
 
 
+@dataclass(frozen=True)
+class CapabilityInput:
+    """One capability as the mitre_map model should see it (plan part 1B).
+
+    The extractor already produces `vendor`, `category` and `security_functions`
+    — its own prevent/detect/respond finding — and all of it was discarded. The
+    pipeline computed "Falcon does detect + respond", threw that away, sent the
+    bare string `"CrowdStrike Falcon"`, and asked the model to re-derive D/P/R
+    from the name alone.
+
+    Four fields, and only four. Cost, licence count and notes are irrelevant to
+    mapping a technique and the redactor should not have to reason about them —
+    a deliberate privacy boundary, pinned by
+    `test_cost_and_licence_never_egress`.
+    """
+
+    name: str
+    vendor: str | None = None
+    category: str | None = None
+    security_functions: list[str] = field(default_factory=list)
+
+
+def _capability_payload(caps: list[CapabilityInput]) -> list[dict]:
+    """What actually egresses. Kept separate from the record on purpose: the
+    boundary is easier to assert on, and easier to notice someone widening."""
+    return [
+        {
+            "name": c.name,
+            "vendor": c.vendor,
+            "category": c.category,
+            "security_functions": list(c.security_functions),
+        }
+        for c in caps
+    ]
+
+
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
+    """Name + vendor only, for the citation resolver. See
+    `_client_capability_inputs`, which this projects from — one query, one set of
+    membership rules, so the allow-list and the payload cannot disagree."""
+    return [
+        Candidate(name=c.name, vendor=c.vendor) for c in _client_capability_inputs(db, client_id)
+    ]
+
+
+def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[CapabilityInput]:
     """Security capabilities from the client's Tech Debt capability list(s).
 
     Returns name AND vendor: the citation resolver needs the vendor column to
@@ -549,7 +594,19 @@ def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
         .all()
     )
 
-    pairs: list[tuple[str, str | None]] = []
+    # (name, vendor, item_id) — `item_id` is present for snapshot rows and is
+    # what makes the split below possible.
+    #
+    # **`name`/`vendor` come from the SNAPSHOT; `category`/`security_functions`
+    # are read LIVE.** That is not a compromise, it is the distinction D-053 is
+    # actually about. W3 froze MEMBERSHIP — which tools may be cited — because an
+    # approved list stays editable and a citation "confirmed against the approved
+    # list" was being checked against whatever the list had since become. The
+    # resolver matches on name and vendor, so those define membership and stay
+    # frozen. `category` and `security_functions` describe a tool that is ALREADY
+    # citable; a consultant re-classifying one after approval should reach the
+    # next run rather than waiting for a re-approval that may never come.
+    pairs: list[tuple[str, str | None, str | None]] = []
     # Lists whose approved membership was never recorded still read live: a DRAFT
     # by design (mapping ATT&CK before approving the tech-debt list is a normal
     # order of work, per the docstring above), and a pre-0043 list because NULL
@@ -577,14 +634,19 @@ def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
                 # that as UNKNOWN rather than as "no vendor" is the cautious
                 # direction: the resolver flags a vendor-shaped match it cannot
                 # verify instead of resolving it confidently.
-                (e.get("name") or "", e.get("vendor"))
+                (e.get("name") or "", e.get("vendor"), e.get("item_id"))
                 for e in cap_list.approved_membership
             )
 
     if live_ids:
         pairs.extend(
-            db.execute(
-                select(CapabilityItem.name, CapabilityItem.vendor).where(
+            (name, vendor, str(item_id))
+            for name, vendor, item_id in db.execute(
+                select(
+                    CapabilityItem.name,
+                    CapabilityItem.vendor,
+                    CapabilityItem.id,
+                ).where(
                     CapabilityItem.capability_list_id.in_(live_ids),
                     security_scope_filter(),
                 )
@@ -607,20 +669,114 @@ def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
     # Sorted so the winner is deterministic. The query has no ORDER BY, and
     # picking by row order meant the same inputs could resolve differently
     # between runs when two lists disagreed about a vendor.
-    by_key: dict[str, tuple[str, str | None]] = {}
-    for name, vendor in sorted(pairs, key=lambda p: (p[0] or "", p[1] or "")):
+    by_key: dict[str, tuple[str, str | None, str | None]] = {}
+    for name, vendor, item_id in sorted(pairs, key=lambda p: (p[0] or "", p[1] or "")):
         clean = (name or "").strip()
         if not clean:
             continue
         key = clean.casefold()
         clean_vendor = (vendor or "").strip() or None
         if key not in by_key:
-            by_key[key] = (clean, clean_vendor)
+            by_key[key] = (clean, clean_vendor, item_id)
         elif by_key[key][1] is None and clean_vendor is not None:
             # Prefer a spelling that carries a vendor — a vendor-less duplicate
             # would make every vendor-shaped citation unverifiable for no reason.
-            by_key[key] = (by_key[key][0], clean_vendor)
-    return [Candidate(name=n, vendor=v) for n, v in sorted(by_key.values())]
+            by_key[key] = (by_key[key][0], clean_vendor, by_key[key][2] or item_id)
+
+    winners = sorted(by_key.values())
+
+    # The descriptive half, in ONE query rather than per row. Deliberately NOT
+    # filtered by `security_scope_filter()`: membership was already decided
+    # above, and re-filtering here would drop the enrichment for exactly the row
+    # the confirm queue moved out of scope after approval — a row that is still
+    # citable and is therefore still worth describing.
+    #
+    # A row whose live item is gone keeps its name and vendor and gets no
+    # description. That is the fail-safe direction: dropping it instead would let
+    # a deletion silently narrow the allow-list, which is #96.
+    # The snapshot stores `item_id` as a string (`str(i.id)` in the writer) and
+    # the column is a UUID, so these have to be converted rather than passed
+    # through. A value that is not a UUID is a bug in a writer, not user input —
+    # it is raised with the offending entry named rather than skipped, because
+    # skipping it would silently drop the description and read as "this tool has
+    # no classification".
+    ids = set()
+    for name, _, i in winners:
+        if not i:
+            continue
+        try:
+            ids.add(uuid.UUID(str(i)))
+        except ValueError as exc:
+            raise ValueError(
+                f"capability {name!r} carries an unusable approved-membership " f"item_id: {i!r}"
+            ) from exc
+    described: dict[str, tuple[str | None, list[str]]] = {}
+    if ids:
+        described = {
+            str(row_id): (category, list(functions or []))
+            for row_id, category, functions in db.execute(
+                select(
+                    CapabilityItem.id,
+                    CapabilityItem.category,
+                    CapabilityItem.security_functions,
+                ).where(CapabilityItem.id.in_(ids))
+            ).all()
+        }
+
+    out: list[CapabilityInput] = []
+    for name, vendor, item_id in winners:
+        category, functions = described.get(item_id or "", (None, []))
+        out.append(
+            CapabilityInput(
+                name=name,
+                vendor=vendor,
+                category=category,
+                security_functions=functions,
+            )
+        )
+    return out
+
+
+def _unapproved_contributing_names(db: Session, client_id: uuid.UUID) -> list[str]:
+    """Tools being SENT that come from a list nobody has approved.
+
+    Deliberately not the function #29 had. That branch reported tools "excluded
+    until approved" and counted DRAFT rows -- but on `main` a draft list
+    CONTRIBUTES (`_client_capability_inputs`: "Only DISCARDED is excluded here:
+    DRAFT still counts, because mapping ATT&CK before approving the tech-debt
+    list is a normal order of work"). #33 finding 7 records the two branches
+    diverging on exactly this, and porting the old copy would have told the
+    consultant the opposite of what the code does.
+
+    So the honest disclosure is the inverse, and it is the more useful one: not
+    "these are held back" but "these are going, and no one has signed them off".
+    That is a fact a consultant can act on before spending a run.
+
+    A name is only listed once, matched case-insensitively against what is in
+    scope, for the same reason `_client_capability_inputs` dedupes that way.
+    """
+    in_scope = {c.name.casefold(): c.name for c in _client_capability_inputs(db, client_id)}
+    unapproved = (
+        db.execute(
+            select(CapabilityItem.name)
+            .join(CapabilityList, CapabilityItem.capability_list_id == CapabilityList.id)
+            .join(Service, CapabilityList.service_id == Service.id)
+            .where(
+                Service.client_id == client_id,
+                Service.kind == ServiceKind.TECH_DEBT,
+                CapabilityList.status == CapabilityListStatus.DRAFT,
+                security_scope_filter(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    hits: dict[str, str] = {}
+    for name in unapproved:
+        key = (name or "").strip().casefold()
+        if key and key in in_scope:
+            hits.setdefault(key, in_scope[key])
+    return sorted(hits.values())
 
 
 def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
@@ -675,8 +831,11 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
 
-    capabilities = _client_capabilities(db, client.id)
-    tools = [c.name for c in capabilities]
+    # ONE query, projected two ways, so the hard allow-list and the egress
+    # payload cannot disagree about what the client owns.
+    capability_inputs = _client_capability_inputs(db, client.id)
+    capabilities = [Candidate(name=c.name, vendor=c.vendor) for c in capability_inputs]
+    tools = [c.name for c in capability_inputs]
     rows = {
         r.technique_code: r
         for r in db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -693,7 +852,14 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         capabilities=capabilities,
         preview=AiPreviewPayload(
             job_name="mitre_map",
-            inputs={"capability_list": tools, "technique_codes": sorted(rows)},
+            inputs={
+                # Enriched objects, not bare names (plan part 1B). The extractor
+                # already knows the vendor, the category and its own
+                # prevent/detect/respond finding; sending the name alone made the
+                # model re-derive D/P/R from a string.
+                "capability_list": _capability_payload(capability_inputs),
+                "technique_codes": sorted(rows),
+            },
             client_org_name=client_org,
         ),
     )
@@ -939,7 +1105,12 @@ def run_ai(
     # and an exact-match frozenset beside it would be a second, laxer answer to
     # the same question. The field stays on the request because the preview
     # payload and its tests read it.
-    resolver = CitationResolver(req.capabilities)
+    # The client's legal name, so a tool named after the client resolves from the
+    # placeholder the model was actually shown (#33 finding 5). `client_org_name`
+    # is None for the "(pending intake)" placeholder, which is exactly when there
+    # is no name to redact -- the same condition `build_attack_ai_request` uses
+    # for the preview payload.
+    resolver = CitationResolver(req.capabilities, client_org_name=req.preview.client_org_name)
     citations = CitationOutcome()
     tools = req.preview.inputs["capability_list"]
 

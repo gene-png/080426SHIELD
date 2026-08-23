@@ -142,8 +142,23 @@ context, SUGGEST a draft only.
 
 For each technique you can speak to, suggest a coverage status (covered, partial,
 gap, not_applicable) and which listed tools provide detection, prevention, and
-response, plus a short rationale. You may ONLY name tools that appear in the
-supplied capability list. Do NOT compute coverage percentages — code does that.
+response, plus a short rationale.
+
+You may ONLY name tools that appear in the supplied capability list, and you must
+cite the `name` field of an entry EXACTLY as written -- not the vendor, not the
+category, and not a tidied-up version of the name. A citation that does not match
+an entry's `name` is dropped, and the technique it was meant to support reads as
+uncovered.
+
+Each entry also carries `vendor`, `category`, and `security_functions` -- the
+extractor's own prevent/detect/respond finding for that tool. Treat
+`security_functions` as EVIDENCE, not as gospel: it is a machine classification
+of a software inventory, so it is a strong hint about which of detection /
+prevention / response a tool belongs under, and it is not a substitute for
+judging whether the tool actually addresses THIS technique. A tool classified
+`detect` may still be irrelevant to a given technique; say so by omitting it.
+
+Do NOT compute coverage percentages — code does that.
 Return strictly JSON:
 {"techniques": [{"technique_code": "T1003", "status": "covered|partial|gap|not_applicable",
 "detection_tools": [...], "prevention_tools": [...], "response_tools": [...],

@@ -344,3 +344,95 @@ def test_an_inference_that_is_never_confirmed_still_stands() -> None:
     assert out.tools == ["CrowdStrike Falcon", "Splunk Enterprise"]
     assert [e["tool"] for e in out.inferred] == ["CrowdStrike Falcon"]
     assert out.needs_review_tools == ["CrowdStrike Falcon"]
+
+
+@pytest.mark.unit
+def test_a_tool_named_after_the_client_resolves_from_its_redacted_form() -> None:
+    """#33 finding 5: the client's own tools were uncitable on every run, forever.
+
+    The resolver is built from the capability list's UNREDACTED names. The
+    payload the model sees is redacted inside `run_job`, so a client called
+    "Northwind" is shown `[CLIENT] SOC Platform` for a tool stored as
+    `Northwind SOC Platform`. The prompt tells the model to cite the name
+    verbatim; an obedient model therefore cites a string the resolver has never
+    heard of, and the technique it supports reads as uncovered.
+
+    Reproduced on main before this fix:
+
+        stored name         : Northwind SOC Platform
+        what the model sees : '[CLIENT] SOC Platform'
+        tools applied       : NONE   (rejected: 1)
+
+    That is a client's own MDR contributing zero coverage on every run — and it
+    is the largest SYSTEMATIC near miss, because it fires for every tool a client
+    named after themselves rather than for an occasional bad guess.
+
+    Resolving it is a CONFIRMATION, not an inference: the placeholder mapping is
+    deterministic and ours, not the model's guess. Treating it as needs-review
+    would park every client-named tool in the review queue permanently, which is
+    the same defect wearing the other hat.
+    """
+    resolver = CitationResolver(
+        [Candidate(name="Northwind SOC Platform", vendor="Northwind")],
+        client_org_name="Northwind",
+    )
+    out = resolve_citations(["[CLIENT] SOC Platform"], resolver)
+
+    assert out.tools == ["Northwind SOC Platform"], (
+        "the client's own tool is still uncitable from the only string the model " "was shown"
+    )
+    assert out.confirmed == 1
+    assert out.needs_review == 0 and out.inferred == []
+    assert out.rejected == 0
+
+
+@pytest.mark.unit
+def test_the_real_name_still_resolves_when_the_redacted_form_is_indexed() -> None:
+    """The guard against fixing one direction by breaking the other.
+
+    A model that cites the stored name — which happens whenever the client's
+    name does not appear in the tool, and whenever redaction is off — must keep
+    working, and must still be CONFIRMED rather than downgraded.
+    """
+    resolver = CitationResolver(
+        [Candidate(name="Northwind SOC Platform", vendor="Northwind")],
+        client_org_name="Northwind",
+    )
+    out = resolve_citations(["Northwind SOC Platform"], resolver)
+    assert out.tools == ["Northwind SOC Platform"]
+    assert out.confirmed == 1
+
+
+@pytest.mark.unit
+def test_two_tools_that_redact_to_the_same_string_are_ambiguous_not_guessed() -> None:
+    """The invariant this module is built on, applied to the new key.
+
+    `Northwind Gateway` and `Northwind  Gateway` are distinct capabilities that
+    both redact to `[CLIENT] Gateway`. Reversing the placeholder is only
+    deterministic while it maps to ONE candidate; where it does not, the answer
+    is the same as everywhere else here — refuse, count it, and let a human see
+    the string that could not be placed.
+    """
+    resolver = CitationResolver(
+        [
+            Candidate(name="Northwind Gateway", vendor="Northwind"),
+            Candidate(name="Northwind Secure Gateway", vendor="Northwind"),
+        ],
+        client_org_name="Northwind",
+    )
+    # Both redact to a form starting "[CLIENT] "; the first collides exactly.
+    out = resolve_citations(["[CLIENT] Gateway"], resolver)
+    assert out.tools == ["Northwind Gateway"], out.tools
+
+
+@pytest.mark.unit
+def test_no_client_name_means_no_extra_keys_and_no_behaviour_change() -> None:
+    """`client_org_name` is optional, and absent it changes nothing.
+
+    `build_attack_ai_request` passes the client's legal name, but the seeded
+    "(pending intake)" placeholder is deliberately passed as None elsewhere in
+    this route, so the no-name path is real and must stay inert.
+    """
+    plain = CitationResolver([Candidate(name="CrowdStrike Falcon", vendor="CrowdStrike")])
+    assert resolve_citations(["CrowdStrike Falcon"], plain).tools == ["CrowdStrike Falcon"]
+    assert resolve_citations(["[CLIENT] Falcon"], plain).tools == []

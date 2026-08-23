@@ -8,6 +8,7 @@ actually builds in fixture mode carries a deterministic response for every job.
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from collections.abc import Iterator
@@ -179,3 +180,71 @@ def test_missing_fixture_raises_typed_503_not_raw_keyerror(db_session) -> None:
     # The failed call is still audited.
     row = db_session.execute(select(LLMCall)).scalars().one()
     assert row.status == LLMCallStatus.FAILED
+
+
+@pytest.mark.unit
+def test_mitre_map_fixture_reads_enriched_capability_objects() -> None:
+    """The single highest-risk item in plan part 1B, and it is a CI-only failure.
+
+    `_fixture_mitre_map` called `_strs(payload["capability_list"])`, which keeps
+    only `isinstance(v, str)`. The moment the payload carries objects, that
+    returns `[]` — so fixture mode cites ZERO tools, and fixture mode is what CI
+    runs. Every existing assertion about tool citations (s5-attack among them)
+    would have gone red at once, with the cause three files away from the
+    failure.
+
+    Both shapes are accepted deliberately rather than switching over: a stored
+    payload written before the enrichment (an `llm_calls` row being replayed, an
+    older preview) is still a list of strings, and the C0 pattern says those must
+    keep parsing.
+    """
+    from app.ai.fixtures import _fixture_mitre_map
+
+    enriched = _fixture_mitre_map(
+        {
+            "technique_codes": ["T1003", "T1059"],
+            "capability_list": [
+                {
+                    "name": "CrowdStrike Falcon",
+                    "vendor": "CrowdStrike",
+                    "category": "EDR",
+                    "security_functions": ["detect", "respond"],
+                },
+                {"name": "Splunk Enterprise", "vendor": "Splunk", "category": "SIEM"},
+            ],
+        }
+    )
+    cited = json.loads(enriched.content)["techniques"]
+    named = {t for row in cited for t in row["detection_tools"] + row["response_tools"]}
+    assert named, "fixture mode cited no tools at all from an enriched payload"
+    assert named <= {"CrowdStrike Falcon", "Splunk Enterprise"}, named
+
+
+@pytest.mark.unit
+def test_mitre_map_fixture_still_reads_a_bare_string_list() -> None:
+    """C0: an older stored payload is a list of strings and must keep working."""
+    from app.ai.fixtures import _fixture_mitre_map
+
+    legacy = _fixture_mitre_map(
+        {"technique_codes": ["T1003"], "capability_list": ["CrowdStrike Falcon"]}
+    )
+    rows = json.loads(legacy.content)["techniques"]
+    named = {t for row in rows for t in row["detection_tools"] + row["response_tools"]}
+    assert named == {"CrowdStrike Falcon"}
+
+
+@pytest.mark.unit
+def test_mitre_map_fixture_ignores_an_object_with_no_usable_name() -> None:
+    """A malformed entry must not become a citation of the empty string, which
+    the resolver would then count as unusable on every technique."""
+    from app.ai.fixtures import _fixture_mitre_map
+
+    out = _fixture_mitre_map(
+        {
+            "technique_codes": ["T1003"],
+            "capability_list": [{"vendor": "Nobody"}, {"name": ""}, {"name": "Wiz"}],
+        }
+    )
+    rows = json.loads(out.content)["techniques"]
+    named = {t for row in rows for t in row["detection_tools"] + row["response_tools"]}
+    assert named == {"Wiz"}
