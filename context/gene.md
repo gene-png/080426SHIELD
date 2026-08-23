@@ -2,45 +2,47 @@
 
 ## Pick up here
 
-Both PRs are real and green. PR #127 (ZT truncation test) and PR #128 (adversarial-reviewer rule in CLAUDE.md, MVP resize to 8-10.5, D-057) verified directly on GitHub: both open, both 7/7 checks passed, both carry their own adversarial-audit section. #128's content is more precise than the relay conveyed, including a self-correction of a number I'd previously verified as accurate ("four of seven" wrong verdicts is actually "four of six"). Recommend merging both now.
+PR #129 is real and matches the relay closely, in more detail than what came through chat. Not ready to merge yet though: as of this check it's 3/7 checks green (the two audit-gate checks plus secret scan) with 4 required checks still running (CI Demo, E2E, Python, Web). Wait for those before merging. Separately, PR #127 and PR #128 are both confirmed merged, so `main` now actually has the adversarial-reviewer rule and the 8-10.5 MVP total, closing the gap flagged two rounds ago.
 
-**Last updated:** 2026-08-22 (PR #127 and PR #128 confirmed open, green, and content-accurate against GitHub; D-057 read in full; the refuted #108 finding checked; a raw.githubusercontent.com caching gotcha caught and noted)
+**Last updated:** 2026-08-22 (PR #129 read in full, checks still in progress; #127/#128 confirmed merged and their content now live on `main`; #106 and #107 confirmed carrying fresh, accurate comments from this round; the vacuous-gate near-miss, the five-state clause, and the authority admission all verified word-for-word against the actual CLAUDE.md diff on the branch)
 
 This file is owner-write-only. It exists so any session (mine or a relay) can pick up the real state of the project without reconstructing it from scattered chat history. Update it after every substantive decision. **This file lives in the repo, not on any one machine; a local computer restart does not affect it.**
 
 ## This round, verified against GitHub directly
 
-**PR #127 (ZT test) confirmed**, open, 7/7 checks green, one commit. Its own adversarial-audit section: 1 finding (the test was written after the behavior it tests, so proved nothing until the revert-check was added), fixed before pushing. Matches what was committed on the branch two rounds ago.
+**PR #127 and PR #128 confirmed merged.** `main`'s `CLAUDE.md` now has 5 occurrences of "adversarial" and `DELIVERY_PLAN.md` now shows the 8-10.5 total. Both were still branch-only two rounds ago; both are real now.
 
-**PR #128 (rule + resize + review) confirmed**, open, 7/7 checks green, two commits, six files changed (`.claude/agents/adversarial-reviewer.md`, `.claude/commands/loop-sprint-cron.md`, `.claude/commands/pr.md`, `CLAUDE.md`, `DECISIONS.md`, `DELIVERY_PLAN.md`). The resize table in the PR body matches what I verified two rounds ago exactly: item 6 1.5-2 to 3-4, item 8 0.5-1 to 1-1.5, item 9 2-2.5 to 3-4, total 5-6.5 to 8-10.5, arithmetic checked (3+1+1+3=8, 4+1+1.5+4=10.5).
+**PR #129 confirmed open**, one commit, six files changed. Read the PR body in full: the near-vacuous-gate finding is real (HTML comments aren't stripped by `check_audit_evidence.py`, so a colon-based commented example in the PR template would have satisfied the FINDINGS/DISPOSITION check invisibly), caught by the dev before review, with the review catching the second half (nothing protected the arrow substitution from being "corrected" back to a colon in a docs-only, gate-exempt diff). Fixed with a CI step that mutates the template and asserts the gate fails on it, proven by a real mutation test shown in the PR body (`MUTANT (arrow -> colon) exit: 1`).
 
-**D-057 read in full on the branch.** Reverses part of D-054 (which rejected "document the gate in CLAUDE.md" as a discipline fix) on a stated distinction: D-054 rejected documenting a mechanism that already existed, D-057 requires running the reviewer at all, which nothing enforces. Tagged `Issues: #108`. D-054 itself now carries a dated in-entry correction pointing to D-057, in the project's established house style for reversals.
+**The five-state clause confirmed on the branch, word for word.** Fetched `CLAUDE.md` at `docs/reviewer-unavailable-clause` directly: "If the reviewer did not run, write `Findings: not run, reviewer absent` (or erroring, timed out, not dispatched: <what conflicted>). Never `Findings: none`." Plus a fifth, separate category for a reviewer that ran against the wrong thing (stale tree, wrong branch, subset, exhausted context), which gets its own `Scope:` line rather than folding into the availability list.
 
-**The self-correction is real and matters.** D-054's corrected text now reads "re-auditing that sweep overturned four of its six verdicts," not seven. The original twin-sweep evaluated six shapes cleanly plus the one real finding, not seven; the earlier round's "four of seven" (which I verified as an accurate transcription of what was posted, and reported as confirmed) was itself wrong at the source. Worth remembering: I confirmed the relay matched GitHub; I did not re-derive the count myself. Same caveat as before, now with a second concrete instance.
+**The authority admission confirmed, word for word.** "No script reads the line; nothing distinguishes a body where Gene approved from one where an agent typed his name... enforce_admins is false and both devs are admins, either of them can already merge past a red gate without writing anything at all." Matches the relay's summary exactly, and is more precise about naming the checkable alternative (`gh pr review --approve`).
 
-**The refuted finding is the best evidence the rule is working as designed.** The reviewer marked "the CLAUDE.md half of #108 is not supported by the repo" as CONFIRMED while stating it could not read GitHub issues. The dev re-verified against #108 directly (it names CLAUDE.md twice) and refuted the finding rather than accepting it. This is exactly the "a finding is a question, not a verdict, re-verify every one" clause doing its job on the first real use.
+**#106 and #107 both confirmed carrying fresh, accurate comments this round.** #107's new comment states the near-miss plainly ("it very nearly shipped a vacuous audit gate") and correctly leaves the issue open since the root fix (strip HTML comments before matching) is still not done, only worked around. #106's new comment adds the PR-template instance as a second concrete example of the docs/-exemption problem, also correctly left open. Both match the PR body's "Known follow-ups" section exactly.
 
-**One thing I caught in my own process, not a repo issue:** `raw.githubusercontent.com` returned a stale (pre-push) version of `DECISIONS.md` on the PR branch immediately after checking, showing no D-057. The GitHub blob view (`/blob/<branch>/...`) had it correctly. Raw's CDN can lag a push by up to a minute or two; prefer the blob UI for anything checked right after a commit.
+**Two self-corrections confirmed accurate.** The PR body states plainly: "A CLAUDE.md-only diff is not docs-exempt, it's in CODE_PATHS" and ".github/pull_request_template.md was not code before this change. I told Gene the opposite last turn." Both are corrections of things I passed along uncritically last round (I'd suggested the dev check whether a CLAUDE.md-only edit might be docs-exempt; it isn't, and saying so was on me, not just the dev).
 
-**#108 is not fully closed by this PR.** Its three suggested fixes were: correct the gate's self-description (done via PR #105), add a PR template audit section (not addressed here), add the gate to CLAUDE.md's collaboration rules (done here, via the adversarial-reviewer rule rather than the audit-gate specifically, which is a reasonable reading but not a literal match). #108 should stay open until the PR template piece lands or someone decides it's out of scope. Not a red flag, just tracking.
+## Branch / in flight
+
+`main` now has #110, #113, #116, #117, #119, #127, #128 merged. PR #129 open, checks in progress, not yet mergeable in practice until CI clears. #106, #107, #108 all still open by design, each now carrying evidence from this round rather than being resolved.
 
 ## MVP tracking: DELIVERY_PLAN.md
 
-**Still pending merge, not yet on `main`.** The 8-10.5 total lives in PR #128, verified accurate to what was reported, but `main` itself still shows 5-6.5 until the PR merges. Once it merges, gene.md and DELIVERY_PLAN.md will agree for the first time this round.
+**Resolved.** `main` and `gene.md` now agree: 8-10.5 sessions across items 6, 7, 8, 9. PR #129 does not touch this file, confirmed by its own body ("MVP path is unchanged").
 
 ## D-054, D-055, D-056, D-057, D-052: decisions log
 
-D-057 new this round (see above). D-054 carries an in-entry correction pointing to D-057. Others unchanged from prior entries.
+Unchanged this round; #129 does not add a new D-number, it's a docs+ci fix, not a decision reversal.
 
 ## Open decisions: NOT to be reconstructed from memory
 
-**New this round:** whether the PR template piece of #108 (the still-unaddressed suggested fix) gets its own issue or gets folded into a future PR. Whether #84 should get the `mvp-blocking` label (still open from last round, unaffected by this PR).
+**New this round:** whether to wait here for PR #129's CI to finish before telling the dev to merge (yes), and whether #106/#107's root fixes (stripping HTML comments, narrowing the docs/ prefix match, guarding against renames) get their own scheduled work or stay parked behind "worked around, issue stays open" indefinitely.
 
-**Still open, unchanged:** whether #111 (admin-console N+1) gets pulled ahead of item 7. Path-scoped branch-protection exemption for `context/gene.md`, not yet requested. What "addressable" coverage means for #102's exclusion of `pending_review`. Local-device mirror of this file. #90's build, #89's pin test, #92's contract-test fix. #57, `ServiceStatus.RELEASED` (#62), W0's freeze shape. Whether to parallelize item 6. First real unattended cron run (the Monday after 2026-08-22), worth confirming it actually fired.
+**Still open, unchanged:** whether #111 (admin-console N+1) gets pulled ahead of item 7. Path-scoped branch-protection exemption for `context/gene.md`, not yet requested. What "addressable" coverage means for #102's exclusion of `pending_review`. Local-device mirror of this file. #90's build, #89's pin test, #92's contract-test fix. #57, `ServiceStatus.RELEASED` (#62), W0's freeze shape. Whether to parallelize item 6. Whether #84 gets the `mvp-blocking` label. First real unattended cron run (the Monday after 2026-08-22), worth confirming it actually fired.
 
 ## Resolved as of this round
 
-PR #127 and PR #128 confirmed real, open, and green. D-057 read in full and matches the relay. The four-of-six correction confirmed. The #108 refutation confirmed as the rule's first real re-verify catch working correctly.
+PR #127 and PR #128 confirmed merged, their content now live on `main`. PR #129 read in full and verified accurate, including the five-state clause and the authority admission checked word-for-word against the actual file diff, not just the PR body summary. #106 and #107 confirmed carrying accurate new comments. Two self-corrections in the PR body confirmed genuine.
 
 ## MVP-complete vs. client-ready: standing distinction
 
@@ -48,16 +50,16 @@ Unchanged.
 
 ## Adversarial-reviewer and Playwright
 
-**Updated this round:** the rule is now real, in `CLAUDE.md` on the PR branch (not yet `main`), with the evidence, the three operational clauses, and the D-057 decision backing it. Its first real use (this PR reviewing itself) caught 11 findings, 9 fixed, 1 correctly refuted, 1 deliberately left. That is a working demonstration, not just a policy.
+**Updated this round:** the rule survived its second real use intact. First use (PR #128 reviewing itself) found 11, fixed 9, refuted 1, left 1. Second use (PR #129) found 9, fixed all 9, with 3 of those being narrow workarounds for issues (#106, #107, #108) that stay open rather than closed, which is itself the honest outcome, not a shortcut.
 
 ## Environment notes (standing)
 
-**New this round:** `raw.githubusercontent.com` can serve a stale version of a file for roughly a minute after a push; the blob UI (`/blob/<branch>/<path>`) does not have this lag. Prefer blob view when verifying something checked immediately after a commit. Open issue count last confirmed at 34 pre-#121-126; six new issues since (#121-#126), unchanged this round.
+Unchanged from last round's `raw.githubusercontent.com` CDN-lag note. Open issue count last confirmed at 34 pre-#121-126; six new issues since (#121-#126), unchanged this round; #106, #107, #108 remain open with updated evidence, not new issues.
 
 ## Do not merge
 
-Nothing open blocking `main`. Two PRs open and green: #127, #128. Both recommended for merge.
+PR #129 open, not yet fully green (3/7 checks passed, 4 required checks still running as of this check). Wait for CI before merging. Nothing else blocking `main`.
 
 ## Recurring defect shapes to watch for (CLAUDE.md)
 
-Unchanged core list plus last round's vocabulary-vs-shape addition. **New this round:** a number carried forward from an earlier round can be wrong at the source, not just mistranscribed later. Confirming a relay matches what's on GitHub is not the same as confirming the number GitHub shows is itself correct; "four of seven" passed that first check cleanly last round and was still wrong.
+Unchanged. No new shape this round; this round's findings (HTML-comment gate bypass, docs/-prefix carve-out, rename laundering) are new instances of shapes already recorded (#72's fail-open-looks-like-pass family, and the docs-exemption problem CLAUDE.md's own "sweeping for twins" entry already warns about).
