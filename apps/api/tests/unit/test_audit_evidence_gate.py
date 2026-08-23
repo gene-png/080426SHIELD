@@ -222,3 +222,21 @@ def test_main_refuses_rather_than_exempting_when_no_paths_were_collected(tmp_pat
 
     assert main(_files(tmp_path, "", "anything\n")) == 2
     assert main(_files(tmp_path, "\n  \n", "anything\n")) == 2
+
+
+@pytest.mark.unit
+def test_the_pr_template_is_treated_as_code() -> None:
+    """A one-file change to it must NOT be waved through as documentation.
+
+    Without this, 'tidying' the arrow back to a colon is a lone `.md` diff:
+    exempt from the gate, green suite, and the gate is vacuous from the next PR
+    onward.
+
+    The OTHER half of this guard -- that the shipped template actually fails the
+    gate when unfilled -- cannot live here: the api container mounts only
+    `apps/api`, so no test in this tree can read `.github/`. It runs as a step in
+    `audit-gate.yml` instead, where the whole repo is checked out. Splitting it
+    is deliberate; asserting against an inlined COPY of the template would test
+    the copy and not the file.
+    """
+    assert is_code_change([".github/pull_request_template.md"]) is True

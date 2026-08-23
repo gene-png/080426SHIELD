@@ -91,6 +91,27 @@ jobs:
           git log --format=%B "origin/${{ github.base_ref }}...HEAD" > /tmp/pr_commits.txt
           echo "commit messages collected:"; wc -l < /tmp/pr_commits.txt
 
+      - name: The PR template must not satisfy the audit gate by itself
+        # Its text goes into every PR body, so one character decides whether this
+        # check means anything. The commented examples use "->" and not ":"
+        # because this checker does not strip HTML comments -- restore the colon
+        # and every PR passes having recorded nothing, in a body that renders no
+        # audit block at all.
+        #
+        # This lives in CI rather than pytest because the api container mounts
+        # only apps/api, so no test in that tree can read .github/.
+        working-directory: apps/api
+        run: >-
+          python -c "import sys;
+          from pathlib import Path;
+          from scripts.check_audit_evidence import missing_evidence;
+          body = Path('../../.github/pull_request_template.md').read_text(encoding='utf-8');
+          p = ' '.join(missing_evidence(body));
+          sys.exit('UNFILLED PR TEMPLATE SATISFIES THE AUDIT GATE -- the commented
+          examples must use an arrow, not a colon. missing_evidence() said: ' + (p or '(nothing)'))
+          if ('no \"Findings:\" line' not in p or 'no \"Disposition:\" line' not in p)
+          else print('PR template correctly fails the gate when unfilled.')"
+
       - name: Reject undeclared issue closes
         working-directory: apps/api
         run: |

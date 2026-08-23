@@ -102,12 +102,17 @@ DOC_SUFFIXES = (".md", ".txt", ".rst")
 DOC_PREFIXES = ("docs/", "context/")
 #: `.md` under here is not prose. `.claude/agents/adversarial-reviewer.md` IS
 #: the reviewer this gate exists to enforce, and CLAUDE.md governs how every
-#: session behaves. Exempting them would let the mechanism that catches the next
+#: session behaves. `.github/pull_request_template.md` is the third: its text is
+#: injected verbatim into every PR body, so a single character there decides
+#: whether this check means anything. Its commented examples deliberately use
+#: `->` rather than `:` — restoring the colon would satisfy FINDINGS and
+#: DISPOSITION from inside an invisible HTML comment on every PR thereafter, and
+#: as a lone `.md` change that edit would have been exempt from this very gate. Exempting them would let the mechanism that catches the next
 #: #93 be rewritten with no audit — contradicting the principle
 #: `test_a_workflow_change_needs_an_audit` states: changing the gates themselves
 #: is when review matters most.
 CODE_PREFIXES = (".claude/",)
-CODE_PATHS = ("CLAUDE.md",)
+CODE_PATHS = ("CLAUDE.md", ".github/pull_request_template.md")
 
 
 def is_code_change(paths: list[str]) -> bool:

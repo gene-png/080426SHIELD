@@ -520,6 +520,71 @@ Rules of the road:
     guard holds for all five jobs" is what told us to pin an invariant rather
     than fix it.
 
+  **When the reviewer cannot run.** "Use judgement" is the gap this rule exists to
+  close, so the cases are named and so is the person who may decide.
+
+  Kinds of unavailable — **an open list, not an enumeration**, because the fourth
+  one below is the case this repo has actually hit and the first draft omitted it:
+
+  - **Absent** — the `adversarial-reviewer` agent type is not in the environment
+    at all. Nothing to retry.
+  - **Erroring** — it dispatches and fails, or returns nothing usable. Retry once.
+    If it fails again, treat as absent.
+  - **Timed out or killed mid-run** — retry once with a narrower scope (fewer
+    files, one question). If it produces partial findings, record them **as
+    partial**; a truncated run is evidence about the part it reached and says
+    nothing about the rest.
+  - **Not dispatched** — present and working, but you did not run it, because
+    running it conflicted with something else. This is D-054's own recorded root
+    cause: *"the agent resolved a conflict between 'do not invoke subagents
+    unprompted' and §14 silently, in favour of not running it."* Say which
+    instruction conflicted. Writing "absent" here is false and sends the next
+    reader hunting an environment problem that never existed.
+  - **Ran, but not against this change** — a stale tree, the wrong branch, a
+    subset of the diff, or a run that exhausted its own context and returned a
+    complete-looking report on the first few files. None of these times out,
+    errors, or is absent; all of them produce a clean report that is true about
+    what the reviewer saw and false about this PR. This is why the audit block
+    carries a **`Scope:`** line — the reviewer is instructed to state what it
+    examined and what it could not reach, and without a field to put it in that
+    evidence is produced and then thrown away at the recording step.
+
+  Anything else: describe it. The list is illustrative.
+
+  **The audit section must not lie about which happened.** If the reviewer did not
+  run, write `Findings: not run — reviewer absent` (or `erroring`, `timed out`,
+  `not dispatched: <what conflicted>`). Never `Findings: none`. Those are different claims: "none" is a claim about the code,
+  "not run" is a claim about the process, and the gate accepts both because it
+  only checks that the lines exist. That asymmetry is precisely why the honesty
+  has to be a rule rather than a check.
+
+  **Who may decide a PR ships without it: the human dev at the keyboard, by name,
+  recorded in the PR body.** Never an agent, never by inference from silence, and
+  never the author of the code when the author is an agent — the same principle
+  as sprint loops being launched by a human and never by an agent.
+
+  **That authorisation is prose, and nothing checks it.** No script reads the
+  line; nothing distinguishes a body where Gene approved from one where an agent
+  typed his name. It is weaker still than it looks, because `enforce_admins` is
+  false and both devs are admins — either of them can already merge past a red
+  gate without writing anything at all. It is written down so it can be pointed
+  at afterwards, not because it stops anything. **The checkable version, if this
+  ever needs to be real, is a GitHub review approval** (`gh pr review --approve`)
+  from the named human rather than a line of body text — that is attributable and
+  visible to the API.
+
+  A blocked PR waits, and the issue it belongs to gets a comment saying it is
+  blocked on tooling rather than deprioritised, so it does not read as stalled.
+  **The exception is a change the gate itself exempts and that states no number
+  or rule** — a typo fix in prose. That is the "use judgement" case above, and it
+  does not become a hard block just because the reviewer is away.
+
+  This clause exists because the reviewer went absent for one turn immediately
+  after PR #128 merged the rule above, and the rule had nothing to say about
+  it. Dated by the PR rather than the clock on purpose: D-057 is dated the day
+  it was written and the rule merged the next, so a reader comparing two dates
+  sees a contradiction that neither file resolves.
+
   If running it ever conflicts with another instruction, **say so out loud rather
   than resolving it quietly** — that silent resolution is the exact failure D-054
   was written about, and it has now happened twice.
