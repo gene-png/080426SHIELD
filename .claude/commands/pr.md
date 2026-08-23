@@ -63,10 +63,20 @@ Write a PR description in this format:
 - [ ] New tests added for: [list what's covered]
 - [ ] Tested manually: [list any scenarios that were manually verified]
 
+<!-- Section names and order follow .github/pull_request_template.md, which
+GitHub pre-fills and which therefore wins in practice. If the two disagree,
+the template is right and this file is stale. -->
+
 ## Adversarial audit
 
-Findings: <n, or "none">
-Disposition: <what was fixed here, what was filed, what was accepted>
+Findings ->  <n, or "none">
+Disposition ->  <what was fixed here, what was filed, what was accepted>
+
+<!-- The arrows above are deliberate and are NOT a typo: with colons, this
+scaffold satisfies the audit check on its own, so a body generated from it would
+pass with the placeholders never filled in. Replace each arrow with a colon only
+when you replace the placeholder with a real value. Same reason
+.github/pull_request_template.md uses arrows. -->
 
 <!-- REQUIRED on any PR touching code. The check is "Adversarial audit
 recorded" (apps/api/scripts/check_audit_evidence.py) and it wants these literal
