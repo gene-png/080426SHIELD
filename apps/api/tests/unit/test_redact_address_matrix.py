@@ -54,6 +54,17 @@ SUFFIX_SHAPE = [
     ("digit+letter", "Apt 3B", ADDR),
     ("letter+digit", "Suite B3", ADDR),
     ("hyphenated digits", "Suite 400-B", ADDR),
+    # letter-HYPHEN-digit. The axis had digit+letter and digit-hyphen-letter but
+    # not this, and the pattern broke at exactly the missing cell: `Suite B-201`
+    # matched only `Suite B` and produced `[ADDRESS]-201` -- the unit number
+    # surviving under an output that LOOKS redacted. A partial match that reads
+    # as a success is the silent-failure shape this module exists to prevent, so
+    # the assertion is exact-equality and would catch it.
+    ("letter-hyphen-digit", "Suite B-201", ADDR),
+    ("letter-hyphen-digit (2)", "Apt A-12", ADDR),
+    ("letter-dot-digit", "Suite B.201", ADDR),
+    ("abbreviated, letter-hyphen-digit", "Ste. D-3", ADDR),
+    ("two letters-hyphen-digit", "Suite AB-201", ADDR),
     ("spelled out", "Suite Twelve", ADDR),
     ("spelled out, multi-token", "Suite One Hundred Twenty", ADDR),
     ("spelled out, hyphenated", "Apt Twenty-One", ADDR),
@@ -69,11 +80,23 @@ SUFFIX_SHAPE_PROSE = [
     ("plural noun", "Unit owners are unclear for 14 systems."),
     ("noun phrase", "Apt configuration drift across the estate."),
     ("hyphenated word", "Floor-level access controls were not tested."),
-    # Roman-numeral letters spell ordinary words. `Unit did` and `Unit ill` are
-    # both `Unit` + a token drawn entirely from [ivxlcdm], so a case-BLIND roman
-    # branch redacts them. This pair is why that branch must be case-scoped.
-    ("roman letters as a word", "Unit did not respond during the test."),
-    ("roman letters as a word (2)", "Unit ill defined in the inventory."),
+    # A keyword ENDING A SENTENCE. This is the most common context the rule meets
+    # in consultant prose, and it is why the separator class allows a period only
+    # after an ABBREVIATION: ". " is both an abbreviating separator and a
+    # sentence break, so a period after a spelled-out word let the rule swallow
+    # the start of the next sentence. "Ste." is an abbreviation; "unit." is a
+    # word followed by a full stop.
+    ("keyword ends a sentence", "Only one control covers this unit. 3 findings remain."),
+    ("keyword ends a sentence (2)", "Cameras on each floor. 2 were offline."),
+    ("keyword ends a sentence (3)", "Reviewed each business unit. A follow-up is due."),
+    # `ill` is drawn entirely from the roman class [IVXL], so a case-BLIND roman
+    # branch redacts it. This is THE case that pins the `(?-i:` scoping: revert
+    # that alone and this row goes red.
+    ("roman letters as a word", "Unit ill defined in the inventory."),
+    # `did` is not at risk (d is not in [IVXL]) and is here only as an ordinary
+    # prose row. Recorded explicitly because an earlier draft cited it as the
+    # evidence for the case-scoping, and it cannot be: it stays green either way.
+    ("prose after the keyword", "Unit did not respond during the test."),
 ]
 
 
@@ -139,7 +162,6 @@ def test_separator_shapes_are_redacted(shape: str, text: str, expected: str) -> 
 POSITION = [
     ("ordinal before Floor", "2nd Floor", ADDR),
     ("ordinal before Fl", "3rd Fl", ADDR),
-    ("bare number before Floor", "3 Floor", ADDR),
     ("keyword first still works", "Floor 2", ADDR),
 ]
 
@@ -148,6 +170,20 @@ POSITION = [
 POSITION_LEAVE = [
     ("no such form", "200 Suite"),
     ("no such form (2)", "4B Apt"),
+    # The ordinal is REQUIRED on the pre-keyword branch. Without it this branch
+    # reaches leftward into ordinary prose: "floor plans", "floor switches" and
+    # "floor wardens" are all normal facility- and network-assessment words.
+    ("bare number, compound noun", "We reviewed 3 floor plans."),
+    ("bare number, compound noun (2)", "Check the floor switches."),
+    # ...and with `\s` as its separator it also crossed a newline, which is the
+    # exact merge the suite separator class is written to prevent. The guarantee
+    # has to hold for EVERY sub-pattern in the compiled rule, not just one.
+    #
+    # The ordinal here is load-bearing in the TEST, not just the rule: the first
+    # version of this row used a bare "3", which the ordinal requirement above
+    # already rejects, so it stayed green with the newline exclusion reverted and
+    # pinned nothing. Caught by red-on-revert, not by review.
+    ("across a newline", "reviewed the 2nd\nfloor plans in detail"),
 ]
 
 
@@ -185,9 +221,16 @@ PRODUCT_NAMES = [
     "Apt Cache Proxy",
     "Adobe Creative Suite Enterprise",
     "Sophos Security Suite Enterprise",
+    # Negative controls -- names with no designator keyword in them at all.
+    # These must stay in the corpus: they are what distinguishes "the rule is
+    # off" from "the rule is correct", and the measured ratio quoted in D-058
+    # (17 of 23) is only reproducible while they are here.
     "CrowdStrike Falcon",
     "Splunk Enterprise",
     "Tenable Nessus",
+    "Palo Alto Cortex XDR",
+    "Rapid7 InsightVM",
+    "Microsoft Sentinel",
 ]
 
 
@@ -260,6 +303,11 @@ RESIDUAL_OVER_REDACTED = [
     # NSA Suite A / Suite B cryptography, caught by the single-letter branch,
     # which exists so `Suite A` (a real lettered suite) is not lost.
     ("crypto suite", "Suite B Cryptography", "[ADDRESS] Cryptography"),
+    # The pre-keyword branch redacts an ordinal + Floor wherever it appears, so
+    # an ordinal-qualified compound noun goes with it. Narrower than the bare
+    # number case (which is a residual LEAK above) and accepted in the safe
+    # direction, but listed so the cost is visible rather than discovered.
+    ("ordinal compound noun", "2nd floor plans were provided.", "[ADDRESS] plans were provided."),
 ]
 
 RESIDUAL_LEAKED = [
@@ -280,8 +328,34 @@ RESIDUAL_LEAKED = [
     # Pre-existing; unchanged by #130's fix.
     ("colon separator", "Suite: 400"),
     ("comma separator", "Suite, 400"),
-    # Full-width numerals. `[A-Za-z0-9]` is ASCII-only.
+    # Full-width numerals, and the real rule is narrower than "ASCII only" -- an
+    # earlier draft of this comment said that and was wrong. Python's `\d` on a
+    # str pattern IS Unicode-aware, so it matches U+FF10-FF19; the ASCII-only
+    # TAIL is what fails, and then the trailing `\b` falls between two word
+    # characters. So a single full-width digit redacts (`Suite ４` -> `[ADDRESS]`)
+    # and so does a full-width digit followed by ASCII ones; only an all-
+    # full-width run of two or more leaks.
     ("full-width digits", "Suite ４００"),
+    # An intervening word between the keyword and the number. The separator class
+    # holds no letters, so `No.` / `Number` defeat it. Pre-existing, and the
+    # CAGE rule fails the same way for the same reason (filed separately) -- the
+    # shared shape is "a separator class with no letters in it".
+    ("intervening No.", "Suite No. 4"),
+    ("intervening Number", "Unit Number 12"),
+    # An underscore is a word character, so the ASCII tail stops before it and
+    # the trailing `\b` then fails. Comes from the same exported-spreadsheet
+    # source class as the zero-separator forms above.
+    ("underscore in the suffix", "Suite 400_B"),
+    # A space between a letter designator and its number. Allowing branch 2 to
+    # cross a space would match "the floor is 3 meters" -- an ordinary sentence.
+    # The single-letter branch declines it too, by lookahead: matching just
+    # "Suite B" left "201" behind under an output that read as redacted, and a
+    # whole-string leak the table records beats half a string vanishing.
+    ("letter, space, digits", "Suite B 201"),
+    # No ordinal on the pre-keyword branch. Requiring it is what keeps "3 floor
+    # plans" intact; the cost is this form, and `3 Floor Lane` is caught by the
+    # street rule rather than this one.
+    ("bare number before Floor", "3 Floor"),
     # A designator wrapped onto the next line, excluded deliberately so that
     # bulleted lists survive -- see the bullet test above.
     ("wrapped line", "Suite\n400"),

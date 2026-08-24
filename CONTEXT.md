@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-20 (cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-08-24 (#130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -12,6 +12,42 @@ facts and environment gotchas live in `CLAUDE.md`; personal in-flight status
 lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
+
+### 2026-08-24 — the redaction boundary over-matched every "fl" word (#130, D-058)
+
+`redact_for_ai` is the single LLM egress path, so `_redact_addresses` is the one
+rule whose errors reach **every AI input in all five services**. Its
+suite-designator pattern had no boundary after the keyword alternation and a
+separator class that could match empty, so a keyword ate the rest of any word it
+prefixed. Measured against `main` over the corpus committed with the fix, so the ratio is
+reproducible from the repo: **17 of 23 real security product names corrupted** (`Stellar Cyber` -> `[ADDRESS] Cyber`; `Flowmon`, `Fleet`,
+`Flashpoint`, `Steampipe`, `Aptible`, `Unitrends`, `Suitecrm` -> a bare
+`[ADDRESS]`), plus prose, because security vocabulary is dense in "fl" -- flat,
+flag, flaw, flow.
+
+It failed silently: the model received plausible text, nothing raised, and no
+test could see it -- **all 73 name-shaped strings in the seed and fixture data
+pass the address rule clean**, so an assertion built on seed data passes forever.
+
+It also re-opened **#33 finding 5** through another door. Three products all
+egressing as `[ADDRESS]` collide in `_by_alias_norm`, so the only string an
+obedient model can cite resolves `ambiguous` -- and under **#102** that pulls the
+technique out of the ATT&CK coverage **denominator**.
+
+The rule is now decided by an enumerated **truth table** rather than a regex
+patched case by case (`tests/unit/test_redact_address_matrix.py`, 79 cells over
+five axes, written before the pattern). Three drafts were rejected on
+measurement, including the issue's own suggested fix, which fixes less and leaks
+more. Residuals are named and pinned rather than discovered later -- see
+**D-058**.
+
+Filed, not fixed, so no item hides another's cost: `street_pat` leaks whole
+addresses when the house number is spelled out or alphanumeric (`221B Baker
+Street` is untouched today); six designator keywords are absent entirely; the
+CAGE rule misses its own primary phrasing; `_RE_CONTRACT` is the only pattern in
+the file compiled without `IGNORECASE`; and `_redact_signature_blocks` truncates
+everything after a line reading `Regards`.
+
 
 ### 2026-08-09 → 2026-08-17 — cross-service integrity (PRs #34, #35, #36, #39, #42, #45, #54)
 

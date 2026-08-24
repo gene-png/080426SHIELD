@@ -3046,3 +3046,100 @@ W8b remains the mechanism that would bind it, and remains deferred.
 - The rule closes the `CLAUDE.md` half of **#108**. The other half — the gate's
   own source still saying it "only REPORTS" and citing D-051 instead of D-054 —
   is untouched and still open.
+
+## D-058 — The address rule is decided by a truth table, and its residuals are named
+
+**Date:** 2026-08-24 · **Context:** #130 · **Supersedes:** nothing
+
+`redact_for_ai` is the single LLM egress path, so `_redact_addresses` is the one
+rule whose errors reach every AI input in all five services. Before this, its
+suite-designator pattern had no trailing boundary after the keyword alternation
+and a separator class that could match empty, so the keyword ate the rest of any
+word it prefixed. Verified in-container against `main`, over the corpus committed as
+`PRODUCT_NAMES` in the truth table so the ratio is reproducible from the repo
+rather than from a scratch list: **17 of 23 real security product names
+corrupted** — `Stellar Cyber` → `[ADDRESS] Cyber`, `Flowmon`,
+`Fleet`, `Flashpoint`, `Fluency`, `Steadfast`, `Steampipe`, `Aptible`, `Unity`,
+`Unitrends`, `Suitecrm` → a bare `[ADDRESS]` — plus prose (`Flat network
+segmentation`, `flaws in the flow control`), because security vocabulary is
+unusually dense in "fl".
+
+It also re-opened **#33 finding 5** through a different door: three products that
+all egress as `[ADDRESS]` collide in `_by_alias_norm`, so the only string an
+obedient model can cite resolves `ambiguous`, and under **#102** the technique
+leaves the ATT&CK coverage **denominator**.
+
+### The decision is the method, not the regex
+
+The pattern was rewritten three times in one sitting and each draft was correct
+for the corpus that prompted it and wrong for the next: the first lost `Ste-400`,
+the second lost `Suite Twelve`, the third lost every zero-separator form. That is
+CLAUDE.md's stated tell for a design problem rather than a bug list, so the rule
+is now decided by an enumerated truth table
+(`apps/api/tests/unit/test_redact_address_matrix.py`) over five axes — suffix
+shape, separator shape, value position, trigger-inside-a-product-name, and
+surrounding context — written BEFORE the pattern and derived from what the
+redactor SHOULD do. Any future change to this rule changes the table first.
+
+The issue's own suggested minimal fix (`\b` plus a required separator) was
+measured and **rejected**: it fixes less _and_ leaks more, dropping `Ste-400`
+while leaving `Apt Cache Proxy` and `Adobe Creative Suite Enterprise` corrupt.
+
+### Accepted residuals — deliberately wrong, and named so no one has to rediscover them
+
+Every one is pinned by a test that fails if it silently changes.
+
+**Over-redacted (a designator keyword followed by a number):** `Burp Suite
+2024.1`, `Burp Suite v2`, `Adobe Creative Suite 6`, `apt 1.2.3`, `APT 28`,
+`Unit 42`, `Unit 8200`, and `Suite B Cryptography`. A version number and a suite
+number are the same shape; **no suffix-shape rule can separate them.** Only
+surrounding-context logic could, and that is a different design, deliberately not
+built here — it would gate the rule on a `street_pat` hit, and `street_pat` is
+itself unreliable (see below).
+
+**Leaked (accepted):** letter-only designators (`Suite AB`, `Ste BB`) and a letter
+designator space-separated from its number (`Suite B 201`); a colon or comma
+separator (`Suite: 400`, pre-existing); an intervening word (`Suite No. 4`,
+`Unit Number 12`) -- the separator class holds no letters, which is the same
+shape that makes the CAGE rule miss its own primary phrasing; an underscore in
+the suffix (`Suite 400_B`, from the same exported-spreadsheet source class as the
+zero-separator forms); an all-full-width numeral run; a designator wrapped onto
+the next line; a bare number before `Floor` (`3 Floor`, no ordinal); and non-US
+designators (`Flat 3`, `Level 2`), which were never covered -- `Flat` matched
+before only via the `Fl` bug being fixed.
+
+**On full-width numerals, stated correctly rather than plausibly:** Python's
+`\d` on a `str` pattern IS Unicode-aware, so it matches U+FF10-FF19. It is the
+ASCII-only TAIL that fails, and then the trailing `` falls between two word
+characters. So `Suite 4` in full-width redacts, and only a run of two or more
+full-width digits leaks. An earlier draft of this record said "`[A-Za-z0-9]` is
+ASCII-only", which named the right character class for the wrong reason.
+
+**Two shapes were FIXED rather than accepted, because their failure mode is worse
+than a leak: a partial match that READS as a completed redaction.** `Suite B-201`
+produced `[ADDRESS]-201`, keeping the unit number under an output that looks
+finished, and `Suite B 201` produced `[ADDRESS] 201`. Both now either redact
+whole or decline whole. A leak the truth table records beats half a string
+vanishing silently, and that asymmetry is why the rule exists at all.
+
+Letter-only designators are accepted on this reasoning: once `street_pat` has
+fired, a letter-only designator carries no identifying content
+(`1234 Main Street, Suite AB` → `[ADDRESS], Suite AB`). The rejected alternative
+was an uppercase-scoped branch `(?-i:[A-Z]{1,3})`, which corrupts `Adobe Creative
+Suite CC` and `Sophos Security Suite XG` — #130 reintroduced on another branch,
+i.e. a fix that breaks an earlier fix. **Stated caveat:** `street_pat` does NOT
+reliably catch the identifying half — spelled-out and alphanumeric house numbers
+pass it (`One Federal Plaza`, `221B Baker Street`), filed separately — so this
+justification is weaker than it first reads and is recorded that way on purpose.
+
+### What was ADDED, not preserved
+
+A value may precede its keyword (`2nd Floor`, `3rd Fl`). The pattern never
+modelled this. Before the fix `2nd Floor` produced `2nd [ADDRESS]` — the `\bFl`
+bug firing and leaving the number behind — and `3rd Fl` matched nothing at all.
+So the new branch adds coverage that never existed and closes a live leak; it
+does not preserve coverage through a fix, and the commit says so.
+
+The shape has exactly one member: only `Floor`/`Fl` take a number in front.
+`Building`, `Bldg`, `Rm`, `Room`, `Level` and `Mail Stop` match nothing at all,
+before or after — a coverage gap rather than a wrong shape, filed separately.

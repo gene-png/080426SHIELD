@@ -438,23 +438,39 @@ def test_two_tools_that_redact_to_the_same_string_are_ambiguous_not_guessed() ->
     change that was fixing #72's cousins.
 
     The collision here is real and comes from the redactor rather than from a
-    contrived pair: the address rule over-matches, so `Flowmon` and `Fleet` BOTH
-    egress as a bare `[ADDRESS]` (#130). Two distinct capabilities, one shown
-    string. Asserted below, from the redactor itself, before the resolver is
-    ever consulted -- so if #130 is fixed and the collision disappears, this test
-    FAILS LOUDLY rather than quietly passing while testing nothing.
+    contrived pair. It used to be `Flowmon` / `Fleet`, which both egressed as a
+    bare `[ADDRESS]` because the address rule ate any word starting "Fl" (#130).
+    That is fixed, the tripwire below fired, and this test was rewritten around a
+    pair that still collides rather than deleted -- which is what the previous
+    version of this docstring asked its reader to do.
+
+    The pair is now `Unit 42` / `Unit 8200`: both real security-domain proper
+    nouns, both genuinely address-shaped, and both members of the ACCEPTED
+    residual class recorded in D-058 -- a designator keyword followed by a
+    number is indistinguishable from a threat-group designation or a product
+    version, and no suffix-shape rule can separate them.
+
+    So this test now rests on a documented defect. That is stated rather than
+    hidden: if D-058's residual is ever narrowed, the tripwire fires again and
+    the message points at the decision record instead of leaving a puzzle.
     """
-    left, right = "Flowmon", "Fleet"
+    left, right = "Unit 42", "Unit 8200"
     a, _ = redact_for_ai(left, mode="strict", client_org_name="Northwind")
     b, _ = redact_for_ai(right, mode="strict", client_org_name="Northwind")
     assert a == b, (
         f"precondition gone: {left!r} and {right!r} no longer redact to the same "
-        f"string ({a!r} vs {b!r}). If #130 was fixed, rewrite this test around a "
-        f"pair that still collides -- do not delete it."
+        f"string ({a!r} vs {b!r}). The keyword+number residual (D-058) was "
+        f"narrowed -- rewrite this test around a pair that still collides. If NO "
+        f"pair collides any more, the alias tier has no ambiguity left to guard "
+        f"and deleting this test is the right call; say so in the PR rather than "
+        f"contriving a pair to keep it alive."
     )
 
     resolver = CitationResolver(
-        [Candidate(name=left, vendor="Kemp"), Candidate(name=right, vendor="Fleetdm")],
+        [
+            Candidate(name=left, vendor="Palo Alto Networks"),
+            Candidate(name=right, vendor="Team8"),
+        ],
         client_org_name="Northwind",
     )
     out = resolve_citations([a], resolver)
@@ -462,6 +478,62 @@ def test_two_tools_that_redact_to_the_same_string_are_ambiguous_not_guessed() ->
     assert out.tools == [], f"guessed between two capabilities: {out.tools}"
     assert out.rejected == 1
     assert out.confirmed == 0
+    # WHY the rejection, not just that there was one. Without this line the test
+    # cannot see the alias tier at all: delete the ambiguity guard and the pool
+    # path rejects as `ambiguous` anyway, and delete the alias tier ENTIRELY and
+    # the citation rejects as `unknown` -- both green, both leaving the test
+    # named after an invariant it no longer measures. `rejected_ambiguous` and
+    # `rejected_unknown` are separate rows in `rejected_details` precisely
+    # because they mean different things to the consultant reading them.
+    assert out.rejected_details[0]["reason"] == "rejected_ambiguous", (
+        f"rejected, but not for ambiguity: {out.rejected_details}. A citation "
+        f"that rejects as 'unknown' means the alias tier never indexed these at "
+        f"all, which is a different defect wearing this test's green tick."
+    )
+
+
+@pytest.mark.unit
+def test_products_named_after_a_designator_keyword_stay_citable() -> None:
+    """#130's ATT&CK-level consequence, which is worse than degraded input.
+
+    The address rule used to eat any word starting "Fl", so `Flowmon`, `Fleet`
+    and `Flashpoint` -- three real products a client can plausibly own together
+    -- were ALL shown to the model as a bare `[ADDRESS]`. `_by_alias_norm` maps
+    one string to a SET, so the only string an obedient model could cite
+    resolved to three candidates and came back `ambiguous`.
+
+    That is not just noise on the way in. Under #102 an unresolved citation
+    withholds the technique, and a withheld technique leaves the ATT&CK coverage
+    DENOMINATOR -- so a client owning more tools could report higher coverage
+    with more findings deleted. It is also #33 finding 5 returning through a
+    different door, one PR after that issue was closed.
+
+    Asserted at the resolver rather than at the redactor on purpose: a redaction
+    unit test says the string survived; this one carries it through to the
+    consumer that #130 actually broke.
+
+    Being precise about what discriminates here, because overclaiming it would be
+    the same defect this file keeps catching: the load-bearing assertion is
+    `shown == name`, which reddens if the fix is reverted. Once that holds, the
+    three names are distinct exact keys in `_by_norm` and the resolver assertions
+    below cannot fail. They are kept because they name the consequence -- the
+    path from "the redactor changed a product name" to "the technique leaves the
+    coverage denominator" is the whole point -- not because they add coverage.
+    """
+    names = ["Flowmon", "Fleet", "Flashpoint"]
+    resolver = CitationResolver(
+        [Candidate(name=n, vendor="Progress") for n in names],
+        client_org_name="Northwind",
+    )
+
+    for name in names:
+        shown, _ = redact_for_ai(name, mode="strict", client_org_name="Northwind")
+        assert shown == name, f"#130: {name!r} still egresses as {shown!r}"
+
+        out = resolve_citations([shown], resolver)
+        assert out.tools == [name], f"{name!r} is uncitable: {out.tools}"
+        assert out.confirmed == 1, f"{name!r} resolved without confirmation"
+        assert out.rejected == 0
 
 
 @pytest.mark.unit
@@ -519,9 +591,14 @@ def test_a_tool_redacted_by_a_rule_other_than_the_org_name_still_resolves() -> N
 
     `_redacted_form` originally called `redact_org_name` while its docstring
     claimed to use "the SAME redactor the egress path uses". That was true of one
-    rule out of eight, and the difference is not academic: the address rule
-    over-matches badly (#130), so `Flowmon` -- a real NDR product, no client name
-    in it anywhere -- egresses as a bare `[ADDRESS]`.
+    rule out of eight, and the difference is not academic: the ADDRESS rule
+    rewrites names with no client string in them anywhere.
+
+    The example used to be `Flowmon`, which egressed as a bare `[ADDRESS]`
+    because the rule ate any word starting "Fl" (#130, now fixed). It is now
+    `Unit 42` -- Palo Alto's threat-intelligence retainer, a real line item in a
+    capability inventory, and address-shaped by the accepted keyword+number
+    residual in D-058.
 
     A tool in that state has exactly the #33-finding-5 disease: the only string
     the model is shown is one the resolver has never heard of. Indexing only the
@@ -529,9 +606,9 @@ def test_a_tool_redacted_by_a_rule_other_than_the_org_name_still_resolves() -> N
 
     This test discriminates the two implementations directly, which the
     ambiguity test above does not: with an org-only `_redacted_form` there is no
-    alias for `Flowmon` at all, so the citation rejects.
+    alias for the tool at all, so the citation rejects.
     """
-    name = "Flowmon"
+    name = "Unit 42"
     shown, counts = redact_for_ai(name, mode="strict", client_org_name="Northwind")
     assert shown != name and "client_org" not in counts, (
         "precondition gone: this test needs a name rewritten by a NON-org rule, "
@@ -609,18 +686,28 @@ def test_a_redacted_tool_resolves_even_when_the_client_has_no_legal_name() -> No
     `_redacted_form` originally returned early when there was no client org name
     and no name hints. But in strict mode the address rule fires regardless of
     both, so a tenant still on "(pending intake)" -- which is precisely when
-    `client_org_name` is None -- would have had `Flowmon` egress as `[ADDRESS]`
-    with no alias indexed, and the tool uncitable.
+    `client_org_name` is None -- would have the tool egress as `[ADDRESS]` with
+    no alias indexed, and the tool uncitable.
 
     The question is never "is there a name to redact", it is "did the redactor
     change this string".
-    """
-    shown, _ = redact_for_ai("Flowmon", mode="strict")
-    assert shown != "Flowmon", "precondition gone; see #130"
 
-    resolver = CitationResolver([Candidate(name="Flowmon", vendor="Kemp")])
+    The example was `Flowmon` until #130 stopped the address rule eating any
+    word starting "Fl". It is now `Unit 42`, which the address rule still
+    rewrites by the accepted keyword+number residual (D-058) -- so the property
+    under test is unchanged and still reachable with no org name in play.
+    """
+    name = "Unit 42"
+    shown, _ = redact_for_ai(name, mode="strict")
+    assert shown != name, (
+        f"precondition gone: {name!r} is no longer rewritten by a non-org rule. "
+        f"The keyword+number residual (D-058) was narrowed -- repoint this test "
+        f"at another name the redactor still changes. If nothing but the org-name "
+        f"and name-hint rules rewrites a plausible bare tool name any more, this "
+        f"property is unreachable and the test should GO, not be contrived."
+    )
+
+    resolver = CitationResolver([Candidate(name=name, vendor="Palo Alto Networks")])
     out = resolve_citations([shown], resolver)
-    assert out.tools == [
-        "Flowmon"
-    ], f"a tenant with no legal name cannot cite its own tool: {out.tools}"
+    assert out.tools == [name], f"a tenant with no legal name cannot cite its own tool: {out.tools}"
     assert out.confirmed == 1

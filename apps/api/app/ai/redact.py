@@ -124,43 +124,170 @@ def _redact_signature_blocks(text: str) -> tuple[str, int]:
     return head + PLACEHOLDER_SIGNATURE + "\n", 1
 
 
+_STREET_WORDS = (
+    "Street",
+    "St",
+    "Avenue",
+    "Ave",
+    "Road",
+    "Rd",
+    "Drive",
+    "Dr",
+    "Lane",
+    "Ln",
+    "Boulevard",
+    "Blvd",
+    "Court",
+    "Ct",
+    "Way",
+    "Highway",
+    "Hwy",
+    "Parkway",
+    "Pkwy",
+    "Plaza",
+    "Square",
+)
+
+_STREET_PAT = r"\b\d{1,6}\s+([A-Z][A-Za-z]+\s+){1,4}(?:" + "|".join(_STREET_WORDS) + r")\b"
+
+# Unit/suite designators. The suffix decides, not the keyword: every keyword
+# here is also an ordinary English word or the start of a product name, so the
+# rule can only be as good as its answer to "is what follows designator-shaped".
+#
+# Split by whether the keyword is an ABBREVIATION, because only an abbreviation
+# takes a trailing period. That distinction is load-bearing rather than tidy: a
+# period-plus-space separator is also how a SENTENCE ends, so allowing it after
+# a spelled-out word made the rule swallow the start of the next sentence --
+# "covers this unit. 3 findings remain." -> "covers this [ADDRESS] findings
+# remain." That is #130's own disease surviving the fix through the separator
+# class instead of the boundary. "Ste." and "Apt." are abbreviations and take a
+# period; "Unit" and "Floor" are words and do not.
+_SUITE_KEY_ABBREV = r"(?:Ste|Apt|Fl)"
+_SUITE_KEY_WORD = r"(?:Suite|Unit|Floor|PO\s+Box|P\.O\.\s+Box)"
+
+# Separators. Deliberately NOT `\s`: a newline lets the rule reach into the next
+# line of a bulleted list and merge two items into one corrupted line
+# ("- Business Unit\n- 3rd party risk tooling"). Client notes are full of
+# bullets; a designator wrapped mid-line is rare and is a listed residual.
+_SUITE_SEP = r"[ \t#\xa0\-]"
+# Abbreviations only: the same class plus the abbreviating period.
+_SUITE_SEP_ABBREV = r"[ \t.#\xa0\-]"
+
+# Spelled-out designators ("Suite Twelve", "Apt Twenty-One"). Without these the
+# digit rule below silently drops a whole class of real addresses.
+_NUMWORD = (
+    r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|"
+    r"thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|first|second|third)"
+)
+
+
+def _suite_branches(sep: str) -> str:
+    """The five suffix shapes, parameterised by which separator class applies.
+
+    Identical for abbreviated and spelled-out keywords except for the period --
+    written once and called twice rather than copied, because a second copy of a
+    security-boundary rule drifts (CLAUDE.md's parity lesson).
+    """
+    return (
+        r"(?:"
+        # 1. NO separator, and a digit immediately: "Suite400", "PO Box99",
+        #    "Apt3B". Nobody types these, but OCR'd letterhead and exported
+        #    spreadsheet cells arrive this way and reach here through Tech Debt
+        #    extraction. Requiring a DIGIT (rather than any character, as before
+        #    #130) is what stops the keyword eating the rest of "Suitecrm",
+        #    "Unitrends", "Flowmon".
+        r"\d[A-Za-z0-9\-]*"
+        # 2. A separator, then a number that may carry a short letter prefix and
+        #    an internal separator: "Suite 400", "Ste-400", "Suite B3",
+        #    "Suite B-201", "Apt A-12". The letter prefix is capped at 3 and the
+        #    internal separator cannot be a space -- both deliberate. Uncapped,
+        #    it swallows "Adobe Creative Suite Enterprise 2024"; with a space
+        #    allowed, "the floor is 3 meters" matches. Before this branch handled
+        #    the letter-hyphen-digit form, "Suite B-201" produced
+        #    "[ADDRESS]-201": the unit number survived while the output LOOKED
+        #    redacted, which is the silent-success shape this module exists to
+        #    avoid.
+        r"|" + sep + r"+[A-Za-z]{0,3}[.\-]?\d[A-Za-z0-9\-]*"
+        # 3. Spelled out, possibly multi-token: "Suite One Hundred Twenty".
+        r"|" + sep + r"+" + _NUMWORD + r"(?:[ \t\-]" + _NUMWORD + r")*"
+        # 4. Roman numerals, and this branch MUST stay case-scoped even though
+        #    the pattern compiles IGNORECASE: lowercase i/v/x/l spell ordinary
+        #    English words, so a case-blind branch redacts "Unit ill defined" --
+        #    the #130 disease again. Verified by reverting `(?-i:` alone and
+        #    watching that case go red; "Unit did not respond" is NOT evidence
+        #    for this and an earlier draft of this comment wrongly claimed it
+        #    was, because `d` is not in the class. C/D/M are left out for the
+        #    same reason: they would add "did", "dim" and "mild" as collisions to
+        #    buy roman numerals above 89, which no suite number needs.
+        r"|" + sep + r"+(?-i:[IVXL]{1,6})"
+        # 5. A single lettered designator: "Suite A", "Apt B". Deliberately one
+        #    character: widening it to [A-Z]{1,3} to catch "Suite AB" also
+        #    corrupts "Adobe Creative Suite CC" and "Sophos Security Suite XG",
+        #    which is #130 reintroduced on another branch. "Suite AB" is an
+        #    accepted residual -- see the truth table in
+        #    tests/unit/test_redact_address_matrix.py.
+        #
+        #    The lookahead refuses when a number follows, because matching just
+        #    the letter would leave it behind: "Suite B 201" became
+        #    "[ADDRESS] 201", a partial match that READS as a completed
+        #    redaction. Declining outright is the honest failure -- the whole
+        #    string survives, which the truth table records as a leak, rather
+        #    than half of it vanishing under an output that looks finished.
+        r"|" + sep + r"+[A-Za-z0-9](?!" + sep + r"*\d)"
+        r")\b"
+    )
+
+
+_SUITE_PAT = (
+    r"\b"
+    + _SUITE_KEY_ABBREV
+    + _suite_branches(_SUITE_SEP_ABBREV)
+    + r"|\b"
+    + _SUITE_KEY_WORD
+    + _suite_branches(_SUITE_SEP)
+)
+
+# The value can also PRECEDE the keyword, which the pre-#130 pattern never
+# modelled. The shape has exactly one member: only Floor/Fl take a number in
+# front -- nobody writes "200 Suite" or "4B Apt". This is NEW coverage closing a
+# live leak, not coverage preserved through the fix: before #130, "2nd Floor"
+# produced "2nd [ADDRESS]" (the `\bFl`-eats-`oor` bug firing, number left
+# behind) and "3rd Fl" matched nothing at all.
+#
+# The ordinal suffix is REQUIRED, and the separator is not `\s`. Both are there
+# because this branch is the one that reaches leftward into prose: with a bare
+# number allowed, "We reviewed 3 floor plans." became "We reviewed [ADDRESS]
+# plans." -- floor plans, floor switches and floor wardens are ordinary facility
+# and network-assessment vocabulary. With `\s` it also crossed a newline
+# ("the top 3\nfloor switches"), which is precisely the merge the separator class
+# above is written to prevent. "3 Floor" with no ordinal is a listed residual;
+# "3 Floor Lane" is caught by the street rule instead.
+_PRE_KEYWORD_PAT = r"\b\d{1,4}(?:st|nd|rd|th)[ \t\xa0]+(?:Floor|Fl)\b"
+
+_RE_ADDRESS = re.compile(
+    f"{_STREET_PAT}|{_SUITE_PAT}|{_PRE_KEYWORD_PAT}",
+    re.IGNORECASE,
+)
+
+
 def _redact_addresses(text: str) -> tuple[str, int]:
     """Best-effort street-address redaction.
 
-    Looks for lines that have a leading digit run + street keyword OR
-    a line containing "Suite", "Apt", "PO Box". This is heuristic and
-    deliberately over-eager; tests cover the realistic shapes.
+    Matches a leading digit run + street keyword, a unit/suite designator, or a
+    number preceding "Floor"/"Fl". Heuristic by nature, so the decisions are
+    pinned as a truth table in `tests/unit/test_redact_address_matrix.py` --
+    including the cells that are knowingly wrong and accepted (D-058).
+
+    This rule is NOT free to make over-eager. `redact_for_ai` is the single LLM
+    egress path, so a keyword that over-matches corrupts every AI input across
+    all five services, silently: the model receives plausible-looking text, no
+    error is raised, and nothing surfaces it. That was #130.
     """
-    street_words = (
-        "Street",
-        "St",
-        "Avenue",
-        "Ave",
-        "Road",
-        "Rd",
-        "Drive",
-        "Dr",
-        "Lane",
-        "Ln",
-        "Boulevard",
-        "Blvd",
-        "Court",
-        "Ct",
-        "Way",
-        "Highway",
-        "Hwy",
-        "Parkway",
-        "Pkwy",
-        "Plaza",
-        "Square",
-    )
-    street_pat = r"\b\d{1,6}\s+([A-Z][A-Za-z]+\s+){1,4}(?:" + "|".join(street_words) + r")\b"
-    suite_pat = r"\b(?:Suite|Ste|Apt|Unit|Floor|Fl|PO\s+Box|P\.O\.\s+Box)[\s.#]*[A-Za-z0-9\-]+"
-    combined = re.compile(f"{street_pat}|{suite_pat}", re.IGNORECASE)
-    count = _count_replacements(combined, text)
+    count = _count_replacements(_RE_ADDRESS, text)
     if count == 0:
         return text, 0
-    return combined.sub(PLACEHOLDER_ADDRESS, text), count
+    return _RE_ADDRESS.sub(PLACEHOLDER_ADDRESS, text), count
 
 
 def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
@@ -170,7 +297,9 @@ def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
     what a tool name looks like after redaction. That resolver now calls
     `redact_for_ai` instead — the whole pipeline rather than this one rule —
     because this rule is only one of eight and the others also rewrite tool
-    names (see #130). Kept public: it is a coherent unit and is tested directly.
+    names. The address rule was the egregious case and is fixed (#130); it still
+    rewrites a keyword followed by a number, so the reason stands. Kept public:
+    it is a coherent unit and is tested directly.
     """
     if not org_name.strip():
         return text, 0

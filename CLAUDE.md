@@ -349,12 +349,44 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   SAME redactor the egress path uses" and then called `redact_org_name` — one
   rule out of the eight in `redact_for_ai`. The docstring even argued the point
   correctly ("a second copy would drift") while the code below it was the second
-  copy. It was wrong immediately, not eventually: the address rule rewrites
-  ordinary product names, so `Flowmon` egresses as a bare `[ADDRESS]` (#130) and
-  had the exact disease the fix was for. When a function must agree with another
-  function, import it and pass it the same inputs — including the MODE and any
-  optional arguments, because a parity claim covers those too.
+  copy. It was wrong immediately, not eventually: the address rule rewrote
+  ordinary product names, so `Flowmon` egressed as a bare `[ADDRESS]` and had the
+  exact disease the fix was for. (That over-match is fixed — #130 — so `Flowmon`
+  now survives; the example is past tense and the lesson is not. A keyword
+  followed by a number is still rewritten, so the case is still live.) When a
+  function must agree with another function, import it and pass it the same
+  inputs — including the MODE and any optional arguments, because a parity claim
+  covers those too.
 
+- **An over-match can be the ONLY thing covering a legitimate case. Before fixing
+  one, check what it was accidentally catching.** `suite_pat`'s `\bFl` ate the
+  `oor` in "Floor", and that bug was the sole reason `2nd Floor` got any
+  redaction at all — the pattern has no branch for a value that PRECEDES its
+  keyword, so tightening `Fl` silently removed coverage nobody knew existed.
+  Nothing fails when this happens: no test knew the coverage was there, because
+  it was never intended. The tell is that the "wrong" behaviour and the only
+  correct behaviour for some input are produced by the same line. Cousin of the
+  twin-sweep rule below — that one asks where else the defect is, this one asks
+  what else the defect is doing. Concretely, on #130: `2nd Floor` → `2nd
+  [ADDRESS]` (number left behind) and `3rd Fl` → no match at all, so the honest
+  framing of the new branch was "adds coverage that never existed and closes a
+  live leak", not "preserves coverage through a fix". Say which one it is; this
+  repo has already been bitten by comments that were true only for the case they
+  were written for.
+- **A redaction/validation corpus drawn from your own assumptions cannot falsify
+  them — and seed data is somebody's assumptions too.** #130 lived for months
+  under a green suite because all 73 name-shaped strings in `seed_demo.py` and
+  `fixtures.py` pass the address rule clean, so an address assertion built on
+  seed data passes forever. Then, fixing it, a hand-written corpus of "real
+  product names" certified a pattern carrying **six leak regressions**, because
+  the author writes addresses correctly spaced and the failing class was
+  malformed input (`PO Box99`, `Suite400`) that arrives from OCR and exported
+  spreadsheets. This is #72's shape pointed at test DATA rather than test code,
+  and the fix is the same as everywhere else here: enumerate the CLASSES and
+  require a row per class, rather than adding whichever example you thought of
+  last. The classes a hand-written corpus structurally cannot contain: malformed
+  strings, `name + version number`, non-US locale variants, and strings that have
+  already been through the pipeline once.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
