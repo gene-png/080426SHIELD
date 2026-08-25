@@ -3046,3 +3046,204 @@ W8b remains the mechanism that would bind it, and remains deferred.
 - The rule closes the `CLAUDE.md` half of **#108**. The other half — the gate's
   own source still saying it "only REPORTS" and citing D-051 instead of D-054 —
   is untouched and still open.
+
+## D-058 — The address rule is decided by a truth table, and its residuals are named
+
+**Date:** 2026-08-24 · **Context:** #130 · **Supersedes:** nothing
+
+`redact_for_ai` is the single LLM egress path, so `_redact_addresses` is the one
+rule whose errors reach every AI input in all five services. Before this, its
+suite-designator pattern had no trailing boundary after the keyword alternation
+and a separator class that could match empty, so the keyword ate the rest of any
+word it prefixed. Verified in-container against `main`, over the corpus committed as
+`PRODUCT_NAMES` in the truth table so the ratio is reproducible from the repo
+rather than from a scratch list: **17 of 23 real security product names
+corrupted** — `Stellar Cyber` → `[ADDRESS] Cyber`, `Flowmon`,
+`Fleet`, `Flashpoint`, `Fluency`, `Steadfast`, `Steampipe`, `Aptible`, `Unity`,
+`Unitrends`, `Suitecrm` → a bare `[ADDRESS]` — plus prose (`Flat network
+segmentation`, `flaws in the flow control`), because security vocabulary is
+unusually dense in "fl".
+
+It also re-opened **#33 finding 5** through a different door: three products that
+all egress as `[ADDRESS]` collide in `_by_alias_norm`, so the only string an
+obedient model can cite resolves `ambiguous`, and under **#102** the technique
+leaves the ATT&CK coverage **denominator**.
+
+### The decision is the method, not the regex
+
+The pattern was rewritten three times in one sitting and each draft was correct
+for the corpus that prompted it and wrong for the next: the first lost `Ste-400`,
+the second lost `Suite Twelve`, the third lost every zero-separator form. That is
+CLAUDE.md's stated tell for a design problem rather than a bug list, so the rule
+is now decided by an enumerated truth table
+(`apps/api/tests/unit/test_redact_address_matrix.py`) over six axes — suffix
+shape, separator shape, value position, trigger-inside-a-product-name,
+surrounding context, and text that has already been through the pipeline once —
+derived from what the redactor SHOULD do. Any future change to this rule changes
+the table first.
+
+**On "written BEFORE the pattern", which this entry said without qualification.**
+The original five axes were. The sixth was not, and neither were the rows added
+for the street rule or the rows the adversarial review of this fix forced. The
+method held for the part that was hardest to get right and was applied
+retroactively to the rest, and that is the honest version — a decision record
+claiming more discipline than the work had is the same defect as a status line
+claiming more progress.
+
+The issue's own suggested minimal fix (`\b` plus a required separator) was
+measured and **rejected**: it fixes less _and_ leaks more, dropping `Ste-400`
+while leaving `Apt Cache Proxy` and `Adobe Creative Suite Enterprise` corrupt.
+
+### Accepted residuals — deliberately wrong, and named so no one has to rediscover them
+
+Every one is pinned by a test that fails if it silently changes.
+
+**Over-redacted (a designator keyword followed by a number):** `Burp Suite
+2024.1`, `Burp Suite v2`, `Adobe Creative Suite 6`, `apt 1.2.3`, `APT 28`,
+`Unit 42`, `Unit 8200`, and `Suite B Cryptography`. A version number and a suite
+number are the same shape; **no suffix-shape rule can separate them.** Only
+surrounding-context logic could, and that is a different design, deliberately not
+built here — it would gate the rule on a `street_pat` hit, and `street_pat` is
+itself unreliable (see below).
+
+**Leaked (accepted):** letter-only designators (`Suite AB`, `Ste BB`) and a letter
+designator space-separated from its number (`Suite B 201`); a colon or comma
+separator (`Suite: 400`, pre-existing); an intervening word (`Suite No. 4`,
+`Unit Number 12`) -- the separator class holds no letters, which is the same
+shape that makes the CAGE rule miss its own primary phrasing; an underscore in
+the suffix (`Suite 400_B`, from the same exported-spreadsheet source class as the
+zero-separator forms); an all-full-width numeral run; a designator wrapped onto
+the next line; a bare number before `Floor` (`3 Floor`, no ordinal); and non-US
+designators (`Flat 3`, `Level 2`), which were never covered -- `Flat` matched
+before only via the `\bFl` bug being fixed.
+
+**On full-width numerals, stated correctly rather than plausibly:** Python's
+`\d` on a `str` pattern IS Unicode-aware, so it matches U+FF10-FF19. It is the
+ASCII-only TAIL that fails, and then the trailing `\b` falls between two word
+characters. So `Suite 4` in full-width redacts, and only a run of two or more
+full-width digits leaks. An earlier draft of this record said "`[A-Za-z0-9]` is
+ASCII-only", which named the right character class for the wrong reason.
+
+**Two shapes were FIXED rather than accepted, because their failure mode is worse
+than a leak: a partial match that READS as a completed redaction.** `Suite B-201`
+produced `[ADDRESS]-201`, keeping the unit number under an output that looks
+finished, and `Suite B 201` produced `[ADDRESS] 201`. Both now either redact
+whole or decline whole. A leak the truth table records beats half a string
+vanishing silently, and that asymmetry is why the rule exists at all.
+
+Letter-only designators are accepted on this reasoning: once `street_pat` has
+fired, a letter-only designator carries no identifying content
+(`1234 Main Street, Suite AB` → `[ADDRESS], Suite AB`). The rejected alternative
+was an uppercase-scoped branch `(?-i:[A-Z]{1,3})`, which corrupts `Adobe Creative
+Suite CC` and `Sophos Security Suite XG` — #130 reintroduced on another branch,
+i.e. a fix that breaks an earlier fix. **Stated caveat:** `street_pat` does NOT
+reliably catch the identifying half — spelled-out and alphanumeric house numbers
+pass it (`One Federal Plaza`, `221B Baker Street`), filed as #138 — so this
+justification is weaker than it first reads and is recorded that way on purpose.
+
+### What was ADDED, not preserved
+
+A value may precede its keyword (`2nd Floor`, `3rd Fl`). The pattern never
+modelled this. Before the fix `2nd Floor` produced `2nd [ADDRESS]` — the `\bFl`
+bug firing and leaving the number behind — and `3rd Fl` matched nothing at all.
+So the new branch adds coverage that never existed and closes a live leak; it
+does not preserve coverage through a fix, and the commit says so.
+
+The shape has exactly one member: only `Floor`/`Fl` take a number in front.
+`Building`, `Bldg`, `Rm`, `Room`, `Level` and `Mail Stop` match nothing at all,
+before or after — a coverage gap rather than a wrong shape, filed as #139.
+
+### The guarantee has to hold for every sub-pattern, and at first it held for two
+
+`_RE_ADDRESS` compiles three sub-patterns: `_STREET_PAT`, `_SUITE_PAT` and
+`_PRE_KEYWORD_PAT`. The newline exclusion — the reason `_SUITE_SEP` stops at a
+line break rather than using `\s` — was applied to the second and third and **not** the
+first, while the truth table carried a comment asserting it held for all three.
+Two of three, and the row that would have caught it did not exist.
+
+`_STREET_PAT` fails worse than the suite rule does, because its leading
+`\d{1,6}` reaches BACKWARD across the break and takes a number off the previous
+line:
+
+    "Servers reviewed: 5"  +  "Main Street office is unstaffed."
+      -> "Servers reviewed: [ADDRESS] office is unstaffed."
+
+The count is gone, the two lines are merged, and the result reads as an ordinary
+sentence. That is #130's own failure mode — plausible output, nothing raised,
+nothing counted — inside the fix for #130.
+
+**Decided:** `_STREET_SEP` is horizontal whitespace, matching `_SUITE_SEP`.
+
+**Cost, named rather than discovered — and this paragraph was WRONG when first
+written; see "The separator is a SUBTRACTION" below, which supersedes it. The
+list below is the whole cost only under the subtraction, not under the
+enumerated class this paragraph originally described.** An address wrapped
+across a line break now leaks (`1600 Pennsylvania` / `Avenue NW`). Unlike `Flat`, whose coverage
+existed only through the `\bFl` bug, this coverage was real — but it was never
+clean: the trailing directional falls outside the alternation, so the wrapped
+form redacted to `[ADDRESS] NW` on main and the single-line form still does. A
+partial match that reads as a completed redaction is the shape this decision
+elsewhere refuses to accept, so trading it for a recorded leak is consistent
+rather than convenient. Pinned as an accepted residual; the directional gap and
+the house-number gaps are #138.
+
+### The separator is a SUBTRACTION, because the enumerated version leaked
+
+This reverses a decision made earlier in this same entry, one round later, and
+the reversal is the part worth keeping.
+
+Narrowing the separator away from `\s` was written as `[ \t\xa0]` — space, tab,
+non-breaking space — and the cost was recorded as _"an address wrapped across a
+line break now leaks"_, full stop. That was **false**. `\s` matches 19 horizontal
+characters, so the enumerated class silently dropped **sixteen** of them:
+U+2000-U+200A, U+202F narrow no-break, U+205F medium mathematical, U+3000
+ideographic, U+1680 ogham, and U+001F.
+
+Those are not exotic. Thin and narrow-no-break spaces are what PDF and Word text
+extraction emit, which is precisely how a client's letterhead reaches this
+boundary. A street address separated by U+202F redacted on `main` and egressed
+**verbatim** under the enumerated class, with no `address` key in
+`removed_counts` — a leak at the security boundary whose audit row is
+byte-identical to a note that contained no address. Strictly worse than the
+over-match it was fixing, in the one direction that matters.
+
+**How it got in.** The decision was framed as being about NEWLINES, so the
+replacement was written to solve newlines and nobody re-derived what else was in
+the class being replaced. Every cell anyone thought to write passed, because the
+cells were written by the same person with the same mental model of "whitespace"
+— CLAUDE.md's corpus lesson, one level down, inside the fix that added it.
+
+**Decided:** `_HSPACE = r"[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]"` — that is
+`\s` minus exactly the ten characters `str.splitlines()` calls a line break.
+Every separator in the ADDRESS rule is built from it, so "does not cross a line"
+is one
+definition rather than a property each pattern re-asserts. `PO\s+Box` inside
+the keyword alternation was still using `\s` and now uses it too. `_RE_PHONE`
+and `_RE_CAGE` still do NOT -- filed as #140 and #137, not fixed here, and said
+out loud because an unstated exemption reads as an oversight.
+
+`[^\S\r\n]`, the obvious idiom and what the review of this fix proposed, is
+**also** wrong: it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and
+U+2029, every one of which IS a line break. Measured rather than argued — both
+halves are now pinned as parametrised sweeps over the two sets, with the
+parameters derived from `str.splitlines()` rather than from the pattern.
+
+**The general rule, and why this is a decision rather than a bug fix:** replacing
+a character class with an enumerated one is a subtraction you must COMPUTE, not
+guess. Write it as the subtraction and let the language define the set.
+
+### The fourth class the corpus was missing
+
+CLAUDE.md gained the four classes a hand-written corpus structurally cannot
+contain **on this branch**, and the table shipped covering three of them. The
+missing one was text that has already been through the pipeline once — which is
+not hypothetical here, because the Tech Debt extractor redacts its own inventory
+input, so `[CLIENT] SOC Platform` is the normal product of any extraction after
+intake and is fed back through the egress path on the next call.
+
+Added as an idempotence axis asserting a fixed point (`_clean(_clean(x)) ==
+_clean(x)`) rather than literal expected strings, so it cannot decay into the #72
+shape of encoding the implementation's own answer. It is green today. It is worth
+having anyway: nothing else in the suite would notice if a future widening made a
+placeholder re-match, and the ATT&CK resolver's alias tier depends on the
+transformation being stable under a second pass.

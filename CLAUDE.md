@@ -347,14 +347,46 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **"Uses the same X as the Y path" is a claim to enforce by CALLING X, never by
   reimplementing it.** `_redacted_form` said in its docstring that it used "the
   SAME redactor the egress path uses" and then called `redact_org_name` — one
-  rule out of the eight in `redact_for_ai`. The docstring even argued the point
+  rule out of the ten `redact_for_ai` runs in strict mode. The docstring even argued the point
   correctly ("a second copy would drift") while the code below it was the second
-  copy. It was wrong immediately, not eventually: the address rule rewrites
-  ordinary product names, so `Flowmon` egresses as a bare `[ADDRESS]` (#130) and
-  had the exact disease the fix was for. When a function must agree with another
-  function, import it and pass it the same inputs — including the MODE and any
-  optional arguments, because a parity claim covers those too.
+  copy. It was wrong immediately, not eventually: the address rule rewrote
+  ordinary product names, so `Flowmon` egressed as a bare `[ADDRESS]` and had the
+  exact disease the fix was for. (That over-match is fixed — #130 — so `Flowmon`
+  now survives; the example is past tense and the lesson is not. A keyword
+  followed by a number is still rewritten, so the case is still live.) When a
+  function must agree with another function, import it and pass it the same
+  inputs — including the MODE and any optional arguments, because a parity claim
+  covers those too.
 
+- **An over-match can be the ONLY thing covering a legitimate case. Before fixing
+  one, check what it was accidentally catching.** `suite_pat`'s `\bFl` ate the
+  `oor` in "Floor", and that bug was the sole reason `2nd Floor` got any
+  redaction at all — the pattern has no branch for a value that PRECEDES its
+  keyword, so tightening `Fl` silently removed coverage nobody knew existed.
+  Nothing fails when this happens: no test knew the coverage was there, because
+  it was never intended. The tell is that the "wrong" behaviour and the only
+  correct behaviour for some input are produced by the same line. Cousin of the
+  twin-sweep rule below — that one asks where else the defect is, this one asks
+  what else the defect is doing. Concretely, on #130: `2nd Floor` → `2nd
+  [ADDRESS]` (number left behind) and `3rd Fl` → no match at all, so the honest
+  framing of the new branch was "adds coverage that never existed and closes a
+  live leak", not "preserves coverage through a fix". Say which one it is; this
+  repo has already been bitten by comments that were true only for the case they
+  were written for.
+- **A redaction/validation corpus drawn from your own assumptions cannot falsify
+  them — and seed data is somebody's assumptions too.** #130 lived for months
+  under a green suite because all 73 name-shaped strings in `seed_demo.py` and
+  `fixtures.py` pass the address rule clean, so an address assertion built on
+  seed data passes forever. Then, fixing it, a hand-written corpus of "real
+  product names" certified a pattern carrying **six leak regressions**, because
+  the author writes addresses correctly spaced and the failing class was
+  malformed input (`PO Box99`, `Suite400`) that arrives from OCR and exported
+  spreadsheets. This is #72's shape pointed at test DATA rather than test code,
+  and the fix is the same as everywhere else here: enumerate the CLASSES and
+  require a row per class, rather than adding whichever example you thought of
+  last. The classes a hand-written corpus structurally cannot contain: malformed
+  strings, `name + version number`, non-US locale variants, and strings that have
+  already been through the pipeline once.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
@@ -378,6 +410,49 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   suite passing. Both were written by someone who had logged that pattern the
   same day, which is the point: knowing the shape does not prevent producing it,
   only checking does.
+
+  **A revert that silently fails to apply reports the same green as a test that
+  cannot fail — so prove the revert LANDED before you read its result.** The
+  check produces the reassuring answer in both cases, and it is the answer you
+  are hoping for, which is the worst possible combination. Concretely, on #130:
+  a scripted `str.replace` of `_STREET_SEP` matched zero occurrences because the
+  search string carried a real tab where the file has a literal backslash-`t`;
+  `replace` does not raise on a miss, so the suite ran against the UNMODIFIED
+  file and came back 111 passed. Written up, that would have read "verified
+  red-on-revert" over a fix pinned by nothing.
+
+  Cheap guards, in order of preference: `assert s.count(old) == 1` before
+  replacing (a miss and an unintended double-hit both raise); `grep` the mutated
+  line and read it back; or revert with `git` rather than a string edit. And
+  treat "the revert produced no failures" as a claim about your tooling until
+  proven otherwise — the first hypothesis is that the mutation did not land, not
+  that the assertion is weak.
+- **Replacing a character class with an enumerated one is a subtraction you must
+  COMPUTE, not guess.** `\s` matches 19 horizontal characters. Narrowing it to
+  "space, tab, non-breaking space" to stop a rule crossing newlines therefore
+  dropped SIXTEEN more (U+2000-U+200A, U+202F, U+205F, U+3000, U+1680, U+001F) --
+  and in the redactor that is a LEAK, not a residual: a street address separated
+  by a narrow no-break space, which is exactly what PDF and Word extraction emit,
+  egressed verbatim with no `address` key in `removed_counts`. Strictly worse
+  than the over-match being fixed. The decision was framed as being about
+  NEWLINES, so the replacement was written to solve newlines and nobody
+  re-derived what else was in the class. Write it as the subtraction and let the
+  language define the set (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
+  parametrised sweeps whose parameters come from somewhere other than the thing
+  under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong -- it
+  still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
+- **An escape sequence written into prose becomes an invisible control byte, and
+  CI now checks for it** (`apps/api/scripts/check_no_control_chars.py`, the
+  "control-character sweep" step). `\b` in a non-raw string is a BACKSPACE; `\v`,
+  `\f` and `\u2028` are equally invisible. This repo writes prose ABOUT regexes
+  constantly -- decision records quote the patterns they decide -- so
+  `DECISIONS.md` acquires an empty code span and a control byte inside a sentence
+  explaining word boundaries, and nothing notices: the file parses, prettier
+  passes, the diff looks fine. **Four instances on one branch**: two pre-existing,
+  one in the commit fixing those two, and one in the CI comment introducing the
+  gate, in the sentence describing the defect. The last was caught by the gate on
+  its first run. That is the argument for mechanising it rather than writing a
+  fifth paragraph -- the same argument the closing-keyword check settled.
 - **Assert what must APPEAR before what must not.** `toHaveCount(0)` on a page
   still mid-fetch passes vacuously — the element it forbids simply has not
   rendered yet. Wait on the positive state first (`toBeVisible`), then assert the

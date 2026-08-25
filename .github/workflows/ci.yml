@@ -47,6 +47,16 @@ jobs:
         working-directory: apps/api
         run: python -m scripts.check_test_integrity tests
 
+      # Stray control characters, repo-wide. Runs from the ROOT, not apps/api,
+      # because the files this defect actually lands in are DECISIONS.md and
+      # CONTEXT.md -- prose about regexes, where an interpolated `\b` becomes an
+      # invisible BACKSPACE byte inside a sentence explaining word boundaries.
+      # FOUR instances on one branch: two pre-existing, one in the commit that
+      # fixed those two, and one in this very comment -- caught by this gate on
+      # its first run, before it had ever run in CI. Also a two-second pass.
+      - name: control-character sweep
+        run: python apps/api/scripts/check_no_control_chars.py .
+
       - name: pytest -m unit
         working-directory: apps/api
         run: pytest -m unit tests/unit

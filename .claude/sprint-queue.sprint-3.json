@@ -1,4 +1,4 @@
-﻿{
+{
     "sprint":  "sprint-3-audit-correctness",
     "cron_job_id":  null,
     "cron_schedule":  "*/10 * * * *",

@@ -233,13 +233,20 @@ class CitationResolver:
 
         The first version called `redact_org_name` directly while its docstring
         claimed to use "the SAME redactor the egress path uses". That was false
-        for seven of the eight rules, and the gap is not theoretical: the address
-        rule rewrites ordinary product names, so `Stellar Cyber` egresses as
-        `[ADDRESS] Cyber` and `Flowmon` as a bare `[ADDRESS]`. Those tools have
-        exactly the #33-finding-5 disease and none of the cure, and indexing only
-        the org-name form would have left them broken while claiming otherwise.
-        That over-redaction is a defect in its own right, tracked in #130; this
-        function is correct either way, because it ASKS the redactor what it does
+        for nine of the ten passes strict mode runs, and the gap was not
+        theoretical: the
+        address rule USED to rewrite ordinary product names, so `Stellar Cyber`
+        egressed as `[ADDRESS] Cyber` and `Flowmon` as a bare `[ADDRESS]`. Those
+        tools had exactly the #33-finding-5 disease and none of the cure, and
+        indexing only the org-name form would have left them broken while
+        claiming otherwise.
+
+        That over-redaction was a defect in its own right and is fixed (#130), so
+        those two examples no longer redact -- they are kept here in the past
+        tense because the ARGUMENT still stands and is what this function is for.
+        A designator keyword followed by a number is still rewritten (`Unit 42`,
+        an accepted residual under D-058), so the case remains live; and either
+        way this function is correct, because it ASKS the redactor what it does
         rather than reimplementing a guess about it.
 
         Returns None when redaction is a no-op, so the common case adds no keys.
@@ -249,7 +256,7 @@ class CitationResolver:
         empty, which is wrong for the same reason the org-only version was: in
         strict mode the ADDRESS rule fires regardless of either, so a tenant
         still on "(pending intake)" -- who has no legal name by definition --
-        would have had `Flowmon` egress as `[ADDRESS]` with no alias indexed.
+        would have had `Unit 42` egress as `[ADDRESS]` with no alias indexed.
         The condition for aliasing is "did the redactor change this string", and
         the only way to know that is to ask it.
         """
