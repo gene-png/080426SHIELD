@@ -57,6 +57,13 @@ jobs:
       - name: control-character sweep
         run: python apps/api/scripts/check_no_control_chars.py .
 
+      # DELIVERY_PLAN's stated total vs the sum of its own rows. Two instances,
+      # both written by someone who had just written the rule against them --
+      # the second inside a section headed "and the parts sum to it". Same
+      # argument as the control-character sweep above: mechanise it.
+      - name: plan totals sum
+        run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
+
       - name: pytest -m unit
         working-directory: apps/api
         run: pytest -m unit tests/unit

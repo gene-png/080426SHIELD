@@ -19,7 +19,12 @@
 | web                     | `apps/web` (next dev)         | `:3000` (override with `WEB_PORT` in the root `.env`)                                                                                                  |
 
 - Seed the demo data: `docker compose exec -T api python scripts/seed_demo.py`
-  (idempotent).
+  — **not idempotent, despite what it prints** (#65). Its guard is "does ANY
+  `Service` row exist, for any tenant", so a single service created by an e2e
+  spec aborts the whole seed with "Services already present; skipping seeding."
+  and exits 0. A drifted dev database cannot be repaired by re-seeding; the only
+  recovery is `docker compose down -v`. CI never hits this because its runners
+  start with empty volumes.
 - LLM defaults to `SHIELD_LLM_MODE=fixture` — deterministic offline responses
   for all five AI purposes (DECISIONS D-017); live mode needs
   `SHIELD_LLM_MODE=live` + `SHIELD_LLM_PROVIDER` and that provider's
