@@ -42,7 +42,7 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
-_Added 2026-08-19, current as of 2026-08-22. **This section is maintained, not archival.** When an item
+_Added 2026-08-19, current as of 2026-08-25. **This section is maintained, not archival.** When an item
 lands, change its status here in the same PR that lands it — the same rule
 `CONTEXT.md` follows. A status line that is wrong is worse than none, because
 this is the document someone reads to decide what to work on._
@@ -53,26 +53,232 @@ fixture mode already demos all five.
 
 ### Order, status, and what blocks what
 
-| # | Item | Status | Blocked by | Rough size |
-| --- | --- | --- | --- | --- |
-| 0 | **Live-AI verification (#51)** | **DONE** (2026-08-19) | — | — |
-| 1 | **Export-target trio — #73 + #75 + #79** | **DONE** (PR #86, D-049, merged 2026-08-20) | — | — |
-| 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — |
-| 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — |
-| 3a | **Export/persistence audit — Tech Debt (+ #77)** | **DONE** (PR #94, D-052, merged 2026-08-20) | — | — |
-| 3b | **Export/persistence audit — ATT&CK** | **DONE** (this PR). §14 audit run against the post-#102 shape: D-052's shape-guard invariant **confirmed** for all five jobs and now mechanically pinned; three defects fixed (per-technique surfaces contradicted the rollup in the same document; the top-50 gap truncation disclosure was pinned by no test; D/P/R posture counted unconfirmed tools); two filed — #114 (dashboard recomputes from latest APPROVED while labelled with the released version, suspected CSF/ZT twins) and #115 (a partially-failed run is indistinguishable from a complete one) | — | — |
-| 4 | **W3 — Tech Debt approval snapshot** | **DONE** (PR #95, D-053, migration 0043, merged 2026-08-20). Regression fixed by **#96** | — | — |
-| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **DONE** (PR #103, merged 2026-08-20). Scoped to the resolver; the two gaps it left honest rather than implied are #101 + #102, item 5a | — | — |
-| 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — |
-| 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **3–4 sessions** |
-| 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it | **item 5a** | 1 session |
-| 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** |
-| 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **3–4 sessions** (fixes only) |
+| # | Item | Status | Blocked by | Estimate | Actual |
+| --- | --- | --- | --- | --- | --- |
+| 0 | **Live-AI verification (#51)** | **DONE** (2026-08-19) | — | — | — |
+| 1 | **Export-target trio — #73 + #75 + #79** | **DONE** (PR #86, D-049, merged 2026-08-20) | — | — | — |
+| 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — | — |
+| 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — | — |
+| 3a | **Export/persistence audit — Tech Debt (+ #77)** | **DONE** (PR #94, D-052, merged 2026-08-20) | — | — | — |
+| 3b | **Export/persistence audit — ATT&CK** | **DONE** (PR #116, merged 2026-08-22). §14 audit run against the post-#102 shape: D-052's shape-guard invariant **confirmed** for all five jobs and now mechanically pinned; three defects fixed (per-technique surfaces contradicted the rollup in the same document; the top-50 gap truncation disclosure was pinned by no test; D/P/R posture counted unconfirmed tools); two filed — #114 (dashboard recomputes from latest APPROVED while labelled with the released version, suspected CSF/ZT twins) and #115 (a partially-failed run is indistinguishable from a complete one) | — | — | — |
+| 4 | **W3 — Tech Debt approval snapshot** | **DONE** (PR #95, D-053, migration 0043, merged 2026-08-20). Regression fixed by **#96** | — | — | — |
+| 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **DONE** (PR #103, merged 2026-08-20). Scoped to the resolver; the two gaps it left honest rather than implied are #101 + #102, item 5a | — | — | — |
+| 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — | — |
+| 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **4–6 sessions** (re-sized 2026-08-25 — see "Why the range is wide") | — |
+| 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **1–1.5 sessions** | — |
+| 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** | — |
+| 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **4–6 sessions** (fixes only; re-sized 2026-08-25 — see "Why the range is wide") | — |
+| 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
+| 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | Not started. `app/ai/redact.py` is, in its own docstring, "the SECURITY BOUNDARY in front of every LLM call" and "the primary compensating control" for egress to a non-FedRAMP provider. It currently carries six known defects, **three of them leaks**: a contract number, a CAGE code and a street address each egress whole with `removed_counts={}` (#136, #137, #138); `Building`/`Bldg`/`Rm`/`Room`/`Level`/`Mail Stop` match nothing (#139); a line reading `Thanks` truncates the rest of the input and records a successful redaction (#135); and `_RE_PHONE` turns `10.20.30.40 and 10.20.30.41` into two `[PHONE]`s while recording `phone: 2` over text with no phone number (#140) | Nothing | **2–3 sessions** — batched by cost, not by surface: it spans `ai/redact.py` (#135–#140), `config.py` + `main.py` (#142), and a model + migration (#144), so its `Scope:` line must name all three. Re-sized from 1.5–2.5 on 2026-08-25 when #142 and #144 joined; the +0.5 is earned by #144's migration (alembic against dev Postgres, `batch_alter_table` for SQLite safety, the C0 additive pattern) — new surface, not more of the same | — |
 
-**Total remaining: roughly 8–10.5 focused sessions** — items 6, 7, 8 and 9. The
-W3 → W2 → W1-ATT&CK chain that was "over half of it" is done: 5a was its last
-link, so **nothing is blocked by anything now** and all four remaining items are
-independently startable.
+### Total remaining: 12–18 sessions, and the parts sum to it
+
+**Updated 2026-08-25.** Expect the upper half; see the next section for why.
+
+**This heading was 12–18.5 for one draft, and the parts did not sum to it** —
+note that is a different number from today's 12–18, which does sum. The residual
+was exactly 0.5–1: item **9a**, which is DONE in this PR and was still being
+counted as remaining. (The current total returned to 12–18 by a separate route:
+item 10 grew from six issues to eight and was re-sized 1.5–2.5 → 2–3. Two
+unrelated changes landing near the same figure is a coincidence worth naming,
+because a reader comparing drafts would otherwise conclude nothing had moved.) The number was carried forward rather than re-added
+— in the section whose own next paragraph says a total that does not sum is the
+same defect as a wrong status line. Caught by the adversarial review of this PR,
+not by writing the rule.
+
+| Item | Estimate |
+| --- | --- |
+| 10 — redaction boundary (#135–#140, #142, #144) | 2–3 |
+| 7 — W1 ATT&CK step (+ #131) | 1–1.5 |
+| 9 — correctness defects only a code review catches | 4–6 |
+| 6 — W1 Risk step | 4–6 |
+| 8 — W6 Risk export/publish split | 1–1.5 |
+| **Total** | **12–18** |
+
+At 4–8 hours a session that is roughly **46–140 hours**, or **2–5 working
+weeks** at 5–6 productive hours a day. The width of that is the point, not a
+hedge; see below. Nothing is blocked
+by anything: 5a was the last link in the W3 → W2 → W1-ATT&CK chain. Order is
+10 → 7 → 9 → 6 → 8.
+
+**The arithmetic is written out because the previous total was asserted rather
+than added.** A schedule whose parts do not sum to its total is the same defect
+as a status line that is wrong, and this document has now produced both. If an
+item re-sizes, the table above moves with it in the same PR.
+
+### Why the range is wide, and why the low end is not the plan
+
+The range is wide, and that is honest rather than lazy: what would narrow it is
+knowing how many adversarial rounds an item needs, and that is only learned by
+doing the item.
+
+(This paragraph used to open by restating the range and its width as a
+percentage. Both were correct when written and both went stale the moment item 9a
+left the total — a derived value given a second place to be wrong, twenty lines
+below the table it was derived from. The cheapest fix for a derived value going
+stale is not deriving it in prose.)
+
+The evidence says expect the upper half:
+
+- **The first measurement.** The #130 redaction fix (PR #141) was planned at
+  **0.25 sessions** and came in at **0.5–1** — 2–4x. Two review rounds found real
+  defects rather than nits, including one *in the fix* that was worse than the
+  bug: a narrowed separator class that leaked sixteen Unicode whitespace
+  characters, so an address separated by a narrow-no-break space egressed
+  verbatim with an empty `removed_counts`.
+- **Items 6 and 9 both touch scoring**, and this document already records that
+  items touching scoring here have needed **four to five** adversarial rounds
+  rather than one.
+
+So items 6 and 9 move from 3–4 to **4–6**. That is a second, separate correction
+from the 2026-08-22 re-size — that one redistributed newly-found issues between
+items, this one is about round count per item. They add rather than overlap.
+
+### Review overhead is per-PR, not per-unit-of-work — so batch by file, not by issue
+
+**Measured, 2026-08-25, over the only two items with data.**
+
+| Item | Review rounds | Findings | Estimated | Actual |
+| --- | --- | --- | --- | --- |
+| #130 redaction fix (PR #141) | 2 | 16 | 0.25 | 0.5–1 |
+| 9a docs-truth pass, `docs/security.md` | 3 | 30 | 0.5–1 | ~1 |
+
+Neither was mis-scoped. In both, the reviewer found real defects at a steady
+rate right through the last round — the second round of #130 found a leak worse
+than the bug being fixed, and the third round of 9a found a live wrong total in
+the PR that existed to end wrong totals. The rounds were not padding.
+
+What that means for sizing: **a fixed 2–9 hours of review sits on every PR
+regardless of its size.** Small items pay it proportionally hardest, and the
+cost scales with the number of PRs, not with the amount of work.
+
+**So: batch by file and harness, not by issue number.**
+
+- **Item 10 is ONE PR, not six.** #135–#140 are six defects in `app/ai/redact.py`,
+  all decided by the same truth table, all reviewed in the same context. Six
+  branches would pay the review overhead six times for no additional review
+  value — the reviewer would re-read the same file six times — and would leave
+  five stale cross-references in the docs between merges. This is why item 10 is
+  sized at 1.5–2.5 rather than the 3–4 a cold item carries.
+- **Item 9's seven issues** (#114, #115, #46, #109, #124, #125, #126) split more
+  naturally, because they span four surfaces. Split them by **surface**, not by
+  issue — **four groups, and every issue is in exactly one**:
+
+  | Group | Issues | Surface |
+  | --- | --- | --- |
+  | Parse guards | #46, #115 | `app/ai/engine.py` |
+  | Version label | #114 | the four client dashboards + `routes/clients.py` |
+  | Target and flag defects | #124, #125, #126 | ZT and Tech Debt |
+  | Per-row citation record | #109 | `app/attack/pending.py`, `attack/citations.py` |
+
+  **#109 gets its own group rather than riding with another.** It is a fourth
+  surface — the ATT&CK pending/citation store — and folds into none of the other
+  three. An earlier draft of this split listed three groups covering six of the
+  seven, which reads as covering all of them: the item's stated scope stops
+  matching its branches and nothing fails to say so. Same shape as #131 being
+  unowned for a week. Cheaper to fix on paper than after three branches are open.
+
+Written down because the instinct at the moment of starting is to open one
+branch per issue — it feels tidier, and it produces a cleaner issue tracker. It
+also multiplies the one cost this table shows is fixed.
+
+### When the two batching rules conflict, cost wins — and the `Scope:` line says so
+
+**They do conflict, and item 10 is the case.** Two rules are in play and they are
+not the same rule:
+
+- **Batch by surface** is about *review coherence*. A reviewer holding the
+  address truth table in mind is not in the right frame to audit an
+  `is_production()` predicate.
+- **Batch to amortise overhead** is about *cost*. A fixed 2–9 hours of review
+  sits on every PR regardless of size.
+
+Item 10 spans **three** surfaces: `app/ai/redact.py` (#135–#140),
+`app/config.py` + `app/main.py` (#142), and a model plus an Alembic migration
+(#144). Surface coherence says split it; cost says do not, because #142 is one
+predicate and three call sites and its own PR would pay the full fixed review
+cost for a ten-line change.
+
+**For a change that small, cost wins — keep the grouping.** But the reviewer's
+recorded failure mode is *"ran, but not against this change — a stale tree, the
+wrong branch, a subset of the diff"*, and a three-surface PR is the ideal shape
+for a clean report about two thirds of it. So:
+
+> **When cost overrides surface coherence, the PR's `Scope:` line enumerates
+> every surface rather than describing the PR by its dominant one.**
+
+That field exists for exactly this and it costs a sentence. Without it the next
+reader sees a rule applied inconsistently with no record of the trade — and the
+audit block reads as complete over a diff the reviewer only partly saw.
+
+### A PR that files an issue names its owning item in the same body
+
+**Filing an issue and assigning it to an item are separate steps, and only the
+first has a gate.** `check_issue_references.py` stops a PR closing an issue by
+accident; nothing notices a PR that *creates* one and leaves it unowned. So every
+PR that files issues reliably produces unowned ones, and they surface weeks later
+as "the plan cannot deliver the outcome it states".
+
+Four this session alone, and they are not four one-offs — they are one missing
+step, four times:
+
+| Issue | Went unowned until |
+| --- | --- |
+| #131 | a week; caught while re-reading the plan |
+| #109 | caught on paper, in a split that covered six of seven |
+| #142 | this section |
+| #143 | this section |
+
+**The practice:** a PR that files an issue names the owning item in its body, or
+marks it **deliberately unowned** and says why. It costs nothing at filing time
+and is checkable by eye in review.
+
+**Not gated, deliberately.** A check would have to recognise "this PR filed issue
+N" and "N is assigned to an item", and the only signal in the body is an issue
+reference — which appears in prose constantly for reasons that have nothing to do
+with filing. That is the same signal-to-noise problem measured for the prose-total
+gate (1 real in 13) and for TI001 (5 in 41), and it fails it worse. Written down
+instead, beside the batching rule, because both are decisions made at the moment
+of starting when the instinct runs the other way.
+
+**Assignments for the two this section names:**
+
+- **#142** — the `is_production()` predicate covering one of three environments,
+  so `SHIELD_REDACTION_MODE=off` and a placeholder signing secret are permitted
+  on `staging`. Owned by **item 10**: single egress path, security boundary, and
+  the same file family as #135-#140.
+- **#144** — `llm_calls` records no redaction mode, so a disabled-redactor row is
+  byte-identical to a clean one. Also **item 10**, though it carries a migration
+  the other six do not; if it splits out, it splits as a second PR within the
+  item rather than a seventh branch.
+- **#143** — the pre-push hook printing "skipped (api container not running)"
+  over a genuinely failing suite. **Deliberately not on the MVP path and not
+  labelled `mvp-blocking`**: it is developer tooling, CI still runs the suite as
+  a required check, and no client document or audit row depends on it. Stated
+  rather than left unlabelled, because in a list "unlabelled" and "deliberately
+  out of scope" look identical.
+
+### Estimate vs actual, recorded as items land
+
+The **Actual** column in the table above is filled in the PR that lands each
+item, not afterwards. Three real measurements will size the remaining work
+better than any judgement call — the same move this document already made for
+"what a session is, in hours", which is measured from git history rather than
+guessed. When a total is next wrong, the arithmetic will be sitting beside it.
+
+| Work | Estimated | Actual | Ratio | Review rounds | Findings |
+| --- | --- | --- | --- | --- | --- |
+| #130 redaction fix (PR #141) | 0.25 | 0.5–1 | 2–4x | 2 | 16 |
+| 9a docs-truth pass, `docs/security.md` | 0.5–1 | ~1.5–2 | **2–4x** | 3 | ~30 |
+
+**9a is the larger overrun of the two, and it is recorded here in its own PR.**
+It was sized "under a session" as a documentation edit. It took three review
+rounds and produced two new `mvp-blocking` issues (#142, #144), one unlabelled
+tooling issue (#143), a new CI gate with 19 tests, and #145 — because the audit
+of a document's claims is an audit of the code behind them, and the code
+disagreed in ten places. A table that recorded the small overrun and omitted the
+big one would be status ahead of truth one level up, inside the pass whose
+subject is exactly that.
 
 ### Why item 9 exists (added 2026-08-22)
 
@@ -336,11 +542,14 @@ zero rules, not even force-push blocking", and stayed that way after the setting
 was actually made. Re-checked against the GitHub API
 (`gh api repos/.../branches/main/protection`) rather than from memory:
 
-- **Six required status checks**, including **"Adversarial audit recorded"** —
-  the condition D-054 said it was waiting on. The other five are Python (ruff +
+- **Seven required status checks** as of a re-read on 2026-08-25: Python (ruff +
   black + pytest + bandit), Web (prettier + eslint + typecheck + build), E2E
-  (Playwright smoke suite), Demo (hosted-demo reset + journey spec), and Secret
-  scan (gitleaks).
+  (Playwright smoke suite), Demo (hosted-demo reset + journey spec), Secret scan
+  (gitleaks), **"Adversarial audit recorded"** — the condition D-054 said it was
+  waiting on — and **"No accidental issue closes"**, added with PR #113 after
+  this list was first written. The list said six until 2026-08-25; a
+  point-in-time API read goes stale the next time protection changes, so it
+  carries the date it was taken.
 - Force-pushes **blocked**. Branch deletion **blocked**.
 
 **What that actually binds — stated precisely, because the short version is

@@ -11,19 +11,27 @@ Functions:
   redact_payload(obj, *, mode, client_org_name=None, name_hints=())
       -> (cleaned_obj, removed_counts)
 
-`removed_counts` is a dict like `{"email": 3, "phone": 1, ...}`. It
-becomes the `removed_items` JSON column on `artifact_redactions` (Master
-Spec §11) and gets logged on the corresponding `llm_calls` audit row.
+`removed_counts` is a dict like `{"email": 3, "phone": 1, ...}`. It is
+logged on the corresponding `llm_calls` audit row (`redacted_counts`).
+Master Spec §11 also describes an `artifact_redactions.removed_items`
+column; that table does not exist -- no model, no migration, no writer.
+This docstring asserted it for months and is where docs/security.md
+picked the claim up.
 Counts only - no payload contents.
 
 Modes:
   strict   - removes everything below.
   standard - removes everything EXCEPT addresses and the client's org name.
              Useful when the prompt explicitly needs the org context.
-  off      - pass-through. Refused at startup outside development by
-             config.assert_safe_for_runtime() (Phase 1). This module
-             accepts `off` so unit tests can compare "redacted vs raw"
-             paths; production never reaches here with mode=off.
+  off      - pass-through. Refused at startup ONLY when
+             ENVIRONMENT=production (config.assert_safe_for_runtime).
+             `Environment` has three members, so a STAGING deployment boots
+             with this module disabled and every llm_calls row recording an
+             empty redacted_counts -- filed as #142. An earlier version of
+             this docstring said "outside development", which is the
+             reassuring sentence that stopped anyone checking.
+             This module accepts `off` so unit tests can compare
+             "redacted vs raw" paths.
 """
 
 from __future__ import annotations

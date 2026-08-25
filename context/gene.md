@@ -10,7 +10,7 @@ The three things to do, in order:
 2. **Item 7 part 2** — the `/ai-inputs` endpoint + `AttackAiInputsPanel`.
 3. Then items 6, 8, 9.
 
-**Last updated:** 2026-08-23 (item 7 backend merged as PR #133; adversarial reviewer run on real feature work for the first time and it overturned the branch's central claim; three new mvp-blocking issues filed — #130, #131, #132)
+**Last updated:** 2026-08-25 (PR #141 merged — #130 fixed and closed; the security-doc honesty pass in flight; #135-#140, #142, #143, #144, #145 filed; items 10 and 9a added to the MVP path). Earlier: 2026-08-23 (item 7 backend merged as PR #133; adversarial reviewer run on real feature work for the first time and it overturned the branch's central claim; three new mvp-blocking issues filed — #130, #131, #132)
 
 This file is owner-write-only. **This round it was written by the agent at Gene's explicit request** ("give me instructions so we can pick back up"), which is an exception rather than a new default. It also merges a relay session's update (`88983b2`) that landed on `main` mid-round; that content is preserved below rather than overwritten. **This file lives in the repo, not on any one machine; a local computer restart does not affect it.**
 
@@ -71,15 +71,42 @@ Recorded by the relay last round, updated with what actually landed.
 
 `main` has #110, #113, #116, #117, #119, #127, #128, #129, #133 merged. **Working tree clean, nothing local, nothing mid-edit.**
 
-## Open mvp-blocking issues (13)
+## Open mvp-blocking issues (20)
 
-`#132 #131 #130` (new this round) · `#126 #125 #124 #123` (dashboards) · `#122 #121` (Risk, item 6) · `#115 #114 #109` · `#46`
+**Read from GitHub on 2026-08-25, not carried forward** — the previous count of
+13 went stale the moment #135-#140 were filed, and a count is exactly the kind of
+derived value this round has been correcting elsewhere.
+
+`#144 #142` (this round: the ledger cannot prove the redactor ran; the redactor
+can be disabled on staging) · `#140 #139 #138 #137 #136 #135` (the redaction
+boundary, **item 10**) · `#132 #131` · `#126 #125 #124 #123` (dashboards) ·
+`#122 #121` (Risk, **item 6**) · `#115 #114 #109` (**item 9**) · `#46`
+
+Closed: `#130`, by PR #141.
+
+Not `mvp-blocking` and deliberately so: **#143** (the pre-push hook's fail-open)
+is tooling, off the MVP path entirely — recorded here because "unlabelled" and
+"deliberately out of scope" look identical in a list.
 
 ## Open decisions: NOT to be reconstructed from memory
 
 **New this round:** whether #130 gets pulled ahead of item 7 part 2 (agent's recommendation: yes — it corrupts every AI input platform-wide and fails quietly, which is exactly what a UI-focused pre-launch pass will not catch). Whether #131's fix needs provenance carried through `pairs` (approved vs live) rather than reconstructed from the tuple. Whether the "searched for: `<shape>`" line gets enforced or stays transparency-only (see above).
 
-**Still open, unchanged:** whether #111 (admin-console N+1) gets pulled ahead. Whether the stale-cross-reference CI trigger gets a tracking issue now or waits until filed. Path-scoped branch-protection exemption for `context/gene.md`, not yet requested. What "addressable" coverage means for #102's exclusion of `pending_review`. Local-device mirror of this file. #90's build, #89's pin test, #92's contract-test fix. #57, `ServiceStatus.RELEASED` (#62), W0's freeze shape. Whether to parallelize item 6. Whether #84 gets the `mvp-blocking` label. First real unattended cron run (the Monday after 2026-08-22), worth confirming it actually fired. #106/#107 root fixes still parked behind "worked around, issue stays open".
+**Closed since the last round** (2026-08-25, recorded here at Gene's explicit
+instruction — this file is owner-write-only and an agent writing it stays the
+exception, not a new default):
+
+- **First real unattended cron run — CONFIRMED.** `Scheduled triggers` fired on
+  its own cron at `2026-08-24T07:54:48Z`, `event=schedule`, green on `main`. The
+  two Aug 22 runs were `workflow_dispatch`, i.e. manual, which is why this was
+  still open. Cited on #145, which depends on the mechanism.
+- **Stale-cross-reference tracking issue — FILED as #145.** Structural half now
+  gated by `check_plan_totals.py`; prose half measured at 1 true finding in 13
+  (7.7% signal) and deliberately not gated, under the same reasoning that
+  narrowed TI001. Three sub-questions left explicitly open on the issue rather
+  than implied closed.
+
+**Still open, unchanged:** whether #111 (admin-console N+1) gets pulled ahead. Path-scoped branch-protection exemption for `context/gene.md`, not yet requested. What "addressable" coverage means for #102's exclusion of `pending_review`. Local-device mirror of this file. #90's build, #89's pin test, #92's contract-test fix. #57, `ServiceStatus.RELEASED` (#62), W0's freeze shape. Whether to parallelize item 6. Whether #84 gets the `mvp-blocking` label. #106/#107 root fixes still parked behind "worked around, issue stays open".
 
 ## Adversarial-reviewer
 

@@ -363,7 +363,9 @@ _HORIZONTAL = [c for c in map(chr, range(0x11000)) if re.match(r"\s", c) and c n
 # address and `_SUITE_SEP` via `Suite`), so reverting `_SUITE_SEP_ABBREV` to the
 # leaking enumerated class left the ENTIRE table green while `Ste.<U+202F>400`
 # and `Apt<U+2009>3B` egressed verbatim. Measured, not theorised: the revert was
-# applied, `grep` confirmed it landed, and all 153 cells passed.
+# applied, `grep` confirmed it landed, and all 153 cells THEN IN THE TABLE
+# passed. (The count is 327 now: parametrising these two sweeps per separator,
+# which is the fix for that very gap, multiplied them 7x.)
 #
 # That is the same defect this file exists to prevent, inside the fix for it, one
 # level up -- so the guarantee is now asserted once per separator.

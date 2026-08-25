@@ -453,6 +453,58 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   gate, in the sentence describing the defect. The last was caught by the gate on
   its first run. That is the argument for mechanising it rather than writing a
   fifth paragraph -- the same argument the closing-keyword check settled.
+- **Changing a parametrisation invalidates every count derived from it, and the
+  count is usually in another file.** Narrower and more checkable than "re-check
+  your numbers": the trigger is mechanical. PR #141 stated the address truth
+  table had 153 cells. The fix for a review finding was to parametrise two
+  sweeps per separator as well as per character — 7 sites x 19 horizontal and
+  7 x 10 vertical — which multiplied the collected count to **327**. The stale
+  153 shipped to `main` in `CONTEXT.md` and `DECISIONS.md` and was found a PR
+  later. What caught it was **re-counting**, not re-reading: the sentence still
+  parsed, still looked deliberate, and was wrong by a factor of two.
+  The number goes stale at the exact moment the change is most obviously
+  substantive, which is when attention is on the code and not on the prose two
+  files away. So: after touching any `@pytest.mark.parametrize` argument, grep
+  the repo for the old count before committing.
+- **When a guard keys on a predicate, sweep every call site of the predicate,
+  not every caller of the guard.** `is_production()` has four call sites and all
+  four mean "is this anything other than a developer's machine" while asking "is
+  this production". Two are startup guards (redaction-off, placeholder signing
+  secret); two publish Swagger UI and the full OpenAPI schema. `Environment` is a
+  three-member literal, so `staging` gets all four. Fixing three of four leaves
+  the shape alive, and the tell that nobody swept is a reassuring comment: the
+  `# noqa` beside the signing secret reads "refused in prod via
+  assert_safe_for_runtime" — true, and the reason the next reader stops looking.
+  Filed as #142.
+- **Before writing a gate, enumerate its SILENT-SUCCESS branches — every path
+  that exits 0 without having looked — the way you enumerate a truth table before
+  a regex.** The fail-closed rule further up is about the branch you write on
+  purpose. This is about the branches you do not notice you wrote, and the
+  distinction matters because the second kind has now happened three times in
+  this repo's own tooling, every one of them found in review rather than by the
+  author:
+
+  - `check_audit_evidence.py` — `is_code_change([])` returned False, so an empty
+    changed-file list printed "documentation-only change, exempt" and exited 0.
+  - `mutation_sweep.py` — `_run_tests` reports "killed" for any non-zero exit,
+    and pytest exits non-zero for collection errors too, so a suite that never
+    ran an assertion scored every mutant killed and printed "no surviving
+    mutants". A tool for certifying that tests can fail, unable to notice that it
+    could not itself fail. Fixed with a `BaselineNotGreen` check.
+  - `check_plan_totals.py` — a table row whose estimate did not parse hit the
+    same `continue` as the column-header row, so an annotated cell
+    (`2-3 (needs-David)` — the house style one table up) was dropped from the sum
+    in silence, and the cheapest route to green was to change the total to the
+    short sum. The gate steering the author into the defect it exists to catch.
+
+  Three instances, one shape: **"I could not look" sharing a branch with
+  "nothing to complain about".** The rule against it was already written down
+  when the second and third were produced, which is D-051's own finding — so the
+  countermeasure is not more resolve, it is a step in the procedure. Before the
+  first line of a new checker, list every `return 0` / `continue` / `pass` it will
+  have and write beside each one what the input looked like. Any entry whose
+  answer is "I don't know" or "there was nothing there" is the bug, and it is
+  cheaper to find on that list than in review.
 - **Assert what must APPEAR before what must not.** `toHaveCount(0)` on a page
   still mid-fetch passes vacuously — the element it forbids simply has not
   rendered yet. Wait on the positive state first (`toBeVisible`), then assert the
@@ -559,6 +611,17 @@ Rules of the road:
   word "close" beside `#N` would itself be an instance of the bug:
 
       Auto-close-approved: <issue numbers, bare>
+
+  **`Auto-close-approved:` authorises the guard; it does NOT close the issue.**
+  Two different mechanisms, and it is easy to assume the line does both. GitHub
+  closes an issue only on a real closing keyword beside the reference
+  (`Fixes #NNN`); the `Auto-close-approved:` line exists solely so this repo's
+  own check permits that keyword instead of rejecting it. A PR that has the
+  approval line and no keyword merges without closing anything — which is the
+  failure that leaves a fixed bug sitting open on the mvp-blocking list,
+  asserting a defect that no longer exists. When you intend a close, write both
+  and then confirm it took: `gh pr view <n> --json closingIssuesReferences`
+  should name the issue before you merge.
 
   **Why this is mechanised rather than documented.** The same issue was closed by
   accident three times. Each fix was a better-worded rule; the second incident
