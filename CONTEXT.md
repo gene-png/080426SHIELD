@@ -19,15 +19,22 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 rule whose errors reach **every AI input in all five services**. Its
 suite-designator pattern had no boundary after the keyword alternation and a
 separator class that could match empty, so a keyword ate the rest of any word it
-prefixed. Measured against `main` over the corpus committed with the fix, so the ratio is
-reproducible from the repo: **17 of 23 real security product names corrupted** (`Stellar Cyber` -> `[ADDRESS] Cyber`; `Flowmon`, `Fleet`,
+prefixed. Measured against `main` over one named corpus --
+`tests/unit/test_redact_address_matrix.py::PRODUCT_NAMES`, 23 entries, six of
+them negative controls -- so the ratio is reproducible from the repo rather than
+from whichever list was to hand: **17 of 23 real security product names
+corrupted** (`Stellar Cyber` -> `[ADDRESS] Cyber`; `Flowmon`, `Fleet`,
 `Flashpoint`, `Steampipe`, `Aptible`, `Unitrends`, `Suitecrm` -> a bare
 `[ADDRESS]`), plus prose, because security vocabulary is dense in "fl" -- flat,
 flag, flaw, flow.
 
 It failed silently: the model received plausible text, nothing raised, and no
-test could see it -- **all 73 name-shaped strings in the seed and fixture data
-pass the address rule clean**, so an assertion built on seed data passes forever.
+test could see it -- **every name-shaped string in the seed and fixture data
+passes the address rule clean**, so an assertion built on seed data passes
+forever. Zero trips, counted twice with different nets: 73 on the original
+hand-narrowed scan and 0 of 120 on a deliberately wide one. The two counts
+disagree about what a "name-shaped string" is and agree on the number that
+matters, which is why the property is stated here rather than the tally.
 
 It also re-opened **#33 finding 5** through another door. Three products all
 egressing as `[ADDRESS]` collide in `_by_alias_norm`, so the only string an
@@ -35,18 +42,55 @@ obedient model can cite resolves `ambiguous` -- and under **#102** that pulls th
 technique out of the ATT&CK coverage **denominator**.
 
 The rule is now decided by an enumerated **truth table** rather than a regex
-patched case by case (`tests/unit/test_redact_address_matrix.py`, 79 cells over
-five axes, written before the pattern). Three drafts were rejected on
-measurement, including the issue's own suggested fix, which fixes less and leaks
-more. Residuals are named and pinned rather than discovered later -- see
+patched case by case: `tests/unit/test_redact_address_matrix.py`, **153 cells** --
+126 across six axes, 23 accepted residuals, and 4 standalone properties. The
+original table was written before the pattern, which is the method D-058
+records; the rows added while fixing the street rule and while acting on the
+adversarial review were not, and saying otherwise would make the method sound
+more disciplined than it was. Three drafts were rejected on measurement,
+including the issue's own suggested fix, which fixes less and leaks more.
+Residuals are named and pinned rather than discovered later -- see **D-058**.
+
+The street rule paid the same debt the suite rule did. `_STREET_PAT` kept `\s+`
+through the first draft of the fix while the other two sub-patterns dropped it,
+so it still reached BACKWARD across a line break and consumed a number belonging
+to the previous line -- `Servers reviewed: 5` + a line break + `Main Street
+office is unstaffed.` became `Servers reviewed: [ADDRESS] office is unstaffed.`, losing the count and
+reading as ordinary prose afterwards. Narrowed to horizontal whitespace, with the
+now-leaking wrapped address pinned as an accepted residual.
+
+The separator narrowing was then wrong in the other direction, and the
+adversarial review of the finished fix caught it. `\s` matches 19 horizontal
+characters; the replacement enumerated three, so it silently dropped sixteen --
+including the narrow-no-break and thin spaces that PDF and Word extraction emit.
+A street address separated by one of those redacted on `main` and **egressed
+verbatim** afterwards, with no `address` key in `removed_counts`: a leak at the
+security boundary, strictly worse than the over-match being fixed, and invisible
+because the decision was framed as being about newlines. The separator is now the
+subtraction `\s` minus the ten characters `str.splitlines()` calls a line break,
+and both halves are pinned as parametrised sweeps rather than sampled cells. See
 **D-058**.
 
-Filed, not fixed, so no item hides another's cost: `street_pat` leaks whole
-addresses when the house number is spelled out or alphanumeric (`221B Baker
-Street` is untouched today); six designator keywords are absent entirely; the
-CAGE rule misses its own primary phrasing; `_RE_CONTRACT` is the only pattern in
-the file compiled without `IGNORECASE`; and `_redact_signature_blocks` truncates
-everything after a line reading `Regards`.
+Filed as real issues, so no item hides another's cost and no claim here is a
+claim about work nobody can find: **#138** (`street_pat` misses spelled-out and
+alphanumeric house numbers -- `221B Baker Street` is untouched today -- and
+leaves the trailing directional behind), **#139** (six designator keywords match
+nothing at all), **#137** (the CAGE rule misses its own primary phrasing, so
+`CAGE Code 1ABC2` leaks whole), **#136** (`_RE_CONTRACT` is compiled without
+`IGNORECASE`, so a lowercase contract number leaks), and **#135**
+(`_redact_signature_blocks` cuts everything from a bare `Thanks` or `Best` to end
+of input -- data loss rather than a leak, and the one worth labelling). The
+adversarial review then found the same newline defect one rule up, in
+`_RE_PHONE`: a four-item numeric bullet list collapses to one token, a pair of
+IP addresses is destroyed, and the audit row records `phone: 1` for input that
+contained no phone number -- **#140**. `_RE_CAGE` has both halves of #130's
+disease in one pattern (`CAGE codes are missing` -> `[CAGE] are missing`, and
+`CAGE Code 1ABC2` leaks whole), tracked on **#137**.
+
+`_RE_CONTRACT` is **not** the only pattern in the file compiled without
+`IGNORECASE`, as an earlier draft of this entry said -- `_RE_EMAIL`, `_RE_PHONE`,
+`_RE_SSN` and `_RE_EIN` are too. It is the only one where the omission changes
+what matches, which is what was meant and not what was written.
 
 
 ### 2026-08-09 → 2026-08-17 — cross-service integrity (PRs #34, #35, #36, #39, #42, #45, #54)

@@ -148,7 +148,59 @@ _STREET_WORDS = (
     "Square",
 )
 
-_STREET_PAT = r"\b\d{1,6}\s+([A-Z][A-Za-z]+\s+){1,4}(?:" + "|".join(_STREET_WORDS) + r")\b"
+# HORIZONTAL whitespace: everything `\s` matches EXCEPT the ten characters
+# `str.splitlines()` treats as a line break. Every separator in the ADDRESS rule
+# is built from it, so "the rule does not cross a line" is one definition in one
+# place rather than a property each pattern re-asserts.
+#
+# NOT every separator in the MODULE, and the difference is deliberate rather than
+# an oversight: `_RE_PHONE` (`[\d\s.\-()]`) and `_RE_CAGE` (`[\s:#-]*`) still
+# contain `\s` and still cross line breaks. Both are filed rather than fixed here so
+# #130's cost stays visible -- #140 and #137 -- and both have defects beyond the
+# newline one. Stated because a reader who greps `\s` will find them, and an
+# unstated exemption reads as an oversight to whoever finds it next.
+#
+# WHY A SUBTRACTION AND NOT A LIST. The first version of this fix enumerated
+# `[ \t\xa0]`, which reads as "space, tab, non-breaking space -- surely
+# that is all of them". `\s` matches 19 horizontal characters, so that list
+# silently dropped SIXTEEN of them: U+2000-U+200A (en, em, thin, hair and
+# friends), U+202F narrow no-break, U+205F medium mathematical, U+3000
+# ideographic, U+1680 ogham, and U+001F. That is a LEAK, not a residual, and it
+# was invisible because the decision was framed as being about NEWLINES and
+# nobody re-derived what else was in the class being replaced. Thin and
+# narrow-no-break spaces are what PDF and Word extraction emit, which is exactly
+# how client letterhead reaches this boundary.
+#
+# `[^\S\r\n]` -- the obvious idiom, and what the adversarial review of this
+# fix suggested -- is also wrong: it still crosses `\v`, `\f`, `\x1c`-`\x1e`,
+# `\x85`, U+2028 and U+2029, every one of which IS a line break. Subtract the
+# whole vertical set instead, and let `\S` define the horizontal one.
+_HSPACE = r"[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]"
+
+# The street rule's failure mode is worse than the suite rule's. Its leading
+# `\d{1,6}` reaches BACKWARD over a line break and takes a number that belonged
+# to the previous line -- "Servers reviewed: 5\nMain Street office is unstaffed."
+# became "Servers reviewed: [ADDRESS] office is unstaffed.", losing the count and
+# reading as an ordinary sentence afterwards. It was also the one sub-pattern
+# still using `\s` after #130's first fix, while the truth table carried a
+# comment claiming the guarantee held for all three.
+#
+# Cost of the change, named rather than discovered: an address wrapped across a
+# line break now leaks. That coverage was real (unlike `Flat`'s, which existed
+# only through the `\bFl` bug) but was never clean -- the trailing directional
+# falls outside the pattern, so `1600 Pennsylvania\nAvenue NW` redacted to
+# `[ADDRESS] NW` either way. Pinned as an accepted residual.
+_STREET_SEP = _HSPACE
+
+_STREET_PAT = (
+    r"\b\d{1,6}"
+    + _STREET_SEP
+    + r"+([A-Z][A-Za-z]+"
+    + _STREET_SEP
+    + r"+){1,4}(?:"
+    + "|".join(_STREET_WORDS)
+    + r")\b"
+)
 
 # Unit/suite designators. The suffix decides, not the keyword: every keyword
 # here is also an ordinary English word or the start of a product name, so the
@@ -163,15 +215,15 @@ _STREET_PAT = r"\b\d{1,6}\s+([A-Z][A-Za-z]+\s+){1,4}(?:" + "|".join(_STREET_WORD
 # class instead of the boundary. "Ste." and "Apt." are abbreviations and take a
 # period; "Unit" and "Floor" are words and do not.
 _SUITE_KEY_ABBREV = r"(?:Ste|Apt|Fl)"
-_SUITE_KEY_WORD = r"(?:Suite|Unit|Floor|PO\s+Box|P\.O\.\s+Box)"
+_SUITE_KEY_WORD = r"(?:Suite|Unit|Floor|PO" + _HSPACE + r"+Box|P\.O\." + _HSPACE + r"+Box)"
 
 # Separators. Deliberately NOT `\s`: a newline lets the rule reach into the next
 # line of a bulleted list and merge two items into one corrupted line
 # ("- Business Unit\n- 3rd party risk tooling"). Client notes are full of
 # bullets; a designator wrapped mid-line is rare and is a listed residual.
-_SUITE_SEP = r"[ \t#\xa0\-]"
+_SUITE_SEP = r"(?:" + _HSPACE + r"|[#\-])"
 # Abbreviations only: the same class plus the abbreviating period.
-_SUITE_SEP_ABBREV = r"[ \t.#\xa0\-]"
+_SUITE_SEP_ABBREV = r"(?:" + _HSPACE + r"|[.#\-])"
 
 # Spelled-out designators ("Suite Twelve", "Apt Twenty-One"). Without these the
 # digit rule below silently drops a whole class of real addresses.
@@ -210,7 +262,7 @@ def _suite_branches(sep: str) -> str:
         #    avoid.
         r"|" + sep + r"+[A-Za-z]{0,3}[.\-]?\d[A-Za-z0-9\-]*"
         # 3. Spelled out, possibly multi-token: "Suite One Hundred Twenty".
-        r"|" + sep + r"+" + _NUMWORD + r"(?:[ \t\-]" + _NUMWORD + r")*"
+        r"|" + sep + r"+" + _NUMWORD + r"(?:(?:" + _HSPACE + r"|-)" + _NUMWORD + r")*"
         # 4. Roman numerals, and this branch MUST stay case-scoped even though
         #    the pattern compiles IGNORECASE: lowercase i/v/x/l spell ordinary
         #    English words, so a case-blind branch redacts "Unit ill defined" --
@@ -263,7 +315,7 @@ _SUITE_PAT = (
 # ("the top 3\nfloor switches"), which is precisely the merge the separator class
 # above is written to prevent. "3 Floor" with no ordinal is a listed residual;
 # "3 Floor Lane" is caught by the street rule instead.
-_PRE_KEYWORD_PAT = r"\b\d{1,4}(?:st|nd|rd|th)[ \t\xa0]+(?:Floor|Fl)\b"
+_PRE_KEYWORD_PAT = r"\b\d{1,4}(?:st|nd|rd|th)" + _HSPACE + r"+(?:Floor|Fl)\b"
 
 _RE_ADDRESS = re.compile(
     f"{_STREET_PAT}|{_SUITE_PAT}|{_PRE_KEYWORD_PAT}",
@@ -296,7 +348,9 @@ def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
     Public since #33 finding 5, when the ATT&CK citation resolver needed to know
     what a tool name looks like after redaction. That resolver now calls
     `redact_for_ai` instead — the whole pipeline rather than this one rule —
-    because this rule is only one of eight and the others also rewrite tool
+    because this rule is only one of the ten passes `redact_for_ai` runs in
+    strict mode (eight in standard, where this rule and the address rule are
+    skipped) and the others also rewrite tool
     names. The address rule was the egregious case and is fixed (#130); it still
     rewrites a keyword followed by a number, so the reason stands. Kept public:
     it is a coherent unit and is tested directly.

@@ -3076,10 +3076,19 @@ for the corpus that prompted it and wrong for the next: the first lost `Ste-400`
 the second lost `Suite Twelve`, the third lost every zero-separator form. That is
 CLAUDE.md's stated tell for a design problem rather than a bug list, so the rule
 is now decided by an enumerated truth table
-(`apps/api/tests/unit/test_redact_address_matrix.py`) over five axes — suffix
-shape, separator shape, value position, trigger-inside-a-product-name, and
-surrounding context — written BEFORE the pattern and derived from what the
-redactor SHOULD do. Any future change to this rule changes the table first.
+(`apps/api/tests/unit/test_redact_address_matrix.py`) over six axes — suffix
+shape, separator shape, value position, trigger-inside-a-product-name,
+surrounding context, and text that has already been through the pipeline once —
+derived from what the redactor SHOULD do. Any future change to this rule changes
+the table first.
+
+**On "written BEFORE the pattern", which this entry said without qualification.**
+The original five axes were. The sixth was not, and neither were the rows added
+for the street rule or the rows the adversarial review of this fix forced. The
+method held for the part that was hardest to get right and was applied
+retroactively to the rest, and that is the honest version — a decision record
+claiming more discipline than the work had is the same defect as a status line
+claiming more progress.
 
 The issue's own suggested minimal fix (`\b` plus a required separator) was
 measured and **rejected**: it fixes less _and_ leaks more, dropping `Ste-400`
@@ -3106,11 +3115,11 @@ the suffix (`Suite 400_B`, from the same exported-spreadsheet source class as th
 zero-separator forms); an all-full-width numeral run; a designator wrapped onto
 the next line; a bare number before `Floor` (`3 Floor`, no ordinal); and non-US
 designators (`Flat 3`, `Level 2`), which were never covered -- `Flat` matched
-before only via the `Fl` bug being fixed.
+before only via the `\bFl` bug being fixed.
 
 **On full-width numerals, stated correctly rather than plausibly:** Python's
 `\d` on a `str` pattern IS Unicode-aware, so it matches U+FF10-FF19. It is the
-ASCII-only TAIL that fails, and then the trailing `` falls between two word
+ASCII-only TAIL that fails, and then the trailing `\b` falls between two word
 characters. So `Suite 4` in full-width redacts, and only a run of two or more
 full-width digits leaks. An earlier draft of this record said "`[A-Za-z0-9]` is
 ASCII-only", which named the right character class for the wrong reason.
@@ -3129,7 +3138,7 @@ was an uppercase-scoped branch `(?-i:[A-Z]{1,3})`, which corrupts `Adobe Creativ
 Suite CC` and `Sophos Security Suite XG` — #130 reintroduced on another branch,
 i.e. a fix that breaks an earlier fix. **Stated caveat:** `street_pat` does NOT
 reliably catch the identifying half — spelled-out and alphanumeric house numbers
-pass it (`One Federal Plaza`, `221B Baker Street`), filed separately — so this
+pass it (`One Federal Plaza`, `221B Baker Street`), filed as #138 — so this
 justification is weaker than it first reads and is recorded that way on purpose.
 
 ### What was ADDED, not preserved
@@ -3142,4 +3151,99 @@ does not preserve coverage through a fix, and the commit says so.
 
 The shape has exactly one member: only `Floor`/`Fl` take a number in front.
 `Building`, `Bldg`, `Rm`, `Room`, `Level` and `Mail Stop` match nothing at all,
-before or after — a coverage gap rather than a wrong shape, filed separately.
+before or after — a coverage gap rather than a wrong shape, filed as #139.
+
+### The guarantee has to hold for every sub-pattern, and at first it held for two
+
+`_RE_ADDRESS` compiles three sub-patterns: `_STREET_PAT`, `_SUITE_PAT` and
+`_PRE_KEYWORD_PAT`. The newline exclusion — the reason `_SUITE_SEP` stops at a
+line break rather than using `\s` — was applied to the second and third and **not** the
+first, while the truth table carried a comment asserting it held for all three.
+Two of three, and the row that would have caught it did not exist.
+
+`_STREET_PAT` fails worse than the suite rule does, because its leading
+`\d{1,6}` reaches BACKWARD across the break and takes a number off the previous
+line:
+
+    "Servers reviewed: 5"  +  "Main Street office is unstaffed."
+      -> "Servers reviewed: [ADDRESS] office is unstaffed."
+
+The count is gone, the two lines are merged, and the result reads as an ordinary
+sentence. That is #130's own failure mode — plausible output, nothing raised,
+nothing counted — inside the fix for #130.
+
+**Decided:** `_STREET_SEP` is horizontal whitespace, matching `_SUITE_SEP`.
+
+**Cost, named rather than discovered — and this paragraph was WRONG when first
+written; see "The separator is a SUBTRACTION" below, which supersedes it. The
+list below is the whole cost only under the subtraction, not under the
+enumerated class this paragraph originally described.** An address wrapped
+across a line break now leaks (`1600 Pennsylvania` / `Avenue NW`). Unlike `Flat`, whose coverage
+existed only through the `\bFl` bug, this coverage was real — but it was never
+clean: the trailing directional falls outside the alternation, so the wrapped
+form redacted to `[ADDRESS] NW` on main and the single-line form still does. A
+partial match that reads as a completed redaction is the shape this decision
+elsewhere refuses to accept, so trading it for a recorded leak is consistent
+rather than convenient. Pinned as an accepted residual; the directional gap and
+the house-number gaps are #138.
+
+### The separator is a SUBTRACTION, because the enumerated version leaked
+
+This reverses a decision made earlier in this same entry, one round later, and
+the reversal is the part worth keeping.
+
+Narrowing the separator away from `\s` was written as `[ \t\xa0]` — space, tab,
+non-breaking space — and the cost was recorded as _"an address wrapped across a
+line break now leaks"_, full stop. That was **false**. `\s` matches 19 horizontal
+characters, so the enumerated class silently dropped **sixteen** of them:
+U+2000-U+200A, U+202F narrow no-break, U+205F medium mathematical, U+3000
+ideographic, U+1680 ogham, and U+001F.
+
+Those are not exotic. Thin and narrow-no-break spaces are what PDF and Word text
+extraction emit, which is precisely how a client's letterhead reaches this
+boundary. A street address separated by U+202F redacted on `main` and egressed
+**verbatim** under the enumerated class, with no `address` key in
+`removed_counts` — a leak at the security boundary whose audit row is
+byte-identical to a note that contained no address. Strictly worse than the
+over-match it was fixing, in the one direction that matters.
+
+**How it got in.** The decision was framed as being about NEWLINES, so the
+replacement was written to solve newlines and nobody re-derived what else was in
+the class being replaced. Every cell anyone thought to write passed, because the
+cells were written by the same person with the same mental model of "whitespace"
+— CLAUDE.md's corpus lesson, one level down, inside the fix that added it.
+
+**Decided:** `_HSPACE = r"[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]"` — that is
+`\s` minus exactly the ten characters `str.splitlines()` calls a line break.
+Every separator in the ADDRESS rule is built from it, so "does not cross a line"
+is one
+definition rather than a property each pattern re-asserts. `PO\s+Box` inside
+the keyword alternation was still using `\s` and now uses it too. `_RE_PHONE`
+and `_RE_CAGE` still do NOT -- filed as #140 and #137, not fixed here, and said
+out loud because an unstated exemption reads as an oversight.
+
+`[^\S\r\n]`, the obvious idiom and what the review of this fix proposed, is
+**also** wrong: it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and
+U+2029, every one of which IS a line break. Measured rather than argued — both
+halves are now pinned as parametrised sweeps over the two sets, with the
+parameters derived from `str.splitlines()` rather than from the pattern.
+
+**The general rule, and why this is a decision rather than a bug fix:** replacing
+a character class with an enumerated one is a subtraction you must COMPUTE, not
+guess. Write it as the subtraction and let the language define the set.
+
+### The fourth class the corpus was missing
+
+CLAUDE.md gained the four classes a hand-written corpus structurally cannot
+contain **on this branch**, and the table shipped covering three of them. The
+missing one was text that has already been through the pipeline once — which is
+not hypothetical here, because the Tech Debt extractor redacts its own inventory
+input, so `[CLIENT] SOC Platform` is the normal product of any extraction after
+intake and is fed back through the egress path on the next call.
+
+Added as an idempotence axis asserting a fixed point (`_clean(_clean(x)) ==
+_clean(x)`) rather than literal expected strings, so it cannot decay into the #72
+shape of encoding the implementation's own answer. It is green today. It is worth
+having anyway: nothing else in the suite would notice if a future widening made a
+placeholder re-match, and the ATT&CK resolver's alias tier depends on the
+transformation being stable under a second pass.

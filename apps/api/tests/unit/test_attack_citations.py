@@ -591,7 +591,8 @@ def test_a_tool_redacted_by_a_rule_other_than_the_org_name_still_resolves() -> N
 
     `_redacted_form` originally called `redact_org_name` while its docstring
     claimed to use "the SAME redactor the egress path uses". That was true of one
-    rule out of eight, and the difference is not academic: the ADDRESS rule
+    rule out of the ten strict mode runs, and the difference is not academic:
+    the ADDRESS rule
     rewrites names with no client string in them anywhere.
 
     The example used to be `Flowmon`, which egressed as a bare `[ADDRESS]`

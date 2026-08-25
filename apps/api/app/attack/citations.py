@@ -233,7 +233,8 @@ class CitationResolver:
 
         The first version called `redact_org_name` directly while its docstring
         claimed to use "the SAME redactor the egress path uses". That was false
-        for seven of the eight rules, and the gap was not theoretical: the
+        for nine of the ten passes strict mode runs, and the gap was not
+        theoretical: the
         address rule USED to rewrite ordinary product names, so `Stellar Cyber`
         egressed as `[ADDRESS] Cyber` and `Flowmon` as a bare `[ADDRESS]`. Those
         tools had exactly the #33-finding-5 disease and none of the cure, and

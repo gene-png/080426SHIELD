@@ -16,6 +16,17 @@ Deriving them from the implementation is the #72 shape (a test that supplies its
 own expected value from the thing under test) and would make the table agree with
 the code by construction.
 
+TWO STATED EXCEPTIONS to that absolute, because an absolute with unlisted
+exceptions is exactly the shape this file exists to catch:
+
+  - Axis 6 (idempotence) asserts a FIXED POINT, so pass 2's expected value is
+    whatever pass 1 produced. A property is not an expected value; the axis is
+    guarded by its own test that the cells are not all pass-1 no-ops.
+  - The horizontal/vertical whitespace sweeps derive their parameter sets from
+    `str.splitlines()` and `re`, not from the redactor. That is a different
+    module deciding what a line break is, which is the point -- the enumerated
+    class this replaced agreed with itself and dropped sixteen characters.
+
 THREE VERDICTS, and the third one is the point:
 
   REDACT   - a real PII designator. Must be removed. A miss here is a LEAK.
@@ -31,6 +42,7 @@ here applies to all five services and every AI purpose.
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -134,6 +146,22 @@ SEPARATORS_REDACT = [
     ("space", "Suite 400", ADDR),
     ("tab", "Suite\t400", ADDR),
     ("non-breaking space", "Suite\xa0400", ADDR),
+    # The rest of Unicode's HORIZONTAL whitespace. `\s` covers 19 such characters
+    # and an enumerated class covered three, so narrowing the separator to stop
+    # at newlines silently dropped sixteen of them -- a LEAK, not a residual, and
+    # one nobody listed because the newline decision was framed as being about
+    # newlines. These are not exotic: PDF and Word text extraction emits thin and
+    # narrow-no-break spaces routinely, and that is exactly how client letterhead
+    # reaches this boundary.
+    ("thin space", "Suite\u2009400", ADDR),
+    ("narrow no-break space", "Suite\u202f400", ADDR),
+    ("en space", "Suite\u2002400", ADDR),
+    ("em space", "Suite\u2003400", ADDR),
+    ("ideographic space", "Suite\u3000400", ADDR),
+    ("medium mathematical space", "Suite\u205f400", ADDR),
+    ("ogham space mark", "Suite\u1680400", ADDR),
+    ("street rule, thin space", "1234\u2009Main\u2009Street", ADDR),
+    ("street rule, narrow no-break", "1600\u202fPennsylvania\u202fAvenue", ADDR),
     ("period", "Ste. 200", ADDR),
     ("hash", "Apt #3B", ADDR),
     ("hyphen", "Ste-400", ADDR),
@@ -178,6 +206,12 @@ POSITION_LEAVE = [
     # ...and with `\s` as its separator it also crossed a newline, which is the
     # exact merge the suite separator class is written to prevent. The guarantee
     # has to hold for EVERY sub-pattern in the compiled rule, not just one.
+    #
+    # It did not, when this comment was first written. `_STREET_PAT` still used
+    # `\s+` while the other two sub-patterns had dropped it, so the sentence
+    # above was true of two of three and no row tested the third. Pinned now by
+    # `test_the_street_rule_does_not_reach_across_a_newline`; a claim in a
+    # comment is not a test, and this one had to be turned into one.
     #
     # The ordinal here is load-bearing in the TEST, not just the rule: the first
     # version of this row used a bare "3", which the ordinal requirement above
@@ -285,6 +319,196 @@ def test_a_bulleted_list_is_not_joined_across_lines() -> None:
     assert _clean(text) == text
 
 
+# The same guarantee, for the STREET sub-pattern. Split out rather than folded
+# into the case above because it was the one sub-pattern the guarantee did not
+# hold for: `_SUITE_SEP` and `_PRE_KEYWORD_PAT` both dropped `\s` while
+# `_STREET_PAT` kept it, so the comment in POSITION_LEAVE claiming the guarantee
+# holds for EVERY sub-pattern was true of two of the three.
+#
+# The failure is worse here than a merge, because the street rule's leading
+# `\d{1,6}` reaches BACKWARD across the newline and consumes a number that
+# belonged to the previous line -- a finding count, a host count, a severity --
+# and the redacted text then reads as an ordinary sentence with no sign that
+# anything was lost. That is #130's disease exactly: plausible output, nothing
+# raised, no test able to see it.
+STREET_NEWLINE_LEAVE = [
+    ("count on the previous line", "Servers reviewed: 5\nMain Street office is unstaffed."),
+    ("host count on the previous line", "hosts: 3\nPark Avenue tooling needs review"),
+    ("bare merge", "reviewed 5\nMain Street office"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("shape", "text"), STREET_NEWLINE_LEAVE, ids=[c[0] for c in STREET_NEWLINE_LEAVE]
+)
+def test_the_street_rule_does_not_reach_across_a_newline(shape: str, text: str) -> None:
+    assert _clean(text) == text, f"{shape}: the street rule merged two lines"
+
+
+# The separator is defined as a SUBTRACTION -- `\s` minus the vertical set -- so
+# the two halves are asserted as SETS rather than sampled. Sampling is what let
+# the first version of this fix ship an enumerated `[ 	 ]` that dropped
+# sixteen horizontal characters: every cell anyone thought to write passed.
+#
+# Derived from `str.splitlines()` and `re`, not from the redactor, so it cannot
+# agree with the implementation by construction (#72). The module hardcodes its
+# subtraction list; this asserts that list against a different module's opinion
+# of what a line break is.
+_VERTICAL = [c for c in map(chr, range(0x11000)) if len(("a" + c + "b").splitlines()) > 1]
+_HORIZONTAL = [c for c in map(chr, range(0x11000)) if re.match(r"\s", c) and c not in _VERTICAL]
+
+# ...and per SEPARATOR, not just per character. The first version of this sweep
+# exercised two of the six separators in the rule (`_STREET_SEP` via a street
+# address and `_SUITE_SEP` via `Suite`), so reverting `_SUITE_SEP_ABBREV` to the
+# leaking enumerated class left the ENTIRE table green while `Ste.<U+202F>400`
+# and `Apt<U+2009>3B` egressed verbatim. Measured, not theorised: the revert was
+# applied, `grep` confirmed it landed, and all 153 cells passed.
+#
+# That is the same defect this file exists to prevent, inside the fix for it, one
+# level up -- so the guarantee is now asserted once per separator.
+_SEPARATOR_SITES = [
+    ("street", "1600{ch}Pennsylvania{ch}Avenue"),
+    ("suite keyword", "Suite{ch}400"),
+    ("abbreviated keyword", "Ste{ch}400"),
+    ("abbreviated keyword (2)", "Apt{ch}3B"),
+    ("PO Box keyword", "PO{ch}Box 12345"),
+    ("value before keyword", "2nd{ch}Floor"),
+    ("between number words", "Suite One{ch}Hundred"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("site,template", _SEPARATOR_SITES, ids=[s[0] for s in _SEPARATOR_SITES])
+@pytest.mark.parametrize("ch", _HORIZONTAL, ids=[f"U+{ord(c):04X}" for c in _HORIZONTAL])
+def test_every_horizontal_whitespace_character_separates_an_address(
+    ch: str, site: str, template: str
+) -> None:
+    r"""A leak, not a residual: `\s` covers 19 of these and an enumerated list covered 3."""
+    assert _clean(template.format(ch=ch)) == ADDR, f"{site}: U+{ord(ch):04X} stopped separating"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("site,template", _SEPARATOR_SITES, ids=[s[0] for s in _SEPARATOR_SITES])
+@pytest.mark.parametrize("ch", _VERTICAL, ids=[f"U+{ord(c):04X}" for c in _VERTICAL])
+def test_no_rule_reaches_across_any_vertical_whitespace_character(
+    ch: str, site: str, template: str
+) -> None:
+    """The bullet-merge guarantee, over the whole line-break set and every separator.
+
+    Asserts the separator SURVIVES in the output rather than that the string is
+    unchanged: some templates legitimately redact the part before the break
+    (`Suite One` is a complete designator), and demanding no change at all would
+    make those cells assert the wrong thing. A match that spanned the break would
+    consume the character, so its survival is the property.
+    """
+    out = _clean(template.format(ch=ch))
+    assert ch in out, f"{site}: a rule spanned U+{ord(ch):04X} and merged two lines"
+
+
+# ---------------------------------------------------------------------------
+# Axis 6 - text that has already been through the pipeline once
+# ---------------------------------------------------------------------------
+#
+# CLAUDE.md names four classes a hand-written corpus structurally cannot
+# contain, and this branch is what added that list. Three of them are covered
+# above (malformed strings, name + version number, non-US variants). This is the
+# fourth, and the table shipped without it -- the branch stated the rule and
+# then missed one of its own four cells.
+#
+# It is not hypothetical here. The Tech Debt extractor redacts its own inventory
+# input, so `[CLIENT] SOC Platform` is the NORMAL product of any extraction after
+# intake, and those strings are then fed back through the egress path on the next
+# AI call. Anything the rule does to a placeholder it does to real client data on
+# the second pass.
+#
+# The property is idempotence: a second pass must be a no-op. That is stronger
+# than a list of cells, and it is what the ATT&CK resolver depends on when it
+# reverses the transformation to build an alias.
+
+# Every cell runs the FULL pipeline with an org name and name hints. Without
+# them `redact_org_name` -- pass 10, and the exact transformation the ATT&CK
+# resolver's alias tier reverses -- never executes, so an axis whose stated
+# motivation is `[CLIENT] SOC Platform` would not once produce a `[CLIENT]`.
+# The first version of this axis made that mistake: it passed literal `[CLIENT]`
+# strings through with the org rule switched off, and all nine cells would have
+# stayed green if the org rule became non-idempotent tomorrow.
+_ORG = "Northwind"
+_HINTS = ("Dana Whitfield",)
+
+
+def _clean_full(text: str) -> str:
+    cleaned, _ = redact_for_ai(text, mode="strict", client_org_name=_ORG, name_hints=_HINTS)
+    return cleaned
+
+
+IDEMPOTENCE_CASES = [
+    # Cells that actually redact on pass 1 -- these are the ones that can detect
+    # a non-idempotent rule, because there is a placeholder for pass 2 to chew on.
+    ("bare address placeholder", "1234 Main Street"),
+    ("suite placeholder", "Suite 400"),
+    ("both, one line", "1234 Main Street, Suite 200"),
+    ("placeholder beside a live designator", "[ADDRESS] Suite 400"),
+    ("email and address together", "reach us at ops@example.com, 1234 Main Street"),
+    # The org rule, which is the whole reason this axis exists.
+    ("org name alone", f"{_ORG} runs the SOC."),
+    ("org name beside a designator", f"{_ORG} SOC Platform, Suite 400"),
+    # Already-redacted input: a no-op by nature, which is the point -- it is the
+    # literal string the Tech Debt extractor hands back. Labelled `no-op:` because
+    # the guard below is right that it cannot detect non-idempotence on its own.
+    ("no-op: org name already replaced", "[CLIENT] SOC Platform"),
+    ("org name twice", f"{_ORG} and {_ORG} Federal"),
+    # Name hints, the other pass that rewrites free text.
+    ("name hint beside an address", "Dana Whitfield, 1234 Main Street"),
+    # Pass-1 no-ops. Kept deliberately and labelled: they cannot detect
+    # non-idempotence (nothing is replaced, so pass 2 sees the input), but they
+    # do catch a widening that starts matching them on pass 2 only.
+    ("no-op: designator before a placeholder", "Suite [ADDRESS]"),
+    ("no-op: product names", "Flowmon and Unitrends are deployed."),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("shape", "text"), IDEMPOTENCE_CASES, ids=[c[0] for c in IDEMPOTENCE_CASES]
+)
+def test_redaction_is_idempotent(shape: str, text: str) -> None:
+    """A second pass over already-redacted text must change nothing.
+
+    Asserts the fixed point rather than a literal expected string on purpose: the
+    expected value for pass 2 is whatever pass 1 produced, so this cannot drift
+    into the #72 shape of encoding the implementation's own answer. The file
+    docstring's "never from what any pattern does" has this one exception, and it
+    is an exception because a fixed point is a PROPERTY rather than an expected
+    value -- stated here so the absolute above is not quietly false.
+    """
+    once = _clean_full(text)
+    assert _clean_full(once) == once, f"{shape}: a second pass rewrote already-redacted text"
+
+
+@pytest.mark.unit
+def test_the_idempotence_cells_are_not_all_pass_one_no_ops() -> None:
+    """Guards the axis against decaying into cells that cannot detect anything.
+
+    A cell where `_clean_full(x) == x` proves nothing about idempotence: there is
+    no placeholder for the second pass to act on. THREE such cells are kept on
+    purpose and named `no-op:`; if a future edit makes the REST of them no-ops
+    too, the axis silently stops testing its own property and this fails.
+
+    The floor matters as much as the check. Without it the cheap way to satisfy
+    this test is to relabel a cell `no-op:` rather than fix it, which is the
+    guard rewarding the edit it exists to catch -- and an empty `redacting` would
+    satisfy `assert not inert` vacuously.
+    """
+    redacting = [t for shape, t in IDEMPOTENCE_CASES if not shape.startswith("no-op:")]
+    assert len(redacting) >= 9, (
+        f"only {len(redacting)} cells still redact on pass 1; relabelling a cell "
+        "`no-op:` is not a fix"
+    )
+    inert = [t for t in redacting if _clean_full(t) == t]
+    assert not inert, f"cells claim to redact on pass 1 but do not: {inert}"
+
+
 # ---------------------------------------------------------------------------
 # Accepted residuals. Each is WRONG and deliberately tolerated, with a reason.
 # ---------------------------------------------------------------------------
@@ -321,7 +545,7 @@ RESIDUAL_LEAKED = [
     #
     # CAVEAT, stated rather than glossed: `street_pat` does NOT reliably catch
     # the identifying half. Spelled-out and alphanumeric house numbers pass it
-    # (`One Federal Plaza`, `221B Baker Street`); filed separately.
+    # (`One Federal Plaza`, `221B Baker Street`); see #138.
     ("two letters", "Suite AB"),
     ("two letters (2)", "Ste BB"),
     # A colon or comma between keyword and value is not in the separator class.
@@ -338,7 +562,7 @@ RESIDUAL_LEAKED = [
     ("full-width digits", "Suite ４００"),
     # An intervening word between the keyword and the number. The separator class
     # holds no letters, so `No.` / `Number` defeat it. Pre-existing, and the
-    # CAGE rule fails the same way for the same reason (filed separately) -- the
+    # CAGE rule fails the same way for the same reason (see #137) -- the
     # shared shape is "a separator class with no letters in it".
     ("intervening No.", "Suite No. 4"),
     ("intervening Number", "Unit Number 12"),
@@ -359,6 +583,20 @@ RESIDUAL_LEAKED = [
     # A designator wrapped onto the next line, excluded deliberately so that
     # bulleted lists survive -- see the bullet test above.
     ("wrapped line", "Suite\n400"),
+    # The STREET rule pays the same price for the same reason, and this cell is
+    # the cost of the newline exclusion above rather than a pre-existing gap: on
+    # main a wrapped address WAS redacted, because `\s+` crossed the line break.
+    # Stated plainly because CLAUDE.md's over-match lesson applies in both
+    # directions -- tightening a rule can remove coverage that was only ever
+    # there by accident, and here it removes coverage that was real. The trade is
+    # deliberate: a wrapped address is rare, and a merged bullet list corrupts
+    # every AI input silently.
+    #
+    # Note it was never CLEAN coverage. `1600 Pennsylvania Avenue NW` redacts to
+    # `[ADDRESS] NW` on one line too -- the trailing directional is outside the
+    # pattern -- so the wrapped form produced a partial redaction that read as a
+    # complete one. Tracked in #138 with the other street_pat gaps.
+    ("wrapped street address", "1600 Pennsylvania\nAvenue NW"),
     # Non-US designators were never covered. `Flat` is caught on main only by
     # the `\bFl`-eats-`at` bug: accidental coverage, not intended coverage.
     ("UK flat", "Flat 3"),
