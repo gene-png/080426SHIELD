@@ -179,7 +179,7 @@ class Settings(BaseSettings):
 
     # JWT signing
     jwt_signing_secret: str = (
-        "dev-only-replace-via-secrets-manager"  # noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime
+        "dev-only-replace-via-secrets-manager"  # noqa: S105 - dev placeholder; refused by assert_safe_for_runtime on ANY non-development environment (#142 - this comment used to say "in prod", which was true and was the reason nobody checked staging)
     )
 
     # Mail (MailHog in dev)
@@ -195,8 +195,63 @@ class Settings(BaseSettings):
     email_verify_token_ttl_seconds: int = Field(default=86400, ge=300)
     password_reset_token_ttl_seconds: int = Field(default=3600, ge=300)
 
-    def is_production(self) -> bool:
-        return self.environment == "production"
+    def is_development(self) -> bool:
+        """True only on a developer's machine.
+
+        THE SAFE PREDICATE, and the reason it exists (#142). Four call sites
+        asked `is_production()` while meaning "is this anything other than a
+        developer's machine", and `Environment` has THREE members -- so
+        `staging` got the developer's treatment on all four: the egress redactor
+        could be disabled, the placeholder JWT signing secret was accepted, and
+        `/docs` plus `/openapi.json` were published.
+
+        Anything that relaxes a security control keys on this. Written as a
+        whitelist of one so that adding a fourth `Environment` member cannot
+        silently reopen any of them -- a new member is not development, so it
+        gets the safe branch by construction.
+
+        `is_production()` was REMOVED rather than left beside this. It had zero
+        callers once the four were converted, and a dead predicate that four
+        things had just misused by name is a trap for whoever reaches for it
+        next.
+
+        WHEN TO BRING IT BACK, and the tell that you need to. The two predicates
+        are not redundant; they are a pair with opposite jobs:
+
+          * `is_development()` guards a RELAXATION -- something safe only on a
+            developer's machine. All four #142 sites were relaxations.
+          * `is_production()` guards an ENABLEMENT -- something that should
+            happen only in production.
+
+        **The BODY distinguishes them, not the `not`.** Both correct uses of
+        this predicate are literally `if not self.is_development(): raise ...`
+        -- an earlier draft of this docstring said the `not` itself was the tell,
+        which would have had a reader "fix" the two guards it exists to protect.
+
+        The test is what the branch DOES. Refusing to boot is a relaxation being
+        withheld and reads correctly as `not is_development()`. Doing something
+        extra is an enablement and needs `is_production()`: "send real email only
+        in production" written as `if not settings.is_development(): send_real()`
+        starts mailing real addresses from staging -- #142 with the sign flipped,
+        arriving the same way, by someone taking the nearest predicate rather
+        than the right one. Reintroduce `is_production()` for that case, with a
+        docstring saying it guards an enablement.
+
+        (No such site exists today -- email delivery is gated on the explicit
+        `shield_email_delivery_enabled` flag, and nothing in `app/` writes
+        `not is_development()`. The example is the shape to watch for, not a
+        known bug.)
+        """
+        return self.environment == "development"
+
+    def expose_api_docs(self) -> bool:
+        """Whether to serve `/docs` and `/openapi.json`.
+
+        Development only. On a platform that returns 404 rather than 403 so
+        existence never leaks, publishing the full route inventory hands over
+        the map those 404s refuse to draw.
+        """
+        return self.is_development()
 
     def live_llm_readiness(self) -> tuple[bool, str]:
         """Whether a live provider call will actually succeed (D-026).
@@ -298,13 +353,18 @@ class Settings(BaseSettings):
 
     def assert_safe_for_runtime(self) -> None:
         """Reject obviously unsafe configurations at startup."""
-        if self.is_production() and self.shield_redaction_mode == "off":
+        if not self.is_development() and self.shield_redaction_mode == "off":
             raise RuntimeError(
-                "SHIELD_REDACTION_MODE=off is forbidden when ENVIRONMENT=production "
-                "(Master Spec §12)."
+                f"SHIELD_REDACTION_MODE=off is forbidden when "
+                f"ENVIRONMENT={self.environment!r} (Master Spec §12). It is "
+                f"permitted only on 'development'."
             )
-        if self.is_production() and self.jwt_signing_secret.startswith("dev-only"):
-            raise RuntimeError("JWT_SIGNING_SECRET is still the default placeholder in production.")
+        if not self.is_development() and self.jwt_signing_secret.startswith("dev-only"):
+            raise RuntimeError(
+                f"JWT_SIGNING_SECRET is still the default placeholder and "
+                f"ENVIRONMENT={self.environment!r}. A real secret is required "
+                f"on anything but 'development'."
+            )
         # Feature flags gate ENFORCEMENT, not boot, as of Sprint 6 (D-027/D-028):
         # shield_auth_require_mfa and shield_auth_require_email_verify now have real
         # flows behind them (routes/auth.py), so the flag requires the control at

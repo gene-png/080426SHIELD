@@ -221,12 +221,14 @@ def _seed_llm_call(
     status: str = "completed",
     correlation_id: str | None = None,
     client_id: uuid.UUID | None = None,
+    redaction_mode: str | None = None,
 ) -> uuid.UUID:
     from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
 
     db = TestSession()
     try:
         row = LLMCall(
+            redaction_mode=redaction_mode,
             purpose=purpose,
             prompt_version="v1",
             provider=provider,
@@ -396,3 +398,44 @@ def test_correlation_id_links_activity_and_ai_tabs(ctx) -> None:
     assert len(ar["entries"]) == 1
     assert len(lr["calls"]) == 1
     assert ar["entries"][0]["correlation_id"] == lr["calls"][0]["correlation_id"] == corr
+
+
+@pytest.mark.unit
+def test_llm_calls_exposes_the_redaction_mode(ctx) -> None:
+    """#144: the ledger must be able to say what the redactor was doing.
+
+    Before 0046 a run with the redactor DISABLED and a run where it executed and
+    found nothing were byte-identical rows -- `redacted_counts` NULL in both, and
+    `mode` is fixture-vs-live, a different axis.
+    """
+    c, admin_bearer, admin_id = _admin(ctx)
+    _, TestSession = ctx
+    _seed_llm_call(TestSession, requested_by=uuid.UUID(admin_id), redaction_mode="off")
+
+    r = c.get("/admin/llm-calls", headers=_auth(admin_bearer))
+    assert r.status_code == 200, r.text
+    row = r.json()["calls"][0]
+    assert row["redaction_mode"] == "off", (
+        "the redaction mode is not surfaced, so the audit row still cannot "
+        f"distinguish a disabled redactor from a clean run: {row}"
+    )
+
+
+@pytest.mark.unit
+def test_a_pre_migration_row_reports_null_not_strict(ctx) -> None:
+    """NULL means NOT RECORDED and must never be coerced to a default.
+
+    A row written before 0046 has an unknown mode. Rendering it as "strict"
+    would assert something no code observed, in the table whose purpose is
+    proving what happened -- worse than the absence it replaces.
+    """
+    c, admin_bearer, admin_id = _admin(ctx)
+    _, TestSession = ctx
+    _seed_llm_call(TestSession, requested_by=uuid.UUID(admin_id))
+
+    r = c.get("/admin/llm-calls", headers=_auth(admin_bearer))
+    assert r.status_code == 200, r.text
+    row = r.json()["calls"][0]
+    assert (
+        row["redaction_mode"] is None
+    ), f"an unrecorded mode was coerced to a value: {row['redaction_mode']!r}"

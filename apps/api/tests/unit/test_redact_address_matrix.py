@@ -512,6 +512,155 @@ def test_the_idempotence_cells_are_not_all_pass_one_no_ops() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Axis 7 - the address SHAPES the rule never modelled (#138, #139)
+# ---------------------------------------------------------------------------
+#
+# The rule matched one line of one address shape. Everything below is a real US
+# address form it passed over, and the LEAVE half is why they could not simply
+# be added as more keywords: `Building`, `Room` and `Level` are ordinary words
+# that routinely precede a number in security prose.
+
+ADDRESS_SHAPES_REDACT = [
+    # #138: house numbers the leading `\d{1,6}` could not express.
+    ("spelled-out house number", "One Federal Plaza", ADDR),
+    ("spelled-out, two", "Two Penn Plaza", ADDR),
+    ("alphanumeric house number", "221B Baker Street", ADDR),
+    ("alphanumeric, lower", "12a Main Street", ADDR),
+    # #138: the directional fell outside the alternation, so the rule produced
+    # `[ADDRESS] NW` -- a partial match reading as a complete one.
+    ("trailing directional", "1600 Pennsylvania Avenue NW", ADDR),
+    ("trailing directional, two letters", "500 Market Street SW", ADDR),
+    # #138: the city/state/ZIP line matched nothing at all, so a redacted street
+    # line still sat above a line naming the location.
+    ("city state zip", "Arlington VA 22209", ADDR),
+    ("city state zip, comma", "Arlington, VA 22209-1234", ADDR),
+    ("two-word city", "San Antonio TX 78205", ADDR),
+    # #139: facility designators that matched nothing.
+    ("building", "Building 4", ADDR),
+    ("bldg", "Bldg 7", ADDR),
+    ("room", "Room 210", ADDR),
+    ("rm", "Rm 210", ADDR),
+    ("mail stop", "Mail Stop 1234", ADDR),
+]
+
+# The reason #139 could not be a keyword list. Each of these is a designator
+# word followed by a number, in ordinary security prose.
+# USPS Publication 28 Appendix C2 -- the approved list of US secondary unit
+# designators. ALL 24, one row each, so #139 can say the keyword list is complete
+# against a STANDARD rather than complete against recall.
+#
+# This is the oracle move applied to a keyword list: a published enumeration
+# turns "which ones did I think of" into a lookup, the same way the old rule is
+# an oracle for a replacement pattern. Neither depends on imagining cases.
+#
+# LEVEL is not on this list, which is the real reason it is excluded -- a better
+# reason than "patch level 3 is inseparable from a floor", because that phrasing
+# invites the next person to attempt the separation and fail identically.
+PUB28_DESIGNATORS = [
+    # (designator, covered?, why)
+    ("STE", True, "Suite -- suite rule"),
+    ("APT", True, "Apt -- suite rule"),
+    ("UNIT", True, "Unit -- suite rule"),
+    ("FL", True, "Floor/Fl -- suite rule + pre-keyword branch"),
+    ("BLDG", True, "Building/Bldg -- facility branch"),
+    ("RM", True, "Room/Rm -- facility branch"),
+    ("STOP", True, "Mail Stop/Stop -- facility branch"),
+    ("DEPT", True, "facility branch"),
+    ("OFC", True, "facility branch"),
+    ("LBBY", True, "facility branch"),
+    ("BSMT", True, "facility branch"),
+    ("TRLR", True, "facility branch"),
+    ("PIER", True, "facility branch"),
+    ("HNGR", True, "facility branch"),
+    ("SLIP", True, "facility branch"),
+    # EXCLUDED: ordinary English or technical vocabulary that takes a digit.
+    # Each would reproduce the `Room for` / `patch level 3` collision.
+    ("KEY", False, "ordinary noun -- 'key 3 controls'"),
+    ("LOT", False, "'lot 5', and 'a lot of'"),
+    ("SIDE", False, "'side 2', 'client-side'"),
+    ("REAR", False, "'rear of'"),
+    ("FRNT", False, "'front 3'"),
+    ("SPC", False, "collides with 'spec'"),
+    ("PH", False, "pH values, phase abbreviations"),
+    ("LOWR", False, "'lower 3'"),
+    ("UPPR", False, "'upper 2'"),
+]
+
+
+@pytest.mark.unit
+def test_every_pub28_designator_has_a_decision() -> None:
+    """Completeness against the STANDARD, not against memory.
+
+    Pub 28 C2 has exactly 24 entries. If that changes, or if a row is dropped
+    here, this fails rather than the list silently shrinking back to whatever
+    someone recalled.
+    """
+    assert len(PUB28_DESIGNATORS) == 24, "Pub 28 C2 has 24 secondary unit designators"
+    assert len({d for d, _, _ in PUB28_DESIGNATORS}) == 24, "duplicate designator row"
+    for designator, covered, why in PUB28_DESIGNATORS:
+        assert why.strip(), f"{designator}: a decision needs a reason"
+        assert isinstance(covered, bool)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "designator",
+    [d for d, covered, _ in PUB28_DESIGNATORS if covered],
+)
+def test_covered_pub28_designators_redact_with_a_number(designator: str) -> None:
+    """Every designator marked covered must actually redact. The table is a claim."""
+    assert (
+        _clean(f"{designator.title()} 12") == ADDR
+    ), f"{designator} is marked covered in PUB28_DESIGNATORS and does not redact"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "designator",
+    [d for d, covered, _ in PUB28_DESIGNATORS if not covered],
+)
+def test_excluded_pub28_designators_stay_excluded(designator: str) -> None:
+    """And every exclusion must still be excluded -- adding one is a deliberate act."""
+    text = f"{designator.title()} 12"
+    assert (
+        _clean(text) == text
+    ), f"{designator} is marked EXCLUDED in PUB28_DESIGNATORS but now redacts"
+
+
+ADDRESS_SHAPES_LEAVE = [
+    ("building as a verb", "Building a baseline takes time."),
+    ("building out", "Building 2 of the 5 controls is done."),
+    ("room as a noun", "Room for improvement exists."),
+    ("patch level", "Patch level 3 is current."),
+    ("log level", "Set the log level to 2."),
+    ("tier", "Tier 2 support is contracted."),
+    ("spelled-out number in prose", "One control was missing."),
+    ("two in prose", "Two findings remain open."),
+    ("a bare zip is not an address", "The count was 22209."),
+    ("state abbreviation in prose", "The VA 22209 figure is a spend total."),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("shape", "text", "expected"),
+    ADDRESS_SHAPES_REDACT,
+    ids=[c[0] for c in ADDRESS_SHAPES_REDACT],
+)
+def test_address_shapes_that_were_never_modelled(shape: str, text: str, expected: str) -> None:
+    assert _clean(text) == expected, f"{shape}: a real address form leaked"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("shape", "text"), ADDRESS_SHAPES_LEAVE, ids=[c[0] for c in ADDRESS_SHAPES_LEAVE]
+)
+def test_designator_words_in_prose_survive_the_new_shapes(shape: str, text: str) -> None:
+    """The LEAVE half is what decides which #139 keywords are addable at all."""
+    assert _clean(text) == text, f"{shape}: #139 keyword ate ordinary prose"
+
+
+# ---------------------------------------------------------------------------
 # Accepted residuals. Each is WRONG and deliberately tolerated, with a reason.
 # ---------------------------------------------------------------------------
 

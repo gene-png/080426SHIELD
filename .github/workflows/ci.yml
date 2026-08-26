@@ -64,6 +64,14 @@ jobs:
       - name: plan totals sum
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
+      # An enumerated whitespace class in the single LLM egress path. Twice a
+      # separator there was written by listing the characters someone could
+      # think of, and both times it leaked -- the second 190 lines above the
+      # comment explaining the first. A third instance was caught by this script
+      # on its first run, in code written the same hour.
+      - name: separator classes in the redactor
+        run: python apps/api/scripts/check_separator_classes.py apps/api/app/ai/redact.py
+
       - name: pytest -m unit
         working-directory: apps/api
         run: pytest -m unit tests/unit

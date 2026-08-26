@@ -85,5 +85,16 @@ class LLMCall(UUIDPKMixin, TimestampMixin, Base):
 
     # Counts of items removed by the redactor for this call's input.
     # Counts only - never payload content (Master Spec §12.1).
+    # The redaction mode this call actually ran under (#144). WRITE-ONCE, set at
+    # INSERT rather than at finalisation: the mode is known before the provider
+    # is called, and a call that fails or is killed is exactly when "what was
+    # egressed" matters most. Unlike `status`, `input_tokens` and `duration_ms`
+    # on this row, nothing updates it after the insert.
+    #
+    # NULL means NOT RECORDED, never "strict". Rows written before migration 0046
+    # have an unknown mode and no default is applied to them -- fabricating one
+    # in the table whose job is proving what happened would be worse than the
+    # absence. See the 0046 docstring.
+    redaction_mode: Mapped[str | None] = mapped_column(String(16))
     redacted_counts: Mapped[dict | None] = mapped_column(JSONB().with_variant(JSONB, "postgresql"))
     correlation_id: Mapped[str | None] = mapped_column(String(128))

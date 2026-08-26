@@ -47,7 +47,15 @@ export async function fetchAiPreview(serviceId: string): Promise<AiPreview> {
   return (await res.json()) as AiPreview;
 }
 
-/** Total number of redacted spans across all categories. */
+/**
+ * Total number of redacted SPANS across all categories.
+ *
+ * Summing every value is correct only because `redacted_counts` carries one
+ * unit: every value is a count of removals (see `app/ai/redact.py`). A key
+ * measuring anything else -- characters deleted, bytes, a duration -- would make
+ * this aggregate silently wrong on the pre-egress preview. If one is ever
+ * needed, it goes in its own column, not in this dict.
+ */
 export function totalRemoved(counts: Record<string, number>): number {
   return Object.values(counts).reduce((sum, n) => sum + n, 0);
 }

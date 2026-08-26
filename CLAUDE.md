@@ -332,6 +332,33 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   else is `_validate_tools` called?". Write the shape down in the PR body next to
   the grep you ran. If you cannot describe the defect without naming the function
   it was found in, you have not generalised it yet and the sweep will miss.
+
+  **A worked example, because every entry above says to write a shape statement
+  and none of them shows a good one.** From the `docs/security.md` honesty pass
+  (PR #146):
+
+  > A control stated in the present tense whose implementation is a deferral
+  > comment, a client-supplied value, a header with no transport to enforce it,
+  > or a function with no callers.
+
+  What makes it work, itemised so the next one can be built the same way:
+
+  - **It names four distinct failure modes, not one.** A shape with a single
+    mode is usually just the found defect restated.
+  - **It names no file, function or symbol.** Nothing in it points back at
+    `security.md` or at the OWASP table that prompted the audit.
+  - **Each mode is checkable by reading the implementation**, not by knowing the
+    history — "a function with no callers" is a grep, "a deferral comment" is a
+    comment saying the real thing is deferred.
+  - **It found three defects outside the table it would have been natural to
+    check**: the MIME sniff that trusts the client's `Content-Type`, the
+    "HIBP top-100k" that is a three-entry deny list, and the `signed_url`
+    credited as the artifact control with zero call sites. None of the three is
+    in the OWASP table; a sweep phrased as "check the OWASP rows" finds none of
+    them.
+
+  The test of a shape statement is whether it could have been written **before**
+  seeing the defect that prompted it. This one could.
 - **A derived lookup key belongs in its OWN tier, below the authoritative one.**
   #33 finding 5 needed the resolver to recognise a tool under the placeholder the
   model was shown, so the redacted form was indexed as an alias — into the same
@@ -505,6 +532,78 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   have and write beside each one what the input looked like. Any entry whose
   answer is "I don't know" or "there was nothing there" is the bug, and it is
   cheaper to find on that list than in review.
+- **A comment or message stating a rule NARROWER than the reader will assume,
+  positioned exactly where they would go to check, is worse than no comment.**
+  It is true, so nothing flags it; it is where you look, so it ends the search;
+  and it reads as a guarantee rather than as a scope. Three instances in two
+  days, all in the same subsystem:
+
+  - `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
+    beside the JWT signing secret. True. The guard covered one of three
+    environments, and this sentence is why nobody checked the other two (#142).
+  - `"SHIELD_REDACTION_MODE=off is forbidden when ENVIRONMENT=production"` — the
+    runtime error the guard itself raises, naming a narrower rule than the one
+    that should exist, in the string a developer reads while debugging it.
+  - `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
+    path uses" while calling one rule out of ten. The docstring even argued
+    correctly that a second copy would drift, directly above the second copy.
+
+  All three were found by reading the CODE and comparing, never by reading the
+  prose — which is the only method that works, because the prose is accurate.
+  The countermeasure is mechanical, not attentional: when a comment states a
+  condition, read the condition it describes and check the two agree in SCOPE,
+  not just in truth. And when you fix such a guard, fix its message in the same
+  commit — an error string is documentation that a developer reads under
+  pressure, and a stale one costs more there than in a doc.
+- **Replacing a validator gives you a free ORACLE for exactly one round: the
+  thing you are replacing.** Enumeration depends on imagining cases, and the
+  cases you fail to imagine are precisely the ones that leak. Item 10 replaced a
+  phone regex; the truth table's LEAVE half was carefully enumerated and its
+  REDACT half was seven rows of one grouping, so four formats the OLD rule caught
+  — `1-800-555-0199`, `1.555.867.5309`, `020 7946 0958`, and any number separated
+  by a non-ASCII space — leaked silently, and `CAGE1ABC2` regressed the same way.
+  Nobody imagined them; the adversarial reviewer found them by reading.
+
+  The mechanical version costs nothing: **run the old rule and the new rule over
+  the same corpus and diff their match sets.** Every input the old one caught and
+  the new one does not is either an intended false-positive fix or a new leak,
+  and you must classify each. It works for any validator, filter, guard or parser
+  being replaced — and only for one round, because after the old one is deleted
+  the oracle is gone. Capture the diff while you still have both.
+
+  **Second example, same shape: a published standard is to a keyword list what
+  the old rule is to a replacement pattern.** #139 asked which facility
+  designators to add, and the honest answer to "which ones did I think of" is
+  always "the ones I thought of". USPS Publication 28 Appendix C2 is the approved
+  list of US secondary unit designators — 24 entries — so the question became a
+  lookup. Of those, 7 were already covered, 8 were added, and 9 were excluded as
+  ordinary English that takes a digit (`KEY`, `LOT`, `SIDE`, `REAR`, `FRNT`,
+  `SPC`, `PH`, `LOWR`, `UPPR`). The table asserts every "covered" row actually
+  redacts and every exclusion still does not, so the list is complete against a
+  standard rather than against recall.
+
+  It also gave the residual a better reason. `Level` is excluded not because
+  "patch level 3 is inseparable from a floor" — a phrasing that invites the next
+  person to attempt the separation and fail identically — but because **LEVEL is
+  not on Pub 28 C2 at all**. That is the same scope call as the non-US postcode
+  residual, with the same firing condition, so three residuals now share one
+  reason and one trigger instead of three separate stories.
+
+  This covers the half enumeration structurally cannot: enumeration finds what
+  you thought of, the oracle finds what the previous author — or the standards
+  body — thought of.
+- **When testing ONE branch of a disjunction, assert the other branches are
+  absent.** Not the #72 shape — removing every detector would fail the test — but
+  the same practical result: the test passes and proves nothing about the thing
+  it is named for. `_RE_CONTACT_HINT` matches an email OR a `--` delimiter OR a
+  phone-shaped run OR a ZIP line. The fixture written to prove the phone branch
+  handled non-ASCII separators contained `Arlington VA 22209`, so it passed on
+  the ZIP branch while the phone branch was ASCII-only and broken. The gate found
+  the defect; the test named for it never could have.
+
+  One line fixes it: the phone fixture asserts the ZIP hint does NOT fire on it.
+  Every multi-signal guard has this shape, and the more signals it has the more
+  reliably a test of any one of them passes for free.
 - **Assert what must APPEAR before what must not.** `toHaveCount(0)` on a page
   still mid-fetch passes vacuously — the element it forbids simply has not
   rendered yet. Wait on the positive state first (`toBeVisible`), then assert the

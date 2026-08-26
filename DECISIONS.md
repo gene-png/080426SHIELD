@@ -3232,6 +3232,41 @@ parameters derived from `str.splitlines()` rather than from the pattern.
 a character class with an enumerated one is a subtraction you must COMPUTE, not
 guess. Write it as the subtraction and let the language define the set.
 
+### Claims from READING fail at about even odds; claims from RUNNING have held
+
+Recorded here rather than in a review comment because it is the strongest
+argument in this repo for mechanism over discipline, and it now has **three
+independent sources** in a single week whose entire subject was that error.
+
+Everyone working on this branch made the same class of mistake -- asserting a
+number or a rule from reading, without executing anything:
+
+- **The adversarial reviewer** proposed `[^' + chr(92) + 'S' + chr(92) + 'r' + chr(92) + 'n]` as the whitespace fix (it still
+  crosses eight line-break characters), and asserted "No accidental issue closes"
+  was not a required check (the live API says it is). It runs read-only by
+  construction, so every one of its claims is static reading -- which is also why
+  it catches what it catches.
+- **The implementing agent** shipped "153 cells" when the count was 327, claimed
+  a separator-class gate had 1:1 signal when it measured 1 in 13, and asserted a
+  plan total without adding the rows.
+- **The reviewing human** made the same error six times: a rule quoted from
+  memory that the file contradicts, a stale audit finding, an unsummed total, a
+  count taken from a docstring, a percentage that had gone stale, and the 1:1
+  ratio above.
+
+The pattern is not carelessness and it is not fixable by care -- all three
+participants knew the rule, and two of them had written it down that week. Every
+claim any of us made **after executing something** has held. Every claim from
+reading has failed at roughly even odds.
+
+**So: nothing reportable until it has been run.** Where a claim cannot be
+executed -- a judgement about scope, a prediction about a future reader -- say
+that it is a judgement rather than dressing it as a measurement.
+
+This is D-051's argument with a bigger sample. It is also why this branch ships
+four gates rather than four paragraphs: `check_no_control_chars`,
+`check_plan_totals`, `check_separator_classes`, and the truth tables themselves.
+
 ### The fourth class the corpus was missing
 
 CLAUDE.md gained the four classes a hand-written corpus structurally cannot

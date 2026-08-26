@@ -604,6 +604,11 @@ class LLMClient:
             mode=call_mode,
             status=LLMCallStatus.RUNNING,
             requested_by=requested_by,
+            # Written HERE, at insert, not at finalisation: the mode is known
+            # at the top of this method and a call that dies before
+            # finalising is precisely when the ledger needs to say what was
+            # egressed. Write-once -- nothing below updates it.
+            redaction_mode=mode,
             redacted_counts=removed_counts or None,
             correlation_id=correlation_id_var.get(),
         )

@@ -114,13 +114,12 @@ runs the first eight — address and org name are strict-only.
 **Implemented:**
 
 - Every call site flows through the redactor. There is no per-call skip.
-- `SHIELD_REDACTION_MODE=off` is refused when `ENVIRONMENT=production`
-  (`app/config.py:301`). **It is NOT refused on `staging`** — the guard keys on
-  `is_production()` and `Environment` has three members, so a staging
-  deployment boots with the entire redactor disabled and every `llm_calls` row
-  recording an empty `redacted_counts`, indistinguishable from a run with
-  nothing to remove. Filed as **#142**; the sibling `jwt_signing_secret` guard
-  on the next line has the identical hole.
+- `SHIELD_REDACTION_MODE=off` is refused on **any** environment other than
+  `development` (`app/config.py`, `assert_safe_for_runtime`). It previously keyed
+  on `is_production()` while `Environment` has three members, so a `staging`
+  deployment booted with the redactor disabled — **#142, fixed**, along with the
+  three other call sites of that predicate: the placeholder JWT signing secret,
+  and `/docs` + `/openapi.json`, which were published on staging.
 - The address rule is decided by an enumerated truth table
   (`apps/api/tests/unit/test_redact_address_matrix.py`, 327 cells) rather than a
   regex patched case by case — see **D-058**.
@@ -133,14 +132,24 @@ runs the first eight — address and org name are strict-only.
 leaks and three corrupt or misreport. They are listed here rather than left to
 the issue tracker because this is the document that describes the control:
 
-| Issue | Defect                                                                                                                                                                                                                                                                  |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #135  | A line reading `Thanks` / `Best` / `Regards` truncates everything after it, and the run records a successful redaction                                                                                                                                                  |
-| #136  | `_RE_CONTRACT` has no `IGNORECASE`, so a lowercase contract number egresses whole                                                                                                                                                                                       |
-| #137  | `_RE_CAGE` misses `CAGE Code <n>`, matches an empty separator, and rewrites the phrase "CAGE codes" while recording a removal that did not happen                                                                                                                       |
-| #138  | Spelled-out and alphanumeric house numbers are not matched (`221B Baker Street`, `One Federal Plaza`)                                                                                                                                                                   |
-| #139  | `Building`, `Bldg`, `Rm`, `Room`, `Level`, `Mail Stop` match nothing                                                                                                                                                                                                    |
-| #140  | `_RE_PHONE` turns `Segments 10.20.30.40 and 10.20.30.41 are isolated.` into `Segments [PHONE] and [PHONE] are isolated.`, recording `phone: 2` over text containing no phone number. Space-separated digit runs of 10-20 characters match; comma-separated lists do not |
+| Issue | Defect                                                                                                             | Status                                                                                                                                             |
+| ----- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #135  | A line reading `Thanks` / `Best` / `Regards` truncated everything after it and recorded a successful redaction     | **Fixed.** An opener counts only when the next line names a person or one of the following lines is contact-shaped; the cut length is now recorded |
+| #136  | `_RE_CONTRACT` had no `IGNORECASE`, so a lowercase contract number egressed whole                                  | **Fixed**                                                                                                                                          |
+| #137  | `_RE_CAGE` missed `CAGE Code <n>`, matched an empty separator, and rewrote the phrase "CAGE codes"                 | **Fixed.** The value must contain a digit, which is what separates a code from a word                                                              |
+| #140  | `_RE_PHONE` consumed IP-address pairs and numeric lists and recorded a phone removal over text with no phone in it | **Fixed.** Replaced with explicit groupings; a bare digit run and a dotted quad match neither                                                      |
+| #138  | Spelled-out and alphanumeric house numbers, the trailing directional, and the city/state/ZIP line are not matched  | Open                                                                                                                                               |
+| #139  | `Building`, `Bldg`, `Rm`, `Room`, `Level`, `Mail Stop` match nothing                                               | Open                                                                                                                                               |
+| #144  | `llm_calls` records no redaction mode, so a disabled-redactor row is indistinguishable from a clean one            | Open                                                                                                                                               |
+
+**Both fixes were wrong before they were right, and the record is worth keeping.**
+The first phone rewrite closed the over-match and opened four under-matches --
+trunk-prefixed (`1-800-555-0199`), UK national, and any number separated by a
+non-ASCII space -- every one of which the old rule caught. The first signature
+fix required a trailing comma, which leaked a name, a title, an org and a ZIP
+line on any comma-less sign-off. Both were caught by adversarial review rather
+than by the test tables, because the REDACT half of each table was one shape
+repeated.
 
 **Corrections to what this section used to say.** It cited a test path that does
 not exist (`apps/api/tests/unit/ai/test_redact.py`; the real files are

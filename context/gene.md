@@ -1,18 +1,121 @@
 # Gene's Context: 080426SHIELD
 
-## Pick up here
+## PICK UP HERE — mid-flight on item 10 (2026-08-25)
 
-**PR #133 is merged.** Item 7's backend half is on `main` — all 7 checks green. Nothing is mid-edit; the working tree is clean and everything is pushed.
+**Written by the agent at Gene's explicit request before a machine restart.**
+This file is owner-write-only; an agent writing it stays the exception.
 
-The three things to do, in order:
+### The one-line state
 
-1. **Start #130** — the highest-value open bug, unblocked, and the one most likely to be invisible to a UI-focused pre-launch pass.
-2. **Item 7 part 2** — the `/ai-inputs` endpoint + `AttackAiInputsPanel`.
-3. Then items 6, 8, 9.
+`main` is at `02f43d6`. Branch **`fix/redaction-boundary-item-10`** holds
+**item 10 complete in code, committed and pushed, NO PR open yet.** An
+adversarial review was in flight when the session ended and its findings have
+NOT been applied.
 
-**Last updated:** 2026-08-25 (PR #141 merged — #130 fixed and closed; the security-doc honesty pass in flight; #135-#140, #142, #143, #144, #145 filed; items 10 and 9a added to the MVP path). Earlier: 2026-08-23 (item 7 backend merged as PR #133; adversarial reviewer run on real feature work for the first time and it overturned the branch's central claim; three new mvp-blocking issues filed — #130, #131, #132)
+### First five commands after restart
 
-This file is owner-write-only. **This round it was written by the agent at Gene's explicit request** ("give me instructions so we can pick back up"), which is an exception rather than a new default. It also merges a relay session's update (`88983b2`) that landed on `main` mid-round; that content is preserved below rather than overwritten. **This file lives in the repo, not on any one machine; a local computer restart does not affect it.**
+```bash
+export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"   # every shell
+cd /c/repos/SHIELD080326/SHIELD080306main
+git checkout fix/redaction-boundary-item-10 && git log --oneline -3
+docker compose up -d                       # stack: web:3000 api:8000 db redis minio keycloak mailhog
+docker compose exec -T api sh -lc "cd /app && alembic current"     # expect 0046 (head)
+```
+
+### Two things to confirm are alive before doing anything else
+
+1. **Playwright** — host-run, not docker.
+   ```bash
+   cd e2e && npx playwright --version && npx playwright test --list | tail -2
+   ```
+   Expect v1.61.1 and ~92 tests over 45 files. A first run may hit the documented
+   next-dev cold-compile timeout; re-run before investigating. Full suite ~17 min,
+   chromium, serialized.
+
+2. **The adversarial reviewer** — `.claude/agents/adversarial-reviewer.md`, agent
+   type `adversarial-reviewer`, tools Read/Grep/Glob, model opus. Dispatch it on
+   the branch; if it returns findings it is working. It found **26 real defects
+   across three PRs this week**, including three leaks the implementing agent
+   introduced. It is also confidently wrong perhaps a fifth of the time, so
+   **re-verify every finding in-container before acting** — two of its proposals
+   were measured and rejected this week.
+
+### Where the plan lives
+
+`DELIVERY_PLAN.md`, section "MVP completion path". Order and remaining sizes:
+
+| # | Item | Est | State |
+| --- | --- | --- | --- |
+| 9a | docs-truth pass, `docs/security.md` | 0.5-1 | **DONE**, PR #146 merged |
+| 10 | the redaction boundary (#135-#140, #142, #144) | 2-3 | **code complete, unmerged** |
+| 7 | W1 ATT&CK step + #131 | 1-1.5 | not started |
+| 9 | correctness defects only a code review catches | 4-6 | not started |
+| 6 | W1 Risk step | 4-6 | not started |
+| 8 | W6 Risk export/publish split | 1-1.5 | not started |
+
+**Total remaining 12-18 sessions, roughly 3-5 working weeks.** `check_plan_totals.py`
+gates that the parts sum. Item 9 splits by SURFACE into four groups (see the plan);
+item 10 is deliberately ONE PR across three surfaces because review overhead is
+per-PR, not per-unit-of-work.
+
+## What item 10 did (all eight issues, code complete)
+
+| Issue | Fix |
+| --- | --- |
+| #135 | Signature blocks: opener counts only when the next line looks like a signatory OR one of the next 5 lines is contact-shaped. Replaced a comma rule that leaked name/title/org/ZIP. |
+| #136 | `_RE_CONTRACT` gained `IGNORECASE`. |
+| #137 | `_RE_CAGE`: value must contain a digit (that is what separates a code from a word); connector loop handles `code(s)`/`number(s)`/`No.`; glued `CAGE1ABC2` works again. |
+| #138 | House numbers alphanumeric + spelled-out, trailing directional, and `City ST NNNNN(-NNNN)?` as ONE grouping. |
+| #139 | Facility branch from **USPS Pub 28 C2**, all 24 designators tabled: 7 covered, 8 added, 9 excluded with reasons. `LEVEL` excluded because it is not on the standard. |
+| #140 | `_RE_PHONE` rewritten from a digit-density heuristic to explicit groupings + a 7-15 digit bound. |
+| #142 | `is_production()` DELETED; `is_development()` + `expose_api_docs()`. All four call sites converted — redaction-off, JWT placeholder, `/docs`, `/openapi.json` were all permitted on `staging`. |
+| #144 | Migration **0046**: nullable `llm_calls.redaction_mode`, no server default, written at INSERT, write-once. Pre-migration rows stay NULL and NULL means NOT RECORDED. |
+
+**Three new gates shipped this week**, all wired into `ci.yml`:
+`check_no_control_chars.py`, `check_plan_totals.py`, `check_separator_classes.py`
+— the last found a third instance of its own defect on first run.
+
+## What is LEFT on item 10
+
+1. **Apply the in-flight adversarial review.** Re-dispatch it; the previous run
+   was pointed at the migration design, a possible second `LLMCall` insert site,
+   phone formats still missed, and prose the new address rules might eat.
+2. **Confirm a clean full `pytest -m unit` run.** Targeted suites all pass
+   (386 address cells, 127 rule cells, gates). The last full run was killed by a
+   cleanup loop, not by failures — re-run it.
+3. **Open the PR.** Body must carry `Findings:` / `Disposition:` / `Scope:` on
+   their own lines (the gate reads them literally), and `Scope:` must **enumerate
+   all three surfaces** — `app/ai/redact.py`, `config.py`+`main.py`, and the
+   model+migration — because cost overrode surface coherence here.
+4. **Do NOT auto-close** #135-#140/#142/#144 unless intended; use
+   `Auto-close-approved: <bare numbers>` PLUS a real closing keyword. The
+   approval line alone does not close anything.
+
+## Standing environment facts
+
+- Detached tests survive a killed wrapper:
+  `docker compose exec -d api sh -lc '... > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'`
+  then poll for the exit file. **Kill stale pytest runs by PID** — `pkill` is not
+  in that image and prints nothing while doing nothing.
+- After ANY `apps/web` edit: `docker compose up -d --force-recreate api web`,
+  then re-check `SHIELD_LLM_MODE`.
+- Gates before every commit: host `prettier@3.9.5 --check`, in-container
+  `ruff check --no-cache . && black --check .`, `check_test_integrity`,
+  `check_no_control_chars`, `check_plan_totals`, `check_separator_classes`.
+- **Writing Python via heredoc mangles backslashes.** Build escapes with
+  `chr(92)` and assert the result is ASCII before writing. This cost ~8 repairs.
+
+## The lesson this week actually produced
+
+Three participants — reviewer, implementing agent, reviewing human — each
+asserted numbers or rules from READING rather than running, at roughly even
+odds of being wrong, in a week whose subject was that error. Every claim made
+after executing something held. Recorded in D-058. **Nothing reportable until
+it has been run.**
+
+---
+
+# Previous rounds (history)
 
 ## What we did this round
 
