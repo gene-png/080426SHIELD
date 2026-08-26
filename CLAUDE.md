@@ -556,8 +556,12 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   while still reading as a guarantee. A bare stale count invites a check. A stale
   count under "read live from GitHub, not carried forward" ends the check.
 
-  Four instances in one week, and **three were in the files that document the
-  rule**:
+  Instances in one week — **five**, of which three are in the files that
+  document the rule. An earlier draft said "four" and was left saying four
+  when two more were added, which is this bullet's own defect for the SECOND
+  time (it also shipped a wrong closure count). The number is written out
+  here only because the list is immediately below it; if it grows again,
+  delete the count rather than update it:
 
   - `context/gene.md` — "Open mvp-blocking issues (20)" under a paragraph
     certifying it freshly read. EIGHT issues closed in the merge that carried
@@ -586,7 +590,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   earlier note about `\s`. It is a real defect and it is a DIFFERENT one — a
   scope over-claim that was wrong on arrival rather than a number that went
   stale — and it belongs under the narrower-rule bullet below. Filing it here to
-  reach four would have mislabelled it, which is what makes the next sweep
+  pad the list would have mislabelled it, which is what makes the next sweep
   miss.
 
   The countermeasure is not more care, because in three of four the author was
@@ -650,8 +654,15 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   - `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
     path uses" while calling one rule out of ten. The docstring even argued
     correctly that a second copy would drift, directly above the second copy.
+  - `redact.py:82` -- "Every separator in the module is now built from
+    [`_HSPACE`]", itself written as a correction to an earlier note that HAD
+    gone stale. `_RE_CONTACT_HINT` uses bare `\s` twice, and
+    `check_separator_classes.py` cannot see it: that gate flags hand-ENUMERATED
+    classes, not `\s`. Wrong on arrival rather than stale, which is why it is
+    filed here -- it was withdrawn from the staleness bullet above and, for one
+    draft, recorded in neither list.
 
-  All three were found by reading the CODE and comparing, never by reading the
+  All four were found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
   The countermeasure is mechanical, not attentional: when a comment states a
   condition, read the condition it describes and check the two agree in SCOPE,

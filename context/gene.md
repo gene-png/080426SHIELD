@@ -83,25 +83,34 @@ and the 1-1.5 estimate rests on the porting assumption.
 `check_no_control_chars.py`, `check_plan_totals.py`, `check_separator_classes.py`
 — the last found a third instance of its own defect on first run.
 
-## What is LEFT on item 10, in order
+## What was LEFT on item 10 — all of it done (kept as the record of a near-miss)
 
-1. **Close the nine blockers above.** They are all in `app/ai/redact.py`. Do the
-   structural fix, not nine patches: **re-derive every LEAVE table against the
-   rule as it stands now**, because each one was written against an earlier
-   version and several rows pass for reasons unrelated to the class they name.
-2. **Add the missing REDACT rows.** `+15551234567` and `5551234567` leaked
-   because `PHONE_REDACT` had no machine-format row. The old rule caught both --
-   use it as an oracle (CLAUDE.md has the entry) before it is gone.
-3. **Fix the two gate defects** (`check_separator_classes` exit 2; the line-scoped
-   `_HSPACE` exemption).
-4. **Correct the docs** that now misdescribe the code: `docs/security.md`'s
-   "cut length is now recorded" and its Open/Fixed table, `redact.py:82-88`, the
-   327-vs-376 cell count, `smoke_live_ai.py:44`.
-5. **Re-run the adversarial reviewer** on the corrected tree. It has now
-   overturned this branch twice; do not treat a third clean-looking state as
-   final without it.
-6. **Confirm a clean full `pytest -m unit`**, then open the PR. `Scope:` must
-   enumerate all three surfaces.
+**Every step below was completed in PR #155.** It is kept because the previous
+version of this file left this section presented as CURRENT, seventeen lines
+under a heading announcing item 10 was DONE — and its first instruction was
+"Close the nine blockers above", pointing at a list that no longer existed. The
+adversarial reviewer caught it on the PR that was correcting the count further
+down this same file.
+
+That is the second time in two days the same shape has bitten this file: the
+opening section was rewritten, the count was corrected, and the section that
+actually TELLS an agent what to do was walked past both times. Correcting the
+paragraph someone points at is not the same as correcting the file.
+
+1. ~~Close the nine blockers.~~ Done, plus four more found afterwards —
+   thirteen in PR #155.
+2. ~~Add the missing REDACT rows using the old rule as an oracle.~~ Done; the
+   diff of old-rule vs new-rule match sets found both machine phone formats.
+3. ~~Fix the two gate defects.~~ Done — `check_separator_classes` exit 2 no
+   longer collapses to 1, and the line-scoped `_HSPACE` exemption now demands a
+   written reason.
+4. ~~Correct the docs.~~ Done — `docs/security.md`'s cut-length claim and
+   Open/Fixed table, `redact.py:82-88`, `smoke_live_ai.py`. The cell count was
+   REMOVED rather than corrected: it was 327, then 376, then 410, and a count in
+   prose is a derived value with a second place to be wrong.
+5. ~~Re-run the adversarial reviewer.~~ Done, twice more.
+6. ~~Confirm a clean full `pytest -m unit`, then open the PR.~~ Done; PR #155
+   merged with all seven CI checks green.
 
 ## Standing environment facts
 
@@ -113,7 +122,11 @@ and the 1-1.5 estimate rests on the porting assumption.
   then re-check `SHIELD_LLM_MODE`.
 - Gates before every commit: host `prettier@3.9.5 --check`, in-container
   `ruff check --no-cache . && black --check .`, `check_test_integrity`,
-  `check_no_control_chars`, `check_plan_totals`, `check_separator_classes`.
+  `check_no_control_chars`, `check_plan_totals`, `check_separator_classes`,
+  `leave_row_oracle.py --check-registry`. That last one is a CI check and was
+  missing from this list, so a commit passing every gate here could still go
+  red -- on a new LEAVE table with no registered guards, which is the silent
+  success the oracle exists to catch.
 - **Writing Python via heredoc mangles backslashes.** Build escapes with
   `chr(92)` and assert the result is ASCII before writing. This cost ~8 repairs.
 

@@ -190,8 +190,8 @@ ruff-format, black, **mypy**, bandit, plus whitespace/JSON/YAML hygiene.
 CI runs in **two** workflow files, not one:
 
 - `.github/workflows/ci.yml` — Python (`ruff`, `black --check`, `bandit`,
-  `pytest -m unit`, plus three static sweeps: `check_test_integrity`,
-  `check_no_control_chars`, and `check_plan_totals`); Web (`eslint`, `prettier`, `tsc --noEmit`, `vitest`,
+  `pytest -m unit`, plus five static sweeps: `check_test_integrity`,
+  `check_no_control_chars`, `check_plan_totals`, `check_separator_classes` -- which guards THIS control's separator classes and was missing from this list -- and the LEAVE-row oracle registry); Web (`eslint`, `prettier`, `tsc --noEmit`, `vitest`,
   `next build`); E2E (Playwright smoke, including `axe-core` at
   `e2e/smoke/s16-axe.spec.ts`); Demo (hosted-demo reset + journey spec); and the
   gitleaks secret scan.
