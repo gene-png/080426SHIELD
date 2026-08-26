@@ -83,6 +83,8 @@ def test_invoke_writes_llm_call_row_with_completed_status(db_factory) -> None:
         assert row.redacted_counts is not None
         assert row.redacted_counts["email"] == 1
         assert row.redacted_counts["ssn"] == 1
+        # #144: the ledger records the mode the redactor actually ran under.
+        assert row.redaction_mode == "strict"
 
     # Provider received the REDACTED payload, never the raw one.
     assert "alice@example.gov" not in captured.values()
@@ -186,3 +188,65 @@ def test_correlation_id_threaded_through_llm_call_row(db_factory) -> None:
             assert row.correlation_id == "cid-llm-001"
     finally:
         correlation_id_var.reset(token)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("requested_mode", ["strict", "standard", "off"])
+def test_the_row_records_the_mode_the_call_actually_ran_under(
+    db_factory, requested_mode: str
+) -> None:
+    """#144, end to end through the production writer, for every mode.
+
+    The other tests in `test_llm_call_redaction_mode.py` assert this over SOURCE
+    TEXT and over the ORM model -- neither runs a call, so before this test the
+    property "the mode is recorded, for every mode" was demonstrated for ZERO
+    modes against a real database.
+
+    `off` is the case #144 exists for: the redactor returns the payload
+    unchanged and `redacted_counts` stores NULL, byte-identical to a strict run
+    that found nothing to remove. The row is only distinguishable if
+    `redaction_mode` is populated -- so that pairing is what gets asserted.
+
+    The per-call ARGUMENT is used rather than the setting on purpose: a writer
+    that records `self._settings.shield_redaction_mode` instead of the value it
+    handed the redactor passes every source-text assertion in this slice
+    (verified by mutation, 2026-08-25) and reports a mode the call never ran
+    under.
+
+    Parametrised over the whole domain rather than sampled, and that is what
+    catches it: under that mutation `[strict]` PASSES, because the setting
+    defaults to strict and the wrong variable coincidentally holds the right
+    value. Only `[standard]` and `[off]` go red. **A single-mode test would have
+    proved nothing.** Same lesson as pinning `get_args(Environment)` rather than
+    one environment -- when a value has a domain, cover the domain.
+    """
+    provider = FixtureProvider()
+    provider.register(
+        "extract.capabilities", lambda payload: LLMResponse("ok", input_tokens=1, output_tokens=1)
+    )
+    client = LLMClient(provider, settings=get_settings())
+
+    with db_factory() as db:
+        admin = _new_admin(db)
+        _, row = client.invoke(
+            db,
+            purpose="extract.capabilities",
+            prompt="Extract the capability list.",
+            payload={"contact": "alice@example.gov"},
+            requested_by=admin.id,
+            redaction_mode=requested_mode,
+        )
+        db.commit()
+
+        persisted = db.execute(select(LLMCall)).scalar_one()
+        assert persisted.redaction_mode == requested_mode, (
+            f"the row claims mode {persisted.redaction_mode!r} for a call made "
+            f"with {requested_mode!r} -- the ledger is not evidence of what ran"
+        )
+        assert row.redaction_mode == requested_mode
+
+        if requested_mode == "off":
+            # The pairing that #144 exists to break: nothing removed, AND the
+            # row says why. Without the second half these bytes are identical
+            # to a clean strict run.
+            assert persisted.redacted_counts is None

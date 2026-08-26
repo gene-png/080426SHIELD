@@ -136,6 +136,16 @@ _PHONE_SEP = r"(?:" + _HSPACE + r"|[.-])"
 # A group may be parenthesised, and a parenthesised group may be followed by
 # more digits without a separator -- "+44 (0)20 7946 0958".
 _PHONE_GROUP = r"(?:\(\d{1,4}\)\d{0,4}|\d{1,4})"
+# One guard per line, each with the comment explaining it. black merges
+# adjacent concatenations, which welds two guards onto one line and
+# detaches them from their comments -- bad for reading a security
+# boundary, and it breaks `leave_row_oracle.py`, which disables one
+# guard at a time BY LINE to measure what each is worth.
+#
+# The marker below must be EXACTLY `# fmt: off`: black ignores it if
+# anything follows on the same line, which is how this comment came to
+# be three lines instead of one.
+# fmt: off
 _RE_PHONE = re.compile(
     # The match must START at a digit, a `+` or an opening paren. An earlier
     # draft allowed a leading optional separator, which let a match begin on
@@ -143,6 +153,13 @@ _RE_PHONE = re.compile(
     # then evaluated against that space, matched nothing, and so blocked
     # nothing. `Segments 10.20.30.40` came back `Segments[PHONE]`.
     r"(?<![\d.\-/])"
+    # B10: a digit run glued to a LETTER is an identifier, not a phone.
+    # `T1003.001` -- an ATT&CK sub-technique -- is seven digits in two
+    # groups with one of exactly three, so it satisfies both validators,
+    # and it egressed as `T[PHONE]` with the ledger recording a phone
+    # removal. No phone format in the REDACT table is preceded by a
+    # letter: they begin with a digit, a `+`, or an open paren.
+    r"(?<![A-Za-z])"
     # An IPv4 address is four groups of 1-3 digits and NOTHING after. Without
     # the trailing guard this also blocked `1.555.867.5309`, a real dotted
     # trunk-prefixed phone number, because its first four groups parse as a
@@ -150,13 +167,43 @@ _RE_PHONE = re.compile(
     # row.
     r"(?!\d{1,3}(?:\.\d{1,3}){3}(?!\d))"
     r"(?!\d{4}-\d{2}-\d{2})"
-    r"(?:\+\d{1,3}" + _PHONE_SEP + r"?)?" + _PHONE_GROUP
-    # At least one SEPARATED group. A bare digit run with no separator is an
-    # identifier far more often than a phone number in this corpus
-    # ("20240115", "120000"), so the separator is load-bearing, not cosmetic.
-    + r"(?:" + _PHONE_SEP + _PHONE_GROUP + r"){1,4}"
-    r"(?![\d\-/])"
+    # The match must not START in the middle of a longer numeric run. Without
+    # this the rule matched a SUBSTRING: `443 3389 8080` inside
+    # `Ports 22 80 443 3389 8080` is 11 digits and passed the 7-15 test, while
+    # the whole run is 17 and would not have. Making the match maximal is what
+    # lets the digit count do the job it was written for (B2, #140 again).
+    r"(?<!\d" + _PHONE_SEP + r")"
+    + r"(?:"
+    # BARE RUN, tried first. `5551234567` and `+15551234567` leaked (B5) and
+    # both were caught by the rule this one replaced -- found by diffing the two
+    # rules' match sets over one corpus, not by imagining formats.
+    # `_PHONE_GROUP` caps at four digits, so no arrangement of it can span a ten
+    # digit run; the branch has to exist separately. Length alone decides here,
+    # in `_phone_shape_ok`: exactly 10, or 11 led by a trunk 1. That is what
+    # keeps `build 20240115` out.
+    + r"\+?\d{7,15}"
+    + r"|"
+    # SEPARATED, with AT MOST FOUR GROUPS.
+    #
+    # `{1,4}` here allowed five, and five groups is what a port list is:
+    # `22 80 443 3389 8080` groups 2-2-3-4-4, totals FIFTEEN digits -- inside
+    # the 7-15 bound -- and contains a three-digit group, so neither the count
+    # test nor the shape test excludes it. No real phone number in the REDACT
+    # table needs a fifth group: `1-800-555-0199` is the longest at four.
+    + r"(?:\+\d{1,3}"
+    + _PHONE_SEP
+    + r"?)?"
+    + _PHONE_GROUP
+    + r"(?:"
+    + _PHONE_SEP
+    + _PHONE_GROUP
+    + r"){1,3}"
+    + r")"
+    # ...and must not END in the middle of one, for the same reason as above.
+    + r"(?![\d\-/])"
+    + r"(?!" + _PHONE_SEP + r"\d)"
 )
+# fmt: on
 
 
 def _phone_digit_count_ok(match: str) -> bool:
@@ -167,6 +214,50 @@ def _phone_digit_count_ok(match: str) -> bool:
     re-scan the whole candidate, and this is both readable and cheap.
     """
     return 7 <= sum(ch.isdigit() for ch in match) <= 15
+
+
+def _phone_shape_ok(match: str) -> bool:
+    """Digit count is not enough: `2024 2025 2026` is 12 digits in three groups.
+
+    Group SIZE was supposed to exclude the LEAVE class, and it does not. A year
+    sequence groups 4-4-4 and a US date groups 2-2-4, both of which sit inside
+    "2-5 groups of 2-4 digits". So this asks what every real phone number in the
+    REDACT table has and no LEAVE row does.
+
+    Derived from the corpus rather than from one failing example -- every
+    separated REDACT row carries at least one group of EXACTLY three digits, or
+    an explicit `+` country code, or a parenthesised group:
+
+        555-123-4567          3-3-4          three
+        (202) 555-0173        (3)-3-4        three + parens
+        020 7946 0958         3-4-4          three
+        0800 123 4567         4-3-4          three
+        +44 20 7946 0958      CC-2-4-4       plus
+        +44 (0)20 7946 0958   CC-(1)2-4-4    plus + parens
+        1-800-555-0199        1-3-3-4        three
+
+    and no LEAVE row does:
+
+        2024 2025 2026        4-4-4          none of the three
+        08-25-2026            2-2-4          none
+        Ports 8080 8443       4-4            none
+        Ports 22 80 443 ...   maximal run is 17 digits, excluded by count
+
+    A BARE run carries no separators to group, so it is judged on length alone:
+    exactly 10 digits (NANP), or 11 led by a trunk 1. That is what keeps
+    `build 20240115` -- eight digits -- out, and it is the reason the separator
+    requirement could not simply be deleted to fix the machine formats.
+    """
+    digits = sum(ch.isdigit() for ch in match)
+    if "+" in match:
+        return True
+    if "(" in match:
+        return True
+    groups = [g for g in re.split(r"[^\d]+", match) if g]
+    if len(groups) <= 1:
+        # No separators: a bare run. NANP is 10, or 11 with the trunk prefix.
+        return digits == 10 or (digits == 11 and match.lstrip()[:1] == "1")
+    return any(len(g) == 3 for g in groups)
 
 
 _RE_SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
@@ -195,9 +286,9 @@ _RE_EIN = re.compile(r"\b\d{2}-\d{7}\b")
 # codes egressing while three table rows asserted that shape was correctly left
 # alone. And `No.` needs the dot INSIDE the separator class, or "CAGE No. 1ABC2"
 # leaks: `no\.?\b` cannot match "no." (no boundary between `.` and a space).
-_CAGE_SEP = r"[\s:#.,-]"
+_CAGE_SEP = r"(?:" + _HSPACE + r"|[:#.,-])"
 _RE_CAGE = re.compile(
-    r"\bCAGE" r"(?:" + _CAGE_SEP + r"*(?:codes?|numbers?|nos?|is|are|and)\b)*" + _CAGE_SEP + r"*"
+    r"\bCAGE" r"(?:" + _CAGE_SEP + r"*(?:codes?|numbers?|nos?|is|are)\b)*" + _CAGE_SEP + r"*"
     # At least one digit in the five: this is what separates a code from a word,
     # and it is the whole mechanism. Real CAGE codes are issued with digits.
     r"(?=[A-Z0-9]{0,4}\d)" r"([A-Z0-9]{5})\b",
@@ -306,6 +397,59 @@ def _looks_like_a_signatory(line: str) -> bool:
     return stripped[0].isupper()
 
 
+def _looks_like_prose(line: str) -> bool:
+    """A SENTENCE, as opposed to a line of a signature block.
+
+    This is the guard B1 needed. A signature block is a stack of label-like
+    lines -- name, title, org, phone, email -- and contains no sentences. So the
+    scan below walks forward from the opener and STOPS at the first sentence,
+    instead of scanning five lines for anything contact-shaped regardless of
+    what lies between.
+
+    "Ends with a full stop" is NOT sufficient on its own, and the row that
+    proves it is in the table: `John Smith Jr.` is a signatory and ends with a
+    period. A sentence is distinguished by ALSO starting lowercase or with a
+    digit, or by running longer than a name can.
+
+        practice per CISA ZTMM.        lowercase start  -> prose
+        10.20.30.40 remains reachable. digit start      -> prose
+        John Smith Jr.                 Title Case, 3 wd -> not prose
+        Next steps below.              Title Case, 3 wd -> not prose
+
+    The last is deliberate: it is not prose by this test, so the scan continues
+    past it -- and finds nothing contact-shaped, so nothing is cut. Being wrong
+    in that direction costs nothing, because the cut still requires a positive
+    signal.
+    """
+    stripped = line.strip()
+    if not stripped or stripped[-1] not in ".!?":
+        return False
+    if not stripped[0].isupper():
+        return True
+    return len(stripped.split()) > _MAX_SIGNATORY_WORDS
+
+
+def _split_inline_signoff(line: str) -> bool:
+    """B6: opener and signatory on ONE line -- "Thanks, Dana Whitfield".
+
+    Every cell in SIGNATURE_REDACT put the name on the NEXT line, so the rule
+    was built for that shape alone and the table could not see the gap: the axis
+    was enumerated from the rule's own structure rather than from how sign-offs
+    are typed. An inline sign-off is how a short email or a ticket comment ends,
+    and Tech Debt ingests both.
+
+    Requires the tail to look like a signatory, so "Thanks to the SOC team for
+    the logs." and "Best practice is MFA everywhere." do not fire -- both are in
+    the LEAVE table, and both have a lowercase tail or a terminal full stop.
+    """
+    head, sep, tail = line.strip().partition(",")
+    if not sep:
+        return False
+    if head.strip().lower() not in _SIGNATURE_OPENERS:
+        return False
+    return _looks_like_a_signatory(tail)
+
+
 def _count_replacements(pattern: re.Pattern[str], text: str) -> int:
     return sum(1 for _ in pattern.finditer(text))
 
@@ -327,19 +471,43 @@ def _redact_signature_blocks(text: str) -> tuple[str, int, int]:
     lines = text.splitlines(keepends=True)
     cut: int | None = None
     for idx, raw in enumerate(lines):
+        # B6: the opener and the signatory can share a line.
+        if _split_inline_signoff(raw):
+            cut = idx
+            break
         if raw.strip().lower().rstrip(",.!") not in _SIGNATURE_OPENERS:
             continue
         following = [nxt for nxt in lines[idx + 1 :] if nxt.strip()]
         if not following:
             continue
-        # Either the next line names a person, OR any of the next few lines is
-        # contact-shaped. The second clause catches the real layouts -- phone
-        # first, email first, `--` delimiter, `Tel:` label -- which the name
-        # test alone rejects, leaking everything below them.
-        if _looks_like_a_signatory(following[0]) or any(
-            _RE_CONTACT_HINT.search(nxt.strip()) for nxt in following[:_SIGNATURE_LOOKAHEAD_LINES]
-        ):
-            cut = idx
+        # Walk forward line by line and STOP AT THE FIRST SENTENCE.
+        #
+        # The previous version asked whether ANY of the next five lines was
+        # contact-shaped, independently of what lay between -- and
+        # `_RE_CONTACT_HINT` fires on any IP address, any date, and any run of
+        # seven digits. Zero Trust findings are made of IP addresses and Tech
+        # Debt notes are made of dates and spend figures, so a wrapped `Best`
+        # or `Thanks` anywhere near ordinary technical content deleted the rest
+        # of the input and recorded a successful redaction (#135, reintroduced
+        # by its own fix).
+        #
+        # The contact hint is still needed -- "Regards," followed by a phone
+        # number or an email is a real layout the name test alone rejects. What
+        # it must not do is reach ACROSS prose to find its evidence.
+        for nxt in following[:_SIGNATURE_LOOKAHEAD_LINES]:
+            candidate = nxt.strip()
+            # PROSE IS CHECKED FIRST, and the order is load-bearing. A
+            # sentence is still a sentence when it contains an IP address, and
+            # the contact hint matches any dotted quad -- so testing the hint
+            # first put `10.20.30.40 remains reachable.` back in the cut path,
+            # which is B1 wearing different clothes. Caught by the truth table
+            # in the round that introduced it.
+            if _looks_like_prose(candidate):
+                break
+            if _looks_like_a_signatory(candidate) or _RE_CONTACT_HINT.search(candidate):
+                cut = idx
+                break
+        if cut is not None:
             break
     if cut is None:
         return text, 0, 0
@@ -388,6 +556,22 @@ _STREET_WORDS = (
 # `[ADDRESS] NW` either way. Pinned as an accepted residual.
 _STREET_SEP = _HSPACE
 
+# B4. `_RE_ADDRESS` compiles IGNORECASE, so the street-name and street-word
+# components matched lowercase prose: `one possible way to remediate` parses as
+# <spelled-out house number> <name> <street word>, and so does
+# `the 16 TB drive`. Both `way` and `drive` are Pub-28 street words AND ordinary
+# security vocabulary -- "the only way to remediate", "the failed drive".
+#
+# A real street address capitalises its street word. Scoping this branch out of
+# IGNORECASE is the same decision the roman-numeral suite branch already makes
+# and for the same reason: lowercase spellings of these tokens are English.
+#
+# RESIDUAL, with a firing condition: an all-lowercase street address
+# (`1234 main street`) now leaks. Accepted because the corpus is consultant
+# prose and extracted documents, where street addresses arrive capitalised and
+# prose arrives lowercase -- and because the alternative was eating the word
+# "way". Revisit if a real all-lowercase address is ever observed in intake.
+
 # Spelled-out designators ("Suite Twelve", "Apt Twenty-One"). Without these the
 # digit rule below silently drops a whole class of real addresses.
 _NUMWORD = (
@@ -409,9 +593,9 @@ _STREET_PAT = (
     r"\b"
     + _HOUSE_NUMBER
     + _STREET_SEP
-    + r"+([A-Z][A-Za-z]+"
+    + r"+((?-i:[A-Z][A-Za-z]+)"
     + _STREET_SEP
-    + r"+){1,4}(?:"
+    + r"+){1,4}(?-i:"
     + "|".join(_STREET_WORDS)
     + r")\b"
     + _DIRECTIONAL
@@ -439,6 +623,68 @@ _SUITE_KEY_WORD = r"(?:Suite|Unit|Floor|PO" + _HSPACE + r"+Box|P\.O\." + _HSPACE
 _SUITE_SEP = r"(?:" + _HSPACE + r"|[#\-])"
 # Abbreviations only: the same class plus the abbreviating period.
 _SUITE_SEP_ABBREV = r"(?:" + _HSPACE + r"|[.#\-])"
+
+# A real designator is TERMINAL -- end of line, a comma, or another capitalised
+# address token. A COUNT is followed by a lowercase noun or preposition:
+# "Building 2 of the 5 controls", "Business Unit 4 reported an outage",
+# "Nessus Plugin ID 19506 remains open".
+#
+# #139 wrote this guard for the facility branch alone. The suite branch (B9) and
+# the city/state/ZIP branch (B3) take a numeric value in exactly the same way and
+# went unguarded, so `Building 2 of the 5` survived while `Business Unit 4
+# reported` and `Plugin ID 19506 remains` were eaten -- a fix applied to one of
+# three identical forms, which is the #79 shape. Named once and applied to all
+# three, so the next branch that takes a value cannot quietly miss it.
+#
+# A stopword list was tried first and is deliberately NOT what this is: it
+# missed "days" and "findings". "Not followed by a lowercase word" is the shape.
+# CASE-SCOPED, and that is not decoration. `_RE_ADDRESS` compiles
+# IGNORECASE, so a bare `[a-z]` here matches "A" as readily as "a" and the
+# guard blocks on ANY following word rather than a lowercase one. #139 wrote
+# it that way, so the facility branch has been refusing `Building 400 Arlington`
+# since it shipped -- silently, because no cell in the table put a capitalised
+# token after a designator. Extending the guard to two more branches turned
+# that latent over-block into three failing rows, which is how it surfaced:
+# `Suite 400 Arlington` stopped redacting. Same lesson as the roman-numeral
+# branch, one rule down -- a case-sensitive test inside a case-insensitive
+# pattern has to say so.
+# A designator glued into a DOTTED machine identifier is not a designator.
+# `GV.RM-01` is a CSF subcategory; `RM` is Pub 28's Room and `-` is a valid
+# separator, so the facility branch consumed `RM-01` and all seven CSF Risk
+# Management subcategories egressed as `GV.[ADDRESS]` (B11).
+#
+# Same shape as the phone rule's letter lookbehind one rule up: a token
+# glued into a longer machine identifier is an identifier. Applied to BOTH
+# keyword branches rather than the one that happened to break, because
+# covering one of two identical forms is exactly how #139 produced this.
+#
+# No real address puts a dot immediately before the designator: `P.O. Box`
+# separates them with a space, and `Ste.` carries its dot afterwards.
+#
+# NARROWED for B16. `(?<!\.)` alone refused any designator after a dot,
+# including `1600 Wilson Blvd.Suite 400` -- an abbreviating period with the
+# space eaten, which is the commonest OCR artefact and the same input class
+# as `Suite400` and `PO Box99`. What separates a machine code from an
+# abbreviation is the segment BEFORE the dot: `GV.RM-01` and `SEC.STE-04`
+# close an all-caps segment; `Blvd.Suite` and `Bldg.Rm` close a Title-Case
+# word.
+#
+# APPLIED TO TWO BRANCHES OF FIVE, and that is a decision, not an oversight.
+# `_STREET_PAT`, `_CITY_STATE_ZIP` and `_PRE_KEYWORD_PAT` all require at
+# least one `_HSPACE` between their components, and a dotted or hyphenated
+# machine identifier contains no horizontal whitespace -- so they are
+# STRUCTURALLY immune to this shape and a guard on them could never fire.
+# Written down because an unstated exemption reads as an oversight to
+# whoever finds it next, and because #139 covering some designator branches
+# and not others is what produced B9 and B11 in the first place. Anyone
+# checking whether the sweep was complete should find the answer here.
+#
+# Case-scoped explicitly: this pattern compiles IGNORECASE, so a bare
+# `[A-Z0-9]` here would match `d` as readily as `V` and the guard would
+# refuse both. That is the exact defect #139's terminal guard shipped with.
+_NOT_INSIDE_A_DOTTED_CODE = r"(?<!(?-i:[A-Z0-9])\.)"
+
+_NOT_FOLLOWED_BY_A_LOWERCASE_WORD = r"(?!" + _SUITE_SEP + r"+(?-i:[a-z]))"
 
 
 def _suite_branches(sep: str) -> str:
@@ -499,12 +745,16 @@ def _suite_branches(sep: str) -> str:
 
 
 _SUITE_PAT = (
-    r"\b"
+    _NOT_INSIDE_A_DOTTED_CODE
+    + r"(?:\b"
     + _SUITE_KEY_ABBREV
     + _suite_branches(_SUITE_SEP_ABBREV)
     + r"|\b"
     + _SUITE_KEY_WORD
     + _suite_branches(_SUITE_SEP)
+    + r")"
+    # B9: the same terminal guard the facility branch has carried since #139.
+    + _NOT_FOLLOWED_BY_A_LOWERCASE_WORD
 )
 
 # The value can also PRECEDE the keyword, which the pre-#130 pattern never
@@ -537,15 +787,122 @@ _PRE_KEYWORD_PAT = r"\b\d{1,4}(?:st|nd|rd|th)" + _HSPACE + r"+(?:Floor|Fl)\b"
 # OX14 3YP`) rather than client PII. **That justification expires the first time
 # a tenant with a non-US office is onboarded**, at which point this becomes a
 # defect. See #138.
+# Two-letter state codes, split by whether the code is ALSO an ordinary word or
+# a standard abbreviation in security prose (B12).
+#
+# `<Title-Case word>+ <two capitals> <five digits>` describes `Arlington VA
+# 22209` and `Nessus Plugin ID 19506` equally well, and at end-of-string nothing
+# follows either -- so no terminal guard can separate them. The discriminator
+# has to be the code. `ID` is the sharpest case: it is Idaho, and it is also the
+# single most common identifier abbreviation in this entire domain, appearing in
+# every vulnerability-scan export the Tech Debt pipeline ingests.
+#
+# UNAMBIGUOUS codes take the bare form. AMBIGUOUS codes require the COMMA form,
+# which is what a postal address has and a scanner id does not.
+#
+# Decision per entry with the reason recorded, the way USPS Pub 28 is handled
+# one rule over -- not a list of whichever collisions someone recalled.
+_STATE_AMBIGUOUS = {
+    "ID": "identifier -- Plugin ID, Asset ID, Rule ID, Finding ID",
+    "IN": "preposition",
+    "OR": "conjunction, and OR-gate",
+    "OK": "ordinary word, and a status value",
+    "ME": "pronoun",
+    "HI": "greeting, and HI as high",
+    "MS": "Microsoft, and milliseconds",
+    "MD": "doctor, and Markdown",
+    "MT": "mount, and empty",
+    "CO": "company",
+    "AR": "augmented reality",
+    "DE": "prefix, and Germany's country code",
+    "LA": "article",
+    "PA": "public address, and per annum",
+    "AL": "AL as a name fragment",
+    "NE": "compass direction -- and NE/NW/SE/SW are the street rule's directionals",
+}
+
+_STATE_UNAMBIGUOUS = [
+    "AK",
+    "AZ",
+    "CA",
+    "CT",
+    "FL",
+    "GA",
+    "IL",
+    "IA",
+    "KS",
+    "KY",
+    "MA",
+    "MI",
+    "MN",
+    "MO",
+    "NV",
+    "NH",
+    "NJ",
+    "NM",
+    "NY",
+    "NC",
+    "ND",
+    "OH",
+    "RI",
+    "SC",
+    "SD",
+    "TN",
+    "TX",
+    "UT",
+    "VT",
+    "VA",
+    "WA",
+    "WV",
+    "WI",
+    "WY",
+    "DC",
+]
+
+# Bare form: unambiguous codes only. Comma form: every code.
+
 _CITY_STATE_ZIP = (
     # A determiner is not a city. Without this, "The VA 22209 figure is a
     # spend total." matched -- `The` fits `[A-Z][a-z]+` exactly as `Reston` does.
     r"\b(?!(?:The|This|That|These|Those|Our|Their|Its|An?)\b)"
-    # The comma form is what people actually type.
-    r"(?:[A-Z][a-z]+,?" + _STREET_SEP + r"+){1,3}"
-    r"(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|"
-    r"MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|"
-    r"WV|WI|WY|DC)" + _STREET_SEP + r"+\d{5}(?:-\d{4})?\b"
+    # TWO ALTERNATIVES, and the difference is the comma.
+    #
+    #   unambiguous code -> the bare form is fine: `Arlington VA 22209`
+    #   ambiguous code   -> a comma is REQUIRED: `Boise, ID 83702`
+    #
+    # An earlier draft expressed the second as a `(?<=,)` lookbehind on the
+    # state alternation. It could never hold -- the city group had already
+    # consumed the comma AND the separator by then -- and Python has no
+    # variable-width lookbehind to fix it with. That is the tell that the
+    # requirement is structural and belongs in the pattern.
+    + r"(?:"
+    # Bare or comma'd city, then an unambiguous code.
+    + r"(?:[A-Z][a-z]+,?"
+    + _STREET_SEP
+    + r"+){1,3}"
+    + r"(?:"
+    + "|".join(_STATE_UNAMBIGUOUS)
+    + r")"
+    + r"|"
+    # City that MUST end in a comma, then an ambiguous code.
+    + r"(?:[A-Z][a-z]+,?"
+    + _STREET_SEP
+    + r"+){0,2}"
+    + r"[A-Z][a-z]+,"
+    + _STREET_SEP
+    + r"+"
+    + r"(?:"
+    + "|".join(sorted(_STATE_AMBIGUOUS))
+    + r")"
+    + r")"
+    + _STREET_SEP
+    + r"+\d{5}(?:-\d{4})?\b"
+    # B3: the same terminal guard as the other two value-taking branches.
+    # `ID` is Idaho and this pattern compiles IGNORECASE, so
+    # `Nessus Plugin ID 19506` parses as city-state-ZIP -- and every
+    # vulnerability scanner on the market emits exactly that shape. A real
+    # address ENDS there; a scanner id is followed by a lowercase verb.
+    + _NOT_FOLLOWED_BY_A_LOWERCASE_WORD
 )
 
 # Facility designators (#139). A SEPARATE keyword group with a DIGIT-ONLY suffix
@@ -576,10 +933,12 @@ _CITY_STATE_ZIP = (
 # C2" is the same scope call as the non-US postcode residual, with the same
 # firing condition -- a tenant with non-US offices.
 _FACILITY_KEY = (
-    r"(?:Building|Bldg|Room|Rm|Mail\s+Stop|Stop|MS" r"|Dept|Ofc|Lbby|Bsmt|Trlr|Pier|Hngr|Slip)"
+    r"(?:Building|Bldg|Room|Rm|Mail" + _HSPACE + r"+Stop|Stop"
+    r"|Dept|Ofc|Lbby|Bsmt|Trlr|Pier|Hngr|Slip)"
 )
 _FACILITY_PAT = (
-    r"\b"
+    _NOT_INSIDE_A_DOTTED_CODE
+    + r"\b"
     + _FACILITY_KEY
     + r"\b"
     + _SUITE_SEP
@@ -593,9 +952,7 @@ _FACILITY_PAT = (
     # the...). It missed "days" and "findings" -- both caught by the prose
     # fixtures here, not by review. A stopword list is an enumeration of what
     # you thought of; "not followed by a lowercase word" is the shape.
-    + r"(?!"
-    + _SUITE_SEP
-    + r"+[a-z])"
+    + _NOT_FOLLOWED_BY_A_LOWERCASE_WORD
 )
 
 _RE_ADDRESS = re.compile(
@@ -650,6 +1007,17 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     hints = [h for h in name_hints if h and len(h) >= 2]
     if not hints:
         return text, 0
+    # LONGEST FIRST. Python's alternation is first-match-wins, not
+    # longest-match-wins, so a dictionary containing both `Dana` and
+    # `Dana Whitfield` in that order rewrote "Dana Whitfield" to
+    # "[NAME] Whitfield" -- publishing the surname under an output that reads
+    # as a completed redaction. Which order the hints arrived in depended on
+    # database row order, and a security boundary must not depend on that.
+    #
+    # Same failure shape as the suite rule's `Suite B 201` -> `[ADDRESS] 201`:
+    # a partial match is worse than no match, because no match is visibly a
+    # leak and a partial one looks finished.
+    hints = sorted(set(hints), key=len, reverse=True)
     pat = re.compile(
         r"\b(?:" + "|".join(re.escape(h) for h in hints) + r")\b",
         re.IGNORECASE,
@@ -707,8 +1075,14 @@ def redact_for_ai(
 
     def _sub_phone(match: re.Match[str]) -> str:
         nonlocal phone_hits
-        if not _phone_digit_count_ok(match.group(0)):
-            return match.group(0)
+        candidate = match.group(0)
+        # BOTH validators, and the second is not optional: digit count alone
+        # accepts `2024 2025 2026` (12 digits, three groups). A rejected
+        # candidate is returned unchanged AND not counted -- the ledger must
+        # equal the substitutions actually made, which is the audit half of
+        # #140.
+        if not _phone_digit_count_ok(candidate) or not _phone_shape_ok(candidate):
+            return candidate
         phone_hits += 1
         return PLACEHOLDER_PHONE
 

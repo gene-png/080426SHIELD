@@ -17,12 +17,14 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from typing import get_args
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.ai.redact import RedactionMode
 from app.db.base import Base
 from app.models._common import TimestampMixin, UUIDPKMixin, utcnow
 
@@ -95,6 +97,44 @@ class LLMCall(UUIDPKMixin, TimestampMixin, Base):
     # have an unknown mode and no default is applied to them -- fabricating one
     # in the table whose job is proving what happened would be worse than the
     # absence. See the 0046 docstring.
-    redaction_mode: Mapped[str | None] = mapped_column(String(16))
+    #
+    # The domain comes from `RedactionMode` via `get_args` rather than a string
+    # list repeated here: `app/ai/redact.py` stays the single source, so a
+    # fourth mode is added in one place.
+    #
+    # `native_enum=False` + the default `create_constraint=False` emit plain
+    # VARCHAR(16) -- byte-identical DDL to the `String(16)` this replaces, on
+    # both Postgres and SQLite (measured on both dialects), so this needs no
+    # migration and a fourth mode will not either. That is deliberate: Sprint 9
+    # added a status member with no migration and that property is kept.
+    #
+    # READ THIS BEFORE ADDING ANOTHER ENUM COLUMN ANYWHERE IN THIS REPO:
+    # `validate_strings=True` is NOT the default, and without it a
+    # string-member `Enum` validates NOTHING. Measured on SQLAlchemy 2.0.51,
+    # both dialects: 'Strict', 'RedactionMode.STRICT' and 'nonsense' all bind
+    # straight through a bare `SAEnum(*values)` and land in the column. The
+    # obvious spelling is the silently-permissive one. With the flag they raise
+    # LookupError at bind and NULL still passes -- which is the pairing this
+    # column needs: on the column whose job is proof, a value no code path can
+    # produce must not be able to land, and "not recorded" must stay
+    # expressible.
+    #
+    # And what is NOT claimed here, because it was nearly written as fact and
+    # then measured: this column is NOT joining a guarantee `mode` and `status`
+    # already enforce. Those columns have no such guarantee. `SAEnum(LLMCallMode)`
+    # binds a bogus raw string unchallenged too --
+    # **THE SAFETY THERE IS IN THE WRITERS, NOT IN THE TYPE**: every writer
+    # assigns an enum MEMBER, so a bad string never reaches the bind. This
+    # column is a plain `str` at the ORM layer with no member to assign, so the
+    # writers cannot carry it and the type has to.
+    redaction_mode: Mapped[str | None] = mapped_column(
+        SAEnum(
+            *get_args(RedactionMode),
+            name="llm_redaction_mode",
+            native_enum=False,
+            length=16,
+            validate_strings=True,
+        )
+    )
     redacted_counts: Mapped[dict | None] = mapped_column(JSONB().with_variant(JSONB, "postgresql"))
     correlation_id: Mapped[str | None] = mapped_column(String(128))

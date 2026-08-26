@@ -42,8 +42,15 @@ obedient model can cite resolves `ambiguous` -- and under **#102** that pulls th
 technique out of the ATT&CK coverage **denominator**.
 
 The rule is now decided by an enumerated **truth table** rather than a regex
-patched case by case: `tests/unit/test_redact_address_matrix.py`, **327 cells** --
-300 across six axes, 23 accepted residuals, and 4 standalone properties. The
+patched case by case: `tests/unit/test_redact_address_matrix.py` -- six axes, accepted residuals
+and standalone properties.
+
+(This sentence carried a cell count and a breakdown summing to it. Both went
+stale twice: 153 -> 327 when two sweeps were parametrised per separator, and
+327 -> 376 when the collector was actually run. A count in prose two files
+away from the parametrisation that produces it is a derived value given a
+second place to be wrong, so it is no longer derived here -- run the collector
+if you need the number.) The
 original table was written before the pattern, which is the method D-058
 records; the rows added while fixing the street rule and while acting on the
 adversarial review were not, and saying otherwise would make the method sound

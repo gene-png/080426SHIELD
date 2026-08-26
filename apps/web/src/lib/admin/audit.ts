@@ -39,6 +39,10 @@ export interface LlmCallRow {
   duration_ms: number | null;
   status: string;
   error_message: string | null;
+  // `null` means NOT RECORDED (the row predates migration 0046), never
+  // "strict". #144: a row written with the redactor disabled and a row
+  // where it ran and found nothing were byte-identical before this field.
+  redaction_mode: string | null;
   redacted_counts: Record<string, number> | null;
   requested_by: string;
   requested_at: string;

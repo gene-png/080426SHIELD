@@ -88,6 +88,18 @@ PHONE_REDACT = [
         "Call the SOC on 555-123-4567 if it recurs.",
         "Call the SOC on [PHONE] if it recurs.",
     ),
+    # MACHINE FORMATS -- no separators at all. Both leaked after the rewrite
+    # and both were caught by the rule it replaced. Found by running the OLD
+    # pattern (quoted in redact.py's own comment) and the new one over one
+    # corpus and diffing the match sets -- the only method that finds what the
+    # PREVIOUS author thought of and this one did not.
+    #
+    # The separator requirement is what excludes them, and it is load-bearing
+    # for `build 20240115`, so the rule cannot simply drop it. A bare run is a
+    # phone at EXACTLY 10 digits, or 11 led by a 1. Eight digits is a build id.
+    ("machine format, bare NANP", "5551234567", PHONE),
+    ("machine format, +1 and no separators", "+15551234567", PHONE),
+    ("machine format, E.164 international", "+442079460958", PHONE),
 ]
 
 
@@ -116,8 +128,33 @@ PHONE_LEAVE = [
     ("numbered findings", "1. 4 controls missing\n2. 9 controls partial"),
     # Things every service emits.
     ("attack technique ids", "Techniques T1078, T1110 and T1566 apply."),
+    # B10. SUB-technique codes, which is how ATT&CK names most concrete
+    # behaviours. `1003.001` is seven digits in two groups with one of
+    # exactly three, so it passes both phone validators, and the parent
+    # `T1003` does not -- which is why every row above passed while this
+    # whole class was being destroyed. Caught by `test_risk_register`
+    # going red on a set comparison, never by this table.
+    ("attack sub-technique", "T1003.001"),
+    ("attack sub-technique in prose", "T1547.001 persists via run keys."),
+    ("attack sub-technique, list", "T1055.012 and T1027.002 both apply."),
+    # The same shape without the ATT&CK prefix: any identifier glued to a
+    # letter. A phone number is never preceded by one.
+    ("build identifier", "Build v1234.567 shipped."),
+    ("rule identifier", "Sigma rule R2001.004 fired."),
     ("cve identifiers", "CVE-2024-3400 and CVE-2023-4966 are unpatched."),
     ("version string", "Splunk Enterprise 9.1.2 build 20240115"),
+    # B2 -- #140 REINTRODUCED. The rewrite that stopped the rule eating IP
+    # pairs still eats any 3-5 short numbers totalling 7-15 digits on one
+    # line. A port list is the most common numeric run in a Zero Trust or
+    # ATT&CK finding, and the audit row records `phone: 1` over text with no
+    # phone number in it -- the accounting lie #140 was filed for.
+    ("port list", "Ports 22 80 443 3389 8080 are open."),
+    ("port list, two entries", "Ports 8080 8443 are exposed."),
+    # A US-format date is three dash-separated groups. The ISO guard covers
+    # 2026-08-25; nothing covered this ordering.
+    ("us date, dashed", "08-25-2026"),
+    ("us date, slashed", "08/25/2026"),
+    ("year sequence", "2024 2025 2026"),
     ("currency column", "Annual spend 120000 vs 95000"),
     ("iso date", "Assessed 2026-08-25, reassess 2027-02-01"),
     ("port range", "Ports 30000 40000 are open to the internet."),
@@ -188,6 +225,13 @@ CAGE_LEAVE = [
     ("keyword glued to a word", "CAGEFIGHT"),
     ("keyword glued, longer", "CAGEBRIDGE"),
     ("prose about the concept", "Every vendor needs a CAGE code before award."),
+    # B7 -- `and` is a connector and `T1078` is five alphanumerics containing
+    # a digit, so the value test passes and an ATT&CK technique id is eaten.
+    # ATT&CK ids sit beside vendor identifiers constantly. This is #130's
+    # disease again, on the CAGE connector branch.
+    ("cage beside an attack technique id", "CAGE and T1078"),
+    ("cage beside a technique id in prose", "CAGE and T1078 both apply."),
+    ("cage connector across a newline", "CAGE and\nT1078 applies."),
 ]
 
 
@@ -257,6 +301,18 @@ def test_the_contract_rule_leaves_similar_shapes_alone(shape: str, text: str) ->
 # ---------------------------------------------------------------------------
 
 SIGNATURE_REDACT = [
+    # B6 -- opener and signatory on ONE line. Every other cell in this table
+    # puts the name on the NEXT line, so the rule was only ever built for
+    # that shape and the table could not see the gap: the axis was written
+    # from the rule's structure rather than from how sign-offs are typed.
+    # Inline sign-offs are how short emails and ticket comments end, and
+    # Tech Debt ingests both.
+    ("inline thanks and name", "Findings follow.\nThanks, Dana Whitfield"),
+    ("inline regards and name", "Findings follow.\nRegards, Dana Whitfield"),
+    (
+        "inline best, name and title",
+        "Findings follow.\nBest, Dana Whitfield, CISO",
+    ),
     ("regards with comma", "Findings follow.\nRegards,\nDana Whitfield\nCISO"),
     ("sincerely", "Findings follow.\nSincerely,\nDana Whitfield"),
     ("best regards", "Findings follow.\nBest regards,\nDana Whitfield"),
@@ -326,6 +382,41 @@ SIGNATURE_LEAVE = [
     # the wrap point, so "Best / practice" arrives as a line reading exactly
     # "Best" -- and Tech Debt's whole pipeline is uploaded documents.
     ("wrapped best practice", "MFA on all admin accounts.\nBest\npractice per CISA ZTMM."),
+    # B1 -- #135 REINTRODUCED, and the rows above could not see it. The rule
+    # now cuts when ANY of the next five lines is contact-shaped, and the
+    # contact hint fires on any IP address, any date, or any run of 7+
+    # digits. Zero Trust findings are made of IP addresses; Tech Debt notes
+    # are made of dates and dollar figures. So a wrapped `Best` or `Thanks`
+    # anywhere within five lines of ordinary technical content deletes the
+    # rest of the input, and the audit row records a successful redaction.
+    #
+    # Every cell above sits in text containing nothing contact-shaped, which
+    # is why they pass and why the oracle reports them as pinning nothing.
+    (
+        "wrapped best, ip later in the finding",
+        "Flat segmentation."
+        + "\nBest"
+        + "\npractice per CISA ZTMM."
+        + "\nHost 10.20.30.40 bridges both.",
+    ),
+    (
+        "wrapped thanks, date later",
+        "Control review complete."
+        + "\nThanks"
+        + "\nto the SOC for the logs."
+        + "\nNext review 2026-11-01.",
+    ),
+    (
+        "wrapped best, spend figure later",
+        "Licence consolidation is viable."
+        + "\nBest"
+        + "\ncase saves 18 percent."
+        + "\nAnnual spend is 1250000 today.",
+    ),
+    (
+        "wrapped regards, ip on the very next line",
+        "Segment review." + "\nRegards" + "\n10.20.30.40 remains reachable.",
+    ),
     ("wrapped thanks", "The SOC owes us logs.\nThanks\nare due to the IR team."),
     ("wrapped regards", "Controls were reviewed.\nRegards\nthis finding, see section 4."),
     ("bare best, more findings after", "Finding 1.\nBest\nFinding 2 is critical."),

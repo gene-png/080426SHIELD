@@ -106,6 +106,37 @@ than added.** A schedule whose parts do not sum to its total is the same defect
 as a status line that is wrong, and this document has now produced both. If an
 item re-sizes, the table above moves with it in the same PR.
 
+### The LEAVE-row oracle run is budgeted into items 6 and 9, not discovered there
+
+**Added 2026-08-25, from a measurement rather than a worry.**
+
+`apps/api/scripts/leave_row_oracle.py` disables one narrowing guard at a time and
+reports which exemption rows in a truth table still pass. A row that passes with
+its guard removed was never testing that guard. Measured over the redaction
+corpus:
+
+| Tables | Rows in the risk class | Pinning nothing |
+| --- | --- | --- |
+| Written before their pattern (#130, PR #141) | 53 | **2 (3.8%)** |
+| Written alongside/after their rule (item 10) | 38 | **16 (42.1%)** |
+
+The variable is order, not subject matter: a table written first is an
+independent specification, a table written afterwards is a transcript of what
+the rule already does.
+
+**Items 6 and 9 both fix code that already exists.** Their tables therefore land
+in the 42% regime by construction. That is a derived prediction, not a guess,
+and it is why the run is scheduled here rather than left to be rediscovered:
+
+- **Item 6 (W1 Risk step)** — the run costs minutes; the tables it checks decide
+  whether a live Risk run's likelihood/impact/tier parsing is pinned or merely
+  green (#121, #122).
+- **Item 9 (correctness defects)** — same, across four client dashboards.
+
+No re-size for either: the run is minutes against a 4-6 session item, and it is
+cheaper than one round of the review it prevents. Recorded so the step is not
+read as scope creep when it appears in those PRs.
+
 ### Why the range is wide, and why the low end is not the plan
 
 The range is wide, and that is honest rather than lazy: what would narrow it is

@@ -414,6 +414,59 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   last. The classes a hand-written corpus structurally cannot contain: malformed
   strings, `name + version number`, non-US locale variants, and strings that have
   already been through the pipeline once.
+- **A table written FIRST is an independent specification. A table written
+  AFTERWARDS is a transcript of what the rule does.** That single sentence
+  explains D-058's own caveat, why 376 green cells certified a rule carrying
+  nine live defects, and an 11x measured split. It is the enumeration rule above
+  pointed at ORDER rather than at content: enumerating cases against a rule you
+  have already written cannot falsify that rule, because the rule is where the
+  cases came from.
+
+  **Measured, not asserted** (2026-08-25, `apps/api/scripts/leave_row_oracle.py`,
+  104 LEAVE rows, 22 guards). A LEAVE row asserts ordinary prose survives the
+  redactor untouched. Disable the guard it was written to pin: if the row still
+  passes, it was never testing that guard -- "the boundary held" and "no rule was
+  ever interested in this string" are the same green.
+
+  | Tables | In risk class | Pinning nothing |
+  | --- | --- | --- |
+  | Written before their pattern (#130, PR #141) | 53 | **2 (3.8%)** |
+  | Written alongside/after their rule (item 10) | 38 | **16 (42.1%)** |
+
+  Same corpus, same author, same file, same week. The only variable is whether
+  the table existed before the code did.
+
+  **The step, and it is a step rather than a gate**: any LEAVE table written or
+  extended after its rule exists gets an oracle run before the PR, and rows that
+  pin nothing are rewritten or reclassified. Scoring a row needs judgement about
+  what it was written for, so the tool reports and a human decides. Exactly one
+  property of it can fail on input nobody configured -- a table with no
+  registered guards -- and THAT is gated
+  (`leave_row_oracle.py --check-registry`, CI step "LEAVE-row oracle
+  registry"), because otherwise a new table reports clean and the tool acquires
+  the silent-success shape it was built to find.
+
+  Three classes, and the third is derived rather than listed: a row that
+  survives even with EVERY guard removed at once was never in the risk class
+  (`Splunk Enterprise` contains no designator substring), so it is a
+  **negative control by design** -- load-bearing against future change, and
+  simply the wrong question for this oracle. Deriving that class rather than
+  hand-listing it moved the headline from 29.8% to 19.8%; a hand-written
+  exclusion list would have been one more enumeration, and would have read as
+  special pleading around an inconvenient number.
+
+  **Budget it.** Items 6 and 9 both fix existing code, so their tables land in
+  the 42% regime by construction, not by bad luck. Forty seconds against that
+  prior is the cheapest thing on the remaining path -- schedule the run rather
+  than rediscover the need for it.
+
+  **Residual, stated so it is examined rather than assumed**: the guard list is
+  hand-built, so the tool is itself an enumeration of what its author thought of
+  -- this entire lesson one level up. `unrelated` is therefore an UPPER BOUND
+  with a known error direction: modelling more guards can only move rows out of
+  it. The way out is deriving mutations from the pattern's own structure
+  (alternations, named sub-patterns) instead of listing them by hand. Not built;
+  the hand list found an 11x signal on its first run.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the

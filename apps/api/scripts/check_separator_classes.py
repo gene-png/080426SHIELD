@@ -26,9 +26,24 @@ effectively 1:1, against the 12.2% at which `check_test_integrity`'s TI001 was
 narrowed and the 7.7% at which a prose-total gate was refused outright. It would
 also have caught D-058's original class.
 
-Scoped to `app/ai/redact.py` deliberately. Elsewhere a literal-space class is
-ordinary; here it is a security boundary where the cost of missing a separator is
-a silent leak.
+Scoped to `app/ai/redact.py` deliberately, and the scope is the rule rather than
+a shortcut. Elsewhere a literal-space class is ordinary; here it is a security
+boundary where the cost of missing a separator is a silent leak. `scripts/` and
+`alembic/versions/` are NOT scanned because neither performs redaction --
+scanning them would apply a rule to code it does not govern and buy false
+positives on ordinary character classes. If redaction ever moves or is copied out
+of this file, this target moves with it.
+
+WHAT IT CANNOT CATCH, stated so a clean run is not read as more than it is:
+
+  * A class built by CONCATENATION. `_PHONE_SEP = "(?:" + _HSPACE + "|[ .-])"`
+    passes -- the literal-space class on that line sits beside `_HSPACE`, and the
+    exemption is line-scoped. The signature is textual and always will be.
+  * A separator defined outside this file and imported into it.
+  * A class that is correctly enumerated today and silently wrong after Unicode
+    adds a horizontal space. Only deriving from `\\s` survives that.
+  * Whether the redactor HONOURS the mode it was handed -- that is behaviour, and
+    no static gate sees it.
 
 EXIT CODES, per this repo's fail-closed convention (D-051):
   0 - no enumerated whitespace class
@@ -86,11 +101,30 @@ def check(source: str) -> tuple[int, list[str]]:
             lineno = tok.start[0]
             line = lines[lineno - 1] if lineno <= len(lines) else ""
             above = lines[lineno - 2] if lineno >= 2 else ""
-            # `_HSPACE` is composed OUTSIDE the string, so look at the source
-            # line rather than at the literal.
-            if "_HSPACE" in line:
+            marked = _ALLOW.search(line) or _ALLOW.search(above)
+            if marked:
                 continue
-            if _ALLOW.search(line) or _ALLOW.search(above):
+            # `_HSPACE` is composed OUTSIDE the string literal, so the gate can
+            # only see it on the source LINE -- which means the exemption cannot
+            # tell whether THIS class is the one alternated with it. It used to
+            # `continue` here, silently excusing every class on any line that
+            # mentioned `_HSPACE` anywhere.
+            #
+            # Tightening the adjacency test does not work: the legitimate form
+            # `r"(?:" + _HSPACE + r"|[ .-])"` puts a raw-string prefix between
+            # the two, so any proximity rule either admits unrelated classes or
+            # rejects the real one. The signature is textual and cannot parse
+            # the expression.
+            #
+            # So the exemption is DOCUMENTED rather than silent: say why.
+            if "_HSPACE" in line:
+                findings.append(
+                    f"line {lineno}: [{body}] lists a literal space on a line "
+                    "that also references `_HSPACE`. If the class really is "
+                    "alternated with it, the space is redundant -- drop it, or "
+                    "say why with `# separator-class: <reason>`. This exemption "
+                    "used to be silent and unbounded."
+                )
                 continue
             findings.append(
                 f"line {lineno}: [{body}] lists a literal space without "
@@ -115,6 +149,16 @@ def main(argv: list[str]) -> int:
         return 2
 
     code, findings = check(source)
+    if code == 2:
+        # "I could not look" must not share a branch with "I found a violation",
+        # and it must not share one with "nothing to complain about" either.
+        # This gate cited D-051 while collapsing its own 2 into a 1 -- the exit
+        # code the docstring promises was unreachable through main().
+        print(f"check-separator-classes: cannot parse {target}")
+        for finding in findings:
+            print(f"  {finding}")
+        print("An unreadable input is NOT a pass and NOT a violation (D-051).")
+        return 2
     if code == 0:
         print(f"check-separator-classes: clean ({target})")
         return 0

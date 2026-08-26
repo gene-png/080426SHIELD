@@ -36,6 +36,36 @@ to confirmed.** Absence of evidence is not evidence of confirmation.
 Same call as #114 one table over, and #59 is the standing evidence for why the
 silent-fallback version is the trap.
 
+## TO WHOEVER WRITES THE NEXT MIGRATION THAT TOUCHES THIS COLUMN
+
+**No backfill may ever populate `redaction_mode`. Not `'strict'`, not the
+current setting, not a value inferred from `redacted_counts`, not "just the
+old rows".**
+
+NULL IS THE RECORD. It is not missing data waiting to be filled in -- it is the
+column's way of saying the mode was not captured, which is the truth for every
+row written before this migration and the only honest thing that can be said
+about them. A migration that fills it does not improve the data; it destroys the
+only thing this column proves, and it does so invisibly, because a fabricated
+`'strict'` and a recorded `'strict'` are the same bytes. After such a migration
+the audit table asserts that the redactor ran on calls where nobody knows
+whether it did, on a platform targeting FedRAMP Moderate/High.
+
+This is written here, in the file you have open, because no gate catches it. The
+insert-site guard in `tests/unit/test_llm_call_redaction_mode.py` counts
+constructors under `app/`; a raw `UPDATE llm_calls SET redaction_mode = ...` in
+`alembic/versions/` is invisible to it, and building a rule for one column with
+zero measured instances would be a gate below this repo's own signal bar. So the
+control is this paragraph, and it instructs rather than reassures: if you came
+here to write that UPDATE, the answer is no, and the reason is that the value
+you would write is not known to anyone.
+
+The same applies to `downgrade()` below. It drops the column, so a
+down-then-up on a populated database converts RECORDED modes back to NULL --
+silently, and indistinguishably from pre-0046 rows. Blast radius is zero today
+(the dev database holds 0 `llm_calls` rows and there is no production
+deployment) and that is the only reason this is a note rather than a blocker.
+
 ## Measured, not assumed
 
 * The dev database holds **0** `llm_calls` rows, so nothing is grandfathered here
