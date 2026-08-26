@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-24 (#130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-08-26 (item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on

@@ -1,94 +1,70 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE - item 10 is NOT ready (2026-08-25)
+## PICK UP HERE - item 10 is DONE; Track 3 is next (2026-08-26)
 
-**Written by the agent at Gene's explicit request before a machine restart.**
-This file is owner-write-only; an agent writing it stays the exception.
+**Written by the agent at Gene's explicit request.** This file is owner-write-only;
+an agent writing it stays the exception.
 
-### The one-line state, corrected
+### The one-line state
 
-`main` is at `02f43d6`. Branch **`fix/redaction-boundary-item-10`** is committed
-and pushed at `af069e1`. An earlier version of this file said "item 10 complete
-in code". **That was wrong.** The adversarial review finished after it was
-written and found **14 findings, 9 of them confirmed by running the code**,
-including two cases where a fix REINTRODUCED the defect it was fixing.
+`main` is at `fbca899`. **PR #155 merged on 2026-08-26** with all seven CI checks
+green, including E2E and Demo, which had never run on the branch. Item 10 is
+**DONE**. Working tree clean.
 
-**Do not open a PR until the blockers below are closed.**
+### What the previous version of this section said, and why it is worth recording
 
-### THE BLOCKERS - all nine verified in-container, not taken on reading
+It said "item 10 is NOT ready", "**Do not open a PR until the blockers below are
+closed**", listed nine blockers as live, and gave a 12-18 session total. Every
+one of those was true on 2026-08-25 and false after PR #155 merged -- and the
+section survived that merge unchanged, because the merge commit corrected the
+issue COUNT further down the file and nobody re-read the top.
 
-Repro for every one: `docker compose exec -T api python -c "from app.ai.redact import redact_for_ai as R; print(R(<string>, mode='strict'))"`
+That is the same shape as the count itself, one section up: the prose an agent
+reads FIRST outlived the state it described. An agent picking this file up would
+have refused to open a PR on already-merged work, or re-done nine fixed
+blockers. Found by the adversarial reviewer on the PR that was correcting the
+count below it.
 
-| # | Defect | Verified output |
-| --- | --- | --- |
-| B1 | **#135 reintroduced.** The 5-line contact lookahead fires on any IP, date or 7+ digit run, so an ordinary ZT note is truncated and the ledger records a successful redaction. | `Flat segmentation.
-Best
-practice per CISA ZTMM.
-Host 10.20.30.40 bridges both.` -> everything after line 1 deleted, `{'signature_block': 1}` |
-| B2 | **#140 reintroduced.** 3-5 short numbers on one line, 7-15 digits total, become a phone. | `Ports 22 80 443 3389 8080 are open.` -> `Ports [PHONE] are open.`; also `08-25-2026` and `2024 2025 2026` |
-| B3 | `_CITY_STATE_ZIP` eats `<Word> ID <5 digits>` - `ID` is Idaho and the rule is IGNORECASE. | `Nessus Plugin ID 19506 remains open.` -> `[ADDRESS] remains open.` |
-| B4 | `_STREET_PAT` eats `<number-or-numword> <word> drive/way`. | `There is one possible way to remediate.` -> `There is [ADDRESS] to remediate.`; `Replaced the 16 TB drive.` -> `Replaced the [ADDRESS].` |
-| B5 | **Real phone formats leak.** The required separator excludes both machine formats; the OLD rule caught both. | `+15551234567` and `5551234567` -> unchanged, `{}` |
-| B6 | A sign-off with opener and name on ONE line is never cut. | `Thanks, Dana Whitfield` -> name and title leak |
-| B7 | `_RE_CAGE` eats ATT&CK IDs - `and` is a connector and the value test is "5 alnum with a digit". | `CAGE and T1078` -> `[CAGE]`; also across a newline |
-| B8 | `MS` is a 25th facility keyword, NOT on Pub 28, with no table row. The completeness test only walks table -> pattern, never pattern -> table. | `We use MS 365.` -> `We use [ADDRESS].` |
-| B9 | `Business Unit 4 reported an outage.` -> `Business [ADDRESS] reported...`. #139 invented a terminal guard and applied it to the facility branch only, not to its twin. | confirmed |
+### Item 10, as it actually landed
 
-**The common cause is one thing: every LEAVE table was enumerated against the
-FIRST version of its rule and never re-derived after the rule changed.** The
-phone LEAVE rows pass for reasons unrelated to the class they name (`Ports 30000
-40000` only passes because 5-digit groups exceed `\d{1,4}`; the bullet list only
-because the separators are newlines). That is CLAUDE.md's "caught by the round
-AFTER the round that added them", and it is the thing to fix structurally rather
-than case by case.
+Sized 2-3 sessions; actual ~5-6. Sixteen blockers over four review rounds
+producing **9, 1, 5, 1** -- a count that did not converge monotonically, which
+is what a three-round budget would have got wrong. Thirteen closed in PR #155,
+three filed: #151, #152, #153.
 
-### Also outstanding, lower severity
+Five of the sixteen were introduced by the fix for a DIFFERENT defect, two of
+those inside the branch itself (B3 -> B12, B11 -> B16). One -- the name
+dictionary destroying the word "client" for any tenant with a generic mailbox --
+was **pre-existing on `main`** and found only because the reviewer was pointed at
+the hint construction rather than at the rules.
 
-- **`check_separator_classes.py` collapses exit 2 into exit 1.** `check()` returns
-  2 on a tokenize failure and `main()` never reads it - the gate that cites D-051
-  does not meet it. One-line fix. Its `_HSPACE` exemption is also line-scoped, so
-  `_PHONE_SEP = r"(?:" + _HSPACE + r"|[ .-])"` would pass silently.
-- **`docs/security.md` claims the signature cut length is recorded.** It is not -
-  `removed_chars` is computed and `del`eted. Either restore it somewhere or
-  correct the doc. It also still lists #138/#139/#144 as Open.
-- **`redact.py:82-88` says `_RE_PHONE`/`_RE_CAGE` no longer contain `\s`.**
-  `_CAGE_SEP`, `Mail\s+Stop` and `_RE_CONTACT_HINT` all still do, and D-058 still
-  says so correctly - the new note contradicts the decision record.
-- **Cell count:** the file says 327; the collector says **376**. Same
-  parametrisation-invalidates-the-count trigger already in CLAUDE.md.
-- **`smoke_live_ai.py:44`** references the removed `signature_block_chars` key.
-- **Nothing renders `redaction_mode`** - `AuditViewer.tsx` has no such column, so
-  #144 ships API-only. Say so in 0046 or add the column.
+Two derived corpora shipped with it and are permanent:
 
-### What DID survive the audit
+- `tests/unit/test_redact_real_identifiers.py` -- every shipped ATT&CK, CSF and
+  ZT identifier through three contexts. Found B10 and B11.
+- `scripts/leave_row_oracle.py` -- disables one narrowing guard at a time and
+  reports which exemption rows still pass. Its `--check-registry` half is a CI
+  gate; the rest is a required step, not a gate.
 
-- **Migration 0046 holds.** The reviewer attacked the read paths (no aggregate,
-  no filter, no coercion), hunted a second `LLMCall` insert site (only three
-  exist, two are tests), and checked `String(16)` against the Literal. Upgrade and
-  downgrade verified on Postgres and a full SQLite round trip, 22 columns either
-  side.
-- **#142 holds.** All four `is_production()` call sites converted, one test cell
-  per environment per guard.
-- **The `removed_counts` unit invariant test is genuinely discriminating** - it
-  derives the expected total from placeholder occurrences in the output.
+Both are budgeted into items 6 and 9, which must now be sized with the review
+rounds INSIDE the number: both fix existing code, so their tables land in the
+after-the-rule regime (42% of in-risk exemption rows pinning nothing, against
+3.8% for tables written before their pattern).
 
-### Where the plan lives
+### Next: Track 3
 
-`DELIVERY_PLAN.md`, section "MVP completion path". Order and remaining sizes:
+Item 7 part 2 (`/ai-inputs` endpoint + panel), then **#131 back to Gene before it
+lands** -- fixing it changes deliverable content by definition, which the
+standing merge rule in CLAUDE.md reserves for a human.
 
-| # | Item | Est | State |
-| --- | --- | --- | --- |
-| 9a | docs-truth pass, `docs/security.md` | 0.5-1 | **DONE**, PR #146 merged |
-| 10 | the redaction boundary (#135-#140, #142, #144) | 2-3 | **code complete, unmerged** |
-| 7 | W1 ATT&CK step + #131 | 1-1.5 | not started |
-| 9 | correctness defects only a code review catches | 4-6 | not started |
-| 6 | W1 Risk step | 4-6 | not started |
-| 8 | W6 Risk export/publish split | 1-1.5 | not started |
-
-**Total remaining 12-18 sessions, roughly 3-5 working weeks.** `check_plan_totals.py`
-gates that the parts sum. Item 9 splits by SURFACE into four groups (see the plan);
-item 10 is deliberately ONE PR across three surfaces because review overhead is
-per-PR, not per-unit-of-work.
+**One correction to the plan's item 7 note.** It says "port the `/ai-inputs`
+panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility`
+is now **103 commits behind main** and its `routes/attack.py` differs by
+385 insertions / 626 deletions -- it predates the resolver rewrite, the D-053
+snapshot, #102's withholding and #133's enrichment. The four files it adds are a
+useful shape reference; the backend endpoint they call does not exist on `main`.
+This is "write against the current resolver using #29 as reference", not "port",
+and the 1-1.5 estimate rests on the porting assumption.
 
 ## What item 10 did (all eight issues, code complete)
 
@@ -221,8 +197,9 @@ Recorded by the relay last round, updated with what actually landed.
 Closed since: `#130` by PR #141; `#135`-`#140`, `#142`, `#144` by PR #155.
 
 **This heading read 20 with a paragraph underneath certifying it as freshly
-read.** Both were true on 2026-08-25 and false the moment PR #155 merged nine
-issues — and the certifying paragraph went stale WITH the number it certified,
+read.** Both were true on 2026-08-25 and false the moment PR #155 merged --
+it closed EIGHT (#135-#140, #142, #144; the ninth, #130, was PR #141's and is
+listed separately above) — and the certifying paragraph went stale WITH the number it certified,
 while still reading as a guarantee. That is worse than a bare stale count: a
 reader checking whether the figure could be trusted found a sentence saying yes.
 
@@ -230,9 +207,16 @@ Fourth instance this week, and three of the four were in the files that document
 the rule against it. See CLAUDE.md, "a correction paragraph outlives the number
 it corrected".
 
-Not `mvp-blocking` and deliberately so: **#143** (the pre-push hook's fail-open)
-is tooling, off the MVP path entirely — recorded here because "unlabelled" and
-"deliberately out of scope" look identical in a list.
+Not `mvp-blocking` and deliberately so -- recorded because "unlabelled" and
+"deliberately out of scope" look identical in a list: **#151** (Tailwind
+classes naming undefined design tokens render as nothing, 18 occurrences),
+**#154** (the computed glue-alphabet sweep, filed with its reasoning and
+measured as searching an empty space), **#156** (ruff isort classifying
+`apps/api/scripts` by whether an unrelated top-level `scripts/` exists), and
+**#143** (the pre-push hook's fail-open). Matches CONTEXT.md's list, which
+it did not until PR #157 -- this file named only #143, so three issues that
+CONTEXT.md called deliberate were indistinguishable from oversights here,
+which is the exact failure the sentence claims to prevent.
 
 ## Open decisions: NOT to be reconstructed from memory
 

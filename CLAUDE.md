@@ -538,7 +538,10 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   your numbers": the trigger is mechanical. PR #141 stated the address truth
   table had 153 cells. The fix for a review finding was to parametrise two
   sweeps per separator as well as per character — 7 sites x 19 horizontal and
-  7 x 10 vertical — which multiplied the collected count to **327**. The stale
+  7 x 10 vertical — which multiplied the collected count several-fold. (The
+  number that stood here was 327; it was 376 within the week and 410 after
+  item 10, which is why it is no longer written down. Run the collector.)
+  The stale
   153 shipped to `main` in `CONTEXT.md` and `DECISIONS.md` and was found a PR
   later. What caught it was **re-counting**, not re-reading: the sentence still
   parsed, still looked deliberate, and was wrong by a factor of two.
@@ -557,16 +560,34 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   rule**:
 
   - `context/gene.md` — "Open mvp-blocking issues (20)" under a paragraph
-    certifying it freshly read. Nine issues closed in the merge that carried the
-    file; the heading did not move and the certificate stayed.
+    certifying it freshly read. EIGHT issues closed in the merge that carried
+    the file; the heading did not move and the certificate stayed.
+
+    An earlier draft of this very bullet said NINE -- the count of everything
+    closed since the heading was written, which silently included one closed
+    by a different PR. The lesson's own defect, in the paragraph introducing
+    the lesson, caught by review rather than by the author. Derive a closure
+    count from `gh pr view <n> --json closingIssuesReferences`, not from
+    memory of what happened.
   - `DELIVERY_PLAN.md` — a paragraph explaining a corrected total said "today's
     12-18" and went stale in the same commit that changed the total to 10-15,
     written by the author applying the rule.
   - `leave_row_oracle.py` — a docstring recording that its own counts must be
     re-counted on every guard-list change, quoting counts that were two guard-list
     changes old.
-  - `redact.py:82` — a note explaining that an EARLIER note about `\s` had gone
-    stale, which was itself wrong about one branch of `_RE_CONTACT_HINT`.
+  - **`CLAUDE.md` itself, three bullets above this one** — the re-count-trigger
+    bullet said the collected count was **327**. It was 376 by the time that
+    sentence shipped and is 410 now. A bullet about counts going stale in
+    another file, carrying a stale count.
+  - `tests/unit/test_redact_address_matrix.py` — "(The count is 327 now…)",
+    present tense, in the file that PRODUCES the number.
+
+  A fourth citation was drafted and withdrawn: `redact.py:82`, a note about an
+  earlier note about `\s`. It is a real defect and it is a DIFFERENT one — a
+  scope over-claim that was wrong on arrival rather than a number that went
+  stale — and it belongs under the narrower-rule bullet below. Filing it here to
+  reach four would have mislabelled it, which is what makes the next sweep
+  miss.
 
   The countermeasure is not more care, because in three of four the author was
   actively applying the rule. It is: **when you write a sentence certifying a
@@ -951,28 +972,61 @@ Rules of the road:
   the evidence had already made. This is a file-path check plus two facts, not a
   judgement call:
 
-  1. All seven CI checks green.
-  2. The adversarial reviewer ran, came back clean, and is recorded with
-     `Findings:` / `Disposition:` / `Scope:`.
+  1. All seven CI checks green. (Five jobs in `ci.yml` — python, web,
+     secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
+     is schedule-only and excluded. **Re-derive this count if a job is added**;
+     it is a hardcoded number in prose, which this file has a bullet about.)
+  2. The adversarial reviewer ran **against the final state of the branch**, and
+     whatever it found is fixed or filed, recorded with `Findings:` /
+     `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
+     first — item 10 would never have qualified under the first-run reading, and
+     §14 already requires a re-run after any substantive change. Note the gate
+     checks only that `Findings:` and `Disposition:` exist; it does not read
+     `Scope:` and cannot tell whether the reviewer ran at all.
   3. `DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated **in the
      landing commit**, with any counts read live rather than carried forward.
   4. No migration.
-  5. Nothing under `apps/api/app/ai/`.
+  5. **None of the following paths**, which are the ones where a green suite
+     proves least:
+       * `apps/api/app/ai/` — the single egress path for all five services.
+       * `apps/api/app/csf/playbook.py`, `app/risk/engine.py`,
+         `app/zt/scoring.py` — the deterministic scoring engines. Core Principle
+         1 says "AI suggests, code computes"; condition 5 named only the
+         suggesting half for one draft, so a refactor of the 5x5 risk mapping
+         would have merged unattended. #84 is on record as `risk.py` hiding
+         exactly that.
+       * any live LLM **prompt**, which is not confined to `app/ai/` —
+         `app/tech_debt/extract.py:44` holds one, and fixture mode echoes payload
+         keys back verbatim, so a prompt drift cannot turn CI red.
+       * `apps/api/scripts/check_*.py`, `.github/workflows/**`, and
+         `.github/pull_request_template.md` — the gates and the harness that
+         enforce this rule. A change here satisfies condition 1 by construction.
+         This file already records that `fetch-depth: 0` and one colon in the PR
+         template are each the single character deciding whether a gate means
+         anything.
   6. Nothing that changes deliverable content, exporter output, or client
      dashboard numbers.
 
-  **Any red, or any PR tripping 4, 5 or 6, comes back to the human.** Those three
-  are the blast-radius test: a migration touches stored data, `app/ai/` is the
-  single egress path for all five services, and the third is what a client
-  actually sees. Everything else is verifiable without a person in the loop.
+  **Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
+
+  **Conditions 1, 4 and 5 are mechanical. Conditions 2, 3 and 6 are
+  self-attested by the agent that wants to merge**, and 6 is a judgement call an
+  agent can talk itself out of. An earlier draft of this rule called the whole
+  thing "a file-path check plus two facts, not a judgement call", which is this
+  file's own narrower-than-the-reader-assumes shape. It is not that; it is three
+  checkable conditions and three honest ones. When 6 is arguable, it has been
+  tripped.
 
   Worked examples, so the boundary is not re-litigated per PR: item 7 part 2's
-  `/ai-inputs` endpoint and panel is admin-only and trips none of the three —
+  `/ai-inputs` endpoint and panel is admin-only and trips none of the paths —
   land it. **#131 comes back**, because the winning spelling reaching the client
   deliverable means fixing it changes deliverable content by definition. Items 9
-  and 6 come back for the same reason — they are entirely about what a client
-  sees and about AI output. Item 8 qualifies outright *unless* the export split
-  touches exporter output; check the paths rather than guessing.
+  and 6 come back for the same reason. **Item 8 comes back too** — an earlier
+  draft said it "qualifies outright unless the export split touches exporter
+  output", which is wrong twice over: the item is *named* export/publish split,
+  and it owns #123, a **client dashboard** defect. Fixing #123 changes what the
+  client's Risk dashboard shows, which is condition 6's third clause. The
+  example contradicted the #131 reasoning directly above it.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
   `gh pr view` — a good body saves them reading your whole diff.
