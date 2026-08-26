@@ -66,6 +66,114 @@ useful shape reference; the backend endpoint they call does not exist on `main`.
 This is "write against the current resolver using #29 as reference", not "port",
 and the 1-1.5 estimate rests on the porting assumption.
 
+## PICK UP HERE (2026-08-26, end of day) — start at step 1 below
+
+`main` is at `fbca899` and untouched since item 10 landed. **PR #157 is an open
+DRAFT and merges nothing.** Do not merge it before doing the steps below and
+reading the two caveats at the end.
+
+### What happened after item 10 merged
+
+PR #157 began as a two-line fix to the issue count in this file. Three
+adversarial passes over it found, in order: that a correction paragraph carried
+its own wrong closure count; that the count was fixed while the section above it
+still said "do not open a PR" and listed fixed blockers as live; and that
+`DELIVERY_PLAN.md` has two sibling estimate-vs-actual sections, of which only
+one had been updated. All acted on.
+
+**The pattern behind all three is one pattern: things written from memory
+instead of derived.** Gene named four rules for it:
+
+1. **Don't write the count.** If a number describes a list in the same document,
+   delete the number and let the list be the count.
+2. **Cite, don't recall.** A number from outside the document carries the command
+   that produced it and the date. If you cannot paste the command, you do not
+   write the number.
+3. **Gate it.** `apps/api/scripts/check_recalled_counts.py` — committed, working,
+   and **deliberately NOT wired into `ci.yml`**. See the caveat below.
+4. **Correct at the instruction, not at the discussion.** Every miss above landed
+   where the topic was DISCUSSED while the line telling someone what to DO was
+   left standing. A correction is unverified until you have grepped the doc set
+   for the claim's SUBJECT, not the line number you were handed. The correcting
+   commit records the grep it ran.
+
+Rule 4 is the highest-value of the four, and every reviewer pass needed it
+independently.
+
+### The finding that matters most, and it is not about counts
+
+`check_recalled_counts.py` crashed mid-report on a character the Windows console
+could not encode, having already printed a partial list — and **Python exits 1 on
+an unhandled exception, which is the same code the gate uses for "violations
+found".** A crash and a verdict were indistinguishable.
+
+Gene then swept the existing gates and RAN the test rather than reading it,
+patching a simulated fault into a copy of `check_plan_totals.py`: `exit=1`,
+traceback on stderr. **Every gate in this repo has that shape.** They all use
+`raise SystemExit(main(...))` with `main` returning 0 or 1 and no broad handler.
+
+The fix is nearly free because the convention already exists in those files —
+they return 2 for every ANTICIPATED failure. What is missing is routing an
+UNANTICIPATED fault to the same place: one `except Exception` at `__main__`.
+
+Two things a structural check added to Gene's sweep:
+
+- **`leave_row_oracle.py` looks protected and is not.** Its broad handlers are
+  INSIDE `main`, covering the mutation-did-not-compile paths, so anything raised
+  elsewhere still escapes and exits 1. It belongs in the test as an extra case,
+  which makes the scope eight scripts rather than seven.
+- **`check_test_integrity.py` has no `return 2` site at all**, so there is no
+  could-not-look branch to route a fault into. That one needs a small design
+  decision about what its anticipated failures are, not a one-liner.
+
+### Tomorrow, in order
+
+1. Commit the gate's fixes with a **crash-exits-2 test parametrised over all
+   eight scripts**, and fix the existing ones in the same commit. If the test
+   only pins the new gate, the rest keep reporting verdicts they never reached.
+2. Set `context/*.md` to **report-only**: run the gate over them, print the
+   findings, ignore the exit code for that subset, put the findings in the PR
+   body. Rationale, Gene's: a red on an owner-write-only file clears either by
+   Gene editing it or by an agent breaking the write rule, so blocking
+   manufactures the exception the policy exists to prevent — while excluding it
+   loses the signal on the file that rotted worst. Precedent and wording are at
+   `ci.yml:75`, where the LEAVE-row oracle is "a required step, not a gate".
+3. Land rules 1, 2 and 4 in `CLAUDE.md`, plus the `CLAUDE.md` sweep, together.
+   That file first, because the rules live there and it is what agents read.
+4. Remaining documents, **committed separately per document**, gate run before and after, delta
+   recorded per file. NOT all together: a sweep of that size across the documents
+   the reviewer has each time overturned is unreviewable, and the fourth pass would
+   be auditing a tree that moved under it.
+5. Fourth reviewer pass, against the settled tree.
+6. `gh pr view 157 --json closingIssuesReferences,title,body` before merging.
+   The reviewer cannot reach GitHub, and those are the only three surfaces
+   GitHub parses for closing keywords — a claim about GitHub state that only
+   GitHub can settle.
+
+### Two caveats that will bite if missed
+
+- **The gate is committed but not referenced by any workflow, on purpose.** CI
+  runs only what the workflow invokes, so it is inert and cannot redden the
+  branch that adds it. Wire it up in step 1, after the sweep, not before.
+- **Do not write the site count anywhere.** The gate's noun list is hand-built
+  and so was the estimate before it; both are floors, and the true population is
+  above both. A count of the places where counts go stale is the last place a
+  hardcoded count belongs. Run the gate; it is the count.
+
+### Also filed today
+
+**#158** — `redact.py:82` claims every separator in the module is built from
+`_HSPACE` while `_RE_CONTACT_HINT` uses bare `\s`, and no gate can see it
+because `check_separator_classes` flags hand-ENUMERATED classes rather than
+`\s`. Wrong on arrival rather than stale. It had been withdrawn from one
+CLAUDE.md lesson as mislabelled and, for a draft, recorded in neither list.
+
+Also open and not `mvp-blocking`: **#151** (Tailwind classes naming undefined
+tokens render as nothing), **#154** (the glue-alphabet sweep, filed with its
+reasoning and measured as searching an empty space), **#156** (ruff isort
+classifying `apps/api/scripts` by whether an unrelated top-level `scripts/`
+exists), **#143** (the pre-push hook's fail-open).
+
 ## What item 10 did (all eight issues, code complete)
 
 | Issue | Fix |
