@@ -210,18 +210,25 @@ Recorded by the relay last round, updated with what actually landed.
 
 `main` has #110, #113, #116, #117, #119, #127, #128, #129, #133 merged. **Working tree clean, nothing local, nothing mid-edit.**
 
-## Open mvp-blocking issues (20)
+## Open mvp-blocking issues (14)
 
-**Read from GitHub on 2026-08-25, not carried forward** — the previous count of
-13 went stale the moment #135-#140 were filed, and a count is exactly the kind of
-derived value this round has been correcting elsewhere.
+**Read live from GitHub on 2026-08-26, immediately after PR #155 merged.**
 
-`#144 #142` (this round: the ledger cannot prove the redactor ran; the redactor
-can be disabled on staging) · `#140 #139 #138 #137 #136 #135` (the redaction
-boundary, **item 10**) · `#132 #131` · `#126 #125 #124 #123` (dashboards) ·
-`#122 #121` (Risk, **item 6**) · `#115 #114 #109` (**item 9**) · `#46`
+`#153 #152` (the two redaction leaks item 10 filed rather than fixed) · `#132
+#131` · `#126 #125 #124 #123` (dashboards) · `#122 #121` (Risk, **item 6**) ·
+`#115 #114 #109` (**item 9**) · `#46`
 
-Closed: `#130`, by PR #141.
+Closed since: `#130` by PR #141; `#135`-`#140`, `#142`, `#144` by PR #155.
+
+**This heading read 20 with a paragraph underneath certifying it as freshly
+read.** Both were true on 2026-08-25 and false the moment PR #155 merged nine
+issues — and the certifying paragraph went stale WITH the number it certified,
+while still reading as a guarantee. That is worse than a bare stale count: a
+reader checking whether the figure could be trusted found a sentence saying yes.
+
+Fourth instance this week, and three of the four were in the files that document
+the rule against it. See CLAUDE.md, "a correction paragraph outlives the number
+it corrected".
 
 Not `mvp-blocking` and deliberately so: **#143** (the pre-push hook's fail-open)
 is tooling, off the MVP path entirely — recorded here because "unlabelled" and

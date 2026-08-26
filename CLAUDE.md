@@ -546,6 +546,35 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   substantive, which is when attention is on the code and not on the prose two
   files away. So: after touching any `@pytest.mark.parametrize` argument, grep
   the repo for the old count before committing.
+- **A CORRECTION PARAGRAPH OUTLIVES THE NUMBER IT CORRECTED, and then certifies
+  a wrong one.** The re-count trigger above says a changed parametrisation
+  invalidates counts in other files. This is its nastier sibling: the prose
+  written to explain WHY a number is trustworthy goes stale with the number,
+  while still reading as a guarantee. A bare stale count invites a check. A stale
+  count under "read live from GitHub, not carried forward" ends the check.
+
+  Four instances in one week, and **three were in the files that document the
+  rule**:
+
+  - `context/gene.md` — "Open mvp-blocking issues (20)" under a paragraph
+    certifying it freshly read. Nine issues closed in the merge that carried the
+    file; the heading did not move and the certificate stayed.
+  - `DELIVERY_PLAN.md` — a paragraph explaining a corrected total said "today's
+    12-18" and went stale in the same commit that changed the total to 10-15,
+    written by the author applying the rule.
+  - `leave_row_oracle.py` — a docstring recording that its own counts must be
+    re-counted on every guard-list change, quoting counts that were two guard-list
+    changes old.
+  - `redact.py:82` — a note explaining that an EARLIER note about `\s` had gone
+    stale, which was itself wrong about one branch of `_RE_CONTACT_HINT`.
+
+  The countermeasure is not more care, because in three of four the author was
+  actively applying the rule. It is: **when you write a sentence certifying a
+  derived value, put the value where a gate can read it, and let the sentence
+  point at the gate rather than restate the number.** `check_plan_totals.py`
+  reads the table, not the prose, which is why the plan's total is the one figure
+  in this repo that has never shipped wrong.
+
 - **When a guard keys on a predicate, sweep every call site of the predicate,
   not every caller of the guard.** `is_production()` has four call sites and all
   four mean "is this anything other than a developer's machine" while asking "is
@@ -917,6 +946,33 @@ Rules of the road:
   `CLAUDE.md` half of #108; the other half — the gate's own source still saying
   it "only REPORTS" and citing D-051 — is untouched and still open.)
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
+- **An agent merges on green WITHOUT checking back, when all six hold.** Standing
+  as of 2026-08-26, after three consecutive PRs came to the human for a decision
+  the evidence had already made. This is a file-path check plus two facts, not a
+  judgement call:
+
+  1. All seven CI checks green.
+  2. The adversarial reviewer ran, came back clean, and is recorded with
+     `Findings:` / `Disposition:` / `Scope:`.
+  3. `DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated **in the
+     landing commit**, with any counts read live rather than carried forward.
+  4. No migration.
+  5. Nothing under `apps/api/app/ai/`.
+  6. Nothing that changes deliverable content, exporter output, or client
+     dashboard numbers.
+
+  **Any red, or any PR tripping 4, 5 or 6, comes back to the human.** Those three
+  are the blast-radius test: a migration touches stored data, `app/ai/` is the
+  single egress path for all five services, and the third is what a client
+  actually sees. Everything else is verifiable without a person in the loop.
+
+  Worked examples, so the boundary is not re-litigated per PR: item 7 part 2's
+  `/ai-inputs` endpoint and panel is admin-only and trips none of the three —
+  land it. **#131 comes back**, because the winning spelling reaching the client
+  deliverable means fixing it changes deliverable content by definition. Items 9
+  and 6 come back for the same reason — they are entirely about what a client
+  sees and about AI output. Item 8 qualifies outright *unless* the export split
+  touches exporter output; check the paths rather than guessing.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
   `gh pr view` — a good body saves them reading your whole diff.
