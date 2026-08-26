@@ -1051,9 +1051,28 @@ Rules of the road:
   checkable conditions and three honest ones. When 6 is arguable, it has been
   tripped.
 
-  Worked examples, so the boundary is not re-litigated per PR: item 7 part 2's
-  `/ai-inputs` endpoint and panel is admin-only and trips none of the paths —
-  land it. **#131 comes back**, because the winning spelling reaching the client
+  Worked examples, so the boundary is not re-litigated per PR — and a STALE
+  worked example is worse than none, because it ends the check with the wrong
+  answer in the place a reader looks first.
+
+  **Item 7 part 2** (`/ai-inputs` endpoint and panel) **comes back.** An earlier
+  draft said it "is admin-only and trips none of the paths — land it". That was
+  true the day it was written and false by the time anyone read it: the
+  `apps/api/tests/**` and `e2e/**` bullet was added to condition 5 in a later
+  session, and an endpoint plus a panel ships with tests — it must, or condition
+  1 proves nothing about it. Whether a surface is admin-only is not a question
+  condition 5 asks. This is the stale-cross-reference shape occurring inside the
+  rule that records the shape: a claim superseded by an edit elsewhere in the
+  same file, still standing where it gets looked up.
+
+  **A PR that repairs the gates comes back too**, and it trips condition 5 on
+  two bullets at once — `apps/api/scripts/check_*.py` and `apps/api/tests/**`.
+  Both are deliberate: a change to a gate satisfies condition 1 by construction,
+  and a change to a test satisfies it more directly than editing a workflow
+  does. That such a commit is *repairing* the harness this rule depends on
+  argues for a human reading it, not against.
+
+  **#131 comes back**, because the winning spelling reaching the client
   deliverable means fixing it changes deliverable content by definition. Items 9
   and 6 come back for the same reason. **Item 8 comes back too** — an earlier
   draft said it "qualifies outright unless the export split touches exporter
