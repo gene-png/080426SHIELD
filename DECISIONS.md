@@ -3282,3 +3282,53 @@ shape of encoding the implementation's own answer. It is green today. It is wort
 having anyway: nothing else in the suite would notice if a future widening made a
 placeholder re-match, and the ATT&CK resolver's alias tier depends on the
 transformation being stable under a second pass.
+
+## D-059 — The unattended-merge rule stands, and its framing sentence states what it measured
+
+**Date:** 2026-08-26 · **Context:** the merge rule in `CLAUDE.md` · **Supersedes:** the framing half of the 2026-08-26 rule as first written
+
+Condition 5 grew to its current path list over two sessions. Every addition was
+individually justified and all of them are kept. The net effect was not stated
+anywhere: because the list now includes `apps/api/tests/**` and `e2e/**`, and
+because this repo does not ship code without tests, no PR containing code can
+clear the rule. A reader deriving the scope from the conditions could reasonably
+land somewhere more generous than the conditions actually permit, and the
+framing sentence did nothing to stop them.
+
+**Measured rather than argued.** Condition 5's current path list applied to the
+last fifteen PR merges on `main`: **four cleared, eleven came back**, the eleven
+tripping 1 to 20 paths each. The four are all documentation
+(`1bc5733`, `16267b0`, `634f6ea`, `65e0f31`).
+
+Two independent constructions were built from opposite directions — a denylist
+(condition 5) and an allowlist proposal — and converged on "documentation".
+They disagree on exactly two PRs, `8aaaace` (`test(zt)`) and `0a26f8c`
+(`test(e2e)`): the allowlist permitted `apps/api/tests/**`, condition 5 forbids
+it, so six became four. **Neither figure was stale; they were two different
+rules**, and the denylist is the stricter one. Convergence from opposite
+directions is evidence about the codebase rather than about either construction:
+on this codebase a green suite genuinely does not license an unattended merge of
+code.
+
+**One objection, killed by the same data.** The worry that this becomes a
+machine for auto-merging a developer's own state file does not survive: exactly
+one of the four cleared PRs touches `context/`.
+
+**The alternative weighed and rejected: drop the rule.** Four reviewer passes
+and a long section of `CLAUDE.md` is a real cost against four cleared PRs in
+fifteen. It loses anyway, because those passes were not spent discovering the
+rule was wrong — they were spent discovering that a green suite does not license
+an unattended code merge here. That finding is worth having written down whether
+or not a standing rule survives it, and the four cleared PRs are the kind that
+recur every round.
+
+**What does not survive is a framing sentence promising more than four in
+fifteen.** It now says what the rule clears, with the measurement, its window
+and its date.
+
+**Trigger, because this number has a specific way of going wrong.** The
+measurement is a claim about a fixed slice of history, so it does not rot the
+way a live count does — but it is only true of condition 5 as that list stood on
+2026-08-26. **Re-derive it whenever condition 5 changes.** Condition 5 changed
+twice in the three days before this entry, so that is a scheduled event and not
+a remote contingency.

@@ -980,9 +980,35 @@ Rules of the road:
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **An agent merges on green WITHOUT checking back, when all six hold.** Standing
   as of 2026-08-26, after three consecutive PRs came to the human for a decision
-  the evidence had already made. Three of the six conditions are checkable and
-  three are self-attested — see the note below the list, which an earlier draft
-  contradicted from here:
+  the evidence had already made.
+
+  **What this rule actually clears: documentation PRs.** Code comes back, and so
+  does anything adding or changing a test — every path where a green suite proves
+  least is a path this codebase's code actually touches, and this repo does not
+  ship code without tests. Measured 2026-08-26 by applying condition 5's path
+  list to the last fifteen PR merges on `main`: **four cleared, eleven came
+  back**, the eleven tripping 1 to 20 paths each. It is written here so nobody
+  has to derive the scope from the conditions and arrive somewhere more generous
+  — an earlier framing promised more than four in fifteen, and the conditions
+  below had grown past it.
+
+  Four in fifteen is worth keeping: those four are the PRs that recur every
+  round. Dropping the rule was weighed against the same evidence and loses — the
+  reviewer passes that produced these conditions were not spent discovering the
+  rule was wrong, they were spent discovering that **a green suite does not
+  license an unattended merge of code here**, and that is worth having written
+  down whether or not a standing rule survives it.
+
+  The measurement carries its window and its date deliberately: it is a claim
+  about a fixed slice of history, so it does not rot the way a live count does.
+  It is only true of condition 5 as that list stood on that date, so
+  **re-derive it whenever condition 5 changes** — not a remote contingency,
+  since condition 5 changed twice in the three days before this was written.
+  (Recorded as **D-059**, which carries the four cleared SHAs and the two PRs on
+  which a denylist and an allowlist construction disagree.)
+
+  Three of the six conditions are checkable and three are self-attested — see the
+  note below the list, which an earlier draft contradicted from here:
 
   1. All seven CI checks green. (Five jobs in `ci.yml` — python, web,
      secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
