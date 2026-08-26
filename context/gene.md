@@ -1,44 +1,76 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — mid-flight on item 10 (2026-08-25)
+## PICK UP HERE - item 10 is NOT ready (2026-08-25)
 
 **Written by the agent at Gene's explicit request before a machine restart.**
 This file is owner-write-only; an agent writing it stays the exception.
 
-### The one-line state
+### The one-line state, corrected
 
-`main` is at `02f43d6`. Branch **`fix/redaction-boundary-item-10`** holds
-**item 10 complete in code, committed and pushed, NO PR open yet.** An
-adversarial review was in flight when the session ended and its findings have
-NOT been applied.
+`main` is at `02f43d6`. Branch **`fix/redaction-boundary-item-10`** is committed
+and pushed at `af069e1`. An earlier version of this file said "item 10 complete
+in code". **That was wrong.** The adversarial review finished after it was
+written and found **14 findings, 9 of them confirmed by running the code**,
+including two cases where a fix REINTRODUCED the defect it was fixing.
 
-### First five commands after restart
+**Do not open a PR until the blockers below are closed.**
 
-```bash
-export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"   # every shell
-cd /c/repos/SHIELD080326/SHIELD080306main
-git checkout fix/redaction-boundary-item-10 && git log --oneline -3
-docker compose up -d                       # stack: web:3000 api:8000 db redis minio keycloak mailhog
-docker compose exec -T api sh -lc "cd /app && alembic current"     # expect 0046 (head)
-```
+### THE BLOCKERS - all nine verified in-container, not taken on reading
 
-### Two things to confirm are alive before doing anything else
+Repro for every one: `docker compose exec -T api python -c "from app.ai.redact import redact_for_ai as R; print(R(<string>, mode='strict'))"`
 
-1. **Playwright** — host-run, not docker.
-   ```bash
-   cd e2e && npx playwright --version && npx playwright test --list | tail -2
-   ```
-   Expect v1.61.1 and ~92 tests over 45 files. A first run may hit the documented
-   next-dev cold-compile timeout; re-run before investigating. Full suite ~17 min,
-   chromium, serialized.
+| # | Defect | Verified output |
+| --- | --- | --- |
+| B1 | **#135 reintroduced.** The 5-line contact lookahead fires on any IP, date or 7+ digit run, so an ordinary ZT note is truncated and the ledger records a successful redaction. | `Flat segmentation.
+Best
+practice per CISA ZTMM.
+Host 10.20.30.40 bridges both.` -> everything after line 1 deleted, `{'signature_block': 1}` |
+| B2 | **#140 reintroduced.** 3-5 short numbers on one line, 7-15 digits total, become a phone. | `Ports 22 80 443 3389 8080 are open.` -> `Ports [PHONE] are open.`; also `08-25-2026` and `2024 2025 2026` |
+| B3 | `_CITY_STATE_ZIP` eats `<Word> ID <5 digits>` - `ID` is Idaho and the rule is IGNORECASE. | `Nessus Plugin ID 19506 remains open.` -> `[ADDRESS] remains open.` |
+| B4 | `_STREET_PAT` eats `<number-or-numword> <word> drive/way`. | `There is one possible way to remediate.` -> `There is [ADDRESS] to remediate.`; `Replaced the 16 TB drive.` -> `Replaced the [ADDRESS].` |
+| B5 | **Real phone formats leak.** The required separator excludes both machine formats; the OLD rule caught both. | `+15551234567` and `5551234567` -> unchanged, `{}` |
+| B6 | A sign-off with opener and name on ONE line is never cut. | `Thanks, Dana Whitfield` -> name and title leak |
+| B7 | `_RE_CAGE` eats ATT&CK IDs - `and` is a connector and the value test is "5 alnum with a digit". | `CAGE and T1078` -> `[CAGE]`; also across a newline |
+| B8 | `MS` is a 25th facility keyword, NOT on Pub 28, with no table row. The completeness test only walks table -> pattern, never pattern -> table. | `We use MS 365.` -> `We use [ADDRESS].` |
+| B9 | `Business Unit 4 reported an outage.` -> `Business [ADDRESS] reported...`. #139 invented a terminal guard and applied it to the facility branch only, not to its twin. | confirmed |
 
-2. **The adversarial reviewer** — `.claude/agents/adversarial-reviewer.md`, agent
-   type `adversarial-reviewer`, tools Read/Grep/Glob, model opus. Dispatch it on
-   the branch; if it returns findings it is working. It found **26 real defects
-   across three PRs this week**, including three leaks the implementing agent
-   introduced. It is also confidently wrong perhaps a fifth of the time, so
-   **re-verify every finding in-container before acting** — two of its proposals
-   were measured and rejected this week.
+**The common cause is one thing: every LEAVE table was enumerated against the
+FIRST version of its rule and never re-derived after the rule changed.** The
+phone LEAVE rows pass for reasons unrelated to the class they name (`Ports 30000
+40000` only passes because 5-digit groups exceed `\d{1,4}`; the bullet list only
+because the separators are newlines). That is CLAUDE.md's "caught by the round
+AFTER the round that added them", and it is the thing to fix structurally rather
+than case by case.
+
+### Also outstanding, lower severity
+
+- **`check_separator_classes.py` collapses exit 2 into exit 1.** `check()` returns
+  2 on a tokenize failure and `main()` never reads it - the gate that cites D-051
+  does not meet it. One-line fix. Its `_HSPACE` exemption is also line-scoped, so
+  `_PHONE_SEP = r"(?:" + _HSPACE + r"|[ .-])"` would pass silently.
+- **`docs/security.md` claims the signature cut length is recorded.** It is not -
+  `removed_chars` is computed and `del`eted. Either restore it somewhere or
+  correct the doc. It also still lists #138/#139/#144 as Open.
+- **`redact.py:82-88` says `_RE_PHONE`/`_RE_CAGE` no longer contain `\s`.**
+  `_CAGE_SEP`, `Mail\s+Stop` and `_RE_CONTACT_HINT` all still do, and D-058 still
+  says so correctly - the new note contradicts the decision record.
+- **Cell count:** the file says 327; the collector says **376**. Same
+  parametrisation-invalidates-the-count trigger already in CLAUDE.md.
+- **`smoke_live_ai.py:44`** references the removed `signature_block_chars` key.
+- **Nothing renders `redaction_mode`** - `AuditViewer.tsx` has no such column, so
+  #144 ships API-only. Say so in 0046 or add the column.
+
+### What DID survive the audit
+
+- **Migration 0046 holds.** The reviewer attacked the read paths (no aggregate,
+  no filter, no coercion), hunted a second `LLMCall` insert site (only three
+  exist, two are tests), and checked `String(16)` against the Literal. Upgrade and
+  downgrade verified on Postgres and a full SQLite round trip, 22 columns either
+  side.
+- **#142 holds.** All four `is_production()` call sites converted, one test cell
+  per environment per guard.
+- **The `removed_counts` unit invariant test is genuinely discriminating** - it
+  derives the expected total from placeholder occurrences in the output.
 
 ### Where the plan lives
 
@@ -75,21 +107,25 @@ per-PR, not per-unit-of-work.
 `check_no_control_chars.py`, `check_plan_totals.py`, `check_separator_classes.py`
 — the last found a third instance of its own defect on first run.
 
-## What is LEFT on item 10
+## What is LEFT on item 10, in order
 
-1. **Apply the in-flight adversarial review.** Re-dispatch it; the previous run
-   was pointed at the migration design, a possible second `LLMCall` insert site,
-   phone formats still missed, and prose the new address rules might eat.
-2. **Confirm a clean full `pytest -m unit` run.** Targeted suites all pass
-   (386 address cells, 127 rule cells, gates). The last full run was killed by a
-   cleanup loop, not by failures — re-run it.
-3. **Open the PR.** Body must carry `Findings:` / `Disposition:` / `Scope:` on
-   their own lines (the gate reads them literally), and `Scope:` must **enumerate
-   all three surfaces** — `app/ai/redact.py`, `config.py`+`main.py`, and the
-   model+migration — because cost overrode surface coherence here.
-4. **Do NOT auto-close** #135-#140/#142/#144 unless intended; use
-   `Auto-close-approved: <bare numbers>` PLUS a real closing keyword. The
-   approval line alone does not close anything.
+1. **Close the nine blockers above.** They are all in `app/ai/redact.py`. Do the
+   structural fix, not nine patches: **re-derive every LEAVE table against the
+   rule as it stands now**, because each one was written against an earlier
+   version and several rows pass for reasons unrelated to the class they name.
+2. **Add the missing REDACT rows.** `+15551234567` and `5551234567` leaked
+   because `PHONE_REDACT` had no machine-format row. The old rule caught both --
+   use it as an oracle (CLAUDE.md has the entry) before it is gone.
+3. **Fix the two gate defects** (`check_separator_classes` exit 2; the line-scoped
+   `_HSPACE` exemption).
+4. **Correct the docs** that now misdescribe the code: `docs/security.md`'s
+   "cut length is now recorded" and its Open/Fixed table, `redact.py:82-88`, the
+   327-vs-376 cell count, `smoke_live_ai.py:44`.
+5. **Re-run the adversarial reviewer** on the corrected tree. It has now
+   overturned this branch twice; do not treat a third clean-looking state as
+   final without it.
+6. **Confirm a clean full `pytest -m unit`**, then open the PR. `Scope:` must
+   enumerate all three surfaces.
 
 ## Standing environment facts
 
