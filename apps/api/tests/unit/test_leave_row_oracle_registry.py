@@ -15,7 +15,13 @@ replace.
 from __future__ import annotations
 
 import pytest
-from scripts import leave_row_oracle as O
+from scripts.leave_row_oracle import (
+    NOT_LEAVE_TABLES,
+    TABLE_GUARDS,
+    check_registry,
+    discover_tables,
+    leave_rows,
+)
 
 
 @pytest.mark.unit
@@ -27,9 +33,9 @@ def test_a_table_with_no_registered_guards_fails_the_gate(monkeypatch) -> None:
     wearing the output of "nothing to complain about".
     """
     rows = [("A_BRAND_NEW_TABLE", "some row", "text")]
-    monkeypatch.setitem(O.TABLE_GUARDS, "A_BRAND_NEW_TABLE", [])
+    monkeypatch.setitem(TABLE_GUARDS, "A_BRAND_NEW_TABLE", [])
 
-    assert O.check_registry(rows) == 1
+    assert check_registry(rows) == 1
 
 
 @pytest.mark.unit
@@ -46,12 +52,15 @@ def test_a_table_absent_from_the_registry_entirely_also_fails(monkeypatch) -> No
     matrix modules, so the fake has to be injected there instead. The test
     going red on that change was the gate's own hole surfacing.
     """
-    real = O.discover_tables()
-    monkeypatch.setattr(O, "discover_tables", lambda: {**real, "NEVER_REGISTERED": 3})
-    assert "NEVER_REGISTERED" not in O.TABLE_GUARDS
-    assert "NEVER_REGISTERED" not in O.NOT_LEAVE_TABLES
+    real = discover_tables()
+    monkeypatch.setattr(
+        "scripts.leave_row_oracle.discover_tables",
+        lambda: {**real, "NEVER_REGISTERED": 3},
+    )
+    assert "NEVER_REGISTERED" not in TABLE_GUARDS
+    assert "NEVER_REGISTERED" not in NOT_LEAVE_TABLES
 
-    assert O.check_registry(O.leave_rows()) == 1
+    assert check_registry(leave_rows()) == 1
 
 
 @pytest.mark.unit
@@ -63,10 +72,10 @@ def test_the_real_registry_is_currently_complete() -> None:
     -- which is the whole point of the gate and would not be true of an
     assertion against a fixed number.
     """
-    rows = O.leave_rows()
+    rows = leave_rows()
     tables = {t for t, _, _ in rows}
     assert tables, "no LEAVE tables discovered -- the collector is broken, not clean"
 
-    unregistered = sorted(t for t in tables if not O.TABLE_GUARDS.get(t))
+    unregistered = sorted(t for t in tables if not TABLE_GUARDS.get(t))
     assert not unregistered, f"LEAVE tables with no registered guards: {unregistered}"
-    assert O.check_registry(rows) == 0
+    assert check_registry(rows) == 0
