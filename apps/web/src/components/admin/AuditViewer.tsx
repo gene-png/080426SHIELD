@@ -216,6 +216,43 @@ export function AuditViewer(): JSX.Element {
       ),
     },
     {
+      key: "redaction",
+      header: "Redaction",
+      cell: (r) => {
+        // Three states, and NULL is not a fourth spelling of "strict". A row
+        // written before migration 0046 has an unknown mode, and the column
+        // exists to prove what happened -- so it says so rather than guessing.
+        if (r.redaction_mode === null) {
+          return (
+            <span
+              className="text-ink-tertiary"
+              title="This call predates the redaction-mode column (migration 0046). The mode it ran under was never captured and cannot be recovered."
+            >
+              not recorded
+            </span>
+          );
+        }
+        // `off` means the redactor returned the payload unchanged: client data
+        // egressed to the provider verbatim. That is the state #144 exists to
+        // make visible, so it is the one state that is styled to be noticed.
+        const off = r.redaction_mode === "off";
+        return (
+          <span
+            className={
+              off ? "font-semibold text-status-danger-fg" : "text-ink-secondary"
+            }
+            title={
+              off
+                ? "The redactor was disabled for this call. The payload reached the provider unredacted."
+                : undefined
+            }
+          >
+            {r.redaction_mode}
+          </span>
+        );
+      },
+    },
+    {
       key: "correlation",
       header: "Correlation",
       cell: (r) => corrLink("activity", r.correlation_id),

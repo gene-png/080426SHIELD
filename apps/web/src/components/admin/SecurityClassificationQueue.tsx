@@ -99,7 +99,16 @@ export function SecurityClassificationQueue({
         </p>
 
         {error ? (
-          <p role="alert" className="text-sm font-medium text-danger-600">
+          <p
+            role="alert"
+            className="text-sm font-medium text-status-danger-fg"
+            /* `danger-600` is not a token. The preset defines
+             status.danger-fg/bg/border and no numeric danger scale, so
+             this alert rendered with no colour at all. Found while
+             adding the same class to the audit viewer -- a twin, fixed
+             rather than left, since an uncoloured role="alert" is the
+             one place the styling carries meaning. */
+          >
             {error}
           </p>
         ) : null}

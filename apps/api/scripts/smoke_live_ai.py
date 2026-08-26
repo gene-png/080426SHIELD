@@ -39,6 +39,15 @@ CONTACT_EMAIL = "jane.doe@atlascorp.example"
 
 # What redaction MUST strip from the payload above under strict mode. The keys
 # are redact.py's category names; the values are occurrence counts.
+# Exact equality on purpose -- a drifted count is the signal. NOTE: the fixture
+# below deliberately contains NO signature-block opener. Adding one would add a
+# `signature_block` key and break this assertion, which is correct behaviour but
+# looks like a redaction regression at 2am.
+#
+# There is no `signature_block_chars` key. This note named one until 2026-08-26:
+# it was added, then removed on purpose, because every value in `removed_counts`
+# is a COUNT of removals and the web sums the dict to render 'N spans redacted'.
+# A magnitude in that column makes the aggregate nonsense.
 EXPECTED_REDACTED_COUNTS = {"email": 2, "name": 2, "client_org": 2}
 
 # Raw PII strings that must NOT appear anywhere in the real model response.

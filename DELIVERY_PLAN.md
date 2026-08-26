@@ -69,16 +69,33 @@ fixture mode already demos all five.
 | 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** | — |
 | 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **4–6 sessions** (fixes only; re-sized 2026-08-25 — see "Why the range is wide") | — |
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
-| 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | Not started. `app/ai/redact.py` is, in its own docstring, "the SECURITY BOUNDARY in front of every LLM call" and "the primary compensating control" for egress to a non-FedRAMP provider. It currently carries six known defects, **three of them leaks**: a contract number, a CAGE code and a street address each egress whole with `removed_counts={}` (#136, #137, #138); `Building`/`Bldg`/`Rm`/`Room`/`Level`/`Mail Stop` match nothing (#139); a line reading `Thanks` truncates the rest of the input and records a successful redaction (#135); and `_RE_PHONE` turns `10.20.30.40 and 10.20.30.41` into two `[PHONE]`s while recording `phone: 2` over text with no phone number (#140) | Nothing | **2–3 sessions** — batched by cost, not by surface: it spans `ai/redact.py` (#135–#140), `config.py` + `main.py` (#142), and a model + migration (#144), so its `Scope:` line must name all three. Re-sized from 1.5–2.5 on 2026-08-25 when #142 and #144 joined; the +0.5 is earned by #144's migration (alembic against dev Postgres, `batch_alter_table` for SQLite safety, the C0 additive pattern) — new surface, not more of the same | — |
+| 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
 
-### Total remaining: 12–18 sessions, and the parts sum to it
+### Total remaining: 10–15 sessions, and the parts sum to it
 
-**Updated 2026-08-25.** Expect the upper half; see the next section for why.
+**Updated 2026-08-26**, when item 10 landed. Expect the upper half; see the
+next section for why, and note that all three measured items have now landed
+in it or past it.
 
-**This heading was 12–18.5 for one draft, and the parts did not sum to it** —
-note that is a different number from today's 12–18, which does sum. The residual
+**Size items 6 and 9 with the review rounds INSIDE the number, not added
+afterwards.** Both fix code that already exists, so their truth tables land in
+the after-the-rule regime — measured at 42% of in-risk exemption rows pinning
+nothing, against 3.8% for tables written before their pattern. The LEAVE-row
+oracle run is already budgeted into both; what the estimate must also carry is
+the rounds that oracle output will generate.
+
+**A HISTORICAL note, kept because the incident is the lesson.** During PR #146
+this heading read 12–18.5 for one draft and the parts did not sum to it. The
+totals it discusses — 12–18.5 and 12–18 — are both superseded: item 10 landed on
+2026-08-26 and the figure is now 10–15 across four items.
+
+That restatement is itself the rule firing. The paragraph said "today's 12–18"
+and went stale the moment the item it was written beside was marked DONE, in the
+same commit, by the same author. A total in prose is a derived value with a
+second place to be wrong, which is why `check_plan_totals.py` reads the table
+rather than the sentence. The residual
 was exactly 0.5–1: item **9a**, which is DONE in this PR and was still being
-counted as remaining. (The current total returned to 12–18 by a separate route:
+counted as remaining. (The total then returned to 12–18 by a separate route:
 item 10 grew from six issues to eight and was re-sized 1.5–2.5 → 2–3. Two
 unrelated changes landing near the same figure is a coincidence worth naming,
 because a reader comparing drafts would otherwise conclude nothing had moved.) The number was carried forward rather than re-added
@@ -88,12 +105,11 @@ not by writing the rule.
 
 | Item | Estimate |
 | --- | --- |
-| 10 — redaction boundary (#135–#140, #142, #144) | 2–3 |
 | 7 — W1 ATT&CK step (+ #131) | 1–1.5 |
 | 9 — correctness defects only a code review catches | 4–6 |
 | 6 — W1 Risk step | 4–6 |
 | 8 — W6 Risk export/publish split | 1–1.5 |
-| **Total** | **12–18** |
+| **Total** | **10–15** |
 
 At 4–8 hours a session that is roughly **46–140 hours**, or **2–5 working
 weeks** at 5–6 productive hours a day. The width of that is the point, not a
@@ -105,6 +121,55 @@ by anything: 5a was the last link in the W3 → W2 → W1-ATT&CK chain. Order is
 than added.** A schedule whose parts do not sum to its total is the same defect
 as a status line that is wrong, and this document has now produced both. If an
 item re-sizes, the table above moves with it in the same PR.
+
+### The LEAVE-row oracle run is budgeted into items 6 and 9, not discovered there
+
+**Added 2026-08-25, from a measurement rather than a worry.**
+
+`apps/api/scripts/leave_row_oracle.py` disables one narrowing guard at a time and
+reports which exemption rows in a truth table still pass. A row that passes with
+its guard removed was never testing that guard. Measured over the redaction
+corpus:
+
+| Tables | Rows in the risk class | Pinning nothing |
+| --- | --- | --- |
+| Written before their pattern (#130, PR #141) | 53 | **2 (3.8%)** |
+| Written alongside/after their rule (item 10) | 38 | **16 (42.1%)** |
+
+The variable is order, not subject matter: a table written first is an
+independent specification, a table written afterwards is a transcript of what
+the rule already does.
+
+**Items 6 and 9 both fix code that already exists.** Their tables therefore land
+in the 42% regime by construction. That is a derived prediction, not a guess,
+and it is why the run is scheduled here rather than left to be rediscovered:
+
+- **Item 6 (W1 Risk step)** — the run costs minutes; the tables it checks decide
+  whether a live Risk run's likelihood/impact/tier parsing is pinned or merely
+  green (#121, #122).
+- **Item 9 (correctness defects)** — same, across four client dashboards.
+
+No re-size for either: the run is minutes against a 4-6 session item, and it is
+cheaper than one round of the review it prevents. Recorded so the step is not
+read as scope creep when it appears in those PRs.
+
+### Item 10 was the egress half of what items 9 and 6 are the output half of
+
+Worth stating once, because the three read as unrelated on this list. Item 10
+fixed what leaves the platform: `redact_for_ai` is the single path every AI
+payload takes to a non-FedRAMP provider, and a defect there corrupts the model's
+INPUT for all five services at once. Items 9 and 6 fix what comes back — whether
+a partially-failed run is distinguishable from a complete one (#115, #46),
+whether a live Risk run's entries carry the likelihood and impact the parser
+demands (#121, #122), whether a dashboard's numbers describe the assessment it
+names (#114).
+
+Same problem, two directions: **can we tell what the AI layer actually did.**
+Item 10's answer to that on the egress side is `llm_calls.redaction_mode` — a row
+that can now say which mode a call ran under, rather than being byte-identical
+whether the redactor ran or was switched off. Items 9 and 6 owe the same
+property on the response side, and #122 is literally the same defect facing the
+other way: an audit row counting what was received rather than what was kept.
 
 ### Why the range is wide, and why the low end is not the plan
 
@@ -142,6 +207,20 @@ items, this one is about round count per item. They add rather than overlap.
 | --- | --- | --- | --- | --- |
 | #130 redaction fix (PR #141) | 2 | 16 | 0.25 | 0.5–1 |
 | 9a docs-truth pass, `docs/security.md` | 3 | 30 | 0.5–1 | ~1 |
+| 10 the redaction boundary (PR #155) | 4 | 16 blockers + 3 self-corrections | 2–3 | **~5–6** |
+
+**Three points is a trend, and the next sizing should absorb it rather than
+rediscover it.** All three items overran, and in each the overrun was review
+yield rather than mis-scoping: the work found was real, and most of it was
+invisible to the estimate because it did not exist until a fix created it.
+Item 10's four rounds produced 9, then 1, then 5, then 1 blockers — the count
+did not converge monotonically, which is the part a three-round budget would
+have got wrong.
+
+Two things make item 10's overrun worth the price rather than a warning:
+five of the sixteen were **pre-existing defects on `main`** that nothing else
+in the process would have found, and the two derived corpora it produced are
+permanent and now budgeted into items 6 and 9.
 
 Neither was mis-scoped. In both, the reviewer found real defects at a steady
 rate right through the last round — the second round of #130 found a leak worse

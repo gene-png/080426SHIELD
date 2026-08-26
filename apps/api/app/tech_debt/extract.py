@@ -336,8 +336,49 @@ def name_hints_for_tenant(db: Session, client_id) -> list[str]:
         if name:
             hints.append(name)
         if email and "@" in email:
-            hints.append(email.split("@", 1)[0])
+            local = email.split("@", 1)[0]
+            if _looks_like_an_account_name(local):
+                hints.append(local)
     return [h for h in hints if h and len(h) >= 2]
+
+
+def _looks_like_an_account_name(local: str) -> bool:
+    """Is this email local part a PERSON, or a shared mailbox? (B13)
+
+    The dictionary these hints feed replaces every case-insensitive occurrence
+    of each entry with `[NAME]`, so an entry that is an ordinary word destroys
+    that word throughout every payload the tenant ever sends. `client@` is not
+    hypothetical -- it is the seeded Atlas login -- and it turns
+
+        "The client has no MFA on the client VPN"
+
+    into two `[NAME]` placeholders. Every real deployment has some of
+    security@, admin@, it@, ops@, info@, support@, helpdesk@.
+
+    NOT a deny-list of mailbox names: that is an enumeration of what somebody
+    thought of, which is the failure this module has been paying for all week.
+    The distinguishing property is structural. A generated account identifier
+    carries a separator, a digit, or mixed case -- `dana.whitfield`,
+    `d_whitfield`, `D.Whitfield`, `jdoe2`. A shared mailbox is a single bare
+    lowercase word, because it is a word.
+
+    RESIDUAL, stated with its firing condition: a single-token lowercase login
+    like `dwhitfield` is rejected and its owner's name is not caught by THIS
+    hint -- the display name still is. Accepted because `dwhitfield` is
+    vanishingly unlikely to appear in an inventory's prose, while `security` is
+    certain to. Revisit if a tenant is observed using bare-surname logins AND a
+    name leak traced to one.
+
+    The same shape one field over is NOT fixed here: a tenant whose `legal_name`
+    is `Core`, `Delta` or `Sentinel` still has that common noun destroyed by
+    `redact_org_name`. That is a single client-supplied string with no
+    structural tell to test -- an org really can be called Core -- so it needs a
+    product decision (warn at intake? require confirmation?) rather than a
+    predicate. Tracked separately.
+    """
+    if any(ch.isdigit() or ch in "._-+" for ch in local):
+        return True
+    return local != local.lower()
 
 
 def client_org_name_for_tenant(db: Session, client_id) -> str | None:

@@ -21,6 +21,27 @@ carried a literal U+2028 inside its own error message.
 U+2028/U+2029 matter beyond tidiness: they are line separators, so a markdown
 renderer and a text editor disagree about how many lines the file has.
 
+WHY NOT `str.isascii()`, WHICH IS THE OBVIOUS SPELLING. Because it is a
+different check wearing this one's clothes, and it REJECTS THINGS THAT ARE
+CORRECT. Run it over this repo and `app/models/llm_call.py` comes back False on
+three characters -- two section signs in `Master Spec §11` and one em dash --
+all of them legitimate typography, none of them a defect, all of them in text
+nobody should be asked to rewrite. The gate would then fire on the em dash
+inside the sentence explaining what the gate is for, which is the same joke this
+file's own history already tells twice.
+
+The distinction is not "ASCII vs not". It is "does this byte RENDER". `§` and
+`—` render and carry meaning; U+0008 and U+2028 do not render and change what the
+file means. So the rule is an explicit deny list of non-rendering characters,
+never an allow list of ASCII -- and the list has to be maintained by hand, which
+is the cost of getting it right.
+
+Recorded because the over-broad version was tried and rejected during the
+2026-08-25 slice, and a rejection that is not written down gets re-derived by
+the next person at the same price. Same shape as the prose-total rule refused at
+7.7% signal and the first separator-class draft: the cheap check is the one that
+cries wolf, and a gate that cries wolf gets switched off.
+
 EXIT CODES, per this repo's fail-closed convention (D-051):
   0 - clean
   1 - at least one stray control character found

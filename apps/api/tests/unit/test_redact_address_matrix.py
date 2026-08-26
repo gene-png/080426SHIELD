@@ -512,6 +512,265 @@ def test_the_idempotence_cells_are_not_all_pass_one_no_ops() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Axis 7 - the address SHAPES the rule never modelled (#138, #139)
+# ---------------------------------------------------------------------------
+#
+# The rule matched one line of one address shape. Everything below is a real US
+# address form it passed over, and the LEAVE half is why they could not simply
+# be added as more keywords: `Building`, `Room` and `Level` are ordinary words
+# that routinely precede a number in security prose.
+
+ADDRESS_SHAPES_REDACT = [
+    # #138: house numbers the leading `\d{1,6}` could not express.
+    ("spelled-out house number", "One Federal Plaza", ADDR),
+    ("spelled-out, two", "Two Penn Plaza", ADDR),
+    ("alphanumeric house number", "221B Baker Street", ADDR),
+    ("alphanumeric, lower", "12a Main Street", ADDR),
+    # #138: the directional fell outside the alternation, so the rule produced
+    # `[ADDRESS] NW` -- a partial match reading as a complete one.
+    ("trailing directional", "1600 Pennsylvania Avenue NW", ADDR),
+    ("trailing directional, two letters", "500 Market Street SW", ADDR),
+    # #138: the city/state/ZIP line matched nothing at all, so a redacted street
+    # line still sat above a line naming the location.
+    ("city state zip", "Arlington VA 22209", ADDR),
+    # The comma form works for EVERY code, including the ambiguous ones --
+    # which is what keeps a real Idaho address redactable after B12.
+    ("ambiguous code, comma form", "Boise, ID 83702", ADDR),
+    # B16 -- an abbreviating period with the space eaten, which is what OCR
+    # and PDF extraction emit. The B11 dotted-code guard blocked these, so
+    # a real suite number leaked. Same input class as `Suite400`.
+    ("ocr glued abbreviation", "1600 Wilson Blvd.Suite 400", ADDR + "." + ADDR),
+    ("ocr glued abbreviation (2)", "12 Oak Rd.Apt 3B", ADDR + "." + ADDR),
+    ("ambiguous code, comma form (2)", "Portland, OR 97205", ADDR),
+    ("ambiguous code, comma and zip4", "Boise, ID 83702-1234", ADDR),
+    ("city state zip, comma", "Arlington, VA 22209-1234", ADDR),
+    ("two-word city", "San Antonio TX 78205", ADDR),
+    # #139: facility designators that matched nothing.
+    ("building", "Building 4", ADDR),
+    ("bldg", "Bldg 7", ADDR),
+    ("room", "Room 210", ADDR),
+    ("rm", "Rm 210", ADDR),
+    ("mail stop", "Mail Stop 1234", ADDR),
+]
+
+# The reason #139 could not be a keyword list. Each of these is a designator
+# word followed by a number, in ordinary security prose.
+# USPS Publication 28 Appendix C2 -- the approved list of US secondary unit
+# designators. ALL 24, one row each, so #139 can say the keyword list is complete
+# against a STANDARD rather than complete against recall.
+#
+# This is the oracle move applied to a keyword list: a published enumeration
+# turns "which ones did I think of" into a lookup, the same way the old rule is
+# an oracle for a replacement pattern. Neither depends on imagining cases.
+#
+# LEVEL is not on this list, which is the real reason it is excluded -- a better
+# reason than "patch level 3 is inseparable from a floor", because that phrasing
+# invites the next person to attempt the separation and fail identically.
+PUB28_DESIGNATORS = [
+    # (designator, covered?, why)
+    ("STE", True, "Suite -- suite rule"),
+    ("APT", True, "Apt -- suite rule"),
+    ("UNIT", True, "Unit -- suite rule"),
+    ("FL", True, "Floor/Fl -- suite rule + pre-keyword branch"),
+    ("BLDG", True, "Building/Bldg -- facility branch"),
+    ("RM", True, "Room/Rm -- facility branch"),
+    ("STOP", True, "Mail Stop/Stop -- facility branch"),
+    ("DEPT", True, "facility branch"),
+    ("OFC", True, "facility branch"),
+    ("LBBY", True, "facility branch"),
+    ("BSMT", True, "facility branch"),
+    ("TRLR", True, "facility branch"),
+    ("PIER", True, "facility branch"),
+    ("HNGR", True, "facility branch"),
+    ("SLIP", True, "facility branch"),
+    # EXCLUDED: ordinary English or technical vocabulary that takes a digit.
+    # Each would reproduce the `Room for` / `patch level 3` collision.
+    ("KEY", False, "ordinary noun -- 'key 3 controls'"),
+    ("LOT", False, "'lot 5', and 'a lot of'"),
+    ("SIDE", False, "'side 2', 'client-side'"),
+    ("REAR", False, "'rear of'"),
+    ("FRNT", False, "'front 3'"),
+    ("SPC", False, "collides with 'spec'"),
+    ("PH", False, "pH values, phase abbreviations"),
+    ("LOWR", False, "'lower 3'"),
+    ("UPPR", False, "'upper 2'"),
+]
+
+
+@pytest.mark.unit
+def test_every_facility_keyword_in_the_pattern_has_a_decision() -> None:
+    """The REVERSE direction, and the direction the defect was in.
+
+    `test_every_pub28_designator_has_a_decision` walks the table and asks
+    whether the pattern handles each row. That certifies half a correspondence.
+    `MS` was in `_FACILITY_KEY` with no Pub 28 entry, no table row and no
+    recorded decision -- a 25th designator nobody chose -- and it redacted
+    `MS 365`, which is about the most common product string a capability list
+    contains. The forward test was green throughout.
+
+    Derived from the pattern's own source, so adding a keyword without a
+    decision turns this red rather than shipping silently.
+    """
+    from app.ai.redact import _FACILITY_KEY  # test-integrity: the pattern IS the subject here
+
+    # `_FACILITY_KEY` is read at RUNTIME, so `_HSPACE` is already expanded into
+    # a character class and `Mail` + _HSPACE + `Stop` arrives as ONE token with
+    # the class embedded. Strip classes first, then take alphabetic words --
+    # stripping metacharacters by hand missed exactly that case.
+    without_classes = re.sub(r"\[[^\]]*\]", " ", _FACILITY_KEY)
+    keywords = {w.upper() for w in re.findall(r"[A-Za-z]{2,}", without_classes)}
+    # `Mail Stop` contributes both halves; `STOP` carries the Pub 28 decision.
+    keywords -= {"MAIL"}
+
+    decided = {d.upper() for d, _, _ in PUB28_DESIGNATORS}
+    # Spelled-out forms the pattern carries beside their Pub 28 abbreviation.
+    spelled_out = {"BUILDING": "BLDG", "ROOM": "RM", "STOP": "STOP"}
+    undeclared = sorted(
+        k for k in keywords if k not in decided and spelled_out.get(k) not in decided
+    )
+
+    assert not undeclared, (
+        f"facility keywords with no Pub 28 decision: {undeclared}. Every keyword "
+        "in the pattern needs a row in PUB28_DESIGNATORS saying whether it is "
+        "covered and why -- or it is a designator nobody chose. `MS` was one, "
+        "and it ate `MS 365`."
+    )
+
+
+@pytest.mark.unit
+def test_every_pub28_designator_has_a_decision() -> None:
+    """Completeness against the STANDARD, not against memory.
+
+    Pub 28 C2 has exactly 24 entries. If that changes, or if a row is dropped
+    here, this fails rather than the list silently shrinking back to whatever
+    someone recalled.
+    """
+    assert len(PUB28_DESIGNATORS) == 24, "Pub 28 C2 has 24 secondary unit designators"
+    assert len({d for d, _, _ in PUB28_DESIGNATORS}) == 24, "duplicate designator row"
+    for designator, covered, why in PUB28_DESIGNATORS:
+        assert why.strip(), f"{designator}: a decision needs a reason"
+        assert isinstance(covered, bool)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "designator",
+    [d for d, covered, _ in PUB28_DESIGNATORS if covered],
+)
+def test_covered_pub28_designators_redact_with_a_number(designator: str) -> None:
+    """Every designator marked covered must actually redact. The table is a claim."""
+    assert (
+        _clean(f"{designator.title()} 12") == ADDR
+    ), f"{designator} is marked covered in PUB28_DESIGNATORS and does not redact"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "designator",
+    [d for d, covered, _ in PUB28_DESIGNATORS if not covered],
+)
+def test_excluded_pub28_designators_stay_excluded(designator: str) -> None:
+    """And every exclusion must still be excluded -- adding one is a deliberate act."""
+    text = f"{designator.title()} 12"
+    assert (
+        _clean(text) == text
+    ), f"{designator} is marked EXCLUDED in PUB28_DESIGNATORS but now redacts"
+
+
+ADDRESS_SHAPES_LEAVE = [
+    ("building as a verb", "Building a baseline takes time."),
+    ("building out", "Building 2 of the 5 controls is done."),
+    ("room as a noun", "Room for improvement exists."),
+    ("patch level", "Patch level 3 is current."),
+    ("log level", "Set the log level to 2."),
+    ("tier", "Tier 2 support is contracted."),
+    ("spelled-out number in prose", "One control was missing."),
+    ("two in prose", "Two findings remain open."),
+    ("a bare zip is not an address", "The count was 22209."),
+    ("state abbreviation in prose", "The VA 22209 figure is a spend total."),
+    # B3 -- `ID` is Idaho and the rule is IGNORECASE, so `<Word> ID <5 digits>`
+    # parses as city-state-ZIP. Every vulnerability scanner emits this shape.
+    ("scanner plugin id", "Nessus Plugin ID 19506 remains open."),
+    ("plugin id, lowercase", "See plugin id 19506 for detail."),
+    # B12 -- the SAME class in every other continuation. The two rows above
+    # pass only because of `remains` and `for`: the B3 guard fires solely
+    # when the next characters are separator + lowercase, so a full stop, a
+    # comma, end-of-string or a capitalised word all defeat it. Two rows of
+    # one variant, from a class with at least six.
+    ("plugin id, full stop", "Nessus Plugin ID 19506."),
+    ("plugin id, end of string", "Plugin ID 19506"),
+    ("plugin id, comma", "Plugin ID 19506, severity High"),
+    ("plugin id, capitalised follower", "Nessus Plugin ID 19506 Critical"),
+    ("plugin id, lowercase and full stop", "See plugin id 19506."),
+    ("asset id", "Asset ID 10234"),
+    ("rule id", "Rule ID 41003"),
+    ("finding id", "Finding ID 40217"),
+    # The other ambiguous codes, each an ordinary word or a standard
+    # abbreviation in this domain.
+    ("in as a preposition", "Findings IN 12345 systems"),
+    ("or as a conjunction", "Choose OR 54321 alternatives"),
+    ("ms as milliseconds", "Latency MS 15000 recorded"),
+    ("co as company", "Vendor CO 12345 registered"),
+    ("ok as a word", "Status OK 20190 checks"),
+    # B3's twin: two-letter state codes that are also ordinary words. `IN`,
+    # `OR`, `ID`, `ME`, `OK` and `HI` are all states AND English, so the
+    # grouping is only unambiguous when the trailing token is a real ZIP in
+    # address CONTEXT -- which a scanner id is not.
+    ("state code that is a word", "Findings IN 12345 systems were counted."),
+    # B4 -- `_STREET_PAT` takes <house-number> <Word> <street-word>, and both
+    # `way` and `drive` are street words AND ordinary security vocabulary.
+    # The spelled-out house number makes it worse: `one possible way` parses
+    # as a complete street address.
+    ("way as a noun", "There is one possible way to remediate."),
+    ("drive as hardware", "Replaced the 16 TB drive."),
+    ("drive as hardware, spelled out", "Replaced the four TB drive."),
+    # B8 -- `MS` was a 25th facility keyword, absent from Pub 28 and from the
+    # decision table below. `MS 365` is the single most common product string
+    # in a capability list.
+    ("microsoft 365", "We use MS 365."),
+    # B11. A designator inside a DOTTED machine identifier. `RM` is `Rm`
+    # (Room), added to the facility branch by #139, and `-` is a valid
+    # separator -- so all seven CSF Risk Management subcategories egressed
+    # as `GV.[ADDRESS]`. Found by running the shipped catalogs
+    # (`test_redact_real_identifiers.py`), not by any cell here.
+    ("csf risk management subcategory", "GV.RM-01"),
+    ("csf category", "GV.RM"),
+    ("csf subcategory in prose", "GV.RM-02 is unscored."),
+    # The same shape for the other designator branch, so the guard is not
+    # left covering one of two identical forms -- which is how #139 got
+    # here in the first place.
+    ("dotted code with a suite designator", "SEC.STE-04"),
+    ("dotted code with a unit designator", "NIST.UNIT-12"),
+    ("ms product, longer", "MS 365 E5 licences cover 400 seats."),
+    # B9 -- #139 added a terminal guard to the FACILITY branch and not to its
+    # twin on the suite branch, so `Building 2 of the 5` survives and
+    # `Business Unit 4 reported` does not. A fix applied to one of two
+    # identical shapes is the exact defect #79 exists to record.
+    ("business unit with a count", "Business Unit 4 reported an outage."),
+    ("unit followed by a verb", "Unit 3 reported no findings."),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("shape", "text", "expected"),
+    ADDRESS_SHAPES_REDACT,
+    ids=[c[0] for c in ADDRESS_SHAPES_REDACT],
+)
+def test_address_shapes_that_were_never_modelled(shape: str, text: str, expected: str) -> None:
+    assert _clean(text) == expected, f"{shape}: a real address form leaked"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("shape", "text"), ADDRESS_SHAPES_LEAVE, ids=[c[0] for c in ADDRESS_SHAPES_LEAVE]
+)
+def test_designator_words_in_prose_survive_the_new_shapes(shape: str, text: str) -> None:
+    """The LEAVE half is what decides which #139 keywords are addable at all."""
+    assert _clean(text) == text, f"{shape}: #139 keyword ate ordinary prose"
+
+
+# ---------------------------------------------------------------------------
 # Accepted residuals. Each is WRONG and deliberately tolerated, with a reason.
 # ---------------------------------------------------------------------------
 

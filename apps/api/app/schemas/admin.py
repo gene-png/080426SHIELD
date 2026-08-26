@@ -243,6 +243,8 @@ class AdminLlmCallRow(BaseModel):
     duration_ms: int | None
     status: str
     error_message: str | None
+    # NULL renders as "not recorded", never as "strict" (#144).
+    redaction_mode: str | None
     redacted_counts: dict | None
     requested_by: uuid.UUID
     requested_at: datetime

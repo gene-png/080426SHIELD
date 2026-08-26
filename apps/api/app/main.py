@@ -61,9 +61,9 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="SHIELD by Kentro - API",
         version=__version__,
-        docs_url="/docs" if not settings.is_production() else None,
+        docs_url="/docs" if settings.expose_api_docs() else None,
         redoc_url=None,
-        openapi_url="/openapi.json" if not settings.is_production() else None,
+        openapi_url="/openapi.json" if settings.expose_api_docs() else None,
         lifespan=_lifespan,
     )
 

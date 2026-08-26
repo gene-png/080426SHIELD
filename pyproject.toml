@@ -22,6 +22,41 @@ ignore = ["S101"]  # assert in tests is fine
 # makes classification layout-independent so the loop gate and CI agree.
 known-first-party = ["app"]
 
+# A SECOND, DIFFERENT SPLIT, and it is not fixed by adding a name above.
+# Recorded because someone hitting it will read the paragraph above -- which is
+# about explicit declaration -- and reach for the wrong fix.
+#
+# Ruff resolves first-party by asking whether the DOTTED MODULE PATH exists
+# under `src`, which defaults to the directory holding this file. Demonstrated
+# both ways:
+#
+#     ./scripts/check_plan_totals.py present  -> both import forms FIRST-party
+#     ./scripts/ absent entirely              -> both import forms THIRD-party
+#
+# This repo has a top-level `scripts/` (dev-up.ps1, dev-web.sh, demo-reset.sh)
+# that has nothing to do with `apps/api/scripts/`. So:
+#
+#   CI          full checkout, src = repo root.  ./scripts/ EXISTS,
+#               ./scripts/check_plan_totals.py does NOT.
+#                 `from scripts import x`            resolves -> FIRST-party
+#                 `from scripts.check_x import y`    no resolve -> third-party
+#
+#   container   apps/api mounted at /app, config at /.  Neither exists.
+#                 both forms                          -> third-party
+#
+# So the BARE form resolved against a directory unrelated to the module being
+# imported, and only in a full checkout: I001 in CI, clean in the container
+# (PR #155). The dotted form is stable because it fails to resolve in BOTH
+# places -- the environments agree by accident, not by design, and the nine
+# files using it are safe for that accidental reason. Rename or remove the
+# top-level `scripts/`, or set `src`, and all ten flip together.
+#
+# The durable fix is `src = ["apps/api"]` in [tool.ruff] above: deterministic
+# and independent of what directories happen to sit at the repo root. It is not
+# free -- `scripts.check_plan_totals` would then resolve to first-party and the
+# nine files need a blank line inserted. Filed rather than done here, because
+# the blast radius does not belong in a redaction PR.
+
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S105", "S106", "S107", "E501"]  # hardcoded creds + long signatures OK in tests
 "**/alembic/env.py" = ["E402"]  # late import is intentional (registers models against metadata)

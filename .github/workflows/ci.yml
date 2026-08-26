@@ -64,6 +64,25 @@ jobs:
       - name: plan totals sum
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
+      # An enumerated whitespace class in the single LLM egress path. Twice a
+      # separator there was written by listing the characters someone could
+      # think of, and both times it leaked -- the second 190 lines above the
+      # comment explaining the first. A third instance was caught by this script
+      # on its first run, in code written the same hour.
+      - name: separator classes in the redactor
+        run: python apps/api/scripts/check_separator_classes.py apps/api/app/ai/redact.py
+
+      # The ONE gateable property of the LEAVE-row oracle. The oracle itself is
+      # a required step, not a gate -- scoring a row pass/fail needs judgement
+      # about what the row was written for, and a tool that claimed to do that
+      # would assert more than it knows. But "a LEAVE table nobody registered
+      # guards for" is a fact, and without this check such a table reports clean:
+      # "I could not look" and "nothing to complain about" on one exit code,
+      # which is the shape this repo has produced three times in its own tooling.
+      - name: LEAVE-row oracle registry
+        working-directory: apps/api
+        run: python scripts/leave_row_oracle.py --check-registry
+
       - name: pytest -m unit
         working-directory: apps/api
         run: pytest -m unit tests/unit
