@@ -79,3 +79,31 @@ def test_the_real_registry_is_currently_complete() -> None:
     unregistered = sorted(t for t in tables if not TABLE_GUARDS.get(t))
     assert not unregistered, f"LEAVE tables with no registered guards: {unregistered}"
     assert check_registry(rows) == 0
+
+
+@pytest.mark.unit
+def test_a_missing_anchor_is_cannot_measure_and_not_a_system_exit() -> None:
+    """The oracle's two escapes used to raise `SystemExit(str)`, which exits 1.
+
+    Both are "cannot measure" conditions -- a mutation anchor that no longer
+    matches `redact.py`, and a mutation that turns out to be a no-op -- and
+    every other such branch in the file returns 2. Raising `SystemExit` put them
+    on the code this repo reserves for "violations found", and `SystemExit` is
+    also the one exception the `__main__` crash handler re-raises untouched by
+    design, so the handler could never have caught them.
+
+    `_line_containing` is exercised directly because the end-to-end route runs
+    the whole LEAVE corpus twice before it reaches `build_mutations`.
+    """
+    from scripts.leave_row_oracle import CannotMeasure, _line_containing
+
+    assert not issubclass(CannotMeasure, SystemExit), (
+        "CannotMeasure must not be a SystemExit: the crash handler re-raises"
+        " SystemExit untouched, so the exit code would be 1 again"
+    )
+
+    source = "alpha = 1\nbeta = 2\n"
+    assert _line_containing(source, "beta") == "beta = 2"
+
+    with pytest.raises(CannotMeasure, match="anchor not found"):
+        _line_containing(source, "gamma")

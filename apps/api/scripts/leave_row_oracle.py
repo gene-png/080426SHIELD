@@ -219,6 +219,19 @@ NOT_LEAVE_TABLES: dict[str, str] = {
 }
 
 
+class CannotMeasure(Exception):
+    """The oracle could not take a measurement.
+
+    Distinct from a finding. Raised where the tool discovers it cannot set up a
+    mutation at all -- a missing anchor, a no-op edit -- and routed to exit 2 by
+    `main`, alongside every other "cannot measure" branch in this file. These
+    two sites previously raised `SystemExit(str)`, which Python exits **1** on,
+    so a tool that could not look reported the same code as a tool that found a
+    violation. They are also unreachable from the `__main__` crash handler,
+    which re-raises `SystemExit` by design.
+    """
+
+
 def _original() -> str:
     return REDACT.read_text(encoding="utf-8")
 
@@ -226,7 +239,7 @@ def _original() -> str:
 def _line_containing(source: str, needle: str, occurrence: int = 0) -> str:
     hits = [ln for ln in source.split("\n") if needle in ln]
     if not hits:
-        raise SystemExit(f"anchor not found in redact.py: {needle!r}")
+        raise CannotMeasure(f"anchor not found in redact.py: {needle!r}")
     return hits[occurrence]
 
 
@@ -242,7 +255,7 @@ def build_mutations(source: str):
         old = _line_containing(source, needle, occurrence)
         new = transform(old)
         if new == old:
-            raise SystemExit(f"mutation {name} is a no-op on {old!r}")
+            raise CannotMeasure(f"mutation {name} is a no-op on {old!r}")
         out.append((name, old, new))
 
     def neutralise(name, needle, occurrence=0):
@@ -537,7 +550,16 @@ def main(argv: list[str]) -> int:
         print("mutation result meaningless.")
         return 2
 
-    muts = build_mutations(original)
+    try:
+        muts = build_mutations(original)
+    except CannotMeasure as exc:
+        print(f"leave-row-oracle: cannot measure: {exc}")
+        print("No mutation was applied and no row was scored. This is not a")
+        print("clean report and not a violation -- the guard list and redact.py")
+        print("have drifted apart. Re-anchor the mutation before reading any")
+        print("earlier run as evidence.")
+        return 2
+
     print(f"baseline clean: {len(rows)} LEAVE rows across {len(TABLE_GUARDS)} tables")
     print(f"guards modelled: {len(muts)}")
     print()
@@ -673,4 +695,27 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    # A crash must NOT share an exit code with "violations found". Python exits
+    # 1 on an unhandled exception, which is this gate's "found something" code,
+    # so an uncaught error would read as a verdict it never reached.
+    #
+    # `BaseException` with both propagating cases NAMED, rather than the
+    # equivalent `except Exception`: a handler that says out loud what it
+    # declines to swallow does not rely on the reader knowing the inheritance
+    # tree. `SystemExit` is somebody's deliberate exit code. `KeyboardInterrupt`
+    # is an operator who knows exactly what happened and is owed 130, not
+    # "could not look".
+    #
+    # Duplicated verbatim in all eight gates rather than shared -- an import is
+    # one more thing that can fail BEFORE the handler is installed, which is the
+    # defect this block exists to close. Drift is caught instead by
+    # tests/unit/test_gate_crash_exit_code.py, which runs every one of them.
+    try:
+        raise SystemExit(main(sys.argv))
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
+        nl = chr(10)
+        sys.stderr.write(f"leave-row-oracle: CRASHED: {type(exc).__name__}: {exc}{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        raise SystemExit(2) from exc

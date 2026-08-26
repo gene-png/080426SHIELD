@@ -229,26 +229,96 @@ def scan_source(path: str, source: str) -> list[Finding]:
     return sorted(visitor.findings, key=lambda f: (f.line, f.code))
 
 
+class CannotScan(Exception):
+    """This gate could not read its input, which is not the same as clean.
+
+    Its anticipated failures, decided here rather than inherited: a root that is
+    not a directory, a root holding no `test_*.py` at all, a file that cannot be
+    read or decoded, and a file that cannot be parsed. Every one of them used to
+    end at the same `return 0` as a genuinely clean tree -- `rglob` on a missing
+    path yields nothing, so `python -m scripts.check_test_integrity /nope`
+    printed "test-integrity: clean" and exited **0**.
+
+    **This was latent, not live.** `ci.yml`'s test-integrity step carries
+    `working-directory: apps/api`, so the relative `tests` it passes has always
+    resolved and the gate has always been reading real files in CI. The exposure
+    is sharper than a live defect anyway: this gate's correctness lived in a
+    `working-directory:` line in a DIFFERENT file, and nothing checks that line.
+    Drop it, or reorder the step above something that changes directory, and the
+    gate goes green and blind with no signal at all. What follows turns that
+    from silent into exit 2.
+
+    The shape is `check_audit_evidence`'s recorded defect -- an empty
+    changed-file list reading as "documentation-only, exempt" -- in a second
+    gate, and it is why D-051 asks for a checker's silent-success branches to be
+    enumerated before its first line rather than found in review.
+    """
+
+
 def scan_tree(root: Path) -> list[Finding]:
-    """Every `test_*.py` under `root`, sorted for a stable report."""
+    """Every `test_*.py` under `root`, sorted for a stable report.
+
+    Raises `CannotScan` rather than returning `[]` for input it could not read:
+    "I found nothing wrong" and "I could not look" must not share a branch.
+    """
+    if not root.is_dir():
+        raise CannotScan(f"{root} is not a directory")
+    paths = sorted(root.rglob("test_*.py"))
+    if not paths:
+        raise CannotScan(f"no test_*.py found under {root}")
     findings: list[Finding] = []
-    for path in sorted(root.rglob("test_*.py")):
+    for path in paths:
         rel = path.relative_to(root).as_posix()
-        findings.extend(scan_source(rel, path.read_text(encoding="utf-8")))
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise CannotScan(f"cannot read {rel}: {type(exc).__name__}: {exc}") from exc
+        try:
+            findings.extend(scan_source(rel, source))
+        except SyntaxError as exc:
+            raise CannotScan(f"cannot parse {rel}: {exc}") from exc
     return findings
 
 
 def main(argv: list[str]) -> int:
     root = Path(argv[1]) if len(argv) > 1 else Path(__file__).resolve().parents[1] / "tests"
-    findings = scan_tree(root)
+    try:
+        findings = scan_tree(root)
+    except CannotScan as exc:
+        print(f"test-integrity: cannot scan: {exc}", file=sys.stderr)
+        print("Refusing to report clean on input it could not read (D-051).", file=sys.stderr)
+        return 2
     for f in findings:
         print(f"{f.path}:{f.line}: {f.code} {f.message}")
     if findings:
-        print(f"\n{len(findings)} unjustified finding(s).", file=sys.stderr)
+        print(f"{chr(10)}{len(findings)} unjustified finding(s).", file=sys.stderr)
         return 1
     print(f"test-integrity: clean ({root})")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    # A crash must NOT share an exit code with "violations found". Python exits
+    # 1 on an unhandled exception, which is this gate's "found something" code,
+    # so an uncaught error would read as a verdict it never reached.
+    #
+    # `BaseException` with both propagating cases NAMED, rather than the
+    # equivalent `except Exception`: a handler that says out loud what it
+    # declines to swallow does not rely on the reader knowing the inheritance
+    # tree. `SystemExit` is somebody's deliberate exit code. `KeyboardInterrupt`
+    # is an operator who knows exactly what happened and is owed 130, not
+    # "could not look".
+    #
+    # Duplicated verbatim in all eight gates rather than shared -- an import is
+    # one more thing that can fail BEFORE the handler is installed, which is the
+    # defect this block exists to close. Drift is caught instead by
+    # tests/unit/test_gate_crash_exit_code.py, which runs every one of them.
+    try:
+        raise SystemExit(main(sys.argv))
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
+        nl = chr(10)
+        sys.stderr.write(f"test-integrity: CRASHED: {type(exc).__name__}: {exc}{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        raise SystemExit(2) from exc

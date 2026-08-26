@@ -213,10 +213,22 @@ def main(argv: list[str]) -> int:
 if __name__ == "__main__":
     # A crash must NOT share an exit code with "violations found". Python exits
     # 1 on an unhandled exception, which is this gate's "found something" code,
-    # so an uncaught error would read as a verdict. See `_echo`.
+    # so an uncaught error would read as a verdict it never reached.
+    #
+    # `BaseException` with both propagating cases NAMED, rather than the
+    # equivalent `except Exception`: a handler that says out loud what it
+    # declines to swallow does not rely on the reader knowing the inheritance
+    # tree. `SystemExit` is somebody's deliberate exit code. `KeyboardInterrupt`
+    # is an operator who knows exactly what happened and is owed 130, not
+    # "could not look".
+    #
+    # Duplicated verbatim in all eight gates rather than shared -- an import is
+    # one more thing that can fail BEFORE the handler is installed, which is the
+    # defect this block exists to close. Drift is caught instead by
+    # tests/unit/test_gate_crash_exit_code.py, which runs every one of them.
     try:
         raise SystemExit(main(sys.argv))
-    except SystemExit:
+    except (SystemExit, KeyboardInterrupt):
         raise
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
