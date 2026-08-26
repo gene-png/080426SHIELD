@@ -105,9 +105,16 @@ paragraph someone points at is not the same as correcting the file.
    longer collapses to 1, and the line-scoped `_HSPACE` exemption now demands a
    written reason.
 4. ~~Correct the docs.~~ Done — `docs/security.md`'s cut-length claim and
-   Open/Fixed table, `redact.py:82-88`, `smoke_live_ai.py`. The cell count was
-   REMOVED rather than corrected: it was 327, then 376, then 410, and a count in
-   prose is a derived value with a second place to be wrong.
+   Open/Fixed table, and `smoke_live_ai.py`. The cell count was REMOVED rather
+   than corrected: it was 327, then 376, then 410, and a count in prose is a
+   derived value with a second place to be wrong.
+
+   **NOT `redact.py:82-88`, which this line used to claim.** That note still
+   says "every separator in the module is now built from `_HSPACE`" while
+   `_RE_CONTACT_HINT` uses bare `\s`, and no gate can see it —
+   `check_separator_classes` flags hand-ENUMERATED classes, not `\s`. This file
+   said done; CLAUDE.md's narrower-rule bullet says not done; CLAUDE.md is
+   right. Filed as **#158** rather than left living only in a lessons file.
 5. ~~Re-run the adversarial reviewer.~~ Done, twice more.
 6. ~~Confirm a clean full `pytest -m unit`, then open the PR.~~ Done; PR #155
    merged with all seven CI checks green.
@@ -240,7 +247,7 @@ which is the exact failure the sentence claims to prevent.
 
 ## Open decisions: NOT to be reconstructed from memory
 
-**New this round:** whether #130 gets pulled ahead of item 7 part 2 (agent's recommendation: yes — it corrupts every AI input platform-wide and fails quietly, which is exactly what a UI-focused pre-launch pass will not catch). Whether #131's fix needs provenance carried through `pairs` (approved vs live) rather than reconstructed from the tuple. Whether the "searched for: `<shape>`" line gets enforced or stays transparency-only (see above).
+**Historical — #130 was pulled ahead, fixed in PR #141, and closed.** It was listed here as a live "new this round" decision, with an action recommendation, twenty-six lines below the line recording it closed. The heading says these are NOT to be reconstructed from memory, which reads as an instruction to treat the contents as current. Found by the third adversarial pass. Still genuinely open: whether #131's fix needs provenance carried through `pairs` (approved vs live) rather than reconstructed from the tuple. Whether the "searched for: `<shape>`" line gets enforced or stays transparency-only (see above).
 
 **Closed since the last round** (2026-08-25, recorded here at Gene's explicit
 instruction — this file is owner-write-only and an agent writing it stays the

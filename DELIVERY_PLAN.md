@@ -201,7 +201,7 @@ items, this one is about round count per item. They add rather than overlap.
 
 ### Review overhead is per-PR, not per-unit-of-work — so batch by file, not by issue
 
-**Measured, 2026-08-25, over the only two items with data.**
+**Measured — 2026-08-25 for the first two rows, 2026-08-26 when item 10 landed.**
 
 | Item | Review rounds | Findings | Estimated | Actual |
 | --- | --- | --- | --- | --- |
@@ -218,11 +218,19 @@ did not converge monotonically, which is the part a three-round budget would
 have got wrong.
 
 Two things make item 10's overrun worth the price rather than a warning:
-five of the sixteen were **pre-existing defects on `main`** that nothing else
-in the process would have found, and the two derived corpora it produced are
+**one** of the sixteen was a pre-existing defect on `main` that nothing else in
+the process would have found — the name dictionary destroying the word
+"client" for any tenant with a generic mailbox. Five were **introduced by the
+fix for a different defect**, which is a cost of the round rather than a
+recovery from it.
+
+(An earlier draft of this sentence said "five … pre-existing on `main`",
+swapping the two categories and inflating the recovery 5x — in the paragraph
+offered as the reason the overrun was worth paying. Row 72 of this file had it
+right the whole time.) The second thing that makes it worth the price, and the two derived corpora it produced are
 permanent and now budgeted into items 6 and 9.
 
-Neither was mis-scoped. In both, the reviewer found real defects at a steady
+None of the three was mis-scoped. In each, the reviewer found real defects at a steady
 rate right through the last round — the second round of #130 found a leak worse
 than the bug being fixed, and the third round of 9a found a live wrong total in
 the PR that existed to end wrong totals. The rounds were not padding.
@@ -340,7 +348,7 @@ of starting when the instinct runs the other way.
 ### Estimate vs actual, recorded as items land
 
 The **Actual** column in the table above is filled in the PR that lands each
-item, not afterwards. Three real measurements will size the remaining work
+item, not afterwards. Real measurements will size the remaining work
 better than any judgement call — the same move this document already made for
 "what a session is, in hours", which is measured from git history rather than
 guessed. When a total is next wrong, the arithmetic will be sitting beside it.
@@ -350,7 +358,16 @@ guessed. When a total is next wrong, the arithmetic will be sitting beside it.
 | #130 redaction fix (PR #141) | 0.25 | 0.5–1 | 2–4x | 2 | 16 |
 | 9a docs-truth pass, `docs/security.md` | 0.5–1 | ~1.5–2 | **2–4x** | 3 | ~30 |
 
-**9a is the larger overrun of the two, and it is recorded here in its own PR.**
+**Superseded — see the estimate-vs-actual table higher in this file, which has
+three rows.** This section was written when 9a and #130 were the only measured
+items and said 9a was "the larger overrun of the two". Item 10 has since
+landed at 2-3 estimated against ~5-6 actual and is the larger of THREE.
+
+Kept rather than deleted because the near-miss is the lesson: a row was added
+to one estimate-vs-actual table and this sibling section, 130 lines down in
+the same file, was not touched — found by the third adversarial pass over the
+PR that added the row. Maintain ONE table; a second copy is a second place to
+be wrong.
 It was sized "under a session" as a documentation edit. It took three review
 rounds and produced two new `mvp-blocking` issues (#142, #144), one unlabelled
 tooling issue (#143), a new CI gate with 19 tests, and #145 — because the audit

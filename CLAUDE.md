@@ -586,7 +586,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   - `tests/unit/test_redact_address_matrix.py` — "(The count is 327 now…)",
     present tense, in the file that PRODUCES the number.
 
-  A fourth citation was drafted and withdrawn: `redact.py:82`, a note about an
+  One further citation was drafted and withdrawn: `redact.py:82`, a note about an
   earlier note about `\s`. It is a real defect and it is a DIFFERENT one — a
   scope over-claim that was wrong on arrival rather than a number that went
   stale — and it belongs under the narrower-rule bullet below. Filing it here to
@@ -642,8 +642,8 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **A comment or message stating a rule NARROWER than the reader will assume,
   positioned exactly where they would go to check, is worse than no comment.**
   It is true, so nothing flags it; it is where you look, so it ends the search;
-  and it reads as a guarantee rather than as a scope. Three instances in two
-  days, all in the same subsystem:
+  and it reads as a guarantee rather than as a scope. Four instances, three of
+  them in the redaction subsystem within two days and the fourth added later:
 
   - `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
     beside the JWT signing secret. True. The guard covered one of three
@@ -660,7 +660,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
     `check_separator_classes.py` cannot see it: that gate flags hand-ENUMERATED
     classes, not `\s`. Wrong on arrival rather than stale, which is why it is
     filed here -- it was withdrawn from the staleness bullet above and, for one
-    draft, recorded in neither list.
+    draft, recorded in neither list. Tracked as **#158**.
 
   All four were found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
@@ -980,8 +980,9 @@ Rules of the road:
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **An agent merges on green WITHOUT checking back, when all six hold.** Standing
   as of 2026-08-26, after three consecutive PRs came to the human for a decision
-  the evidence had already made. This is a file-path check plus two facts, not a
-  judgement call:
+  the evidence had already made. Three of the six conditions are checkable and
+  three are self-attested — see the note below the list, which an earlier draft
+  contradicted from here:
 
   1. All seven CI checks green. (Five jobs in `ci.yml` — python, web,
      secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
@@ -1041,7 +1042,8 @@ Rules of the road:
 
   **Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
 
-  **Conditions 1, 4 and 5 are mechanical. Conditions 2, 3 and 6 are
+  **Conditions 1 and 4 are mechanical; 5 is mostly a path match but its
+  live-prompt clause needs a diff read. Conditions 2, 3 and 6 are
   self-attested by the agent that wants to merge**, and 6 is a judgement call an
   agent can talk itself out of. An earlier draft of this rule called the whole
   thing "a file-path check plus two facts, not a judgement call", which is this
