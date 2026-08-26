@@ -1009,7 +1009,28 @@ Rules of the road:
        * any live LLM **prompt**, which is not confined to `app/ai/` —
          `app/tech_debt/extract.py:44` holds one, and fixture mode echoes payload
          keys back verbatim, so a prompt drift cannot turn CI red.
-       * `apps/api/scripts/check_*.py`, `.github/workflows/**`, and
+       * `apps/api/app/config.py` — the switch deciding whether the redactor
+         may be disabled, and its default. **#142 lived here, not in
+         `app/ai/`.** A PR widening `is_development()` reintroduces it while
+         tripping nothing else on this list.
+       * `apps/api/app/models/**` and `apps/api/alembic/env.py` — "no
+         migration" (condition 4) is not "nothing under `alembic/`". A
+         cascade rule or a column default changes stored behaviour without
+         one.
+       * `apps/api/tests/**` and `e2e/**` — weakening a test satisfies
+         condition 1 more directly than editing a workflow does, and this
+         repo has thirteen recorded instances of tests that could not fail.
+       * `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both
+         drive CI jobs, and seed data being clean is why #130 survived months
+         of green.
+       * the deterministic surfaces the first draft of this list missed:
+         `app/attack/coverage.py`, `app/csf/scoring.py`, `app/zt/maturity.py`,
+         `app/tech_debt/security_scope.py`, `app/risk/exporters.py`. Naming
+         one file for three of five services and none for ATT&CK or Tech Debt
+         was a half-sweep — the defect this file has a bullet about.
+       * `apps/api/scripts/check_*.py`, `apps/api/scripts/leave_row_oracle.py`
+         (a CI gate whose name does not match `check_*`),
+         `.github/workflows/**`, and
          `.github/pull_request_template.md` — the gates and the harness that
          enforce this rule. A change here satisfies condition 1 by construction.
          This file already records that `fetch-depth: 0` and one colon in the PR

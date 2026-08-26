@@ -212,11 +212,18 @@ Closed since: `#130` by PR #141; `#135`-`#140`, `#142`, `#144` by PR #155.
 **This heading read 20 with a paragraph underneath certifying it as freshly
 read.** Both were true on 2026-08-25 and false the moment PR #155 merged --
 it closed EIGHT (#135-#140, #142, #144; the ninth, #130, was PR #141's and is
-listed separately above) — and the certifying paragraph went stale WITH the number it certified,
+listed separately above).
+
+The arithmetic, written out because 20 - 8 = 12 and the answer is 14: item 10
+also **filed** two, #152 and #153, before it merged. 20 - 8 + 2 = 14. A
+correction paragraph that shows only the subtraction invites the check and
+then fails it.
+
+The certifying paragraph went stale WITH the number it certified,
 while still reading as a guarantee. That is worse than a bare stale count: a
 reader checking whether the figure could be trusted found a sentence saying yes.
 
-Fourth instance this week, and three of the four were in the files that document
+Fifth instance this week, and three of the five were in the files that document
 the rule against it. See CLAUDE.md, "a correction paragraph outlives the number
 it corrected".
 
