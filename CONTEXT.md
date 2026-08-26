@@ -13,6 +13,26 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+### Open `mvp-blocking` issues: 14
+
+**Read live from GitHub on 2026-08-26, immediately after PR #155 merged — not
+carried forward.** 22 were open before it; the eight it closes (#135–#140, #142,
+#144) leave fourteen:
+
+`#153 #152` (two redaction leaks item 10 filed rather than fixed: a signature
+block whose signatory line ends in punctuation, and three real phone formats the
+NANP-shaped bare-run rule misses) · `#132 #131` · `#126 #125 #124 #123`
+(dashboards) · `#122 #121` (Risk, **item 6**) · `#115 #114 #109` (**item 9**) ·
+`#46`
+
+Not labelled `mvp-blocking`, and deliberately so — recorded because unlabelled
+and out-of-scope look identical otherwise: **#151** (Tailwind classes naming
+undefined design tokens render as nothing, 18 occurrences), **#154** (the
+computed glue-alphabet sweep, filed with its reasoning and measured as searching
+an empty space), **#156** (ruff isort classifying `apps/api/scripts` by whether
+an unrelated top-level `scripts/` exists), **#143** (the pre-push hook's
+fail-open).
+
 ### 2026-08-24 — the redaction boundary over-matched every "fl" word (#130, D-058)
 
 `redact_for_ai` is the single LLM egress path, so `_redact_addresses` is the one
