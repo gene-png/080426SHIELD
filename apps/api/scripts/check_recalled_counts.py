@@ -57,20 +57,36 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_TARGETS = [
+# Shared documents. A wrong count in one of these is a claim every reader of
+# the repo is entitled to rely on, and anyone may fix it. Enforced.
+ENFORCED_TARGETS = [
     "CLAUDE.md",
     "CONTEXT.md",
     "DELIVERY_PLAN.md",
     "docs/security.md",
     "docs/operations.md",
     "docs/architecture.md",
-    # The personal status files are IN the doc set: gene.md is where the "(20)"
-    # heading and its freshness certificate lived. They are owner-write-only by
-    # convention, which makes them likelier to drift, not less -- so the gate
-    # covers them and the owner does the fixing.
+]
+
+# The personal status files are IN the doc set -- `gene.md` is where the "(20)"
+# heading and its freshness certificate lived, and owner-write-only by
+# convention makes them likelier to drift, not less. They are REPORTED rather
+# than enforced for a reason that is about the convention, not about wanting an
+# exemption: `CLAUDE.md` says each file is written by its owner ONLY. A blocking
+# gate on `dave.md` would therefore hold Gene's PR red on a line Gene may not
+# edit, and vice versa -- the gate would be stopping the wrong person, and the
+# only ways out are to break the ownership rule or to merge past a red check.
+#
+# Reporting has its own failure mode and it is named where the CI step declares
+# it, not here: a finding nobody reads is a check that does not exist.
+ADVISORY_TARGETS = [
     "context/gene.md",
     "context/dave.md",
 ]
+
+# A human sweep wants everything; `--all` is that. Bare invocation is what CI
+# blocks on, so it is the enforced set alone.
+DEFAULT_TARGETS = ENFORCED_TARGETS
 
 # Spelled cardinals. Digits are deliberately NOT matched: "14 open" beside a
 # command is the FIXED form this gate steers towards, and flagging it would
@@ -154,7 +170,21 @@ def main(argv: list[str]) -> int:
     # the characters that happen to appear in the docs it quotes.
     with contextlib.suppress(AttributeError, OSError):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    targets = argv[1:] or DEFAULT_TARGETS
+    flags = {a for a in argv[1:] if a.startswith("--")}
+    explicit = [a for a in argv[1:] if not a.startswith("--")]
+    unknown = sorted(flags - {"--advisory", "--all"})
+    if unknown:
+        _echo(f"check-recalled-counts: unknown option(s): {' '.join(unknown)}")
+        _echo("Valid: --advisory (personal status files), --all (both sets).")
+        return 2
+    if explicit:
+        targets = explicit
+    elif "--all" in flags:
+        targets = ENFORCED_TARGETS + ADVISORY_TARGETS
+    elif "--advisory" in flags:
+        targets = ADVISORY_TARGETS
+    else:
+        targets = DEFAULT_TARGETS
     root = Path(__file__).resolve().parents[3]
 
     all_findings: list[tuple[str, int, str, str]] = []

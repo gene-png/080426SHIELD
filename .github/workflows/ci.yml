@@ -83,6 +83,62 @@ jobs:
         working-directory: apps/api
         run: python scripts/leave_row_oracle.py --check-registry
 
+      # Spelled counts of things that change, in the SHARED documents. Blocking:
+      # a wrong count in CLAUDE.md or DELIVERY_PLAN.md is a claim every reader of
+      # the repo is entitled to rely on, and anyone may fix it. The enforced set
+      # is defined in the script and NOT restated here -- a list of documents in
+      # this file would be a second copy of the one in the gate, free to drift
+      # from it, which is the shape several of this repo's gates were built for.
+      - name: recalled counts (shared docs)
+        run: python apps/api/scripts/check_recalled_counts.py
+
+      # The personal status files, REPORT ONLY.
+      #
+      # The precedent is pip-audit below (`continue-on-error: true`), NOT the
+      # LEAVE-row oracle registry above -- that one blocks, and its comment
+      # explains why the ORACLE is not automated, which is a different question.
+      #
+      # pip-audit can report without blocking because Dependabot turns its
+      # findings into PRs: that step names the channel by which its output
+      # reaches a person. This step has no Dependabot. `continue-on-error` alone
+      # would leave findings in the log of a job that renders green, and nobody
+      # opens a green job's log -- a check with no reader is not a check, which
+      # is the failure this gate set exists to stop, arriving by a slower route.
+      # So it writes to the run summary, which is on the run page without anyone
+      # deciding to expand a step. The write happens BEFORE the exit code is
+      # propagated, so what lands does not depend on how the step concludes.
+      #
+      # Residual, stated rather than left to be found: a human still has to open
+      # the run page. What this buys is that they do not ALSO have to decide to
+      # expand a step that looks fine.
+      #
+      # Why report-only rather than blocking: CLAUDE.md makes each
+      # context/<name>.md owner-write-only. A blocking gate on dave.md would hold
+      # Gene's PR red on a line Gene may not edit -- it would stop the wrong
+      # person, and the only ways out are breaking the ownership rule or merging
+      # past a red check. Posture, not a carve-out: there is no version of
+      # enforcing it that does not create a worse problem.
+      - name: recalled counts in personal status files (report only)
+        continue-on-error: true
+        run: |
+          set +e
+          out=$(python apps/api/scripts/check_recalled_counts.py --advisory 2>&1)
+          code=$?
+          printf '%s\n' "$out"
+          {
+            echo "### Recalled counts in personal status files"
+            echo
+            echo "Report only: context/*.md is owner-write-only, so this step does"
+            echo "not block. The reasoning is on this step in ci.yml."
+            echo
+            echo "Gate exit code: $code (0 clean, 1 findings, 2 could not read)."
+            echo
+            echo '~~~'
+            printf '%s\n' "$out"
+            echo '~~~'
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit $code
+
       - name: pytest -m unit
         working-directory: apps/api
         run: pytest -m unit tests/unit
