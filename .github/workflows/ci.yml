@@ -142,6 +142,17 @@ jobs:
           if [ "$code" -ne 0 ]; then
             echo "gate exited $code before producing a list" >&2
             cat /tmp/live.txt
+            # The summary, not just the log. This branch used to write only to
+            # stdout/stderr, so a missing context/*.md exited 2, continue-on-error
+            # kept the job green, and the run summary was EMPTY -- indistinguishable
+            # on that page from "no new findings". Silence, from the one mechanism
+            # this step exists to deliver through.
+            {
+              echo "### Recalled counts (advisory): GATE DID NOT PRODUCE A LIST"
+              echo
+              echo "Exit code $code. This is not a clean report and not a finding."
+              echo "Most likely a target named in ADVISORY_TARGETS no longer exists."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             exit "$code"
           fi
           grep -v '^#' "$base" | tr -d '\r' | sort > /tmp/base.txt
