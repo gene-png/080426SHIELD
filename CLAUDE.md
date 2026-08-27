@@ -1034,6 +1034,26 @@ Rules of the road:
   converts a finding into a lie with a marker on it, and nothing downstream can
   tell the difference.
 
+  **Two limits of the mechanism, both load-bearing, both found by using it.**
+  The provenance window is the finding's line and two either side, so a marker
+  spanning three lines has its closing delimiter outside the window and does not
+  register — write markers on one line. More importantly, the pattern requires
+  the cardinal to sit NEXT TO the noun, so `thirteen recorded instances` is
+  invisible where `nine instances` is caught.
+  <!-- counted: quoted phrases illustrating the pattern, not counts of anything -->
+  That is how two documents came to
+  hold different numbers for the same population with only one of them flagged,
+  and it is not a bug to fix: the noun list is a floor rather than a census, and
+  widening it indefinitely turns the gate into a prose critic. It is the reason
+  **rule 3 still matters after the gate exists** — grep the claim's SUBJECT
+  across the doc set, because the mechanism can only see the spellings it knows.
+
+  **The gate cannot see itself.** Its help text is a Python string and the
+  enforced set is Markdown, so the paragraph teaching this rule carried a
+  spelled, uncited count of its own until a human read it. Same shape as a gate
+  whose correctness lives in a `working-directory:` line: the part that matters
+  sits where the check does not reach.
+
   **The gate finds; it does not fix.** A long finding list invites clearing it
   mechanically, which deletes correct sentences and rewords true ones. Every site
   gets its own disposition. Where a finding is a false positive, say why at the
