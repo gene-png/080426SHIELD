@@ -3477,3 +3477,38 @@ failure recorded traces to violating it), "AI suggests, code computes", FAIL
 LOUDLY, the gate suite and the reasons each gate exists, and the merge rule as
 it stands. **Do not grow the merge rule.** It has been repaired four times; each
 repair was correct and the aggregate is a rule nobody can hold in their head.
+
+## D-063 — The agent maintains `context/gene.md`; Gene owns it by review
+
+**Date:** 2026-08-27 · **Context:** governance pass · **Amends:** the file-ownership table
+
+`context/gene.md` was owner-write-only AND required updating every round.
+Either constraint alone is workable; together they guarantee staleness, and the
+file went stale-and-misleading **three times in nine days** — most recently
+carrying a "PICK UP HERE — start at step 1" list whose four steps had all
+landed, and two separate statements that a gate was "deliberately NOT wired"
+after it was wired.
+
+**So: the agent maintains it, and Gene owns it by REVIEW, in the PR, like any
+other file.** He keeps every decision that goes in it. He gives up typing it.
+Each of the three staleness incidents cost more than typing would have.
+
+**Timing was forced by D-061.** Putting `context/*.md` on the direct-to-main
+path while `gene.md` stayed owner-write-only would have made that exception dead
+letter for the one file it matters most for — only Gene could ever have used it,
+and the rule would have shipped describing a path the person at the keyboard
+cannot take.
+
+**The twin sweep this required, recorded because the reason was load-bearing in
+four places.** "`context/*.md` is owner-write-only" was the stated justification
+for the recalled-counts gate treating those files as advisory rather than
+blocking — in `CLAUDE.md`, in the gate's own comment, in the `ci.yml` step
+comment, and in the text that step writes to the run summary. That argument
+survives for `dave.md` and **does not survive for `gene.md`**.
+
+The advisory treatment is unchanged; the reason for it is now stated per file:
+`dave.md` because a blocking gate would hold Gene's PR red on a line Gene may
+not edit, and `gene.md` because it is a status file rewritten most sessions, so
+a count gate would fire constantly on churn that is correct when written. Two
+files, two reasons, explicitly not interchangeable — one reason given for both
+would have gone quietly false the moment this decision landed.

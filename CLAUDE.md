@@ -825,7 +825,8 @@ mechanism; docs carry only what git can't show.
 |---|---|---|
 | `CLAUDE.md` | Durable facts, principles, gotchas | Both — append/refine in PRs |
 | `CONTEXT.md` | Project status as of `main` | Updated as part of a PR, never outside one |
-| `context/dave.md`, `context/gene.md` | Personal in-flight status: branch, what's mid-stream, next steps | Owner ONLY. Read the other's for awareness; never write it |
+| `context/dave.md` | Dave's in-flight status | **Dave ONLY.** Read for awareness; never write it |
+| `context/gene.md` | Gene's in-flight status | **The agent maintains it; Gene owns it by REVIEW, in the PR.** He keeps every decision in the file and gives up typing it |
 | `DECISIONS.md` | Append-only decision log (D-numbers) | Both — append in the PR that makes the decision |
 | `docs/architecture.md` | Structure | Updated in the PR that changes architecture |
 | `SPRINT_<n>.md` | Per-sprint plan (immutable once the sprint closes) | Sprint author |
@@ -1107,8 +1108,9 @@ Rules of the road:
 
   **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
   `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
-  (owner-write-only, so a blocking gate there would hold one developer's PR red
-  on a line only the other may edit). It matches SPELLED cardinals and
+  (`dave.md` is owner-write-only, so a blocking gate there would hold Gene's PR
+  red on a line Gene may not edit; `gene.md` is agent-maintained since D-063 and
+  is advisory for the different reason that its churn is hourly). It matches SPELLED cardinals and
   deliberately not digits, because "14 open" beside its command is the fixed form
   and flagging it would punish the correction.
 
@@ -1153,6 +1155,13 @@ Rules of the road:
   bad form is itself an instance of the bad form, and the gate cannot tell the
   difference, which is why the marker carries a reason a human wrote.
 
+- **Check `git stash list` DURING work, not only when stopping.** A stash is
+  invisible to `git status`, survives a branch switch, and is one command from
+  loss. An end-of-session check catches it far too late: this repo has one
+  recorded instance of an entire governance change sitting stashed through a
+  whole adversarial review, produced within an hour of running the checklist
+  that names `git stash list`. The checklist was not wrong; it fires at the
+  wrong time.
 - **Branch + PR for anything that changes behaviour or states a rule. Two
   exceptions go direct to `main`, and they are exceptions because practice
   already worked this way.**

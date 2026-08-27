@@ -72,10 +72,16 @@ ENFORCED_TARGETS = [
 # heading and its freshness certificate lived, and owner-write-only by
 # convention makes them likelier to drift, not less. They are REPORTED rather
 # than enforced for a reason that is about the convention, not about wanting an
-# exemption: `CLAUDE.md` says each file is written by its owner ONLY. A blocking
-# gate on `dave.md` would therefore hold Gene's PR red on a line Gene may not
-# edit, and vice versa -- the gate would be stopping the wrong person, and the
-# only ways out are to break the ownership rule or to merge past a red check.
+# exemption. `dave.md` is written by Dave ONLY, so a blocking gate on it would
+# hold Gene's PR red on a line Gene may not edit -- stopping the wrong person,
+# with no way out but breaking the ownership rule or merging past a red check.
+#
+# `gene.md` is agent-maintained as of D-063, so that argument does NOT apply to
+# it. It stays advisory for a different reason: it is a status file rewritten
+# most sessions, so a blocking count gate on it would fire constantly on churn
+# that is correct at the moment it is written. Two files, two reasons, and the
+# reasons are not interchangeable -- stated because an earlier version of this
+# comment gave one reason for both and would have gone quietly false.
 #
 # Reporting has its own failure mode and it is named where the CI step declares
 # it, not here: a finding nobody reads is a check that does not exist.
