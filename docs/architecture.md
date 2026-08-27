@@ -99,7 +99,7 @@ loud warning if Redis is down.
 
 ## Audit log
 
-Every state-changing route writes one row to **`audit_entries`** via the only
+Every state-changing route writes one row to **`audit_entries`** via the only <!-- counted: a cardinality claim about a design invariant (exactly one row per state-changing route), not a tally of a set that grows. Deleting the number would remove the guarantee the sentence exists to make. -->
 blessed write surface, `app/audit/spine.py::audit()`. Append-only at two
 layers: a Postgres `BEFORE UPDATE/DELETE` trigger in production, plus a
 SQLAlchemy `before_flush` guard that raises `AuditEntryImmutableError` on any

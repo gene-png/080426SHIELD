@@ -128,9 +128,7 @@ runs the first eight — address and org name are strict-only.
   no model, no migration, no writer. It is a Master Spec §11 aspiration that
   reached this document through a stale docstring in `app/ai/redact.py:15`.
 
-**Known defects in this control, all filed and all `mvp-blocking`.** Three are
-leaks and three corrupt or misreport. They are listed here rather than left to
-the issue tracker because this is the document that describes the control:
+**Known defects in this control.** This paragraph and its table were written when all seven were open and `mvp-blocking`. All seven are now **Fixed** (PR #155, 2026-08-26) and none carries the label. The leaks found while fixing them are open and tracked separately as #152 and #153; they are not in this table. The prose said "three are leaks and three corrupt or misreport" and described a state that no longer exists -- a correction paragraph outliving the thing it described, which CLAUDE.md now has a bullet about.
 
 | Issue | Defect                                                                                                             | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ----- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -144,8 +142,8 @@ the issue tracker because this is the document that describes the control:
 
 **Both fixes were wrong before they were right, and the record is worth keeping.**
 The first phone rewrite closed the over-match and opened four under-matches --
-trunk-prefixed (`1-800-555-0199`), UK national, and any number separated by a
-non-ASCII space -- every one of which the old rule caught. The first signature
+trunk-prefixed (`1-800-555-0199`), dot-separated (`1.555.867.5309`), UK national
+(`020 7946 0958`), and any number separated by a non-ASCII space -- every one of which the old rule caught. The first signature
 fix required a trailing comma, which leaked a name, a title, an org and a ZIP
 line on any comma-less sign-off. Both were caught by adversarial review rather
 than by the test tables, because the REDACT half of each table was one shape
@@ -192,8 +190,8 @@ ruff-format, black, **mypy**, bandit, plus whitespace/JSON/YAML hygiene.
 CI runs in **two** workflow files, not one:
 
 - `.github/workflows/ci.yml` — Python (`ruff`, `black --check`, `bandit`,
-  `pytest -m unit`, plus three static sweeps: `check_test_integrity`,
-  `check_no_control_chars`, and `check_plan_totals`); Web (`eslint`, `prettier`, `tsc --noEmit`, `vitest`,
+  `pytest -m unit`, plus five static sweeps: `check_test_integrity`,
+  `check_no_control_chars`, `check_plan_totals`, `check_separator_classes` -- which guards THIS control's separator classes and was missing from this list -- and the LEAVE-row oracle registry); Web (`eslint`, `prettier`, `tsc --noEmit`, `vitest`,
   `next build`); E2E (Playwright smoke, including `axe-core` at
   `e2e/smoke/s16-axe.spec.ts`); Demo (hosted-demo reset + journey spec); and the
   gitleaks secret scan.

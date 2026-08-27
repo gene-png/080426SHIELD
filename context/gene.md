@@ -1,94 +1,207 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE - item 10 is NOT ready (2026-08-25)
+## PICK UP HERE - item 10 is DONE; Track 3 is next (2026-08-26)
 
-**Written by the agent at Gene's explicit request before a machine restart.**
-This file is owner-write-only; an agent writing it stays the exception.
+**Written by the agent at Gene's explicit request.** This file is owner-write-only;
+an agent writing it stays the exception.
 
-### The one-line state, corrected
+### The one-line state
 
-`main` is at `02f43d6`. Branch **`fix/redaction-boundary-item-10`** is committed
-and pushed at `af069e1`. An earlier version of this file said "item 10 complete
-in code". **That was wrong.** The adversarial review finished after it was
-written and found **14 findings, 9 of them confirmed by running the code**,
-including two cases where a fix REINTRODUCED the defect it was fixing.
+`main` is at `fbca899`. **PR #155 merged on 2026-08-26** with all seven CI checks
+green, including E2E and Demo, which had never run on the branch. Item 10 is
+**DONE**. Working tree clean.
 
-**Do not open a PR until the blockers below are closed.**
+### What the previous version of this section said, and why it is worth recording
 
-### THE BLOCKERS - all nine verified in-container, not taken on reading
+It said "item 10 is NOT ready", "**Do not open a PR until the blockers below are
+closed**", listed nine blockers as live, and gave a 12-18 session total. Every
+one of those was true on 2026-08-25 and false after PR #155 merged -- and the
+section survived that merge unchanged, because the merge commit corrected the
+issue COUNT further down the file and nobody re-read the top.
 
-Repro for every one: `docker compose exec -T api python -c "from app.ai.redact import redact_for_ai as R; print(R(<string>, mode='strict'))"`
+That is the same shape as the count itself, one section up: the prose an agent
+reads FIRST outlived the state it described. An agent picking this file up would
+have refused to open a PR on already-merged work, or re-done nine fixed
+blockers. Found by the adversarial reviewer on the PR that was correcting the
+count below it.
 
-| # | Defect | Verified output |
-| --- | --- | --- |
-| B1 | **#135 reintroduced.** The 5-line contact lookahead fires on any IP, date or 7+ digit run, so an ordinary ZT note is truncated and the ledger records a successful redaction. | `Flat segmentation.
-Best
-practice per CISA ZTMM.
-Host 10.20.30.40 bridges both.` -> everything after line 1 deleted, `{'signature_block': 1}` |
-| B2 | **#140 reintroduced.** 3-5 short numbers on one line, 7-15 digits total, become a phone. | `Ports 22 80 443 3389 8080 are open.` -> `Ports [PHONE] are open.`; also `08-25-2026` and `2024 2025 2026` |
-| B3 | `_CITY_STATE_ZIP` eats `<Word> ID <5 digits>` - `ID` is Idaho and the rule is IGNORECASE. | `Nessus Plugin ID 19506 remains open.` -> `[ADDRESS] remains open.` |
-| B4 | `_STREET_PAT` eats `<number-or-numword> <word> drive/way`. | `There is one possible way to remediate.` -> `There is [ADDRESS] to remediate.`; `Replaced the 16 TB drive.` -> `Replaced the [ADDRESS].` |
-| B5 | **Real phone formats leak.** The required separator excludes both machine formats; the OLD rule caught both. | `+15551234567` and `5551234567` -> unchanged, `{}` |
-| B6 | A sign-off with opener and name on ONE line is never cut. | `Thanks, Dana Whitfield` -> name and title leak |
-| B7 | `_RE_CAGE` eats ATT&CK IDs - `and` is a connector and the value test is "5 alnum with a digit". | `CAGE and T1078` -> `[CAGE]`; also across a newline |
-| B8 | `MS` is a 25th facility keyword, NOT on Pub 28, with no table row. The completeness test only walks table -> pattern, never pattern -> table. | `We use MS 365.` -> `We use [ADDRESS].` |
-| B9 | `Business Unit 4 reported an outage.` -> `Business [ADDRESS] reported...`. #139 invented a terminal guard and applied it to the facility branch only, not to its twin. | confirmed |
+### Item 10, as it actually landed
 
-**The common cause is one thing: every LEAVE table was enumerated against the
-FIRST version of its rule and never re-derived after the rule changed.** The
-phone LEAVE rows pass for reasons unrelated to the class they name (`Ports 30000
-40000` only passes because 5-digit groups exceed `\d{1,4}`; the bullet list only
-because the separators are newlines). That is CLAUDE.md's "caught by the round
-AFTER the round that added them", and it is the thing to fix structurally rather
-than case by case.
+Sized 2-3 sessions; actual ~5-6. Sixteen blockers over four review rounds
+producing **9, 1, 5, 1** -- a count that did not converge monotonically, which
+is what a three-round budget would have got wrong. Thirteen closed in PR #155,
+three filed: #151, #152, #153.
 
-### Also outstanding, lower severity
+Five of the sixteen were introduced by the fix for a DIFFERENT defect, two of
+those inside the branch itself (B3 -> B12, B11 -> B16). One -- the name
+dictionary destroying the word "client" for any tenant with a generic mailbox --
+was **pre-existing on `main`** and found only because the reviewer was pointed at
+the hint construction rather than at the rules.
 
-- **`check_separator_classes.py` collapses exit 2 into exit 1.** `check()` returns
-  2 on a tokenize failure and `main()` never reads it - the gate that cites D-051
-  does not meet it. One-line fix. Its `_HSPACE` exemption is also line-scoped, so
-  `_PHONE_SEP = r"(?:" + _HSPACE + r"|[ .-])"` would pass silently.
-- **`docs/security.md` claims the signature cut length is recorded.** It is not -
-  `removed_chars` is computed and `del`eted. Either restore it somewhere or
-  correct the doc. It also still lists #138/#139/#144 as Open.
-- **`redact.py:82-88` says `_RE_PHONE`/`_RE_CAGE` no longer contain `\s`.**
-  `_CAGE_SEP`, `Mail\s+Stop` and `_RE_CONTACT_HINT` all still do, and D-058 still
-  says so correctly - the new note contradicts the decision record.
-- **Cell count:** the file says 327; the collector says **376**. Same
-  parametrisation-invalidates-the-count trigger already in CLAUDE.md.
-- **`smoke_live_ai.py:44`** references the removed `signature_block_chars` key.
-- **Nothing renders `redaction_mode`** - `AuditViewer.tsx` has no such column, so
-  #144 ships API-only. Say so in 0046 or add the column.
+Two derived corpora shipped with it and are permanent:
 
-### What DID survive the audit
+- `tests/unit/test_redact_real_identifiers.py` -- every shipped ATT&CK, CSF and
+  ZT identifier through three contexts. Found B10 and B11.
+- `scripts/leave_row_oracle.py` -- disables one narrowing guard at a time and
+  reports which exemption rows still pass. Its `--check-registry` half is a CI
+  gate; the rest is a required step, not a gate.
 
-- **Migration 0046 holds.** The reviewer attacked the read paths (no aggregate,
-  no filter, no coercion), hunted a second `LLMCall` insert site (only three
-  exist, two are tests), and checked `String(16)` against the Literal. Upgrade and
-  downgrade verified on Postgres and a full SQLite round trip, 22 columns either
-  side.
-- **#142 holds.** All four `is_production()` call sites converted, one test cell
-  per environment per guard.
-- **The `removed_counts` unit invariant test is genuinely discriminating** - it
-  derives the expected total from placeholder occurrences in the output.
+Both are budgeted into items 6 and 9, which must now be sized with the review
+rounds INSIDE the number: both fix existing code, so their tables land in the
+after-the-rule regime (42% of in-risk exemption rows pinning nothing, against
+3.8% for tables written before their pattern).
 
-### Where the plan lives
+### Next: Track 3
 
-`DELIVERY_PLAN.md`, section "MVP completion path". Order and remaining sizes:
+Item 7 part 2 (`/ai-inputs` endpoint + panel), then **#131 back to Gene before it
+lands** -- fixing it changes deliverable content by definition, which the
+standing merge rule in CLAUDE.md reserves for a human.
 
-| # | Item | Est | State |
-| --- | --- | --- | --- |
-| 9a | docs-truth pass, `docs/security.md` | 0.5-1 | **DONE**, PR #146 merged |
-| 10 | the redaction boundary (#135-#140, #142, #144) | 2-3 | **code complete, unmerged** |
-| 7 | W1 ATT&CK step + #131 | 1-1.5 | not started |
-| 9 | correctness defects only a code review catches | 4-6 | not started |
-| 6 | W1 Risk step | 4-6 | not started |
-| 8 | W6 Risk export/publish split | 1-1.5 | not started |
+**[CORRECTED 2026-08-27]** Item 7 part 2 **also** comes back to a human. An
+earlier reading had it landing unattended on the strength of a `CLAUDE.md`
+worked example that had gone stale: an endpoint plus a panel ships with tests,
+and condition 5 covers `apps/api/tests/**`, `e2e/**` and now the web test globs.
+The worked example was corrected in the same PR.
 
-**Total remaining 12-18 sessions, roughly 3-5 working weeks.** `check_plan_totals.py`
-gates that the parts sum. Item 9 splits by SURFACE into four groups (see the plan);
-item 10 is deliberately ONE PR across three surfaces because review overhead is
-per-PR, not per-unit-of-work.
+**One correction to the plan's item 7 note.** It says "port the `/ai-inputs`
+panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility`
+is now **103 commits behind main** and its `routes/attack.py` differs by
+385 insertions / 626 deletions -- it predates the resolver rewrite, the D-053
+snapshot, #102's withholding and #133's enrichment. The four files it adds are a
+useful shape reference; the backend endpoint they call does not exist on `main`.
+This is "write against the current resolver using #29 as reference", not "port",
+and the 1-1.5 estimate rests on the porting assumption.
+
+## PICK UP HERE (2026-08-26, end of day) — **DONE, see the correction below**
+
+> **Corrected 2026-08-27 by an agent on `docs/stale-count-and-merge-rule`, at
+> Gene's explicit instruction and recorded as the exception this file's own
+> ownership rule describes.** The corrections are marked **[CORRECTED]** in
+> place and state what they replace rather than overwriting it silently. The
+> reason for the exception: this file had reached its THIRD occurrence of the
+> stale-instruction shape it documents twice, and the only person permitted to
+> fix it is the one not in the editor. Nothing else in the file was touched.
+
+**[CORRECTED]** Steps 1-4 below all LANDED on 2026-08-27 in
+`docs/stale-count-and-merge-rule` (PR #157). Do not start at step 1. They are
+kept because the reasoning in them is still the record of why each was done.
+What is actually next: the fifth adversarial pass against the frozen branch,
+then Gene's merge decision — the branch trips condition 5 on several bullets,
+so it comes back to a human by the standing rule.
+
+`main` is at `fbca899` and untouched since item 10 landed. **PR #157 is an open
+DRAFT and merges nothing.** Do not merge it before doing the steps below and
+reading the two caveats at the end.
+
+### What happened after item 10 merged
+
+PR #157 began as a two-line fix to the issue count in this file. Three
+adversarial passes over it found, in order: that a correction paragraph carried
+its own wrong closure count; that the count was fixed while the section above it
+still said "do not open a PR" and listed fixed blockers as live; and that
+`DELIVERY_PLAN.md` has two sibling estimate-vs-actual sections, of which only
+one had been updated. All acted on.
+
+**The pattern behind all three is one pattern: things written from memory
+instead of derived.** Gene named four rules for it:
+
+1. **Don't write the count.** If a number describes a list in the same document,
+   delete the number and let the list be the count.
+2. **Cite, don't recall.** A number from outside the document carries the command
+   that produced it and the date. If you cannot paste the command, you do not
+   write the number.
+3. **Gate it.** `apps/api/scripts/check_recalled_counts.py`. **[CORRECTED
+   2026-08-27]** It said "committed, working, and **deliberately NOT wired into
+   `ci.yml`**". It is wired now: blocking on the shared documents, report-only
+   on `context/*.md`.
+4. **Correct at the instruction, not at the discussion.** Every miss above landed
+   where the topic was DISCUSSED while the line telling someone what to DO was
+   left standing. A correction is unverified until you have grepped the doc set
+   for the claim's SUBJECT, not the line number you were handed. The correcting
+   commit records the grep it ran.
+
+Rule 4 is the highest-value of the four, and every reviewer pass needed it
+independently.
+
+### The finding that matters most, and it is not about counts
+
+`check_recalled_counts.py` crashed mid-report on a character the Windows console
+could not encode, having already printed a partial list — and **Python exits 1 on
+an unhandled exception, which is the same code the gate uses for "violations
+found".** A crash and a verdict were indistinguishable.
+
+Gene then swept the existing gates and RAN the test rather than reading it,
+patching a simulated fault into a copy of `check_plan_totals.py`: `exit=1`,
+traceback on stderr. **Every gate in this repo has that shape.** They all use
+`raise SystemExit(main(...))` with `main` returning 0 or 1 and no broad handler.
+
+The fix is nearly free because the convention already exists in those files —
+they return 2 for every ANTICIPATED failure. What is missing is routing an
+UNANTICIPATED fault to the same place: one `except Exception` at `__main__`.
+
+Two things a structural check added to Gene's sweep:
+
+- **`leave_row_oracle.py` looks protected and is not.** Its broad handlers are
+  INSIDE `main`, covering the mutation-did-not-compile paths, so anything raised
+  elsewhere still escapes and exits 1. It belongs in the test as an extra case,
+  which makes the scope eight scripts rather than seven.
+- **`check_test_integrity.py` has no `return 2` site at all**, so there is no
+  could-not-look branch to route a fault into. That one needs a small design
+  decision about what its anticipated failures are, not a one-liner.
+
+### Tomorrow, in order
+
+1. Commit the gate's fixes with a **crash-exits-2 test parametrised over all
+   eight scripts**, and fix the existing ones in the same commit. If the test
+   only pins the new gate, the rest keep reporting verdicts they never reached.
+2. Set `context/*.md` to **report-only**: run the gate over them, print the
+   findings, ignore the exit code for that subset, put the findings in the PR
+   body. Rationale, Gene's: a red on an owner-write-only file clears either by
+   Gene editing it or by an agent breaking the write rule, so blocking
+   manufactures the exception the policy exists to prevent — while excluding it
+   loses the signal on the file that rotted worst. Precedent and wording are at
+   `ci.yml:75`, where the LEAVE-row oracle is "a required step, not a gate".
+3. Land rules 1, 2 and 4 in `CLAUDE.md`, plus the `CLAUDE.md` sweep, together.
+   That file first, because the rules live there and it is what agents read.
+4. Remaining documents, **committed separately per document**, gate run before and after, delta
+   recorded per file. NOT all together: a sweep of that size across the documents
+   the reviewer has each time overturned is unreviewable, and the fourth pass would
+   be auditing a tree that moved under it.
+5. Fourth reviewer pass, against the settled tree.
+6. `gh pr view 157 --json closingIssuesReferences,title,body` before merging.
+   The reviewer cannot reach GitHub, and those are the only three surfaces
+   GitHub parses for closing keywords — a claim about GitHub state that only
+   GitHub can settle.
+
+### Two caveats that will bite if missed
+
+- **[CORRECTED 2026-08-27] The gate IS wired now.** This bullet said it was
+  "committed but not referenced by any workflow, on purpose" and told the reader
+  to "wire it up in step 1, after the sweep, not before". Both were true when
+  written and false from the moment the sweep landed. The wiring is two steps in
+  `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
+  against a committed baseline. The precedent cited for the report-only step was
+  also wrong — `ci.yml:75` explains why the ORACLE is not automated and what CI
+  invokes there is a hard gate; the real precedent is pip-audit's
+  `continue-on-error`.
+- **Do not write the site count anywhere.** The gate's noun list is hand-built
+  and so was the estimate before it; both are floors, and the true population is
+  above both. A count of the places where counts go stale is the last place a
+  hardcoded count belongs. Run the gate; it is the count.
+
+### Also filed today
+
+**#158** — `redact.py:82` claims every separator in the module is built from
+`_HSPACE` while `_RE_CONTACT_HINT` uses bare `\s`, and no gate can see it
+because `check_separator_classes` flags hand-ENUMERATED classes rather than
+`\s`. Wrong on arrival rather than stale. It had been withdrawn from one
+CLAUDE.md lesson as mislabelled and, for a draft, recorded in neither list.
+
+Also open and not `mvp-blocking`: **#151** (Tailwind classes naming undefined
+tokens render as nothing), **#154** (the glue-alphabet sweep, filed with its
+reasoning and measured as searching an empty space), **#156** (ruff isort
+classifying `apps/api/scripts` by whether an unrelated top-level `scripts/`
+exists), **#143** (the pre-push hook's fail-open).
 
 ## What item 10 did (all eight issues, code complete)
 
@@ -103,29 +216,47 @@ per-PR, not per-unit-of-work.
 | #142 | `is_production()` DELETED; `is_development()` + `expose_api_docs()`. All four call sites converted — redaction-off, JWT placeholder, `/docs`, `/openapi.json` were all permitted on `staging`. |
 | #144 | Migration **0046**: nullable `llm_calls.redaction_mode`, no server default, written at INSERT, write-once. Pre-migration rows stay NULL and NULL means NOT RECORDED. |
 
-**Three new gates shipped this week**, all wired into `ci.yml`:
-`check_no_control_chars.py`, `check_plan_totals.py`, `check_separator_classes.py`
-— the last found a third instance of its own defect on first run.
+**New gates shipped this week**, all wired into `ci.yml`:
+`check_no_control_chars.py`, `check_plan_totals.py`, `check_separator_classes.py`,
+and **[CORRECTED 2026-08-27]** `check_recalled_counts.py` — the count that used to
+open this sentence said three and went stale within the week, which is the defect
+this very list is about. The list is the count.
 
-## What is LEFT on item 10, in order
+## What was LEFT on item 10 — all of it done (kept as the record of a near-miss)
 
-1. **Close the nine blockers above.** They are all in `app/ai/redact.py`. Do the
-   structural fix, not nine patches: **re-derive every LEAVE table against the
-   rule as it stands now**, because each one was written against an earlier
-   version and several rows pass for reasons unrelated to the class they name.
-2. **Add the missing REDACT rows.** `+15551234567` and `5551234567` leaked
-   because `PHONE_REDACT` had no machine-format row. The old rule caught both --
-   use it as an oracle (CLAUDE.md has the entry) before it is gone.
-3. **Fix the two gate defects** (`check_separator_classes` exit 2; the line-scoped
-   `_HSPACE` exemption).
-4. **Correct the docs** that now misdescribe the code: `docs/security.md`'s
-   "cut length is now recorded" and its Open/Fixed table, `redact.py:82-88`, the
-   327-vs-376 cell count, `smoke_live_ai.py:44`.
-5. **Re-run the adversarial reviewer** on the corrected tree. It has now
-   overturned this branch twice; do not treat a third clean-looking state as
-   final without it.
-6. **Confirm a clean full `pytest -m unit`**, then open the PR. `Scope:` must
-   enumerate all three surfaces.
+**Every step below was completed in PR #155.** It is kept because the previous
+version of this file left this section presented as CURRENT, seventeen lines
+under a heading announcing item 10 was DONE — and its first instruction was
+"Close the nine blockers above", pointing at a list that no longer existed. The
+adversarial reviewer caught it on the PR that was correcting the count further
+down this same file.
+
+That is the second time in two days the same shape has bitten this file: the
+opening section was rewritten, the count was corrected, and the section that
+actually TELLS an agent what to do was walked past both times. Correcting the
+paragraph someone points at is not the same as correcting the file.
+
+1. ~~Close the nine blockers.~~ Done, plus four more found afterwards —
+   thirteen in PR #155.
+2. ~~Add the missing REDACT rows using the old rule as an oracle.~~ Done; the
+   diff of old-rule vs new-rule match sets found both machine phone formats.
+3. ~~Fix the two gate defects.~~ Done — `check_separator_classes` exit 2 no
+   longer collapses to 1, and the line-scoped `_HSPACE` exemption now demands a
+   written reason.
+4. ~~Correct the docs.~~ Done — `docs/security.md`'s cut-length claim and
+   Open/Fixed table, and `smoke_live_ai.py`. The cell count was REMOVED rather
+   than corrected: it was 327, then 376, then 410, and a count in prose is a
+   derived value with a second place to be wrong.
+
+   **NOT `redact.py:82-88`, which this line used to claim.** That note still
+   says "every separator in the module is now built from `_HSPACE`" while
+   `_RE_CONTACT_HINT` uses bare `\s`, and no gate can see it —
+   `check_separator_classes` flags hand-ENUMERATED classes, not `\s`. This file
+   said done; CLAUDE.md's narrower-rule bullet says not done; CLAUDE.md is
+   right. Filed as **#158** rather than left living only in a lessons file.
+5. ~~Re-run the adversarial reviewer.~~ Done, twice more.
+6. ~~Confirm a clean full `pytest -m unit`, then open the PR.~~ Done; PR #155
+   merged with all seven CI checks green.
 
 ## Standing environment facts
 
@@ -137,7 +268,13 @@ per-PR, not per-unit-of-work.
   then re-check `SHIELD_LLM_MODE`.
 - Gates before every commit: host `prettier@3.9.5 --check`, in-container
   `ruff check --no-cache . && black --check .`, `check_test_integrity`,
-  `check_no_control_chars`, `check_plan_totals`, `check_separator_classes`.
+  `check_no_control_chars`, `check_plan_totals`, `check_separator_classes`,
+  `leave_row_oracle.py --check-registry`, and **[CORRECTED 2026-08-27]**
+  `check_recalled_counts.py` (run from the REPO ROOT, not the container — it
+  resolves the repo root from its own path and refuses rather than guessing). That last one is a CI check and was
+  missing from this list, so a commit passing every gate here could still go
+  red -- on a new LEAVE table with no registered guards, which is the silent
+  success the oracle exists to catch.
 - **Writing Python via heredoc mangles backslashes.** Build escapes with
   `chr(92)` and assert the result is ASCII before writing. This cost ~8 repairs.
 
@@ -210,26 +347,48 @@ Recorded by the relay last round, updated with what actually landed.
 
 `main` has #110, #113, #116, #117, #119, #127, #128, #129, #133 merged. **Working tree clean, nothing local, nothing mid-edit.**
 
-## Open mvp-blocking issues (20)
+## Open mvp-blocking issues (14)
 
-**Read from GitHub on 2026-08-25, not carried forward** — the previous count of
-13 went stale the moment #135-#140 were filed, and a count is exactly the kind of
-derived value this round has been correcting elsewhere.
+**Read live from GitHub on 2026-08-26, immediately after PR #155 merged.**
 
-`#144 #142` (this round: the ledger cannot prove the redactor ran; the redactor
-can be disabled on staging) · `#140 #139 #138 #137 #136 #135` (the redaction
-boundary, **item 10**) · `#132 #131` · `#126 #125 #124 #123` (dashboards) ·
-`#122 #121` (Risk, **item 6**) · `#115 #114 #109` (**item 9**) · `#46`
+`#153 #152` (the two redaction leaks item 10 filed rather than fixed) · `#132
+#131` · `#126 #125 #124 #123` (dashboards) · `#122 #121` (Risk, **item 6**) ·
+`#115 #114 #109` (**item 9**) · `#46`
 
-Closed: `#130`, by PR #141.
+Closed since: `#130` by PR #141; `#135`-`#140`, `#142`, `#144` by PR #155.
 
-Not `mvp-blocking` and deliberately so: **#143** (the pre-push hook's fail-open)
-is tooling, off the MVP path entirely — recorded here because "unlabelled" and
-"deliberately out of scope" look identical in a list.
+**This heading read 20 with a paragraph underneath certifying it as freshly
+read.** Both were true on 2026-08-25 and false the moment PR #155 merged --
+it closed EIGHT (#135-#140, #142, #144; the ninth, #130, was PR #141's and is
+listed separately above).
+
+The arithmetic, written out because 20 - 8 = 12 and the answer is 14: item 10
+also **filed** two, #152 and #153, before it merged. 20 - 8 + 2 = 14. A
+correction paragraph that shows only the subtraction invites the check and
+then fails it.
+
+The certifying paragraph went stale WITH the number it certified,
+while still reading as a guarantee. That is worse than a bare stale count: a
+reader checking whether the figure could be trusted found a sentence saying yes.
+
+Fifth instance this week, and three of the five were in the files that document
+the rule against it. See CLAUDE.md, "a correction paragraph outlives the number
+it corrected".
+
+Not `mvp-blocking` and deliberately so -- recorded because "unlabelled" and
+"deliberately out of scope" look identical in a list: **#151** (Tailwind
+classes naming undefined design tokens render as nothing, 18 occurrences),
+**#154** (the computed glue-alphabet sweep, filed with its reasoning and
+measured as searching an empty space), **#156** (ruff isort classifying
+`apps/api/scripts` by whether an unrelated top-level `scripts/` exists), and
+**#143** (the pre-push hook's fail-open). Matches CONTEXT.md's list, which
+it did not until PR #157 -- this file named only #143, so three issues that
+CONTEXT.md called deliberate were indistinguishable from oversights here,
+which is the exact failure the sentence claims to prevent.
 
 ## Open decisions: NOT to be reconstructed from memory
 
-**New this round:** whether #130 gets pulled ahead of item 7 part 2 (agent's recommendation: yes — it corrupts every AI input platform-wide and fails quietly, which is exactly what a UI-focused pre-launch pass will not catch). Whether #131's fix needs provenance carried through `pairs` (approved vs live) rather than reconstructed from the tuple. Whether the "searched for: `<shape>`" line gets enforced or stays transparency-only (see above).
+**Historical — #130 was pulled ahead, fixed in PR #141, and closed.** It was listed here as a live "new this round" decision, with an action recommendation, twenty-six lines below the line recording it closed. The heading says these are NOT to be reconstructed from memory, which reads as an instruction to treat the contents as current. Found by the third adversarial pass. Still genuinely open: whether #131's fix needs provenance carried through `pairs` (approved vs live) rather than reconstructed from the tuple. Whether the "searched for: `<shape>`" line gets enforced or stays transparency-only (see above).
 
 **Closed since the last round** (2026-08-25, recorded here at Gene's explicit
 instruction — this file is owner-write-only and an agent writing it stays the

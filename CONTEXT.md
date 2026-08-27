@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-24 (#130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-08-26 (item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -66,7 +66,7 @@ patched case by case: `tests/unit/test_redact_address_matrix.py` -- six axes, ac
 and standalone properties.
 
 (This sentence carried a cell count and a breakdown summing to it. Both went
-stale twice: 153 -> 327 when two sweeps were parametrised per separator, and
+stale twice: 153 -> 327 when two sweeps were parametrised per separator, and <!-- counted: historical -->
 327 -> 376 when the collector was actually run. A count in prose two files
 away from the parametrisation that produces it is a derived value given a
 second place to be wrong, so it is no longer derived here -- run the collector
@@ -108,7 +108,7 @@ nothing at all), **#137** (the CAGE rule misses its own primary phrasing, so
 (`_redact_signature_blocks` cuts everything from a bare `Thanks` or `Best` to end
 of input -- data loss rather than a leak, and the one worth labelling). The
 adversarial review then found the same newline defect one rule up, in
-`_RE_PHONE`: a four-item numeric bullet list collapses to one token, a pair of
+`_RE_PHONE`: a four-item numeric bullet list collapses to one token, a pair of <!-- counted: Describes the SHAPE of a test input, not a population that grows. -->
 IP addresses is destroyed, and the audit row records `phone: 1` for input that
 contained no phone number -- **#140**. `_RE_CAGE` has both halves of #130's
 disease in one pattern (`CAGE codes are missing` -> `[CAGE] are missing`, and
@@ -123,7 +123,7 @@ what matches, which is what was meant and not what was written.
 ### 2026-08-09 → 2026-08-17 — cross-service integrity (PRs #34, #35, #36, #39, #42, #45, #54)
 
 An audit that began as an ATT&CK citation-resolver problem (#34) turned out not
-to be an ATT&CK problem. Checking the other four services found **one defect
+to be an ATT&CK problem. Checking the other four services found **one defect <!-- counted: historical -->
 family in ten places**:
 
 > An AI-suggested value that fails validation is dropped silently, and the run's
@@ -157,8 +157,8 @@ self-skipping without a key). What remains true is the reason it mattered:
 fixture responses echo the parser's own keys back, so they can never express a
 drop, a shape error, or a drift.
 
-**Two gates now check whether a test can fail at all (D-051, PR #93).** The #72
-pattern reached nine instances, two of them produced inside the audit hunting
+**These gates check whether a test can fail at all (D-051, PR #93).** The #72
+pattern kept growing, and two of the instances were produced inside the audit hunting
 for them. `scripts/check_test_integrity.py` is static and runs in CI ahead of
 pytest; `scripts/mutation_sweep.py` runs nightly over changed files. Neither
 closes #72 and D-051 says which instances each is blind to. Its first run filed
@@ -184,7 +184,7 @@ count is now derived rather than measured off the named list, on the exporter an
 the workspace together.
 
 **Exports use the client's target and disclose what they omit (D-049).** #73,
-#75 and #79 were one defect — `analyze_gaps` called without the target every
+#75 and #79 were one defect — `analyze_gaps` called without the target every <!-- counted: "were one defect" is an identity claim about two issues, not a tally. -->
 other surface resolves — plus a truncation nobody disclosed. Both finalize audit
 rows now record the target AND whether the client chose it, because a gap count
 became uninterpretable the moment the target stopped being a constant. The
@@ -226,7 +226,7 @@ suggestions_received / suggestions_applied / dropped: [{reason, key, field, valu
 received == applied + sum(d.values for d in dropped)
 ```
 
-Counted in **values** (one field on one row), not entries — **D-045** carries the
+Counted in **values** (one field on one row), not entries — **D-045** carries the <!-- counted: A definition of the unit of measurement, not a measurement. -->
 reasoning and all four audit rounds. Itemized rather than counted because a
 single integer cannot state its own scope, which is what sank the F9 counter
 layer (see below).
@@ -263,7 +263,7 @@ rewrite lands plus a clean adversarial audit.
 | #69 | Admin live regions are mounted with their text, so failures announce and successes never do; `role="alert"` wraps an unbounded itemized list |
 | #70 | `AttackWorkspace` marks its Run-AI step done for a run that applied nothing — the rule ZT adopted, unstated exemption |
 | #71 | `csf.py` stores `what_we_found` unescaped — the one raw-model-string path the escaping fix did not reach, and the only durable one |
-| #72 | **W8:** sweep for tests that cannot fail — five instances this session, two of which arrived AFTER the `CLAUDE.md` rule was written |
+| #72 | **W8:** sweep for tests that cannot fail — five instances this session, two of which arrived AFTER the `CLAUDE.md` rule was written | <!-- counted: historical -->
 | #73 | **Exported ZT deliverable ignores the per-capability AND intake targets**, exporting gaps against a default of 3 nobody chose; a stored target of 2 exports as 3. Pre-existing since the baseline import. **Next after this merge, ahead of W1-Risk** |
 | #74 | CSF never received W1's severity model — a total loss to prompt drift still renders as a calm grey status line. Scoped matrix-first |
 | #75 | Exported ZT Gap Plan truncated at 20 with `total_gap_count` rendered nowhere, while the on-screen view discloses it. Fix with #73 |
@@ -285,7 +285,7 @@ rewrite lands plus a clean adversarial audit.
   passes ran and nine found real defects — six of those in the reviewer's own
   fixes — and two recommendations would have made things actively worse
   (un-locking seeded demo data; stranding 25 assessments). W1's CSF step then
-  took four more rounds, every one of which found something. Not one of those
+  took four more rounds, every one of which found something. Not one of those <!-- counted: historical -->
   defects was caught by a test suite that was green throughout.
 
 - **Budget four audit rounds per service, and do not read a flat defect rate as
@@ -473,13 +473,13 @@ the browser here.
 | T9 | CI `demo` job on its own isolated runner (compose-version floor, `demo-reset --demo`, `SHIELD_DEMO_SMOKE=1` playwright, always-run diagnostics + artifact upload); SMOKE §27 | `00d970e` |
 | T10 | Wrap-up: SMOKE final pass (§10/§19/§26/§27/§31/§32), CHANGELOG `[3.5.0]`, BUILD_REPORT sync, this snapshot, `context/dave.md` refresh, full gates + full e2e | `ee8bf23` |
 
-One migration this sprint: **0032** (`users.keycloak_sub` String(64) nullable
+One migration this sprint: **0032** (`users.keycloak_sub` String(64) nullable <!-- counted: historical -->
 unique, additive/SQLite-safe, C0). New DECISIONS: **D-031** (draft discard as an
 admin-only soft-delete state transition), **D-032** (hybrid Keycloak SSO as a
 flag-gated exchange, never a bearer), **D-033** (destructive-by-design automation
 is opt-in-gated).
 
-- **Seven-issue fix pass MERGED** (PR #5, was `fix/seven-issue-pass`, targeting
+- **Seven-issue fix pass MERGED** (PR #5, was `fix/seven-issue-pass`, targeting <!-- counted: The NAME of a past pass, and the literal branch name. Rewording it would make the record harder to find, not more accurate. -->
   `v3.8.0`): seven reported issues in four phases. Three were the same class of
   defect — a surface that renders but cannot be acted on. The client `/home`
   service cards were unlinked `Card`s, so a client could see a service and had no
@@ -498,7 +498,7 @@ is opt-in-gated).
   env), **D-038** (release control + admin pre-release preview through the shared
   builder).
 
-### Seven-issue pass: issue → commit
+### Seven-issue pass: issue → commit <!-- counted: The same proper name, used as a heading. -->
 
 | Issue | What shipped | Commit |
 | --- | --- | --- |
@@ -509,7 +509,7 @@ is opt-in-gated).
 | 2 | `POST`/`DELETE /admin/llm-key` (validate against the provider, then store Fernet-encrypted, migration 0034); `AiStatusBanner` moved into the admin shell; `LlmKeyPanel`; `RunAiGuard`; `.env` placeholder model corrected; `test_admin_llm_key.py`, `RunAiGuard.test.tsx`, `s34` | `006f571` |
 | 4 | Release wired end to end for all four services (callers + 4 proxy routes + `released_at` type fix), admin pre-release preview via the shared `_dashboard_deliverable()` resolver, `resolveDashboardClientId()` for cold admin URLs, single-body-read fix in all six client libs; `s36` | `c601d32` |
 
-- **Seven-issue pass and UX-findings remediation MERGED** (PRs #5, #6, #7, #8):
+- **Seven-issue pass and UX-findings remediation MERGED** (PRs #5, #6, #7, #8): <!-- counted: The same proper name. -->
   the pass described below landed, along with the 2026-08-04 UX/E2E remediation
   (audit-mode correctness, a failure record that survives the request rollback,
   the offline Run-AI guard on every entry point, extraction reconciliation,
@@ -539,7 +539,7 @@ is opt-in-gated).
   form (D-041).
 
   Notable process point: **the browser check found a defect in every one of the
-  four rounds**, including two the unit tests could not see (the monotonic-stage
+  four rounds**, including two the unit tests could not see (the monotonic-stage <!-- counted: historical -->
   cursor, and stage evidence for Tech Debt). The e2e specs written afterwards
   found two more. See "Lessons learned (portfolio scope + stages)" below.
 
@@ -575,7 +575,12 @@ documents overlap heavily; PR #6 carries the authoritative change -> finding tab
 **No migrations in Phase C or D.** The Deliverables statuses derive from columns
 that already existed.
 
-**The one open item is a verification gap, not a defect.** `REPORT.md` records
+**Superseded 2026-08-19.** Live-AI verification completed — item 0 in
+`DELIVERY_PLAN.md`, tracked as #82 — so the instruction at the end of this
+paragraph no longer applies. Kept as the record of Phase D's close.
+<!-- counted: historical -->
+
+**The one open item was a verification gap, not a defect.** `REPORT.md` records
 that CSF and MITRE live scoring were never completed, deprioritised once F-3 was
 established, and F-3's own note says Zero Trust could not complete on live
 Anthropic at all. PR #6 added streaming to answer that — but **nothing has
@@ -624,7 +629,7 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
   queue. Both were closed by making the fixture behave like the prompt it stands
   in for, not by writing more tests around the unreachable state.
 
-- **Run the browser check before believing the tests.** Four rounds, four
+- **Run the browser check before believing the tests.** Four rounds, four <!-- counted: historical -->
   defects it caught that unit tests and typecheck did not: a null
   `source_rows_total`, a monotonic-stage cursor rendered behind completed work,
   an override stored but absent from the response that had to restore it, and a
@@ -797,7 +802,7 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
 ## Lessons learned (Sprint 9)
 
 - **Activating a state means auditing every reader, not just the writer.** Adding
-  `DISCARDED` was the easy part. Codex's two blockers were both hidden consumers:
+  `DISCARDED` was the easy part. Codex's two blockers were both hidden consumers: <!-- counted: historical -->
   the risk-register synthesis has its own `_latest()` that would have read a
   discarded highest-version assessment straight into the gate, and the intake
   engagement cards reported the raw latest version. A dormant status is only as safe
@@ -868,7 +873,7 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
 
 - **"Feasible with curl" is not "works through the adapter."** T0's Vertex path
   was proven by a raw ADC `generateContent` curl, but the first live sweep (T1)
-  still found two defects a keyless unit test could never hit: `google-auth`'s
+  still found two defects a keyless unit test could never hit: `google-auth`'s <!-- counted: historical -->
   token-refresh transport needs the `[requests]` extra (the unit test mocked
   `_bearer_token`, so it never exercised the real transport), and gemini-2.5
   "thinking" ate the output budget and truncated JSON. A real end-to-end sweep is

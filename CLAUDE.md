@@ -68,7 +68,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - Web unit tests (vitest, loop gate since Sprint 5):
   `docker compose exec -T web sh -lc "cd /app && pnpm -F web test"`
 - Web lint (loop gate since mid-Sprint-6 — a latent react-hooks error slipped
-  the five-gate set and only surfaced in CI's `next build`):
+  the loop gates as they then stood, and only surfaced in CI's `next build`):
   `docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"`
 - Dependency audits: `pnpm audit` at root, `npm audit` inside `e2e/`.
 - **Bandit is CI-only** (`bandit -q -c pyproject.toml -r apps/api/app`), not a
@@ -177,7 +177,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   test. Do the matrix FIRST, then change the logic — a matrix written after the
   fix only pins the fix.
 - **A test that supplies its own expected value — or its own precondition — from
-  the thing under test cannot fail.** The AI-fixture rule above is one instance
+  the thing under test cannot fail.** The AI-fixture rule above is an instance <!-- counted: "one instance" here means "an instance" - it counts nothing that can grow. -->
   of this; this is the general shape, and it turned up twice on 2026-08-18 in
   code that had already passed review. `tests/unit/test_csf_ai_contract.py`
   builds its "prompt-compliant" response out of `_PARSER_ROW_KEYS` — the
@@ -226,7 +226,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   `gap` as withholdable. But `coverage_pct` is
   `(covered + 0.5·partial) / (covered + partial + gap)`, so a gap contributes to
   the DENOMINATOR only: ten covered beside ten gaps reported 50%, and flagging
-  every gap reported **100%** with ten findings deleted. A run in which more
+  every gap reported **100%** with ten findings deleted. A run in which more <!-- counted: A hypothetical worked example (ten covered beside ten gaps). The number is fixed by construction, not recalled from a population. -->
   evidence was doubted claimed twice the coverage. Only values that carry
   numerator weight can be withheld conservatively; withholding a pure-denominator
   value is a strictly optimistic move wearing a cautious one's clothes. And even
@@ -277,7 +277,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   worked.** `check_issue_references.py` was written months later by someone who
   had read this entry, and its fail-closed path and the test pinning it were in
   the first committed version — the defect never existed in it. Set that against
-  the closing-keyword rule three entries down, which was rewritten three times
+  the closing-keyword rule in *Rules of the road*, which was rewritten three times
   and violated a fourth. The difference worth noticing is not diligence: the
   fail-closed lesson is a rule about code you are *writing on purpose*, and the
   closing-keyword one is a rule about prose you are *not thinking about*. Only the
@@ -296,7 +296,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   function you just changed, and when you deliberately leave a twin alone, say
   so in the code — an unstated exemption reads as an oversight to everyone who
   finds it later, including you.
-- **Two gates now check whether a test can fail at all (#72, D-051).**
+- **These gates check whether a test can fail at all (#72, D-051).**
   `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
   is a two-second static pass and **runs in CI before pytest** — it flags a test
   importing a private CONSTANT from the module it tests, and a containment
@@ -350,7 +350,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   - **Each mode is checkable by reading the implementation**, not by knowing the
     history — "a function with no callers" is a grep, "a deferral comment" is a
     comment saying the real thing is deferred.
-  - **It found three defects outside the table it would have been natural to
+  - **It found three defects outside the table it would have been natural to <!-- counted: historical -->
     check**: the MIME sniff that trusts the client's `Content-Type`, the
     "HIBP top-100k" that is a three-entry deny list, and the `signed_url`
     credited as the artifact control with zero call sites. None of the three is
@@ -405,7 +405,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   under a green suite because all 73 name-shaped strings in `seed_demo.py` and
   `fixtures.py` pass the address rule clean, so an address assertion built on
   seed data passes forever. Then, fixing it, a hand-written corpus of "real
-  product names" certified a pattern carrying **six leak regressions**, because
+  product names" certified a pattern carrying **six leak regressions**, because <!-- counted: historical -->
   the author writes addresses correctly spaced and the failing class was
   malformed input (`PO Box99`, `Suite400`) that arrives from OCR and exported
   spreadsheets. This is #72's shape pointed at test DATA rather than test code,
@@ -417,7 +417,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **A table written FIRST is an independent specification. A table written
   AFTERWARDS is a transcript of what the rule does.** That single sentence
   explains D-058's own caveat, why 376 green cells certified a rule carrying
-  nine live defects, and an 11x measured split. It is the enumeration rule above
+  nine live defects, and an 11x measured split. It is the enumeration rule above <!-- counted: historical -->
   pointed at ORDER rather than at content: enumerating cases against a rule you
   have already written cannot falsify that rule, because the rule is where the
   cases came from.
@@ -528,7 +528,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   constantly -- decision records quote the patterns they decide -- so
   `DECISIONS.md` acquires an empty code span and a control byte inside a sentence
   explaining word boundaries, and nothing notices: the file parses, prettier
-  passes, the diff looks fine. **Four instances on one branch**: two pre-existing,
+  passes, the diff looks fine. **Four instances on one branch**: two pre-existing, <!-- counted: historical -->
   one in the commit fixing those two, and one in the CI comment introducing the
   gate, in the sentence describing the defect. The last was caught by the gate on
   its first run. That is the argument for mechanising it rather than writing a
@@ -538,7 +538,10 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   your numbers": the trigger is mechanical. PR #141 stated the address truth
   table had 153 cells. The fix for a review finding was to parametrise two
   sweeps per separator as well as per character — 7 sites x 19 horizontal and
-  7 x 10 vertical — which multiplied the collected count to **327**. The stale
+  7 x 10 vertical — which multiplied the collected count several-fold. (The
+  number that stood here was 327; it was 376 within the week and 410 after
+  item 10, which is why it is no longer written down. Run the collector.)
+  The stale
   153 shipped to `main` in `CONTEXT.md` and `DECISIONS.md` and was found a PR
   later. What caught it was **re-counting**, not re-reading: the sentence still
   parsed, still looked deliberate, and was wrong by a factor of two.
@@ -546,6 +549,57 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   substantive, which is when attention is on the code and not on the prose two
   files away. So: after touching any `@pytest.mark.parametrize` argument, grep
   the repo for the old count before committing.
+- **A CORRECTION PARAGRAPH OUTLIVES THE NUMBER IT CORRECTED, and then certifies
+  a wrong one.** The re-count trigger above says a changed parametrisation
+  invalidates counts in other files. This is its nastier sibling: the prose
+  written to explain WHY a number is trustworthy goes stale with the number,
+  while still reading as a guarantee. A bare stale count invites a check. A stale
+  count under "read live from GitHub, not carried forward" ends the check.
+
+  Instances in one week — **five**, of which three are in the files that
+  document the rule. An earlier draft said "four" and was left saying four
+  when two more were added, which is this bullet's own defect for the SECOND
+  time (it also shipped a wrong closure count). The number is written out
+  here only because the list is immediately below it; if it grows again,
+  delete the count rather than update it:
+
+  - `context/gene.md` — "Open mvp-blocking issues (20)" under a paragraph
+    certifying it freshly read. EIGHT issues closed in the merge that carried <!-- counted: historical -->
+    the file; the heading did not move and the certificate stayed.
+
+    An earlier draft of this very bullet said NINE -- the count of everything
+    closed since the heading was written, which silently included one closed
+    by a different PR. The lesson's own defect, in the paragraph introducing
+    the lesson, caught by review rather than by the author. Derive a closure
+    count from `gh pr view <n> --json closingIssuesReferences`, not from
+    memory of what happened.
+  - `DELIVERY_PLAN.md` — a paragraph explaining a corrected total said "today's
+    12-18" and went stale in the same commit that changed the total to 10-15,
+    written by the author applying the rule.
+  - `leave_row_oracle.py` — a docstring recording that its own counts must be
+    re-counted on every guard-list change, quoting counts that were two guard-list <!-- counted: historical -->
+    changes old.
+  - **`CLAUDE.md` itself, the re-count-trigger bullet above** — it said the
+    collected count was **327**. It was 376 by the time that
+    sentence shipped and is 410 now. A bullet about counts going stale in
+    another file, carrying a stale count.
+  - `tests/unit/test_redact_address_matrix.py` — "(The count is 327 now…)",
+    present tense, in the file that PRODUCES the number.
+
+  One further citation was drafted and withdrawn: `redact.py:82`, a note about an <!-- counted: "One further citation" narrates a single act, not a tally of a population. -->
+  earlier note about `\s`. It is a real defect and it is a DIFFERENT one — a
+  scope over-claim that was wrong on arrival rather than a number that went
+  stale — and it belongs under the narrower-rule bullet below. Filing it here to
+  pad the list would have mislabelled it, which is what makes the next sweep
+  miss.
+
+  The countermeasure is not more care, because in most of the instances above the
+  author was actively applying the rule. It is: **when you write a sentence certifying a
+  derived value, put the value where a gate can read it, and let the sentence
+  point at the gate rather than restate the number.** `check_plan_totals.py`
+  reads the table, not the prose, which is why the plan's total is the one figure
+  in this repo that has never shipped wrong.
+
 - **When a guard keys on a predicate, sweep every call site of the predicate,
   not every caller of the guard.** `is_production()` has four call sites and all
   four mean "is this anything other than a developer's machine" while asking "is
@@ -560,9 +614,9 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   that exits 0 without having looked — the way you enumerate a truth table before
   a regex.** The fail-closed rule further up is about the branch you write on
   purpose. This is about the branches you do not notice you wrote, and the
-  distinction matters because the second kind has now happened three times in
-  this repo's own tooling, every one of them found in review rather than by the
-  author:
+  distinction matters because the second kind keeps happening in this repo's own
+  tooling — the list below is the count, and every entry but the last was found
+  in review rather than by the author:
 
   - `check_audit_evidence.py` — `is_code_change([])` returned False, so an empty
     changed-file list printed "documentation-only change, exempt" and exited 0.
@@ -576,8 +630,16 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
     (`2-3 (needs-David)` — the house style one table up) was dropped from the sum
     in silence, and the cheapest route to green was to change the total to the
     short sum. The gate steering the author into the defect it exists to catch.
+  - `check_test_integrity.py` — `rglob` on a path that does not exist yields
+    nothing, so `check_test_integrity /nope` printed "test-integrity: clean" and
+    exited **0**. LATENT rather than live, and the distinction is the useful
+    part: `ci.yml` carries `working-directory: apps/api` on that step, so the
+    relative `tests` it passes has always resolved. The gate's correctness lived
+    in a line in a DIFFERENT file that nothing checks — drop it, or reorder the
+    step, and the gate goes green and blind with no signal at all. Its four
+    anticipated failures are now decided and named, and all four exit 2.
 
-  Three instances, one shape: **"I could not look" sharing a branch with
+  One shape, and the list keeps growing: **"I could not look" sharing a branch with
   "nothing to complain about".** The rule against it was already written down
   when the second and third were produced, which is D-051's own finding — so the
   countermeasure is not more resolve, it is a step in the procedure. Before the
@@ -588,8 +650,8 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **A comment or message stating a rule NARROWER than the reader will assume,
   positioned exactly where they would go to check, is worse than no comment.**
   It is true, so nothing flags it; it is where you look, so it ends the search;
-  and it reads as a guarantee rather than as a scope. Three instances in two
-  days, all in the same subsystem:
+  and it reads as a guarantee rather than as a scope. The instances, most of them
+  in the redaction subsystem within two days and the last added later:
 
   - `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
     beside the JWT signing secret. True. The guard covered one of three
@@ -600,19 +662,26 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   - `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
     path uses" while calling one rule out of ten. The docstring even argued
     correctly that a second copy would drift, directly above the second copy.
+  - `redact.py:82` -- "Every separator in the module is now built from
+    [`_HSPACE`]", itself written as a correction to an earlier note that HAD
+    gone stale. `_RE_CONTACT_HINT` uses bare `\s` twice, and
+    `check_separator_classes.py` cannot see it: that gate flags hand-ENUMERATED
+    classes, not `\s`. Wrong on arrival rather than stale, which is why it is
+    filed here -- it was withdrawn from the staleness bullet above and, for one
+    draft, recorded in neither list. Tracked as **#158**.
 
-  All three were found by reading the CODE and comparing, never by reading the
+  Every one was found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
   The countermeasure is mechanical, not attentional: when a comment states a
   condition, read the condition it describes and check the two agree in SCOPE,
   not just in truth. And when you fix such a guard, fix its message in the same
   commit — an error string is documentation that a developer reads under
   pressure, and a stale one costs more there than in a doc.
-- **Replacing a validator gives you a free ORACLE for exactly one round: the
+- **Replacing a validator gives you a free ORACLE for exactly one round: the <!-- counted: "one round" is a duration in the claim itself, not a recalled figure. Rewording it to dodge the pattern would be gaming the gate. -->
   thing you are replacing.** Enumeration depends on imagining cases, and the
   cases you fail to imagine are precisely the ones that leak. Item 10 replaced a
   phone regex; the truth table's LEAVE half was carefully enumerated and its
-  REDACT half was seven rows of one grouping, so four formats the OLD rule caught
+  REDACT half was seven rows of one grouping, so four formats the OLD rule caught <!-- counted: historical -->
   — `1-800-555-0199`, `1.555.867.5309`, `020 7946 0958`, and any number separated
   by a non-ASCII space — leaked silently, and `CAGE1ABC2` regressed the same way.
   Nobody imagined them; the adversarial reviewer found them by reading.
@@ -621,7 +690,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   the same corpus and diff their match sets.** Every input the old one caught and
   the new one does not is either an intended false-positive fix or a new leak,
   and you must classify each. It works for any validator, filter, guard or parser
-  being replaced — and only for one round, because after the old one is deleted
+  being replaced — and only for one round, because after the old one is deleted <!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
   the oracle is gone. Capture the diff while you still have both.
 
   **Second example, same shape: a published standard is to a keyword list what
@@ -639,8 +708,8 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   "patch level 3 is inseparable from a floor" — a phrasing that invites the next
   person to attempt the separation and fail identically — but because **LEVEL is
   not on Pub 28 C2 at all**. That is the same scope call as the non-US postcode
-  residual, with the same firing condition, so three residuals now share one
-  reason and one trigger instead of three separate stories.
+  residual, with the same firing condition, so those residuals now share one
+  reason and one trigger instead of separate stories.
 
   This covers the half enumeration structurally cannot: enumeration finds what
   you thought of, the oracle finds what the previous author — or the standards
@@ -778,7 +847,7 @@ Rules of the road:
   **Why this is mechanised rather than documented.** The same issue was closed by
   accident three times. Each fix was a better-worded rule; the second incident
   was the PR that documented the first, and the third was a sentence warning
-  about the second. Three rounds of documentation produced a fourth incident.
+  about the second. Three rounds of documentation produced a fourth incident. <!-- counted: historical -->
   That is #72's finding applied to prose: discipline against a known shape has
   failed nine recorded times here, including instances written minutes after the
   rule was logged.
@@ -808,7 +877,7 @@ Rules of the road:
   its own comment calls that "the one defensible skip". This rule still asks for
   the reviewer, because `CLAUDE.md`, `DELIVERY_PLAN.md` and `DECISIONS.md` are
   where wrong claims do their damage, and the review that produced this very
-  bullet found eleven defects in two markdown files. Use judgement on a typo;
+  bullet found eleven defects in two markdown files. Use judgement on a typo; <!-- counted: historical -->
   do not use judgement on a document that states a number or a rule.
 
   **This rule is unenforceable, and unobservable, and it is written down anyway.**
@@ -838,7 +907,7 @@ Rules of the road:
     is indistinguishable from a sweep that looked in the wrong places.
   - **Re-verify every finding before acting on it.** It runs read-only and
     executes nothing, so every claim is static reading, and it is confidently
-    wrong often enough to matter — the review of this bullet marked one finding
+    wrong often enough to matter — the review of this bullet marked one finding <!-- counted: "one finding" narrates a single act. -->
     CONFIRMED that was simply wrong, because it could not read a GitHub issue.
   - **A finding it upholds is a result worth recording**, not a null. "The shape
     guard holds for all five jobs" is what told us to pin an invariant rather
@@ -916,7 +985,236 @@ Rules of the road:
   (Decision recorded as **D-057**, which reverses part of D-054. Closes the
   `CLAUDE.md` half of #108; the other half — the gate's own source still saying
   it "only REPORTS" and citing D-051 — is untouched and still open.)
+- **Three rules for numbers in prose, and a gate that enforces the first two on
+  the shared documents.** Every miss behind them is one pattern: a value written
+  from memory instead of derived. This file has produced that defect repeatedly,
+  including inside the paragraphs correcting earlier instances of it, so the
+  rules are stated as procedure rather than as advice.
+
+  1. **Don't write the count.** If a number describes a list in the same
+     document, delete the number and let the list be the count. "The blockers:"
+     followed by the list cannot go stale; "The four blockers:" goes stale the
+     moment one closes.
+     <!-- counted: an illustration of the form being warned against, not a count of anything --> This is the cheapest of the three and it applies far more
+     often than it looks — most spelled counts in this file sit within two lines
+     of the thing they count.
+  2. **Cite, don't recall.** A number from OUTSIDE the document carries the
+     command that produced it and the date it was run:
+
+         <!-- counted: gh issue list --label mvp-blocking --state open
+              --json number | jq length, 2026-08-26 -->
+
+     If you cannot paste the command, you do not know the number and must not
+     write it. A measurement over a fixed window (D-059's "four of the last
+     fifteen PR merges") is a claim about history and does not rot — but it
+     carries its window and its date for the same reason, and it is re-derived
+     when its inputs change.
+  3. **Correct at the instruction, not at the discussion.** Every miss so far
+     landed where the topic was DISCUSSED while the line telling someone what to
+     DO was left standing — a heading, a to-do list, a worked example. A
+     correction is UNVERIFIED until you have grepped the doc set for the claim's
+     SUBJECT rather than the line number you were handed, and the correcting
+     commit records the grep it ran. This is the highest-value of the three:
+     every adversarial pass over the branch that produced these rules needed it
+     independently, and the merge rule's worked example for item 7 part 2 — which
+     stayed
+     authoritative for a week after the condition beneath it changed — is the
+     canonical instance.
+
+  **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
+  `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
+  (owner-write-only, so a blocking gate there would hold one developer's PR red
+  on a line only the other may edit). It matches SPELLED cardinals and
+  deliberately not digits, because "14 open" beside its command is the fixed form
+  and flagging it would punish the correction.
+
+  **Two markers, and they are not the same claim.** `<!-- counted: <command>,
+  <date> -->` is rule 2 satisfied. `<!-- counted: historical -->` is for a count
+  QUOTED as the record of a past event — it cannot grow, so it cannot go stale.
+  Do not reach for either to silence a number you simply have not checked; that
+  converts a finding into a lie with a marker on it, and nothing downstream can
+  tell the difference.
+
+  **Two limits of the mechanism, both load-bearing, both found by using it.**
+  The provenance window is the finding's line and two either side, so a marker
+  spanning three lines has its closing delimiter outside the window and does not
+  register — write markers on one line. Matching is also PER LINE, so a count
+  split across a line break (`Three` / newline / `instances`) is invisible — and
+  since `prettier --write` is mandatory before every commit and reflows prose, an
+  edit somewhere above a flagged line can silently un-flag it with no change to
+  the sentence. More importantly, the pattern requires
+  the cardinal to sit NEXT TO the noun, so `thirteen recorded instances` is
+  invisible where `nine instances` is caught.
+  <!-- counted: quoted phrases illustrating the pattern, not counts of anything -->
+  That is how two documents came to
+  hold different numbers for the same population with only one of them flagged,
+  and it is not a bug to fix: the noun list is a floor rather than a census, and
+  widening it indefinitely turns the gate into a prose critic. It is the reason
+  **rule 3 still matters after the gate exists** — grep the claim's SUBJECT
+  across the doc set, because the mechanism can only see the spellings it knows.
+
+  **The gate cannot see itself.** Its help text is a Python string and the
+  enforced set is Markdown, so the paragraph teaching this rule carried a
+  spelled, uncited count of its own until a human read it. Same shape as a gate
+  whose correctness lives in a `working-directory:` line: the part that matters
+  sits where the check does not reach.
+
+  **The gate finds; it does not fix.** A long finding list invites clearing it
+  mechanically, which deletes correct sentences and rewords true ones. Every site
+  gets its own disposition. Where a finding is a false positive, say why at the
+  site — that is what the marker's free-text reason is for — rather than widening
+  the pattern. And expect the gate to catch its own author. It did twice in
+  the branch that wired it: once on the sentence written to explain the merge
+  rule, and once on the illustration inside rule 1 above — the example of the
+  bad form is itself an instance of the bad form, and the gate cannot tell the
+  difference, which is why the marker carries a reason a human wrote.
+
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
+- **An agent merges on green WITHOUT checking back, when all six hold.** Standing
+  as of 2026-08-26, after three consecutive PRs came to the human for a decision
+  the evidence had already made.
+
+  **What this rule actually clears: documentation PRs.** Code comes back, and so
+  does anything adding or changing a test — every path where a green suite proves
+  least is a path this codebase's code actually touches, and this repo does not
+  ship code without tests. Measured 2026-08-26 by applying condition 5's path
+  list to the last fifteen PR merges on `main`: **four cleared, eleven came
+  back**, the eleven tripping 1 to 20 paths each. Re-derived 2026-08-27 after
+  the web test globs were added, per the trigger below — the figure is
+  unchanged, because no PR in that window touched a web test file. The hole was
+  real and simply unexercised by the window, which is the measurement's limit
+  rather than a reason to doubt it: a window can only show what it contains. It is written here so nobody
+  has to derive the scope from the conditions and arrive somewhere more generous
+  — an earlier framing promised more than four in fifteen, and the conditions
+  below had grown past it.
+
+  Four in fifteen is worth keeping: those four are the PRs that recur every
+  round. Dropping the rule was weighed against the same evidence and loses — the
+  reviewer passes that produced these conditions were not spent discovering the
+  rule was wrong, they were spent discovering that **a green suite does not
+  license an unattended merge of code here**, and that is worth having written
+  down whether or not a standing rule survives it.
+
+  The measurement carries its window and its date deliberately: it is a claim
+  about a fixed slice of history, so it does not rot the way a live count does.
+  It is only true of condition 5 as that list stood on that date, so
+  **re-derive it whenever condition 5 changes** — not a remote contingency,
+  since condition 5 changed twice in the three days before this was written.
+  (Recorded as **D-059**, which carries the four cleared SHAs and the two PRs on
+  which a denylist and an allowlist construction disagree.)
+
+  Three of the six conditions are checkable and three are self-attested — see the
+  note below the list, which an earlier draft contradicted from here:
+
+  1. All seven CI checks green. (Five jobs in `ci.yml` — python, web,
+     secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
+     is schedule-only and excluded. **Re-derive this count if a job is added**;
+     it is a hardcoded number in prose, which this file has a bullet about.)
+  2. The adversarial reviewer ran **against the final state of the branch**, and
+     whatever it found is fixed or filed, recorded with `Findings:` /
+     `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
+     first — item 10 would never have qualified under the first-run reading, and
+     §14 already requires a re-run after any substantive change. Note the gate
+     checks only that `Findings:` and `Disposition:` exist; it does not read
+     `Scope:` and cannot tell whether the reviewer ran at all.
+  3. `DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated **in the
+     landing commit**, with any counts read live rather than carried forward.
+  4. No migration.
+  5. **None of the following paths**, which are the ones where a green suite
+     proves least:
+       * `apps/api/app/ai/` — the single egress path for all five services.
+       * `apps/api/app/csf/playbook.py`, `app/risk/engine.py`,
+         `app/zt/scoring.py` — the deterministic scoring engines. Core Principle
+         1 says "AI suggests, code computes"; condition 5 named only the
+         suggesting half for one draft, so a refactor of the 5x5 risk mapping
+         would have merged unattended. #84 is on record as `risk.py` hiding
+         exactly that.
+       * any live LLM **prompt**, which is not confined to `app/ai/` —
+         `app/tech_debt/extract.py:44` holds one, and fixture mode echoes payload
+         keys back verbatim, so a prompt drift cannot turn CI red.
+       * `apps/api/app/config.py` — the switch deciding whether the redactor
+         may be disabled, and its default. **#142 lived here, not in
+         `app/ai/`.** A PR widening `is_development()` reintroduces it while
+         tripping nothing else on this list.
+       * `apps/api/app/models/**` and `apps/api/alembic/env.py` — "no
+         migration" (condition 4) is not "nothing under `alembic/`". A
+         cascade rule or a column default changes stored behaviour without
+         one.
+       * `apps/web/**/*.test.ts`, `apps/web/**/*.test.tsx`,
+         `apps/web/**/*.spec.ts`, `apps/web/**/*.spec.tsx` — the vitest suite,
+         which condition 1 counts as one of its checks. The justification
+         written for `apps/api/tests/**` below applies word for word, and
+         for a week this list did not carry it: a PR editing a component and its
+         own test cleared every condition, including a version that WEAKENS the
+         test. The rule's own reasoning was sitting next to the hole. Test globs
+         only, deliberately — most `apps/web` product code that matters is
+         already caught by condition 6's dashboard clause, and widening to
+         `apps/web/**` would expand scope on an argument nobody has made.
+       * `apps/api/tests/**` and `e2e/**` — weakening a test satisfies
+         condition 1 more directly than editing a workflow does, and this
+         repo keeps finding tests that could not fail (#72, D-051). No
+         enumerated list of those instances exists anywhere; the figures
+         that used to be quoted here and in CONTEXT.md disagreed, and
+         neither was ever derived.
+       * `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both
+         drive CI jobs, and seed data being clean is why #130 survived months
+         of green.
+       * the deterministic surfaces the first draft of this list missed:
+         `app/attack/coverage.py`, `app/csf/scoring.py`, `app/zt/maturity.py`,
+         `app/tech_debt/security_scope.py`, `app/risk/exporters.py`. Naming
+         one file for three of five services and none for ATT&CK or Tech Debt
+         was a half-sweep — the defect this file has a bullet about.
+       * `apps/api/scripts/check_*.py`, `apps/api/scripts/leave_row_oracle.py`
+         (a CI gate whose name does not match `check_*`),
+         `.github/workflows/**`, and
+         `.github/pull_request_template.md` — the gates and the harness that
+         enforce this rule. A change here satisfies condition 1 by construction.
+         This file already records that `fetch-depth: 0` and one colon in the PR
+         template are each the single character deciding whether a gate means
+         anything.
+  6. Nothing that changes deliverable content, exporter output, or client
+     dashboard numbers.
+
+  **Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
+
+  **Conditions 1 and 4 are mechanical; 5 is mostly a path match but its
+  live-prompt clause needs a diff read. Conditions 2, 3 and 6 are
+  self-attested by the agent that wants to merge**, and 6 is a judgement call an
+  agent can talk itself out of. An earlier draft of this rule called the whole
+  thing "a file-path check plus two facts, not a judgement call", which is this
+  file's own narrower-than-the-reader-assumes shape. It is not that; it is three
+  checkable conditions and three honest ones. When 6 is arguable, it has been
+  tripped.
+
+  Worked examples, so the boundary is not re-litigated per PR — and a STALE
+  worked example is worse than none, because it ends the check with the wrong
+  answer in the place a reader looks first.
+
+  **Item 7 part 2** (`/ai-inputs` endpoint and panel) **comes back.** An earlier
+  draft said it "is admin-only and trips none of the paths — land it". That was
+  true the day it was written and false by the time anyone read it: the
+  `apps/api/tests/**` and `e2e/**` bullet was added to condition 5 in a later
+  session, and an endpoint plus a panel ships with tests — it must, or condition
+  1 proves nothing about it. Whether a surface is admin-only is not a question
+  condition 5 asks. This is the stale-cross-reference shape occurring inside the
+  rule that records the shape: a claim superseded by an edit elsewhere in the
+  same file, still standing where it gets looked up.
+
+  **A PR that repairs the gates comes back too**, and it trips condition 5 on
+  both `apps/api/scripts/check_*.py` and `apps/api/tests/**` at once.
+  Both are deliberate: a change to a gate satisfies condition 1 by construction,
+  and a change to a test satisfies it more directly than editing a workflow
+  does. That such a commit is *repairing* the harness this rule depends on
+  argues for a human reading it, not against.
+
+  **#131 comes back**, because the winning spelling reaching the client
+  deliverable means fixing it changes deliverable content by definition. Items 9
+  and 6 come back for the same reason. **Item 8 comes back too** — an earlier
+  draft said it "qualifies outright unless the export split touches exporter
+  output", which is wrong twice over: the item is *named* export/publish split,
+  and it owns #123, a **client dashboard** defect. Fixing #123 changes what the
+  client's Risk dashboard shows, which is condition 6's third clause. The
+  example contradicted the #131 reasoning directly above it.
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
   `gh pr view` — a good body saves them reading your whole diff.

@@ -60,16 +60,16 @@ fixture mode already demos all five.
 | 2 | **CSF client dashboard** | **DONE** (PR #80, merged 2026-08-19) | — | — | — |
 | 2a | **W8a — the #72 sweep (tests that cannot fail)** | **DONE** (PR #93, D-051, merged 2026-08-20) | — | — | — |
 | 3a | **Export/persistence audit — Tech Debt (+ #77)** | **DONE** (PR #94, D-052, merged 2026-08-20) | — | — | — |
-| 3b | **Export/persistence audit — ATT&CK** | **DONE** (PR #116, merged 2026-08-22). §14 audit run against the post-#102 shape: D-052's shape-guard invariant **confirmed** for all five jobs and now mechanically pinned; three defects fixed (per-technique surfaces contradicted the rollup in the same document; the top-50 gap truncation disclosure was pinned by no test; D/P/R posture counted unconfirmed tools); two filed — #114 (dashboard recomputes from latest APPROVED while labelled with the released version, suspected CSF/ZT twins) and #115 (a partially-failed run is indistinguishable from a complete one) | — | — | — |
+| 3b | **Export/persistence audit — ATT&CK** | **DONE** (PR #116, merged 2026-08-22). <!-- counted: historical --> §14 audit run against the post-#102 shape: D-052's shape-guard invariant **confirmed** for all five jobs and now mechanically pinned; three defects fixed (per-technique surfaces contradicted the rollup in the same document; the top-50 gap truncation disclosure was pinned by no test; D/P/R posture counted unconfirmed tools); two filed — #114 (dashboard recomputes from latest APPROVED while labelled with the released version, suspected CSF/ZT twins) and #115 (a partially-failed run is indistinguishable from a complete one) | — | — | — |
 | 4 | **W3 — Tech Debt approval snapshot** | **DONE** (PR #95, D-053, migration 0043, merged 2026-08-20). Regression fixed by **#96** | — | — | — |
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **DONE** (PR #103, merged 2026-08-20). Scoped to the resolver; the two gaps it left honest rather than implied are #101 + #102, item 5a | — | — | — |
-| 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — | — |
-| 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **4–6 sessions** (re-sized 2026-08-25 — see "Why the range is wide") | — |
-| 7 | **W1 ATT&CK step** | Not started — decision taken: port the `/ai-inputs` panel from #29's branch (6 new files, zero drift), rewrite the enrichment fresh against the new resolver, and re-derive #33's finding 5 rather than porting it. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **1–1.5 sessions** | — |
+| 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). <!-- counted: historical --> Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — | — |
+| 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted) and **#132** (`risk.py` re-derives the ATT&CK citation drop as a two-line list comprehension with no counter, no reason and nothing in the audit row -- found by grepping the SHAPE, not the call sites, and absent from this plan entirely until the review of PR #157 noticed an `mvp-blocking` issue with no owning item). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **4–6 sessions** (re-sized 2026-08-25 — see "Why the range is wide") | — |
+| 7 | **W1 ATT&CK step** | Not started — **decision superseded 2026-08-26.** It read "port the `/ai-inputs` panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility` is now 103 commits behind `main` and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the backend endpoint its four files call does not exist on `main`. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption and is unsound until re-derived** -- do that before starting, not after. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **1–1.5 sessions** | — |
 | 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** | — |
 | 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **4–6 sessions** (fixes only; re-sized 2026-08-25 — see "Why the range is wide") | — |
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
-| 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
+| 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). <!-- counted: historical --> Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
 
 ### Total remaining: 10–15 sessions, and the parts sum to it
 
@@ -87,7 +87,7 @@ the rounds that oracle output will generate.
 **A HISTORICAL note, kept because the incident is the lesson.** During PR #146
 this heading read 12–18.5 for one draft and the parts did not sum to it. The
 totals it discusses — 12–18.5 and 12–18 — are both superseded: item 10 landed on
-2026-08-26 and the figure is now 10–15 across four items.
+2026-08-26 and the figure is now 10–15 across the items in the table below.
 
 That restatement is itself the rule firing. The paragraph said "today's 12–18"
 and went stale the moment the item it was written beside was marked DONE, in the
@@ -96,7 +96,7 @@ second place to be wrong, which is why `check_plan_totals.py` reads the table
 rather than the sentence. The residual
 was exactly 0.5–1: item **9a**, which is DONE in this PR and was still being
 counted as remaining. (The total then returned to 12–18 by a separate route:
-item 10 grew from six issues to eight and was re-sized 1.5–2.5 → 2–3. Two
+item 10 grew from six issues to eight and was re-sized 1.5–2.5 → 2–3. Two <!-- counted: historical -->
 unrelated changes landing near the same figure is a coincidence worth naming,
 because a reader comparing drafts would otherwise conclude nothing had moved.) The number was carried forward rather than re-added
 — in the section whose own next paragraph says a total that does not sum is the
@@ -150,7 +150,7 @@ and it is why the run is scheduled here rather than left to be rediscovered:
 - **Item 9 (correctness defects)** — same, across four client dashboards.
 
 No re-size for either: the run is minutes against a 4-6 session item, and it is
-cheaper than one round of the review it prevents. Recorded so the step is not
+cheaper than one round of the review it prevents. Recorded so the step is not <!-- counted: "one round" is a unit of comparison, not a tally. -->
 read as scope creep when it appears in those PRs.
 
 ### Item 10 was the egress half of what items 9 and 6 are the output half of
@@ -201,7 +201,7 @@ items, this one is about round count per item. They add rather than overlap.
 
 ### Review overhead is per-PR, not per-unit-of-work — so batch by file, not by issue
 
-**Measured, 2026-08-25, over the only two items with data.**
+**Measured — 2026-08-25 for the first two rows, 2026-08-26 when item 10 landed.** <!-- counted: historical -->
 
 | Item | Review rounds | Findings | Estimated | Actual |
 | --- | --- | --- | --- | --- |
@@ -210,19 +210,29 @@ items, this one is about round count per item. They add rather than overlap.
 | 10 the redaction boundary (PR #155) | 4 | 16 blockers + 3 self-corrections | 2–3 | **~5–6** |
 
 **Three points is a trend, and the next sizing should absorb it rather than
-rediscover it.** All three items overran, and in each the overrun was review
+rediscover it.** All three items overran, and in each the overrun was review <!-- counted: historical -->
 yield rather than mis-scoping: the work found was real, and most of it was
 invisible to the estimate because it did not exist until a fix created it.
-Item 10's four rounds produced 9, then 1, then 5, then 1 blockers — the count
-did not converge monotonically, which is the part a three-round budget would
+Item 10's four rounds produced 9, then 1, then 5, then 1 blockers — the count <!-- counted: historical -->
+did not converge monotonically, which is the part a three-round budget would <!-- counted: A hypothetical budget size, not a count of anything that exists. -->
 have got wrong.
 
 Two things make item 10's overrun worth the price rather than a warning:
-five of the sixteen were **pre-existing defects on `main`** that nothing else
-in the process would have found, and the two derived corpora it produced are
-permanent and now budgeted into items 6 and 9.
+**one** of the sixteen was a pre-existing defect on `main` that nothing else in
+the process would have found — the name dictionary destroying the word
+"client" for any tenant with a generic mailbox. Five were **introduced by the
+fix for a different defect**, which is a cost of the round rather than a
+recovery from it.
 
-Neither was mis-scoped. In both, the reviewer found real defects at a steady
+(An earlier draft of this sentence said "five … pre-existing on `main`",
+swapping the two categories and inflating the recovery 5x — in the paragraph
+offered as the reason the overrun was worth paying. Row 72 of this file had it
+right the whole time.)
+
+The second thing: the two derived corpora it produced are permanent, and both
+are now budgeted into items 6 and 9.
+
+None of the three was mis-scoped. In each, the reviewer found real defects at a steady
 rate right through the last round — the second round of #130 found a leak worse
 than the bug being fixed, and the third round of 9a found a live wrong total in
 the PR that existed to end wrong totals. The rounds were not padding.
@@ -233,13 +243,14 @@ cost scales with the number of PRs, not with the amount of work.
 
 **So: batch by file and harness, not by issue number.**
 
-- **Item 10 is ONE PR, not six.** #135–#140 are six defects in `app/ai/redact.py`,
+- **Item 10 is ONE PR, not six.** #135–#140 are six defects in `app/ai/redact.py`, <!-- counted: historical -->
   all decided by the same truth table, all reviewed in the same context. Six
   branches would pay the review overhead six times for no additional review
   value — the reviewer would re-read the same file six times — and would leave
-  five stale cross-references in the docs between merges. This is why item 10 is
-  sized at 1.5–2.5 rather than the 3–4 a cold item carries.
-- **Item 9's seven issues** (#114, #115, #46, #109, #124, #125, #126) split more
+  five stale cross-references in the docs between merges. This is why item 10 was
+  first sized at 1.5–2.5 rather than the 3–4 a cold item carries. It was re-sized
+  to 2–3 and landed at ~5–6; the table row is the record.
+- **Item 9's issues** (#114, #115, #46, #109, #124, #125, #126) split more
   naturally, because they span four surfaces. Split them by **surface**, not by
   issue — **four groups, and every issue is in exactly one**:
 
@@ -340,7 +351,7 @@ of starting when the instinct runs the other way.
 ### Estimate vs actual, recorded as items land
 
 The **Actual** column in the table above is filled in the PR that lands each
-item, not afterwards. Three real measurements will size the remaining work
+item, not afterwards. Real measurements will size the remaining work
 better than any judgement call — the same move this document already made for
 "what a session is, in hours", which is measured from git history rather than
 guessed. When a total is next wrong, the arithmetic will be sitting beside it.
@@ -350,7 +361,15 @@ guessed. When a total is next wrong, the arithmetic will be sitting beside it.
 | #130 redaction fix (PR #141) | 0.25 | 0.5–1 | 2–4x | 2 | 16 |
 | 9a docs-truth pass, `docs/security.md` | 0.5–1 | ~1.5–2 | **2–4x** | 3 | ~30 |
 
-**9a is the larger overrun of the two, and it is recorded here in its own PR.**
+**Superseded — see the estimate-vs-actual table higher in this file.** This section was written when 9a and #130 were the only measured
+items and said 9a was "the larger overrun of the two". Item 10 has since
+landed at 2-3 estimated against ~5-6 actual and is the larger of THREE.
+
+Kept rather than deleted because the near-miss is the lesson: a row was added
+to one estimate-vs-actual table and this sibling section, 130 lines down in
+the same file, was not touched — found by the third adversarial pass over the
+PR that added the row. Maintain ONE table; a second copy is a second place to
+be wrong.
 It was sized "under a session" as a documentation edit. It took three review
 rounds and produced two new `mvp-blocking` issues (#142, #144), one unlabelled
 tooling issue (#143), a new CI gate with 19 tests, and #145 — because the audit
@@ -417,7 +436,7 @@ but is a deliberate call, not a tidy-up.
 
 #### Why the total moved from 5–6.5 to 8–10.5 (2026-08-22)
 
-The twin-sweep inside item 9 reported six of seven defect shapes clean across
+The twin-sweep inside item 9 reported six of seven defect shapes clean across <!-- counted: historical -->
 CSF, ZT and Risk. An adversarial review of **those verdicts** — not of the
 services — overturned four of them.
 
@@ -429,7 +448,7 @@ nothing and the verdict was recorded as "no twin". The shape was present in thre
 services, and in one of them it had been written up in
 `docs/plans/2026-08-08-cross-service-integrity.md` as F6 since 2026-08-08.
 
-**The split matters more than the total.** Six new issues, and they do not all
+**The split matters more than the total.** The new issues do not all
 belong to the item that found them:
 
 - **#121, #122** and the corrected scope of **#84** are Risk-service defects that
@@ -634,7 +653,7 @@ was actually made. Re-checked against the GitHub API
 **What that actually binds — stated precisely, because the short version is
 wrong.** An earlier draft of this section said "the §14 gate now blocks" and "a
 red suite can no longer merge". Both are overstatements, and an adversarial
-audit caught them contradicting the three bullets directly below them:
+audit caught them contradicting the bullets directly below them:
 
 - Required checks bind **a non-admin merging via a pull request**. This repo has
   no such person today.
@@ -698,7 +717,7 @@ or Web check.
   in the queue.
 - **The §14 audit gate** (PR #98, **D-054**) — a deterministic merge check
   requiring recorded audit evidence on any code PR. Built after the gate was
-  silently skipped three times running; its own audit found eight defects in it.
+  silently skipped three times running; its own audit found eight defects in it. <!-- counted: historical -->
   **Registered as a required status check** on `main` (2026-08-20, verified
   2026-08-21), which binds a non-admin merging via a PR and nothing else — see
   the branch-protection section above for what that does and does not cover.
