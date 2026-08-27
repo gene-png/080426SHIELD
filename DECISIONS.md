@@ -3445,6 +3445,27 @@ written for.** It teaches that the rules here are advisory, which is expensive
 for the ones that are not — and this repo's rules include several where a single
 character decides whether a gate means anything.
 
+**The mechanise-over-document argument is now empirical, and this is where the
+evidence goes.** While preparing the governance PR itself, the accidental-close
+guard rejected a merge commit that paired a closing keyword with a live PR
+number — written minutes after working on the rule that forbids it. The fix
+explained the mistake by QUOTING it, live number still in place, and was
+rejected again.
+
+That second rejection is this repo's recorded incident number two, reproduced
+verbatim: the change documenting the rule re-triggering it by quoting the
+offending sentence. **The offending text WAS the warning**, which is a form no
+prose rule could have anticipated — you cannot write a warning that warns
+against quoting itself.
+
+Hundreds of lines of documentation about that failure never prevented it once.
+The guard stopped it twice inside two minutes.
+
+**So the rule this decision rests on: what can be mechanised should be, and what
+cannot be mechanised should be short enough that people finish reading it.**
+That is the justification for the whole governance change — the dispositions,
+the direct-to-main correction and the size ratchet are three faces of it.
+
 So: `context/*.md` and typo-class prose fixes go direct. **The boundary is the
 same test as D-060's:** a prose fix that changes what someone would DO is not
 typo-class and is still a PR. Everything else — code, tests, CI, gates,

@@ -21,9 +21,16 @@ you are a small fraction of it.
 | Anything not listed above | Read on. "Stop" applies to a row that matches, never to the absence of one. |
 
 **One rule outranks the rest and is worth reading even if nothing above applies:
-VERIFY BY RUNNING.** Every expensive failure recorded in this file traces to a
-premise someone reasoned about instead of executing. It is the cheapest habit
-here and the highest-yield.
+VERIFY BY RUNNING.** Nearly every expensive failure recorded in this file traces
+to a premise someone reasoned about instead of executing. It is the cheapest
+habit here and the highest-yield.
+
+**Its unstated precondition: verify that what you are measuring is the thing you
+think you are measuring.** `python gate.py | head -1; echo $?` reports `head`'s
+status, not the gate's — so a fail-closed exit 2 reads as a clean 0. Use
+`${PIPESTATUS[0]}`, or do not pipe. That is the crash-versus-verdict shape one
+layer down, in the shell instead of in Python: one program's verdict silently
+substituted for another's, and the substitution looks like success.
 
 ## What this is
 
