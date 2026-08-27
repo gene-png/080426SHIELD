@@ -68,7 +68,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - Web unit tests (vitest, loop gate since Sprint 5):
   `docker compose exec -T web sh -lc "cd /app && pnpm -F web test"`
 - Web lint (loop gate since mid-Sprint-6 — a latent react-hooks error slipped
-  the five-gate set and only surfaced in CI's `next build`):
+  the loop gates as they then stood, and only surfaced in CI's `next build`):
   `docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"`
 - Dependency audits: `pnpm audit` at root, `npm audit` inside `e2e/`.
 - **Bandit is CI-only** (`bandit -q -c pyproject.toml -r apps/api/app`), not a
@@ -177,7 +177,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   test. Do the matrix FIRST, then change the logic — a matrix written after the
   fix only pins the fix.
 - **A test that supplies its own expected value — or its own precondition — from
-  the thing under test cannot fail.** The AI-fixture rule above is one instance
+  the thing under test cannot fail.** The AI-fixture rule above is an instance <!-- counted: "one instance" here means "an instance" - it counts nothing that can grow. -->
   of this; this is the general shape, and it turned up twice on 2026-08-18 in
   code that had already passed review. `tests/unit/test_csf_ai_contract.py`
   builds its "prompt-compliant" response out of `_PARSER_ROW_KEYS` — the
@@ -226,7 +226,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   `gap` as withholdable. But `coverage_pct` is
   `(covered + 0.5·partial) / (covered + partial + gap)`, so a gap contributes to
   the DENOMINATOR only: ten covered beside ten gaps reported 50%, and flagging
-  every gap reported **100%** with ten findings deleted. A run in which more
+  every gap reported **100%** with ten findings deleted. A run in which more <!-- counted: A hypothetical worked example (ten covered beside ten gaps). The number is fixed by construction, not recalled from a population. -->
   evidence was doubted claimed twice the coverage. Only values that carry
   numerator weight can be withheld conservatively; withholding a pure-denominator
   value is a strictly optimistic move wearing a cautious one's clothes. And even
@@ -277,7 +277,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   worked.** `check_issue_references.py` was written months later by someone who
   had read this entry, and its fail-closed path and the test pinning it were in
   the first committed version — the defect never existed in it. Set that against
-  the closing-keyword rule three entries down, which was rewritten three times
+  the closing-keyword rule in *Rules of the road*, which was rewritten three times
   and violated a fourth. The difference worth noticing is not diligence: the
   fail-closed lesson is a rule about code you are *writing on purpose*, and the
   closing-keyword one is a rule about prose you are *not thinking about*. Only the
@@ -296,7 +296,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   function you just changed, and when you deliberately leave a twin alone, say
   so in the code — an unstated exemption reads as an oversight to everyone who
   finds it later, including you.
-- **Two gates now check whether a test can fail at all (#72, D-051).**
+- **These gates check whether a test can fail at all (#72, D-051).**
   `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
   is a two-second static pass and **runs in CI before pytest** — it flags a test
   importing a private CONSTANT from the module it tests, and a containment
@@ -350,7 +350,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   - **Each mode is checkable by reading the implementation**, not by knowing the
     history — "a function with no callers" is a grep, "a deferral comment" is a
     comment saying the real thing is deferred.
-  - **It found three defects outside the table it would have been natural to
+  - **It found three defects outside the table it would have been natural to <!-- counted: historical -->
     check**: the MIME sniff that trusts the client's `Content-Type`, the
     "HIBP top-100k" that is a three-entry deny list, and the `signed_url`
     credited as the artifact control with zero call sites. None of the three is
@@ -405,7 +405,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   under a green suite because all 73 name-shaped strings in `seed_demo.py` and
   `fixtures.py` pass the address rule clean, so an address assertion built on
   seed data passes forever. Then, fixing it, a hand-written corpus of "real
-  product names" certified a pattern carrying **six leak regressions**, because
+  product names" certified a pattern carrying **six leak regressions**, because <!-- counted: historical -->
   the author writes addresses correctly spaced and the failing class was
   malformed input (`PO Box99`, `Suite400`) that arrives from OCR and exported
   spreadsheets. This is #72's shape pointed at test DATA rather than test code,
@@ -417,7 +417,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **A table written FIRST is an independent specification. A table written
   AFTERWARDS is a transcript of what the rule does.** That single sentence
   explains D-058's own caveat, why 376 green cells certified a rule carrying
-  nine live defects, and an 11x measured split. It is the enumeration rule above
+  nine live defects, and an 11x measured split. It is the enumeration rule above <!-- counted: historical -->
   pointed at ORDER rather than at content: enumerating cases against a rule you
   have already written cannot falsify that rule, because the rule is where the
   cases came from.
@@ -528,7 +528,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   constantly -- decision records quote the patterns they decide -- so
   `DECISIONS.md` acquires an empty code span and a control byte inside a sentence
   explaining word boundaries, and nothing notices: the file parses, prettier
-  passes, the diff looks fine. **Four instances on one branch**: two pre-existing,
+  passes, the diff looks fine. **Four instances on one branch**: two pre-existing, <!-- counted: historical -->
   one in the commit fixing those two, and one in the CI comment introducing the
   gate, in the sentence describing the defect. The last was caught by the gate on
   its first run. That is the argument for mechanising it rather than writing a
@@ -564,7 +564,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   delete the count rather than update it:
 
   - `context/gene.md` — "Open mvp-blocking issues (20)" under a paragraph
-    certifying it freshly read. EIGHT issues closed in the merge that carried
+    certifying it freshly read. EIGHT issues closed in the merge that carried <!-- counted: historical -->
     the file; the heading did not move and the certificate stayed.
 
     An earlier draft of this very bullet said NINE -- the count of everything
@@ -577,16 +577,16 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
     12-18" and went stale in the same commit that changed the total to 10-15,
     written by the author applying the rule.
   - `leave_row_oracle.py` — a docstring recording that its own counts must be
-    re-counted on every guard-list change, quoting counts that were two guard-list
+    re-counted on every guard-list change, quoting counts that were two guard-list <!-- counted: historical -->
     changes old.
-  - **`CLAUDE.md` itself, three bullets above this one** — the re-count-trigger
+  - **`CLAUDE.md` itself, the re-count-trigger bullet above** — it
     bullet said the collected count was **327**. It was 376 by the time that
     sentence shipped and is 410 now. A bullet about counts going stale in
     another file, carrying a stale count.
   - `tests/unit/test_redact_address_matrix.py` — "(The count is 327 now…)",
     present tense, in the file that PRODUCES the number.
 
-  One further citation was drafted and withdrawn: `redact.py:82`, a note about an
+  One further citation was drafted and withdrawn: `redact.py:82`, a note about an <!-- counted: "One further citation" narrates a single act, not a tally of a population. -->
   earlier note about `\s`. It is a real defect and it is a DIFFERENT one — a
   scope over-claim that was wrong on arrival rather than a number that went
   stale — and it belongs under the narrower-rule bullet below. Filing it here to
@@ -630,8 +630,16 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
     (`2-3 (needs-David)` — the house style one table up) was dropped from the sum
     in silence, and the cheapest route to green was to change the total to the
     short sum. The gate steering the author into the defect it exists to catch.
+  - `check_test_integrity.py` — `rglob` on a path that does not exist yields
+    nothing, so `check_test_integrity /nope` printed "test-integrity: clean" and
+    exited **0**. LATENT rather than live, and the distinction is the useful
+    part: `ci.yml` carries `working-directory: apps/api` on that step, so the
+    relative `tests` it passes has always resolved. The gate's correctness lived
+    in a line in a DIFFERENT file that nothing checks — drop it, or reorder the
+    step, and the gate goes green and blind with no signal at all. Its four
+    anticipated failures are now decided and named, and all four exit 2.
 
-  Three instances, one shape: **"I could not look" sharing a branch with
+  One shape, and the list keeps growing: **"I could not look" sharing a branch with
   "nothing to complain about".** The rule against it was already written down
   when the second and third were produced, which is D-051's own finding — so the
   countermeasure is not more resolve, it is a step in the procedure. Before the
@@ -642,7 +650,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **A comment or message stating a rule NARROWER than the reader will assume,
   positioned exactly where they would go to check, is worse than no comment.**
   It is true, so nothing flags it; it is where you look, so it ends the search;
-  and it reads as a guarantee rather than as a scope. Four instances, three of
+  and it reads as a guarantee rather than as a scope. The instances, most of
   them in the redaction subsystem within two days and the fourth added later:
 
   - `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
@@ -669,11 +677,11 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   not just in truth. And when you fix such a guard, fix its message in the same
   commit — an error string is documentation that a developer reads under
   pressure, and a stale one costs more there than in a doc.
-- **Replacing a validator gives you a free ORACLE for exactly one round: the
+- **Replacing a validator gives you a free ORACLE for exactly one round: the <!-- counted: "one round" is a duration in the claim itself, not a recalled figure. Rewording it to dodge the pattern would be gaming the gate. -->
   thing you are replacing.** Enumeration depends on imagining cases, and the
   cases you fail to imagine are precisely the ones that leak. Item 10 replaced a
   phone regex; the truth table's LEAVE half was carefully enumerated and its
-  REDACT half was seven rows of one grouping, so four formats the OLD rule caught
+  REDACT half was seven rows of one grouping, so four formats the OLD rule caught <!-- counted: historical -->
   — `1-800-555-0199`, `1.555.867.5309`, `020 7946 0958`, and any number separated
   by a non-ASCII space — leaked silently, and `CAGE1ABC2` regressed the same way.
   Nobody imagined them; the adversarial reviewer found them by reading.
@@ -682,7 +690,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   the same corpus and diff their match sets.** Every input the old one caught and
   the new one does not is either an intended false-positive fix or a new leak,
   and you must classify each. It works for any validator, filter, guard or parser
-  being replaced — and only for one round, because after the old one is deleted
+  being replaced — and only for one round, because after the old one is deleted <!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
   the oracle is gone. Capture the diff while you still have both.
 
   **Second example, same shape: a published standard is to a keyword list what
@@ -700,8 +708,8 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   "patch level 3 is inseparable from a floor" — a phrasing that invites the next
   person to attempt the separation and fail identically — but because **LEVEL is
   not on Pub 28 C2 at all**. That is the same scope call as the non-US postcode
-  residual, with the same firing condition, so three residuals now share one
-  reason and one trigger instead of three separate stories.
+  residual, with the same firing condition, so those residuals now share one
+  reason and one trigger instead of separate stories.
 
   This covers the half enumeration structurally cannot: enumeration finds what
   you thought of, the oracle finds what the previous author — or the standards
@@ -839,7 +847,7 @@ Rules of the road:
   **Why this is mechanised rather than documented.** The same issue was closed by
   accident three times. Each fix was a better-worded rule; the second incident
   was the PR that documented the first, and the third was a sentence warning
-  about the second. Three rounds of documentation produced a fourth incident.
+  about the second. Three rounds of documentation produced a fourth incident. <!-- counted: historical -->
   That is #72's finding applied to prose: discipline against a known shape has
   failed nine recorded times here, including instances written minutes after the
   rule was logged.
@@ -869,7 +877,7 @@ Rules of the road:
   its own comment calls that "the one defensible skip". This rule still asks for
   the reviewer, because `CLAUDE.md`, `DELIVERY_PLAN.md` and `DECISIONS.md` are
   where wrong claims do their damage, and the review that produced this very
-  bullet found eleven defects in two markdown files. Use judgement on a typo;
+  bullet found eleven defects in two markdown files. Use judgement on a typo; <!-- counted: historical -->
   do not use judgement on a document that states a number or a rule.
 
   **This rule is unenforceable, and unobservable, and it is written down anyway.**
@@ -899,7 +907,7 @@ Rules of the road:
     is indistinguishable from a sweep that looked in the wrong places.
   - **Re-verify every finding before acting on it.** It runs read-only and
     executes nothing, so every claim is static reading, and it is confidently
-    wrong often enough to matter — the review of this bullet marked one finding
+    wrong often enough to matter — the review of this bullet marked one finding <!-- counted: "one finding" narrates a single act. -->
     CONFIRMED that was simply wrong, because it could not read a GitHub issue.
   - **A finding it upholds is a result worth recording**, not a null. "The shape
     guard holds for all five jobs" is what told us to pin an invariant rather
@@ -977,6 +985,65 @@ Rules of the road:
   (Decision recorded as **D-057**, which reverses part of D-054. Closes the
   `CLAUDE.md` half of #108; the other half — the gate's own source still saying
   it "only REPORTS" and citing D-051 — is untouched and still open.)
+- **Three rules for numbers in prose, and a gate that enforces the first two on
+  the shared documents.** Every miss behind them is one pattern: a value written
+  from memory instead of derived. This file has produced that defect repeatedly,
+  including inside the paragraphs correcting earlier instances of it, so the
+  rules are stated as procedure rather than as advice.
+
+  1. **Don't write the count.** If a number describes a list in the same
+     document, delete the number and let the list be the count. "The blockers:"
+     followed by the list cannot go stale; "The four blockers:" goes stale the
+     moment one closes.
+     <!-- counted: an illustration of the form being warned against, not a count of anything --> This is the cheapest of the three and it applies far more
+     often than it looks — most spelled counts in this file sit within two lines
+     of the thing they count.
+  2. **Cite, don't recall.** A number from OUTSIDE the document carries the
+     command that produced it and the date it was run:
+
+         <!-- counted: gh issue list --label mvp-blocking --state open
+              --json number | jq length, 2026-08-26 -->
+
+     If you cannot paste the command, you do not know the number and must not
+     write it. A measurement over a fixed window (D-059's "four of the last
+     fifteen PR merges") is a claim about history and does not rot — but it
+     carries its window and its date for the same reason, and it is re-derived
+     when its inputs change.
+  3. **Correct at the instruction, not at the discussion.** Every miss so far
+     landed where the topic was DISCUSSED while the line telling someone what to
+     DO was left standing — a heading, a to-do list, a worked example. A
+     correction is UNVERIFIED until you have grepped the doc set for the claim's
+     SUBJECT rather than the line number you were handed, and the correcting
+     commit records the grep it ran. This is the highest-value of the three:
+     every adversarial pass over the branch that produced these rules needed it
+     independently, and `CLAUDE.md:1055` — a worked example that stayed
+     authoritative for a week after the condition beneath it changed — is the
+     canonical instance.
+
+  **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
+  `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
+  (owner-write-only, so a blocking gate there would hold one developer's PR red
+  on a line only the other may edit). It matches SPELLED cardinals and
+  deliberately not digits, because "14 open" beside its command is the fixed form
+  and flagging it would punish the correction.
+
+  **Two markers, and they are not the same claim.** `<!-- counted: <command>,
+  <date> -->` is rule 2 satisfied. `<!-- counted: historical -->` is for a count
+  QUOTED as the record of a past event — it cannot grow, so it cannot go stale.
+  Do not reach for either to silence a number you simply have not checked; that
+  converts a finding into a lie with a marker on it, and nothing downstream can
+  tell the difference.
+
+  **The gate finds; it does not fix.** A long finding list invites clearing it
+  mechanically, which deletes correct sentences and rewords true ones. Every site
+  gets its own disposition. Where a finding is a false positive, say why at the
+  site — that is what the marker's free-text reason is for — rather than widening
+  the pattern. And expect the gate to catch its own author. It did twice in
+  the branch that wired it: once on the sentence written to explain the merge
+  rule, and once on the illustration inside rule 1 above — the example of the
+  bad form is itself an instance of the bad form, and the gate cannot tell the
+  difference, which is why the marker carries a reason a human wrote.
+
 - **Never commit directly to `main`.** Branch + PR, even for small fixes.
 - **An agent merges on green WITHOUT checking back, when all six hold.** Standing
   as of 2026-08-26, after three consecutive PRs came to the human for a decision
@@ -1092,7 +1159,7 @@ Rules of the road:
   same file, still standing where it gets looked up.
 
   **A PR that repairs the gates comes back too**, and it trips condition 5 on
-  two bullets at once — `apps/api/scripts/check_*.py` and `apps/api/tests/**`.
+  both `apps/api/scripts/check_*.py` and `apps/api/tests/**` at once.
   Both are deliberate: a change to a gate satisfies condition 1 by construction,
   and a change to a test satisfies it more directly than editing a workflow
   does. That such a commit is *repairing* the harness this rule depends on
