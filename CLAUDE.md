@@ -1113,7 +1113,8 @@ Rules of the road:
          one.
        * `apps/api/tests/**` and `e2e/**` — weakening a test satisfies
          condition 1 more directly than editing a workflow does, and this
-         repo has thirteen recorded instances of tests that could not fail.
+         repo keeps finding tests that could not fail — the running record
+         is the #72 bullet above, not a number repeated here.
        * `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both
          drive CI jobs, and seed data being clean is why #130 survived months
          of green.
