@@ -120,7 +120,12 @@ _PROVENANCE = re.compile(r"<!--\s*counted:\s*(\S.*?)-->", re.IGNORECASE | re.DOT
 # when the number is gone; while it is present it is still a recalled count.
 # But a cardinal inside a quotation of a PREVIOUS wrong count is the record of
 # the fix, not a new instance -- those carry this marker.
-_HISTORICAL = re.compile(r"<!--\s*counted:\s*historical", re.IGNORECASE)
+# NOTE: there is deliberately no separate `historical` pattern. `historical` and
+# a pasted command are different claims TO A READER, but the gate treats any
+# non-empty reason alike -- it cannot judge whether a set can grow. A compiled
+# constant matching only `historical` sat here with no call sites until the
+# adversarial reviewer found it: a function with no callers, inside the gate,
+# which is one of the four modes in this repo's own shape statement.
 
 
 def _provenance_window(lines: list[str], index: int) -> str:
@@ -161,21 +166,54 @@ def _echo(text: str) -> None:
 
     The real total was 73 across eight files; it never reached three of them.
     """
+    # NOT the protection, despite how the docstring reads: encoding to UTF-8
+    # always succeeds, so this round-trip is an identity and substitutes nothing.
+    # The protection is `main`'s stdout.reconfigure(errors="replace"). If that
+    # suppress ever fires, the gate still dies here -- now at exit 2 rather than
+    # 1, which was the defect that mattered.
     safe = text.encode("utf-8", "replace").decode("utf-8")
     sys.stdout.write(safe + chr(10))
 
 
-def main(argv: list[str]) -> int:
+def repo_root() -> Path:
+    """The repo root, resolved from this file: apps/api/scripts/x.py -> parents[3].
+
+    RAISES rather than guessing when the layout is not what it expects. This
+    used to be a bare `parents[3]`, which throws `IndexError` inside the api
+    container -- where `/app` IS `apps/api`, so there is no fourth parent. That
+    is the right OUTCOME (the crash handler turns it into exit 2, not a clean
+    report on documents nobody opened) reached by the wrong route: an
+    unexplained IndexError from pathlib tells the reader nothing. A gate that
+    silently picked a different root would be the real disaster, so this refuses
+    to pick one.
+
+    Run this gate from the REPO ROOT, which is what `ci.yml` does.
+    """
+    return root_from(Path(__file__).resolve())
+
+
+def root_from(here: Path) -> Path:
+    """The repo-root rule, split out so it can be tested without moving files."""
+    if len(here.parents) <= 3:
+        raise RuntimeError(
+            f"cannot resolve the repo root from {here} -- this gate expects to live at "
+            "apps/api/scripts/ inside a full checkout, and must be run from the repo root"
+        )
+    return here.parents[3]
+
+
+def main(argv: list[str], root: Path | None = None) -> int:
     # Any console, any codepage. Without this the gate is only as reliable as
     # the characters that happen to appear in the docs it quotes.
     with contextlib.suppress(AttributeError, OSError):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     flags = {a for a in argv[1:] if a.startswith("--")}
     explicit = [a for a in argv[1:] if not a.startswith("--")]
-    unknown = sorted(flags - {"--advisory", "--all"})
+    unknown = sorted(flags - {"--advisory", "--all", "--porcelain"})
     if unknown:
         _echo(f"check-recalled-counts: unknown option(s): {' '.join(unknown)}")
-        _echo("Valid: --advisory (personal status files), --all (both sets).")
+        _echo("Valid: --advisory (personal status files), --all (both sets),")
+        _echo("       --porcelain (file<TAB>phrase<TAB>line, exit 0, for diffing).")
         return 2
     if explicit:
         targets = explicit
@@ -185,7 +223,7 @@ def main(argv: list[str]) -> int:
         targets = ADVISORY_TARGETS
     else:
         targets = DEFAULT_TARGETS
-    root = Path(__file__).resolve().parents[3]
+    root = root or repo_root()
 
     all_findings: list[tuple[str, int, str, str]] = []
     read_any = False
@@ -208,6 +246,15 @@ def main(argv: list[str]) -> int:
         print("check-recalled-counts: read NOTHING -- every target missing.")
         print("An unreadable doc set is not a clean doc set (D-051).")
         return 2
+
+    if "--porcelain" in flags:
+        # file<TAB>phrase<TAB>line-text. Keyed on the TEXT, never the line
+        # number: a baseline keyed on line numbers reports a whole file as new
+        # the first time someone inserts a paragraph above it, which is the
+        # noise this mode exists to prevent.
+        for rel, _lineno, phrase, line in all_findings:
+            _echo(f"{rel}	{phrase}	{line}")
+        return 0
 
     if not all_findings:
         print(f"check-recalled-counts: clean ({len(targets)} documents)")
@@ -252,7 +299,7 @@ if __name__ == "__main__":
     # is an operator who knows exactly what happened and is owed 130, not
     # "could not look".
     #
-    # Duplicated verbatim in all eight gates rather than shared -- an import is
+    # Duplicated verbatim in every gate rather than shared -- an import is
     # one more thing that can fail BEFORE the handler is installed, which is the
     # defect this block exists to close. Drift is caught instead by
     # tests/unit/test_gate_crash_exit_code.py, which runs every one of them.

@@ -1,0 +1,24 @@
+# Advisory recalled-count findings, accepted as of 2026-08-27.
+#
+# The CI step reports only what is NOT in this file. Zero delta means the
+# summary stays empty -- because a check that is red on every PR regardless
+# of the diff teaches everyone to ignore it, which ci.yml says in its own
+# words further down and which the first version of that step walked past.
+#
+# These are advisory because context/*.md is owner-write-only. They are the
+# owners' to clear; when one is cleared, regenerate with:
+#   python apps/api/scripts/check_recalled_counts.py --advisory --porcelain \
+#     > .github/recalled-counts-advisory-baseline.txt
+# Keyed on the finding TEXT, never the line number, so an insertion above a
+# finding does not report the whole file as new.
+context/gene.md	nine blockers	closed**", listed nine blockers as live, and gave a 12-18 session total. Every
+context/gene.md	Sixteen blockers	Sized 2-3 sessions; actual ~5-6. Sixteen blockers over four review rounds
+context/gene.md	three-round	is what a three-round budget would have got wrong. Thirteen closed in PR #155,
+context/gene.md	eight issues	## What item 10 did (all eight issues, code complete)
+context/gene.md	nine blockers	"Close the nine blockers above", pointing at a list that no longer existed. The
+context/gene.md	nine blockers	1. ~~Close the nine blockers.~~ Done, plus four more found afterwards —
+context/gene.md	two gate	3. ~~Fix the two gate defects.~~ Done — `check_separator_classes` exit 2 no
+context/gene.md	two commits	Branch `feat/attack-client-named-tools`, two commits (`09a57e3` then `5a88431`), squashed as `ed96486`.
+context/gene.md	three issues	it did not until PR #157 -- this file named only #143, so three issues that
+context/gene.md	four more instances	**#72 (tests that cannot fail): four more instances this round, all produced by the agent in the same change where it was fixing that pattern's cousins.** Instances 10–13. CLAUDE.md's line — *knowing the shape does not prevent producing it, only checking does* — is now the most heavily evidenced sentence in the file, and it is the argument for the reviewer being a standing rule rather than a habit.
+context/dave.md	two blockers	`DISCARDED` status (Codex's two blockers). Not scope creep.

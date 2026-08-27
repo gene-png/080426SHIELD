@@ -92,52 +92,74 @@ jobs:
       - name: recalled counts (shared docs)
         run: python apps/api/scripts/check_recalled_counts.py
 
-      # The personal status files, REPORT ONLY.
+      # The personal status files, REPORT ONLY, and only what is NEW.
       #
       # The precedent is pip-audit below (`continue-on-error: true`), NOT the
       # LEAVE-row oracle registry above -- that one blocks, and its comment
-      # explains why the ORACLE is not automated, which is a different question.
+      # explains why the ORACLE is not automated, a different question.
       #
       # pip-audit can report without blocking because Dependabot turns its
       # findings into PRs: that step names the channel by which its output
-      # reaches a person. This step has no Dependabot. `continue-on-error` alone
-      # would leave findings in the log of a job that renders green, and nobody
-      # opens a green job's log -- a check with no reader is not a check, which
-      # is the failure this gate set exists to stop, arriving by a slower route.
-      # So it writes to the run summary, which is on the run page without anyone
-      # deciding to expand a step. The write happens BEFORE the exit code is
-      # propagated, so what lands does not depend on how the step concludes.
+      # reaches a person. This step has no Dependabot, so it writes to the run
+      # summary, which is on the run page without anyone expanding a step.
       #
-      # Residual, stated rather than left to be found: a human still has to open
-      # the run page. What this buys is that they do not ALSO have to decide to
-      # expand a step that looks fine.
+      # AND IT REPORTS ONLY THE DELTA against a committed baseline. The first
+      # version of this step reported every finding every time, which would have
+      # meant a permanently non-empty block on every PR -- and this same file
+      # says, of a different check, that one red on every PR regardless of the
+      # diff "teaches everyone to ignore it, which is worse than not running
+      # it". A channel built to be read, given content guaranteed to make it
+      # unread. Zero delta now means an empty summary.
+      #
+      # It fails in the right direction: a stale baseline shows up as NOISE
+      # (findings reported that someone already accepted), never as silence.
       #
       # Why report-only rather than blocking: CLAUDE.md makes each
-      # context/<name>.md owner-write-only. A blocking gate on dave.md would hold
-      # Gene's PR red on a line Gene may not edit -- it would stop the wrong
-      # person, and the only ways out are breaking the ownership rule or merging
-      # past a red check. Posture, not a carve-out: there is no version of
-      # enforcing it that does not create a worse problem.
-      - name: recalled counts in personal status files (report only)
+      # context/<name>.md owner-write-only, so a blocking gate on dave.md would
+      # hold Gene's PR red on a line Gene may not edit. It would stop the wrong
+      # person. Posture, not a carve-out.
+      #
+      # `tr -d '\r'`: the baseline may be regenerated on a Windows host, where
+      # Python emits CRLF; CI is Linux and emits LF. Normalising both sides
+      # keeps the diff about content rather than about whose machine wrote it.
+      - name: recalled counts in personal status files (report only, delta)
         continue-on-error: true
         run: |
           set +e
-          out=$(python apps/api/scripts/check_recalled_counts.py --advisory 2>&1)
+          base=.github/recalled-counts-advisory-baseline.txt
+          if [ ! -f "$base" ]; then
+            echo "advisory baseline missing at $base -- refusing to report"
+            echo "### Recalled counts (advisory): BASELINE MISSING" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            echo "Cannot tell new findings from accepted ones. This is not a clean report." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit 2
+          fi
+          python apps/api/scripts/check_recalled_counts.py --advisory --porcelain > /tmp/live.txt
           code=$?
-          printf '%s\n' "$out"
+          if [ "$code" -ne 0 ]; then
+            echo "gate exited $code before producing a list" >&2
+            cat /tmp/live.txt
+            exit "$code"
+          fi
+          grep -v '^#' "$base" | tr -d '\r' | sort > /tmp/base.txt
+          tr -d '\r' < /tmp/live.txt | sort > /tmp/now.txt
+          comm -13 /tmp/base.txt /tmp/now.txt > /tmp/new.txt
+          if [ ! -s /tmp/new.txt ]; then
+            echo "advisory: no new recalled counts beyond the accepted baseline"
+            exit 0
+          fi
+          echo "advisory: new recalled counts in context/*.md"
+          cat /tmp/new.txt
           {
-            echo "### Recalled counts in personal status files"
+            echo "### New recalled counts in personal status files"
             echo
-            echo "Report only: context/*.md is owner-write-only, so this step does"
-            echo "not block. The reasoning is on this step in ci.yml."
-            echo
-            echo "Gate exit code: $code (0 clean, 1 findings, 2 could not read)."
+            echo "Advisory: \`context/*.md\` is owner-write-only, so this does not block."
+            echo "Only findings NOT in \`.github/recalled-counts-advisory-baseline.txt\` are listed."
             echo
             echo '~~~'
-            printf '%s\n' "$out"
+            cat /tmp/new.txt
             echo '~~~'
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          exit $code
+          exit 1
 
       - name: pytest -m unit
         working-directory: apps/api

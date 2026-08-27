@@ -579,8 +579,8 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   - `leave_row_oracle.py` — a docstring recording that its own counts must be
     re-counted on every guard-list change, quoting counts that were two guard-list <!-- counted: historical -->
     changes old.
-  - **`CLAUDE.md` itself, the re-count-trigger bullet above** — it
-    bullet said the collected count was **327**. It was 376 by the time that
+  - **`CLAUDE.md` itself, the re-count-trigger bullet above** — it said the
+    collected count was **327**. It was 376 by the time that
     sentence shipped and is 410 now. A bullet about counts going stale in
     another file, carrying a stale count.
   - `tests/unit/test_redact_address_matrix.py` — "(The count is 327 now…)",
@@ -593,8 +593,8 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   pad the list would have mislabelled it, which is what makes the next sweep
   miss.
 
-  The countermeasure is not more care, because in three of four the author was
-  actively applying the rule. It is: **when you write a sentence certifying a
+  The countermeasure is not more care, because in most of the instances above the
+  author was actively applying the rule. It is: **when you write a sentence certifying a
   derived value, put the value where a gate can read it, and let the sentence
   point at the gate rather than restate the number.** `check_plan_totals.py`
   reads the table, not the prose, which is why the plan's total is the one figure
@@ -614,9 +614,9 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   that exits 0 without having looked — the way you enumerate a truth table before
   a regex.** The fail-closed rule further up is about the branch you write on
   purpose. This is about the branches you do not notice you wrote, and the
-  distinction matters because the second kind has now happened three times in
-  this repo's own tooling, every one of them found in review rather than by the
-  author:
+  distinction matters because the second kind keeps happening in this repo's own
+  tooling — the list below is the count, and every entry but the last was found
+  in review rather than by the author:
 
   - `check_audit_evidence.py` — `is_code_change([])` returned False, so an empty
     changed-file list printed "documentation-only change, exempt" and exited 0.
@@ -650,8 +650,8 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 - **A comment or message stating a rule NARROWER than the reader will assume,
   positioned exactly where they would go to check, is worse than no comment.**
   It is true, so nothing flags it; it is where you look, so it ends the search;
-  and it reads as a guarantee rather than as a scope. The instances, most of
-  them in the redaction subsystem within two days and the fourth added later:
+  and it reads as a guarantee rather than as a scope. The instances, most of them
+  in the redaction subsystem within two days and the last added later:
 
   - `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
     beside the JWT signing secret. True. The guard covered one of three
@@ -670,7 +670,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
     filed here -- it was withdrawn from the staleness bullet above and, for one
     draft, recorded in neither list. Tracked as **#158**.
 
-  All four were found by reading the CODE and comparing, never by reading the
+  Every one was found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
   The countermeasure is mechanical, not attentional: when a comment states a
   condition, read the condition it describes and check the two agree in SCOPE,
@@ -1016,7 +1016,8 @@ Rules of the road:
      SUBJECT rather than the line number you were handed, and the correcting
      commit records the grep it ran. This is the highest-value of the three:
      every adversarial pass over the branch that produced these rules needed it
-     independently, and `CLAUDE.md:1055` — a worked example that stayed
+     independently, and the merge rule's worked example for item 7 part 2 — which
+     stayed
      authoritative for a week after the condition beneath it changed — is the
      canonical instance.
 
@@ -1037,7 +1038,11 @@ Rules of the road:
   **Two limits of the mechanism, both load-bearing, both found by using it.**
   The provenance window is the finding's line and two either side, so a marker
   spanning three lines has its closing delimiter outside the window and does not
-  register — write markers on one line. More importantly, the pattern requires
+  register — write markers on one line. Matching is also PER LINE, so a count
+  split across a line break (`Three` / newline / `instances`) is invisible — and
+  since `prettier --write` is mandatory before every commit and reflows prose, an
+  edit somewhere above a flagged line can silently un-flag it with no change to
+  the sentence. More importantly, the pattern requires
   the cardinal to sit NEXT TO the noun, so `thirteen recorded instances` is
   invisible where `nine instances` is caught.
   <!-- counted: quoted phrases illustrating the pattern, not counts of anything -->
@@ -1074,7 +1079,11 @@ Rules of the road:
   least is a path this codebase's code actually touches, and this repo does not
   ship code without tests. Measured 2026-08-26 by applying condition 5's path
   list to the last fifteen PR merges on `main`: **four cleared, eleven came
-  back**, the eleven tripping 1 to 20 paths each. It is written here so nobody
+  back**, the eleven tripping 1 to 20 paths each. Re-derived 2026-08-27 after
+  the web test globs were added, per the trigger below — the figure is
+  unchanged, because no PR in that window touched a web test file. The hole was
+  real and simply unexercised by the window, which is the measurement's limit
+  rather than a reason to doubt it: a window can only show what it contains. It is written here so nobody
   has to derive the scope from the conditions and arrive somewhere more generous
   — an earlier framing promised more than four in fifteen, and the conditions
   below had grown past it.
@@ -1131,10 +1140,22 @@ Rules of the road:
          migration" (condition 4) is not "nothing under `alembic/`". A
          cascade rule or a column default changes stored behaviour without
          one.
+       * `apps/web/**/*.test.ts`, `apps/web/**/*.test.tsx`,
+         `apps/web/**/*.spec.ts`, `apps/web/**/*.spec.tsx` — the vitest suite,
+         which condition 1 counts as one of its checks. The justification
+         written for `apps/api/tests/**` below applies word for word, and
+         for a week this list did not carry it: a PR editing a component and its
+         own test cleared every condition, including a version that WEAKENS the
+         test. The rule's own reasoning was sitting next to the hole. Test globs
+         only, deliberately — most `apps/web` product code that matters is
+         already caught by condition 6's dashboard clause, and widening to
+         `apps/web/**` would expand scope on an argument nobody has made.
        * `apps/api/tests/**` and `e2e/**` — weakening a test satisfies
          condition 1 more directly than editing a workflow does, and this
-         repo keeps finding tests that could not fail — the running record
-         is the #72 bullet above, not a number repeated here.
+         repo keeps finding tests that could not fail (#72, D-051). No
+         enumerated list of those instances exists anywhere; the figures
+         that used to be quoted here and in CONTEXT.md disagreed, and
+         neither was ever derived.
        * `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both
          drive CI jobs, and seed data being clean is why #130 survived months
          of green.

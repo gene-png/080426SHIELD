@@ -706,7 +706,7 @@ if __name__ == "__main__":
     # is an operator who knows exactly what happened and is owed 130, not
     # "could not look".
     #
-    # Duplicated verbatim in all eight gates rather than shared -- an import is
+    # Duplicated verbatim in every gate rather than shared -- an import is
     # one more thing that can fail BEFORE the handler is installed, which is the
     # defect this block exists to close. Drift is caught instead by
     # tests/unit/test_gate_crash_exit_code.py, which runs every one of them.

@@ -3332,3 +3332,49 @@ way a live count does — but it is only true of condition 5 as that list stood 
 2026-08-26. **Re-derive it whenever condition 5 changes.** Condition 5 changed
 twice in the three days before this entry, so that is a scheduled event and not
 a remote contingency.
+
+## D-059a — Condition 5 gains the web test globs; the measurement is re-derived and unchanged
+
+**Date:** 2026-08-27 · **Context:** the fourth adversarial pass on `docs/stale-count-and-merge-rule` · **Amends:** D-059
+
+The fourth reviewer pass falsified D-059's central claim. It stated that
+"because the list now includes `apps/api/tests/**` and `e2e/**`, and because
+this repo does not ship code without tests, no PR containing code can clear the
+rule." Condition 5 named **no `apps/web` path at all**, and there are 35 vitest
+files under `apps/web/src/**`. A PR editing a component and its own test cleared
+conditions 1, 4, 5 and 6 and merged unattended — **including a version that
+weakens that test** — which is the exact justification already written for
+including `apps/api/tests/**`. The rule's own reasoning was sitting
+next to the hole.
+
+**The fix is narrow on purpose: the test globs only** (`apps/web/**/*.test.ts`,
+`*.test.tsx`, `*.spec.ts`, `*.spec.tsx`), not `apps/web/**`. The narrow version
+closes the falsification using an argument already in the file. The broad
+version would expand the rule's scope on an argument nobody has made, and most
+`apps/web` product code that changes what a client sees is already caught by
+condition 6's dashboard clause.
+
+**D-059's number is implicated but NOT stale, and the distinction is the point.**
+The measurement applied condition 5's path list as it then stood, and it
+correctly describes _that_ rule. The number was right about a rule that was
+wrong. Calling it stale would flatten exactly the kind of distinction this branch
+spent four passes preserving.
+
+**Re-derived per D-059's own trigger — its first live test.** Against the amended
+list: **four cleared, eleven came back.** Unchanged, because no PR in that window
+touched a web test file. The hole was real and simply unexercised by the window.
+That is the measurement's limit rather than a reason to doubt it: a window shows
+only what it contains, which is the enumeration lesson one level up.
+
+**The population is now pinned, because getting it wrong is easy and silent.**
+The first re-derivation attempt used "the last fifteen commits on `main`" and
+returned **eight cleared, seven came back** — a different, defensible-sounding
+reading of the same words, off by a factor of two. `main` carries commits that
+are not the head of a merged PR, so the two populations differ. The command:
+
+    gh pr list --state merged -L 15 --json number,mergeCommit
+
+then `git show --name-only` per merge commit, matched against condition 5's
+paths. The four that clear are `1bc5733`, `16267b0`, `634f6ea`, `65e0f31` — all
+documentation. Reproducing those four SHAs is the check that the population is
+right.

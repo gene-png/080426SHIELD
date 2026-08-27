@@ -575,7 +575,12 @@ documents overlap heavily; PR #6 carries the authoritative change -> finding tab
 **No migrations in Phase C or D.** The Deliverables statuses derive from columns
 that already existed.
 
-**The one open item is a verification gap, not a defect.** `REPORT.md` records <!-- counted: historical -->
+**Superseded 2026-08-19.** Live-AI verification completed — item 0 in
+`DELIVERY_PLAN.md`, tracked as #82 — so the instruction at the end of this
+paragraph no longer applies. Kept as the record of Phase D's close.
+<!-- counted: historical -->
+
+**The one open item was a verification gap, not a defect.** `REPORT.md` records
 that CSF and MITRE live scoring were never completed, deprioritised once F-3 was
 established, and F-3's own note says Zero Trust could not complete on live
 Anthropic at all. PR #6 added streaming to answer that — but **nothing has

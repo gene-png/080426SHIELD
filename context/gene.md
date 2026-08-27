@@ -57,6 +57,12 @@ Item 7 part 2 (`/ai-inputs` endpoint + panel), then **#131 back to Gene before i
 lands** -- fixing it changes deliverable content by definition, which the
 standing merge rule in CLAUDE.md reserves for a human.
 
+**[CORRECTED 2026-08-27]** Item 7 part 2 **also** comes back to a human. An
+earlier reading had it landing unattended on the strength of a `CLAUDE.md`
+worked example that had gone stale: an endpoint plus a panel ships with tests,
+and condition 5 covers `apps/api/tests/**`, `e2e/**` and now the web test globs.
+The worked example was corrected in the same PR.
+
 **One correction to the plan's item 7 note.** It says "port the `/ai-inputs`
 panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility`
 is now **103 commits behind main** and its `routes/attack.py` differs by
@@ -66,7 +72,22 @@ useful shape reference; the backend endpoint they call does not exist on `main`.
 This is "write against the current resolver using #29 as reference", not "port",
 and the 1-1.5 estimate rests on the porting assumption.
 
-## PICK UP HERE (2026-08-26, end of day) — start at step 1 below
+## PICK UP HERE (2026-08-26, end of day) — **DONE, see the correction below**
+
+> **Corrected 2026-08-27 by an agent on `docs/stale-count-and-merge-rule`, at
+> Gene's explicit instruction and recorded as the exception this file's own
+> ownership rule describes.** The corrections are marked **[CORRECTED]** in
+> place and state what they replace rather than overwriting it silently. The
+> reason for the exception: this file had reached its THIRD occurrence of the
+> stale-instruction shape it documents twice, and the only person permitted to
+> fix it is the one not in the editor. Nothing else in the file was touched.
+
+**[CORRECTED]** Steps 1-4 below all LANDED on 2026-08-27 in
+`docs/stale-count-and-merge-rule` (PR #157). Do not start at step 1. They are
+kept because the reasoning in them is still the record of why each was done.
+What is actually next: the fifth adversarial pass against the frozen branch,
+then Gene's merge decision — the branch trips condition 5 on several bullets,
+so it comes back to a human by the standing rule.
 
 `main` is at `fbca899` and untouched since item 10 landed. **PR #157 is an open
 DRAFT and merges nothing.** Do not merge it before doing the steps below and
@@ -89,8 +110,10 @@ instead of derived.** Gene named four rules for it:
 2. **Cite, don't recall.** A number from outside the document carries the command
    that produced it and the date. If you cannot paste the command, you do not
    write the number.
-3. **Gate it.** `apps/api/scripts/check_recalled_counts.py` — committed, working,
-   and **deliberately NOT wired into `ci.yml`**. See the caveat below.
+3. **Gate it.** `apps/api/scripts/check_recalled_counts.py`. **[CORRECTED
+   2026-08-27]** It said "committed, working, and **deliberately NOT wired into
+   `ci.yml`**". It is wired now: blocking on the shared documents, report-only
+   on `context/*.md`.
 4. **Correct at the instruction, not at the discussion.** Every miss above landed
    where the topic was DISCUSSED while the line telling someone what to DO was
    left standing. A correction is unverified until you have grepped the doc set
@@ -152,9 +175,15 @@ Two things a structural check added to Gene's sweep:
 
 ### Two caveats that will bite if missed
 
-- **The gate is committed but not referenced by any workflow, on purpose.** CI
-  runs only what the workflow invokes, so it is inert and cannot redden the
-  branch that adds it. Wire it up in step 1, after the sweep, not before.
+- **[CORRECTED 2026-08-27] The gate IS wired now.** This bullet said it was
+  "committed but not referenced by any workflow, on purpose" and told the reader
+  to "wire it up in step 1, after the sweep, not before". Both were true when
+  written and false from the moment the sweep landed. The wiring is two steps in
+  `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
+  against a committed baseline. The precedent cited for the report-only step was
+  also wrong — `ci.yml:75` explains why the ORACLE is not automated and what CI
+  invokes there is a hard gate; the real precedent is pip-audit's
+  `continue-on-error`.
 - **Do not write the site count anywhere.** The gate's noun list is hand-built
   and so was the estimate before it; both are floors, and the true population is
   above both. A count of the places where counts go stale is the last place a
@@ -187,9 +216,11 @@ exists), **#143** (the pre-push hook's fail-open).
 | #142 | `is_production()` DELETED; `is_development()` + `expose_api_docs()`. All four call sites converted — redaction-off, JWT placeholder, `/docs`, `/openapi.json` were all permitted on `staging`. |
 | #144 | Migration **0046**: nullable `llm_calls.redaction_mode`, no server default, written at INSERT, write-once. Pre-migration rows stay NULL and NULL means NOT RECORDED. |
 
-**Three new gates shipped this week**, all wired into `ci.yml`:
-`check_no_control_chars.py`, `check_plan_totals.py`, `check_separator_classes.py`
-— the last found a third instance of its own defect on first run.
+**New gates shipped this week**, all wired into `ci.yml`:
+`check_no_control_chars.py`, `check_plan_totals.py`, `check_separator_classes.py`,
+and **[CORRECTED 2026-08-27]** `check_recalled_counts.py` — the count that used to
+open this sentence said three and went stale within the week, which is the defect
+this very list is about. The list is the count.
 
 ## What was LEFT on item 10 — all of it done (kept as the record of a near-miss)
 
@@ -238,7 +269,9 @@ paragraph someone points at is not the same as correcting the file.
 - Gates before every commit: host `prettier@3.9.5 --check`, in-container
   `ruff check --no-cache . && black --check .`, `check_test_integrity`,
   `check_no_control_chars`, `check_plan_totals`, `check_separator_classes`,
-  `leave_row_oracle.py --check-registry`. That last one is a CI check and was
+  `leave_row_oracle.py --check-registry`, and **[CORRECTED 2026-08-27]**
+  `check_recalled_counts.py` (run from the REPO ROOT, not the container — it
+  resolves the repo root from its own path and refuses rather than guessing). That last one is a CI check and was
   missing from this list, so a commit passing every gate here could still go
   red -- on a new LEAVE table with no registered guards, which is the silent
   success the oracle exists to catch.

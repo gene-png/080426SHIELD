@@ -142,8 +142,8 @@ runs the first eight — address and org name are strict-only.
 
 **Both fixes were wrong before they were right, and the record is worth keeping.**
 The first phone rewrite closed the over-match and opened four under-matches --
-trunk-prefixed (`1-800-555-0199`), UK national, and any number separated by a
-non-ASCII space -- every one of which the old rule caught. The first signature
+trunk-prefixed (`1-800-555-0199`), dot-separated (`1.555.867.5309`), UK national
+(`020 7946 0958`), and any number separated by a non-ASCII space -- every one of which the old rule caught. The first signature
 fix required a trailing comma, which leaked a name, a title, an org and a ZIP
 line on any comma-less sign-off. Both were caught by adversarial review rather
 than by the test tables, because the REDACT half of each table was one shape

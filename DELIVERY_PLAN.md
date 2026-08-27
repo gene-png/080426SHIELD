@@ -227,8 +227,10 @@ recovery from it.
 (An earlier draft of this sentence said "five … pre-existing on `main`",
 swapping the two categories and inflating the recovery 5x — in the paragraph
 offered as the reason the overrun was worth paying. Row 72 of this file had it
-right the whole time.) The second thing that makes it worth the price, and the two derived corpora it produced are
-permanent and now budgeted into items 6 and 9.
+right the whole time.)
+
+The second thing: the two derived corpora it produced are permanent, and both
+are now budgeted into items 6 and 9.
 
 None of the three was mis-scoped. In each, the reviewer found real defects at a steady
 rate right through the last round — the second round of #130 found a leak worse
@@ -245,8 +247,9 @@ cost scales with the number of PRs, not with the amount of work.
   all decided by the same truth table, all reviewed in the same context. Six
   branches would pay the review overhead six times for no additional review
   value — the reviewer would re-read the same file six times — and would leave
-  five stale cross-references in the docs between merges. This is why item 10 is
-  sized at 1.5–2.5 rather than the 3–4 a cold item carries.
+  five stale cross-references in the docs between merges. This is why item 10 was
+  first sized at 1.5–2.5 rather than the 3–4 a cold item carries. It was re-sized
+  to 2–3 and landed at ~5–6; the table row is the record.
 - **Item 9's issues** (#114, #115, #46, #109, #124, #125, #126) split more
   naturally, because they span four surfaces. Split them by **surface**, not by
   issue — **four groups, and every issue is in exactly one**:

@@ -47,6 +47,12 @@ GATES = [
     ("check_separator_classes", "sys.argv"),
     ("check_test_integrity", "sys.argv"),
     ("leave_row_oracle", "sys.argv"),
+    # Not a CI gate -- mutation-sweep.yml is schedule-only and pipes through
+    # `tee`, so its exit code never reaches the job. It is here anyway: it
+    # carries the identical 0/1/2 convention, and a developer running it by
+    # hand reads exit 1 as "surviving mutants". The sweep that fixed the other
+    # eight missed it, which is this repo's twin rule in its own tooling.
+    ("mutation_sweep", ""),
 ]
 
 MARKER = 'if __name__ == "__main__":'
