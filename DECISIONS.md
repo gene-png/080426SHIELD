@@ -3378,3 +3378,102 @@ then `git show --name-only` per merge commit, matched against condition 5's
 paths. The four that clear are `1bc5733`, `16267b0`, `634f6ea`, `65e0f31` — all
 documentation. Reproducing those four SHAs is the check that the population is
 right.
+
+## D-060 — The reviewer always runs; three dispositions decide what blocks
+
+**Date:** 2026-08-27 · **Context:** governance growth measured after PR #157 · **Amends:** D-057
+
+**The measurement.** `CLAUDE.md` on `main`: **211 lines** (2026-08-15) →
+**648** (2026-08-24) → **1,236** (2026-08-27). Doubled in three days, six-fold
+in twelve, accelerating. The governance corpus across `CLAUDE.md`,
+`DECISIONS.md`, `DELIVERY_PLAN.md`, `CONTEXT.md` and both `context/*.md` is
+**6,881 lines / 69,201 words** — longer than most published books, governing the
+remaining MVP backlog. Every entry was individually justified, which is the
+mechanism rather than a defence.
+
+**The reviewer was never the problem. Treating everything it found as blocking
+was.** Five passes over PR #157 returned 17, 12, 11 and 15 findings and did not
+converge. That is structural: prose review has no green state, because judgement
+has no green state. Each pass also audited a larger tree, because each fix grew
+the surface.
+
+**So the reviewer still runs on every PR, on every surface, and is explicitly
+NOT permitted to skip prose.** What changes is that every finding carries a
+disposition:
+
+- **BLOCKING** — any executable path. Fixed before merge, no exceptions.
+- **BLOCKING (prose)** — prose where acting on it as written causes WRONG WORK.
+  A heading claiming work is incomplete when it is done; a to-do list of
+  finished items; a worked example contradicting its own rule; a scope claim
+  that sends someone to build what already ships. The cost is a session, not a
+  sentence.
+- **ADVISORY** — prose whose only cost is inaccuracy. Filed with an issue
+  number, not fixed before merge.
+
+**The test is one question: would a competent person, reading this and acting on
+it, do the wrong thing?** Accuracy is the advisory bar; consequence is the
+blocking bar.
+
+**Filed is not deferred.** An advisory finding without an issue number is an
+unfixed defect wearing a disposition — the same shape as a false claim carrying
+a marker that certifies it (`CONTEXT.md`'s superseded live-AI paragraph).
+
+**Where the rule lives, and why only there.** In
+`.claude/agents/adversarial-reviewer.md`, in the body AND the frontmatter
+`description`, so it binds regardless of who invokes the agent or whether they
+have `CLAUDE.md` in view. `CLAUDE.md` points at it in one line and does not
+restate the dispositions — two copies of a rule are two places for it to drift,
+which this repo has four recorded instances of.
+
+**Two same-day tests of the new rule, both real.** The scope claim in
+`DELIVERY_PLAN.md` saying item 7's endpoint "does not exist on `main`" is
+BLOCKING (prose): a generic `/ai/preview` ships the payload half already, fully
+wired, so a reader acting on the plan would build a duplicate. The item's
+estimate being too high is ADVISORY: wrong, and it changes no action today.
+
+## D-061 — `context/*.md` and typo-class fixes go direct to `main`
+
+**Date:** 2026-08-27 · **Context:** the same governance pass · **Amends:** the "never commit directly to `main`" rule
+
+Measured over the last twenty-five commits on `main`: **nine were direct**,
+every one `docs(context):`, every one touching only `.md` files under
+`context/`. The rule said never; practice said always, for one narrow and
+harmless class.
+
+**A rule that is routinely and correctly ignored does not bind the case it was
+written for.** It teaches that the rules here are advisory, which is expensive
+for the ones that are not — and this repo's rules include several where a single
+character decides whether a gate means anything.
+
+So: `context/*.md` and typo-class prose fixes go direct. **The boundary is the
+same test as D-060's:** a prose fix that changes what someone would DO is not
+typo-class and is still a PR. Everything else — code, tests, CI, gates,
+migrations, and any document stating a rule or a number someone acts on —
+is branch + PR, unchanged.
+
+## D-062 — `CLAUDE.md` is INSTRUCTIONS; `DECISIONS.md` is the RECORD
+
+**Date:** 2026-08-27 · **Context:** the same governance pass
+
+**Budget: 600 lines on `CLAUDE.md`.** The split that gets it there: if a
+paragraph says what to DO it stays; if it says what HAPPENED it moves to a
+D-number and `CLAUDE.md` cites it in one line. Most of the current length is
+incident narrative — how a defect was found, who found it, how many rounds it
+took. Worth keeping, not worth keeping where every reader pays for it on every
+read to reach an instruction that is usually one sentence.
+
+**The trim is incremental, in whatever PR next touches the file, and NEVER its
+own project.** A 1,236-line file cannot be trimmed to 600 in one session, and
+attempting it is precisely the large, self-referential, judgement-heavy pass
+with no green state that D-060 exists to stop.
+
+**A task map goes at the top** — "read the rows that apply and stop" — because
+the map makes the file usable immediately while the budget works over several
+PRs. Length was never the whole problem; undifferentiated length was.
+
+**What the budget does not license, recorded so a trim cannot take load-bearing
+rules:** verify-by-running (the highest-value rule here — every expensive
+failure recorded traces to violating it), "AI suggests, code computes", FAIL
+LOUDLY, the gate suite and the reasons each gate exists, and the merge rule as
+it stands. **Do not grow the merge rule.** It has been repaired four times; each
+repair was correct and the aggregate is a rule nobody can hold in their head.
