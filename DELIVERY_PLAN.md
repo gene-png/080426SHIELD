@@ -65,15 +65,15 @@ fixture mode already demos all five.
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **DONE** (PR #103, merged 2026-08-20). Scoped to the resolver; the two gaps it left honest rather than implied are #101 + #102, item 5a | — | — | — |
 | 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). <!-- counted: historical --> Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — | — |
 | 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted) and **#132** (`risk.py` re-derives the ATT&CK citation drop as a two-line list comprehension with no counter, no reason and nothing in the audit row -- found by grepping the SHAPE, not the call sites, and absent from this plan entirely until the review of PR #157 noticed an `mvp-blocking` issue with no owning item). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **4–6 sessions** (re-sized 2026-08-25 — see "Why the range is wide") | — |
-| 7 | **W1 ATT&CK step** | Not started — **decision superseded 2026-08-26.** It read "port the `/ai-inputs` panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility` is now 103 commits behind `main` and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the backend endpoint its four files call does not exist on `main`. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption and is unsound until re-derived** -- do that before starting, not after. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **1–1.5 sessions** | — |
+| 7 | **W1 ATT&CK step** | Not started — **decision superseded 2026-08-26.** It read "port the `/ai-inputs` panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility` is now 103 commits behind `main` and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the backend endpoint its four files call does not exist on `main`. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption and is unsound until re-derived** -- do that before starting, not after. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **4–6 sessions** (re-derived 2026-08-27 — see "Re-sizing item 7") | — |
 | 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** | — |
 | 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **4–6 sessions** (fixes only; re-sized 2026-08-25 — see "Why the range is wide") | — |
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
 | 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). <!-- counted: historical --> Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
 
-### Total remaining: 10–15 sessions, and the parts sum to it
+### Total remaining: 13–19.5 sessions, and the parts sum to it
 
-**Updated 2026-08-26**, when item 10 landed. Expect the upper half; see the
+**Updated 2026-08-27**, when item 7 was re-derived. Previously 10–15. Expect the upper half; see the
 next section for why, and note that all three measured items have now landed
 in it or past it.
 
@@ -87,7 +87,8 @@ the rounds that oracle output will generate.
 **A HISTORICAL note, kept because the incident is the lesson.** During PR #146
 this heading read 12–18.5 for one draft and the parts did not sum to it. The
 totals it discusses — 12–18.5 and 12–18 — are both superseded: item 10 landed on
-2026-08-26 and the figure is now 10–15 across the items in the table below.
+2026-08-26 and the figure is now 13–19.5 across the items in the table below,
+after item 7 was re-sized on 2026-08-27.
 
 That restatement is itself the rule firing. The paragraph said "today's 12–18"
 and went stale the moment the item it was written beside was marked DONE, in the
@@ -105,11 +106,11 @@ not by writing the rule.
 
 | Item | Estimate |
 | --- | --- |
-| 7 — W1 ATT&CK step (+ #131) | 1–1.5 |
+| 7 — W1 ATT&CK step (+ #131) | 4–6 |
 | 9 — correctness defects only a code review catches | 4–6 |
 | 6 — W1 Risk step | 4–6 |
 | 8 — W6 Risk export/publish split | 1–1.5 |
-| **Total** | **10–15** |
+| **Total** | **13–19.5** |
 
 At 4–8 hours a session that is roughly **46–140 hours**, or **2–5 working
 weeks** at 5–6 productive hours a day. The width of that is the point, not a
@@ -347,6 +348,55 @@ of starting when the instinct runs the other way.
   a required check, and no client document or audit row depends on it. Stated
   rather than left unlabelled, because in a list "unlabelled" and "deliberately
   out of scope" look identical.
+
+### Re-sizing item 7, 2026-08-27
+
+The recorded **1–1.5** rested on one assumption — "port the `/ai-inputs` panel
+from #29's branch, zero drift" — and that assumption expired. It is not adjusted
+here; it is void, and the replacement is derived from two independent directions
+that are then checked against each other.
+
+**What actually has to be built.** `feat/attack-ai-inputs-visibility` is 104
+commits behind `main`. Its ai-inputs-specific surface is **825 insertions**
+across six files (a 243-line panel, a 214-line panel test, a 280-line backend
+test, types, client, proxy route) — genuinely useful as a shape reference. But
+it sits on **630 insertions** of backend that `main` has since rewritten:
+`routes/attack.py` is 1835 lines today and `citations.py` 478, and neither
+resembles what #29 called. The endpoint does not exist on `main` at all; the
+only trace is a stale `.pyc`. So the panel is a reference and the backend is a
+fresh write, against four subsystems that all postdate #29: the resolver rewrite
+(5a), the D-053 approval snapshot, #102's withholding, and #133's enrichment.
+The payload has to express all four or the panel shows something the model was
+never given.
+
+**Bottom-up:** backend endpoint and schema against the current resolver,
+including reading those four subsystems (0.75–1); backend tests covering tenant
+isolation, admin-only, and redaction parity by CALLING the redactor rather than
+restating it (0.5–0.75); the web half — proxy route, client, types, panel,
+workspace wiring, vitest (0.75–1); e2e plus the `--force-recreate web` cycle and
+the serialised seeded DB (0.25–0.5); review rounds, which are inside the number
+and not a contingency (0.75–1.25); and **#131** — a resolver defect whose fix
+changes client deliverable content, so it needs its own enumeration and its own
+verification that the losing spelling stops reaching the deliverable (0.75–1.25).
+That sums to **3.75–5.75**.
+
+**Cross-check from the measured ratios.** The estimate-vs-actual table records
+2–4x on every item that has landed, with the largest (item 10) at the low end.
+A fresh-write base of 1.5–2 against that band gives 3–8. The bottom-up figure
+sits inside it, nearer the middle. Two constructions from opposite directions,
+which is the only cross-check this document trusts.
+
+**Recorded as 4–6.**
+
+**Recommendation: split it, and the reason is measured rather than aesthetic.**
+Item 7 part 2 and #131 should be separate PRs. Splitting no longer costs an
+unattended merge — both come back to a human under condition 5 regardless, since
+an endpoint plus a panel ships with tests and #131 changes deliverable content.
+What it buys is review convergence: the four adversarial passes over PR #157
+returned 17, 12, 11 and 15 findings and did not converge, because each pass
+audited a surface the previous step had grown. A smaller surface is the only
+lever that has ever moved that number. Suggested split: **7b, endpoint and
+panel, 2.5–4**; **#131, 1–2**.
 
 ### Estimate vs actual, recorded as items land
 
