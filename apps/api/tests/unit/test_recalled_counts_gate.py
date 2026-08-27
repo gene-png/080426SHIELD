@@ -33,8 +33,16 @@ def test_an_unprovenanced_spelled_count_is_flagged() -> None:
 
 @pytest.mark.unit
 def test_digits_are_deliberately_not_flagged() -> None:
-    """The fixed form the gate steers towards must not itself be a violation."""
-    assert check("14 open, per the command below.\n") == []
+    """The fixed form the gate steers towards must not itself be a violation.
+
+    The fixture MUST carry a volatile noun. An earlier version read
+    "14 open, per the command below." -- no volatile noun anywhere, so it
+    returned [] whether or not digits were matched and the test could not
+    fail. Verified by mutation: adding a digit alternative to the cardinals
+    left this file green at 18/18, its size then. #72's pattern inside a file written
+    because this gate shipped as a blocking check with no behaviour test.
+    """
+    assert check("14 open blockers, per the command below.\n") == []
 
 
 @pytest.mark.unit
@@ -125,3 +133,66 @@ def test_too_short_a_path_raises_a_NAMED_error_rather_than_an_IndexError() -> No
     """
     with pytest.raises(RuntimeError, match="cannot resolve the repo root"):
         root_from(Path("/app/scripts/g.py"))
+
+
+@pytest.mark.unit
+def test_one_missing_target_exits_2_rather_than_being_skipped(tmp_path: Path) -> None:
+    """PARTIAL blindness, which is the likely failure, not total blindness.
+
+    The old guard fired only when EVERY target was missing -- a case that cannot
+    occur -- and stayed silent on one missing document. Removing a single
+    enforced doc produced `clean (6 documents)` and exit 0 from a gate that had
+    read five.
+    """
+    (tmp_path / "CLAUDE.md").write_text("nothing to see\n", encoding="utf-8")
+    assert main(["prog"], root=tmp_path) == 2
+
+
+@pytest.mark.unit
+def test_the_clean_message_states_a_count_of_documents(tmp_path: Path, capsys) -> None:
+    """Pins the message FORMAT. It cannot pin which value produced it.
+
+    The gate now derives that number by counting reads rather than taking
+    `len(targets)`, which is the honest form -- the old one was a count asserted
+    rather than derived, in the success message of the gate built to catch
+    exactly that.
+
+    But this test cannot tell the two apart, and saying so is the point.
+    Reverting `checked` to `len(targets)` leaves this file green, because the
+    missing-target guard makes them provably EQUAL on every path that reaches
+    this line: any target that cannot be read exits 2 before it. Verified by
+    reverting; it stayed green.
+
+    So the derived count is defence in depth against a future skip branch, not a
+    behaviour a test can observe today. The behaviour that IS observable is
+    pinned by the two missing-target cases, one above this and one below, and
+    they go red on the OTHER revert -- the one restoring the `continue` for a
+    missing target. Naming which revert matters: an earlier draft said they go
+    red on "that revert", whose nearest antecedent was the `len(targets)`
+    revert, under which nothing goes red at all. A false sentence inside the
+    justification for keeping a test that cannot fail is the one place this
+    repo can least afford one, and it survived until a reviewer read it.
+    Written out because an unexplained non-discriminating test is
+    indistinguishable from an oversight -- which this file already has one
+    recorded instance of.
+    """
+    for name in ("a.md", "b.md"):
+        (tmp_path / name).write_text("nothing to see\n", encoding="utf-8")
+
+    assert main(["prog", "a.md", "b.md"], root=tmp_path) == 0
+    assert "clean (2 documents)" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_a_partial_set_never_reports_a_clean_count(tmp_path: Path, capsys) -> None:
+    """The discriminating half: three asked for, one present, no clean line."""
+    (tmp_path / "a.md").write_text("nothing to see\n", encoding="utf-8")
+
+    assert main(["prog", "a.md", "gone.md", "also-gone.md"], root=tmp_path) == 2
+    captured = capsys.readouterr()
+    assert (
+        "check-recalled-counts: clean" not in captured.out
+    ), f"reported clean over a set it did not read: {captured.out!r}"
+    # stderr, deliberately: stdout is --porcelain's machine-readable stream,
+    # and the baseline-regeneration command redirects it into a data file.
+    assert "MISSING target gone.md" in captured.err

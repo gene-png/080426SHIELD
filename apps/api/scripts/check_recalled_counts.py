@@ -226,24 +226,48 @@ def main(argv: list[str], root: Path | None = None) -> int:
     root = root or repo_root()
 
     all_findings: list[tuple[str, int, str, str]] = []
-    read_any = False
+    # COUNTED, never assumed. This used to report `len(targets)` -- the set the
+    # gate MEANT to read -- in its own success message, which is a count
+    # asserted rather than derived from what happened, inside the gate built to
+    # catch exactly that. Fifth instance of the shape.
+    checked = 0
     for rel in targets:
         path = root / rel
         if not path.exists():
-            # Not fatal: the doc set differs per checkout depth. But if NOTHING
-            # was readable, that is the could-not-look branch and it exits 2.
-            continue
+            # A missing target used to `continue`, justified by a comment saying
+            # "the doc set differs per checkout depth". That premise is FALSE and
+            # was falsified by running it: `git clone --depth 1` yields history
+            # depth 1 and every tracked file present, because depth controls
+            # HISTORY, never the working tree. So the skip had no justification.
+            #
+            # It also guarded the wrong case. The old `read_any` flag fired only
+            # when EVERY target was missing -- total blindness, which cannot happen
+            # through CI's invocation, though `main()` can be called that way and a
+            # test in this file does -- and stayed silent on one missing document,
+            # which is the likely failure by an order of magnitude.
+            #
+            # The target list is committed beside the documents it names, so a
+            # missing one means the list is wrong. That is fail-closed, not a skip.
+            # stderr, not stdout: `--porcelain` writes machine-readable rows to
+            # stdout, and the documented baseline-regeneration command redirects
+            # stdout into a data file. Prose on that stream becomes baseline rows.
+            nl = chr(10)
+            sys.stderr.write(f"check-recalled-counts: MISSING target {rel}{nl}")
+            sys.stderr.write(f"A document that could not be opened is not a clean document{nl}")
+            sys.stderr.write(f"(D-051), and this gate will not report a verdict over a set it{nl}")
+            sys.stderr.write(f"did not read.{nl}")
+            return 2
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             _echo(f"check-recalled-counts: cannot read {rel}: {type(exc).__name__}")
             return 2
-        read_any = True
+        checked += 1
         for lineno, phrase, line in check(text):
             all_findings.append((rel, lineno, phrase, line))
 
-    if not read_any:
-        print("check-recalled-counts: read NOTHING -- every target missing.")
+    if not checked:
+        print("check-recalled-counts: read NOTHING -- no targets to check.")
         print("An unreadable doc set is not a clean doc set (D-051).")
         return 2
 
@@ -257,7 +281,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 0
 
     if not all_findings:
-        print(f"check-recalled-counts: clean ({len(targets)} documents)")
+        print(f"check-recalled-counts: clean ({checked} documents)")
         return 0
 
     print("check-recalled-counts: spelled counts of things that change")
