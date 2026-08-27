@@ -241,15 +241,21 @@ def main(argv: list[str], root: Path | None = None) -> int:
             # HISTORY, never the working tree. So the skip had no justification.
             #
             # It also guarded the wrong case. The old `read_any` flag fired only
-            # when EVERY target was missing -- total blindness, which cannot
-            # happen -- and stayed silent on one missing document, which is the
-            # likely failure by an order of magnitude.
+            # when EVERY target was missing -- total blindness, which cannot happen
+            # through CI's invocation, though `main()` can be called that way and a
+            # test in this file does -- and stayed silent on one missing document,
+            # which is the likely failure by an order of magnitude.
             #
             # The target list is committed beside the documents it names, so a
             # missing one means the list is wrong. That is fail-closed, not a skip.
-            _echo(f"check-recalled-counts: MISSING target {rel}")
-            _echo("A document that could not be opened is not a clean document (D-051),")
-            _echo("and this gate will not report a verdict over a set it did not read.")
+            # stderr, not stdout: `--porcelain` writes machine-readable rows to
+            # stdout, and the documented baseline-regeneration command redirects
+            # stdout into a data file. Prose on that stream becomes baseline rows.
+            nl = chr(10)
+            sys.stderr.write(f"check-recalled-counts: MISSING target {rel}{nl}")
+            sys.stderr.write(f"A document that could not be opened is not a clean document{nl}")
+            sys.stderr.write(f"(D-051), and this gate will not report a verdict over a set it{nl}")
+            sys.stderr.write(f"did not read.{nl}")
             return 2
         try:
             text = path.read_text(encoding="utf-8")

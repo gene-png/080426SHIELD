@@ -39,7 +39,7 @@ def test_digits_are_deliberately_not_flagged() -> None:
     "14 open, per the command below." -- no volatile noun anywhere, so it
     returned [] whether or not digits were matched and the test could not
     fail. Verified by mutation: adding a digit alternative to the cardinals
-    left this file 18/18 green. #72's pattern inside the file written
+    left this file green at 18/18, its size then. #72's pattern inside a file written
     because this gate shipped as a blocking check with no behaviour test.
     """
     assert check("14 open blockers, per the command below.\n") == []
@@ -165,8 +165,14 @@ def test_the_clean_message_states_a_count_of_documents(tmp_path: Path, capsys) -
 
     So the derived count is defence in depth against a future skip branch, not a
     behaviour a test can observe today. The behaviour that IS observable is
-    pinned by the two missing-target cases below, both of which go red on that
-    revert. Written out because an unexplained non-discriminating test is
+    pinned by the two missing-target cases, one above this and one below, and
+    they go red on the OTHER revert -- the one restoring the `continue` for a
+    missing target. Naming which revert matters: an earlier draft said they go
+    red on "that revert", whose nearest antecedent was the `len(targets)`
+    revert, under which nothing goes red at all. A false sentence inside the
+    justification for keeping a test that cannot fail is the one place this
+    repo can least afford one, and it survived until a reviewer read it.
+    Written out because an unexplained non-discriminating test is
     indistinguishable from an oversight -- which this file already has one
     recorded instance of.
     """
@@ -183,8 +189,10 @@ def test_a_partial_set_never_reports_a_clean_count(tmp_path: Path, capsys) -> No
     (tmp_path / "a.md").write_text("nothing to see\n", encoding="utf-8")
 
     assert main(["prog", "a.md", "gone.md", "also-gone.md"], root=tmp_path) == 2
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
     assert (
-        "check-recalled-counts: clean" not in out
-    ), f"reported clean over a set it did not read: {out!r}"
-    assert "MISSING target gone.md" in out
+        "check-recalled-counts: clean" not in captured.out
+    ), f"reported clean over a set it did not read: {captured.out!r}"
+    # stderr, deliberately: stdout is --porcelain's machine-readable stream,
+    # and the baseline-regeneration command redirects it into a data file.
+    assert "MISSING target gone.md" in captured.err
