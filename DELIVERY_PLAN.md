@@ -66,7 +66,7 @@ fixture mode already demos all five.
 | 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). <!-- counted: historical --> Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — | — |
 | 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted) and **#132** (`risk.py` re-derives the ATT&CK citation drop as a two-line list comprehension with no counter, no reason and nothing in the audit row -- found by grepping the SHAPE, not the call sites, and absent from this plan entirely until the review of PR #157 noticed an `mvp-blocking` issue with no owning item). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **4–6 sessions** (re-sized 2026-08-25 — see "Why the range is wide") | — |
 | 7 | **W1 ATT&CK step** | Not started — **decision superseded 2026-08-26.** It read "port the `/ai-inputs` panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility` is now 104 commits behind `main`
-<!-- counted: git rev-list --count origin/feat/attack-ai-inputs-visibility..origin/main, 2026-08-27 --> and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the backend endpoint its four files call does not exist on `main`. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption and is unsound until re-derived** -- do that before starting, not after. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **4–6 sessions** (re-derived 2026-08-27 — see "Re-sizing item 7") | — |
+<!-- counted: git rev-list --count origin/feat/attack-ai-inputs-visibility..origin/main, 2026-08-27 --> and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the endpoint its four files call does not exist on `main` under that name -- **but the payload half of this item already SHIPS**, see the scope correction below. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption and is unsound until re-derived** -- do that before starting, not after. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **4–6 sessions** (re-derived 2026-08-27 — see "Re-sizing item 7") | — |
 | 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** | — |
 | 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **4–6 sessions** (fixes only; re-sized 2026-08-25 — see "Why the range is wide") | — |
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
@@ -349,6 +349,71 @@ of starting when the instinct runs the other way.
   a required check, and no client document or audit row depends on it. Stated
   rather than left unlabelled, because in a list "unlabelled" and "deliberately
   out of scope" look identical.
+
+### Scope correction, 2026-08-27 — half of item 7 part 2 already ships
+
+**Read this before writing any code for item 7 part 2.** Verified against `main`
+at `fdfde7d` by reading the code, not the plan.
+
+`POST /ai/preview` exists (`apps/api/app/routes/ai_preview.py`): admin-only,
+tenant-scoped, and it builds its payload by calling `build_attack_ai_request` --
+the exact function run-ai uses -- so a preview cannot diverge from what
+egresses. It returns the REDACTED outbound payload plus `removed_counts`,
+constructs no provider and writes no `llm_calls` row. The web half ships too:
+`app/api/proxy/ai/preview/route.ts`, `lib/ai/preview.ts`, and `AiPreviewButton`,
+which is **already rendered in `AttackWorkspace.tsx`** alongside CSF and ZT, with
+`tests/unit/test_ai_preview.py` behind it.
+
+So "the endpoint does not exist" is true of the NAME
+(`/attack/services/{id}/ai-inputs` appears nowhere in `apps/api/app` or
+`apps/web/src`) and misleading about the CAPABILITY. Acting on the old sentence
+means building a second payload view. That is the wrong work this correction
+exists to prevent.
+
+**The remaining gap is a different question, and it is the more valuable one.**
+
+| Endpoint | Answers |
+| --- | --- |
+| `/ai/preview` (ships) | *What will be sent?* |
+| `/ai-inputs` (open) | *What was NOT sent, and where did what was sent come from?* |
+
+The original spec is provenance and exclusions: `capabilities[]` with
+`awaiting_signoff` / `source_list_version` / `source_document`; `sources[]`;
+`excluded[]` from `CapabilityList.excluded_rows`; `not_sent[]` filtered out by
+security scope; `totals`.
+
+**Why that gap matters, in the code's own words.** `_client_capability_inputs`
+applies three load-bearing filters -- security scope, list status, and
+approved-snapshot membership -- and returns only the survivors. It surfaces
+nothing it drops. Its docstring already states the consequence:
+
+> a tool missing from it cannot be named, and the technique it covers reads as
+> uncovered
+
+The filter is correct on all three counts. That is the point: this is not a bug,
+it is a correct filter whose drops are invisible. A `gap` on a client
+deliverable can mean "no control here" or "the tool was filtered and nobody
+could see it", and the client cannot tell which.
+
+**So the work is:** provenance and exclusions only, TDD-first against the three
+filters, and a panel section BESIDE `AiPreviewButton` rather than a second
+surface -- which is what `docs/plans/2026-08-08-attack-citation-resolver.md`
+already says: "the step-1 edit modal should extend that panel rather than invent
+a second surface".
+
+**The 4-6 estimate below is SUPERSEDED and deliberately not replaced.** It
+priced a payload half that had already shipped. A forecast is not a recalled
+count -- there is no command to cite -- so writing a second derived number on
+the same day the first was found wrong is how a third gets written. The measured
+actual replaces it when the item lands, which is the discipline the
+estimate-vs-actual table exists for.
+
+**Generalised, because item 7's premise was wrong by half and items 9, 6 and 8
+were sized against assumptions about what exists too: verifying an item's
+premise against `main` is the FIRST action when starting any item.** Not a
+re-plan of the remaining items now -- that is the move that costs days. One
+cheap check, distributed, at the moment it is worth doing. It paid for itself
+here before a line of code.
 
 ### Re-sizing item 7, 2026-08-27
 
