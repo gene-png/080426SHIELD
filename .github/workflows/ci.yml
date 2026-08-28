@@ -114,10 +114,14 @@ jobs:
       # It fails in the right direction: a stale baseline shows up as NOISE
       # (findings reported that someone already accepted), never as silence.
       #
-      # Why report-only rather than blocking: CLAUDE.md makes each
-      # context/<name>.md owner-write-only, so a blocking gate on dave.md would
-      # hold Gene's PR red on a line Gene may not edit. It would stop the wrong
-      # person. Posture, not a carve-out.
+      # Why report-only rather than blocking, and the two files differ:
+      # dave.md is Dave-only, so a blocking gate on it would hold Gene's PR red on
+      # a line Gene may not edit -- stopping the wrong person. gene.md is
+      # agent-maintained (D-063), so that argument does not apply to it; it stays
+      # advisory because it is a status file rewritten most sessions and a count
+      # gate would fire constantly on churn that is correct when written. Two
+      # files, two reasons, and they are not interchangeable. Posture, not a
+      # carve-out.
       #
       # `tr -d '\r'`: the baseline may be regenerated on a Windows host, where
       # Python emits CRLF; CI is Linux and emits LF. Normalising both sides
@@ -163,7 +167,8 @@ jobs:
           {
             echo "### New recalled counts in personal status files"
             echo
-            echo "Advisory: \`context/*.md\` is owner-write-only, so this does not block."
+            echo "Advisory: personal status files. \`dave.md\` is owner-write-only;"
+            echo "\`gene.md\` is agent-maintained but rewritten most sessions."
             echo "Only findings NOT in \`.github/recalled-counts-advisory-baseline.txt\` are listed."
             echo
             echo '~~~'

@@ -1,5 +1,39 @@
 # CLAUDE.md — SHIELD
 
+## Where to start, by task
+
+**Read the rows that apply and stop.** This file is long enough that reading it
+end to end costs more than most tasks are worth, and the parts that matter to
+you are a small fraction of it.
+
+| If you are… | Read |
+| --- | --- |
+| Picking up after a break | `context/<your-name>.md`, then `DELIVERY_PLAN.md`'s MVP completion path |
+| Writing or changing code | Core principles, then Real commands, then the gotcha bullets for the subsystem you are touching |
+| Writing a test | Core principle 3, and the bullets on tests that cannot fail (#72, D-051) |
+| Touching the redactor or any AI path | Core principle 1, the redaction bullets, and D-058 |
+| Adding or changing a gate | The silent-success bullet, and the fail-closed bullet |
+| Opening a PR | Rules of the road: the reviewer, the audit block, the closing-keyword check, the merge rule |
+| Deciding whether an agent may merge | The merge rule alone. Do not grow it. |
+| Writing a number into any document | The three rules for numbers in prose |
+| Debugging something that "should work" | Environment gotchas. Start there, not in the code. |
+| Editing this file, `DECISIONS.md`, or any `context/*.md` | The size ratchet, the file-ownership table, and the branch-vs-direct rule |
+| Anything not listed above | Read on. "Stop" applies to a row that matches, never to the absence of one. |
+
+**One rule outranks the rest and is worth reading even if nothing above applies:
+VERIFY BY RUNNING.** Nearly every expensive failure recorded in this file traces
+to a premise someone reasoned about instead of executing. It is the cheapest
+habit here and the highest-yield.
+
+**Its unstated precondition: verify that what you are measuring is the thing you
+think you are measuring.** `python gate.py | head -1; echo $?` reports `head`'s
+status, not the gate's — so a fail-closed exit 2 reads as a clean 0. Use
+`${PIPESTATUS[0]}`, or do not pipe. That is the crash-versus-verdict shape one
+layer down, in the shell instead of in Python: one program's verdict silently
+substituted for another's, and the substitution looks like success.
+
+## What this is
+
 Durable project knowledge for every Claude session, every developer. If it's a
 fact that outlives the current sprint, it belongs here. Session status belongs
 in `context/<your-name>.md`; state-of-main belongs in `CONTEXT.md`.
@@ -798,12 +832,62 @@ mechanism; docs carry only what git can't show.
 |---|---|---|
 | `CLAUDE.md` | Durable facts, principles, gotchas | Both — append/refine in PRs |
 | `CONTEXT.md` | Project status as of `main` | Updated as part of a PR, never outside one |
-| `context/dave.md`, `context/gene.md` | Personal in-flight status: branch, what's mid-stream, next steps | Owner ONLY. Read the other's for awareness; never write it |
+| `context/dave.md` | Dave's in-flight status | **Dave ONLY.** Read for awareness; never write it |
+| `context/gene.md` | Gene's in-flight status | **The agent maintains it; Gene owns it by REVIEW, in the PR.** He keeps every decision in the file and gives up typing it |
 | `DECISIONS.md` | Append-only decision log (D-numbers) | Both — append in the PR that makes the decision |
 | `docs/architecture.md` | Structure | Updated in the PR that changes architecture |
 | `SPRINT_<n>.md` | Per-sprint plan (immutable once the sprint closes) | Sprint author |
 | `DELIVERY_PLAN.md` | Path to MVP: order, status, blockers, sizes. The **MVP completion path** section is LIVING — update an item's status in the PR that lands it, never afterwards. Sprint sections below it are historical | Both |
 | `SMOKE_TEST.md` | QA checklist — a box is checked ONLY if a green committed spec proves it, annotated with the spec filename | Both, honesty convention enforced |
+
+### The size ratchet: this file is INSTRUCTIONS, `DECISIONS.md` is the RECORD
+
+**Budget: 600 lines.** Measured 2026-08-27 it is well over that, and the trend is
+the argument: 211 lines on 2026-08-15, 648 on 2026-08-24, 1,236 on 2026-08-27.
+Doubled in three days, six-fold in twelve, accelerating — governing the
+remaining MVP backlog, which `DELIVERY_PLAN.md` enumerates. Every entry was individually justified, which is the mechanism rather
+than a defence.
+
+    <!-- counted: git show <sha>:CLAUDE.md | wc -l at each date, 2026-08-27 -->
+
+**The split, and it is the whole rule.** If a paragraph says what to DO, it
+belongs here. If it says what HAPPENED, it belongs in `DECISIONS.md` under a
+D-number, and this file cites it in one line. Most of the length here is
+incident narrative — *how* a defect was found, *who* found it, *how many* rounds
+it took. That is genuinely worth keeping. It is not worth keeping HERE, because
+every reader pays for it on every read, and the instruction it supports is
+usually one sentence.
+
+**How the trim happens: incrementally, in whatever PR next touches this file.**
+Never as its own project. A 1,236-line file cannot be trimmed to 600 in one
+session, and attempting it is the same move as the 73-site sweep that cost two
+days — a large, self-referential, judgement-heavy pass with no green state. The
+task map at the top makes the file usable tonight; the budget shrinks it over
+the next few PRs.
+
+**What the budget does NOT license.** It is not a reason to delete a rule
+because it is long. Load-bearing rules stay at any length — see the list below.
+Move the narrative, keep the instruction.
+
+**What does not move, recorded so a trim cannot take it:**
+
+- **Verify by running.** The highest-value rule in this file. Every failure this
+  week traced to violating it.
+- **"AI suggests, code computes"** and **FAIL LOUDLY** — core principles 1 and 2.
+- **The gate suite** and the reasons each gate exists.
+- **The merge rule.** Keeping it ACCURATE is mandatory and is not "growth":
+  condition 1 says to re-derive its check count when a job is added, D-059 says
+  to re-derive its measurement whenever condition 5 changes, and D-059a closed a
+  live fail-open hole on 2026-08-27 by adding four globs to condition 5. Never
+  leave a known gap in it because a budget said not to grow — that reinstates
+  the defect D-059a fixed.
+
+  What to resist is growth in KIND: another condition, another paragraph of
+  narrative, another worked example. It has been repaired four times, each
+  repair correct, and the aggregate is a rule nobody can hold in their head. If
+  it becomes unholdable again, restructure the presentation — a table, or a path
+  list a script can read — rather than freezing a rule whose own conditions
+  mandate re-derivation.
 
 Rules of the road:
 
@@ -852,7 +936,15 @@ Rules of the road:
   failed nine recorded times here, including instances written minutes after the
   rule was logged.
 - **Run the adversarial reviewer, and record the audit in the PR body.**
-  `.claude/agents/adversarial-reviewer.md` via the Agent tool. Run it before you
+  `.claude/agents/adversarial-reviewer.md` via the Agent tool.
+
+  **It always runs, on every surface including prose. What changes is what
+  BLOCKS.** Every finding is labelled BLOCKING, BLOCKING (prose), or ADVISORY,
+  and advisory findings are FILED with an issue number rather than fixed before
+  merge. The three labels and the test between them are defined in the agent
+  file and deliberately NOT restated here — two copies of a rule are two places
+  for it to drift, and this file has a bullet about that. Read them there.
+ Run it before you
   open the PR where you can, and **again after any substantive change to the
   branch** — PR #29's plan records two consecutive patches that each looked done
   and each were wrong, both caught only by re-auditing while CI stayed green. A
@@ -1023,8 +1115,9 @@ Rules of the road:
 
   **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
   `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
-  (owner-write-only, so a blocking gate there would hold one developer's PR red
-  on a line only the other may edit). It matches SPELLED cardinals and
+  (`dave.md` is owner-write-only, so a blocking gate there would hold Gene's PR
+  red on a line Gene may not edit; `gene.md` is agent-maintained since D-063 and
+  is advisory for the different reason that its churn is hourly). It matches SPELLED cardinals and
   deliberately not digits, because "14 open" beside its command is the fixed form
   and flagging it would punish the correction.
 
@@ -1069,7 +1162,47 @@ Rules of the road:
   bad form is itself an instance of the bad form, and the gate cannot tell the
   difference, which is why the marker carries a reason a human wrote.
 
-- **Never commit directly to `main`.** Branch + PR, even for small fixes.
+- **Check `git stash list` DURING work, not only when stopping.** A stash is
+  invisible to `git status`, survives a branch switch, and is one command from
+  loss. An end-of-session check catches it far too late: this repo has one
+  recorded instance of an entire governance change sitting stashed through a
+  whole adversarial review, produced within an hour of running the checklist
+  that names `git stash list`. The checklist was not wrong; it fires at the
+  wrong time.
+- **Branch + PR for anything that changes behaviour or states a rule. Two
+  exceptions go direct to `main`, and they are exceptions because practice
+  already worked this way.**
+
+  1. **`context/*.md`** — the personal status files. Owner-write-only by
+     convention, read by the other dev for awareness, and stale within hours of
+     being written.
+  2. **Typo-class prose fixes** — a misspelling, a mangled character, a
+     formatting slip. Nothing that changes what a reader would DO.
+
+     **A broken link is NOT typo-class**, though it looks like one. Repointing
+     a cross-reference is a judgement about where a reader should go, and
+     "a pointer to something that no longer exists" is on the reviewer's
+     BLOCKING (prose) list. Fixing one direct to `main` pushes an unreviewed
+     judgement call, and `audit-gate.yml` triggers on `pull_request` only, so
+     nothing would see it.
+
+  **The boundary, and it is the only test:** a prose fix that changes what
+  someone would do is not typo-class. Those are PRs, because they are the
+  findings the reviewer labels BLOCKING (prose) — **read that list in the agent
+  file rather than here.** An abridged copy of it is how this exception first
+  shipped licensing direct pushes for one of the items it omitted.
+
+  **Why this is a correction rather than a loosening.** Measured on
+  <!-- counted: git log -25 --format=%s main | grep -cvE '[(]#[0-9]+[)]$', 2026-08-27 -->
+  2026-08-27 over the last twenty-five commits on `main`: **nine were direct**,
+  every one of them `docs(context):`, and every one touched only `.md` files
+  under `context/`. The rule said never; practice said always, for one specific
+  and harmless class. A rule that is routinely and correctly ignored does not
+  bind the case it was written for — it teaches that the rules here are
+  advisory, which is expensive for the ones that are not.
+
+  Everything else — code, tests, CI, gates, migrations, and any document stating
+  a rule or a number someone acts on — is branch + PR, as before.
 - **An agent merges on green WITHOUT checking back, when all six hold.** Standing
   as of 2026-08-26, after three consecutive PRs came to the human for a decision
   the evidence had already made.
