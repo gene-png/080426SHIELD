@@ -1,207 +1,108 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE - item 10 is DONE; Track 3 is next (2026-08-26)
+## PICK UP HERE — 2026-08-27, end of session
 
-**Written by the agent at Gene's explicit request.** This file is owner-write-only;
-an agent writing it stays the exception.
+**Maintained by the agent since D-063; Gene owns it by review.** Everything
+below was derived at the moment of writing, not recalled — the commands are
+beside the numbers.
 
 ### The one-line state
 
-`main` is at `fbca899`. **PR #155 merged on 2026-08-26** with all seven CI checks
-green, including E2E and Demo, which had never run on the branch. Item 10 is
-**DONE**. Working tree clean.
+`main` is at `939310f`. Four PRs merged today (#157, #163, #164, #167). The
+governance work is DONE and closed. **Item 7 part 2 is started and RED on
+purpose** — one failing test, no endpoint yet. Nothing is blocked on Gene
+except the two decisions named at the bottom.
 
-### What the previous version of this section said, and why it is worth recording
+### Start here, in this order
 
-It said "item 10 is NOT ready", "**Do not open a PR until the blockers below are
-closed**", listed nine blockers as live, and gave a 12-18 session total. Every
-one of those was true on 2026-08-25 and false after PR #155 merged -- and the
-section survived that merge unchanged, because the merge commit corrected the
-issue COUNT further down the file and nobody re-read the top.
+1. **`git checkout feat/attack-ai-inputs-provenance`** and run
+   `docker compose exec -T api sh -lc "cd /app && python -m pytest tests/unit/test_attack_ai_inputs.py -q"`.
+   It fails with **404**. That is correct and is where work resumes.
+2. Read `DELIVERY_PLAN.md` → "Scope correction, 2026-08-27". It is short and it
+   is the thing that stops you building the wrong surface.
+3. Read `CLAUDE.md`'s task map at the top and **only the rows that apply**.
 
-That is the same shape as the count itself, one section up: the prose an agent
-reads FIRST outlived the state it described. An agent picking this file up would
-have refused to open a PR on already-merged work, or re-done nine fixed
-blockers. Found by the adversarial reviewer on the PR that was correcting the
-count below it.
+### Item 7 part 2 — what it is and is NOT
 
-### Item 10, as it actually landed
+**IS:** `GET /attack/services/{id}/ai-inputs`, admin-only, tenant-scoped.
+Provenance and exclusions only — `capabilities[]` with `awaiting_signoff` /
+`source_list_version` / `source_document`, `sources[]`, `excluded[]`,
+`not_sent[]`, `totals`. A panel section BESIDE `AiPreviewButton` in
+`AttackWorkspace.tsx`.
 
-Sized 2-3 sessions; actual ~5-6. Sixteen blockers over four review rounds
-producing **9, 1, 5, 1** -- a count that did not converge monotonically, which
-is what a three-round budget would have got wrong. Thirteen closed in PR #155,
-three filed: #151, #152, #153.
+**IS NOT:** a payload view. `POST /ai/preview` already ships that, generically
+for all three services, and its button already renders in the ATT&CK workspace.
+Building a second one is the wrong work the scope correction exists to prevent.
 
-Five of the sixteen were introduced by the fix for a DIFFERENT defect, two of
-those inside the branch itself (B3 -> B12, B11 -> B16). One -- the name
-dictionary destroying the word "client" for any tenant with a generic mailbox --
-was **pre-existing on `main`** and found only because the reviewer was pointed at
-the hint construction rather than at the rules.
+**Why it matters**, in the filter's own words
+(`_client_capability_inputs`, `app/routes/attack.py`):
 
-Two derived corpora shipped with it and are permanent:
+> a tool missing from it cannot be named, and the technique it covers reads as
+> uncovered
 
-- `tests/unit/test_redact_real_identifiers.py` -- every shipped ATT&CK, CSF and
-  ZT identifier through three contexts. Found B10 and B11.
-- `scripts/leave_row_oracle.py` -- disables one narrowing guard at a time and
-  reports which exemption rows still pass. Its `--check-registry` half is a CI
-  gate; the rest is a required step, not a gate.
+The filter is CORRECT on all three counts. That is the point — a correct filter
+whose drops are invisible. A `gap` on a client deliverable can mean "no control
+here" or "the tool was filtered and nobody could see it", and the client cannot
+tell which.
 
-Both are budgeted into items 6 and 9, which must now be sized with the review
-rounds INSIDE the number: both fix existing code, so their tables land in the
-after-the-rule regime (42% of in-risk exemption rows pinning nothing, against
-3.8% for tables written before their pattern).
+**Four drop-paths to drive, one test each.** Security scope (DONE, red);
+list status (`DISCARDED`); approved-snapshot membership (live rows added after
+approval, and snapshot entries whose item was renamed or removed); and
+extraction-time `excluded_rows`, which never reach the query at all.
 
-### Next: Track 3
+**Each test asserts BOTH halves** — absent from `capabilities[]` AND present in
+`not_sent[]`. "It appears in not_sent" and "it was actually withheld" are
+different claims, and asserting only the first passes over an endpoint that
+reports everything twice.
 
-Item 7 part 2 (`/ai-inputs` endpoint + panel), then **#131 back to Gene before it
-lands** -- fixing it changes deliverable content by definition, which the
-standing merge rule in CLAUDE.md reserves for a human.
+**No estimate.** The old 1–1.5 assumed porting from a branch now 104 commits
+behind; the 4–6 that replaced it priced a payload half that had already shipped.
+Both superseded, deliberately not replaced. The measured actual goes in the
+estimate-vs-actual table when it lands.
 
-**[CORRECTED 2026-08-27]** Item 7 part 2 **also** comes back to a human. An
-earlier reading had it landing unattended on the strength of a `CLAUDE.md`
-worked example that had gone stale: an endpoint plus a panel ships with tests,
-and condition 5 covers `apps/api/tests/**`, `e2e/**` and now the web test globs.
-The worked example was corrected in the same PR.
+### After item 7: #131, then item 9
 
-**One correction to the plan's item 7 note.** It says "port the `/ai-inputs`
-panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility`
-is now **103 commits behind main** and its `routes/attack.py` differs by
-385 insertions / 626 deletions -- it predates the resolver rewrite, the D-053
-snapshot, #102's withholding and #133's enrichment. The four files it adds are a
-useful shape reference; the backend endpoint they call does not exist on `main`.
-This is "write against the current resolver using #29 as reference", not "port",
-and the 1-1.5 estimate rests on the porting assumption.
+**#131 comes back to Gene before it lands** — it changes client deliverable
+content, so the merge rule reserves it for a human. Then item 9.
 
-## PICK UP HERE (2026-08-26, end of day) — **DONE, see the correction below**
+### What Gene owes a decision on
 
-> **Corrected 2026-08-27 by an agent on `docs/stale-count-and-merge-rule`, at
-> Gene's explicit instruction and recorded as the exception this file's own
-> ownership rule describes.** The corrections are marked **[CORRECTED]** in
-> place and state what they replace rather than overwriting it silently. The
-> reason for the exception: this file had reached its THIRD occurrence of the
-> stale-instruction shape it documents twice, and the only person permitted to
-> fix it is the one not in the editor. Nothing else in the file was touched.
+1. **Two local-only branches with unique commits**, on this machine and on no
+   remote: `feat/w2-attack-citation-resolver` and `scratch/w2-and-docs-parked`,
+   each carrying unpushed work. They survive a shutdown; they do NOT survive a
+   disk failure.
+   Push as backups, or confirm they are dead and delete them. Pre-existing —
+   not from this session.
+2. **Three stashes**, dated 2026-08-09, -19 and -20, on
+   `fix/ai-response-shape-not-silently-discarded`,
+   `fix/ai-shape-guards-and-csf-provenance` and `feat/w2-resolver`. Same
+   question. Also pre-existing.
 
-**[CORRECTED]** Steps 1-4 below all LANDED on 2026-08-27 in
-`docs/stale-count-and-merge-rule` (PR #157). Do not start at step 1. They are
-kept because the reasoning in them is still the record of why each was done.
-What is actually next: the fifth adversarial pass against the frozen branch,
-then Gene's merge decision — the branch trips condition 5 on several bullets,
-so it comes back to a human by the standing rule.
+### What landed today, so it is not re-litigated
 
-`main` is at `fbca899` and untouched since item 10 landed. **PR #157 is an open
-DRAFT and merges nothing.** Do not merge it before doing the steps below and
-reading the two caveats at the end.
+- **#157** — the stale-count and merge-rule PR. Closed no issues, correctly.
+- **#163** — the recalled-counts gate reported `clean (6 documents)` over five
+  it had read. Fixed, fail-closed on a missing target, pinned red-on-revert.
+- **#164** — item 7's scope correction and the superseded estimate.
+- **#167** — the governance change: reviewer dispositions (BLOCKING /
+  BLOCKING (prose) / ADVISORY), `context/*.md` and typo-class direct to `main`,
+  the 600-line `CLAUDE.md` budget and INSTRUCTIONS-vs-RECORD split, the task
+  map, and D-063 handing this file to the agent. **D-060 through D-063.**
 
-### What happened after item 10 merged
+**The disposition rule is live and the next PR is its first ordinary use.**
+Write the endpoint, run the reviewer, fix BLOCKING, file ADVISORY, and let the
+rule be boring. Its value is that it stops being a topic.
 
-PR #157 began as a two-line fix to the issue count in this file. Three
-adversarial passes over it found, in order: that a correction paragraph carried
-its own wrong closure count; that the count was fixed while the section above it
-still said "do not open a PR" and listed fixed blockers as live; and that
-`DELIVERY_PLAN.md` has two sibling estimate-vs-actual sections, of which only
-one had been updated. All acted on.
+### Open work, derived not recalled
 
-**The pattern behind all three is one pattern: things written from memory
-instead of derived.** Gene named four rules for it:
+<!-- counted: gh issue list --label mvp-blocking --state open --json number | jq length, 2026-08-27 -->
+**16 open `mvp-blocking`.** Eight issues were filed today (#159–#162, #165,
+#166 from the reviewer passes; #156 and #158 earlier). Four Dependabot PRs
+(#147–#150) remain open; #149 still carries a hold comment.
 
-1. **Don't write the count.** If a number describes a list in the same document,
-   delete the number and let the list be the count.
-2. **Cite, don't recall.** A number from outside the document carries the command
-   that produced it and the date. If you cannot paste the command, you do not
-   write the number.
-3. **Gate it.** `apps/api/scripts/check_recalled_counts.py`. **[CORRECTED
-   2026-08-27]** It said "committed, working, and **deliberately NOT wired into
-   `ci.yml`**". It is wired now: blocking on the shared documents, report-only
-   on `context/*.md`.
-4. **Correct at the instruction, not at the discussion.** Every miss above landed
-   where the topic was DISCUSSED while the line telling someone what to DO was
-   left standing. A correction is unverified until you have grepped the doc set
-   for the claim's SUBJECT, not the line number you were handed. The correcting
-   commit records the grep it ran.
+<!-- counted: gh pr list --state open, 2026-08-27 -->
+**No feature PRs are open.** The only open PRs are the four Dependabot ones.
 
-Rule 4 is the highest-value of the four, and every reviewer pass needed it
-independently.
-
-### The finding that matters most, and it is not about counts
-
-`check_recalled_counts.py` crashed mid-report on a character the Windows console
-could not encode, having already printed a partial list — and **Python exits 1 on
-an unhandled exception, which is the same code the gate uses for "violations
-found".** A crash and a verdict were indistinguishable.
-
-Gene then swept the existing gates and RAN the test rather than reading it,
-patching a simulated fault into a copy of `check_plan_totals.py`: `exit=1`,
-traceback on stderr. **Every gate in this repo has that shape.** They all use
-`raise SystemExit(main(...))` with `main` returning 0 or 1 and no broad handler.
-
-The fix is nearly free because the convention already exists in those files —
-they return 2 for every ANTICIPATED failure. What is missing is routing an
-UNANTICIPATED fault to the same place: one `except Exception` at `__main__`.
-
-Two things a structural check added to Gene's sweep:
-
-- **`leave_row_oracle.py` looks protected and is not.** Its broad handlers are
-  INSIDE `main`, covering the mutation-did-not-compile paths, so anything raised
-  elsewhere still escapes and exits 1. It belongs in the test as an extra case,
-  which makes the scope eight scripts rather than seven.
-- **`check_test_integrity.py` has no `return 2` site at all**, so there is no
-  could-not-look branch to route a fault into. That one needs a small design
-  decision about what its anticipated failures are, not a one-liner.
-
-### Tomorrow, in order
-
-1. Commit the gate's fixes with a **crash-exits-2 test parametrised over all
-   eight scripts**, and fix the existing ones in the same commit. If the test
-   only pins the new gate, the rest keep reporting verdicts they never reached.
-2. Set `context/*.md` to **report-only**: run the gate over them, print the
-   findings, ignore the exit code for that subset, put the findings in the PR
-   body. Rationale, Gene's: a red on an owner-write-only file clears either by
-   Gene editing it or by an agent breaking the write rule, so blocking
-   manufactures the exception the policy exists to prevent — while excluding it
-   loses the signal on the file that rotted worst. Precedent and wording are at
-   `ci.yml:75`, where the LEAVE-row oracle is "a required step, not a gate".
-3. Land rules 1, 2 and 4 in `CLAUDE.md`, plus the `CLAUDE.md` sweep, together.
-   That file first, because the rules live there and it is what agents read.
-4. Remaining documents, **committed separately per document**, gate run before and after, delta
-   recorded per file. NOT all together: a sweep of that size across the documents
-   the reviewer has each time overturned is unreviewable, and the fourth pass would
-   be auditing a tree that moved under it.
-5. Fourth reviewer pass, against the settled tree.
-6. `gh pr view 157 --json closingIssuesReferences,title,body` before merging.
-   The reviewer cannot reach GitHub, and those are the only three surfaces
-   GitHub parses for closing keywords — a claim about GitHub state that only
-   GitHub can settle.
-
-### Two caveats that will bite if missed
-
-- **[CORRECTED 2026-08-27] The gate IS wired now.** This bullet said it was
-  "committed but not referenced by any workflow, on purpose" and told the reader
-  to "wire it up in step 1, after the sweep, not before". Both were true when
-  written and false from the moment the sweep landed. The wiring is two steps in
-  `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
-  against a committed baseline. The precedent cited for the report-only step was
-  also wrong — `ci.yml:75` explains why the ORACLE is not automated and what CI
-  invokes there is a hard gate; the real precedent is pip-audit's
-  `continue-on-error`.
-- **Do not write the site count anywhere.** The gate's noun list is hand-built
-  and so was the estimate before it; both are floors, and the true population is
-  above both. A count of the places where counts go stale is the last place a
-  hardcoded count belongs. Run the gate; it is the count.
-
-### Also filed today
-
-**#158** — `redact.py:82` claims every separator in the module is built from
-`_HSPACE` while `_RE_CONTACT_HINT` uses bare `\s`, and no gate can see it
-because `check_separator_classes` flags hand-ENUMERATED classes rather than
-`\s`. Wrong on arrival rather than stale. It had been withdrawn from one
-CLAUDE.md lesson as mislabelled and, for a draft, recorded in neither list.
-
-Also open and not `mvp-blocking`: **#151** (Tailwind classes naming undefined
-tokens render as nothing), **#154** (the glue-alphabet sweep, filed with its
-reasoning and measured as searching an empty space), **#156** (ruff isort
-classifying `apps/api/scripts` by whether an unrelated top-level `scripts/`
-exists), **#143** (the pre-push hook's fail-open).
 
 ## What item 10 did (all eight issues, code complete)
 
