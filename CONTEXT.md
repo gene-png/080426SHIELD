@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-08-26 (item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-08-30 (the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -13,17 +13,36 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
-### Open `mvp-blocking` issues: 14
+### Open `mvp-blocking` issues
 
-**Read live from GitHub on 2026-08-26, immediately after PR #155 merged — not
-carried forward.** 22 were open before it; the eight it closes (#135–#140, #142,
-#144) leave fourteen:
+**The count is not written here. Run it:**
 
-`#153 #152` (two redaction leaks item 10 filed rather than fixed: a signature
-block whose signatory line ends in punctuation, and three real phone formats the
-NANP-shaped bare-run rule misses) · `#132 #131` · `#126 #125 #124 #123`
-(dashboards) · `#122 #121` (Risk, **item 6**) · `#115 #114 #109` (**item 9**) ·
-`#46`
+    gh issue list --label mvp-blocking --state open --json number | jq length
+
+**A command instead of a number, and this is the endpoint of rule 1 rather than
+a new idea.** The heading used to say `14` under a paragraph certifying it
+freshly read. Both were true on 2026-08-26 and false within days. Replacing that
+with a `<!-- counted: … -->` marker only moves the problem: a marker is a
+FRESHNESS CLAIM, and on 2026-08-30 one certified `17` that a re-label in the
+same session made `16` — while the PR that closes `#165` sat green, about to
+make it `15`. A claim can go stale. A command cannot, and anyone who wants the
+number runs it.
+
+**What stays is the MAPPING**, because an issue's owning item does not change
+when a different issue closes. Durable half keeps, volatile half goes. Every
+blocker belongs to an item in `DELIVERY_PLAN.md` — a property this list did NOT
+have on 2026-08-26, when four were orphaned. By item:
+
+- **7** — `#131` · **9** — `#114 #115 #46 #109 #124 #125 #126` ·
+  **6** — `#121 #122 #132` · **8** — `#123`
+- **11 (new)** — `#152 #153`, the redaction leaks item 10 filed rather than
+  fixed and then orphaned when it closed
+- **12 (new)** — `#168`, the pre-commit hook set running three tools at versions
+  no gate uses
+
+In flight: `#165` closes with the prettier-pin PR. `#159` loses the label — it
+is developer tooling and does not meet "the MVP cannot ship while this is open",
+the definition now written into `DELIVERY_PLAN.md`.
 
 Not labelled `mvp-blocking`, and deliberately so — recorded because unlabelled
 and out-of-scope look identical otherwise: **#151** (Tailwind classes naming
