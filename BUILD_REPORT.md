@@ -100,7 +100,7 @@ The repo-wide gates enforced this sprint (and encoded in the sprint queue):
 | Full e2e smoke suite  | `cd e2e && npx playwright test` (27 spec files; Sprint 9 added s26-oidc-login and demo/demo-journey, both self-skipping) | host → composed stack |
 | Runtime axe WCAG A/AA | `s16-axe.spec.ts` (part of the suite)                                                                                    | host → composed stack |
 | Python lint/format    | `docker compose exec -T api sh -lc "ruff check --no-cache . && black --check ."` (root-config parity, Sprint 4 T0)       | api container         |
-| Repo format           | `npx -y prettier@3.9.5 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"`                                                  | host                  |
+| Repo format           | `npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"`                                                  | host                  |
 | Dependency audit      | `pnpm audit` (root) / `npm audit` (`e2e/`)                                                                               | host                  |
 
 ### CI jobs (`.github/workflows/ci.yml`)

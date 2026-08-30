@@ -212,8 +212,8 @@ docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"
 # Python lint/format (in-container, CI-parity)
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 
-# Formatting (lockfile-pinned prettier; CI enforces it)
-npx -y prettier@3.9.5 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+# Formatting (the version pnpm-lock.yaml resolves; CI enforces it)
+npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 
 # End-to-end (Playwright) - host-run against the running stack on :3000.
 # 21 spec files under e2e/smoke/ (s0-s21). Chromium only, serialized;

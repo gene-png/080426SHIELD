@@ -46,6 +46,23 @@ repos:
         files: ^apps/api/app/
         additional_dependencies: ["bandit[toml]"]
 
+  # KNOWN DIVERGENCE — PRETTIER ONLY. It is NOT the only one in this file, and
+  # not the largest: the ruff (`rev: v0.6.9`) and black (`rev: 24.8.0`) hooks
+  # above are the same shape against `apps/api/pyproject.toml`'s `ruff==0.16.3`
+  # / `black==26.5.1`, and they rewrite too. Those are tracked in #168 with this
+  # one. Unlike prettier they are a plain `rev` bump — both repos are actively
+  # maintained and tags `v0.16.3` and `26.5.1` exist. This runs prettier
+  # 3.1.0 while CI checks 3.9.6 (`package.json` requires ^3.9.6), and the
+  # `prettier` hook id defaults to --write — so this REWRITES files into a state
+  # CI then rejects. Measured 2026-08-30:
+  #   npx -y prettier@3.1.0 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+  #   -> Code style issues found in 46 files.  exit=1
+  # Not fixable by bumping `rev`: pre-commit/mirrors-prettier is ARCHIVED
+  # upstream (last push 2024-04-11) and v3.1.0 is its newest stable tag —
+  # everything above it is v4.0.0-alpha.*. Verified via the GitHub API, not
+  # inferred. The fix is a local hook calling the same npx command the docs
+  # specify, which changes what every commit does and needs its own review.
+  # Tracked in #168. Deliberately NOT fixed in the version-sweep PR.
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v3.1.0
     hooks:

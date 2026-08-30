@@ -39,7 +39,7 @@ docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"
 docker compose exec -T web sh -lc "cd /app && pnpm -F web test"
 docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
-npx -y prettier@3.9.5 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 cd e2e && npx playwright test          # host-run, stack must be up + seeded
 ```
 
