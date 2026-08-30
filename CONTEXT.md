@@ -662,8 +662,11 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
   `e2e/node_modules/@playwright/test/cli.js`. Docker CLI needs
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` per shell.
   Host Node LTS is 22 (matches the container after Sprint 4 T4).
-- **Six queue gates:** `pytest -m unit`, web `tsc`, host prettier 3.9.5
-  `--check`, in-container ruff/black (root-config parity), in-container web vitest
+- **Six queue gates:** `pytest -m unit`, web `tsc`, host prettier `--check` **at
+  whatever version your runtime `.claude/sprint-queue.json` pins — re-sync it
+  from a staged queue after any prettier bump, because it is gitignored and no
+  PR can change it** (staged queues say `3.9.6` as of this commit; a runtime
+  queue copied before it still says `3.9.5`), in-container ruff/black (root-config parity), in-container web vitest
   (`pnpm -F web test`), in-container web eslint (`pnpm -F web lint`). Bandit is
   CI-only (a ruff `# noqa` does NOT suppress it — a flagged string needs its own
   `# nosec`).

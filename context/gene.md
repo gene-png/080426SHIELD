@@ -167,7 +167,7 @@ paragraph someone points at is not the same as correcting the file.
   in that image and prints nothing while doing nothing.
 - After ANY `apps/web` edit: `docker compose up -d --force-recreate api web`,
   then re-check `SHIELD_LLM_MODE`.
-- Gates before every commit: host `prettier@3.9.5 --check`, in-container
+- Gates before every commit: host `prettier@3.9.6 --check`, in-container
   `ruff check --no-cache . && black --check .`, `check_test_integrity`,
   `check_no_control_chars`, `check_plan_totals`, `check_separator_classes`,
   `leave_row_oracle.py --check-registry`, and **[CORRECTED 2026-08-27]**

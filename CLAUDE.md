@@ -87,9 +87,11 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   ~17 min.
 - Format check (MANDATORY before every commit — CI enforces it, the Sprint 2
   loop shipped unformatted files it only caught at CI): run host prettier at the
-  version the lockfile pins (`3.9.5`) so local and CI agree —
-  `npx -y prettier@3.9.5 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"` from
-  the repo root. `--write` the same glob to fix, then re-check.
+  version `pnpm-lock.yaml` resolves (`3.9.6` today, from `package.json`'s
+  `^3.9.6`) so local and CI agree — CI runs `pnpm install --frozen-lockfile`
+  then `pnpm format:check`, so the LOCKFILE decides, not the range —
+  `npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"`
+  from the repo root. `--write` the same glob to fix, then re-check.
 - Python lint/format (in-container, CI-parity — MANDATORY before every commit
   that touches `apps/api`): `docker compose exec -T api sh -lc "cd /app && ruff
   check --no-cache . && black --check ."`. Compose bind-mounts the root
