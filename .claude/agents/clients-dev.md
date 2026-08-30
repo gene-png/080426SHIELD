@@ -1,6 +1,6 @@
 ---
 name: clients-dev
-description: Track C. Implements the client-dashboard correctness work — #124/#125/#126 as one PR, then #114 alone, then #123. Owns routes/clients.py, app/zt/scoring.py, routes/zt.py and the Tech Debt dashboard, and nothing else. Runs in its own worktree on its own branch so disjointness from Track A is structural rather than remembered.
+description: Track C. Implements the client-dashboard correctness work — #124/#125/#126 as one PR, then #114 alone, then #123. Owns routes/clients.py, the ZT scoring and intake path, the Tech Debt spend surfaces and every client dashboard. Runs in the wt-clients worktree. Never merges.
 tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 ---
 
@@ -9,122 +9,198 @@ tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 ## Step 0, before anything else
 
 **Re-read `CLAUDE.md` AND this file from disk. Do not trust injected context.**
-Report a disagreement between the two; never silently prefer either.
-
-Injected context lags the file on disk — measured five times on 2026-08-30,
-where reviewers carried a `CLAUDE.md` missing rules written that morning, and one
-carried a stale copy of its own definition. An agent whose own definition is
-stale applies a rule set nobody can see is missing, and it is the one file it
-will never think to check.
+Report a disagreement; never silently prefer either. Injected copies of both were
+found stale repeatedly on 2026-08-30, missing rules written that morning. An agent
+whose own definition is stale applies a rule set nobody can see is missing, and
+it is the one file it will never think to check.
 
 **Any claim about state outside the working tree carries the command that
-produced it.** Branch state, worktree location, push status, stash contents,
-upstream repos, CI results, issue state. This is rule 2's form pointed at a
-different domain, and it is the ONLY thing that reaches that surface: the
-adversarial reviewer runs read-only and cannot see it, and every gate in this
-repo reads files. Two of the worst defects of 2026-08-30 were in this class — an
-archive instruction that licensed deleting 592 insertions on an unverified
-"superseded by PR #78", and a branch recommended for dropping that was another
-item's shape reference. Both were claims about git, asserted rather than run.
+produced it** — branch state, push status, stash contents, CI results, issue
+text. Nothing else reaches that surface: the adversarial reviewer runs read-only,
+and every gate in this repo reads files.
 
-## Territory — yours, and only yours
+## Where you work
 
 ```
-apps/api/app/routes/clients.py
-apps/api/app/zt/scoring.py
-apps/api/app/routes/zt.py
-apps/api/app/tech_debt/exporters.py      (for #126's twin — see below)
-apps/api/app/schemas/clients.py
-apps/api/tests/unit/  (only tests for the above)
-apps/web/src/components/dashboards/**
-apps/web/src/lib/dashboards/**
+worktree:  C:/repos/SHIELD080326/wt-clients
+branch:    fix/zt-targets-and-spend-floor   (cut from main, empty)
 ```
 
-**Do not edit `routes/attack.py`, `app/attack/**`, or the ATT&CK web surface.**
-Those are `attack-dev`'s territory and it is working in them concurrently. If
-your work appears to require one of them, **stop and report** rather than editing
-across the line.
+## Territory
 
-**One-directional coupling you must respect.** `routes/clients.py` imports five
-things from `app.attack` (`clients.py:22-26`). You READ those; `attack-dev`
-edits them. If one changes under you, that is a cross-track break — CI re-runs on
-this track after every Track A merge for exactly this reason. `routes/attack.py`
-imports nothing from `clients.py`, so the coupling runs one way only.
+**YOURS — exclusive write:**
 
-## The work, in strict order — this is a CHAIN, not a set
+```
+apps/api/app/routes/clients.py          apps/api/app/schemas/clients.py
+apps/api/app/zt/scoring.py              apps/api/app/routes/zt.py
+apps/api/app/routes/intake.py           apps/api/app/schemas/intake.py
+apps/api/app/tech_debt/exporters.py     apps/api/app/routes/tech_debt.py
+apps/api/tests/unit/test_attack_dashboard.py   <- tests clients.py, not attack.py
+apps/api/tests/unit/  (other tests for the files above)
+apps/web/src/components/dashboards/**   <- INCLUDING dashboards/attack/**
+apps/web/src/lib/dashboards/**          <- INCLUDING lib/dashboards/attack.ts
+apps/web/src/lib/intake/**
+apps/web/src/components/home/ValueLoopCard.tsx
+e2e/smoke/s27-attack-dashboard.spec.ts  s28-zt-dashboard.spec.ts
+e2e/smoke/s30-risk-dashboard.spec.ts
+```
 
-They share `routes/clients.py`, so they cannot overlap:
+**`dashboards/attack/**` and `test_attack_dashboard.py` ARE yours** despite the
+name. They are client-dashboard surfaces served by `routes/clients.py`, and
+`#114` renders in `AttackDashboard.tsx`. `attack-dev` is told to stay out of them.
 
-1. **#124 + #125 + #126 — ONE PR.** They must land together: fixing #124 by
-   copying the CSF pattern **activates #125**, which is latent on the dashboard
-   only because no target-source field is published there yet.
-2. **— merged —**
-3. **#114 alone.** A cross-cutting refactor of `_latest_finalized`, eight call
-   sites. Not folded into step 1: stacking a refactor onto point fixes in one
-   diff is item 10's shape.
-4. **— merged —**
+**NOT YOURS — `attack-dev` is editing these concurrently. Stop and report:**
+
+```
+apps/api/app/routes/attack.py    apps/api/app/attack/**
+apps/api/app/schemas/attack.py
+apps/api/tests/unit/test_attack_ai_inputs.py, _citations.py, _run_ai.py, _enrichment.py
+apps/web/src/components/admin/attack/**
+apps/web/src/lib/attack/**       apps/web/src/app/api/proxy/attack/**
+```
+
+**SHARED — required by merge-rule condition 3, and both tracks must write them:**
+
+```
+DELIVERY_PLAN.md   CONTEXT.md   context/gene.md   DECISIONS.md
+```
+
+Write these **only in the landing commit**, and **rebase on `origin/main`
+immediately before pushing** — the other track edits the same files and PRs merge
+one at a time. Read every count live; never carry one forward.
+
+**A file in NONE of these lists is undecidable — stop and report.** Do not
+default to editing it. `app/models/**` and `alembic/**` are specifically not
+yours without a decision: a migration trips merge-rule condition 4.
+
+**Coupling that runs one way.** `routes/clients.py:22-26` imports five names from
+`app.attack`. `routes/attack.py` imports nothing from `clients.py`. **You read
+what Track A edits** — so if one of those changes under you, that is a
+cross-track break, and it is why CI re-runs on this track after every Track A
+merge.
+
+## The work — a CHAIN, not a set. They share `routes/clients.py`.
+
+1. **#124 + #125 + #126 — ONE PR.** #124 and #125 must land together (below).
+2. **— merged by Gene —**
+3. **#114 alone.** A cross-cutting refactor of `_latest_finalized` with eight call
+   sites (`clients.py:272, 299, 338, 380, 576, 722, 851, 1086`). Not folded into
+   step 1: stacking a refactor onto point fixes in one diff is item 10's shape.
+4. **— merged by Gene —**
 5. **#123** — item 8's `clients.py` half.
 
-## #125 is a PRODUCT defect, not a dashboard tweak
+## #125 is a LIVE product defect. Not latent, and not a dashboard tweak.
 
-Read this before sizing step 1. `zt/scoring.py:243-244` clamps an out-of-range
-target to 3; `zt.py:1746` writes that clamped value and `zt.py:1747` writes
-`target_stage_source: "client"` on the **adjacent line**. So a DoD engagement
-whose client chose Stage 4 gets an audit row reading `target_stage: 3,
-target_stage_source: "client"` — the false value and the false attribution of it,
-side by side, in the record that exists to establish provenance.
+`DELIVERY_PLAN.md` records an earlier draft calling it "latent" and retracts it —
+**do not reintroduce that word.** It ships today on the **finalize** path:
 
-The guard keys on whether a value was **offered**, never whether it **survived**.
+```
+zt/scoring.py:243-244  clamps an out-of-range target to 3
+zt/scoring.py:276      returns the CLAMPED value
+routes/zt.py:1746      "target_stage": gap.target_stage,       <- clamped 3
+routes/zt.py:1747      "target_stage_source": "client"         <- ADJACENT LINE
+```
 
-**The UI offers the impossible choice too**:
+A DoD engagement whose client chose Stage 4 gets an audit row reading
+`target_stage: 3, target_stage_source: "client"` — the false value and the false
+attribution of it, side by side, in the record that exists to establish
+provenance, on a FedRAMP-target platform. The guard keys on whether a value was
+**offered**, never whether it **survived**.
+
+**The fix starts at the UI, which offers the impossible choice.**
 `apps/web/src/lib/intake/types.ts:217-221` gives `zero_trust_dod` a
-`{ value: 4, label: "Stage 4 · Optimal" }` option — DoD has three stages, and
-"Optimal" is CISA's label. A backend-only fix ships under a UI still presenting
-it. `routes/intake.py:52` treats CISA and DoD identically and `_validate_targets`
-(`:85-101`) checks presence only, never range.
+`{ value: 4, label: "Stage 4 · Optimal" }` — DoD has three stages and "Optimal"
+is CISA's label. `routes/intake.py:52` treats CISA and DoD identically, and
+`_validate_targets` (`:85-101`) checks presence only, never range. A backend-only
+fix ships under a UI still presenting the value. All three files are yours.
 
-**Constraint on the fix, pinned by a test rather than asserted:** it must NOT
-alter the `GapAnalysis` / `ScoreResult` shape or the values reaching
+**#124's relation to it:** fixing #124 by copying the CSF pattern adds a SECOND
+surface to an already-live mislabel. That is why they land together — not because
+#124 wakes a sleeping defect.
+
+**Constraint, pinned by a test rather than asserted:** the #125 fix must NOT alter
+the `GapAnalysis` / `ScoreResult` shape, nor the values reaching
 `app/zt/exporters.py`, which produces the ZT client deliverable and is on
-condition 5's deterministic-surfaces list. If the fix turns out to require an
-exporter change, **stop and re-scope** — do not widen quietly.
+condition 5's deterministic-surfaces list. **`app/zt/exporters.py` is NOT in your
+territory.** If the fix requires changing it, **stop and re-scope** — do not
+widen quietly.
 
-## #126 has a twin that reaches the client document
+## #126 has twins. Fix them together or state which you left.
 
-`clients.py:879` sums a floored cost for EVERY item; `:880` guards on
-`CapabilityDisposition.CUT` before `:882` sets `savings_cost_known = False`.
-Those are **different predicates** — a spend flag must be computed over ALL
-items, and copying the savings predicate ships `spend_cost_known: true` over a
-floored figure.
+Two different predicates, not one:
 
-`tech_debt/exporters.py:96-106` repeats the asymmetry exactly, into the
-**released PDF/DOCX/XLSX**. Fix both or neither.
+```
+clients.py:878-879  an unknown annual_cost_usd coerces to 0.0 and enters
+                    annual_spend for EVERY item          -> a floor
+clients.py:880      if disposition == CUT:               <- extra guard
+clients.py:882          savings_cost_known = False       -> NARROWER predicate
+```
 
-## Gates, in this order
+A spend flag must be computed over **all** items. Copying the savings predicate
+ships `spend_cost_known: true` over a floored figure — a false assurance about
+money on a client surface.
 
-The formatter runs BEFORE the gates.
+**Twin 1, and it is the worse half:** `tech_debt/exporters.py:96-106` repeats it
+exactly (`:100-101` skips an unknown cost for `total_cost`; `:102-104` CUT-guards
+`savings_known`) into the **released PDF/DOCX/XLSX**.
+
+**Twin 2, a scoping call to make deliberately:** `routes/tech_debt.py` computes
+`savings_cost_known` a third time and writes the deliverable's `summary_line`
+with a `≥` on savings and none on any spend figure. Also `ValueLoopCard.tsx`
+consumes `tech_debt_savings_cost_known`. All are yours. **If you leave a twin
+alone, say so in the code and in the PR body** — an unstated exemption reads as
+an oversight to everyone who finds it later.
+
+## Gates — the formatter runs BEFORE them
 
 ```bash
 export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"
 npx -y prettier@3.9.6 --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"
 docker compose exec -T api sh -lc "cd /app && python -m pytest -m unit -q"
-python apps/api/scripts/check_recalled_counts.py     # from the REPO ROOT
+
+# WEB — all four, because CI's Web job runs all four and you edit dashboards
+docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"
+docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"
+docker compose exec -T web sh -lc "cd /app && pnpm -F web test"
+docker compose exec -T web sh -lc "cd /app && pnpm -F web build"
+
+# from the REPO ROOT
+python apps/api/scripts/check_recalled_counts.py
+python apps/api/scripts/check_no_control_chars.py
+python apps/api/scripts/check_plan_totals.py
+python apps/api/scripts/check_separator_classes.py
+python apps/api/scripts/leave_row_oracle.py --check-registry
 ```
 
-After ANY `apps/web` edit: `docker compose up -d --force-recreate api web`, then
-re-check `SHIELD_LLM_MODE`.
+`check_plan_totals` matters directly here: condition 3 makes you edit
+`DELIVERY_PLAN.md`, and that gate's recorded failure mode is steering an author
+into changing the total to a wrong sum.
+
+e2e is host-run: `cd e2e && npx playwright test <file>`. Your three dashboard
+specs are listed above. After ANY `apps/web` edit:
+`docker compose up -d --force-recreate api web`, then re-check `SHIELD_LLM_MODE`.
+
+**Note on committing:** a local pre-commit hook, if installed, runs prettier
+3.1.0 against CI's 3.9.6 (issue #168) and would reformat ~46 files. If `git
+commit` reformats files you did not touch, that is why — report it.
 
 ## Before you open a PR
 
 - **Red-on-revert, one fix at a time**, and **prove the revert landed**.
 - Run the adversarial reviewer, again after any substantive change. Record
-  `Findings:` / `Disposition:` / `Scope:`, and **state per finding whether it is
-  INTRODUCED or PRE-EXISTING**, derived rather than asserted.
-- **Every PR here trips condition 5 (`app/zt/scoring.py` is a deterministic
-  scoring engine) AND condition 6 (client dashboard numbers).** All come back to
-  Gene. Do not merge.
-- **Never merge while a Track A PR is in flight.** One at a time, CI re-run on
-  the other track after each merge.
+  `Findings:` / `Disposition:` / `Scope:`, marking each **INTRODUCED or
+  PRE-EXISTING**, derived by `git log -S` or `git blame`.
+- **Closing keywords:** `fix|close|resolve` beside `#N` closes the issue — in the
+  PR title, the body, and every commit message. Your first PR closes three issues
+  on purpose: write the keywords AND `Auto-close-approved: 124 125 126`, then
+  confirm with `gh pr view <n> --json closingIssuesReferences`. Run
+  `python apps/api/scripts/check_issue_references.py --title <f> --body <f> --commits <f>`
+  before pushing; it takes file paths, not strings.
+- **YOU NEVER MERGE. Every PR on this track comes back to Gene**, unconditionally
+  — every one trips condition 5 (`zt/scoring.py` is a deterministic scoring
+  engine) and condition 6 (client dashboard numbers). Merging is not yours to
+  sequence.

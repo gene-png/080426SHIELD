@@ -833,6 +833,8 @@ mechanism; docs carry only what git can't show.
 | File | Role | Who writes |
 |---|---|---|
 | `CLAUDE.md` | Durable facts, principles, gotchas | Both — append/refine in PRs |
+| `.claude/agents/*.md` | Agent definitions: territory, gates, merge rules | Both — PR; each agent re-reads its own from disk |
+| `.claude/settings.json` | Committed Claude Code config. `env` only | Both — PR. Never `permissions`/`hooks` |
 | `CONTEXT.md` | Project status as of `main` | Updated as part of a PR, never outside one |
 | `context/dave.md` | Dave's in-flight status | **Dave ONLY.** Read for awareness; never write it |
 | `context/gene.md` | Gene's in-flight status | **The agent maintains it; Gene owns it by REVIEW, in the PR.** He keeps every decision in the file and gives up typing it |
@@ -1110,7 +1112,10 @@ Rules of the road:
   is stale applies a rule set nobody can see is missing, and it is the one file
   it will never think to check.
 
-  **Injected context lags the file.** Observed twice on 2026-08-30: the
+  **Injected context lags the file.** Instances accumulate on **#170** rather
+  than in a count here — three documents once carried three different numbers
+  for this one population, none of them marked. Observed repeatedly on
+  2026-08-30, e.g. the
   `CLAUDE.md` in a subagent's context said "Three rules for numbers in prose"
   while disk said "The rules" with five — the two rules added that morning
   were absent from the copy the agent was reasoning with. It caught the
@@ -1553,6 +1558,16 @@ Rules of the road:
 - To see what your collaborator is doing: `gh pr list` + their `context/*.md`
   — not their unmerged branches.
 - `.claude/sprint-queue.json` is machine-local loop runtime state (gitignored).
+  **`.claude/settings.json` is COMMITTED and `.claude/settings.local.json` is
+  NOT** (`.gitignore:66`). The committed one carries
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, so both devs get the flag — it lived
+  in the gitignored file until 2026-08-30, which meant Dave never had it. Keep it
+  `env`-only: **no `permissions`, no `hooks`**. The local allow-list was deleted
+  the same day and is left to rebuild from use; `Bash(python -c ' *)` stays out
+  permanently, because under Agent Teams a pre-approved permission is granted to
+  every agent the team spawns rather than to the session that approved it, and a
+  step needing Python belongs in `apps/api/scripts/` where the reviewer can read
+  it. An empty allow-list means more prompts, which is the intended trade.
   Staged sprint queues (`.claude/sprint-queue.sprint-<n>.json`) ARE committed —
   they're the plan of record.
 - **Sprint loops are launched by the human dev at the keyboard, never by an

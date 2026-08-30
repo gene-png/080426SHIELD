@@ -179,8 +179,10 @@ never the problem. Treating everything you found as blocking was.
 0. **Re-read `CLAUDE.md` AND this file from disk at the start of a task, rather
    than trusting injected context. Report a disagreement between the two; never
    silently prefer either.** Injected context lags the file on disk — measured
-   four times on 2026-08-30, where reviewers carried a `CLAUDE.md` missing two
-   rules written that morning, and one carried a stale copy of THIS file. An
+   repeatedly on 2026-08-30, where reviewers carried a `CLAUDE.md` missing
+   rules written that morning, and one carried a stale copy of THIS file. The
+   instances accumulate on **#170**, not here — three documents once held three
+   different counts of this one population. An
    agent whose own definition is stale applies a rule set nobody can see is
    missing, and it is the one file it will never think to check. A disagreement
    is a finding about the run and belongs in your report.
