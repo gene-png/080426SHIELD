@@ -1,108 +1,128 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — 2026-08-27, end of session
+## PICK UP HERE — 2026-08-30
 
-**Maintained by the agent since D-063; Gene owns it by review.** Everything
-below was derived at the moment of writing, not recalled — the commands are
-beside the numbers.
+**Maintained by the agent since D-063; Gene owns it by review.** Every number
+below carries the command that produced it.
 
 ### The one-line state
 
-`main` is at `939310f`. Four PRs merged today (#157, #163, #164, #167). The
-governance work is DONE and closed. **Item 7 part 2 is started and RED on
-purpose** — one failing test, no endpoint yet. Nothing is blocked on Gene
-except the two decisions named at the bottom.
+`main` is at `295a1d9`. **Item 7 part 2 is started and RED on purpose** — one
+failing test, no endpoint. Two PRs are in flight and the MVP path was corrected
+underneath them: it now has six remaining items, not four.
 
 ### Start here, in this order
 
 1. **`git checkout feat/attack-ai-inputs-provenance`** and run
    `docker compose exec -T api sh -lc "cd /app && python -m pytest tests/unit/test_attack_ai_inputs.py -q"`.
    It fails with **404**. That is correct and is where work resumes.
-2. Read `DELIVERY_PLAN.md` → "Scope correction, 2026-08-27". It is short and it
-   is the thing that stops you building the wrong surface.
-3. Read `CLAUDE.md`'s task map at the top and **only the rows that apply**.
+2. Read `DELIVERY_PLAN.md` → "Scope correction, 2026-08-27", then the
+   **file-contention dependencies** under "Dependencies". The first stops you
+   building the wrong surface; the second stops two tracks colliding in
+   `routes/clients.py`.
+3. Read `CLAUDE.md`'s task map and **only the rows that apply**.
 
-### Item 7 part 2 — what it is and is NOT
+### Before writing the ai-inputs query, read this
 
-**IS:** `GET /attack/services/{id}/ai-inputs`, admin-only, tenant-scoped.
-Provenance and exclusions only — `capabilities[]` with `awaiting_signoff` /
-`source_list_version` / `source_document`, `sources[]`, `excluded[]`,
-`not_sent[]`, `totals`. A panel section BESIDE `AiPreviewButton` in
-`AttackWorkspace.tsx`.
+**The single most likely way item 7 part 2 gets built wrong** is deriving
+`not_sent` from live `CapabilityItem` rows for every list. The existing test's
+fixture is `status=APPROVED` with `approved_membership` NULL, so it takes the
+LIVE branch at `attack.py:624` — a live-only implementation **passes it green**
+and is wrong in both directions on a real approved list, where the snapshot IS
+the membership. A row re-classified into scope after approval is genuinely not
+sent but reports as sent; that is the fabricated-gap failure the endpoint exists
+to prevent, carrying its own disclosure as proof.
 
-**IS NOT:** a payload view. `POST /ai/preview` already ships that, generically
-for all three services, and its button already renders in the ATT&CK workspace.
-Building a second one is the wrong work the scope correction exists to prevent.
+Write the **path-3 test first**, seeded through `build_approved_membership`
+(`tech_debt.py:803-827`), before the query exists to be tested.
 
-**Why it matters**, in the filter's own words
-(`_client_capability_inputs`, `app/routes/attack.py`):
+Call, do not restate: `approved_membership_stale` (`tech_debt.py:157-213`)
+already computes path 3's diff · `awaiting_security_signoff`
+(`security_scope.py:54-61`) IS the `awaiting_signoff` field · copy the endpoint
+shape from `heatmap` (`attack.py:1500`) · `_client_capability_inputs` takes
+**client_id, not service_id** · do NOT add `enforce_ai_rate_limit`.
 
-> a tool missing from it cannot be named, and the technique it covers reads as
-> uncovered
+**One trap:** `Reconciliation.attribution_complete` is not persisted, so
+`excluded_rows` is written empty when the count is untrustworthy. Path 4 must
+distinguish "nothing was excluded" from "we cannot know what was excluded".
 
-The filter is CORRECT on all three counts. That is the point — a correct filter
-whose drops are invisible. A `gap` on a client deliverable can mean "no control
-here" or "the tool was filtered and nobody could see it", and the client cannot
-tell which.
+### The plan changed on 2026-08-30
 
-**Four drop-paths to drive, one test each.** Security scope (DONE, red);
-list status (`DISCARDED`); approved-snapshot membership (live rows added after
-approval, and snapshot entries whose item was renamed or removed); and
-extraction-time `excluded_rows`, which never reach the query at all.
+- **`mvp-blocking` now has a written definition** — "the MVP cannot ship while
+  this is open" — because it had drifted to "this is important".
+- **Items 11 and 12 exist.** 11 = #152 + #153, the redaction egress leaks item
+  10 filed and orphaned when it closed. 12 = #168, the pre-commit hook set.
+  Both sized **on start**, and both deliberately OUTSIDE the 13–19.5 total.
+- **Item 8 is split.** #123 joins the `clients.py` chain; the export/publish
+  half stays with item 6 in the held risk track.
+- **Two tracks, a held third.** Track A (attack) = item 7 → #131 → #109.
+  Track C (`clients.py` + `zt/scoring.py`) = #124/#125/#126 → #114 → #123.
+  Held: item 6 → item 8's export half. Merge track PRs ONE AT A TIME and re-run
+  CI on the other track after each — `clients.py:22-26` imports five things from
+  `app.attack`.
 
-**Each test asserts BOTH halves** — absent from `capabilities[]` AND present in
-`not_sent[]`. "It appears in not_sent" and "it was actually withheld" are
-different claims, and asserting only the first passes over an endpoint that
-reports everything twice.
+### In flight
 
-**No estimate.** The old 1–1.5 assumed porting from a branch now 104 commits
-behind; the 4–6 that replaced it priced a payload half that had already shipped.
-Both superseded, deliberately not replaced. The measured actual goes in the
-estimate-vs-actual table when it lands.
-
-### After item 7: #131, then item 9
-
-**#131 comes back to Gene before it lands** — it changes client deliverable
-content, so the merge rule reserves it for a human. Then item 9.
+- **PR #169** — the prettier pin. Closes 165. Gene merges (condition 5).
+- **#168** (pre-commit runs prettier 3.1.0 / ruff 0.6.9 / black 24.8.0 against
+  pins nothing uses) and **#170** (merge-rule condition 2 assumes the reviewer
+  saw the branch; a stale Read can serve it otherwise) — both filed, neither
+  fixed.
 
 ### What Gene owes a decision on
 
-1. **Two local-only branches with unique commits**, on this machine and on no
-   remote: `feat/w2-attack-citation-resolver` and `scratch/w2-and-docs-parked`,
-   each carrying unpushed work. They survive a shutdown; they do NOT survive a
-   disk failure.
-   Push as backups, or confirm they are dead and delete them. Pre-existing —
-   not from this session.
-2. **Three stashes**, dated 2026-08-09, -19 and -20, on
-   `fix/ai-response-shape-not-silently-discarded`,
-   `fix/ai-shape-guards-and-csf-provenance` and `feat/w2-resolver`. Same
-   question. Also pre-existing.
+Nothing outstanding. **Two branches and three stashes** were approved for
+archiving on 2026-08-30 — named explicitly, because "the parked branches" was
+ambiguous and the ambiguity was dangerous:
 
-### What landed today, so it is not re-litigated
-
-- **#157** — the stale-count and merge-rule PR. Closed no issues, correctly.
-- **#163** — the recalled-counts gate reported `clean (6 documents)` over five
-  it had read. Fixed, fail-closed on a missing target, pinned red-on-revert.
-- **#164** — item 7's scope correction and the superseded estimate.
-- **#167** — the governance change: reviewer dispositions (BLOCKING /
-  BLOCKING (prose) / ADVISORY), `context/*.md` and typo-class direct to `main`,
-  the 600-line `CLAUDE.md` budget and INSTRUCTIONS-vs-RECORD split, the task
-  map, and D-063 handing this file to the agent. **D-060 through D-063.**
-
-**The disposition rule is live and the next PR is its first ordinary use.**
-Write the endpoint, run the reviewer, fix BLOCKING, file ADVISORY, and let the
-rule be boring. Its value is that it stops being a topic.
+- `feat/w2-attack-citation-resolver` and `scratch/w2-and-docs-parked` — local
+  only, on no remote. Every artifact they carry already exists on `main`
+  (`citations.py`, `check_audit_evidence.py`, `AttackCitationAccounting.tsx`).
+  Tag `archive/<name>`, then drop them.
+- **The three stashes: INSPECT EACH BEFORE DROPPING. Not approved for blind
+  deletion.** An earlier draft of this section licensed dropping them on a
+  justification that covered only the branches — and the branches are tagged
+  first, so that half is recoverable while the stashes are not. What they hold,
+  read 2026-08-30 with `git stash show --stat`:
+  - `stash@{0}` — 112 insertions / 4 files, the same `attack.py` + `tech_debt.py`
+    + `AttackWorkspace.tsx` content as `scratch/w2-and-docs-parked`.
+  - `stash@{1}` — **592 insertions / 11 files**, CSF provenance and AI shape
+    guards, incl. `DECISIONS.md`, `ai/jobs.py`, `csf_profile.py`, four test
+    files. The largest of the three by an order of magnitude. It is *believed*
+    superseded by PR #78; that belief has NOT been checked against its contents.
+  - `stash@{2}` — a 237-line `context/gene.md` rewrite, superseded by D-063.
+  `git stash drop` is unrecoverable, and afterwards "it was worthless" and "it
+  held the only copy" are byte-identical states. This repo already has one
+  recorded instance of a whole governance change sitting stashed through an
+  entire review. Diff `stash@{1}` against `main` before deciding.
+- **NOT `feat/attack-ai-inputs-visibility`.** It is pushed to `origin`, and it is
+  **item 7's shape reference** — the 825-insertion `/ai-inputs` surface
+  `DELIVERY_PLAN.md` sends you to. Its endpoint does NOT exist on `main`, so the
+  "everything is already on main" justification is false for it specifically.
+  Leave it alone until item 7 lands.
 
 ### Open work, derived not recalled
 
-<!-- counted: gh issue list --label mvp-blocking --state open --json number | jq length, 2026-08-27 -->
-**16 open `mvp-blocking`.** Eight issues were filed today (#159–#162, #165,
-#166 from the reviewer passes; #156 and #158 earlier). Four Dependabot PRs
-(#147–#150) remain open; #149 still carries a hold comment.
+**Do not write these numbers down. Run them:**
 
-<!-- counted: gh pr list --state open, 2026-08-27 -->
-**No feature PRs are open.** The only open PRs are the four Dependabot ones.
+    gh issue list --label mvp-blocking --state open --json number | jq length
+    gh pr list --state open
 
+Every open blocker is owned by an item — `CONTEXT.md` has the by-item mapping,
+which is durable in a way the count is not. #165 closes with PR #169; #159 lost
+the label on 2026-08-30.
+
+A `<!-- counted: … -->` marker is not enough here. On 2026-08-30 one certified
+`17`, a re-label in the same session made it `16`, and the PR that closes #165
+was already green. The count changed twice in an afternoon; the command did not.
+
+### The lesson this session produced
+
+**A subject sweep enumerates how the subject can be WRITTEN before it greps.**
+Issue 165 was sized "two characters" and landed at 15 files, because
+`grep "3\.9\.5"` reached one of four spellings of "the prettier version". Two
+of the three misses were found by other people. Now rules 4 and 5 in
+`CLAUDE.md`'s numbers block.
 
 ## What item 10 did (all eight issues, code complete)
 
@@ -248,9 +268,22 @@ Recorded by the relay last round, updated with what actually landed.
 
 `main` has #110, #113, #116, #117, #119, #127, #128, #129, #133 merged. **Working tree clean, nothing local, nothing mid-edit.**
 
-## Open mvp-blocking issues (14)
+## Open mvp-blocking issues AS OF 2026-08-26 — historical, do not act on
 
-**Read live from GitHub on 2026-08-26, immediately after PR #155 merged.**
+<!-- counted: historical -->
+
+**14, read live from GitHub on 2026-08-26, immediately after PR #155 merged.**
+**It is 2026-08-26's number and nothing else.** For the current figure run the
+command in "Open work" at the top of this file; for the by-item mapping see
+`CONTEXT.md`.
+
+**This heading has now held three different values** — 20, then 14, and it was
+still saying 14 on 2026-08-30 when the mapping gave 15 and the list below
+omitted #168. `CLAUDE.md` cites it as instance 1 of the
+correction-paragraph-outlives-its-number shape, and it went stale a third time
+while that citation stood. Date-qualified rather than updated: a heading in a
+history section that reads as current is the defect, and a fresh number would
+only reset the clock on it.
 
 `#153 #152` (the two redaction leaks item 10 filed rather than fixed) · `#132
 #131` · `#126 #125 #124 #123` (dashboards) · `#122 #121` (Risk, **item 6**) ·

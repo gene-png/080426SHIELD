@@ -15,7 +15,7 @@ you are a small fraction of it.
 | Adding or changing a gate | The silent-success bullet, and the fail-closed bullet |
 | Opening a PR | Rules of the road: the reviewer, the audit block, the closing-keyword check, the merge rule |
 | Deciding whether an agent may merge | The merge rule alone. Do not grow it. |
-| Writing a number into any document | The three rules for numbers in prose |
+| Writing a number into any document | The rules for numbers in prose |
 | Debugging something that "should work" | Environment gotchas. Start there, not in the code. |
 | Editing this file, `DECISIONS.md`, or any `context/*.md` | The size ratchet, the file-ownership table, and the branch-vs-direct rule |
 | Anything not listed above | Read on. "Stop" applies to a row that matches, never to the absence of one. |
@@ -941,11 +941,14 @@ Rules of the road:
   `.claude/agents/adversarial-reviewer.md` via the Agent tool.
 
   **It always runs, on every surface including prose. What changes is what
-  BLOCKS.** Every finding is labelled BLOCKING, BLOCKING (prose), or ADVISORY,
-  and advisory findings are FILED with an issue number rather than fixed before
-  merge. The three labels and the test between them are defined in the agent
-  file and deliberately NOT restated here — two copies of a rule are two places
+  BLOCKS.** Advisory findings are FILED with an issue number rather than fixed
+  before merge. **The labels and the test between them are defined in the agent
+  file and deliberately NOT restated here** — two copies of a rule are two places
   for it to drift, and this file has a bullet about that. Read them there.
+
+  This paragraph used to enumerate the labels inside the sentence promising not
+  to enumerate them, and went stale the day a fourth was added. The enumeration
+  is deleted rather than corrected; correcting it would only reset the clock.
  Run it before you
   open the PR where you can, and **again after any substantive change to the
   branch** — PR #29's plan records two consecutive patches that each looked done
@@ -965,6 +968,18 @@ Rules of the road:
       ## Adversarial audit
       Findings: none
       Disposition: nothing to act on
+
+  **State per finding whether it is INTRODUCED or PRE-EXISTING, and the claim
+  is checkable by `git blame`.** The reviewer runs read-only and often without
+  Bash, so it cannot run `git diff` and **cannot separate "you wrote this" from
+  "you touched a file that already had it"**. Every finding therefore arrives
+  attributed to the author by default, and some are inherited. The disposition
+  rule splits on CONSEQUENCE; fix-here-versus-file-it also turns on OWNERSHIP,
+  which the reviewer structurally cannot judge. Observed 2026-08-30, when a
+  finding about an item's estimate contradicting itself was reported against
+  the branch and the contradiction predated it — the branch had amplified it,
+  not created it. Costs one word per finding and turns an invisible gap into a
+  stated one.
 
   **Docs-only PRs are exempt from the gate and NOT exempt from this rule**, and
   the two are different things. The gate skips a pure-docs change deliberately —
@@ -1079,7 +1094,90 @@ Rules of the road:
   (Decision recorded as **D-057**, which reverses part of D-054. Closes the
   `CLAUDE.md` half of #108; the other half — the gate's own source still saying
   it "only REPORTS" and citing D-051 — is untouched and still open.)
-- **Three rules for numbers in prose, and a gate that enforces the first two on
+- **EVERY agent definition carries this line, written before the agent runs
+  rather than after:** *"Re-read `CLAUDE.md` **and your own agent definition**
+  from disk at the start of a task rather than trusting injected context. Report
+  a disagreement between the two; never silently prefer either."*
+
+  **"And your own agent definition" is load-bearing, and the first draft of this
+  bullet omitted it** — it named `CLAUDE.md` only, which is narrower than the
+  problem it describes and is this file's own most-recorded shape. The reviewer
+  that caught the omission demonstrated it in the same run: its injected system
+  prompt carried the disposition list with three labels while
+  `.claude/agents/adversarial-reviewer.md` on disk had four, and it evaluated the
+  fourth **only because it had been told to read from disk** — an instruction
+  that named the wrong file and worked by accident. An agent whose own definition
+  is stale applies a rule set nobody can see is missing, and it is the one file
+  it will never think to check.
+
+  **Injected context lags the file.** Observed twice on 2026-08-30: the
+  `CLAUDE.md` in a subagent's context said "Three rules for numbers in prose"
+  while disk said "The rules" with five — the two rules added that morning
+  were absent from the copy the agent was reasoning with. It caught the
+  disagreement and re-read from disk; nothing about the output would have
+  looked wrong if it had not. Tracked as #170.
+
+  The risk scales with the number of agents: two agents operating on a rule
+  set that predates the rules written FOR them produce work that passes every
+  gate and violates a rule neither ever saw. This binds `attack-dev` and
+  `clients-dev` at creation, not afterwards.
+
+- **SPOT-CHECK a subagent's `file:line` citations before they enter a document,
+  and record the check. A sample, not all of them — what you need is the
+  report's CALIBRATION.** This replaces "be skeptical of subagent output", which
+  is a disposition, and dispositions lose to convenience under time pressure.
+  The rule was on record and read, and the numbers were propagated anyway.
+
+  Measured 2026-08-30, and it is a clean partition rather than a near-miss: of
+  fourteen `file:line` citations that entered `DELIVERY_PLAN.md` from an Explore
+  agent's report, **the eleven that were independently run were all correct and
+  the three that were only read were all wrong.**
+
+  **How big a sample?** With that hit rate the arithmetic is worth doing once
+  rather than guessing, because the intuitive answer is too small: drawing 3
+  of 14 catches at least one bad citation only **55%** of the time, 4 gets
+  67%, 5 gets 77%, 6 gets 85%
+  <!-- counted: python -c "from math import comb; [print(k, 1-comb(11,k)/comb(14,k)) for k in (3,4,5,6)]", 2026-08-30 -->.
+  An earlier draft of this bullet asserted that three checks "would have
+  caught it" -- a 55% chance stated as a certainty, in the rule about not
+  writing numbers you have not derived. **Sample a third, and round up.**
+
+  **Those figures are conditional on THIS incident's error rate -- roughly 1
+  in 5, observed once -- and are not a detection guarantee.** At a lower rate
+  the same sample catches proportionally less: 1 bad in 20, sampled at a
+  third, is caught **35%** of the time
+  <!-- counted: python -c "from math import comb; print(1-comb(19,7)/comb(20,7))", 2026-08-30 -->.
+  Which is the point of the framing above rather than an exception to it: the
+  sample CALIBRATES the report, it does not CLEAR the citations. A clean
+  sample of five does not verify the other nine; it says the error rate is
+  probably low enough to trust them. Read the table as "how likely am I to
+  learn this report is unreliable", never as "what fraction of bad citations
+  do I catch".
+
+  **And the arithmetic assumes the bad citations are EXCHANGEABLE with the
+  good ones, which in this incident they demonstrably were not.** The three
+  wrong citations were exactly the three nobody had executed; the eleven right
+  ones were exactly the eleven that had been run. Under a random-draw model,
+  drawing 11 and finding 0 bad has probability 1/364 — so the model is simply
+  the wrong one. **Sample the citations you have NOT executed**, and a sample
+  of three from that stratum would have been certain rather than 55%. The
+  table is a floor for the case where you cannot tell the strata apart; when
+  you can, stratify and the sample gets much cheaper and much stronger.
+
+  **The wrong ones do not look wrong**, which is why sampling beats reading:
+  `clients.py:741` is a bare closing paren and `:755` is a real line of code that
+  reads plausibly in context. As everywhere else in this file, the failure and
+  the success are indistinguishable at the point of reading.
+
+- **A plan entry that carries only a LOCATION is a derived value with a second
+  place to be wrong. Name the MECHANISM instead, or as well.** "`clients.py:741`"
+  goes stale the next time anyone reflows that function, silently and with
+  nothing to notice it. "`zt_dashboard` never calls `_zt_client_target_stage`,
+  though `_zt_gap_total` does" survives the reflow and is greppable back to a
+  line whenever one is needed. Line numbers are for finding the code today; the
+  mechanism is what the entry is actually for.
+
+- **The rules for numbers in prose, and a gate that enforces the first two on
   the shared documents.** Every miss behind them is one pattern: a value written
   from memory instead of derived. This file has produced that defect repeatedly,
   including inside the paragraphs correcting earlier instances of it, so the
@@ -1089,9 +1187,43 @@ Rules of the road:
      document, delete the number and let the list be the count. "The blockers:"
      followed by the list cannot go stale; "The four blockers:" goes stale the
      moment one closes.
-     <!-- counted: an illustration of the form being warned against, not a count of anything --> This is the cheapest of the three and it applies far more
+     <!-- counted: an illustration of the form being warned against, not a count of anything --> This is the cheapest of them and it applies far more
      often than it looks — most spelled counts in this file sit within two lines
      of the thing they count.
+
+     **When the list lives OUTSIDE the document, write the COMMAND, not the
+     number — and not a marker either.** Rule 2's `<!-- counted: … -->` is a
+     freshness CLAIM, and a claim can go stale between being written and being
+     read. On 2026-08-30 a marker certified 17 open blockers; a re-label in the
+     same session made it 16, with a green PR about to make it 15. The count
+     changed twice in an afternoon and the marker asserted the first one
+     throughout. A command cannot go stale, and whoever wants the number runs it.
+     Reach for rule 2 when a number must appear inline; reach for this when the
+     document's job is to point at the number rather than to state it.
+
+     **Delete the COUNT, never the MAPPING.** Read carelessly, "don't write the
+     <!-- counted: a quoted illustration of the volatile form, not a count of anything -->
+     count" takes the useful half with it. "Seventeen open blockers" is volatile —
+     one close invalidates it. "#123 belongs to item 8" is durable: an issue's
+     owning item does not change when a different issue closes. Same list, two
+     halves, opposite lifetimes. Keep the structure and drop the tally.
+
+     **The gate catches FORM. It cannot catch what a correct number
+     IMPLIES, and the two mechanisms are complementary by construction
+     rather than redundant.** `check_recalled_counts` matches a spelled
+     cardinal adjacent to a plural noun -- that is all it can ever do. On
+     <!-- counted: a verbatim quotation of the phrase the gate caught, not a count -->
+     2026-08-30 it caught "Three checks drawn at random would have caught
+     it"; the repair derived the real figure, 54.7%, and then stated that
+     TRUE figure so as to imply a detection guarantee it does not support.
+     A human caught the second. No pattern over text could have: the
+     sentence contains a cited, correct, derived number.
+
+     **Do not try to grow the gate into the second role.** Every attempt
+     widens the pattern until it fires on everything, which is the same
+     finding already recorded for TI001 and for the prose-total gate. Form
+     is mechanisable and implication is not; run both and expect neither to
+     cover the other.
   2. **Cite, don't recall.** A number from OUTSIDE the document carries the
      command that produced it and the date it was run:
 
@@ -1108,12 +1240,60 @@ Rules of the road:
      DO was left standing — a heading, a to-do list, a worked example. A
      correction is UNVERIFIED until you have grepped the doc set for the claim's
      SUBJECT rather than the line number you were handed, and the correcting
-     commit records the grep it ran. This is the highest-value of the three:
+     commit records the grep it ran. This is the highest-value of the numbering rules:
      every adversarial pass over the branch that produced these rules needed it
      independently, and the merge rule's worked example for item 7 part 2 — which
      stayed
      authoritative for a week after the condition beneath it changed — is the
      canonical instance.
+
+     **PROXIMITY CATCHES NOTHING RELIABLY. The grep is the only mechanism, at
+     any distance, and there is no partial credit.** An earlier draft of this
+     paragraph said "a correction reaches roughly one screen unaided" and drew a
+     threshold. That was one incident stated as a property, and it was falsified
+     by the branch that wrote it: the same commit left a contradiction **two
+     lines above** the correction it had just recorded, through a first draft and
+     a full reviewer pass. Two other sites, 550 and 600 lines away, were also
+     missed. A third, two lines away, was caught. So proximity is not a
+     threshold, it is a coin toss — and writing a number on it invited exactly
+     the "I was close enough to be careful" reasoning that produced the miss.
+     The question is never "was I careful" but "did I run the grep". The
+     `Blocked by` column is the worst case: it is the field a reader consults to
+     answer exactly the question the correction answered.
+
+  4. **A subject sweep enumerates how the subject can be WRITTEN before it
+     greps.** Rule 3 says grep the subject rather than the line you were handed.
+     This is its precondition, and skipping it produces a sweep that reports
+     clean while reporting on a fraction of the sites. **One literal is one
+     spelling; a sweep over one spelling is silent about every other.**
+
+     The instance that produced this rule: issue 165 named a stale
+     `prettier@3.9.5` in `CLAUDE.md`. Grepping `3\.9\.5` found seven sites and
+     was reported as complete — twice. The subject was "the prettier version",
+     written four ways: `prettier@3.9.5`, `prettier@3.9.4` (two more staged
+     queues), `rev: v3.1.0` (`.pre-commit-config.yaml`, running a `--write` hook
+     eight minors behind CI), and `"prettier": "^3.9.6"` (a range, not a pin).
+     Grepping `prettier` and reading every hit found all of them. The two
+     missed spellings were found by other people, and one was the largest defect
+     on the branch (#168).
+
+     This is the enumerate-the-class rule pointed at a SEARCH rather than at a
+     pattern or a table — the same shape as `_HSPACE` being written by listing
+     the characters someone thought of. **Derive the set; do not list it.** In
+     practice: grep the bare noun, read every hit, and classify each one, rather
+     than grepping any value the noun has ever had.
+
+  5. **A de-duplication that points at the NON-AUTHORITATIVE source is worse
+     than the duplication it removes.** Two places to be wrong is a risk; one
+     place that is always wrong is a defect.
+
+     Same PR: three docs said "the version the lockfile pins" and were repointed
+     at `package.json` to give the requirement "one home instead of two". Sound
+     reasoning, wrong operand — `package.json` holds a RANGE (`^3.9.6`) that
+     names no version and admits 3.10.x, while CI runs `pnpm install
+     --frozen-lockfile` and executes what `pnpm-lock.yaml` resolves. Two of the
+     three docs had been correct before the edit. **Before collapsing two
+     sources into one, establish which one the machine actually reads.**
 
   **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
   `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
@@ -1134,10 +1314,26 @@ Rules of the road:
   The provenance window is the finding's line and two either side, so a marker
   spanning three lines has its closing delimiter outside the window and does not
   register — write markers on one line. Matching is also PER LINE, so a count
-  split across a line break (`Three` / newline / `instances`) is invisible — and
-  since `prettier --write` is mandatory before every commit and reflows prose, an
-  edit somewhere above a flagged line can silently un-flag it with no change to
-  the sentence. More importantly, the pattern requires
+  split across a line break (`Three` / newline / `instances`) is invisible.
+
+  **The consequence, stated as the general fact rather than as one of its
+  directions: the gate's finding set is NOT STABLE UNDER REFORMATTING. A clean
+  result is clean for the CURRENT FORMATTING, not for the text.** `prettier
+  --write` is mandatory before every commit and reflows prose, so an edit
+  anywhere above a flagged line can move a count across — or off — a line break
+  with no change to the sentence. Both directions have now been observed:
+  reflow un-flagging a real finding, and reflow joining a cardinal to its noun
+  and exposing one that had been hidden. Neither is a bug to fix; the point is
+  that **the gate must be run AFTER the formatter, never before**, and that a
+  green run recorded before a reformat says nothing about the tree after it.
+
+  This has a live consequence in #168: fixing the pre-commit hook reformats 46
+  files, so any recalled-count finding currently hidden by a line break in them
+  becomes visible the moment it lands. That PR re-runs the gate after the
+  reformat or it ships a green that means "clean before the change" while
+  reading as "clean after".
+
+  More importantly, the pattern requires
   the cardinal to sit NEXT TO the noun, so `thirteen recorded instances` is
   invisible where `nine instances` is caught.
   <!-- counted: quoted phrases illustrating the pattern, not counts of anything -->

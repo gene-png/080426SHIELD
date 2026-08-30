@@ -51,6 +51,19 @@ this is the document someone reads to decide what to work on._
 correct documents, with the AI layer working end to end. Not the seeded demo —
 fixture mode already demos all five.
 
+**`mvp-blocking` means the MVP cannot ship while this is open.** Written down
+2026-08-30 because the label had drifted to "this is important" and four issues <!-- counted: historical -->
+were carrying it without meeting the bar or belonging to any item. Two failed
+the test and were re-labelled or closed; two were real and became item 11. The
+definition is here, where the plan defines its scope, so the next triage answers
+itself instead of arriving as a question.
+
+<!-- counted: "exactly one item" states a cardinality rule, not a tally -->
+**Every `mvp-blocking` issue belongs to exactly one item below, or is recorded
+as deliberately unowned with a reason.** An unowned blocker is invisible: the
+plan's total silently stops covering the plan's own definition of done, which is
+what happened between 2026-08-26 and 2026-08-30.
+
 ### Order, status, and what blocks what
 
 | # | Item | Status | Blocked by | Estimate | Actual |
@@ -65,14 +78,16 @@ fixture mode already demos all five.
 | 5 | **W2 — ATT&CK resolver rewrite + tri-state** | **DONE** (PR #103, merged 2026-08-20). Scoped to the resolver; the two gaps it left honest rather than implied are #101 + #102, item 5a | — | — | — |
 | 5a | **#101 + #102 — persist the flags, and stop unconfirmed support scoring** | **DONE** (PR #110, merged 2026-08-21). <!-- counted: historical --> Migrations 0044 + 0045, `attack/pending.py`, run-AI + patch + `confirm-citations` + heatmap + finalize + all 3 exporters + admin and CLIENT surfaces, `seed_demo` (D-055, D-056). §14 audit: 6 findings, 5 fixed, 1 filed (#109). CI green — six checks incl. full E2E. The local `s2` / `s33:84` failures were **measured, not assumed**: `/admin/management` costs 1+2N requests and took 95.6s to settle at 88 clients vs 5.4s at 3; both specs pass on a re-seeded DB. Product finding tracked as #111 | — | — | — |
 | 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted) and **#132** (`risk.py` re-derives the ATT&CK citation drop as a two-line list comprehension with no counter, no reason and nothing in the audit row -- found by grepping the SHAPE, not the call sites, and absent from this plan entirely until the review of PR #157 noticed an `mvp-blocking` issue with no owning item). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **4–6 sessions** (re-sized 2026-08-25 — see "Why the range is wide") | — |
-| 7 | **W1 ATT&CK step** | Not started — **decision superseded 2026-08-26.** It read "port the `/ai-inputs` panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility` is now 104 commits behind `main`
-<!-- counted: git rev-list --count origin/feat/attack-ai-inputs-visibility..origin/main, 2026-08-27 --> and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the endpoint its four files call does not exist on `main` under that name -- **but the payload half of this item already SHIPS**, see the scope correction below. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption and is unsound until re-derived** -- do that before starting, not after. Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **4–6 sessions** (re-derived 2026-08-27 — see "Re-sizing item 7") | — |
-| 8 | **W6 — Risk export/publish split** | Not started. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | Nothing | **1–1.5 sessions** | — |
+| 7 | **W1 ATT&CK step** | **PART 2 IN PROGRESS, RED ON PURPOSE** — branch `feat/attack-ai-inputs-provenance` carries a committed failing test (`db43a86`) and no endpoint; that 404 is where work resumes. **Decision superseded 2026-08-26.** It read "port the `/ai-inputs` panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility` is now 104 commits behind `main` <!-- counted: git rev-list --count origin/feat/attack-ai-inputs-visibility..origin/main, 2026-08-27 --> and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the endpoint its four files call does not exist on `main` under that name -- **but the payload half of this item already SHIPS**, see the scope correction below. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption, which expired; the current 4-6 was derived bottom-up on 2026-08-27 (see "Re-sizing item 7") and needs no further work.** Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **4–6 sessions** (re-derived 2026-08-27 — see "Re-sizing item 7") | — |
+| 8 | **W6 — Risk export/publish split** | Not started. **SPLIT 2026-08-30:** #123 is the `routes/clients.py` half and queues behind #114 (same file — see "File-contention dependencies"); the export/publish half is independent. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | **#123 half: #114.** Export/publish half: nothing | **1–1.5 sessions** | — |
 | 9 | **Correctness defects only a code review catches** | **IN PROGRESS — sweep done, fixes not started.** MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **4–6 sessions** (fixes only; re-sized 2026-08-25 — see "Why the range is wide") | — |
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
 | 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). <!-- counted: historical --> Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
+| 11 | **The two redaction leaks item 10 filed rather than fixed — #152 + #153** | Not started. Filed by item 10 and **orphaned when it closed**: both are labelled `client-data-egress` on a FedRAMP Moderate/High target, so client identifiers reach a third-party provider. #152 — a signature block whose signatory line ends in punctuation or exceeds four words is not cut. #153 — bare UK national, E.164 without the plus, and the US international prefix all leak. One PR, batched by file per the item-10 rule: both live in `app/ai/redact.py` and are decided by the same corpus | Nothing | **On start** — see below | — |
+| 12 | **The pre-commit hook set diverges from every pinned tool version — #168** | Not started. Found by the adversarial reviewer during the #165 sweep, **pre-existing on `main`**. `.pre-commit-config.yaml` runs prettier `v3.1.0` (46 files disagree, measured 2026-08-30), ruff `v0.6.9` against `ruff==0.16.3`, and black `24.8.0` against `black==26.5.1` — all three REWRITE, while `SECURITY.md:44` makes the hook mandatory and `docs/development.md:65` forbids `--no-verify`. A mandatory step producing the failure it exists to prevent. The prettier half needs a local hook (`mirrors-prettier` is archived and `v3.1.0` is its newest tag); the ruff/black half is a `rev` bump whose **effect is unmeasured** — black crosses two stable-style years | **Nothing logically; land it BETWEEN items** — its fix reformats 46 files, so it collides with every other item's working tree | **On start** — see below | — |
 
-### Total remaining: 13–19.5 sessions, and the parts sum to it
+
+### Total remaining: 13–19.5 sessions across the FOUR SIZED items, and the parts sum to it
 
 **Updated 2026-08-27**, when item 7 was re-derived. Previously 10–15. Expect the upper half; see the
 next section for why, and note that all three measured items have now landed
@@ -113,11 +128,33 @@ not by writing the rule.
 | 8 — W6 Risk export/publish split | 1–1.5 |
 | **Total** | **13–19.5** |
 
-At 4–8 hours a session that is roughly **52–156 hours**, or **2–6 working
-weeks** at 5–6 productive hours a day. The width of that is the point, not a
-hedge; see below. Nothing is blocked
-by anything: 5a was the last link in the W3 → W2 → W1-ATT&CK chain. Order is
-10 → 7 → 9 → 6 → 8.
+**Items 11 and 12 are NOT in that table and NOT in that total, on purpose.**
+Both are sized **on start**, so the total above covers four of the six remaining
+items and says so rather than implying otherwise. They are excluded from the
+summing table rather than given a placeholder because `check_plan_totals.py`
+fails loud on an estimate it cannot parse — that is the fix for the bug where an
+annotated cell was dropped from the sum in silence, and putting "on start" in
+the table would either trip the gate or force the placeholder that caused it.
+
+**Why unsized rather than guessed.** Item 10 was sized 2–3 and landed at ~5–6;
+issue 165 was sized "two characters" and landed at 15 files, four review rounds
+and new issues of its own. Both are redaction/tooling work, which is exactly what items
+11 and 12 are, and neither sized from the outside. Item 7 got the same treatment
+on 2026-08-27 for the same reason. A forecast written the week the last one was
+found wrong is how a third gets written.
+
+At 4–8 hours a session the four sized items are roughly **52–156 hours**, or
+**2–6 working weeks** at 5–6 productive hours a day — plus items 11 and 12.
+The width of that is the point, not a
+hedge; see below. **Nothing is blocked by anything at the ITEM level** — but
+several units inside items 8 and 9 are blocked at the FILE level, all in
+`routes/clients.py` — the block below is the list; see "File-contention dependencies". At the item level: 5a was the last link in the W3 → W2 → W1-ATT&CK chain. Order is
+10 → 7 → 9 → 6 → 8, with 11 and 12 unsequenced against them — but **item 12
+is the LEAST independent item here, not an independent one.** Fixing #168
+reformats 46 files, so it touches every other item's working tree and
+changes what `check_recalled_counts` can see (`CLAUDE.md`, "limits of the
+mechanism"). Land it between items, never alongside one. Item 11 is
+genuinely independent: `app/ai/redact.py` and its own tests.
 
 **The arithmetic is written out because the previous total was asserted rather
 than added.** A schedule whose parts do not sum to its total is the same defect
@@ -203,16 +240,20 @@ items, this one is about round count per item. They add rather than overlap.
 
 ### Review overhead is per-PR, not per-unit-of-work — so batch by file, not by issue
 
-**Measured — 2026-08-25 for the first two rows, 2026-08-26 when item 10 landed.** <!-- counted: historical -->
+**The measurements live in ONE table — "Estimate vs actual, recorded as items
+land", below.** This section argues from them; it no longer restates them.
 
-| Item | Review rounds | Findings | Estimated | Actual |
-| --- | --- | --- | --- | --- |
-| #130 redaction fix (PR #141) | 2 | 16 | 0.25 | 0.5–1 |
-| 9a docs-truth pass, `docs/security.md` | 3 | 30 | 0.5–1 | ~1 |
-| 10 the redaction boundary (PR #155) | 4 | 16 blockers + 3 self-corrections | 2–3 | **~5–6** |
+**Consolidated 2026-08-30, because the duplicate had already gone wrong.** A
+second copy of this data sat here with its columns in a different order, and it
+disagreed with the other one: 9a's actual read `~1` here and `~1.5–2` there,
+and `~1.5–2` is what item 9a's own status row says. Nothing flagged it — the
+gate reads the totals table, not these. The note under the other table has said
+"Maintain ONE table; a second copy is a second place to be wrong" since the
+third adversarial pass over PR #146 put it there; the copy it warns about
+outlived the warning by two weeks and was found by adding a row to both.
 
-**Three points is a trend, and the next sizing should absorb it rather than
-rediscover it.** All three items overran, and in each the overrun was review <!-- counted: historical -->
+**Every measured item has overrun, and the next sizing should absorb that
+rather than rediscover it.** In each, the overrun was review
 yield rather than mis-scoping: the work found was real, and most of it was
 invisible to the estimate because it did not exist until a fix created it.
 Item 10's four rounds produced 9, then 1, then 5, then 1 blockers — the count <!-- counted: historical -->
@@ -333,7 +374,7 @@ gate (1 real in 13) and for TI001 (5 in 41), and it fails it worse. Written down
 instead, beside the batching rule, because both are decisions made at the moment
 of starting when the instinct runs the other way.
 
-**Assignments for the two this section names:**
+**Assignments for the issues this section names:**
 
 - **#142** — the `is_production()` predicate covering one of three environments,
   so `SHIELD_REDACTION_MODE=off` and a placeholder signing secret are permitted
@@ -401,7 +442,11 @@ surface -- which is what `docs/plans/2026-08-08-attack-citation-resolver.md`
 already says: "the step-1 edit modal should extend that panel rather than invent
 a second surface".
 
-**The 4-6 estimate below is SUPERSEDED and deliberately not replaced.** It
+**The 4-6 estimate THIS SECTION was written against is SUPERSEDED and was deliberately not replaced at the time.**
+**[Superseded in turn — read "Re-sizing item 7" below.]** That section
+re-derived 4-6 from scratch, bottom-up, and recorded it; the two numbers are
+the same and their derivations are not, which is why this paragraph reads as
+a contradiction without this line. What follows describes the FIRST 4-6. It
 priced a payload half that had already shipped. A forecast is not a recalled
 count -- there is no command to cite -- so writing a second derived number on
 the same day the first was found wrong is how a third gets written. The measured
@@ -449,9 +494,9 @@ That sums to **3.75–5.75**.
 **Cross-check from the measured ratios.** Stated precisely, because an earlier
 draft of this paragraph said "2–4x on every item that has landed" and that is
 row one's own label promoted to a property of the whole table. What the table
-actually records is **1–2x** (9a, 0.5–1 against ~1), **1.67–3x** (item 10, 2–3
-against ~5–6) and **2–4x** (#130, 0.25 against 0.5–1) — a band of roughly
-1–4x, with the largest item at the low end. A fresh-write base of 1.5–2 against
+actually records is **1.5–4x** (9a, 0.5–1 against ~1.5–2), **1.67–3x** (item 10,
+2–3 against ~5–6) and **2–4x** (#130, 0.25 against 0.5–1) — a band of roughly
+1.5–4x, with the largest item at the low end. A fresh-write base of 1.5–2 against
 that gives 1.5–8. The bottom-up figure sits inside it. The conclusion survives
 the correction, which is why the correction is worth making: the answer did not
 depend on the overstatement, so nothing is lost by removing it.
@@ -484,9 +529,11 @@ guessed. When a total is next wrong, the arithmetic will be sitting beside it.
 | Work | Estimated | Actual | Ratio | Review rounds | Findings |
 | --- | --- | --- | --- | --- | --- |
 | #130 redaction fix (PR #141) | 0.25 | 0.5–1 | 2–4x | 2 | 16 |
-| 9a docs-truth pass, `docs/security.md` | 0.5–1 | ~1.5–2 | **2–4x** | 3 | ~30 |
+| 9a docs-truth pass, `docs/security.md` | 0.5–1 | ~1.5–2 | **1.5–4x** | 3 | ~30 |
+| 10 the redaction boundary (PR #155) | 2–3 | ~5–6 | 1.67–3x | 4 | 16 blockers |
+| issue 165, the prettier pin (PR #169) | "two characters" | 15 files, 4 versions | **not computable** | 4 | 4 BLOCKING + 2 ADVISORY |
 
-**Superseded — see the estimate-vs-actual table higher in this file.** This section was written when 9a and #130 were the only measured
+**Superseded — the table directly above is now the only one.** This paragraph was written when 9a and #130 were the only measured
 items and said 9a was "the larger overrun of the two". Item 10 has since
 landed at 2-3 estimated against ~5-6 actual and is the larger of THREE.
 
@@ -603,7 +650,11 @@ generates. W1-ZT's elapsed span looks like 23h in the log, but two of those gaps
 are idle time, not work — do not read commit timestamps as effort.
 
 **8–10.5 sessions ≈ 32–84 hours ≈ 7–15 working days** at 5–6 productive hours a
-day. That is where "two to three weeks" comes from.
+day. **[SUPERSEDED — the 8–10.5 above is an old total.]** The current figure
+is 13–19.5 across the four sized items, plus items 11 and 12 unsized, which the
+"Total remaining" section states as **2–6 working weeks**. This paragraph is kept
+for its hours-per-session derivation, which is measured and still holds; its
+"two to three weeks" conclusion is not current and is superseded by that section.
 
 Two caveats that matter for planning:
 
@@ -624,7 +675,8 @@ W3 ──> W2 ──> W1 ATT&CK          (WAS the long pole; W3 and W2 are DONE;
 #79 ─┘
 
 W1 Risk ──> (independent)
-W6      ──> (independent)
+W6      ──> export/publish half independent; its #123 half queues
+            behind #114 (same file) — see "File-contention dependencies"
 #51     ──> (independent, but gates "MVP" itself)
 ```
 
@@ -637,7 +689,149 @@ W6      ──> (independent)
 - **W2 before the ATT&CK export audit** — same files, and the audit wants the
   post-rewrite shape.
 - **#29 must not merge** until a clean adversarial audit. (W2 landed as PR #103 on 2026-08-20; the resolver half of #29 is superseded, the `/ai-inputs` panel half is item 7.)
-- Items 1, 6 and 8 depend on nothing and can run in parallel with the chain.
+- Items 1 and 6 depend on nothing and can run in parallel with the chain.
+  **Item 8 is HALF independent**: its export/publish half depends on nothing,
+  its #123 half queues behind #114 on `routes/clients.py`. This line said
+  "1, 6 and 8" for one draft of the very commit that added the dependency
+  two lines below it — see the note there.
+
+#### File-contention dependencies, added 2026-08-30
+
+**This block falsified the rule it was written to demonstrate.** `CLAUDE.md`
+rule 3 gained a threshold from this branch — "a correction reaches roughly one
+screen unaided" — and the two lines immediately above this heading contradicted
+it through a first draft and a reviewer pass. **Two lines is not one screen; it
+is adjacency, and it still failed.** The rule has been corrected to say what the
+evidence supports: proximity catches nothing reliably, and the grep is the only
+mechanism at any distance.
+
+These are not logical dependencies — nothing blocks anything conceptually. They
+are **the same-file kind**, which is why they were invisible until someone
+looked at line numbers instead of item names. Recorded here rather than in a
+session summary, because a dependency that lives only in a chat log is the shape
+this document already has a bullet about.
+
+**`routes/clients.py` holds four separate work units**, spread across three
+items:
+
+```
+#124 ZT target ignored          clients.py:749  target = zt_compute(fw, targets)
+                                using per-row targets only; the client target
+                                (_zt_client_target_stage, :253) is never called
+                                in zt_dashboard, though _zt_gap_total uses it :322
+#126 Tech Debt spend floor      an unknown annual_cost_usd coerces to 0.0 (:878)
+                                and enters annual_spend for EVERY item (:879).
+                                savings_cost_known is set False (:882) only when
+                                a CUT item has unknown cost -- the CUT guard at
+                                :880 makes it a NARROWER predicate, not the same
+                                one. The response carries no spend equivalent of
+                                that flag, and the flag it needs must be computed
+                                over ALL items. Copying the savings predicate
+                                ships spend_cost_known: true over a floored
+                                spend figure -- a false assurance about money.
+                                TWIN, and it is the worse half: tech_debt/
+                                exporters.py:96-106 repeats the asymmetry
+                                exactly -- total_cost skips an unknown cost
+                                (:100-101) while savings_known is CUT-guarded
+                                (:102-104) -- so the RELEASED PDF/DOCX/XLSX
+                                prints an unqualified "Total annual cost" that
+                                is a floor, beside a savings figure that does
+                                carry its qualifier. #126 is not a dashboard
+                                defect; it reaches the client document
+#114 version label vs numbers   the label and the numbers come from two
+                                INDEPENDENT lookups: _latest_released_deliverable
+                                orders by released_at, _latest_finalized (:182)
+                                orders by version. Nothing ties them. Eight
+                                call sites: :272 :299 :338 :380 :576 :722 :851
+                                :1086 -- and Deliverable.parent_version already
+                                records the right answer, used correctly next
+                                door in deliverable_release.py
+#123 Risk dashboard 404         the register query takes the highest VERSION with
+                                no finalized filter (:974), then 404s with a
+                                message asserting nothing is finalized (:982)
+```
+
+**Every entry above names the MECHANISM, not only the line.** A line number goes
+stale the next time anyone reflows the function, silently; the mechanism is
+greppable back to a line whenever one is needed. Three of the numbers in the
+first draft of this block were wrong for exactly that reason -- see the
+spot-check rule in `CLAUDE.md`.
+
+So, as a strict order:
+
+- **#114 requires #124/#125/#126 landed.** Same file. Not folded into one PR
+  either: #124/#125/#126 are independent per-service defects — **#125 is not a
+  "point fix", see below** — and #114 is a
+  cross-cutting refactor, and stacking a refactor on point fixes in one diff is
+  item 10's shape.
+- **#123 requires #114 landed.** Same file again. #123 is **item 8's
+  `clients.py` half** — item 8 spans two territories, and its export/publish
+  half is independent of this chain.
+- **#125 is the exception to "it is all in `clients.py`"** — its clamp is
+  `app/zt/scoring.py:243-244` and its label `routes/zt.py:1747`. That puts the
+  #124/#125/#126 PR on **condition 5** (deterministic scoring engines) as well
+  as condition 6.
+- **#125 is LIVE TODAY on the ZT finalize path — not latent.** An earlier draft
+  of this bullet said it was "latent today only because the ZT dashboard
+  publishes no target-source field". That second clause is true — `grep
+  target_stage_source` returns `routes/zt.py:1747` and nothing in `clients.py` —
+  and being true is exactly why it ended the check. The site it cites is
+  **finalize**, not the dashboard. Traced end to end:
+
+  ```
+  schemas/intake.py:77    zt_target_stage ge=2 le=4, NO framework discrimination
+  routes/intake.py:52     _ZT_SERVICE_TYPES treats CISA and DoD identically
+  routes/intake.py:85-101 _validate_targets checks PRESENCE only, never range
+  zt/maturity.py:96       CISA has 4 stages, DoD has 3
+  routes/zt.py:1618/1624  engagement_target passed through as target_stage=
+  zt/scoring.py:32        DEFAULT_TARGET_STAGE = STAGE_3 = 3
+  zt/scoring.py:243-244   clamps to min(DEFAULT_TARGET_STAGE, max_stage) = 3
+  zt/scoring.py:276       returns target_stage= -- the CLAMPED value
+  routes/zt.py:1746       "target_stage": gap.target_stage,      <- clamped 3
+  routes/zt.py:1747       "target_stage_source": "client"        <- ADJACENT LINE
+  ```
+
+  **The two fields are adjacent lines in the same audit row.** It reads
+  `target_stage: 3, target_stage_source: "client"` for a client who chose 4 --
+  the false value and the false attribution of it, side by side, in the record
+  that exists to establish provenance. Nothing between intake and the deliverable
+  discriminates by framework: intake accepts 2-4 for both, validates presence
+  only, and DoD's ceiling is 3.
+
+  **The UI OFFERS the invalid choice, which is where the fix has to start.**
+  `apps/web/src/lib/intake/types.ts:217-221` gives `zero_trust_dod` a
+  `{ value: 4, label: "Stage 4 · Optimal" }` option — and "Optimal" is CISA's
+  label for its fourth stage, which DoD does not have. So a consultant is shown
+  a stage that cannot exist for the framework they selected, under a name
+  borrowed from a different one. Every fix-site list for #125 must include it;
+  an earlier draft of this block omitted it and would have shipped a backend
+  fix under a UI that still offers the value.
+
+  A DoD ZTRA engagement whose client picks Stage 4 at intake is silently clamped
+  to 3, and the finalize audit row on the deliverable says the target is 3 and
+  the client chose it. That ships today, with no dashboard involved.
+
+  **This is a PRODUCT defect, not a documentation one, and the distinction
+  changes how its PR is reviewed.** The other defects in this section are
+  documents describing code inaccurately. This is the product writing a FALSE
+  STATEMENT ABOUT THE CLIENT'S OWN STATED CHOICE into the audit trail of a
+  deliverable, on a FedRAMP Moderate/High-target platform. `target_stage_source`
+  exists precisely to distinguish a client's decision from a default, and it
+  reports "client" for a value the client did not choose — a guard keyed on
+  whether a value was OFFERED rather than whether it SURVIVED.
+
+  Sequencing is unchanged: #125 ships in Track C's first PR because fixing #124
+  activates its second surface. What changes is the review — that PR carries a
+  falsified audit row and a scoring-engine clamp, and must not be read as three
+  small per-service fixes.
+
+  The instruction is unchanged — **#124 and #125 must land together** — but the
+  reason is that #124 adds a second surface to an already-live mislabel, not
+  that it wakes a sleeping one.
+
+**Item 6 is the one to watch, not to split.** #121 is fixed in `risk.py` and the
+AI prompt, but its symptom renders at `clients.py:959-1010`, so a test for it
+may reach into the contended file.
 
 ### W8 is split, and half of it moved into the path (decided 2026-08-20)
 
