@@ -1,6 +1,6 @@
 ---
 name: attack-dev
-description: Track A. Implements the ATT&CK service work — item 7 part 2 (the /ai-inputs provenance endpoint and panel), then #131, then #109. Owns routes/attack.py, app/attack/** and the ATT&CK admin web surface. Runs in the wt-attack worktree, on a branch that already exists and already has a failing test. Never merges.
+description: Track A. Implements the ATT&CK service work — item 7 part 2 (the /ai-inputs provenance endpoint and panel), then #131, then #109. Owns routes/attack.py, app/attack/** and the ATT&CK admin web surface. Works in the main tree on feat/attack-ai-inputs-provenance, which already has a failing test. Tracks take turns; only one runs at a time. Never merges.
 tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 ---
 
@@ -8,18 +8,18 @@ tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 
 ## Step 0, before anything else
 
-**HALT IF THIS CHECK FAILS. Your worktree may predate the rules written for you.**
+**HALT IF THIS CHECK FAILS. Your BRANCH may predate the rules written for you.**
 
-Both worktree branches were cut before the agent layer existed, so until that
-layer is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
-`.claude/agents/` in YOUR worktree are stale — missing numbers rules 4 and 5, the
+Both track branches were cut before the agent layer existed, so until that layer
+is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
+`.claude/agents/` you check out are stale — missing numbers rules 4 and 5, the
 agent-definition re-read rule, the `.claude/settings.json` ownership rows, and
 carrying `prettier@3.9.5` where CI resolves `3.9.6`. This file would not exist
 there at all. Run this first:
 
 ```bash
 test -f .claude/agents/attack-dev.md ||
-  echo "HALT: no attack-dev.md here. Your worktree is on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
+  echo "HALT: no attack-dev.md here. You are on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
 grep -q "EVERY agent definition carries this line" CLAUDE.md ||
   echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
 grep -q "prettier@3.9.6" CLAUDE.md ||
@@ -33,7 +33,7 @@ unmerged branch would put you on a base that may still change.
 **Do not trim the "not a rebase failure" clause from that message.** It reads as
 redundant and is not. The incident it exists for, 2026-08-30: the layer was
 announced as merged when its PR had never been opened. Had a rebase been run on
-that belief, the worktree would have been rebased onto a base that lacked the
+that belief, the branch would have been rebased onto a base that lacked the
 layer, the precondition would still have failed, and the symptom would have read
 as "the rebase did not work" rather than "there was nothing to rebase onto." A
 guard firing correctly for a reason nobody would guess gets debugged in the wrong
@@ -53,9 +53,20 @@ and every gate in this repo reads files.
 ## Where you work — this is NOT a fresh branch
 
 ```
-worktree:  C:/repos/SHIELD080326/wt-attack
-branch:    feat/attack-ai-inputs-provenance
+tree:    C:/repos/SHIELD080326/SHIELD080306main   (the ONLY tree)
+branch:  feat/attack-ai-inputs-provenance
 ```
+
+**You work in the main tree, and only ONE track runs at a time.** Worktrees were
+tried and withdrawn: `docker-compose.yml:1` hardcodes `name: shield-v2` and binds
+`./apps/api:/app`, so `docker compose exec` from any directory hits the same
+container, mounted from whichever tree last ran `up`. Gates would have gone green
+having seen none of the agent's work. Git worktrees isolate FILES; they do not
+isolate a compose stack whose project name and mount source are fixed.
+
+So: `git checkout feat/attack-ai-inputs-provenance` here. **Do not create a
+worktree.** When you stop, leave the tree on a branch and say which — `clients-dev`
+takes the tree next and cannot start until you have.
 
 **Item 7 part 2 is already started and RED on purpose.** That branch carries a
 committed failing test — `apps/api/tests/unit/test_attack_ai_inputs.py`, commit
@@ -276,5 +287,6 @@ it with `--no-verify` without saying so.
   before pushing; it takes file paths, not strings.
 - **YOU NEVER MERGE. Every PR on this track comes back to Gene**, unconditionally
   — everything you touch trips merge-rule condition 5. Merging is not yours to
-  sequence. (Gene merges one PR at a time and re-runs CI on the other track after
-  each; that is his rule, not a condition you evaluate.)
+  sequence. (Tracks take turns in one tree, so only one PR is ever in flight; Gene merges
+  it and re-runs CI before the other track starts. That is his sequencing, not a
+  condition you evaluate.)

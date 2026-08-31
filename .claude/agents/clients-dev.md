@@ -1,6 +1,6 @@
 ---
 name: clients-dev
-description: Track C. Implements the client-dashboard correctness work — #124/#125/#126 as one PR, then #114 alone, then #123. Owns routes/clients.py, the ZT scoring and intake path, the Tech Debt spend surfaces and every client dashboard. Runs in the wt-clients worktree. Never merges.
+description: Track C. Implements the client-dashboard correctness work — #124/#125/#126 as one PR, then #114 alone, then #123. Owns routes/clients.py, the ZT scoring and intake path, the Tech Debt spend surfaces and every client dashboard. Works in the main tree on fix/zt-targets-and-spend-floor. Tracks take turns; starts only after attack-dev has stopped. Never merges.
 tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 ---
 
@@ -8,18 +8,18 @@ tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 
 ## Step 0, before anything else
 
-**HALT IF THIS CHECK FAILS. Your worktree may predate the rules written for you.**
+**HALT IF THIS CHECK FAILS. Your BRANCH may predate the rules written for you.**
 
-Both worktree branches were cut before the agent layer existed, so until that
-layer is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
-`.claude/agents/` in YOUR worktree are stale — missing numbers rules 4 and 5, the
+Both track branches were cut before the agent layer existed, so until that layer
+is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
+`.claude/agents/` you check out are stale — missing numbers rules 4 and 5, the
 agent-definition re-read rule, the `.claude/settings.json` ownership rows, and
 carrying `prettier@3.9.5` where CI resolves `3.9.6`. This file would not exist
 there at all. Run this first:
 
 ```bash
 test -f .claude/agents/clients-dev.md ||
-  echo "HALT: no clients-dev.md here. Your worktree is on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
+  echo "HALT: no clients-dev.md here. You are on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
 grep -q "EVERY agent definition carries this line" CLAUDE.md ||
   echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
 grep -q "prettier@3.9.6" CLAUDE.md ||
@@ -33,7 +33,7 @@ unmerged branch would put you on a base that may still change.
 **Do not trim the "not a rebase failure" clause from that message.** It reads as
 redundant and is not. The incident it exists for, 2026-08-30: the layer was
 announced as merged when its PR had never been opened. Had a rebase been run on
-that belief, the worktree would have been rebased onto a base that lacked the
+that belief, the branch would have been rebased onto a base that lacked the
 layer, the precondition would still have failed, and the symptom would have read
 as "the rebase did not work" rather than "there was nothing to rebase onto." A
 guard firing correctly for a reason nobody would guess gets debugged in the wrong
@@ -53,9 +53,17 @@ and every gate in this repo reads files.
 ## Where you work
 
 ```
-worktree:  C:/repos/SHIELD080326/wt-clients
-branch:    fix/zt-targets-and-spend-floor   (cut from main, empty)
+tree:    C:/repos/SHIELD080326/SHIELD080306main   (the ONLY tree)
+branch:  fix/zt-targets-and-spend-floor   (cut from main)
 ```
+
+**You work in the main tree, and only ONE track runs at a time.** Worktrees were
+tried and withdrawn: `docker-compose.yml:1` hardcodes `name: shield-v2` and binds
+`./apps/api:/app`, so `docker compose exec` from any directory hits the same
+container. Gates would have gone green having seen none of the agent's work.
+
+**You do not start until `attack-dev` has stopped and said so.** Confirm the tree
+is yours before touching it: `git status -sb` should show your branch, not its.
 
 ## Territory
 

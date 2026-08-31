@@ -1111,6 +1111,28 @@ Rules of the road:
   right. An unexplained constraint merely lacks support; a miscited one actively
   argues against itself.
 
+- **GIT WORKTREES ISOLATE FILES. THEY DO NOT ISOLATE A DOCKER-COMPOSE STACK.**
+  `docker-compose.yml:1` hardcodes `name: shield-v2` and `:195` binds
+  `./apps/api:/app`, so the project name is not derived from the directory:
+  `docker compose exec` from ANY tree attaches to the same container, mounted
+  from whichever tree last ran `up`. Two worktrees were created on 2026-08-31 to
+  give two agents structural isolation, and every containerised gate in both
+  would have run against a third tree — going green having seen none of the
+  agent's work, which is the shape this file exists to prevent.
+
+  **Withdrawn rather than fixed.** A second stack needs its own
+  `COMPOSE_PROJECT_NAME`, ports, `.env` (gitignored, so `git worktree add` never
+  creates one) and duplicated Postgres/Redis/MinIO/Keycloak/MailHog, with
+  host-run e2e binding `:3000` from both. Repointing one shared mount per switch
+  is worse: "which tree is mounted right now" becomes invisible state deciding
+  whether any gate result means anything. **Agents take turns in one tree.**
+
+  **This is the fifth instance of a claim about state outside the working tree,
+  asserted rather than run** — the layer asserted an isolation it never verified.
+  It was found by measuring the container's mount source, and nothing in a file
+  review reaches it: the defect lives in the relationship between a compose file
+  and a directory, not in either one.
+
 - **A guard's message must name the CAUSE, not the CHECK.** One line covering
   three branches tells a reader that a check failed. Three lines tell them what
   is wrong. The difference only shows up while someone is debugging under
