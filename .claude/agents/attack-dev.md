@@ -74,7 +74,9 @@ apps/api/tests/unit/test_attack_*.py   EXCEPT test_attack_dashboard.py
 apps/web/src/components/admin/attack/**
 apps/web/src/lib/attack/**
 apps/web/src/app/api/proxy/attack/**
-e2e/smoke/   (only new specs you add; `ls e2e/smoke` before naming one)
+e2e/smoke/s5-attack.spec.ts  s11-staleness*.spec.ts  s34-llm-key*.spec.ts
+e2e/smoke/   (new specs you add; `ls e2e/smoke` before naming one)
+apps/api/tests/unit/test_capability_list_approved_membership.py
 ```
 
 **NOT YOURS — `clients-dev` is editing these concurrently. Stop and report:**
@@ -110,18 +112,30 @@ exceptions.
 **SHARED — required by merge-rule condition 3, and both tracks must write them:**
 
 ```
-DELIVERY_PLAN.md   CONTEXT.md   context/gene.md   DECISIONS.md
+DELIVERY_PLAN.md   CONTEXT.md   context/gene.md
 ```
 
 Write these **only in the landing commit**, never earlier, and **rebase on
 `origin/main` immediately before pushing** — the other track is editing the same
 files and PRs merge one at a time. Read every count live; never carry one
-forward.
+forward. If a rebase is needed after the PR is open, that push needs
+`--force-with-lease` — never a bare `--force`.
+
+**`DECISIONS.md` is append-only and you have a RESERVED D-NUMBER RANGE:
+`D-064` to `D-069`** (Track A). The last entry on `main` is `D-063`, so without
+ranges both tracks would allocate `D-064` and a rebase would resolve by keeping
+both — a file that looks fine and is wrong, surfacing only once both tracks are
+mid-flight. Use your range; an unused gap is harmless. Note merge-rule condition
+3 does NOT name this file — it names `DELIVERY_PLAN.md`, `CONTEXT.md` and
+`context/<name>.md` only — so append here only when your work actually makes a
+decision, and say in the PR body which number you took.
 
 **A file in NONE of these lists is undecidable — stop and report.** Do not
-default to editing it. Likely candidates for `#109`: `app/models/**` and
-`alembic/**` if it needs a persisted row. Decide that with Gene **before**
-opening the branch, not mid-task — a migration also trips merge-rule condition 4.
+default to editing it. Likely candidates: `app/models/**` and `alembic/**` if `#109` needs a persisted
+row, and `tech_debt/reconcile.py` if `attribution_complete` must be persisted for
+item 7's path 4. **Item 7's branch already exists, so "decide before opening the
+branch" is not available — decide before you need the file, and report rather
+than reach for it.** A migration also trips merge-rule condition 4.
 
 An apparent need to cross a line is the signal the split is wrong, and that
 signal is worth more than the edit.
@@ -132,6 +146,19 @@ signal is worth more than the edit.
 nothing from `clients.py`. So **you edit what Track C reads.** Changing any of
 those five signatures or behaviours is a cross-track change: say so loudly in the
 PR body, because the reviewer reads one PR at a time and will not catch it.
+
+**The coupling REVERSES at the test layer, and that is the one both files got
+wrong.** `test_attack_dashboard.py` is `clients-dev`'s, and its docstring says it
+"walks the same admin approve -> finalize -> release preamble the other attack
+tests use" — so a Track C file DRIVES `routes/attack.py`. Track A can turn it red
+and cannot edit it; Track C owns it and did not cause the break. **If it goes red
+after a Track A merge, that is a cross-track break: report it, do not fix it by
+editing the other track's code.**
+
+**Who fixes it: it comes to Gene.** He decides whether Track A's change is
+wrong or the test legitimately needs updating. If the test needs updating,
+**`clients-dev` makes that edit in its own PR** — never `attack-dev`, and never
+as part of the change that broke it.
 
 ## The work, in order
 
@@ -169,6 +196,13 @@ mode and arguments.
   shape is a test that cannot fail.
 - `_client_capability_inputs` — takes **`client_id`, not `service_id`**.
 - Copy the endpoint shape from `heatmap` in the same file.
+- **`Reconciliation.attribution_complete` is NOT persisted.** When it is False,
+  `excluded_rows` is written empty while the count is untrustworthy, so a
+  `not_sent` built from it silently under-reports — the silent-success shape
+  inside the endpoint built to end silent drops. Path 4 must distinguish "nothing
+  was excluded" from "we cannot know what was excluded". **Persisting it would
+  need `tech_debt/reconcile.py` and a migration, neither of which is yours** —
+  decide that with Gene before you need it.
 - **Do NOT add `enforce_ai_rate_limit` to `/ai-inputs`.** The reason is that
   `/ai-inputs` is a read-only provenance view that constructs no provider and
   writes no `llm_calls` row — not that the dependency belongs to `/ai/preview`.

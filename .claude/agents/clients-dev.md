@@ -61,6 +61,8 @@ apps/web/src/components/dashboards/**   <- INCLUDING dashboards/attack/**
 apps/web/src/lib/dashboards/**          <- INCLUDING lib/dashboards/attack.ts
 apps/web/src/lib/intake/**
 apps/web/src/components/home/ValueLoopCard.tsx
+apps/api/app/schemas/tech_debt.py       <- ConsolidationPlanSummary, #126's shape
+apps/web/src/lib/tech_debt/**           apps/web/src/components/**/ConsolidationPlanCard.tsx
 e2e/smoke/s27-attack-dashboard.spec.ts  s28-zt-dashboard.spec.ts
 e2e/smoke/s30-risk-dashboard.spec.ts
 ```
@@ -87,7 +89,18 @@ DELIVERY_PLAN.md   CONTEXT.md   context/gene.md   DECISIONS.md
 
 Write these **only in the landing commit**, and **rebase on `origin/main`
 immediately before pushing** — the other track edits the same files and PRs merge
-one at a time. Read every count live; never carry one forward.
+one at a time. Read every count live; never carry one forward. If a rebase is
+needed after the PR is open, that push needs `--force-with-lease` — never a
+bare `--force`.
+
+**`DECISIONS.md` is append-only and you have a RESERVED D-NUMBER RANGE:
+`D-070` to onward** (Track C). The last entry on `main` is `D-063`, so without
+ranges both tracks would allocate `D-064` and a rebase would resolve by keeping
+both — a file that looks fine and is wrong, surfacing only once both tracks are
+mid-flight. Use your range; an unused gap is harmless. Note merge-rule condition
+3 does NOT name this file — it names `DELIVERY_PLAN.md`, `CONTEXT.md` and
+`context/<name>.md` only — so append here only when your work actually makes a
+decision, and say in the PR body which number you took.
 
 **A file in NONE of these lists is undecidable — stop and report.** Do not
 default to editing it. `app/models/**` and `alembic/**` are specifically not
@@ -98,6 +111,19 @@ yours without a decision: a migration trips merge-rule condition 4.
 what Track A edits** — so if one of those changes under you, that is a
 cross-track break, and it is why CI re-runs on this track after every Track A
 merge.
+
+**The coupling REVERSES at the test layer, and that is the one both files got
+wrong.** `test_attack_dashboard.py` is `clients-dev`'s, and its docstring says it
+"walks the same admin approve -> finalize -> release preamble the other attack
+tests use" — so a Track C file DRIVES `routes/attack.py`. Track A can turn it red
+and cannot edit it; Track C owns it and did not cause the break. **If it goes red
+after a Track A merge, that is a cross-track break: report it, do not fix it by
+editing the other track's code.**
+
+**Who fixes it: it comes to Gene.** He decides whether Track A's change is
+wrong or the test legitimately needs updating. If the test needs updating,
+**`clients-dev` makes that edit in its own PR** — never `attack-dev`, and never
+as part of the change that broke it.
 
 ## The work — a CHAIN, not a set. They share `routes/clients.py`.
 
@@ -140,9 +166,12 @@ surface to an already-live mislabel. That is why they land together — not beca
 
 **Constraint, pinned by a test rather than asserted:** the #125 fix must NOT alter
 the `GapAnalysis` / `ScoreResult` shape, nor the values reaching
-`app/zt/exporters.py`, which produces the ZT client deliverable and is on
-condition 5's deterministic-surfaces list. **`app/zt/exporters.py` is NOT in your
-territory.** If the fix requires changing it, **stop and re-scope** — do not
+`app/zt/exporters.py`, which produces the ZT client deliverable. **It is NOT in
+your territory.** (It is condition **6** that reserves it — deliverable content.
+Condition 5's deterministic-surfaces list names `zt/scoring.py` and
+`zt/maturity.py` but NOT `zt/exporters.py`; an earlier draft of this file said it
+did, which is the false-rationale shape: an instruction whose stated reason does
+not survive the check you are told to run.) If the fix requires changing it, **stop and re-scope** — do not
 widen quietly.
 
 ## #126 has twins. Fix them together or state which you left.

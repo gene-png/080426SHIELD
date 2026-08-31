@@ -1096,6 +1096,21 @@ Rules of the road:
   (Decision recorded as **D-057**, which reverses part of D-054. Closes the
   `CLAUDE.md` half of #108; the other half — the gate's own source still saying
   it "only REPORTS" and citing D-051 — is untouched and still open.)
+- **When you cite a rule as the REASON for a constraint, the citation is a claim
+  and gets checked like one.** Instances from 2026-08-30, all in agent
+  definitions, all where the constraint was RIGHT and the reason was false:
+  `enforce_ai_rate_limit` attributed to `/ai/preview` when it guards five
+  endpoints including the one in the agent's own file; `zt/exporters.py` cited to
+  merge-rule condition 5 when condition 5 does not list it (condition 6 does);
+  `DECISIONS.md` cited to condition 3 when condition 3 names three files and not
+  that one.
+
+  **A correct constraint with a false citation is worse than an unexplained
+  one.** This repo tells every agent to verify what it reads — so the agent
+  checks the reason, finds it false, and may discard an instruction that was
+  right. An unexplained constraint merely lacks support; a miscited one actively
+  argues against itself.
+
 - **A control that protects an agent from STALE STATE must be verifiable from
   INSIDE that state.** A rule written in a file the stale worktree does not have
   is a warning about stale state that is unreachable from the stale state —
