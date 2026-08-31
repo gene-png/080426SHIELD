@@ -18,10 +18,12 @@ carrying `prettier@3.9.5` where CI resolves `3.9.6`. This file would not exist
 there at all. Run this first:
 
 ```bash
-test -f .claude/agents/attack-dev.md &&
-  grep -q "EVERY agent definition carries this line" CLAUDE.md &&
-  grep -q "prettier@3.9.6" CLAUDE.md &&
-  echo "PRECONDITION OK" || echo "HALT: worktree predates the agent layer"
+test -f .claude/agents/attack-dev.md ||
+  echo "HALT: no attack-dev.md here. Your worktree is on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
+grep -q "EVERY agent definition carries this line" CLAUDE.md ||
+  echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
+grep -q "prettier@3.9.6" CLAUDE.md ||
+  echo "HALT: CLAUDE.md pins the WRONG prettier. Running it reformats against"\n       " a version CI does not use. Same cause as above"
 ```
 
 If it says HALT: **stop and report.** Do not proceed against the injected copy,
