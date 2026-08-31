@@ -1096,6 +1096,29 @@ Rules of the road:
   (Decision recorded as **D-057**, which reverses part of D-054. Closes the
   `CLAUDE.md` half of #108; the other half — the gate's own source still saying
   it "only REPORTS" and citing D-051 — is untouched and still open.)
+- **A control that protects an agent from STALE STATE must be verifiable from
+  INSIDE that state.** A rule written in a file the stale worktree does not have
+  is a warning about stale state that is unreachable from the stale state —
+  worse than no control, because it creates the belief the hazard is handled.
+
+  Measured 2026-08-30: both agent definitions opened with "re-read `CLAUDE.md`
+  and this file from disk", and neither file existed in either worktree, whose
+  branches predate them. `wt-attack/CLAUDE.md` still carried `prettier@3.9.5`
+  and none of that day's rules. An agent doing step 0 there finds a disagreement
+  it is told to report — and if it resolved it by preferring disk, it would run
+  the wrong formatter under a rule set it cannot see is missing.
+
+  The fix is not a better-worded rule. It is **three greps the agent executes
+  first**, which halt it when its own worktree predates the layer. A documented
+  rule could never satisfy this; an executable check does.
+
+  **And a guard must be observed in BOTH states before it is trusted.** Watching
+  it fire proves it fires; it does not prove it passes. A typo that halts
+  unconditionally leaves every agent dead on arrival, and that symptom is
+  indistinguishable from the hazard the guard exists to catch. Same both-halves
+  discipline as a test contract, pointed at the guard: run it where it must HALT
+  and where it must PASS, and record both.
+
 - **EVERY agent definition carries this line, written before the agent runs
   rather than after:** *"Re-read `CLAUDE.md` **and your own agent definition**
   from disk at the start of a task rather than trusting injected context. Report

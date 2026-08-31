@@ -8,11 +8,31 @@ tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 
 ## Step 0, before anything else
 
-**Re-read `CLAUDE.md` AND this file from disk. Do not trust injected context.**
-Report a disagreement; never silently prefer either. Injected copies of both were
-found stale repeatedly on 2026-08-30, missing rules written that morning. An agent
-whose own definition is stale applies a rule set nobody can see is missing, and
-it is the one file it will never think to check.
+**HALT IF THIS CHECK FAILS. Your worktree may predate the rules written for you.**
+
+Both worktree branches were cut before the agent layer existed, so until that
+layer is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
+`.claude/agents/` in YOUR worktree are stale — missing numbers rules 4 and 5, the
+agent-definition re-read rule, the `.claude/settings.json` ownership rows, and
+carrying `prettier@3.9.5` where CI resolves `3.9.6`. This file would not exist
+there at all. Run this first:
+
+```bash
+test -f .claude/agents/attack-dev.md &&
+  grep -q "EVERY agent definition carries this line" CLAUDE.md &&
+  grep -q "prettier@3.9.6" CLAUDE.md &&
+  echo "PRECONDITION OK" || echo "HALT: worktree predates the agent layer"
+```
+
+If it says HALT: **stop and report.** Do not proceed against the injected copy,
+and do not rebase yourself — merging the layer is Gene's, and rebasing onto an
+unmerged branch would put you on a base that may still change.
+
+**Then re-read `CLAUDE.md` AND this file from disk. Do not trust injected
+context.** Report a disagreement; never silently prefer either. Injected copies of
+both were found stale repeatedly on 2026-08-30, missing rules written that
+morning. An agent whose own definition is stale applies a rule set nobody can see
+is missing, and it is the one file it will never think to check.
 
 **Any claim about state outside the working tree carries the command that
 produced it** — branch state, push status, stash contents, CI results, issue
@@ -50,10 +70,7 @@ endpoint does not exist on `main`. Read it; do not delete, rebase or merge it.
 apps/api/app/routes/attack.py
 apps/api/app/attack/**
 apps/api/app/schemas/attack.py
-apps/api/tests/unit/test_attack_ai_inputs.py
-apps/api/tests/unit/test_attack_citations.py
-apps/api/tests/unit/test_attack_run_ai.py
-apps/api/tests/unit/test_attack_enrichment.py
+apps/api/tests/unit/test_attack_*.py   EXCEPT test_attack_dashboard.py
 apps/web/src/components/admin/attack/**
 apps/web/src/lib/attack/**
 apps/web/src/app/api/proxy/attack/**
@@ -72,7 +89,17 @@ apps/web/src/lib/dashboards/**           <- INCLUDING lib/dashboards/attack.ts
 apps/api/tests/unit/test_attack_dashboard.py
 ```
 
-**Two of those look like yours and are not.** `components/dashboards/attack/`
+**The one exclusion, and it is the only one.** `test_attack_dashboard.py` tests
+`routes/clients.py`, not `routes/attack.py`. A first draft of this file
+enumerated four test filenames instead of globbing; one of them
+(`test_attack_enrichment.py`) does not exist — the real file is
+`test_attack_ai_enrichment.py` — and the enumeration silently excluded nine
+others that ARE yours, which under the stop-and-report rule below would have
+halted you on each. That is rule 4's lesson pointed at a territory: enumerate how
+a thing can be WRITTEN before you list instances, or glob and state the
+exceptions.
+
+**Two paths look like yours and are not.** `components/dashboards/attack/`
 (`AttackDashboard.tsx`, `AttackCharts.tsx`), `lib/dashboards/attack.ts`, and
 `tests/unit/test_attack_dashboard.py` all carry "attack" in the path but are
 **client dashboard** surfaces served by `routes/clients.py` — `#114`'s territory.

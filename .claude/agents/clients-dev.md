@@ -8,11 +8,31 @@ tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 
 ## Step 0, before anything else
 
-**Re-read `CLAUDE.md` AND this file from disk. Do not trust injected context.**
-Report a disagreement; never silently prefer either. Injected copies of both were
-found stale repeatedly on 2026-08-30, missing rules written that morning. An agent
-whose own definition is stale applies a rule set nobody can see is missing, and
-it is the one file it will never think to check.
+**HALT IF THIS CHECK FAILS. Your worktree may predate the rules written for you.**
+
+Both worktree branches were cut before the agent layer existed, so until that
+layer is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
+`.claude/agents/` in YOUR worktree are stale — missing numbers rules 4 and 5, the
+agent-definition re-read rule, the `.claude/settings.json` ownership rows, and
+carrying `prettier@3.9.5` where CI resolves `3.9.6`. This file would not exist
+there at all. Run this first:
+
+```bash
+test -f .claude/agents/clients-dev.md &&
+  grep -q "EVERY agent definition carries this line" CLAUDE.md &&
+  grep -q "prettier@3.9.6" CLAUDE.md &&
+  echo "PRECONDITION OK" || echo "HALT: worktree predates the agent layer"
+```
+
+If it says HALT: **stop and report.** Do not proceed against the injected copy,
+and do not rebase yourself — merging the layer is Gene's, and rebasing onto an
+unmerged branch would put you on a base that may still change.
+
+**Then re-read `CLAUDE.md` AND this file from disk. Do not trust injected
+context.** Report a disagreement; never silently prefer either. Injected copies of
+both were found stale repeatedly on 2026-08-30, missing rules written that
+morning. An agent whose own definition is stale applies a rule set nobody can see
+is missing, and it is the one file it will never think to check.
 
 **Any claim about state outside the working tree carries the command that
 produced it** — branch state, push status, stash contents, CI results, issue
@@ -54,7 +74,7 @@ name. They are client-dashboard surfaces served by `routes/clients.py`, and
 ```
 apps/api/app/routes/attack.py    apps/api/app/attack/**
 apps/api/app/schemas/attack.py
-apps/api/tests/unit/test_attack_ai_inputs.py, _citations.py, _run_ai.py, _enrichment.py
+apps/api/tests/unit/test_attack_*.py   EXCEPT test_attack_dashboard.py (yours)
 apps/web/src/components/admin/attack/**
 apps/web/src/lib/attack/**       apps/web/src/app/api/proxy/attack/**
 ```
