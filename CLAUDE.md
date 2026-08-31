@@ -1111,6 +1111,18 @@ Rules of the road:
   right. An unexplained constraint merely lacks support; a miscited one actively
   argues against itself.
 
+- **A guard's message must name the CAUSE, not the CHECK.** One line covering
+  three branches tells a reader that a check failed. Three lines tell them what
+  is wrong. The difference only shows up while someone is debugging under
+  pressure, which is the only time the message is read.
+
+  The instance: a worktree precondition ran three greps and printed a single
+  `HALT: worktree predates the agent layer` for all of them. Correct, and useless
+  — the most plausible misreading was "the rebase did not work", when the actual
+  cause was that there had been nothing to rebase onto. **A guard that fires
+  correctly for a reason nobody would guess gets debugged in the wrong
+  direction.** Each branch now names its own cause and what it implies.
+
 - **A control that protects an agent from STALE STATE must be verifiable from
   INSIDE that state.** A rule written in a file the stale worktree does not have
   is a warning about stale state that is unreachable from the stale state —

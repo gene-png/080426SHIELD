@@ -30,6 +30,15 @@ If it says HALT: **stop and report.** Do not proceed against the injected copy,
 and do not rebase yourself — merging the layer is Gene's, and rebasing onto an
 unmerged branch would put you on a base that may still change.
 
+**Do not trim the "not a rebase failure" clause from that message.** It reads as
+redundant and is not. The incident it exists for, 2026-08-30: the layer was
+announced as merged when its PR had never been opened. Had a rebase been run on
+that belief, the worktree would have been rebased onto a base that lacked the
+layer, the precondition would still have failed, and the symptom would have read
+as "the rebase did not work" rather than "there was nothing to rebase onto." A
+guard firing correctly for a reason nobody would guess gets debugged in the wrong
+direction, and the wrong direction there is the plausible one.
+
 **Then re-read `CLAUDE.md` AND this file from disk. Do not trust injected
 context.** Report a disagreement; never silently prefer either. Injected copies of
 both were found stale repeatedly on 2026-08-30, missing rules written that
