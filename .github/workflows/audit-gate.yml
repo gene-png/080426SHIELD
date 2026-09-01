@@ -12,11 +12,22 @@ name: Audit gate
 # re-run the 20-minute Playwright suite every time someone fixes a typo in a PR
 # description.
 #
-# IMPORTANT: a workflow job only REPORTS. It blocks merging only once
-# "Adversarial audit recorded" is registered in the branch protection rules for
-# `main` as a required status check. That registration is a GitHub setting, not
-# a file in this repo — see DECISIONS.md D-051. Until it is done, this is a
-# visible red X and nothing more.
+# THIS GATE IS BINDING. "Adversarial audit recorded" is registered in the branch
+# protection rules for `main` as a required status check — configured 2026-08-20
+# (D-054) and re-verified against the GitHub API on 2026-08-25, one of seven
+# required checks. See DELIVERY_PLAN.md, "Branch protection".
+#
+# The registration is a GitHub setting rather than a file here, so nothing in the
+# repo can prove it; re-derive it with
+# `gh api repos/{owner}/{repo}/branches/main/protection` rather than trusting
+# this comment.
+#
+# [CORRECTED 2026-09-01] This block previously read "a workflow job only REPORTS
+# … Until it is done, this is a visible red X and nothing more", and cited D-051
+# rather than D-054. Both were false from 2026-08-20 onward, and the pointer sent
+# a reader to a decision that does not contain the correction. A developer opening
+# this file to decide whether the gate mattered read that it did not. Closes the
+# second half of #108; the `CLAUDE.md` half was closed by D-057.
 
 on:
   pull_request:
