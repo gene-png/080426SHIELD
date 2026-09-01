@@ -1133,6 +1133,48 @@ Rules of the road:
   review reaches it: the defect lives in the relationship between a compose file
   and a directory, not in either one.
 
+- **Two rules for reading a result, and they are one instinct against two
+  failure modes.**
+
+  **PREFER THE MOST PRIMITIVE AVAILABLE SIGNAL.** Every layer of presentation
+  between you and the raw fact is somewhere a plausible wrong answer can live,
+  and the wrong answer arrives in the right format, in the place the real one
+  goes. Measured 2026-09-01, three in one day, all the same shape:
+
+  | Read | Should have read |
+  | --- | --- |
+  | `head`'s exit status through a pipe | `${PIPESTATUS[0]}` |
+  | pytest's printed summary line | the exit code |
+  | `od -c` output grepped for `\r` | `d.count(b'\r')` |
+  | a detached run's marker EXISTS | the marker's AGE |
+
+  The last was a success record from a run **a week earlier**, read as the
+  current one: `test -f /tmp/x.exit` tests existence, not freshness. **The
+  detached-run pattern in `context/gene.md` is unsafe as written** — `rm -f` the
+  marker before launching, or use a per-run filename. Polling for a file that a
+  previous run already created is a check whose "I found a result" branch and
+  its "this result is current" branch are the same branch.
+
+  **PREFER A CHECK WHOSE TWO SIDES CAN ONLY AGREE IF THE THING IS TRUE.** After
+  converting a file to LF, three signals were available: `file(1)`, a byte
+  count, and `git diff --numstat` raw versus `--ignore-cr-at-eol`. The third is
+  strongest, because its two numbers **converge only if the CRs are gone** — it
+  has an internal contradiction available to it and would have to fail loudly to
+  be wrong. The other two are single readings, each wrong in some way you have
+  not thought of. Same property as red-on-revert.
+
+  **And two readings agreeing does not validate a third that disagrees.** In
+  that same check `file` and the byte count agreed against `od | grep`, and
+  preferring the majority got the right answer for the wrong reason: `od -c`
+  renders `\r` inside multi-byte sequences as literal text, so grepping its
+  output counts RENDERED LINES, not carriage returns. It answered a different
+  question in the same units, which is the hardest kind to catch. Diagnose the
+  disagreement; do not vote on it.
+
+  **Worth stating plainly: the verification layer produced more defects than the
+  code under test that day.** That is not an argument for more checking
+  machinery. Every fix went toward a more primitive signal, not a cleverer one.
+
 - **A guard's message must name the CAUSE, not the CHECK.** One line covering
   three branches tells a reader that a check failed. Three lines tell them what
   is wrong. The difference only shows up while someone is debugging under
