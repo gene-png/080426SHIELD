@@ -64,7 +64,7 @@ dev = [
     # separately by known-first-party=["app"] in the ROOT pyproject's
     # [tool.ruff.lint.isort]. The exact pins are belt-and-suspenders.)
     # Bump deliberately with a format pass, never float.
-    "ruff==0.16.3",
+    "ruff==0.16.5",
     "black==26.5.1",
     "mypy>=1.11",
     "bandit[toml]>=1.7",
