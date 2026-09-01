@@ -1791,9 +1791,14 @@ def _excluded_attribution(cap_list: CapabilityList) -> str:
     and a migration. Until then this reports `unknown` and the panel says so.
     """
     if cap_list.source_rows_total is None:
-        # Pre-0036: no reconciliation was ever stored, so there is no claim to
-        # make either way. Distinct from `unknown`, which means a reconciliation
+        # NULL means no reconciliation was stored, so there is no claim to make
+        # either way. Distinct from `unknown`, which means a reconciliation
         # happened and its per-row half is unrecoverable.
+        #
+        # Do NOT name the cause here. NULL is usually a pre-0036 list, but
+        # `seed_demo.py` builds lists without either field too, so every demo and
+        # e2e run would be told a list created minutes earlier "predates the
+        # extraction record". The condition observes ABSENCE; it cannot see WHY.
         return "not_recorded"
     if cap_list.excluded_rows:
         return "complete"

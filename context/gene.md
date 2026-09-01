@@ -182,8 +182,11 @@ paragraph someone points at is not the same as correcting the file.
 ## Standing environment facts
 
 - Detached tests survive a killed wrapper:
-  `docker compose exec -d api sh -lc '... > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'`
-  then poll for the exit file. **Kill stale pytest runs by PID** — `pkill` is not
+  `docker compose exec -d api sh -lc 'rm -f /tmp/x.exit; ... > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'`
+  then poll for the exit file. **The `rm -f` is load-bearing** — polling tests
+  EXISTENCE, and on 2026-09-01 a marker from a run a week earlier was read as
+  the current one and reported as a passing suite. Delete it first, or use a
+  per-run filename, and check the marker's AGE not just its presence. **Kill stale pytest runs by PID** — `pkill` is not
   in that image and prints nothing while doing nothing.
 - After ANY `apps/web` edit: `docker compose up -d --force-recreate api web`,
   then re-check `SHIELD_LLM_MODE`.
@@ -354,7 +357,7 @@ Re-verify every finding before acting — it runs read-only and executes nothing
 
 ## Environment notes (standing)
 
-Background/foreground test runs kept getting killed by the harness wrapper this round. Reliable pattern: `docker compose exec -d api sh -lc '… > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'` then poll for the exit file. The detached pytest survives even when the wrapper is killed.
+Background/foreground test runs kept getting killed by the harness wrapper this round. Reliable pattern: `docker compose exec -d api sh -lc 'rm -f /tmp/x.exit; … > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'` then poll for the exit file. **The `rm -f` is not optional** — a marker left by an earlier run satisfies the poll and reports that run's result as this one's. The detached pytest survives even when the wrapper is killed.
 
 ## MVP-complete vs. client-ready: standing distinction
 

@@ -355,3 +355,104 @@ def test_an_approved_lists_snapshot_is_its_membership_not_its_live_rows(app_clie
     assert "Figma" not in sent
     assert "Figma" in withheld
     assert withheld["Figma"]["reason"] == "security_scope"
+
+
+def _list_with_extraction_record(
+    TestSession: sessionmaker,
+    cid: str,
+    user_id: str,
+    *,
+    source_rows_total: int | None,
+    excluded_rows: list | None,
+) -> None:
+    """A Tech Debt list carrying a specific EXTRACTION record.
+
+    The three `excluded_attribution` states are decided entirely by these two
+    stored columns, so they are set here directly rather than by driving an
+    extraction -- the point is to pin what the READER does with each stored
+    shape, including the shape a clean run and a failed attribution both produce.
+    """
+    with TestSession() as db:
+        svc = Service(
+            kind=ServiceKind.TECH_DEBT,
+            status=ServiceStatus.IN_PROGRESS,
+            title="Acme Tech Debt",
+            client_id=_uuid.UUID(cid),
+            opened_by=_uuid.UUID(user_id),
+        )
+        db.add(svc)
+        db.flush()
+        cl = CapabilityList(
+            service_id=svc.id,
+            version=1,
+            status=CapabilityListStatus.APPROVED,
+            source_rows_total=source_rows_total,
+            excluded_rows=excluded_rows,
+        )
+        db.add(cl)
+        db.flush()
+        db.add(
+            CapabilityItem(
+                capability_list_id=cl.id,
+                name="Splunk",
+                security_related=None,
+                security_class_confirmed=False,
+            )
+        )
+        db.commit()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source_rows_total", "excluded_rows", "expected"),
+    [
+        # No reconciliation was ever stored (pre-0036). No claim either way.
+        (None, None, "not_recorded"),
+        # A reconciliation ran and NAMED its drops. Only this licenses a number.
+        (5, [{"index": 3, "summary": "row 3"}], "complete"),
+        # A reconciliation ran and stored an EMPTY list. This is the shape a
+        # clean run (nothing excluded) and a failed attribution BOTH produce --
+        # `reconcile.py:83-89` fills the list only under `if attribution_complete`
+        # and yields [] when nothing was excluded. Reporting 0 here would be the
+        # silent under-report this endpoint exists to end.
+        (5, [], "unknown"),
+    ],
+)
+def test_excluded_attribution_is_a_tri_state_over_the_stored_record(
+    app_client, source_rows_total, excluded_rows, expected
+) -> None:
+    """The PRODUCER of the tri-state, which the panel's tests cannot reach.
+
+    `AttackAiInputsPanel.test.tsx` asserts the renderer against a hand-written
+    value; nothing there proves the backend ever emits the right one. This is
+    that half.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _list_with_extraction_record(
+        TestSession,
+        cid,
+        me["id"],
+        source_rows_total=source_rows_total,
+        excluded_rows=excluded_rows,
+    )
+    sid = _attack_service(c, bearer, cid)
+
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    r = c.get(f"/attack/services/{sid}/ai-inputs", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert len(body["sources"]) == 1
+    assert body["sources"][0]["excluded_attribution"] == expected
+
+    # And the TOTALS agree with the per-list state -- a digit may only appear
+    # under `complete`.
+    totals = body["totals"]
+    if expected == "complete":
+        assert totals["excluded_rows_named"] == 1
+        assert totals["lists_with_unknown_exclusions"] == 0
+    else:
+        assert totals["excluded_rows_named"] == 0
+        assert totals["lists_with_unknown_exclusions"] == (1 if expected == "unknown" else 0)

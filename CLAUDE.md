@@ -1127,7 +1127,8 @@ Rules of the road:
   is worse: "which tree is mounted right now" becomes invisible state deciding
   whether any gate result means anything. **Agents take turns in one tree.**
 
-  **This is the fifth instance of a claim about state outside the working tree,
+  <!-- counted: gh issue view 170 --json comments, 2026-09-01 -->
+  **This is another instance of a claim about state outside the working tree,
   asserted rather than run** — the layer asserted an isolation it never verified.
   It was found by measuring the container's mount source, and nothing in a file
   review reaches it: the defect lives in the relationship between a compose file
@@ -1139,7 +1140,7 @@ Rules of the road:
   **PREFER THE MOST PRIMITIVE AVAILABLE SIGNAL.** Every layer of presentation
   between you and the raw fact is somewhere a plausible wrong answer can live,
   and the wrong answer arrives in the right format, in the place the real one
-  goes. Measured 2026-09-01, three in one day, all the same shape:
+  goes. Measured 2026-09-01, all the same shape:
 
   | Read | Should have read |
   | --- | --- |
@@ -1174,6 +1175,89 @@ Rules of the road:
   **Worth stating plainly: the verification layer produced more defects than the
   code under test that day.** That is not an argument for more checking
   machinery. Every fix went toward a more primitive signal, not a cleverer one.
+
+- **A STATUS WORD CARRIES ITS OUTPUT, OR IT DOES NOT GO IN THE REPORT.**
+  "Merged" carries the `git log --oneline -1 origin/main` line. "Pushed" carries
+  the ref. "Dispatched" carries the tool result. "Green" carries the exit code.
+
+  Measured 2026-09-01 — **false status claims, all in reports, none caught by
+  the report:** "Merge this, then I rebase" — about a PR
+  that had never been opened. "Merged" — with `main` unchanged, twice. "Running
+  the adversarial reviewer now" — nothing dispatched. Every one was caught by a
+  human checking the artifact in one command.
+
+  **The asymmetry is the diagnosis.** Test output gets pasted without being
+  asked; merges, pushes and dispatches do not — and that is exactly where all
+  three failures landed. The words that describe an ACTION TAKEN ELSEWHERE are
+  the ones with no evidence attached, because the evidence lives in a system you
+  have to go and ask.
+
+  A resolution not to do it again is worthless here: this is prose, and the
+  bullet below explains why prose fails at precisely this. **Putting the burden
+  on the SENTENCE is what makes it hold** — a status word without its output is
+  visibly incomplete to any reader in about a second, which is cheaper than a
+  gate and just as binding.
+
+  <!-- counted: "one finding from two directions" is a cardinality claim, not a tally -->
+  This and the bullet below are one finding from two directions: that one is
+  about what you WRITE, this one is about what you CLAIM, and both fail because
+  the discipline lived in your head at the moment you were thinking about
+  something else.
+
+- **THE REFLEX SURVIVES THE RULE UNTIL THE RULE HAS A GATE. A rule that lives
+  only in prose gets followed on the item you are thinking about and skipped on
+  the item next to it.**
+
+  Measured 2026-09-01, and the third instance is what makes it a rule rather than
+  an observation. In one batch of issue filings:
+
+  - **#175** was filed with the derived form, and its body argues the case
+    explicitly: naming five workspace packages goes stale on the sixth, so gate
+    it off `pnpm-workspace.yaml` instead.
+  - **#173** was filed in the same batch as a list of two sites. There are six.
+  - **#174** was filed in the same batch as a list of one site. There are three.
+
+  The author wrote the argument for derived sets and then, minutes later and
+  <!-- counted: "one issue away" is a distance in the idiom, not a tally of a population -->
+  twice, enumerated. The reasoning was one issue away and did not transfer —
+  because prose is consulted when you are already thinking about it, and the item
+  next to it never triggers the consultation.
+
+  **So the test of a rule is not whether it is written down, it is whether
+  something fires.** When you find yourself writing a list of sites into an
+  issue, a plan or a comment, write the PREDICATE and a one-line grep beside it,
+  and say that the enumeration was found incomplete — so the next reader knows
+  the gate exists because a list failed rather than as decoration.
+
+  This is the enumeration-versus-derived-set lesson pointed at the WRITER rather
+  than at the artifact, and it is why `check_recalled_counts`, `check_plan_totals`
+  and `check_separator_classes` exist as scripts rather than as paragraphs.
+
+- **PREFER A DERIVATION OVER A SYNCHRONIZATION. When you cannot, say which
+  update closes the window and how wide it is.** A derived value cannot be out
+  of sync; a synchronized one merely is not, right now, for reasons that have to
+  keep holding.
+
+  The instances here, and the last is what makes it a rule:
+
+  - `_HSPACE` as a **computed subtraction** from `\s` rather than a hand-listed
+    character class. The list was wrong by sixteen characters and nothing could
+    see it.
+  - `_client_capability_inputs` as a **projection of** `_client_capability_membership`
+    rather than a second query answering the same question. The docstring is the
+    argument: one query, one set of membership rules, so the allow-list and the
+    payload cannot disagree.
+  - A React panel's phase as a **derivation of the current id** --
+    `loaded.serviceId === serviceId ? loaded.phase : {kind: "loading"}` -- rather
+    than a reset fired on change. The derivation evaluates in the render the prop
+    change triggers, so there is **no window**, rather than a window closed by a
+    later update. A `cancelled` flag alone fixes only the late-response half and
+    leaves the stale-data half live.
+
+  Each replaced something that had to be **kept** in sync with something that
+  **cannot** be out of sync. Where a derivation is genuinely unavailable, name
+  the closing update and the width of the gap in a comment — an unstated window
+  is the one nobody tests.
 
 - **A guard's message must name the CAUSE, not the CHECK.** One line covering
   three branches tells a reader that a check failed. Three lines tell them what

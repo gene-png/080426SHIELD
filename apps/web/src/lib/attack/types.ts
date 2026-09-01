@@ -194,3 +194,149 @@ export interface AttackDeliverable {
   released_at: string | null;
   superseded_by: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Item 7 part 2 — GET /attack/services/{id}/ai-inputs.
+//
+// Mirrors `AttackAiInputsResponse` and friends in apps/api/app/schemas/attack.py
+// field for field, derived by reading that file rather than from what the panel
+// wanted to render.
+//
+// Every field is REQUIRED here even though its pydantic counterpart carries a
+// default. The defaults are the C0 pattern on the SERVER — an older client
+// parsing a newer response — and this endpoint has exactly one version, shipped
+// with this panel. Marking them optional would license `?? 0` in the renderer,
+// and a `?? 0` over `excluded_attribution` is precisely the silent under-report
+// the endpoint exists to end.
+// ---------------------------------------------------------------------------
+
+/** The client-uploaded file a capability was extracted from. */
+export interface AttackAiInputDocument {
+  id: string;
+  /** The sanitised original filename. */
+  title: string;
+  uploaded_at: string;
+}
+
+/**
+ * Why a named capability on a list is not offered to the model.
+ *
+ * `not_in_approved_snapshot` names the observable STATE and not a cause: the
+ * row was either created after approval or reclassified into scope after, and
+ * nothing readable at request time separates those. Do not render it as either.
+ */
+export type AttackWithheldReason =
+  "security_scope" | "not_in_approved_snapshot";
+
+/**
+ * How much the API may honestly say about rows dropped at extraction.
+ *
+ * A TRI-STATE, and the third member is the whole point. `unknown` must never
+ * render as a number — `Reconciliation.attribution_complete` is not persisted,
+ * so "nothing was excluded" and "attribution failed" are the same stored bytes
+ * and the API refuses to collapse them into a zero. See `_excluded_attribution`
+ * in apps/api/app/routes/attack.py.
+ */
+export type AttackExcludedAttribution = "not_recorded" | "complete" | "unknown";
+
+/** One capability the model WILL be offered, and where it came from. */
+export interface AttackAiInputCapability {
+  name: string;
+  vendor: string | null;
+  category: string | null;
+  security_functions: string[];
+  /**
+   * The model called this row non-security and no consultant has agreed yet.
+   * Still in scope deliberately, and surfaced so a misclassification can be
+   * caught before it becomes a fabricated gap.
+   */
+  awaiting_signoff: boolean;
+  capability_list_id: string | null;
+  source_list_version: number | null;
+  source_document: AttackAiInputDocument | null;
+  /**
+   * A snapshot entry whose live row is gone (#96). It is still sent, under the
+   * snapshot's own name, but it carries no description — so `category`,
+   * `security_functions`, `awaiting_signoff` and `source_document` are all
+   * absent-because-unreadable rather than empty. Renderers MUST say which:
+   * "uncategorised" and "we cannot look" are different facts.
+   */
+  live_row_missing: boolean;
+}
+
+/** A named capability on a list that is NOT offered to the model. */
+export interface AttackAiInputWithheld {
+  name: string;
+  vendor: string | null;
+  reason: AttackWithheldReason;
+  capability_list_id: string | null;
+  source_list_version: number | null;
+  source_document: AttackAiInputDocument | null;
+}
+
+/**
+ * An uploaded SOURCE ROW that produced no capability at all.
+ *
+ * Not merged with `AttackAiInputWithheld`: this row never became a capability,
+ * so it has no name to withhold. It is the earliest drop in the chain.
+ */
+export interface AttackAiInputExcludedRow {
+  capability_list_id: string;
+  index: number;
+  summary: string;
+}
+
+/** A Tech Debt capability list contributing to — or held back from — the map. */
+export interface AttackAiInputSourceList {
+  capability_list_id: string;
+  tech_debt_service_id: string;
+  tech_debt_service_title: string;
+  version: number;
+  status: string;
+  /**
+   * False => a LATER version of the same list exists and this one still counts.
+   * Every non-discarded version feeds the mapping, not just the newest.
+   */
+  is_latest_for_service: boolean;
+  /** True when the APPROVED snapshot decides membership; false when live rows do. */
+  membership_from_snapshot: boolean;
+  /** The snapshot no longer matches current security scope; re-approval clears it. */
+  membership_stale: boolean;
+  sent_count: number;
+  not_sent_count: number;
+  /** Rows in the uploaded file. Null on a pre-0036 list, which makes no claim. */
+  source_rows_total: number | null;
+  excluded_attribution: AttackExcludedAttribution;
+  /**
+   * How many rows are NAMED in `excluded`, which is always literally true.
+   * Deliberately not a count of what was excluded: under `unknown` this is zero
+   * and the number excluded is not zero-or-anything-else known.
+   */
+  excluded_rows_named: number;
+}
+
+export interface AttackAiInputTotals {
+  sent: number;
+  not_sent: number;
+  awaiting_signoff: number;
+  withheld_security_scope: number;
+  withheld_not_in_approved_snapshot: number;
+  excluded_rows_named: number;
+  /**
+   * Contributing lists whose extraction-time exclusions cannot be reported.
+   * Rendered beside `excluded_rows_named` for the same reason a withheld count
+   * is rendered beside a coverage percentage: a total over an unknowable
+   * population is not self-describing.
+   */
+  lists_with_unknown_exclusions: number;
+  sent_without_source_document: number;
+}
+
+export interface AttackAiInputs {
+  service_id: string;
+  capabilities: AttackAiInputCapability[];
+  not_sent: AttackAiInputWithheld[];
+  excluded: AttackAiInputExcludedRow[];
+  sources: AttackAiInputSourceList[];
+  totals: AttackAiInputTotals;
+}
