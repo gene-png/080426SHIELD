@@ -833,6 +833,8 @@ mechanism; docs carry only what git can't show.
 | File | Role | Who writes |
 |---|---|---|
 | `CLAUDE.md` | Durable facts, principles, gotchas | Both — append/refine in PRs |
+| `.claude/agents/*.md` | Agent definitions: territory, gates, merge rules | Both — PR; each agent re-reads its own from disk |
+| `.claude/settings.json` | Committed Claude Code config. `env` only | Both — PR. Never `permissions`/`hooks` |
 | `CONTEXT.md` | Project status as of `main` | Updated as part of a PR, never outside one |
 | `context/dave.md` | Dave's in-flight status | **Dave ONLY.** Read for awareness; never write it |
 | `context/gene.md` | Gene's in-flight status | **The agent maintains it; Gene owns it by REVIEW, in the PR.** He keeps every decision in the file and gives up typing it |
@@ -1094,6 +1096,78 @@ Rules of the road:
   (Decision recorded as **D-057**, which reverses part of D-054. Closes the
   `CLAUDE.md` half of #108; the other half — the gate's own source still saying
   it "only REPORTS" and citing D-051 — is untouched and still open.)
+- **When you cite a rule as the REASON for a constraint, the citation is a claim
+  and gets checked like one.** Instances from 2026-08-30, all in agent
+  definitions, all where the constraint was RIGHT and the reason was false:
+  `enforce_ai_rate_limit` attributed to `/ai/preview` when it guards five
+  endpoints including the one in the agent's own file; `zt/exporters.py` cited to
+  merge-rule condition 5 when condition 5 does not list it (condition 6 does);
+  `DECISIONS.md` cited to condition 3 when condition 3 names three files and not
+  that one.
+
+  **A correct constraint with a false citation is worse than an unexplained
+  one.** This repo tells every agent to verify what it reads — so the agent
+  checks the reason, finds it false, and may discard an instruction that was
+  right. An unexplained constraint merely lacks support; a miscited one actively
+  argues against itself.
+
+- **GIT WORKTREES ISOLATE FILES. THEY DO NOT ISOLATE A DOCKER-COMPOSE STACK.**
+  `docker-compose.yml:1` hardcodes `name: shield-v2` and `:195` binds
+  `./apps/api:/app`, so the project name is not derived from the directory:
+  `docker compose exec` from ANY tree attaches to the same container, mounted
+  from whichever tree last ran `up`. Two worktrees were created on 2026-08-31 to
+  give two agents structural isolation, and every containerised gate in both
+  would have run against a third tree — going green having seen none of the
+  agent's work, which is the shape this file exists to prevent.
+
+  **Withdrawn rather than fixed.** A second stack needs its own
+  `COMPOSE_PROJECT_NAME`, ports, `.env` (gitignored, so `git worktree add` never
+  creates one) and duplicated Postgres/Redis/MinIO/Keycloak/MailHog, with
+  host-run e2e binding `:3000` from both. Repointing one shared mount per switch
+  is worse: "which tree is mounted right now" becomes invisible state deciding
+  whether any gate result means anything. **Agents take turns in one tree.**
+
+  **This is the fifth instance of a claim about state outside the working tree,
+  asserted rather than run** — the layer asserted an isolation it never verified.
+  It was found by measuring the container's mount source, and nothing in a file
+  review reaches it: the defect lives in the relationship between a compose file
+  and a directory, not in either one.
+
+- **A guard's message must name the CAUSE, not the CHECK.** One line covering
+  three branches tells a reader that a check failed. Three lines tell them what
+  is wrong. The difference only shows up while someone is debugging under
+  pressure, which is the only time the message is read.
+
+  The instance: a worktree precondition ran three greps and printed a single
+  `HALT: worktree predates the agent layer` for all of them. Correct, and useless
+  — the most plausible misreading was "the rebase did not work", when the actual
+  cause was that there had been nothing to rebase onto. **A guard that fires
+  correctly for a reason nobody would guess gets debugged in the wrong
+  direction.** Each branch now names its own cause and what it implies.
+
+- **A control that protects an agent from STALE STATE must be verifiable from
+  INSIDE that state.** A rule written in a file the stale worktree does not have
+  is a warning about stale state that is unreachable from the stale state —
+  worse than no control, because it creates the belief the hazard is handled.
+
+  Measured 2026-08-30: both agent definitions opened with "re-read `CLAUDE.md`
+  and this file from disk", and neither file existed in either worktree, whose
+  branches predate them. `wt-attack/CLAUDE.md` still carried `prettier@3.9.5`
+  and none of that day's rules. An agent doing step 0 there finds a disagreement
+  it is told to report — and if it resolved it by preferring disk, it would run
+  the wrong formatter under a rule set it cannot see is missing.
+
+  The fix is not a better-worded rule. It is **three greps the agent executes
+  first**, which halt it when its own worktree predates the layer. A documented
+  rule could never satisfy this; an executable check does.
+
+  **And a guard must be observed in BOTH states before it is trusted.** Watching
+  it fire proves it fires; it does not prove it passes. A typo that halts
+  unconditionally leaves every agent dead on arrival, and that symptom is
+  indistinguishable from the hazard the guard exists to catch. Same both-halves
+  discipline as a test contract, pointed at the guard: run it where it must HALT
+  and where it must PASS, and record both.
+
 - **EVERY agent definition carries this line, written before the agent runs
   rather than after:** *"Re-read `CLAUDE.md` **and your own agent definition**
   from disk at the start of a task rather than trusting injected context. Report
@@ -1110,7 +1184,10 @@ Rules of the road:
   is stale applies a rule set nobody can see is missing, and it is the one file
   it will never think to check.
 
-  **Injected context lags the file.** Observed twice on 2026-08-30: the
+  **Injected context lags the file.** Instances accumulate on **#170** rather
+  than in a count here — three documents once carried three different numbers
+  for this one population, none of them marked. Observed repeatedly on
+  2026-08-30, e.g. the
   `CLAUDE.md` in a subagent's context said "Three rules for numbers in prose"
   while disk said "The rules" with five — the two rules added that morning
   were absent from the copy the agent was reasoning with. It caught the
@@ -1553,6 +1630,16 @@ Rules of the road:
 - To see what your collaborator is doing: `gh pr list` + their `context/*.md`
   — not their unmerged branches.
 - `.claude/sprint-queue.json` is machine-local loop runtime state (gitignored).
+  **`.claude/settings.json` is COMMITTED and `.claude/settings.local.json` is
+  NOT** (`.gitignore:66`). The committed one carries
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, so both devs get the flag — it lived
+  in the gitignored file until 2026-08-30, which meant Dave never had it. Keep it
+  `env`-only: **no `permissions`, no `hooks`**. The local allow-list was deleted
+  the same day and is left to rebuild from use; `Bash(python -c ' *)` stays out
+  permanently, because under Agent Teams a pre-approved permission is granted to
+  every agent the team spawns rather than to the session that approved it, and a
+  step needing Python belongs in `apps/api/scripts/` where the reviewer can read
+  it. An empty allow-list means more prompts, which is the intended trade.
   Staged sprint queues (`.claude/sprint-queue.sprint-<n>.json`) ARE committed —
   they're the plan of record.
 - **Sprint loops are launched by the human dev at the keyboard, never by an
