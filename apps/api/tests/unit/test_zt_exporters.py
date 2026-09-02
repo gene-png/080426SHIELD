@@ -15,7 +15,7 @@ from app.models.zt_assessment import (
 )
 from app.zt.catalog import capabilities
 from app.zt.exporters import build_context, render_docx, render_pdf, render_xlsx
-from app.zt.maturity import ZtFrameworkCode
+from app.zt.maturity import ZtFrameworkCode, level_count
 from app.zt.scoring import analyze_gaps, compute
 
 
@@ -47,7 +47,24 @@ def _build_inputs(
     return a, answers
 
 
-def _ctx(framework: ZtFrameworkCode, stage: int | None = 3, *, target: int = 4):
+def _ctx(framework: ZtFrameworkCode, stage: int | None = 3, *, target: int | None = None):
+    """Build an exporter context. `target` defaults to the FRAMEWORK'S ceiling.
+
+    It used to default to a hardcoded 4, and DoD ZTRA has three stages -- so
+    `test_dod_xlsx_renders`, `test_dod_xlsx_answers_sheet_row_count` and
+    `test_dod_pdf_renders` had been rendering DoD deliverables against a target
+    the framework does not have, for as long as they had existed. Nothing
+    failed, because `analyze_gaps` silently clamped 4 to 3 (#125). The clamp is
+    now a refusal, which is what surfaced these three.
+
+    Deriving the default from `level_count` rather than restating a number per
+    framework means the fixture CANNOT express an impossible target by
+    accident again. Callers that want a specific target still pass one, and
+    passing an out-of-range one still raises -- that is the engine contract,
+    pinned in `test_zt_target_stage_provenance.py`.
+    """
+    if target is None:
+        target = level_count(framework)
     a, answers = _build_inputs(framework, stage=stage)
     stage_map = {ans.capability_code: ans.maturity_stage for ans in answers}
     score = compute(framework, stage_map)

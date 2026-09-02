@@ -390,6 +390,49 @@ of starting when the instinct runs the other way.
   a required check, and no client document or audit row depends on it. Stated
   rather than left unlabelled, because in a list "unlabelled" and "deliberately
   out of scope" look identical.
+- **#175** - `./packages:/app/packages` is bind-mounted with no `node_modules`
+  overlay, so a host `pnpm install` breaks the container for the five workspace
+  packages behind it. **Deliberately not on the MVP path and not labelled
+  `mvp-blocking`**, on the same reasoning as #143 directly above: it is
+  developer environment setup, and no client document or audit row depends on
+  it. The bar is the one written at the top of this file - MVP means all five
+  services producing correct documents - and a broken container produces no
+  document at all rather than a wrong one, which is the failure mode CI and a
+  rebuild already cover. Stated rather than left unlabelled, for the reason
+  #143 gives.
+
+  Recorded 2026-09-02 after the issue was cited in review as carrying
+  `mvp-blocking`. It does not, and never did - `gh issue view 175` returns an
+  empty label set, and it is absent from `gh issue list --label mvp-blocking
+  --state open`. The claim came from a summary table, not from the API. Noted
+  because an unlabelled issue and a deliberately-exempt one are the same bytes,
+  which is exactly what #143's last sentence is about, and because the blocking
+  set is what the delivery order is derived from: a phantom member distorts
+  every sequencing decision taken after it.
+- **#184** - CSF silently clamps an out-of-range `target_tier` and reports the
+  clamped value back as the one requested. **Deliberately not on the MVP path
+  and not labelled `mvp-blocking`**, same treatment as #143 and #175 above.
+
+  It is the CSF twin of #125 and it was labelled `mvp-blocking` on filing, on
+  the reasoning that `target_tier` renders verbatim into the client deliverable
+  - `csf/exporters.py:310`/`:402` headings, `:315`/`:407` empty state,
+  `:326`/`:421` every gap row - and that `routes/csf.py:2261` passes a
+  client-supplied value into `analyze_gaps`. Both facts are true. **The label
+  was still wrong**, because a render site only matters if a bad value can
+  reach it, and none can: `schemas/intake.py:75`/`:174` bound `csf_target_tier`
+  at `ge=2, le=4`, `schemas/csf.py:166` bounds the self-assessment write at
+  `ge=1, le=4`, and CSF's ceiling is 4. Every write path sits inside the ladder,
+  so the clamp is unreachable from stored data. The live defect is confined to
+  the `/gap-analysis` query parameter, which finalize never receives.
+
+  **The condition that flips it, written down because it is not hypothetical:**
+  a CSF variant whose ceiling falls BELOW its schema bound. That is precisely
+  what DoD ZTRA did to Zero Trust - a 3-stage ladder behind a schema still
+  permitting 4 - and #125 is what it cost. One new framework, or one widened
+  bound, converts #184 from latent to shipped with no other code change and
+  nothing on the path to catch it. Re-label it the day either happens.
+
+  Stated rather than left unlabelled, for the reason #143 gives.
 
 ### Scope correction, 2026-08-27 — half of item 7 part 2 already ships
 

@@ -419,3 +419,142 @@ def test_zt_home_card_agrees_with_the_released_report_on_the_target(app_client) 
         "the /home card and the released report disagree about the same "
         f"assessment: card={summary['zt_gap_count']} report={expected}"
     )
+
+
+# --- #125 — the finalize audit row must never attribute a coerced target ---
+
+
+def _finalize_and_read_audit(c: TestClient, h: dict, svc_id: str) -> dict:
+    """Finalize a ZT deliverable and return the audit row's details dict.
+
+    The audit row is the record #125 is about, and before this nothing in the
+    repo asserted on `target_stage_source` at all -- `grep` over `apps/api/tests`
+    and `e2e/` returned only prose. The engine half could therefore be fixed,
+    and the label left computing itself from `is not None`, with a full green
+    suite either way.
+    """
+    from app.models.audit_entry import AuditEntry
+
+    fin = c.post(f"/zt/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        row = (
+            s.query(AuditEntry)
+            .filter(AuditEntry.action == "zt.deliverable.finalized")
+            .order_by(AuditEntry.at.desc())
+            .first()
+        )
+        assert row is not None, "finalize wrote no audit row"
+        return dict(row.details or {})
+
+
+def _seed_scored_zt_service(c: TestClient, h: dict, kind: str, stored_target: int | None) -> str:
+    svc_id = c.post("/zt/services", headers=h, json={"kind": kind, "title": "ZT"}).json()["id"]
+    if stored_target is not None:
+        _attach_intake_target(svc_id, zt_stage=stored_target)
+    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h).json()
+    for ans in a["answers"]:
+        c.patch(f"/zt/answers/{ans['id']}", headers=h, json={"maturity_stage": 2})
+    c.post(f"/zt/assessments/{a['id']}/approve", headers=h)
+    return svc_id
+
+
+@pytest.mark.unit
+def test_finalize_never_attributes_an_impossible_target_to_the_client(app_client) -> None:
+    """#125, stated at the layer the defect actually shipped from.
+
+    DoD ZTRA has three stages. The intake UI offers `zero_trust_dod` a Stage 4
+    option (`apps/web/src/lib/intake/types.ts`) and `schemas/intake.py` bounds
+    the field 2-4 with no framework discrimination, so a stored 4 on a DoD
+    engagement is a normal product state, not an edge case.
+
+    `analyze_gaps` clamped that 4 to 3 and returned the clamped value; the audit
+    row's source was computed separately, from whether the client had supplied
+    ANY value. The row therefore read `target_stage: 3, target_stage_source:
+    "client"` -- the false value and the false attribution of it, side by side,
+    in the record whose entire purpose is provenance.
+
+    The assertion that matters is the SOURCE, not the number. Clamping to 3 is a
+    defensible rendering choice; calling that 3 the client's decision is not.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = _seed_scored_zt_service(c, h, "zero_trust_dod", 4)
+
+    details = _finalize_and_read_audit(c, h, svc_id)
+
+    assert details["target_stage_source"] != "client", (
+        "a stage DoD ZTRA does not have was attributed to the client -- this is "
+        f"#125: {details.get('target_stage')} labelled {details['target_stage_source']!r}"
+    )
+    assert details["target_stage_source"] == "client_out_of_range"
+    assert details["target_stage"] == 3
+
+
+@pytest.mark.unit
+def test_finalize_still_credits_the_client_for_a_target_the_framework_has(app_client) -> None:
+    """The other half of the contract, and the reason the first test is not enough.
+
+    A guard that withheld "client" from everything would satisfy the test above
+    while destroying the field's meaning. CISA ZTMM has four stages, so a stored
+    4 there IS the client's choice and must still say so.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = _seed_scored_zt_service(c, h, "zero_trust_cisa", 4)
+
+    details = _finalize_and_read_audit(c, h, svc_id)
+
+    assert details["target_stage_source"] == "client"
+    assert details["target_stage"] == 4
+
+
+@pytest.mark.unit
+def test_finalize_reports_default_when_the_client_chose_nothing(app_client) -> None:
+    """ "Chose nothing" and "chose something unusable" must stay distinguishable.
+
+    Both fall back to stage 3, so the NUMBER cannot tell them apart and only the
+    source can. That is the whole reason the field exists.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = _seed_scored_zt_service(c, h, "zero_trust_dod", None)
+
+    details = _finalize_and_read_audit(c, h, svc_id)
+
+    assert details["target_stage_source"] == "default"
+    assert details["target_stage"] == 3
+
+
+@pytest.mark.unit
+def test_gap_analysis_refuses_a_target_the_framework_does_not_have(app_client) -> None:
+    """A REQUEST is refused, where a stored value is resolved.
+
+    `analyze_gaps` raises rather than clamps now, so without a typed guard the
+    consultant gets an untyped 500 -- and `ZtWorkspace.tsx` swallows the
+    rejection in a bare `catch {}`, leaving the score and gap cards in a
+    permanent loading state indistinguishable from a slow network. Assert the
+    typed D-016 body, not just the status.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = _seed_scored_zt_service(c, h, "zero_trust_dod", None)
+
+    r = c.get(f"/zt/services/{svc_id}/gap-analysis", headers=h, params={"target_stage": 4})
+    assert r.status_code == 422, r.text
+    # The house envelope is `{"error": {...}}` (see `app/exceptions.py`), NOT
+    # FastAPI's default `{"detail": ...}`. Asserting the status alone would have
+    # passed against the wrong body shape, which is what a first draft of this
+    # test did -- 422 is also what FastAPI returns for its own request-validation
+    # rejection, so the code says nothing about which guard fired.
+    assert r.json()["error"]["reason"] == "target_stage_out_of_range"
+    assert "1-3" in r.json()["error"]["message"]
+
+    ok = c.get(f"/zt/services/{svc_id}/gap-analysis", headers=h, params={"target_stage": 3})
+    assert ok.status_code == 200, ok.text

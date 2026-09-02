@@ -36,6 +36,17 @@ export interface TechDebtDashboardData {
   annual_spend_usd: number;
   identified_savings_usd: number;
   savings_cost_known: boolean;
+  // #126. Three states, not a boolean: "complete" (every row accounted for and
+  // costed), "partial" (something is known missing), "unknown" (completeness
+  // was never recorded for this list -- pre-0036, or never cut by an
+  // extraction). A bool cannot carry the third, and folding it into "complete"
+  // is what let the spend figure claim totality it had no basis for.
+  spend_completeness: "complete" | "partial" | "unknown";
+  // NULL source_rows_total means the upload was never reconciled -- distinct
+  // from zero rows received.
+  source_rows_total: number | null;
+  included_count: number;
+  excluded_count: number;
   redundant_category_count: number;
   spend_by_category: CategorySpend[];
   sprawl_by_category: CategorySpend[];

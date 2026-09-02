@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -307,6 +308,29 @@ class TechDebtDashboardResponse(BaseModel):
     annual_spend_usd: float
     identified_savings_usd: float
     savings_cost_known: bool  # False when a CUT item lacked a cost (savings is a floor)
+    # #126. THREE states, not a bool mirroring `savings_cost_known`.
+    #
+    #   "complete" every source row is accounted for and every item is costed
+    #   "partial"  something is known to be missing - an uncosted item, or rows
+    #              excluded from the upload
+    #   "unknown"  completeness was never RECORDED for this list
+    #
+    # A bool cannot carry the third, and the third is not a rounding error: it
+    # is the whole population of pre-0036 lists and any list not cut by an AI
+    # extraction. Collapsing it into "complete" is what let the exporter print
+    # "Total annual cost" over a figure nobody had reconciled; collapsing it
+    # into "partial" would claim a defect nobody observed. Same three-answer
+    # shape as the ATT&CK citation record, and for the same reason: absence of
+    # evidence is not evidence of either outcome.
+    spend_completeness: Literal["complete", "partial", "unknown"] = "unknown"
+    # The reconciliation the exporter has carried since N-010 and the dashboard
+    # never received, so the excluded-rows half of #126 was not merely
+    # undisclosed - it was inexpressible. NULL `source_rows_total` means the
+    # upload was never reconciled, which is why it is optional rather than 0:
+    # zero rows received and no record of how many are different facts.
+    source_rows_total: int | None = None
+    included_count: int = 0
+    excluded_count: int = 0
     redundant_category_count: int
     spend_by_category: list[TechDebtCategorySpend]
     sprawl_by_category: list[TechDebtCategorySpend]

@@ -71,8 +71,42 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
 
 
 def cost_label(ctx: DeliverableContext) -> str:
-    """Never call a partial figure a total (UX finding #4)."""
-    return "Included annual cost" if ctx.excluded_count else "Total annual cost"
+    """Never call a partial figure a total (UX finding #4).
+
+    THREE outcomes, not two. "Nothing was excluded" and "whether anything was
+    excluded was never recorded" are different claims about the client's upload,
+    and a two-valued label cannot carry both -- so for the whole life of this
+    function they shared the string "Total annual cost".
+
+    The hole was `source_rows_total is None`. `build_context` derives
+    `excluded_count = max(received - included, 0) if received is not None else 0`,
+    so a list with no reconciliation on record yields 0, and 0 read as "nothing
+    was excluded". `reconciliation_line` -- the function immediately above --
+    guards that exact condition at its first line and correctly returns None.
+    Two adjacent functions, one predicate each, and only one of them had the
+    guard: the report printed no reconciliation line, which is right, and then
+    called the figure a TOTAL, which is not.
+
+    Who has a NULL `source_rows_total`: pre-0036 lists, and any list not cut by
+    an AI extraction (`reconcile.py` types `received` as a plain `int`, so
+    `routes/tech_debt.py:316` always writes one when extraction ran).
+    `services/stages.py:137` already reads NULL here as "un-analysed rather than
+    analysed", calling that "the conservative direction" -- this makes the
+    renderer agree with that reading instead of contradicting it.
+
+    NOT the same defect as the one `build_context`'s comment already records.
+    That one is `received is not None` with items >= source rows, where the
+    subtraction floors to 0 while rows genuinely were excluded, and it needs
+    `attribution_complete` persisted to fix. This one needs two lines, and the
+    existing comment is silent on it -- which is why it survived: the comment
+    sits exactly where a reader would check and describes a NARROWER case than
+    they would assume it covers.
+    """
+    if ctx.excluded_count:
+        return "Included annual cost"
+    if ctx.source_rows_total is None:
+        return "Annual cost (may not be complete)"
+    return "Total annual cost"
 
 
 def _disposition_label(d: CapabilityDisposition | None) -> str:
