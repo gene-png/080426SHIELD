@@ -129,6 +129,14 @@ def context_with_items():
         service_id=uuid.uuid4(),
         version=1,
         status=CapabilityListStatus.APPROVED,
+        # Three source rows, all three included. Set EXPLICITLY: leaving it NULL
+        # made this fixture a pre-0036 list by accident, which is not what the
+        # test is about. `reconcile.py` types `received` as a plain `int`, so a
+        # list cut by an extraction always carries one -- an unset value here
+        # described a state the normal path cannot produce, and the summary row
+        # it asserted was consequently labelled for a list whose completeness
+        # was never recorded. See `cost_label`'s three outcomes.
+        source_rows_total=3,
     )
     items = [
         _item(name="Wiz", annual_cost_usd=350_000, disposition=CapabilityDisposition.KEEP),

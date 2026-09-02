@@ -1380,6 +1380,25 @@ Rules of the road:
   line whenever one is needed. Line numbers are for finding the code today; the
   mechanism is what the entry is actually for.
 
+  **Corollary, and it is the same rule pointed at a CITATION rather than a plan
+  entry: cite the FILE and the QUOTED STRING, never the line.** A line number is
+  a claim that expires without notice, and it expires fastest in exactly the
+  documents people cite most, because those are the ones being edited. Write
+  `DELIVERY_PLAN.md, the paragraph quoting "Total annual cost"` rather than
+  `DELIVERY_PLAN.md:737` -- the quoted string survives every reflow, is greppable
+  to a line in one command, and cannot silently point at the wrong paragraph.
+
+  <!-- counted: historical -->
+  Three instances on 2026-09-02, in one session, from three different causes:
+  a reviewer's clone was pinned to an older commit and its citations were all
+  shifted; two plan notes added that morning moved a `DELIVERY_PLAN.md` citation
+  from :737 to :780 between one message and the next; and
+  `check_issue_references.py`'s fail-closed branch moved :152 to :162 between
+  two people reading the same file. None was a mistake anyone made. Every one
+  was a correct number that had stopped being correct, and the failure is
+  invisible: the wrong line usually still contains plausible code, which is the
+  same thing that makes a stale citation worse than a missing one.
+
 - **The rules for numbers in prose, and a gate that enforces the first two on
   the shared documents.** Every miss behind them is one pattern: a value written
   from memory instead of derived. This file has produced that defect repeatedly,

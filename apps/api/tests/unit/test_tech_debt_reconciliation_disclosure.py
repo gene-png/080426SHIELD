@@ -180,3 +180,73 @@ def test_more_items_than_source_rows_reports_zero_and_that_is_a_KNOWN_GAP() -> N
     ctx = _ctx(received=5, named=[], items=[_Item(f"cap{i}") for i in range(9)])
     assert ctx.excluded_count == 0
     assert reconciliation_line(ctx) is None
+
+
+# --- #126 / the second hole: "not recorded" is not "nothing excluded" -------
+
+
+@pytest.mark.unit
+def test_a_list_with_no_reconciliation_on_record_is_not_called_a_total() -> None:
+    """The `source_rows_total is None` hole in `cost_label`.
+
+    `build_context` derives `excluded_count = max(received - included, 0) if
+    received is not None else 0`, so a list carrying no reconciliation yields 0,
+    and `cost_label` read 0 as "nothing was excluded". The report then printed
+    "Total annual cost" over a figure whose completeness was never recorded.
+
+    `reconciliation_line`, the function directly above it, guards this exact
+    condition on its first line. Only one of the two adjacent functions had it.
+    """
+    ctx = _ctx(received=None, named=None, items=[_Item(f"cap{i}") for i in range(12)])
+    assert ctx.source_rows_total is None
+    assert ctx.excluded_count == 0, "the derivation floors to 0 - that is the trap"
+    assert cost_label(ctx) != "Total annual cost", (
+        "a figure whose completeness was never recorded was called a total - "
+        "the exact thing this function's docstring forbids"
+    )
+    assert cost_label(ctx) == "Annual cost (may not be complete)"
+
+
+@pytest.mark.unit
+def test_not_recorded_and_nothing_excluded_do_not_render_identically() -> None:
+    """The assertion that would have caught it, stated as the two-state contrast.
+
+    Both cases have `excluded_count == 0` and both correctly emit no
+    reconciliation line. Before the fix they also emitted the same cost label,
+    so two different claims about a client's upload were byte-identical in the
+    released document.
+    """
+    items = [_Item(f"cap{i}") for i in range(12)]
+    not_recorded = _ctx(received=None, named=None, items=items)
+    genuinely_clean = _ctx(received=12, named=[], items=items)
+
+    assert reconciliation_line(not_recorded) is None
+    assert reconciliation_line(genuinely_clean) is None
+    assert cost_label(not_recorded) != cost_label(genuinely_clean)
+    # And the positive control: a guard that withheld "Total" from everything
+    # would satisfy the test above while destroying the label's meaning.
+    assert cost_label(genuinely_clean) == "Total annual cost"
+
+
+@pytest.mark.unit
+def test_the_unbalanced_case_is_still_wrong_and_that_is_deliberate() -> None:
+    """STATED EXEMPTION, pinned so it stays visible rather than being forgotten.
+
+    When the model emits at least as many items as there were source rows, the
+    subtraction floors to 0 while rows genuinely WERE excluded, and the label
+    still reads "Total annual cost". That is a different defect from the one
+    above: it needs `reconcile.py`'s `attribution_complete` persisted so the
+    renderer can say "the reconciliation does not balance", which is a migration
+    and outside this change.
+
+    `build_context`'s own comment records it. This test exists so the remaining
+    gap is asserted rather than described - if someone fixes it, this test fails
+    and tells them to delete it.
+    """
+    ctx = _ctx(received=12, named=[], items=[_Item(f"cap{i}") for i in range(14)])
+    assert ctx.source_rows_total is not None
+    assert ctx.excluded_count == 0, "the subtraction floors"
+    assert cost_label(ctx) == "Total annual cost", (
+        "if this now reports the imbalance, the exemption is closed - "
+        "delete this test and update build_context's comment"
+    )

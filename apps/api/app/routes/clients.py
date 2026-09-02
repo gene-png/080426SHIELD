@@ -93,6 +93,7 @@ from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
 from app.zt.scoring import analyze_gaps as zt_analyze_gaps
 from app.zt.scoring import compute as zt_compute
+from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -320,11 +321,21 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
         # That is #79's symptom in the service #73 was filed against, and this
         # function sat directly below the CSF twin that was fixed for it.
         stage = _zt_client_target_stage(db, sid)
+        # #125: resolve rather than let `zt_analyze_gaps` clamp -- it now
+        # raises, and an unresolved stored value would 500 the client's own
+        # dashboard. STATED EXEMPTION: the resolved `source` is discarded here
+        # because this helper returns a bare gap TOTAL and has nowhere to put
+        # it. That is a real disclosure gap -- a client on an out-of-range
+        # target sees a number computed against a stage they did not choose,
+        # with no flag -- and it belongs to #124, which is rewriting this card
+        # to carry the engagement target and its provenance. Left rather than
+        # half-built, so #124 does not inherit a second partial surface.
+        resolved_stage, _source = zt_resolve_target_stage(fw, stage)
         total += zt_analyze_gaps(
             fw,
             answers,
             targets=targets,
-            **({"target_stage": stage} if stage is not None else {}),
+            target_stage=resolved_stage,
         ).total_gap_count
     return total if found else None
 
@@ -872,10 +883,17 @@ def tech_debt_dashboard(
     annual_spend = 0.0
     savings = 0.0
     savings_cost_known = True
+    # #126: the same floor question the SAVINGS figure has always asked, asked
+    # of SPEND. An uncosted item contributes 0.0 below and is still counted in
+    # `total_applications`, so the spend figure was a floor and said so nowhere
+    # while `savings` beside it carried a flag for exactly this.
+    spend_cost_known = True
     # category -> {"total": float, "count": int, "items": [CapabilityItem]}
     by_cat: dict[str, dict] = {}
     for it in items:
         cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None else 0.0
+        if it.annual_cost_usd is None:
+            spend_cost_known = False
         annual_spend += cost
         if it.disposition == CapabilityDisposition.CUT:
             if it.annual_cost_usd is None:
@@ -924,6 +942,29 @@ def tech_debt_dashboard(
         savings=savings,
     )
 
+    # #126, the excluded-rows half. `build_context` (tech_debt/exporters.py) has
+    # derived this since N-010 and the dashboard never received it, so a client
+    # card could not disclose an exclusion even in principle. Derived the same
+    # way as the exporter -- source-derived items only, so decomposing a bundle
+    # into children can never move the arithmetic.
+    source_rows_total = getattr(cl, "source_rows_total", None)
+    included_count = sum(1 for it in items if getattr(it, "parent_item_id", None) is None)
+    excluded_count = (
+        max(source_rows_total - included_count, 0) if source_rows_total is not None else 0
+    )
+    # THREE states. "unknown" is not a hedge, it is the pre-0036 population and
+    # every list not cut by an extraction: `source_rows_total` is NULL and no
+    # reconciliation was ever recorded, so neither "complete" nor "partial" is a
+    # claim the data supports. `services/stages.py:137` already reads NULL here
+    # as un-analysed and calls that the conservative direction; this agrees with
+    # it rather than contradicting it.
+    if source_rows_total is None:
+        spend_completeness = "unknown"
+    elif excluded_count or not spend_cost_known:
+        spend_completeness = "partial"
+    else:
+        spend_completeness = "complete"
+
     return TechDebtDashboardResponse(
         service_id=service_id,
         service_title=svc.title,
@@ -934,6 +975,10 @@ def tech_debt_dashboard(
         annual_spend_usd=round(annual_spend, 2),
         identified_savings_usd=round(savings, 2),
         savings_cost_known=savings_cost_known,
+        spend_completeness=spend_completeness,
+        source_rows_total=source_rows_total,
+        included_count=included_count,
+        excluded_count=excluded_count,
         redundant_category_count=len(sprawl_by_category),
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,

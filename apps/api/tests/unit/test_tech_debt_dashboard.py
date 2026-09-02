@@ -250,3 +250,156 @@ def test_tech_debt_release_flips_the_capability_list_and_finalize_still_works(ap
     again = c.post(f"/tech-debt/services/{svc_id}/deliverables/finalize", headers=h)
     assert again.status_code == 201, again.text
     assert again.json()["version"] == 2
+
+
+# --- #126: spend is a floor, and the card must say so ----------------------
+
+
+@pytest.mark.unit
+def test_spend_completeness_is_not_complete_when_an_item_has_no_cost(app_client) -> None:
+    """The #126 asymmetry, stated as the assertion that would have caught it.
+
+    An item with a NULL cost contributes 0.0 to the spend and is still counted
+    in `total_applications`, so `annual_spend_usd` is a FLOOR.
+    `savings_cost_known` has carried exactly this flag for the savings figure
+    since it was written; the spend figure beside it carried nothing, and the
+    client card labelled it "Across all tools".
+
+    A NULL cost is seeded explicitly here rather than relying on the shared
+    fixture. The fixture's Defender row is `"annual_cost_usd": 0` -- a RECORDED
+    ZERO, not a missing cost -- and an earlier draft of this test read the
+    existing "195k + 0 + 95k" comment as an uncosted row and asserted the
+    dashboard must not report `complete`. It reports `complete`, correctly:
+    a cost known to be zero is a fact, absence of a cost is not, and collapsing
+    the two would be the same absent-vs-zero error this tri-state exists to
+    prevent, pointed the other way.
+    """
+    import sqlalchemy as sa
+
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    svc_id = _seed_release(c, provider, admin["tokens"]["access_token"], release=True)
+
+    eng = sa.create_engine(os.environ["DATABASE_URL"], future=True)
+    with eng.begin() as conn:
+        conn.execute(
+            sa.text(
+                "UPDATE capability_items SET annual_cost_usd = NULL " "WHERE name = 'Splunk ES'"
+            )
+        )
+
+    c.headers["X-Client-Id"] = client_id
+    b = c.get(
+        f"/clients/{client_id}/tech-debt/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    ).json()
+
+    assert b["spend_completeness"] != "complete", (
+        "a spend figure with an uncosted item claimed completeness - this is "
+        "#126, the floor with no flag beside a savings figure that has one"
+    )
+    assert b["spend_completeness"] == "partial"
+    # Splunk ES is a KEEP item, chosen deliberately. Nulling a CUT item would
+    # flip `savings_cost_known` too, and the assertion below would then pass for
+    # the wrong reason -- it is here to show the SPEND floor is tracked on its
+    # own rather than inherited from the savings flag, which is the entire
+    # asymmetry #126 is about.
+    assert b["savings_cost_known"] is True
+
+
+@pytest.mark.unit
+def test_the_dashboard_can_express_an_exclusion_at_all(app_client) -> None:
+    """The excluded-rows half was not undisclosed - it was INEXPRESSIBLE.
+
+    `tech_debt/exporters.py` has derived `source_rows_total` / `included_count`
+    / `excluded_count` since N-010 and the released PDF prints them. The
+    dashboard response had no field for any of the three, so a client card
+    could not have disclosed an exclusion even if someone had wanted it to.
+    This asserts the fields exist and are populated, which is the precondition
+    for the disclosure rather than the disclosure itself.
+    """
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    svc_id = _seed_release(c, provider, admin["tokens"]["access_token"], release=True)
+
+    c.headers["X-Client-Id"] = client_id
+    b = c.get(
+        f"/clients/{client_id}/tech-debt/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    ).json()
+
+    for field in ("source_rows_total", "included_count", "excluded_count"):
+        assert field in b, f"{field} is absent - the exclusion cannot be disclosed"
+    # Source-derived items only, matching `build_context`, so decomposing a
+    # bundle can never move the arithmetic.
+    assert b["included_count"] == b["total_applications"]
+    assert b["excluded_count"] >= 0
+
+
+@pytest.mark.unit
+def test_unknown_is_its_own_state_and_not_folded_into_complete(app_client) -> None:
+    """A bool could not carry this, which is why it is a tri-state.
+
+    A list whose `source_rows_total` is NULL was never reconciled - pre-0036,
+    or never cut by an extraction. "Nothing was excluded" and "whether anything
+    was excluded was never recorded" are different claims, and reporting the
+    second as the first is what let the exporter print "Total annual cost" over
+    an unreconciled figure.
+    """
+    import sqlalchemy as sa
+
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    svc_id = _seed_release(c, provider, admin["tokens"]["access_token"], release=True)
+
+    eng = sa.create_engine(os.environ["DATABASE_URL"], future=True)
+    with eng.begin() as conn:
+        conn.execute(sa.text("UPDATE capability_lists SET source_rows_total = NULL"))
+
+    c.headers["X-Client-Id"] = client_id
+    b = c.get(
+        f"/clients/{client_id}/tech-debt/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    ).json()
+
+    assert b["source_rows_total"] is None
+    assert b["spend_completeness"] == "unknown", (
+        "a list that was never reconciled reported a completeness verdict it " "has no basis for"
+    )
+    assert b["excluded_count"] == 0, "the derivation floors - that is the trap"
+
+
+@pytest.mark.unit
+def test_a_recorded_zero_cost_is_not_a_missing_cost(app_client) -> None:
+    """The other direction, and the reason the tri-state is not just a bool.
+
+    The seeded list contains `"annual_cost_usd": 0` for Defender for Endpoint.
+    That is a cost that was recorded and happens to be zero, not an absent one,
+    and a dashboard that called it incomplete would be making the same
+    absent-versus-zero error as the defect - facing the other way.
+
+    Without this, a guard that reported "partial" for everything would satisfy
+    every other assertion in this file while making the field meaningless.
+    """
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    svc_id = _seed_release(c, provider, admin["tokens"]["access_token"], release=True)
+
+    c.headers["X-Client-Id"] = client_id
+    b = c.get(
+        f"/clients/{client_id}/tech-debt/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    ).json()
+
+    assert b["spend_completeness"] == "complete", (
+        "a recorded zero was treated as a missing cost - absence and zero are "
+        "different facts and this is the tri-state's whole point"
+    )
