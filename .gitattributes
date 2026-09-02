@@ -1,9 +1,6 @@
+# Normalise line endings at the source. A Windows-host agent writing this repo
+# produced a CRLF `routes/attack.py` on 2026-09-01; nothing in the gate set sees
+# line terminators, and `black` would have normalised it silently later --
+# landing a whole-file diff on whoever next ran the formatter rather than on the
+# change that caused it. Silent, deferred, misattributed.
 * text=auto eol=lf
-
-# Binary reference docs
-reference-docs/*.docx binary
-reference-docs/*.xlsx binary
-reference-docs/*.pdf  binary
-
-# Shell scripts
-*.sh text eol=lf

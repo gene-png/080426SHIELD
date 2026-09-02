@@ -43,6 +43,12 @@ vi.mock("@/components/admin/StaleDocsNudge", () => ({
 vi.mock("@/components/admin/AiPreviewButton", () => ({
   AiPreviewButton: () => null,
 }));
+// Fetches on mount on its own; stubbed for the same reason as every other
+// self-fetching child above, so the only requests in play stay the
+// workspace's own. Its behaviour is covered in AttackAiInputsPanel.test.tsx.
+vi.mock("./AttackAiInputsPanel", () => ({
+  AttackAiInputsPanel: () => null,
+}));
 
 const fetchCatalog = vi.mocked(attackClient.fetchCatalog);
 const fetchHeatmap = vi.mocked(attackClient.fetchHeatmap);

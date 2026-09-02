@@ -11,6 +11,7 @@ analytics endpoint in place of scoring/gap.
   PATCH  /attack/coverage/{coverage_id}
   POST   /attack/assessments/{id}/approve
   GET    /attack/services/{id}/heatmap
+  GET    /attack/services/{id}/ai-inputs
 """
 
 from __future__ import annotations
@@ -75,7 +76,15 @@ from app.models.deliverable import Deliverable
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.user import User, UserRole
 from app.routes.artifacts import _storage_dep
+from app.routes.tech_debt import approved_membership_stale
 from app.schemas.attack import (
+    AttackAiInputCapability,
+    AttackAiInputDocument,
+    AttackAiInputExcludedRow,
+    AttackAiInputSourceList,
+    AttackAiInputsResponse,
+    AttackAiInputTotals,
+    AttackAiInputWithheld,
     AttackAssessmentResponse,
     AttackCoveragePatch,
     AttackCoverageResponse,
@@ -94,7 +103,7 @@ from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_ATTACK, deliverable_filename
-from app.tech_debt.security_scope import security_scope_filter
+from app.tech_debt.security_scope import awaiting_security_signoff, in_security_scope
 from app.tenant import (
     require_attack_assessment_in_tenant,
     require_service_in_tenant,
@@ -531,16 +540,84 @@ def _capability_payload(caps: list[CapabilityInput]) -> list[dict]:
     ]
 
 
+@dataclass(frozen=True)
+class CapabilityProvenance:
+    """One capability the model WILL be offered, plus where it came from.
+
+    Provenance is kept OUT of :class:`CapabilityInput` on purpose. That class is
+    the egress payload and has four fields and only four — a privacy boundary
+    pinned by `test_cost_and_licence_never_egress`. A list id or an artifact id
+    has no business in a prompt, so it lives out here where the boundary stays
+    easy to assert on and easy to notice someone widening.
+    """
+
+    capability: CapabilityInput
+    # `awaiting_security_signoff`, never re-spelled here: `security_related` is
+    # tri-state and None must never read as a negative.
+    awaiting_signoff: bool
+    capability_list_id: uuid.UUID
+    list_version: int
+    source_artifact_id: uuid.UUID | None = None
+    # A snapshot entry whose live row is gone. Still sent, under the snapshot's
+    # own name (#96), but with no description available — and "we cannot look"
+    # is not "uncategorised".
+    live_row_missing: bool = False
+
+
+@dataclass(frozen=True)
+class WithheldCapability:
+    """A named capability the membership rules keep OUT of the allow-list.
+
+    `reason` is one of the two constants below; the response schema
+    `AttackAiInputWithheld` carries the full definition of each.
+    """
+
+    name: str
+    vendor: str | None
+    reason: str
+    capability_list_id: uuid.UUID
+    list_version: int
+    source_artifact_id: uuid.UUID | None = None
+
+
+WITHHELD_SECURITY_SCOPE = "security_scope"
+WITHHELD_NOT_IN_APPROVED_SNAPSHOT = "not_in_approved_snapshot"
+
+
+@dataclass(frozen=True)
+class CapabilityMembership:
+    """What the model may cite, what it may not, and which lists decided.
+
+    Survivors and drops come out of ONE pass over ONE row set. The alternative —
+    an endpoint deriving the drops with its own copy of the membership rules —
+    is the drift `CLAUDE.md` has a bullet about: the reported drops would be a
+    claim about the filter rather than the filter's own output, and the two
+    would agree only until someone edited one of them.
+    """
+
+    sent: list[CapabilityProvenance]
+    withheld: list[WithheldCapability]
+    lists: list[CapabilityList]
+
+    def inputs(self) -> list[CapabilityInput]:
+        return [p.capability for p in self.sent]
+
+
 def _client_capabilities(db: Session, client_id: uuid.UUID) -> list[Candidate]:
     """Name + vendor only, for the citation resolver. See
-    `_client_capability_inputs`, which this projects from — one query, one set of
-    membership rules, so the allow-list and the payload cannot disagree."""
+    `_client_capability_membership`, which this projects from — one query, one
+    set of membership rules, so the allow-list and the payload cannot disagree."""
     return [
         Candidate(name=c.name, vendor=c.vendor) for c in _client_capability_inputs(db, client_id)
     ]
 
 
 def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[CapabilityInput]:
+    """The egress projection of `_client_capability_membership`. Survivors only."""
+    return _client_capability_membership(db, client_id).inputs()
+
+
+def _client_capability_membership(db: Session, client_id: uuid.UUID) -> CapabilityMembership:
     """Security capabilities from the client's Tech Debt capability list(s).
 
     Returns name AND vendor: the citation resolver needs the vendor column to
@@ -554,10 +631,10 @@ def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[Capabil
 
     * **Security scope.** Tech Debt covers the whole software portfolio since
       migration 0038, so the raw list now includes payroll and CRM. Only rows in
-      security scope are offered here — and `security_scope_filter` deliberately
-      keeps rows whose non-security call is unconfirmed, because this list is a
-      hard allow-list on what the model may cite: a tool missing from it cannot
-      be named, and the technique it covers reads as uncovered.
+      security scope are offered here — and the scope rule deliberately keeps
+      rows whose non-security call is unconfirmed, because this list is a hard
+      allow-list on what the model may cite: a tool missing from it cannot be
+      named, and the technique it covers reads as uncovered.
     * **List status.** Previously absent entirely, so a DISCARDED list's rows
       stayed citable forever — a consultant throwing a draft away did not stop
       its tools being offered as evidence. Only DISCARDED is excluded here:
@@ -580,6 +657,20 @@ def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[Capabil
       A list with no recorded membership (a DRAFT, or one approved before
       migration 0043) still reads live — NULL means nobody recorded it, which is
       not the same as nothing having been approved.
+
+    **Every drop is RECORDED, not merely correct** (item 7 part 2). The three
+    filters above are right; their invisibility is what is wrong. A `gap` on a
+    client deliverable could mean "no control here" or "the tool was filtered
+    and nobody could see it", and nothing in the product told the two apart.
+
+    That is why the live rows are loaded ONCE and filtered in Python through
+    `in_security_scope` — the row-level twin of `security_scope_filter()` — and
+    not by two SQL queries with opposite predicates. A complement computed by a
+    second query is a second statement of the rule, and it would agree with this
+    one only until somebody edited one of them. The cost is loading a client's
+    out-of-scope capability rows, which is one client's software inventory and
+    bounded; the previous code already issued an unfiltered second query over
+    the same table for the descriptive half.
     """
     lists = (
         db.execute(
@@ -594,9 +685,25 @@ def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[Capabil
         .scalars()
         .all()
     )
+    if not lists:
+        return CapabilityMembership(sent=[], withheld=[], lists=[])
 
-    # (name, vendor, item_id) — `item_id` is present for snapshot rows and is
-    # what makes the split below possible.
+    # ONE query for every live row on every contributing list — no scope
+    # predicate, because both the survivors and the drops are decided from it.
+    live_by_list: dict[uuid.UUID, list[CapabilityItem]] = {cl.id: [] for cl in lists}
+    live_by_id: dict[str, CapabilityItem] = {}
+    for item in (
+        db.execute(
+            select(CapabilityItem).where(CapabilityItem.capability_list_id.in_(live_by_list.keys()))
+        )
+        .scalars()
+        .all()
+    ):
+        live_by_list[item.capability_list_id].append(item)
+        live_by_id[str(item.id)] = item
+
+    # (name, vendor, item_id, list) — `item_id` is present for snapshot rows and
+    # is what makes the descriptive lookup below possible.
     #
     # **`name`/`vendor` come from the SNAPSHOT; `category`/`security_functions`
     # are read LIVE.** That is not a compromise, it is the distinction D-053 is
@@ -607,52 +714,93 @@ def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[Capabil
     # frozen. `category` and `security_functions` describe a tool that is ALREADY
     # citable; a consultant re-classifying one after approval should reach the
     # next run rather than waiting for a re-approval that may never come.
-    pairs: list[tuple[str, str | None, str | None]] = []
-    # Lists whose approved membership was never recorded still read live: a DRAFT
-    # by design (mapping ATT&CK before approving the tech-debt list is a normal
-    # order of work, per the docstring above), and a pre-0043 list because NULL
-    # means "nobody recorded this", which is not the same as "nothing was
-    # approved" — the C0 pattern. Inventing a membership for those would assert
-    # something no consultant ever did.
-    # `is None`, NOT falsy. An approved list with ZERO in-scope items stores
-    # `[]`, and `not []` is True — so under the falsy test that list fell back to
-    # reading LIVE rows, which is the one case where #32's hole stayed open. The
-    # model docstring and this one both say the rule is NULL; the falsy spelling
-    # did not implement it. Pinned by
-    # `test_an_empty_snapshot_is_not_the_same_as_no_snapshot`, because `not x` is
-    # exactly the simplification a reviewer would suggest back.
-    live_ids = [cl.id for cl in lists if cl.approved_membership is None]
+    pairs: list[tuple[str, str | None, str | None, CapabilityList]] = []
+    dropped: list[WithheldCapability] = []
+
     for cap_list in lists:
-        # W3: for an APPROVED list the snapshot IS the membership. The list stays
-        # editable until release through five doors — one of which can rename an
-        # item, and one of which (the confirm queue) removes a row from security
-        # scope by design — so reading live rows here meant every "confirmed
-        # against the approved list" citation was checked against whatever the
-        # list had since become.
-        if cap_list.approved_membership is not None:
-            pairs.extend(
+        # Lists whose approved membership was never recorded read live: a DRAFT
+        # by design (mapping ATT&CK before approving the tech-debt list is a
+        # normal order of work, per the docstring above), and a pre-0043 list
+        # because NULL means "nobody recorded this", which is not the same as
+        # "nothing was approved" — the C0 pattern. Inventing a membership for
+        # those would assert something no consultant ever did.
+        # `is None`, NOT falsy. An approved list with ZERO in-scope items stores
+        # `[]`, and `not []` is True — so under the falsy test that list fell
+        # back to reading LIVE rows, which is the one case where #32's hole
+        # stayed open. The model docstring and this one both say the rule is
+        # NULL; the falsy spelling did not implement it. Pinned by
+        # `test_an_empty_snapshot_is_not_the_same_as_no_snapshot`, because
+        # `not x` is exactly the simplification a reviewer would suggest back.
+        if cap_list.approved_membership is None:
+            for item in live_by_list[cap_list.id]:
+                if in_security_scope(item):
+                    pairs.append((item.name, item.vendor, str(item.id), cap_list))
+                else:
+                    dropped.append(
+                        WithheldCapability(
+                            name=item.name,
+                            vendor=item.vendor,
+                            reason=WITHHELD_SECURITY_SCOPE,
+                            capability_list_id=cap_list.id,
+                            list_version=cap_list.version,
+                            source_artifact_id=item.source_artifact_id,
+                        )
+                    )
+            continue
+
+        # W3: for an APPROVED list the snapshot IS the membership. The list
+        # stays editable until release through five doors — one of which can
+        # rename an item, and one of which (the confirm queue) removes a row
+        # from security scope by design — so reading live rows here meant every
+        # "confirmed against the approved list" citation was checked against
+        # whatever the list had since become.
+        snapshot_names: set[str] = set()
+        for entry in cap_list.approved_membership:
+            entry_name = entry.get("name") or ""
+            snapshot_names.add(entry_name.strip().casefold())
+            pairs.append(
                 # A snapshot written before W2 carries no `vendor` key. Reading
                 # that as UNKNOWN rather than as "no vendor" is the cautious
                 # direction: the resolver flags a vendor-shaped match it cannot
                 # verify instead of resolving it confidently.
-                (e.get("name") or "", e.get("vendor"), e.get("item_id"))
-                for e in cap_list.approved_membership
+                (entry_name, entry.get("vendor"), entry.get("item_id"), cap_list)
             )
 
-    if live_ids:
-        pairs.extend(
-            (name, vendor, str(item_id))
-            for name, vendor, item_id in db.execute(
-                select(
-                    CapabilityItem.name,
-                    CapabilityItem.vendor,
-                    CapabilityItem.id,
-                ).where(
-                    CapabilityItem.capability_list_id.in_(live_ids),
-                    security_scope_filter(),
+        # A live row absent from the snapshot. Matched on NAME ONLY, and
+        # deliberately not on (name, vendor) the way `approved_membership_stale`
+        # matches: that function answers "should this list be re-approved?",
+        # where a corrected vendor genuinely moves the allow-list. This answers
+        # "can the model cite this string?", and what the resolver is offered is
+        # the snapshot's name — so a row whose name is in the snapshot IS
+        # citable however its vendor has since been edited, and reporting it
+        # withheld would be false. Two different questions, which is why the
+        # list-level answer is read from `approved_membership_stale` rather than
+        # inferred from this loop.
+        for item in live_by_list[cap_list.id]:
+            if (item.name or "").strip().casefold() in snapshot_names:
+                continue
+            dropped.append(
+                WithheldCapability(
+                    name=item.name,
+                    vendor=item.vendor,
+                    # Out of scope now AND absent from the snapshot means the
+                    # filter dropped it inside `build_approved_membership` and
+                    # would drop it again today, so it gets the reason the DRAFT
+                    # path gives it — the same tool in the same state, whatever
+                    # the list's status. In scope now and absent means only that
+                    # the snapshot predates it: a state, not a cause. The row
+                    # was either created after approval or reclassified into
+                    # scope after, and nothing readable here separates those.
+                    reason=(
+                        WITHHELD_NOT_IN_APPROVED_SNAPSHOT
+                        if in_security_scope(item)
+                        else WITHHELD_SECURITY_SCOPE
+                    ),
+                    capability_list_id=cap_list.id,
+                    list_version=cap_list.version,
+                    source_artifact_id=item.source_artifact_id,
                 )
-            ).all()
-        )
+            )
 
     # De-duplicate on the NAME, keeping the first vendor seen for it. Two lists
     # can carry the same tool; emitting it twice would make every citation of it
@@ -670,72 +818,102 @@ def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[Capabil
     # Sorted so the winner is deterministic. The query has no ORDER BY, and
     # picking by row order meant the same inputs could resolve differently
     # between runs when two lists disagreed about a vendor.
-    by_key: dict[str, tuple[str, str | None, str | None]] = {}
-    for name, vendor, item_id in sorted(pairs, key=lambda p: (p[0] or "", p[1] or "")):
+    by_key: dict[str, tuple[str, str | None, str | None, CapabilityList]] = {}
+    for name, vendor, item_id, cap_list in sorted(pairs, key=lambda p: (p[0] or "", p[1] or "")):
         clean = (name or "").strip()
         if not clean:
             continue
         key = clean.casefold()
         clean_vendor = (vendor or "").strip() or None
         if key not in by_key:
-            by_key[key] = (clean, clean_vendor, item_id)
+            by_key[key] = (clean, clean_vendor, item_id, cap_list)
         elif by_key[key][1] is None and clean_vendor is not None:
             # Prefer a spelling that carries a vendor — a vendor-less duplicate
             # would make every vendor-shaped citation unverifiable for no reason.
-            by_key[key] = (by_key[key][0], clean_vendor, by_key[key][2] or item_id)
+            #
+            # The winner's LIST is deliberately not moved with the vendor, so a
+            # capability whose vendor was adopted from a second list is reported
+            # under the first list's version and document. That provenance is
+            # mixed, and it is pre-existing: the line already took the second
+            # list's `item_id` the same way, which decides `category` and
+            # `security_functions` too. Left exactly as it stands here because
+            # rewriting this branch changes which vendor reaches the client
+            # deliverable — tracked in #131, and not this change's business.
+            by_key[key] = (by_key[key][0], clean_vendor, by_key[key][2] or item_id, by_key[key][3])
 
-    winners = sorted(by_key.values())
+    winners = sorted(by_key.values(), key=lambda w: (w[0], w[1] or "", w[2] or ""))
 
-    # The descriptive half, in ONE query rather than per row. Deliberately NOT
-    # filtered by `security_scope_filter()`: membership was already decided
-    # above, and re-filtering here would drop the enrichment for exactly the row
-    # the confirm queue moved out of scope after approval — a row that is still
-    # citable and is therefore still worth describing.
-    #
-    # A row whose live item is gone keeps its name and vendor and gets no
-    # description. That is the fail-safe direction: dropping it instead would let
-    # a deletion silently narrow the allow-list, which is #96.
     # The snapshot stores `item_id` as a string (`str(i.id)` in the writer) and
-    # the column is a UUID, so these have to be converted rather than passed
-    # through. A value that is not a UUID is a bug in a writer, not user input —
-    # it is raised with the offending entry named rather than skipped, because
-    # skipping it would silently drop the description and read as "this tool has
-    # no classification".
-    ids = set()
-    for name, _, i in winners:
-        if not i:
+    # the column is a UUID, so a stored value that is not a UUID is a bug in a
+    # writer, not user input — it is raised with the offending entry named
+    # rather than skipped, because skipping it would silently drop the
+    # description and read as "this tool has no classification".
+    for name, _vendor, item_id, _cap_list in winners:
+        if not item_id:
             continue
         try:
-            ids.add(uuid.UUID(str(i)))
+            uuid.UUID(str(item_id))
         except ValueError as exc:
             raise ValueError(
-                f"capability {name!r} carries an unusable approved-membership " f"item_id: {i!r}"
+                f"capability {name!r} carries an unusable approved-membership "
+                f"item_id: {item_id!r}"
             ) from exc
-    described: dict[str, tuple[str | None, list[str]]] = {}
-    if ids:
-        described = {
-            str(row_id): (category, list(functions or []))
-            for row_id, category, functions in db.execute(
-                select(
-                    CapabilityItem.id,
-                    CapabilityItem.category,
-                    CapabilityItem.security_functions,
-                ).where(CapabilityItem.id.in_(ids))
-            ).all()
-        }
 
-    out: list[CapabilityInput] = []
-    for name, vendor, item_id in winners:
-        category, functions = described.get(item_id or "", (None, []))
-        out.append(
-            CapabilityInput(
-                name=name,
-                vendor=vendor,
-                category=category,
-                security_functions=functions,
+    sent: list[CapabilityProvenance] = []
+    for name, vendor, item_id, cap_list in winners:
+        # The descriptive half. Deliberately NOT re-filtered through the scope
+        # rule: membership was already decided above, and re-filtering here
+        # would drop the enrichment for exactly the row the confirm queue moved
+        # out of scope after approval — a row that is still citable and is
+        # therefore still worth describing.
+        #
+        # A row whose live item is gone keeps its name and vendor and gets no
+        # description. That is the fail-safe direction: dropping it instead
+        # would let a deletion silently narrow the allow-list, which is #96.
+        item = live_by_id.get(item_id or "")
+        sent.append(
+            CapabilityProvenance(
+                capability=CapabilityInput(
+                    name=name,
+                    vendor=vendor,
+                    category=item.category if item is not None else None,
+                    security_functions=list(item.security_functions or []) if item else [],
+                ),
+                awaiting_signoff=awaiting_security_signoff(item) if item is not None else False,
+                capability_list_id=cap_list.id,
+                list_version=cap_list.version,
+                source_artifact_id=item.source_artifact_id if item is not None else None,
+                live_row_missing=item is None,
             )
         )
-    return out
+
+    # A name that SURVIVES anywhere is not withheld anywhere. One client can
+    # hold the same tool on two lists — a v1 approved and a v2 draft — and the
+    # allow-list is the union of them, so reporting the second copy as withheld
+    # would tell a consultant the model cannot cite a tool it can. That is the
+    # defect `_unapproved_contributing_names` was withdrawn for.
+    survivors = {w[0].casefold() for w in winners}
+    withheld: dict[str, WithheldCapability] = {}
+    for drop in sorted(dropped, key=lambda d: (d.name or "", d.list_version, d.reason)):
+        key = (drop.name or "").strip().casefold()
+        if not key or key in survivors:
+            continue
+        seen = withheld.get(key)
+        if seen is None:
+            withheld[key] = drop
+        elif seen.reason != drop.reason and drop.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT:
+            # Withheld for both reasons across two lists. `security_scope` says
+            # a human decided this is not security tooling; the copy that is in
+            # scope proves that decision is not universal, so the accurate
+            # report for the tool is the one the consultant can clear by
+            # re-approving.
+            withheld[key] = drop
+
+    return CapabilityMembership(
+        sent=sent,
+        withheld=sorted(withheld.values(), key=lambda d: d.name),
+        lists=list(lists),
+    )
 
 
 # `_unapproved_contributing_names` lived here and moved to item 7's SECOND PR.
@@ -1554,6 +1732,264 @@ def heatmap(
             )
             for tc in rollup.by_tactic
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# AI inputs — provenance and exclusions (item 7 part 2)
+# ---------------------------------------------------------------------------
+
+
+def _excluded_source_rows(cap_list: CapabilityList) -> list[AttackAiInputExcludedRow]:
+    """The uploaded rows Tech Debt recorded as producing no capability.
+
+    Read back rather than re-derived: this service never saw the upload. A
+    malformed entry is a bug in the writer, not user input, so it is raised with
+    the list named instead of skipped — skipping it would shrink a drop list
+    inside the endpoint built to end silent drops.
+
+    Deliberately no `int(...)` coercion. `int(True)` is 1 and `int("2")` is 2, so
+    a coercion here would invent an index the writer never stored and report it
+    as fact.
+    """
+    rows: list[AttackAiInputExcludedRow] = []
+    for entry in cap_list.excluded_rows or []:
+        index = entry.get("index") if isinstance(entry, dict) else None
+        summary = entry.get("summary") if isinstance(entry, dict) else None
+        if not isinstance(index, int) or isinstance(index, bool) or not isinstance(summary, str):
+            raise ValueError(
+                f"capability list {cap_list.id} carries an unusable excluded_rows "
+                f"entry: {entry!r}"
+            )
+        rows.append(
+            AttackAiInputExcludedRow(
+                capability_list_id=cap_list.id,
+                index=index,
+                summary=summary,
+            )
+        )
+    return rows
+
+
+def _excluded_attribution(cap_list: CapabilityList) -> str:
+    """How much this endpoint may honestly say about extraction-time drops.
+
+    `Reconciliation.attribution_complete` is NOT persisted (see
+    `app/tech_debt/reconcile.py`), and the writer stores an empty `excluded_rows`
+    in BOTH of the cases that matter: when nothing was excluded, and when the
+    model did not attribute every item to a source row so the rows could not be
+    named. Those are the same stored bytes.
+
+    So the two are not collapsed into a zero. A non-empty list is proof the
+    reconciliation balanced — the writer only fills it under
+    `if attribution_complete` — and an empty one is proof of nothing. Reporting
+    "0 excluded" for the empty case would be the silent under-report this whole
+    endpoint exists to end, and it would be the persuasive kind: a number, in a
+    provenance view, that a consultant would reasonably act on.
+
+    Persisting the flag is the real fix and it needs `tech_debt/reconcile.py`
+    and a migration. Until then this reports `unknown` and the panel says so.
+    """
+    if cap_list.source_rows_total is None:
+        # NULL means no reconciliation was stored, so there is no claim to make
+        # either way. Distinct from `unknown`, which means a reconciliation
+        # happened and its per-row half is unrecoverable.
+        #
+        # Do NOT name the cause here. NULL is usually a pre-0036 list, but
+        # `seed_demo.py` builds lists without either field too, so every demo and
+        # e2e run would be told a list created minutes earlier "predates the
+        # extraction record". The condition observes ABSENCE; it cannot see WHY.
+        return "not_recorded"
+    if cap_list.excluded_rows:
+        return "complete"
+    return "unknown"
+
+
+@router.get(
+    "/services/{service_id}/ai-inputs",
+    response_model=AttackAiInputsResponse,
+    summary="What feeds this mapping, and what does not (admin)",
+)
+def ai_inputs(
+    service_id: uuid.UUID,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackAiInputsResponse:
+    """Provenance and exclusions for the ATT&CK mapping's capability inputs.
+
+    **Not a second payload view.** `POST /ai/preview` already answers "what will
+    be sent?", redacted, for all three services, and its button already renders
+    in the ATT&CK workspace. This answers the question nothing answers today:
+    **what was NOT sent, and where did what was sent come from?**
+
+    `_client_capability_membership` is correct on all three counts — security
+    scope, list status, approved-snapshot membership. That is exactly the point:
+    a correct filter whose drops are invisible. A `gap` on a client deliverable
+    can mean "no control here" or "the tool was filtered and nobody could see
+    it", and the client cannot tell which.
+
+    Its own separate endpoint rather than part of `/ai/preview`, for three
+    reasons that each independently rule the preview out:
+
+    * the preview requires an existing assessment, and "what will this run
+      against?" is asked BEFORE creating one — this route deliberately does not
+      call `_latest_assessment` and works on a service with no assessment at all;
+    * the preview returns the REDACTED payload, and an admin needs the real
+      names — a redacted one is unrecognisable;
+    * the preview sits behind `enforce_ai_rate_limit`, so a panel loading on
+      mount would spend the run budget on a page view.
+
+    **No rate limit here, and the reason is not the third bullet.** That
+    dependency guards five endpoints, one of which is the run-AI path in this
+    same file. It exists for calls that can cost money. This one constructs no
+    provider, sends nothing, and writes no `llm_calls` row, so there is no spend
+    to limit — the panel-on-mount argument is a consequence, not the reason.
+
+    Read-only. Never gates Run AI; the typed 409 in `run_ai` is the only guard.
+    """
+    require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    membership = _client_capability_membership(db, client.id)
+
+    # One query for the documents, not one per capability. The tenant predicate
+    # is defence in depth: a dangling or cross-tenant id is dropped rather than
+    # rendered — and a capability whose document is dropped still appears, with
+    # `source_document` null, because the tool is genuinely in the allow-list
+    # and hiding it would be a drop this endpoint could not report.
+    wanted_docs = {
+        p.source_artifact_id for p in membership.sent if p.source_artifact_id is not None
+    } | {d.source_artifact_id for d in membership.withheld if d.source_artifact_id is not None}
+    documents: dict[uuid.UUID, AttackAiInputDocument] = {}
+    if wanted_docs:
+        documents = {
+            a.id: AttackAiInputDocument(id=a.id, title=a.title, uploaded_at=a.uploaded_at)
+            for a in db.execute(
+                select(Artifact).where(
+                    Artifact.id.in_(wanted_docs),
+                    Artifact.client_id == client.id,
+                )
+            )
+            .scalars()
+            .all()
+        }
+
+    capabilities = [
+        AttackAiInputCapability(
+            name=p.capability.name,
+            vendor=p.capability.vendor,
+            category=p.capability.category,
+            security_functions=list(p.capability.security_functions),
+            awaiting_signoff=p.awaiting_signoff,
+            capability_list_id=p.capability_list_id,
+            source_list_version=p.list_version,
+            source_document=documents.get(p.source_artifact_id) if p.source_artifact_id else None,
+            live_row_missing=p.live_row_missing,
+        )
+        for p in membership.sent
+    ]
+    not_sent = [
+        AttackAiInputWithheld(
+            name=d.name,
+            vendor=d.vendor,
+            reason=d.reason,
+            capability_list_id=d.capability_list_id,
+            source_list_version=d.list_version,
+            source_document=documents.get(d.source_artifact_id) if d.source_artifact_id else None,
+        )
+        for d in membership.withheld
+    ]
+
+    # A later version of the same tech-debt list does NOT retire an earlier one:
+    # every non-discarded version still feeds the mapping. Surfaced, not fixed —
+    # it is pre-existing behaviour and routinely surprises people.
+    latest_version: dict[uuid.UUID, int] = {}
+    for cap_list in membership.lists:
+        latest_version[cap_list.service_id] = max(
+            latest_version.get(cap_list.service_id, 0), cap_list.version
+        )
+    titles = dict(
+        db.execute(
+            select(Service.id, Service.title).where(Service.id.in_(latest_version.keys()))
+        ).all()
+    )
+
+    sent_per_list: dict[uuid.UUID, int] = {}
+    for p in membership.sent:
+        sent_per_list[p.capability_list_id] = sent_per_list.get(p.capability_list_id, 0) + 1
+    withheld_per_list: dict[uuid.UUID, int] = {}
+    for d in membership.withheld:
+        withheld_per_list[d.capability_list_id] = withheld_per_list.get(d.capability_list_id, 0) + 1
+
+    excluded: list[AttackAiInputExcludedRow] = []
+    sources: list[AttackAiInputSourceList] = []
+    for cap_list in membership.lists:
+        from_snapshot = cap_list.approved_membership is not None
+        rows = _excluded_source_rows(cap_list)
+        excluded.extend(rows)
+        sources.append(
+            AttackAiInputSourceList(
+                capability_list_id=cap_list.id,
+                tech_debt_service_id=cap_list.service_id,
+                # Indexed, not `.get(..., "")`. Every contributing list was
+                # loaded through a JOIN on Service, so a miss is impossible and
+                # an empty-string default would render as a nameless source
+                # rather than saying the lookup failed.
+                tech_debt_service_title=titles[cap_list.service_id],
+                version=cap_list.version,
+                status=cap_list.status.value,
+                is_latest_for_service=cap_list.version >= latest_version[cap_list.service_id],
+                membership_from_snapshot=from_snapshot,
+                # CALLED, not re-derived. The row-level split above answers a
+                # different question — "can the model cite this string?", keyed
+                # on name — while this one answers "should this list be
+                # re-approved?", keyed on name AND vendor, because a corrected
+                # vendor moves the allow-list too. Restating it here would be a
+                # second comparison that agrees until someone edits one of them.
+                membership_stale=(
+                    approved_membership_stale(db, cap_list) if from_snapshot else False
+                ),
+                sent_count=sent_per_list.get(cap_list.id, 0),
+                not_sent_count=withheld_per_list.get(cap_list.id, 0),
+                source_rows_total=cap_list.source_rows_total,
+                excluded_attribution=_excluded_attribution(cap_list),
+                excluded_rows_named=len(rows),
+            )
+        )
+    sources.sort(key=lambda s: (s.tech_debt_service_title, s.version))
+
+    totals = AttackAiInputTotals(
+        sent=len(capabilities),
+        not_sent=len(not_sent),
+        awaiting_signoff=sum(1 for c in capabilities if c.awaiting_signoff),
+        withheld_security_scope=sum(1 for d in not_sent if d.reason == WITHHELD_SECURITY_SCOPE),
+        withheld_not_in_approved_snapshot=sum(
+            1 for d in not_sent if d.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT
+        ),
+        excluded_rows_named=len(excluded),
+        lists_with_unknown_exclusions=sum(
+            1 for s in sources if s.excluded_attribution == "unknown"
+        ),
+        sent_without_source_document=sum(1 for c in capabilities if c.source_document is None),
+    )
+
+    _log.info(
+        "attack.ai_inputs.read",
+        service_id=str(service_id),
+        client_id=str(client.id),
+        user_id=str(user.id),
+        sent=totals.sent,
+        not_sent=totals.not_sent,
+        sources=len(sources),
+        excluded_rows_named=totals.excluded_rows_named,
+        lists_with_unknown_exclusions=totals.lists_with_unknown_exclusions,
+    )
+    return AttackAiInputsResponse(
+        service_id=service_id,
+        capabilities=capabilities,
+        not_sent=not_sent,
+        excluded=excluded,
+        sources=sources,
+        totals=totals,
     )
 
 

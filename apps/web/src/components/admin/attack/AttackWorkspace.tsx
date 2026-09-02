@@ -42,6 +42,7 @@ import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 
+import { AttackAiInputsPanel } from "./AttackAiInputsPanel";
 import { AttackCitationAccounting } from "./AttackCitationAccounting";
 import { AttackDeliverableCard } from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
@@ -477,6 +478,13 @@ export function AttackWorkspace({
                 )}
               </RunAiGuard>
               <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
+              {/* Beside the preview, not a second surface. The preview
+                  answers "what will be sent?" (redacted); this answers
+                  "what will NOT be sent, and where did the rest come
+                  from?" -- the question nothing on this page answered, and
+                  the one behind a run that reports a filtered-out tool as a
+                  gap. Read-only and not rate-limited, so it loads on mount. */}
+              <AttackAiInputsPanel serviceId={serviceId} />
               {runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">
                   Updated{" "}

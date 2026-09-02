@@ -281,3 +281,157 @@ class AttackHeatmap(BaseModel):
     pending_review: int = 0
     coverage_pct: float
     by_tactic: list[TacticHeatmapEntry]
+
+
+# ---------------------------------------------------------------------------
+# "What feeds this mapping, and what does NOT" — item 7 part 2
+#
+# Not a second payload view: `POST /ai/preview` already answers "what will be
+# sent?", redacted, for all three services. This answers the question nothing
+# answers today — **what was NOT sent, and where did what was sent come from?**
+#
+# `_client_capability_membership` is CORRECT on all three counts (security
+# scope, list status, approved-snapshot membership). That is the point: a
+# correct filter whose drops are invisible, so a `gap` on a client deliverable
+# can mean "no control here" or "the tool was filtered and nobody could see it".
+#
+# Every list field is defaulted so an older client parses a newer response and
+# vice versa (the C0 pattern).
+# ---------------------------------------------------------------------------
+
+
+class AttackAiInputDocument(BaseModel):
+    """The client-uploaded file a capability was extracted from."""
+
+    id: uuid.UUID
+    title: str  # the sanitised original filename
+    uploaded_at: datetime
+
+
+class AttackAiInputCapability(BaseModel):
+    """One capability the model WILL be offered, and where it came from."""
+
+    name: str
+    vendor: str | None = None
+    category: str | None = None
+    security_functions: list[str] = []
+    # The model called this row non-security and no consultant has agreed yet.
+    # It is still IN scope deliberately — `app/tech_debt/security_scope.py` —
+    # and is surfaced so a misclassification can be caught before it becomes a
+    # fabricated gap. Computed by `awaiting_security_signoff`, never re-spelled:
+    # `security_related=None` must never read as a negative.
+    awaiting_signoff: bool = False
+    capability_list_id: uuid.UUID | None = None
+    source_list_version: int | None = None
+    source_document: AttackAiInputDocument | None = None
+    # True for a snapshot entry whose live row is gone. It is still sent, under
+    # the snapshot's own name (#96: a deletion must not silently narrow a hard
+    # allow-list) — but it carries no description, and saying so is the
+    # difference between "uncategorised" and "we cannot look".
+    live_row_missing: bool = False
+
+
+class AttackAiInputWithheld(BaseModel):
+    """A named capability that exists on a list and is NOT offered to the model.
+
+    `reason` is one of:
+
+    * ``security_scope`` — out of the ATT&CK subset: the model called it
+      non-security and a consultant agreed. Used for a DRAFT list's live rows
+      and for an APPROVED list's non-snapshot rows alike, because the same tool
+      in the same state gets the same reason regardless of list status.
+    * ``not_in_approved_snapshot`` — live, in scope, and absent from the
+      membership frozen at approval. Deliberately names the observable STATE and
+      not a cause: the row was either created after approval or reclassified
+      into scope after, and nothing readable at request time separates those.
+      Re-approval is the remedy, and it is exactly what clears
+      `approved_membership_stale`.
+    """
+
+    name: str
+    vendor: str | None = None
+    reason: str
+    capability_list_id: uuid.UUID | None = None
+    source_list_version: int | None = None
+    source_document: AttackAiInputDocument | None = None
+
+
+class AttackAiInputExcludedRow(BaseModel):
+    """An uploaded SOURCE ROW that produced no capability at all.
+
+    Distinct from `AttackAiInputWithheld` and deliberately not merged with it:
+    this row never became a capability, so it has no name to withhold. It is
+    the earliest drop in the chain and the only one the ATT&CK service cannot
+    re-derive — it is read back from what Tech Debt recorded at extraction.
+    """
+
+    capability_list_id: uuid.UUID
+    index: int
+    summary: str
+
+
+class AttackAiInputSourceList(BaseModel):
+    """A Tech Debt capability list contributing to (or held back from) the map."""
+
+    capability_list_id: uuid.UUID
+    tech_debt_service_id: uuid.UUID
+    tech_debt_service_title: str
+    version: int
+    status: str
+    # False => a LATER version of the same list exists and this one still
+    # counts. Surfaced because it routinely surprises people: every
+    # non-discarded version feeds the mapping, not just the newest.
+    is_latest_for_service: bool = True
+    # True when the APPROVED snapshot decides membership; False when live rows
+    # do (a DRAFT, or a list approved before migration 0043 — NULL means nobody
+    # recorded it, which is not the same as nothing having been approved).
+    membership_from_snapshot: bool = False
+    # `approved_membership_stale` — the snapshot no longer matches current
+    # security scope, and re-approval is the one audited way to move it.
+    # Always False when `membership_from_snapshot` is False, because there is no
+    # snapshot to be stale.
+    membership_stale: bool = False
+    sent_count: int = 0
+    not_sent_count: int = 0
+    # Rows in the uploaded file, as Tech Debt recorded them at extraction. NULL
+    # on a pre-0036 list, which makes no claim at all.
+    source_rows_total: int | None = None
+    # How much this endpoint may honestly say about rows dropped at extraction:
+    #
+    # * ``complete`` — named rows are on record, so the reconciliation balanced.
+    # * ``unknown``  — nothing is named and the count is not knowable from what
+    #   was stored. `Reconciliation.attribution_complete` is NOT persisted, and
+    #   the writer records an empty list both when nothing was excluded and when
+    #   attribution failed. Those are the same stored bytes, so this endpoint
+    #   refuses to report zero — that would be a silent under-report inside the
+    #   endpoint built to end silent drops.
+    # * ``not_recorded`` — pre-0036 list; no reconciliation was ever stored.
+    excluded_attribution: str = "not_recorded"
+    # How many rows are NAMED in `excluded`, which is always literally true.
+    # Deliberately not called a count of what was excluded: under ``unknown``
+    # this is zero and the number excluded is not zero-or-anything-else known.
+    excluded_rows_named: int = 0
+
+
+class AttackAiInputTotals(BaseModel):
+    sent: int = 0
+    not_sent: int = 0
+    awaiting_signoff: int = 0
+    withheld_security_scope: int = 0
+    withheld_not_in_approved_snapshot: int = 0
+    excluded_rows_named: int = 0
+    # Contributing lists whose extraction-time exclusions cannot be reported.
+    # Rendered beside `excluded_rows_named` for the same reason a withheld count
+    # is rendered beside a coverage percentage: a total over an unknowable
+    # population is not self-describing.
+    lists_with_unknown_exclusions: int = 0
+    sent_without_source_document: int = 0
+
+
+class AttackAiInputsResponse(BaseModel):
+    service_id: uuid.UUID
+    capabilities: list[AttackAiInputCapability] = []
+    not_sent: list[AttackAiInputWithheld] = []
+    excluded: list[AttackAiInputExcludedRow] = []
+    sources: list[AttackAiInputSourceList] = []
+    totals: AttackAiInputTotals = AttackAiInputTotals()
