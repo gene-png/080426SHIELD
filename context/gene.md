@@ -1,6 +1,203 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — 2026-08-30
+## PICK UP HERE — 2026-09-03
+
+**Maintained by the agent since D-063; Gene owns it by review.** Every number
+below carries the command that produced it, or says it was not derived.
+
+### The one-line state
+
+Track C's first slice (#125 + #126) is **committed and pushed as `3f9164f` on
+`fix/zt-targets-and-spend-floor`**, and it is **NOT ready for a PR**: the two
+full test suites that gate it never produced a citable exit code, because the
+dev box degraded badly partway through the session. Fix the box, re-run both,
+then rebase and open the PR. Nothing is at risk — the work is committed, pushed,
+and the tree is clean.
+
+### Verify the state before trusting this file
+
+    git log --oneline -1                     # expect 3f9164f
+    git status --porcelain | wc -l           # expect 0
+    git rev-list --count HEAD..origin/main   # expect 1 (behind fef3cf5)
+    gh issue list --label mvp-blocking --state open --json number | jq length
+
+### Do these in order. Do not skip 1.
+
+**1. Fix the box, and prove it is fixed before anything else.**
+
+The whole session's test signal was destroyed by machine degradation, not by
+code. The tell is sign-in latency:
+
+    curl -s -o /dev/null -w "%{time_total}s\n" http://localhost:3000/sign-in
+
+It measured **7.9-8.7 seconds** on both `main` and the branch. `signIn`
+(`e2e/helpers/auth.ts`) allows 15s inside a 60s `toPass`, and local runs use
+`retries: 0`, so at that latency the whole suite cascades. A healthy box should
+answer in well under a second after warm-up. **Do not run either suite until it
+does.** A full restart of Docker Desktop is the first thing to try; the stack
+had been up 25 hours by the end of the session.
+
+Reference point for "healthy": CI runs the same e2e suite in **20m32s**
+(`gh run view 33554602541`). The local run took **1.5h**.
+
+**2. Full backend unit suite, with the exit code captured.**
+
+    docker compose exec -d api sh -lc 'cd /app && rm -f /tmp/u.exit && \
+      python -m pytest -m unit -q > /tmp/u.log 2>&1; echo $? > /tmp/u.exit'
+
+Then poll for `/tmp/u.exit` and read it. **The exit file is the verdict — not
+the log tail, and not the wrapper's status.** This was the session's own
+process defect: an e2e run was dispatched under `nohup` without capturing `$?`,
+so when the number was asked for there was nothing to read.
+
+**3. Full e2e, with the exit code captured.**
+
+    cd e2e && npx playwright test --reporter=line > /tmp/e2e.log 2>&1; \
+      echo $? > /tmp/e2e.exit
+
+Recreate `api web` TOGETHER first and re-check `SHIELD_LLM_MODE=fixture` after
+(a web recreate reconciles api too). The branch now carries a
+container-identity gate (`e2e/globalSetup.ts` / `globalTeardown.ts` /
+`helpers/containerIdentity.ts`) that fails the run if either container id moves
+mid-run; it prints two lines and has been verified in both its passing and
+halting states.
+
+**Expect one pre-existing failure that is NOT this branch's:**
+`s42-layout-overflow.spec.ts:91` at narrow-desktop 1024px fails on
+`origin/main` too, byte-identically. Tracked as **#187**. Do not chase it here.
+
+**4. Rebase onto `fef3cf5`, then re-run CI on the merged base.**
+
+`#180` changed `apps/api/app/routes/attack.py`, and `routes/clients.py`
+imports five things from `app.attack` — this branch changes `clients.py`. That
+is the cross-track collision the plan's file-contention rules exist to catch,
+so CI must run on the merged base specifically, not on the pre-rebase branch.
+
+**5. Open the PR.** It needs the `## Adversarial audit` block with
+`Findings:` / `Disposition:` / `Scope:`. Re-run the adversarial reviewer
+against the FINAL state of the branch first — it ran twice during
+implementation, but not against `3f9164f`.
+
+**Merge rule: this comes back to Gene.** It trips condition 5 on
+`app/zt/scoring.py`, `apps/api/tests/**` and `e2e/**`, and condition 6 on
+deliverable content (see the label change below).
+
+### What `3f9164f` contains
+
+20 files, 1131 insertions. Two issues, one root shape: *a value the client
+never supplied is silently coerced into range, and a downstream record then
+names a source that did not choose it.*
+
+- **#125 (ZT).** `resolve_target_stage(framework, chosen) -> (stage, source)`
+  with source `client` / `default` / `client_out_of_range` /
+  `client_unparseable`. `analyze_gaps` now RAISES instead of clamping. Wired at
+  all three call sites, on a deliberate split: a REQUEST is refused (typed
+  D-016 422 on `/gap-analysis`), STORED DATA is resolved and disclosed.
+- **#126 (Tech Debt).** `cost_label` gained a third outcome,
+  `"Annual cost (may not be complete)"`, for `source_rows_total IS NULL`. The
+  client dashboard gained `spend_completeness` as a TRI-STATE
+  (`complete`/`partial`/`unknown`) plus `source_rows_total` / `included_count`
+  / `excluded_count`, which the response never carried — so the excluded-rows
+  half of #126 was previously inexpressible, not merely undisclosed.
+- **e2e container-identity gate**, and a CLAUDE.md rule about citing files and
+  quoted strings rather than line numbers.
+
+**Rendered ZT numbers are unchanged**, verified as a property rather than a
+sample: both frameworks x {None, below range, in range, above range}, old path
+emulated from the parent commit, diffed on target AND gap count — 18/18
+identical. The gap-count metric uses a spread of maturity stages because the
+obvious fixture (all at stage 1) saturates and could not detect a 3-vs-4
+divergence at all.
+
+**Deliverable content DOES change in one place:** a pre-0036 Tech Debt list now
+renders `Annual cost (may not be complete): $X` where it said
+`Total annual cost: $X`. Gene approved this string specifically. The dev DB's
+only RELEASED capability list is that case, so the demo output changes.
+
+### Test evidence, stated honestly
+
+- **Targeted unit suite: exit 0**, 193 tests, 193 dots, zero F/E/x/s — every
+  file the diff touches plus the twins. This is the only clean signal the
+  branch has.
+- **Full `pytest -m unit`: NO RESULT.** Killed at 9% after ~35 min on the
+  degraded box. Never wrote an exit file.
+- **Full e2e: NO EXIT CODE CAPTURED.** Tally was 45 failed / 12 skipped /
+  35 passed in 1.5h, with **37** failures sharing one `signIn` signature.
+- **Those 37 were the box, proven by a paired A/B**, not asserted: the same
+  five specs on `origin/main` and on the branch, same box, stack recreated for
+  each, gave byte-identical results — exit 1, 1 failed, 9 passed, 6.8m, zero
+  `signIn` failures on both, same failing test (`s42`). Running main alone
+  would NOT have been decisive, because the box had been idle since and a clean
+  result there is equally consistent with recovery.
+
+**Steps 2 and 3 exist to replace the two missing verdicts. Do not open the PR
+on the targeted suite alone.**
+
+### Issues filed this session — all open, none blocking this branch
+
+- **#183** — `attack/catalog.py`'s docstring says 14/196/411/607; measured
+  14/193/440/**633**. All three technique counts wrong. Note `routes/attack.py`'s
+  other `607` is a DIFFERENT and correct number (the N-033 incident), so a grep
+  for the literal returns sites that must not be changed.
+- **#184** — CSF clamps an out-of-range `target_tier` and reports the clamped
+  value back as requested. **`mvp-blocking` deliberately REMOVED**: every write
+  path is bounded inside CSF's 1-4 ladder, so the clamp is unreachable from
+  stored data. The flip condition is recorded on the issue and in
+  `DELIVERY_PLAN.md` — a CSF variant whose ceiling falls below its schema
+  bound, which is exactly what DoD ZTRA did to ZT.
+- **#185** — `ZtWorkspace.tsx` swallows score/gap failures into a permanent
+  loading state. #125 fixes the API and NOT the screen; this is the other half.
+- **#186** — `OverlapDashboard` calls a partial cost a "Total" three cards from
+  the `Missing cost` count that disproves it. Ordered AFTER #126 so it consumes
+  `spend_completeness` rather than inventing a fourth spelling.
+- **#187** — CI cannot distinguish "passed" from "passed on retry", and s42
+  fails on main locally. **Premise demonstrated, not hypothesised:** run
+  `33084646649` (2026-08-27) contains a `-retry1/trace.zip` for
+  `s39-excluded-rows` and its E2E check was green. A green check has already
+  hidden a real flake at least once.
+
+### Housekeeping, done and NOT done
+
+**Done:** 43 archive tags pushed to origin — 40 covering every merged remote
+branch, 3 covering the stashes. All verified to resolve to the same commit as
+their source. The three stashes still exist locally as well; nothing was
+dropped.
+
+**NOT done, on purpose:** no branches deleted. There are **40** merged branches
+on the remote, not the five that were expected. Everything is tagged so nothing
+is at risk. When it is done, key it PER BRANCH on content equivalence, not on
+`--merged` and not on a PR label: this repo squash-merges, so a merged branch's
+tip is not an ancestor of `main` (`git branch -r --merged origin/main` returns
+27, the content check returns 40). An ancestor is provably contained; a
+squash-merged branch is safe only if you check the content landed. A bulk
+delete keyed on either alone gets one class wrong.
+
+There is also a stray remote branch literally named `origin`, unmerged,
+almost certainly a `git push origin origin` slip. Left alone.
+
+### For CLAUDE.md, at the top of a fresh session
+
+Deliberately deferred rather than written tired — this repo has a recorded
+instance of a heredoc putting real control characters inside the rule about
+control characters, caught only by `check_no_control_chars`.
+
+1. The ancestor-versus-squash distinction above, next to the merge rule.
+2. The 40-branch deletion plan, keyed on content equivalence.
+3. **`$?` capture as a WRAPPER, not a rule.** The session's gap was a rule that
+   had been articulated correctly and then half-followed, which is the
+   definition of one that needs a mechanism. The helper should own
+   `; echo $? > <file>` and refuse to report a result when the exit file is
+   absent, so "no status recorded" surfaces as an error rather than as someone
+   quoting a log tail.
+4. **Calibrate before reading a negative.** "No artifact" nearly became a
+   verdict before checking whether the artifact ever appears; it does — 12
+   historically. A missing artifact and an upload that never fires are the same
+   bytes, and only the first says anything.
+
+
+---
+
+## Previous pick-up — 2026-08-30 (superseded, kept for history)
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every number
 below carries the command that produced it.
@@ -182,11 +379,8 @@ paragraph someone points at is not the same as correcting the file.
 ## Standing environment facts
 
 - Detached tests survive a killed wrapper:
-  `docker compose exec -d api sh -lc 'rm -f /tmp/x.exit; ... > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'`
-  then poll for the exit file. **The `rm -f` is load-bearing** — polling tests
-  EXISTENCE, and on 2026-09-01 a marker from a run a week earlier was read as
-  the current one and reported as a passing suite. Delete it first, or use a
-  per-run filename, and check the marker's AGE not just its presence. **Kill stale pytest runs by PID** — `pkill` is not
+  `docker compose exec -d api sh -lc '... > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'`
+  then poll for the exit file. **Kill stale pytest runs by PID** — `pkill` is not
   in that image and prints nothing while doing nothing.
 - After ANY `apps/web` edit: `docker compose up -d --force-recreate api web`,
   then re-check `SHIELD_LLM_MODE`.
@@ -357,7 +551,7 @@ Re-verify every finding before acting — it runs read-only and executes nothing
 
 ## Environment notes (standing)
 
-Background/foreground test runs kept getting killed by the harness wrapper this round. Reliable pattern: `docker compose exec -d api sh -lc 'rm -f /tmp/x.exit; … > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'` then poll for the exit file. **The `rm -f` is not optional** — a marker left by an earlier run satisfies the poll and reports that run's result as this one's. The detached pytest survives even when the wrapper is killed.
+Background/foreground test runs kept getting killed by the harness wrapper this round. Reliable pattern: `docker compose exec -d api sh -lc '… > /tmp/x.log 2>&1; echo $? > /tmp/x.exit'` then poll for the exit file. The detached pytest survives even when the wrapper is killed.
 
 ## MVP-complete vs. client-ready: standing distinction
 
