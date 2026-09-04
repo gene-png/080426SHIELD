@@ -45,6 +45,19 @@ class DeliverableContext:
     # False when the excluded rows exist but could not be named individually.
     # The count is exact either way; only the naming is withheld.
     excluded_rows_named: bool = False
+    # False when an INCLUDED item carries no cost, so `total_cost` is a floor.
+    #
+    # The twin of `savings_cost_known`, which has existed since this dataclass
+    # did. #126 asked the floor question of SPEND and was answered on the
+    # dashboard (`spend_completeness`) and not here, so for one commit the
+    # dashboard called a list "partial" while the released document called the
+    # same list's figure a "Total". Two surfaces, one list, contradictory
+    # claims, and the client only keeps the document.
+    #
+    # Defaulted True so older callers construct unchanged: a context built
+    # without this field is one whose items were never checked, and the
+    # pre-existing behaviour for those is the unqualified label.
+    spend_cost_known: bool = True
 
 
 def reconciliation_line(ctx: DeliverableContext) -> str | None:
@@ -73,10 +86,18 @@ def reconciliation_line(ctx: DeliverableContext) -> str | None:
 def cost_label(ctx: DeliverableContext) -> str:
     """Never call a partial figure a total (UX finding #4).
 
-    THREE outcomes, not two. "Nothing was excluded" and "whether anything was
-    excluded was never recorded" are different claims about the client's upload,
-    and a two-valued label cannot carry both -- so for the whole life of this
-    function they shared the string "Total annual cost".
+    "Total annual cost" is the ONLY label that asserts completeness, and it is
+    reached only when nothing was excluded, the reconciliation is on record,
+    AND every included item carries a cost. Each of those was a separate way
+    for the old two-valued label to overstate:
+
+      - "nothing was excluded" vs "whether anything was excluded was never
+        recorded" -- different claims about the upload, and for the whole life
+        of this function they shared the string "Total annual cost".
+      - "every item is costed" vs "some item is not" -- `total_cost` skips an
+        uncosted item, so the figure is a floor and nothing said so. That half
+        was fixed on the dashboard first and here second, which for one commit
+        had the two surfaces contradicting each other about the same list.
 
     The hole was `source_rows_total is None`. `build_context` derives
     `excluded_count = max(received - included, 0) if received is not None else 0`,
@@ -104,6 +125,35 @@ def cost_label(ctx: DeliverableContext) -> str:
     sits exactly where a reader would check and describes a NARROWER case than
     they would assume it covers.
     """
+    if ctx.source_rows_total is not None and ctx.included_count > ctx.source_rows_total:
+        # THE UNBALANCED CASE. More items than there were source rows, so
+        # `excluded_count` floored to 0 and the two branches below both fall
+        # through to "Total annual cost" -- a completeness claim over an
+        # accounting that cannot balance.
+        #
+        # This was deliberately left for one commit, on the stated reason that
+        # naming the fault needs `reconcile.py`'s `attribution_complete`
+        # persisted. That reason was FALSE and the same commit disproved it:
+        # `tech_debt_dashboard` withholds the identical claim using these two
+        # operands and no migration, and `DeliverableContext` has carried both
+        # since `build_context` set them. The migration buys the ability to say
+        # WHY -- "the reconciliation does not balance" rather than "may not be
+        # complete" -- not the ability to stop overstating.
+        #
+        # Withholding the claim needs no migration, so it is not deferred. The
+        # dashboard and the document now agree on this list; for one commit
+        # they did not, which is the defect #126 exists to end, reinstated in a
+        # state nobody had listed.
+        return "Annual cost (may not be complete)"
+    if not ctx.spend_cost_known:
+        # Above `excluded_count`, and the precedence is deliberate. An uncosted
+        # included item
+        # makes the NUMBER a floor, which is a stronger qualification than
+        # "some rows were excluded" -- "Included annual cost" would still
+        # assert that what IS included was fully counted, and it was not.
+        # Nothing is lost by not naming the exclusion here: `reconciliation_line`
+        # states the received/included/excluded counts on its own.
+        return "Annual cost (may not be complete)"
     if ctx.excluded_count:
         return "Included annual cost"
     if ctx.source_rows_total is None:
@@ -132,9 +182,15 @@ def build_context(
     total_cost = 0.0
     estimated_savings = 0.0
     savings_known = True
+    # `total_cost` SKIPS an uncosted item rather than failing, which makes the
+    # figure a floor. Nothing recorded that, so `cost_label` had no way to know
+    # and printed "Total annual cost" over it (#126, exporter half).
+    spend_known = True
     for it in items_list:
         if it.annual_cost_usd is not None:
             total_cost += float(it.annual_cost_usd)
+        else:
+            spend_known = False
         if it.disposition == CapabilityDisposition.CUT:
             if it.annual_cost_usd is None:
                 savings_known = False
@@ -157,13 +213,23 @@ def build_context(
     # NOT trustworthy in every regime, and an earlier version of this comment
     # claimed it was. When the model emits at least as many items as there were
     # source rows — two items sharing one `source_row_index`, say — `max(..., 0)`
-    # reports ZERO, and a genuinely excluded row goes undisclosed while
-    # `cost_label` prints "Total annual cost". Strictly better than measuring the
-    # named list, which was 0 in that case too; still short of honest. Closing it
-    # needs `reconcile.py`'s `attribution_complete` persisted so the renderer can
-    # say "the reconciliation does not balance" rather than "nothing was
-    # excluded" — a zero-value record that names the fault, per the CLAUDE.md
-    # rule. Tracked, not silently accepted.
+    # reports ZERO, and a genuinely excluded row goes undisclosed. Strictly
+    # better than measuring the named list, which was 0 in that case too; still
+    # short of honest.
+    #
+    # NEITHER RENDERER OVERSTATES ANY MORE: the dashboard reports "partial" and
+    # `cost_label` returns "Annual cost (may not be complete)" for this case,
+    # both from these two counts and without a migration. What remains is
+    # naming the CAUSE — "the reconciliation does not balance" rather than a
+    # generic qualifier — which needs `reconcile.py`'s `attribution_complete`
+    # persisted: a zero-value record that names the fault, per the CLAUDE.md
+    # rule. Tracked as #193.
+    #
+    # The number is here because a disposition asserting it is tracked, with
+    # nothing tracking it, is an unfixed defect wearing a managed one's
+    # costume. Written as one account rather than a claim plus a correction
+    # appended below it, because a reader going top-down would otherwise meet
+    # the superseded sentence first.
     excluded_count = max(received - included, 0) if received is not None else 0
     return DeliverableContext(
         source_rows_total=received,
@@ -177,6 +243,7 @@ def build_context(
         total_cost=total_cost,
         estimated_savings=estimated_savings,
         savings_cost_known=savings_known,
+        spend_cost_known=spend_known,
     )
 
 

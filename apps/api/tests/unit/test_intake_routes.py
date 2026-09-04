@@ -274,6 +274,58 @@ def test_submit_requires_csf_and_zt_targets(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_submit_refuses_a_zt_target_the_framework_does_not_have(app_client) -> None:
+    """DoD ZTRA ends at Stage 3. Intake must refuse 4 rather than store it.
+
+    The front half of #125. `ServiceRequestInput.zt_target_stage` is bound
+    `ge=2, le=4` for BOTH frameworks -- a pydantic field constraint cannot see
+    `service_type` -- and `_validate_targets` checked PRESENCE only. So a DoD
+    engagement stored a 4, `analyze_gaps` clamped it to 3, and the finalize
+    audit row reported `target_stage: 3, target_stage_source: "client"`: a stage
+    the framework does not have, attributed to a client who could not have
+    meant it.
+
+    `resolve_target_stage` now reports such a stored value as
+    `client_out_of_range` instead of as the client's choice, which is the
+    honest answer to a value already on disk. This is the other end: refusing
+    it at the door means there is nothing to be honest about later.
+
+    The positive controls are the point. A guard that refused every target
+    would satisfy the 422 assertion alone, so this also pins that DoD 2 and 3
+    still submit, and that CISA 4 -- a stage CISA really has -- is untouched.
+    """
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+
+    def submit(service_type: str, stage: int):
+        return client.post(
+            "/intake/submit",
+            headers={"Authorization": f"Bearer {bearer}"},
+            json={
+                "client": {"legal_name": "Atlas Defense Solutions"},
+                "service_requests": [{"service_type": service_type, "zt_target_stage": stage}],
+            },
+        )
+
+    # DoD has no Stage 4. Refused, and the reason names the real range rather
+    # than dumping a validation error (the D-016 typed-detail pattern).
+    r = submit("zero_trust_dod", 4)
+    assert r.status_code == 422, r.text
+    # The app wraps a typed detail in its own envelope (`app/exceptions.py`),
+    # so `reason`/`message` sit under "error", not under FastAPI's "detail".
+    err = r.json()["error"]
+    assert err["reason"] == "zt_target_stage_out_of_range", err
+    assert "stages 1-3" in err["message"], err["message"]
+    assert "zero_trust_dod" in err["message"], err["message"]
+
+    # POSITIVE CONTROLS -- every stage each framework really has still submits.
+    for stage in (2, 3):
+        assert submit("zero_trust_dod", stage).status_code == 200, stage
+    for stage in (2, 3, 4):
+        assert submit("zero_trust_cisa", stage).status_code == 200, stage
+
+
+@pytest.mark.unit
 def test_intake_requires_authentication(app_client) -> None:
     client, _ = app_client
     r = client.get("/intake")

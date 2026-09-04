@@ -79,7 +79,7 @@ class ExcludedRowResponse(BaseModel):
     index: int
     summary: str
     # A consultant has reviewed this exclusion and agrees with it. The row stays
-    # listed either way â€” the reconciliation must remain honest â€” but the
+    # listed either way — the reconciliation must remain honest — but the
     # workspace can stop flagging it as needing attention.
     confirmed: bool = False
 
@@ -113,7 +113,7 @@ class CapabilityListResponse(BaseModel):
     approved_at: datetime | None
     approved_by: uuid.UUID | None
     # True when the approved allow-list snapshot (W3) no longer matches current
-    # security scope â€” a classification was overturned, or components were added
+    # security scope — a classification was overturned, or components were added
     # to an approved bundle. Those tools CANNOT be cited by the ATT&CK mapping
     # until the list is re-approved, so a technique they cover comes back as a
     # fabricated gap. Surfaced rather than auto-refreshed: silently widening a
@@ -121,7 +121,7 @@ class CapabilityListResponse(BaseModel):
     # this one. Re-approval is the deliberate, audited way to change it.
     approved_membership_stale: bool = False
     # Reconciliation of the source upload against what was extracted (0036).
-    # NULL on lists created before the column existed â€” the UI renders no claim
+    # NULL on lists created before the column existed — the UI renders no claim
     # rather than implying a complete inventory.
     source_rows_total: int | None = None
     excluded_rows: list[ExcludedRowResponse] = []

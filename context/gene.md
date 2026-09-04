@@ -76,14 +76,20 @@ Both docs-only pushes to `main` this session printed `Bypassed rule violations`
 checks are expected". That **confirms the documented posture rather than
 revealing a gap**, so it is a decision for Gene, not a defect to fix:
 
-- `docs/security.md:207` — branch protection has `enforce_admins: false`, so
-  both developers can merge past every CI gate.
-- `DELIVERY_PLAN.md:1078-1085` — the precise statement, under "Branch
-  protection: configured 2026-08-20, verified 2026-08-21" (`:1054`). Required
-  checks bind *a non-admin merging via a pull request*, and this repo has no
-  such person today.
-- `DECISIONS.md:2768-2771` — the same correction, recorded as an overstatement
-  an adversarial pass caught.
+- `docs/security.md` — "branch protection has `enforce_admins: false`, so both
+  developers can merge past every check above".
+- `DELIVERY_PLAN.md` — the precise statement, under the heading "Branch
+  protection: configured 2026-08-20, verified 2026-08-21": "Required checks
+  bind **a non-admin merging via a pull request**. This repo has no such person
+  today." The same bullet list calls the direct-push hole "the largest /
+  remaining gap" — that phrase WRAPS, so search it with `rg -U --multiline`.
+- `DECISIONS.md` — the same correction, recorded as an overstatement an
+  adversarial pass caught: "the gate is a guardrail on the PR path, not a wall
+  around `main`".
+
+(Quoted, not numbered, per the rule below. On `main` these sit near
+`DELIVERY_PLAN.md:956-990`; on this branch, ~120 lines lower. Which is the
+argument.)
 
 **The line worth deciding from:** a direct push to `main` produces **no
 "Adversarial audit recorded" check run at all** — the commit is *invisible* to
@@ -99,11 +105,44 @@ nothing to require. Measured, not cited:
 No `push:` trigger. Fine for a handoff file. Not fine for anything else — **and
 the keystrokes are identical**, which is the whole risk.
 
-*(Citation drift, flagged in passing and in the spirit of the section above:
-`DELIVERY_PLAN.md:645` and `:980` were offered for this and land on #46/#115 and
-#84/W1 Risk respectively. The claim was right; the line numbers had moved. A
-citation that resolves to real prose about something else reads as verified —
-same shape, cheapest possible check.)*
+*(The citation round that produced this section had **four** errors in it, and
+the count is the point. `DELIVERY_PLAN.md:980` for `enforce_admins` was
+**correct on `main`** and my correction of it was wrong — I read the feature
+branch, where the same string sits at `:1078` because this branch inserts 111
+lines above it. So `:1054` and `:1078-1085` are right here and land on
+`#96`/`#84` on `main`. `:645` was wrong; its real line is `:984` on `main`.
+And a line-wise grep for "the largest remaining gap" returns nothing, because
+the phrase wraps a line break — an absence that reads as fabrication:
+
+    grep -n "the largest remaining gap" DELIVERY_PLAN.md     # no match
+    rg -U --multiline -n "largest\s+remaining gap" DELIVERY_PLAN.md   # 1083-1084
+
+Neither of us was careless. **A line number is a property of a tree, not of a
+document**, and we were reading two trees. That is why the rule below is
+mechanical.)*
+
+### Citing and checking: the mechanical rule
+
+Prose did not hold this — both of us broke it the day after writing it down. So:
+
+1. **When you cite, quote the string and name the file. Never the line.** A
+   quoted string survives a rebase, a branch and an insertion above it; a line
+   number survives none of them and fails by pointing at real prose about
+   something else, which reads as verified.
+2. **When you check a citation, search with a multiline-capable tool** — `rg -U
+   --multiline`, never bare `grep -n`. Markdown wraps at 80 columns, so any
+   quoted phrase longer than a few words is more likely than not to straddle a
+   line break.
+3. **If the search returns nothing, confirm the tool could have found it before
+   reporting an absence.** Re-search a short fragment that cannot wrap. A
+   no-match is a claim about the world and needs the same calibration as a
+   finding — this is the "calibrate before reading a negative" rule, and its
+   first casualty was its own author.
+4. **Prefer a measurement to a citation wherever one exists.** Reading
+   `audit-gate.yml`'s `on:` block settles the trigger question outright; citing
+   a document *about* the trigger block inherits every drift problem above. **A
+   measurement has no line number to drift.**
+
 
 ### The cwd question, settled: the three adversarial passes are clean
 

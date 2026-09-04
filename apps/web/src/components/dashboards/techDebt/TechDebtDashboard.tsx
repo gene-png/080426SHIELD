@@ -54,17 +54,36 @@ const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
  * there would assert a defect nobody observed, which is the mirror image of
  * calling the figure a total.
  *
- * The card LABEL is deliberately unchanged: `e2e/smoke/s29-tech-debt-dashboard
- * .spec.ts:77` asserts `getByText("Annual license spend", { exact: true })`,
- * and the disclosure belongs in the subtitle beside it either way.
+ * The card LABEL is deliberately unchanged: `e2e/smoke/s29-tech-debt-dashboard.spec.ts`
+ * asserts `getByText("Annual license spend", { exact: true })`, and the
+ * disclosure belongs in the subtitle beside it either way.
  */
-function spendSub(data: TechDebtDashboardData): string {
+export function spendSub(data: TechDebtDashboardData): string {
   if (data.spend_completeness === "unknown") {
     return "May not be complete - upload not reconciled";
   }
   if (data.spend_completeness === "partial") {
     if (data.excluded_count > 0 && data.source_rows_total !== null) {
       return `Floor - ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`;
+    }
+    // The API reports "partial" for THREE causes and this renderer must not
+    // guess which. `spend_completeness` is a three-valued label over a
+    // four-state world, so the unbalanced case -- more items than there were
+    // source rows -- arrives here indistinguishable from an uncosted tool.
+    //
+    // Saying "some tools lacked a cost" for it would be a precise, checkable
+    // FALSEHOOD: in that state every tool is costed, and a client who went
+    // looking for the uncosted one would find nothing. A vague label converted
+    // into a confident wrong sentence is worse than the vague label.
+    //
+    // These two numbers are on the response, so the cause is recoverable here
+    // without the `attribution_complete` migration that naming it precisely
+    // would need (#193).
+    if (
+      data.source_rows_total !== null &&
+      data.included_count > data.source_rows_total
+    ) {
+      return "Floor - upload does not reconcile";
     }
     return "Floor - some tools lacked a cost";
   }

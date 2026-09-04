@@ -963,6 +963,31 @@ def tech_debt_dashboard(
         spend_completeness = "unknown"
     elif excluded_count or not spend_cost_known:
         spend_completeness = "partial"
+    elif included_count > source_rows_total:
+        # THE UNBALANCED CASE, and it must not reach "complete".
+        #
+        # `excluded_count` is `max(source_rows_total - included_count, 0)`, so
+        # when more items exist than there were source rows -- two items sharing
+        # one `source_row_index`, say -- the subtraction FLOORS TO ZERO and the
+        # first two branches both fall through. With every cost known that
+        # landed on "complete", whose definition in `schemas/clients.py` is
+        # "every source row is accounted for and every item is costed". The
+        # accounting demonstrably does not balance, so that claim is false.
+        #
+        # `build_context` already records this case for the exporter and pins
+        # it with a test; the dashboard derived `excluded_count` "the same way"
+        # and inherited the hole WITHOUT the caveat -- and it is strictly worse
+        # here, because the exporter merely fails to disclose while this makes
+        # the affirmative claim.
+        #
+        # "partial" rather than "unknown": completeness WAS recorded for this
+        # list, it just does not reconcile, and "unknown" is defined as never
+        # recorded. Neither word fits exactly -- this is a fourth state wearing
+        # a three-state label -- but only one of the three is safe, and
+        # CLAUDE.md's rule is that missing or unreliable data defaults to
+        # UNCONFIRMED. Telling the truth about WHY needs `attribution_complete`
+        # persisted, which is a migration this change does not carry.
+        spend_completeness = "partial"
     else:
         spend_completeness = "complete"
 

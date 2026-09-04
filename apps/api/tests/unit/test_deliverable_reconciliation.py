@@ -37,9 +37,24 @@ class _FakeItem:
     `build_context` reads costs and `parent_item_id`, so the bare `object()`
     stubs this file used before no longer suffice — the trade for exercising the
     real derivation instead of asserting a number the test handed in.
+
+    COSTED BY DEFAULT, and the default changed on 2026-09-04 from `None`.
+    Stated rather than adjusted quietly, because it moved what two assertions in
+    this file mean.
+
+    Every item here was uncosted, so `total_cost` was 0.0 and the tests asserted
+    "Total annual cost" / "Included annual cost" over a figure of ZERO — fine
+    while `cost_label` keyed only on the row reconciliation, and misleading the
+    moment it also keys on whether the included items are costed (#126's
+    exporter half). The assertions were not weakened to accommodate that: this
+    file is about EXCLUSION labelling, and an uncosted fixture was simply not
+    modelling the dimension the labels now also depend on. Giving the items a
+    cost lets each test exercise the thing it is named for, and the uncosted
+    case gets its own test below rather than arriving as a side effect of every
+    other one.
     """
 
-    annual_cost_usd: float | None = None
+    annual_cost_usd: float | None = 100.0
     disposition: object | None = None
     parent_item_id: object | None = None
 
@@ -79,6 +94,29 @@ def test_nothing_excluded_reads_as_a_plain_total() -> None:
     ctx = _ctx(received=26, excluded=0, included=26)
     assert reconciliation_line(ctx) is None
     assert cost_label(ctx) == "Total annual cost"
+
+
+@pytest.mark.unit
+def test_an_uncosted_item_outranks_the_exclusion_label() -> None:
+    """The dimension this file did not model until its fixture was costed.
+
+    `total_cost` skips an item whose `annual_cost_usd` is None, so the figure is
+    a floor regardless of how the ROW reconciliation came out. "Included annual
+    cost" would still assert that what is included was fully counted, so the
+    weaker claim wins. Nothing is lost: `reconciliation_line` reports the
+    received/included/excluded counts on its own line either way, which this
+    asserts rather than assumes.
+    """
+    ctx = build_context(
+        client_legal_name="UX-E2E-Validation",
+        service_title="Technical Debt Review",
+        cap_list=_FakeList(28, [{"index": i} for i in range(2)]),
+        items=[_FakeItem() for _ in range(25)] + [_FakeItem(annual_cost_usd=None)],
+    )
+    assert ctx.spend_cost_known is False
+    assert ctx.excluded_count == 2
+    assert cost_label(ctx) == "Annual cost (may not be complete)"
+    assert reconciliation_line(ctx) == "28 rows received · 26 included · 2 excluded"
 
 
 @pytest.mark.unit

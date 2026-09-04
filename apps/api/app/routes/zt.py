@@ -1180,10 +1180,35 @@ def submit_self_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="This self-assessment has already been submitted.",
         )
-    if body.target_stage is not None and svc.source_request_id is not None:
-        sr = db.get(ServiceRequest, svc.source_request_id)
-        if sr is not None:
-            sr.zt_target_stage = body.target_stage
+    if body.target_stage is not None:
+        # RANGE, per framework. `ZtSelfAssessmentSubmit.target_stage` is bound
+        # `ge=1, le=4` for both frameworks -- a pydantic field constraint cannot
+        # see the service -- and DoD ZTRA ends at 3, so the schema admits a DoD
+        # Stage 4 and this is the only place that can refuse it FOR THIS ROUTE.
+        #
+        # The THIRD writer of the engagement target, and the one an earlier
+        # draft of the #125 fix missed while its intake sibling carried a
+        # comment claiming intake was "the only place that can refuse it". It
+        # was not: a client could store the impossible stage here, and the ZT
+        # self-assessment UI re-persists whatever is stored when the client
+        # submits without touching the control -- refreshing an invalid legacy
+        # value straight past the new door.
+        max_stage = level_count(_to_catalog_framework(a.framework))
+        if not 1 <= body.target_stage <= max_stage:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "reason": "target_stage_out_of_range",
+                    "message": (
+                        f"{a.framework.value} has stages 1-{max_stage}; "
+                        f"target_stage={body.target_stage} is not one of them."
+                    ),
+                },
+            )
+        if svc.source_request_id is not None:
+            sr = db.get(ServiceRequest, svc.source_request_id)
+            if sr is not None:
+                sr.zt_target_stage = body.target_stage
     a.status = ZtAssessmentStatus.SUBMITTED
     # Provenance (migration 0035): these are the client's own answers. Stamping
     # here — rather than on each answer write — captures exactly the set the
@@ -1433,9 +1458,19 @@ def gap_analysis(
     # other is a fact on disk.
     #
     # Without this the consultant gets an untyped 500: `analyze_gaps` now
-    # raises instead of clamping, and `ZtWorkspace.tsx:139` swallows the
-    # rejection in a bare `catch {}`, leaving the score and gap cards in a
-    # permanent loading state that looks identical to a slow network.
+    # raises instead of clamping, and `ZtWorkspace.tsx` swallows the rejection
+    # in the bare `catch {}` closing `refreshScoreAndGap`, leaving the score and
+    # gap cards in a permanent loading state that looks identical to a slow
+    # network.
+    #
+    # The typed 422 is the floor, NOT the fix for that swallow. Two things sit
+    # above it: `normalizeTarget` in the same component now derives the target
+    # from the framework's own ladder so the workspace cannot ask for a stage
+    # this refuses, and the swallow itself is filed as #185. Worth stating
+    # because the sentence above is true and was, for one commit, the reason
+    # nobody traced what the refusal actually did to the page -- both cards
+    # blank, including the score card, which does not depend on the target at
+    # all.
     max_stage = level_count(cat_fw)
     if not 1 <= target_stage <= max_stage:
         raise HTTPException(

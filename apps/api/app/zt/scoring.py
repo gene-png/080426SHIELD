@@ -270,7 +270,11 @@ def resolve_target_stage(framework: ZtFrameworkCode, chosen: object) -> tuple[in
     render an existing engagement is not an available response to it. An earlier
     draft claimed this while raising `TypeError` on a list and `ValueError` on a
     non-numeric string; `chosen` is typed `object` so the claim is now
-    checkable rather than aspirational. The engine entry point `analyze_gaps`
+    checkable rather than aspirational. A later one still raised `OverflowError`
+    on an int too wide for a double, which is what an absolute claim costs when
+    the test behind it enumerates values someone thought of rather than
+    deriving them -- the parametrised sweep now covers all three arms of the
+    `except`. The engine entry point `analyze_gaps`
     does raise, because by then the value has been resolved and anything out of
     range is a caller bug.
     """
@@ -284,7 +288,13 @@ def resolve_target_stage(framework: ZtFrameworkCode, chosen: object) -> tuple[in
         return (fallback, "client_unparseable")
     try:
         n = float(chosen)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is NOT decorative: `float(10**400)` raises it, and an
+        # int wider than a double is ordinary JSON. `_as_number` in
+        # `routes/zt.py` carries this same catch with a comment explaining what
+        # an uncaught raise costs there; this function claimed parity with it
+        # and omitted the one guard it had learned. A parity claim covers the
+        # exception list too.
         return (fallback, "client_unparseable")
     if not math.isfinite(n):
         return (fallback, "client_unparseable")

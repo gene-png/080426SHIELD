@@ -28,6 +28,7 @@ import type {
   ZtAnswer,
   ZtAnswerPatch,
   ZtAssessment,
+  CatalogStage,
   ZtCatalog,
   ZtDeliverable,
   ZtFramework,
@@ -60,9 +61,49 @@ export interface ZtWorkspaceProps {
   serviceTitle: string;
 }
 
-/** Clamp a stored target stage to the selectable 2-4 range; default 3. */
-function normalizeTarget(value: number | null | undefined): number {
-  return value === 2 || value === 3 || value === 4 ? value : 3;
+/** The lowest stage a client can TARGET. Stage 1 is a starting point, not a goal. */
+const MIN_TARGET_STAGE = 2;
+/** Mirrors `DEFAULT_TARGET_STAGE` in `app/zt/scoring.py`; valid on both ladders. */
+const DEFAULT_TARGET_STAGE = 3;
+
+/**
+ * Clamp a stored target stage to one THIS FRAMEWORK actually has.
+ *
+ * Framework-blindness here was a live defect, not a theoretical one. This
+ * returned the stored value for any of 2, 3 or 4 regardless of framework, and
+ * DoD ZTRA has three stages while intake still offers a fourth -- so a stored 4
+ * on a DoD engagement is reachable through the product's own wizard and is
+ * exactly the population #125 is about.
+ *
+ * It stopped being survivable when `analyze_gaps` began REFUSING an
+ * out-of-range target instead of clamping it. `/gap-analysis` now answers a
+ * typed 422, and `refreshScoreAndGap` runs both fetches under one
+ * `Promise.all` whose rejection is swallowed -- so asking for a stage the
+ * framework lacks blanks the gap card AND the score card, which does not depend
+ * on the target at all. Before that change the same request returned 200 with a
+ * clamped gap set. The consultant sees two empty cards, is told nothing, and
+ * can recover only by touching a dropdown that never offered 4 in the first
+ * place.
+ *
+ * `stages` is the framework's own ladder, fetched from the catalog the target
+ * dropdown is already built from, so this cannot drift from what the UI offers.
+ * When the ladder is unavailable, fall back to the engine default rather than
+ * trusting the stored value: asking for a stage that cannot be checked is the
+ * case that just cost two cards.
+ */
+export function normalizeTarget(
+  value: number | null | undefined,
+  stages: readonly CatalogStage[] | null | undefined,
+): number {
+  const selectable = (stages ?? [])
+    .map((s) => s.stage)
+    .filter((s) => s >= MIN_TARGET_STAGE)
+    .sort((a, b) => a - b);
+  if (selectable.length === 0) return DEFAULT_TARGET_STAGE;
+  if (typeof value === "number" && selectable.includes(value)) return value;
+  return selectable.includes(DEFAULT_TARGET_STAGE)
+    ? DEFAULT_TARGET_STAGE
+    : selectable[selectable.length - 1];
 }
 
 function describeError(err: unknown): string {
@@ -146,8 +187,9 @@ export function ZtWorkspace({
 
   const initialLoad = React.useCallback(async () => {
     const seq = ++assessmentSeq.current;
+    let cat: ZtCatalog;
     try {
-      const cat = await fetchCatalog(framework);
+      cat = await fetchCatalog(framework);
       setCatalog(cat);
     } catch (err) {
       setLoadError(describeError(err));
@@ -164,7 +206,8 @@ export function ZtWorkspace({
       setAssessment(a);
       if (a) {
         // Default the gap target to the client's chosen stage (set at intake).
-        const t = normalizeTarget(a.client_target_stage);
+        // `cat`, not the `catalog` state: setCatalog has not re-rendered yet.
+        const t = normalizeTarget(a.client_target_stage, cat.stages);
         setTargetStage(t);
         await refreshScoreAndGap(t);
         try {
@@ -191,7 +234,7 @@ export function ZtWorkspace({
     try {
       const next = await createAssessment(serviceId);
       setAssessment(next);
-      const t = normalizeTarget(next.client_target_stage);
+      const t = normalizeTarget(next.client_target_stage, catalog?.stages);
       setTargetStage(t);
       await refreshScoreAndGap(t);
     } catch (err) {
@@ -263,7 +306,7 @@ export function ZtWorkspace({
       if (seq === assessmentSeq.current) {
         setAssessment(a);
         if (a) {
-          const t = normalizeTarget(a.client_target_stage);
+          const t = normalizeTarget(a.client_target_stage, catalog?.stages);
           setTargetStage(t);
           await refreshScoreAndGap(t);
         } else {
