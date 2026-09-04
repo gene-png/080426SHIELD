@@ -48,8 +48,18 @@ from app.schemas.intake import (
     IntakeSubmitRequest,
     ServiceRequestInput,
 )
+from app.zt.maturity import ZtFrameworkCode, level_count
 
 _ZT_SERVICE_TYPES = (ServiceType.ZERO_TRUST_CISA, ServiceType.ZERO_TRUST_DOD)
+
+# Which maturity ladder each ZT service type is scored on. Kept beside
+# `_ZT_SERVICE_TYPES` on purpose: a new ZT service type added to that tuple
+# without an entry here raises a KeyError in `_validate_targets` rather than
+# silently validating against the wrong framework's ceiling.
+_ZT_FRAMEWORK_BY_SERVICE = {
+    ServiceType.ZERO_TRUST_CISA: ZtFrameworkCode.CISA_ZTMM_2_0,
+    ServiceType.ZERO_TRUST_DOD: ZtFrameworkCode.DOD_ZTRA,
+}
 
 
 def _effective_contact(client: Client | None, user: User) -> IntakeContactResponse:
@@ -94,11 +104,40 @@ def _validate_targets(item: ServiceRequestInput) -> None:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="NIST CSF requires a target tier and profile before submitting.",
             )
-    elif item.service_type in _ZT_SERVICE_TYPES and item.zt_target_stage is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Zero Trust requires a target stage before submitting.",
-        )
+    elif item.service_type in _ZT_SERVICE_TYPES:
+        if item.zt_target_stage is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Zero Trust requires a target stage before submitting.",
+            )
+        # RANGE, per framework. `ServiceRequestInput.zt_target_stage` is bound
+        # `ge=2, le=4` for both frameworks because a pydantic field constraint
+        # cannot see `service_type`, and DoD ZTRA ends at 3 -- so the schema
+        # admits a DoD Stage 4 and this is the only place that can refuse it
+        # ON THIS ROUTE. It is NOT the only writer of the stored value: the ZT
+        # self-assessment submit path writes it too and carries its own copy of
+        # this check. Said precisely because the first draft of this comment
+        # claimed to be the only door, which is the kind of true-sounding
+        # narrower-than-you-assume sentence that ends the next reader's search
+        # exactly where it should have started.
+        #
+        # Checking PRESENCE and not RANGE is what #125 cost: a DoD engagement
+        # stored a 4, `analyze_gaps` clamped it to 3, and the finalize audit row
+        # called that 3 the client's choice. `resolve_target_stage` now reports
+        # such a value honestly instead, but reporting it is the second-best
+        # outcome; refusing it at the door means it is never stored at all.
+        max_stage = level_count(_ZT_FRAMEWORK_BY_SERVICE[item.service_type])
+        if not 1 <= item.zt_target_stage <= max_stage:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "reason": "zt_target_stage_out_of_range",
+                    "message": (
+                        f"{item.service_type.value} has stages 1-{max_stage}; "
+                        f"{item.zt_target_stage} is not one of them."
+                    ),
+                },
+            )
 
 
 router = APIRouter(prefix="/intake", tags=["intake"])

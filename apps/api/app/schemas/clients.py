@@ -311,8 +311,10 @@ class TechDebtDashboardResponse(BaseModel):
     # #126. THREE states, not a bool mirroring `savings_cost_known`.
     #
     #   "complete" every source row is accounted for and every item is costed
-    #   "partial"  something is known to be missing - an uncosted item, or rows
-    #              excluded from the upload
+    #   "partial"  something is known to be missing OR the accounting does not
+    #              reconcile - an uncosted item, rows excluded from the upload,
+    #              or more items than there were source rows (which floors
+    #              `excluded_count` to 0 and would otherwise read "complete")
     #   "unknown"  completeness was never RECORDED for this list
     #
     # A bool cannot carry the third, and the third is not a rounding error: it

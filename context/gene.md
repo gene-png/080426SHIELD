@@ -1,203 +1,181 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — 2026-09-03
+## PICK UP HERE — 2026-09-04
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every number
 below carries the command that produced it, or says it was not derived.
 
 ### The one-line state
 
-Track C's first slice (#125 + #126) is **committed and pushed as `3f9164f` on
-`fix/zt-targets-and-spend-floor`**, and it is **NOT ready for a PR**: the two
-full test suites that gate it never produced a citable exit code, because the
-dev box degraded badly partway through the session. Fix the box, re-run both,
-then rebase and open the PR. Nothing is at risk — the work is committed, pushed,
-and the tree is clean.
+Track C's first slice is **rebased onto `origin/main` and committed at
+`9941a2e`**. It closes **#125 and #126**, and deliberately **not #124** — that
+deviation from the plan's "must land together" is recorded in
+`DELIVERY_PLAN.md` beside the instruction it departs from, in #143's form.
+
+**Gate status is stated per gate rather than certified in one word**, because
+an earlier draft of this line said "green on every local gate" while the only
+citable suite result predated two rounds of fixes — and on this branch the full
+unit suite is the gate that has already caught a defect the targeted runs could
+not see. Run them; do not trust this sentence:
+
+    docker compose exec -d api sh -lc 'cd /app &&       python -m pytest -m unit tests/unit > /tmp/u.log 2>&1; echo $? > /tmp/u.exit'
+    docker compose exec -T web sh -lc 'cd /app && pnpm -F web test'
+    npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+
+Note the container has no `ps`, `pgrep` or usefully-matching `pkill`: judge a
+detached run by whether its log is GROWING, never by a process count, and
+`docker compose restart api` is the reliable way to stop one.
 
 ### Verify the state before trusting this file
 
-    git log --oneline -1                     # expect 3f9164f
-    git status --porcelain | wc -l           # expect 0
-    git rev-list --count HEAD..origin/main   # expect 1 (behind fef3cf5)
-    gh issue list --label mvp-blocking --state open --json number | jq length
+    git log --oneline -3
+    git status --porcelain
+    git rev-list --left-right --count origin/main...HEAD
+    gh issue list --label mvp-blocking --state open --json number --jq length
 
-### Do these in order. Do not skip 1.
+Note `jq` is NOT on this box's PATH — use gh's built-in `--jq`, never a pipe.
 
-**1. Fix the box, and prove it is fixed before anything else.**
+### What happened this session
 
-The whole session's test signal was destroyed by machine degradation, not by
-code. The tell is sign-in latency:
+**The box was the blocker, and it is fixed.** Sign-in latency was 7.9–8.7s all
+of the previous session, above what `signIn` tolerates with `retries: 0`, so
+every e2e verdict was noise. A Docker Desktop restart took warm latency to
+**0.52s**. The first request after a recreate is a next-dev cold compile (~15s)
+and is expected — measure the second onward.
 
-    curl -s -o /dev/null -w "%{time_total}s\n" http://localhost:3000/sign-in
+**Ordering was changed on purpose.** The hand-off put the rebase after the
+suites; running them first produces a verdict on a tree the rebase then
+invalidates, at 41 minutes a time. Rebased first, ran once.
 
-It measured **7.9-8.7 seconds** on both `main` and the branch. `signIn`
-(`e2e/helpers/auth.ts`) allows 15s inside a 60s `toPass`, and local runs use
-`retries: 0`, so at that latency the whole suite cascades. A healthy box should
-answer in well under a second after warm-up. **Do not run either suite until it
-does.** A full restart of Docker Desktop is the first thing to try; the stack
-had been up 25 hours by the end of the session.
+**The full unit suite finally produced a citable exit code**, which is what the
+previous session could not get: 7072 passed, 17 deselected, exit 0, in 41m10s,
+on the rebased tree, using CI's exact invocation. CI's own Python job takes
+about 14m for the same work, so this box runs it roughly 3x slower —
+**CLAUDE.md's "~3 min alone" for this suite is stale and should be corrected the
+next time someone edits that line.**
 
-Reference point for "healthy": CI runs the same e2e suite in **20m32s**
-(`gh run view 33554602541`). The local run took **1.5h**.
+### The review found a regression the green suite could not
 
-**2. Full backend unit suite, with the exit code captured.**
+An adversarial run returned findings across code and prose. Six were BLOCKING,
+and **all six were re-verified by hand before anything was acted on** — the
+reviewer's calibration was good, but the rule is to check.
 
-    docker compose exec -d api sh -lc 'cd /app && rm -f /tmp/u.exit && \
-      python -m pytest -m unit -q > /tmp/u.log 2>&1; echo $? > /tmp/u.exit'
+The one that mattered: making `analyze_gaps` refuse an out-of-range target
+instead of clamping it **introduced a silent client-visible regression**. A DoD
+engagement at Stage 4 — #125's own population — made the ZT workspace request a
+stage the API now refuses; `refreshScoreAndGap` runs both fetches under one
+`Promise.all` and swallows the rejection, so the gap card **and the score card**
+rendered blank. The score card does not depend on the target at all. Nothing in
+`apps/api` could have caught it, and 7072 green tests did not.
 
-Then poll for `/tmp/u.exit` and read it. **The exit file is the verdict — not
-the log tail, and not the wrapper's status.** This was the session's own
-process defect: an e2e run was dispatched under `nohup` without capturing `$?`,
-so when the number was asked for there was nothing to read.
+Fixed by deriving `normalizeTarget`'s selectable set from the framework's own
+catalog, removing the intake option that offered the impossible stage, and
+adding the server-side range check `_validate_targets` never had.
 
-**3. Full e2e, with the exit code captured.**
+### A test fixture that made every completeness assertion meaningless
 
-    cd e2e && npx playwright test --reporter=line > /tmp/e2e.log 2>&1; \
-      echo $? > /tmp/e2e.exit
+Worth reading even if nothing else here is. `test_tech_debt_dashboard.py`
+uploaded a one-row CSV while the mocked extractor returned five items, so the
+seeded list reported `source_rows_total=1` against `included_count=5`. Measured,
+not inferred. `excluded_count` is `max(received - included, 0)`, which floors
+that to 0 — so the impossible list read as "nothing was excluded" and **every
+completeness assertion in the file was made about a world that cannot exist.**
+That is what hid the fourth state. The fixture was corrected; the assertions
+were not weakened.
 
-Recreate `api web` TOGETHER first and re-check `SHIELD_LLM_MODE=fixture` after
-(a web recreate reconciles api too). The branch now carries a
-container-identity gate (`e2e/globalSetup.ts` / `globalTeardown.ts` /
-`helpers/containerIdentity.ts`) that fails the run if either container id moves
-mid-run; it prints two lines and has been verified in both its passing and
-halting states.
+### Everything fixed here, beyond the original two issues
 
-**Expect one pre-existing failure that is NOT this branch's:**
-`s42-layout-overflow.spec.ts:91` at narrow-desktop 1024px fails on
-`origin/main` too, byte-identically. Tracked as **#187**. Do not chase it here.
+- The ZT workspace regression above, with `normalizeTarget` exported and pinned,
+  including a positive control that a real CISA 4 survives.
+- The exporter still printed "Total annual cost" over a floor when an included
+  item had no cost, while the new dashboard called the same list "partial" — two
+  surfaces contradicting each other about one list, and the client only keeps
+  the document.
+- The unbalanced reconciliation no longer reads "complete" on the client card.
+- `resolve_target_stage` raised `OverflowError` on an int wider than a double,
+  contradicting its own never-raises docstring while claiming parity with
+  `_as_number`, which carries exactly that guard. Its cases are now derived from
+  the `except` arms rather than hand-listed.
+- `spendSub` — the sentence the client actually reads — was exported and pinned;
+  it had no test at all, and deleting its branches left everything green.
+- Every `file:line` citation the branch introduced is now a quoted string. This
+  took THREE passes and the failure mode was the same each time: the first
+  enumerated one spelling (`file.py:NNN`) and missed nine bare `:NNN` ranges; the
+  second was clean over the code but I then introduced two NEW ones while writing
+  the deviation record, and one of those did not resolve to what it named. A
+  sweep certified complete is worth less than the same sweep re-run after the
+  next edit.
+- Double-encoded UTF-8 repaired in the Tech Debt subsystem, including a
+  client-visible one in `Deliverable.summary`. The first repair enumerated the
+  byte signatures I could think of and missed two, in the very session that
+  fixed an instance of enumerate-instead-of-derive. The repair now DERIVES: it
+  round-trips each run of high characters through cp1252 and keeps the result
+  only if it decodes as valid UTF-8, which is self-checking. Verified repo-wide;
+  one instance remains in `routes/attack.py`, left deliberately because that
+  file belongs to the ATT&CK track. A gate for the class is #192.
 
-**4. Rebase onto `fef3cf5`, then re-run CI on the merged base.**
+Each fix was verified **red-on-revert individually, with the revert proven to
+have landed** before its result was read.
 
-`#180` changed `apps/api/app/routes/attack.py`, and `routes/clients.py`
-imports five things from `app.attack` — this branch changes `clients.py`. That
-is the cross-track collision the plan's file-contention rules exist to catch,
-so CI must run on the merged base specifically, not on the pre-rebase branch.
+### The second review is the one worth reading
 
-**5. Open the PR.** It needs the `## Adversarial audit` block with
-`Findings:` / `Disposition:` / `Scope:`. Re-run the adversarial reviewer
-against the FINAL state of the branch first — it ran twice during
-implementation, but not against `3f9164f`.
+The reviewer ran twice. The first pass found the regression above. **The second
+pass, pointed at the FIXES, found four more BLOCKING issues and two of them were
+defects the fixes themselves introduced** — which is why §14 says to re-run after
+any substantive change rather than once at the start.
 
-**Merge rule: this comes back to Gene.** It trips condition 5 on
-`app/zt/scoring.py`, `apps/api/tests/**` and `e2e/**`, and condition 6 on
-deliverable content (see the label change below).
+- The fourth-state fix set `spend_completeness: "partial"`, and the renderer
+  turns `partial` with no excluded rows into **"Floor - some tools lacked a
+  cost"**. In that state every tool IS costed. A vague label had been converted
+  into a precise, checkable falsehood on the client's card.
+- The same fix withheld the completeness claim on the dashboard and NOT in the
+  exporter, so the released document said "Total annual cost" for a list the
+  card called partial — **the exact contradiction #126 exists to end,
+  reinstated in a state nobody had enumerated.** The deferral reason on the test
+  pinning it ("needs the `attribution_complete` migration") was disproved by the
+  dashboard fix in the same commit: withholding a claim needs the two counts,
+  which the context already carries. The migration buys naming the CAUSE.
+- **#125 was not closed.** `submit_self_assessment` is a third writer of the
+  stored target and was still framework-blind, while the intake comment called
+  itself "the only place that can refuse it". The existing test looked like
+  coverage and could not fail: it posts `target_stage: 4` at a **CISA** service,
+  where 4 is real.
 
-### What `3f9164f` contains
+All four are fixed and each is pinned red-on-revert. The lesson to carry: the
+first review audited the code and the second audited the repairs, and the second
+found more.
 
-20 files, 1131 insertions. Two issues, one root shape: *a value the client
-never supplied is silently coerced into range, and a downstream record then
-names a source that did not choose it.*
+### Issues filed this session
 
-- **#125 (ZT).** `resolve_target_stage(framework, chosen) -> (stage, source)`
-  with source `client` / `default` / `client_out_of_range` /
-  `client_unparseable`. `analyze_gaps` now RAISES instead of clamping. Wired at
-  all three call sites, on a deliberate split: a REQUEST is refused (typed
-  D-016 422 on `/gap-analysis`), STORED DATA is resolved and disclosed.
-- **#126 (Tech Debt).** `cost_label` gained a third outcome,
-  `"Annual cost (may not be complete)"`, for `source_rows_total IS NULL`. The
-  client dashboard gained `spend_completeness` as a TRI-STATE
-  (`complete`/`partial`/`unknown`) plus `source_rows_total` / `included_count`
-  / `excluded_count`, which the response never carried — so the excluded-rows
-  half of #126 was previously inexpressible, not merely undisclosed.
-- **e2e container-identity gate**, and a CLAUDE.md rule about citing files and
-  quoted strings rather than line numbers.
+    gh issue list --state open --limit 20 --json number,title --jq '.[] | "\(.number) \(.title)"'
 
-**Rendered ZT numbers are unchanged**, verified as a property rather than a
-sample: both frameworks x {None, below range, in range, above range}, old path
-emulated from the parent commit, diffed on target AND gap count — 18/18
-identical. The gap-count metric uses a spread of maturity stages because the
-obvious fixture (all at stage 1) saturates and could not detect a 3-vs-4
-divergence at all.
+#188 (per-capability target exemption, latent), #189 (PATCH accepts `true` as
+Stage 1 — Pydantic lax bool-to-int, measured), #190 (stage-0 comment describing
+behaviour no route implements), #191 (docker-not-on-PATH kills e2e with a
+message naming the check not the cause), #192 (no gate catches double-encoded
+UTF-8), #193 (the "Tracked, not silently accepted" that tracked nothing), #194
+(`MIN_TARGET_STAGE` duplicated as a literal in three ZT components), #195
+(`patch_self_assessment_answer` accepts `target_stage` and drops it), #196 (s34's
+key-panel spec cannot pass on a dev box that has a provider key).
 
-**Deliverable content DOES change in one place:** a pre-0036 Tech Debt list now
-renders `Annual cost (may not be complete): $X` where it said
-`Total annual cost: $X`. Gene approved this string specifically. The dev DB's
-only RELEASED capability list is that case, so the demo output changes.
+None blocks this branch. #189 and #192 are the two worth doing soon; #196 is
+the one that costs somebody an afternoon of misattribution if it is left.
 
-### Test evidence, stated honestly
+### What is NOT done
 
-- **Targeted unit suite: exit 0**, 193 tests, 193 dots, zero F/E/x/s — every
-  file the diff touches plus the twins. This is the only clean signal the
-  branch has.
-- **Full `pytest -m unit`: NO RESULT.** Killed at 9% after ~35 min on the
-  degraded box. Never wrote an exit file.
-- **Full e2e: NO EXIT CODE CAPTURED.** Tally was 45 failed / 12 skipped /
-  35 passed in 1.5h, with **37** failures sharing one `signIn` signature.
-- **Those 37 were the box, proven by a paired A/B**, not asserted: the same
-  five specs on `origin/main` and on the branch, same box, stack recreated for
-  each, gave byte-identical results — exit 1, 1 failed, 9 passed, 6.8m, zero
-  `signIn` failures on both, same failing test (`s42`). Running main alone
-  would NOT have been decisive, because the box had been idle since and a clean
-  result there is equally consistent with recovery.
-
-**Steps 2 and 3 exist to replace the two missing verdicts. Do not open the PR
-on the targeted suite alone.**
-
-### Issues filed this session — all open, none blocking this branch
-
-- **#183** — `attack/catalog.py`'s docstring says 14/196/411/607; measured
-  14/193/440/**633**. All three technique counts wrong. Note `routes/attack.py`'s
-  other `607` is a DIFFERENT and correct number (the N-033 incident), so a grep
-  for the literal returns sites that must not be changed.
-- **#184** — CSF clamps an out-of-range `target_tier` and reports the clamped
-  value back as requested. **`mvp-blocking` deliberately REMOVED**: every write
-  path is bounded inside CSF's 1-4 ladder, so the clamp is unreachable from
-  stored data. The flip condition is recorded on the issue and in
-  `DELIVERY_PLAN.md` — a CSF variant whose ceiling falls below its schema
-  bound, which is exactly what DoD ZTRA did to ZT.
-- **#185** — `ZtWorkspace.tsx` swallows score/gap failures into a permanent
-  loading state. #125 fixes the API and NOT the screen; this is the other half.
-- **#186** — `OverlapDashboard` calls a partial cost a "Total" three cards from
-  the `Missing cost` count that disproves it. Ordered AFTER #126 so it consumes
-  `spend_completeness` rather than inventing a fourth spelling.
-- **#187** — CI cannot distinguish "passed" from "passed on retry", and s42
-  fails on main locally. **Premise demonstrated, not hypothesised:** run
-  `33084646649` (2026-08-27) contains a `-retry1/trace.zip` for
-  `s39-excluded-rows` and its E2E check was green. A green check has already
-  hidden a real flake at least once.
-
-### Housekeeping, done and NOT done
-
-**Done:** 43 archive tags pushed to origin — 40 covering every merged remote
-branch, 3 covering the stashes. All verified to resolve to the same commit as
-their source. The three stashes still exist locally as well; nothing was
-dropped.
-
-**NOT done, on purpose:** no branches deleted. There are **40** merged branches
-on the remote, not the five that were expected. Everything is tagged so nothing
-is at risk. When it is done, key it PER BRANCH on content equivalence, not on
-`--merged` and not on a PR label: this repo squash-merges, so a merged branch's
-tip is not an ancestor of `main` (`git branch -r --merged origin/main` returns
-27, the content check returns 40). An ancestor is provably contained; a
-squash-merged branch is safe only if you check the content landed. A bulk
-delete keyed on either alone gets one class wrong.
-
-There is also a stray remote branch literally named `origin`, unmerged,
-almost certainly a `git push origin origin` slip. Left alone.
-
-### For CLAUDE.md, at the top of a fresh session
-
-Deliberately deferred rather than written tired — this repo has a recorded
-instance of a heredoc putting real control characters inside the rule about
-control characters, caught only by `check_no_control_chars`.
-
-1. The ancestor-versus-squash distinction above, next to the merge rule.
-2. The 40-branch deletion plan, keyed on content equivalence.
-3. **`$?` capture as a WRAPPER, not a rule.** The session's gap was a rule that
-   had been articulated correctly and then half-followed, which is the
-   definition of one that needs a mechanism. The helper should own
-   `; echo $? > <file>` and refuse to report a result when the exit file is
-   absent, so "no status recorded" surfaces as an error rather than as someone
-   quoting a log tail.
-4. **Calibrate before reading a negative.** "No artifact" nearly became a
-   verdict before checking whether the artifact ever appears; it does — 12
-   historically. A missing artifact and an upload that never fires are the same
-   bytes, and only the first says anything.
+- **e2e has not been run on the final tree.** Expect one pre-existing failure
+  that is not this branch's: `s42-layout-overflow` at 1024px, which fails on
+  `main` too (#187). Export the docker PATH first or `globalSetup` dies with a
+  bare `ENOENT` (#191).
+- **The adversarial reviewer has not re-run against the final state.** It ran
+  against the pre-fix tree; §14 requires a re-run after substantive change, and
+  this branch changed a great deal since.
+- **Branch deletion is still unstarted.** All archive tags are pushed to
+  `origin`, so nothing is at risk. Key it per-branch on content equivalence —
+  squash-merging means the naive equivalence check is not enough.
 
 
----
-
-## Previous pick-up — 2026-08-30 (superseded, kept for history)
+## Previous pick-up — 2026-09-03 and earlier (superseded, kept for history)
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every number
 below carries the command that produced it.

@@ -116,7 +116,8 @@ def test_resolve_rejects_a_fraction_instead_of_calling_it_a_client_choice() -> N
 
 @pytest.mark.unit
 def test_resolve_judges_range_before_wholeness() -> None:
-    """Order matters, and the repo already settled it at `routes/zt.py:728`.
+    """Order matters, and the repo already settled it in `routes/zt.py`, in
+    the AI-apply comment reading "RANGE before wholeness".
 
     4.9 on DoD's 1-3 ladder is both out of range and not whole. Out-of-range is
     the more useful thing to report, and testing it in the other order would let
@@ -138,7 +139,25 @@ def test_resolve_accepts_a_value_the_client_plainly_meant(value: object, expecte
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "junk",
-    ["abc", "", [], {}, float("nan"), float("inf"), float("-inf")],
+    [
+        # Derived from the arms of `resolve_target_stage`'s own `except`, not
+        # from values anyone thought of -- an enumeration cannot falsify an
+        # ABSOLUTE claim, and the first draft of this list proved it: seven
+        # hand-picked values, all green, over a live `OverflowError`.
+        pytest.param([], id="TypeError-list"),
+        pytest.param({}, id="TypeError-dict"),
+        pytest.param(object(), id="TypeError-object"),
+        pytest.param("abc", id="ValueError-nonnumeric"),
+        pytest.param("", id="ValueError-empty"),
+        # OverflowError. `float(10**400)` raises it, and an int wider than a
+        # double is ordinary JSON. This arm was MISSING and the function raised.
+        pytest.param(10**400, id="OverflowError-int-wider-than-double"),
+        pytest.param(-(10**400), id="OverflowError-negative"),
+        # Parse fine; rejected later by the finiteness guard.
+        pytest.param(float("nan"), id="finite-guard-nan"),
+        pytest.param(float("inf"), id="finite-guard-inf"),
+        pytest.param(float("-inf"), id="finite-guard-neg-inf"),
+    ],
 )
 def test_resolve_never_raises_on_any_stored_value(junk: object) -> None:
     """The docstring's claim, made checkable.
@@ -147,10 +166,17 @@ def test_resolve_never_raises_on_any_stored_value(junk: object) -> None:
     and ValueError on a non-numeric string. A stored value is data, not a
     programming error: refusing to render an engagement that already exists is
     not an available response to it.
+
+    A LATER draft still raised `OverflowError`, because this list was written by
+    enumerating inputs rather than by reading the `except` it exists to pin --
+    and the function's docstring claimed parity with `_as_number` in
+    `routes/zt.py`, which carries exactly that catch. The cases below are keyed
+    to the arms instead, so adding an arm without a case is visible.
     """
     stage, source = resolve_target_stage(CISA, junk)
     assert source == "client_unparseable"
     assert isinstance(stage, int)
+    assert not isinstance(stage, bool)
 
 
 # ---------------------------------------------------------------------------
@@ -225,8 +251,8 @@ def test_every_dataclass_the_zt_exporter_reads_is_shape_pinned() -> None:
     and said in this docstring that it covered "the two dataclasses it reads" -
     a claim narrower than the reader would assume, sitting exactly where they
     would go to check it. `exporters.py` also reads eight fields off `Gap` rows
-    (`:209-216`, `:296-300`, `:391-395`) and six off `PillarScoreResult`
-    (`:140-145`, `:274-277`, `:359-362`), so renaming `Gap.gap_size` or
+    and six off `PillarScoreResult`, at each of the three
+    renderers in `zt/exporters.py`, so renaming `Gap.gap_size` or
     `PillarScoreResult.coverage_pct` broke every ZT deliverable while this test
     stayed green.
     """

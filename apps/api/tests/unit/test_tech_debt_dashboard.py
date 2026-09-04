@@ -131,6 +131,18 @@ _ITEMS = [
 ]
 
 
+def _inventory_csv() -> bytes:
+    """An upload with exactly one row per item the mocked extractor returns.
+
+    Keeps `source_rows_total` equal to `included_count` so the seeded list
+    BALANCES. Anything else makes every completeness assertion in this file a
+    statement about an impossible world.
+    """
+    nl = chr(10)
+    rows = nl.join(f"{it['name']},1" for it in _ITEMS)
+    return ("Tool,Cost" + nl + rows + nl).encode()
+
+
 def _seed_release(c: TestClient, provider: FixtureProvider, bearer: str, *, release: bool) -> str:
     provider.register(
         "extract.capabilities",
@@ -152,7 +164,25 @@ def _seed_release(c: TestClient, provider: FixtureProvider, bearer: str, *, rele
     artifact_id = c.post(
         "/artifacts",
         headers=h,
-        files={"file": ("inv.csv", io.BytesIO(b"Tool,Cost\nx,1\n"), "text/csv")},
+        # ONE ROW PER `_ITEMS` ENTRY, and the count is load-bearing rather than
+        # decorative. `reconcile.py` records `received` from the upload's row
+        # count while the mocked extractor above returns every `_ITEMS` entry, so
+        # a single-row CSV produced a list reporting 5 items against 1 source row.
+        #
+        # `excluded_count` is `max(received - included, 0)`, which FLOORS that to
+        # 0, so the impossible list read as "nothing was excluded" and every test
+        # in this file asserted its completeness verdict over a reconciliation
+        # that could not balance. The FIXTURE was wrong, not the assertions: a
+        # test whose world is impossible says nothing about the states a real
+        # list reaches, and this one hid the fourth state that
+        # `test_an_unbalanced_reconciliation_never_reads_complete` now pins.
+        files={
+            "file": (
+                "inv.csv",
+                io.BytesIO(_inventory_csv()),
+                "text/csv",
+            )
+        },
     ).json()["id"]
     ext = c.post(
         f"/tech-debt/services/{svc_id}/capability-lists/extract",
@@ -373,6 +403,63 @@ def test_unknown_is_its_own_state_and_not_folded_into_complete(app_client) -> No
         "a list that was never reconciled reported a completeness verdict it " "has no basis for"
     )
     assert b["excluded_count"] == 0, "the derivation floors - that is the trap"
+
+
+@pytest.mark.unit
+def test_an_unbalanced_reconciliation_never_reads_complete(app_client) -> None:
+    """The FOURTH state, which the three-valued label folds into "complete".
+
+    `excluded_count` is `max(source_rows_total - included_count, 0)`. When more
+    items exist than there were source rows -- two items attributed to one
+    `source_row_index`, the case `build_context` already records for the
+    exporter -- the subtraction floors to 0. With every cost known, the
+    excluded-count branch and the uncosted branch both fall through, and the
+    card claimed "complete": "every source row is accounted for", asserted over
+    an accounting that cannot balance.
+
+    Strictly worse than the exporter's version of the same hole, which merely
+    fails to disclose. This one makes the affirmative claim, on a client-facing
+    surface, and the dashboard's comment said it derived the count "the same
+    way as the exporter" while carrying neither the caveat nor a test.
+
+    "partial" is not a perfect word for it -- nothing is known to be MISSING --
+    but of the three available it is the only one that is not a false claim,
+    and unreliable data resolves to unconfirmed rather than to confirmed.
+    """
+    import sqlalchemy as sa
+
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    svc_id = _seed_release(c, provider, admin["tokens"]["access_token"], release=True)
+
+    c.headers["X-Client-Id"] = client_id
+    url = f"/clients/{client_id}/tech-debt/{svc_id}/dashboard"
+    auth = {"Authorization": f"Bearer {client['tokens']['access_token']}"}
+
+    # POSITIVE CONTROL first: as seeded and balanced, this list is allowed to
+    # say "complete". Without this the assertion below passes for a guard that
+    # simply never returns "complete".
+    before = c.get(url, headers=auth).json()
+    assert before["spend_completeness"] == "complete", before["spend_completeness"]
+    included = before["included_count"]
+
+    # Now make the reconciliation impossible: fewer source rows than items.
+    eng = sa.create_engine(os.environ["DATABASE_URL"], future=True)
+    with eng.begin() as conn:
+        conn.execute(
+            sa.text("UPDATE capability_lists SET source_rows_total = :n"),
+            {"n": included - 1},
+        )
+
+    after = c.get(url, headers=auth).json()
+    assert after["included_count"] > after["source_rows_total"]
+    assert after["excluded_count"] == 0, "the derivation floors - that is the trap"
+    assert after["spend_completeness"] != "complete", (
+        "an accounting that does not balance reported every source row as " "accounted for"
+    )
+    assert after["spend_completeness"] == "partial"
 
 
 @pytest.mark.unit
