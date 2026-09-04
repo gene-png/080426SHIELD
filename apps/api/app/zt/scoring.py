@@ -262,7 +262,8 @@ def resolve_target_stage(framework: ZtFrameworkCode, chosen: object) -> tuple[in
     the client plainly meant is the same defect facing the other way.
 
     This ordering, and the two reason names, are deliberately the same as the
-    AI-apply path at `routes/zt.py:728-750`, which had it right first.
+    AI-apply path -- `_as_number` and the range check that follows it in
+    `routes/zt.py` -- which had it right first.
 
     Never raises **for any input**, including types the annotation does not
     admit -- a stored value is data, not a programming error, and refusing to
@@ -335,8 +336,8 @@ def analyze_gaps(
         # An out-of-range PER-CAPABILITY target falls back here silently, the
         # same shape #125 fixes one level up. It is left alone because naming
         # that fault needs a counter on `GapAnalysis`, and this change is
-        # constrained not to alter the shape `zt/exporters.py` reads. Filed as
-        # an issue rather than fixed here; see the PR body.
+        # constrained not to alter the shape `zt/exporters.py` reads. Tracked
+        # in #188, which carries the expiry condition stated below.
         #
         # Not currently reachable, and the two writers are named rather than
         # summarised, because an earlier draft of this comment said "no other
@@ -344,11 +345,17 @@ def analyze_gaps(
         # false in the direction that stops a reader checking the writer they
         # most need to see. Both writers bound the value first:
         #
-        #   routes/zt.py:1035  patch_answer -- 422s on anything outside
-        #                      1..level_count() for the answer's OWN framework.
-        #   routes/zt.py:767   the AI-apply path -- range-checks at :731 and
-        #                      `continue`s to a dropped-suggestion record, so an
-        #                      out-of-range suggestion is never written.
+        #   routes/zt.py, `patch_answer` -- its `target_stage must be 1-`
+        #     guard 422s on anything outside 1..level_count() for the answer's
+        #     OWN framework.
+        #   routes/zt.py, the AI-apply path -- `_as_number` plus the
+        #     `if not 1 <= n <= max_stage` check `continue`s to a
+        #     dropped-suggestion record, so an out-of-range suggestion is
+        #     never written.
+        #
+        # Both bound the RANGE. Neither refuses a bool at the schema, so
+        # `patch_answer` writes Stage 1 for `true` -- tracked in #189, and out
+        # of scope here because an in-range 1 never reaches this fallback.
         #
         # If a third writer appears, this exemption expires with it.
         return target_stage

@@ -955,9 +955,10 @@ def tech_debt_dashboard(
     # THREE states. "unknown" is not a hedge, it is the pre-0036 population and
     # every list not cut by an extraction: `source_rows_total` is NULL and no
     # reconciliation was ever recorded, so neither "complete" nor "partial" is a
-    # claim the data supports. `services/stages.py:137` already reads NULL here
-    # as un-analysed and calls that the conservative direction; this agrees with
-    # it rather than contradicting it.
+    # claim the data supports. `services/stages.py`, in the helper returning
+    # `getattr(cap_list, "source_rows_total", None) is not None`, already reads
+    # NULL here as un-analysed and calls that the conservative direction; this
+    # agrees with it rather than contradicting it.
     if source_rows_total is None:
         spend_completeness = "unknown"
     elif excluded_count or not spend_cost_known:
