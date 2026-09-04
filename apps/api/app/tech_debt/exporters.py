@@ -89,8 +89,10 @@ def cost_label(ctx: DeliverableContext) -> str:
 
     Who has a NULL `source_rows_total`: pre-0036 lists, and any list not cut by
     an AI extraction (`reconcile.py` types `received` as a plain `int`, so
-    `routes/tech_debt.py:316` always writes one when extraction ran).
-    `services/stages.py:137` already reads NULL here as "un-analysed rather than
+    `routes/tech_debt.py`'s `source_rows_total=result.reconciliation.received`
+    always writes one when extraction ran). `services/stages.py`, in the helper
+    returning `getattr(cap_list, "source_rows_total", None) is not None`,
+    already reads NULL here as "un-analysed rather than
     analysed", calling that "the conservative direction" -- this makes the
     renderer agree with that reading instead of contradicting it.
 
