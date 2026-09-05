@@ -219,7 +219,22 @@ Rank by severity — could this reach a client, corrupt data, or cost money.
 For each finding give:
 
 - **What breaks**, in one sentence
-- **Evidence** — `file:line`, the actual code or test, quoted short
+- **Evidence** — **quote the string and name the file; do NOT cite a line
+  number.** A line number is a property of a tree, not of a document: it does
+  not survive a rebase, a branch, or an insertion above it, and it fails by
+  landing on real prose about something else, which reads as verified. A quoted
+  string survives all three. Quote short and exactly. Give a symbol or heading
+  as the locator when the reader needs one. **When you check someone else's
+  citation, search with `rg -U --multiline` — never bare `grep -n`, because
+  prose wraps at 80 columns and any phrase longer than a few words straddles a
+  line break. If the search returns nothing, confirm the tool could have found
+  it before you report an absence:** re-search a short fragment that cannot
+  wrap. Reporting "that text does not exist" is an accusation of fabrication,
+  and it has been wrong here for exactly this reason.
+- **Prefer a measurement to a citation** whenever the thing is executable or
+  readable directly. Reading a workflow's `on:` block settles what triggers it;
+  citing a document *about* the trigger block inherits every drift problem
+  above. A measurement has no line number to drift.
 - **Concrete failure scenario** — specific inputs or state producing a specific
   wrong outcome. If you cannot construct one, say so and downgrade it.
 - **CONFIRMED** (you traced it in the code) or **SUSPECTED** (it fits the shape
