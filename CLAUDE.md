@@ -1326,12 +1326,15 @@ Rules of the road:
   `clients-dev` at creation, not afterwards.
 
 - **CITE A QUOTED STRING AND A FILE, NEVER A LINE NUMBER — and check a citation
-  with `rg -U --multiline`, never bare `grep -n`.** A line number is a property
-  of a TREE, not of a document. Measured 2026-09-05: `DELIVERY_PLAN.md:980` and
-  `:1078` are both correct for the same `enforce_admins` sentence — on `main`
-  and on `fix/zt-targets-and-spend-floor` respectively, which inserts 111 lines
-  above it. <!-- counted: git diff --stat origin/main..HEAD -- DELIVERY_PLAN.md -> 111 insertions, 2026-09-05 --> Two people each "verified" the other wrong, and both were right.
-  Four citation errors in one exchange, in an exchange about citations being <!-- counted: historical -->
+  with `rg -U --multiline`, never bare `grep -n`.**
+  **A line number is a property of a tree, not of a document.**
+
+  Measured 2026-09-05: `DELIVERY_PLAN.md:980` and `:1078` are both correct for
+  the same `enforce_admins` sentence — on `main` and on
+  `fix/zt-targets-and-spend-floor` respectively, which inserts 111 lines above
+  it. <!-- counted: git diff --stat origin/main..HEAD -- DELIVERY_PLAN.md -> 111 insertions, 2026-09-05 -->
+  Two people each "verified" the other wrong, and both were right. Four
+  citation errors in one exchange, on the subject of citations being <!-- counted: historical -->
   unreliable; the only durable element was a quoted string.
 
   The wrapping half is the dangerous one. Prose here wraps at 80 columns, so a
@@ -1340,6 +1343,12 @@ Rules of the road:
 
       grep -n "the largest remaining gap" DELIVERY_PLAN.md            # no match
       rg -U --multiline -n "largest\s+remaining gap" DELIVERY_PLAN.md  # 1083-1084
+
+  A multiline tool is necessary and NOT sufficient: a literal space in the
+  pattern still will not cross the wrap, because what is there is a newline and
+  an indent. **Write every space in a quoted phrase as `\s+`.** Searching this
+  very rule for "property of a" returned nothing minutes after it was written;
+  `property\s+of a` found it on the line it wraps.
 
   A no-match is a claim about the world. **Before reporting an absence, confirm
   the tool could have found it** — re-search a fragment that cannot wrap. This
