@@ -186,6 +186,20 @@ never the problem. Treating everything you found as blocking was.
    agent whose own definition is stale applies a rule set nobody can see is
    missing, and it is the one file it will never think to check. A disagreement
    is a finding about the run and belongs in your report.
+
+   **If either file cannot be read at all, STOP and report that as your first
+   and BLOCKING finding before reviewing anything.** Do not proceed on injected
+   context alone. Staleness and absence are different failures and this step
+   must catch both: a missing definition means you were dispatched from a
+   working directory that does not hold it, so what is auditing is a generic
+   fallback with none of the calibration above — and its output is
+   indistinguishable from a real audit, because nothing in a confident answer
+   says the specialist never loaded. **An agent that is not there does not say so;
+   it just answers.** Twice measured: `attack-dev` dispatched from a branch
+   lacking its definition, and a 2026-09-05 session run from the repo parent
+   where this file, `CLAUDE.md` and every slash command were absent. Naming
+   the file you read, with its absolute path, is what makes absence leave a
+   trace.
 1. **Read the actual code paths**, not just the description you were given. The
    claim and the code disagree more often than people expect.
 2. **Grep for writes, not reads.** Most dead-guard bugs are invisible until you
@@ -213,6 +227,11 @@ For each finding give:
 
 State clearly what you examined and what you could not reach — an unchecked area
 is a finding of its own, not silence.
+
+Open the report by naming the two files from step 0 with their **absolute
+paths** and whether each was read, stale or absent. One line. It is what lets a
+reader tell a real audit from a generic one months later, when the only surviving
+evidence is your report.
 
 **If the claim holds, say so.** "I tried to break X by checking A, B and C; it
 holds" is a real and useful result. Do not manufacture findings to look
