@@ -1325,6 +1325,31 @@ Rules of the road:
   gate and violates a rule neither ever saw. This binds `attack-dev` and
   `clients-dev` at creation, not afterwards.
 
+- **CITE A QUOTED STRING AND A FILE, NEVER A LINE NUMBER — and check a citation
+  with `rg -U --multiline`, never bare `grep -n`.** A line number is a property
+  of a TREE, not of a document. Measured 2026-09-05: `DELIVERY_PLAN.md:980` and
+  `:1078` are both correct for the same `enforce_admins` sentence — on `main`
+  and on `fix/zt-targets-and-spend-floor` respectively, which inserts 111 lines
+  above it. <!-- counted: git diff --stat origin/main..HEAD -- DELIVERY_PLAN.md -> 111 insertions, 2026-09-05 --> Two people each "verified" the other wrong, and both were right.
+  Four citation errors in one exchange, in an exchange about citations being <!-- counted: historical -->
+  unreliable; the only durable element was a quoted string.
+
+  The wrapping half is the dangerous one. Prose here wraps at 80 columns, so a
+  quoted phrase longer than a few words usually straddles a line break and a
+  line-wise `grep` returns NOTHING for text that is present:
+
+      grep -n "the largest remaining gap" DELIVERY_PLAN.md            # no match
+      rg -U --multiline -n "largest\s+remaining gap" DELIVERY_PLAN.md  # 1083-1084
+
+  A no-match is a claim about the world. **Before reporting an absence, confirm
+  the tool could have found it** — re-search a fragment that cannot wrap. This
+  nearly produced an accusation of fabrication against correctly-quoted text.
+
+  **And prefer a MEASUREMENT to a citation wherever one exists.** Reading
+  `audit-gate.yml`'s `on:` block settles what triggers it; citing a document
+  about that block inherits every drift problem above. A measurement has no line
+  number to drift.
+
 - **SPOT-CHECK a subagent's `file:line` citations before they enter a document,
   and record the check. A sample, not all of them — what you need is the
   report's CALIBRATION.** This replaces "be skeptical of subagent output", which
