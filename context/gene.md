@@ -39,6 +39,72 @@ again:**
 
     docker compose exec -T api sh -lc 'rm -f /tmp/w.exit /tmp/w.log /tmp/w.start'
 
+### Instructions that fail by looking like success — the running record
+
+Three this session, all the same shape: the check runs, returns something that
+reads as a clean pass, and the pass is an artifact of the check rather than a
+property of the thing checked. Recorded together because the shape matters more
+than any one instance, and because two of the three came from Gene — authorship
+is not a defence against it.
+
+1. **The exit-file rule.** "`cat /tmp/w.exit`; `exit 0` clears the gate." The
+   file said `0` and the run had died at 98%. Detail above.
+2. **A format-check with no stated location.** Prescribed without saying which
+   directory to run it in; a pnpm-root check and an `e2e/` check are different
+   checks with the same command.
+3. **`git diff --stat $(git log --before="20:22" -1 --format=%H)..HEAD`.**
+   `--before="20:22"` parses as *today* at 20:22, which resolved to `67142b3` —
+   HEAD itself. The command compared HEAD to HEAD and printed an empty diff,
+   which is exactly what "no non-doc files changed" looks like. Anchor to the
+   run's actual start instead, and never to a bare wall-clock time:
+
+       git diff --stat $(git log --before="2026-09-05T00:22:19Z" -1 --format=%H)..HEAD
+
+   Anchored that way the base is `e0efdba` and the range is `context/gene.md`
+   alone, 266 insertions / 154 deletions, **no non-doc files**. Docs-only is now
+   measured. It does not rescue the run — a tree that never moved and a run that
+   died at 98% are independent facts, and only the second decides anything.
+
+The general rule this produces: **a verification command must be able to fail.**
+Before trusting a clean result, ask what a dirty one would have looked like and
+confirm the command could have produced it.
+
+### The cwd question, settled: the three adversarial passes are clean
+
+The 2026-09-05 session ran from the parent directory and therefore had no
+`adversarial-reviewer`, no `CLAUDE.md` and no slash commands. The obvious
+follow-up — whether the three passes that found the ZT regression were also run
+without their definition, which would make five findings the output of a generic
+fallback — was checked, not assumed. They were not. Evidence:
+
+- `~/.claude/projects/` holds two dirs for this repo. `C--repos-SHIELD080326`
+  (parent cwd) contains **exactly one** session — 2026-09-05, this one. Every
+  other session, including the 2026-09-04 one, lives under
+  `C--repos-SHIELD080326-SHIELD080306main`. The mistake is confined to one day.
+- Every `cwd` recorded in the 2026-09-04 transcript is
+  `C:\repos\SHIELD080326\SHIELD080306main` or a subdirectory of it.
+- That session dispatched `subagent_type: adversarial-reviewer` exactly **three**
+  times, matching the three passes; all three `.meta.json` files record
+  `"agentType":"adversarial-reviewer"`, `"model":"opus"`, `spawnDepth 1`.
+- Each pass was instructed to re-read its own definition from disk, and the
+  subagent transcripts show it happening: **3 reads** of
+  `.claude\agents\adversarial-reviewer.md` and 5 of `CLAUDE.md`, at the correct
+  absolute paths.
+
+So the PR body may cite those five findings as a real audit. This is the second
+instance of "an agent that isn't there doesn't say so, it just answers" — the
+first was `attack-dev` dispatched from a branch that lacked its definition. The
+cheap standing guard is the one used above: have the agent read its own
+definition from disk and report any disagreement, so absence leaves a trace.
+
+### Do not create `wip/zt-2026-09-04`
+
+That name predates the date roll and nothing exists at it. `origin/wip/
+zt-2026-09-05` at `67142b3` already carries `e0efdba`, `d176115` and `67142b3`;
+`fix/zt-targets-and-spend-floor` is untouched at `3f9164f`. The remote is at
+**49 branches** with the 40-branch cleanup unstarted — a second ref at the same
+commits is one more thing to reason about, not insurance.
+
 ### Verified state at end of this session
 
     git log --oneline -1                              d176115
@@ -61,6 +127,8 @@ in `SHIELD080306main/.claude/agents/`, and Claude Code only loads them when that
 directory is the working directory. The same applies to `CLAUDE.md` and every
 `.claude/commands/` slash command. If the agent list does not contain
 `adversarial-reviewer`, you are in the wrong directory; nothing else will fix it.
+This affected the 2026-09-05 session only — the three adversarial passes ran
+from the correct cwd, verified above.
 
 **The adversarial reviewer** (`.claude/agents/adversarial-reviewer.md`, opus,
 Read/Grep/Glob only) is a subagent, not a process — there is nothing to "start"
