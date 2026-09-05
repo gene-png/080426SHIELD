@@ -69,6 +69,42 @@ The general rule this produces: **a verification command must be able to fail.**
 Before trusting a clean result, ask what a dirty one would have looked like and
 confirm the command could have produced it.
 
+### The `main` bypass is documented, and it is worse than "unchecked"
+
+Both docs-only pushes to `main` this session printed `Bypassed rule violations`
+— "Changes must be made through a pull request" and "7 of 7 required status
+checks are expected". That **confirms the documented posture rather than
+revealing a gap**, so it is a decision for Gene, not a defect to fix:
+
+- `docs/security.md:207` — branch protection has `enforce_admins: false`, so
+  both developers can merge past every CI gate.
+- `DELIVERY_PLAN.md:1078-1085` — the precise statement, under "Branch
+  protection: configured 2026-08-20, verified 2026-08-21" (`:1054`). Required
+  checks bind *a non-admin merging via a pull request*, and this repo has no
+  such person today.
+- `DECISIONS.md:2768-2771` — the same correction, recorded as an overstatement
+  an adversarial pass caught.
+
+**The line worth deciding from:** a direct push to `main` produces **no
+"Adversarial audit recorded" check run at all** — the commit is *invisible* to
+the audit gate, not merely unchecked by it. There is nothing red to notice and
+nothing to require. Measured, not cited:
+
+    grep -n -A8 '^on:' .github/workflows/audit-gate.yml
+    on:
+      pull_request:
+        branches: [main]
+        types: [opened, synchronize, reopened, edited]
+
+No `push:` trigger. Fine for a handoff file. Not fine for anything else — **and
+the keystrokes are identical**, which is the whole risk.
+
+*(Citation drift, flagged in passing and in the spirit of the section above:
+`DELIVERY_PLAN.md:645` and `:980` were offered for this and land on #46/#115 and
+#84/W1 Risk respectively. The claim was right; the line numbers had moved. A
+citation that resolves to real prose about something else reads as verified —
+same shape, cheapest possible check.)*
+
 ### The cwd question, settled: the three adversarial passes are clean
 
 The 2026-09-05 session ran from the parent directory and therefore had no
