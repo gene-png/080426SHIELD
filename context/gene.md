@@ -1,6 +1,137 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — 2026-09-04 (end of session)
+## PICK UP HERE — 2026-09-05 (end of session)
+
+**Supersedes the 2026-09-04 section below.** That section is still accurate on
+what the branch contains and why; it is WRONG on one instruction — see the
+correction immediately below, which is the first thing to read.
+
+### Correction: `/tmp/w.exit` is stale. Do not read it.
+
+The 2026-09-04 session closed by telling Gene to read the result with `cat
+/tmp/w.exit` and treat `exit 0` as the outstanding gate cleared. (The file's
+2026-09-04 section itself only gives the launch and dot-count commands, so this
+correction is about that closing instruction, not about text below.) Doing that
+today reports a **false green**. Measured this session:
+
+    docker compose exec -T api sh -lc 'ls -la --time-style=full-iso /tmp/w.exit /tmp/w.log'
+    -rw-r--r-- ... 2026-09-05 15:19:01 +0000 /tmp/w.exit     <- contains "0"
+    -rw-r--r-- ... 2026-09-05 15:48:39 +0000 /tmp/w.log      <- written LATER
+
+The exit file was written **29 minutes before the log stopped growing**, so it
+cannot be that run's exit code. And the run it claims to summarise did not
+finish: the log ends mid-line at `[ 98%]` with 7025 dots and **no pytest summary
+line at all** —
+
+    docker compose exec -T api sh -lc 'grep -nE "passed|failed|error" /tmp/w.log'   # no output
+
+The containers read `Up 8 minutes` at 20:14 UTC while the log had been untouched
+since 15:48, so the `exec -d` process was killed by a container stop (host sleep
+or Docker Desktop restart) roughly 53 tests from the end. `/tmp` survives a
+container stop; the process does not.
+
+**So: the full unit suite is STILL the outstanding gate. It has still never
+completed green on the final tree.** Nothing about the 2026-09-04 evidence
+changed — it is still strong, still composite, still not a single green run.
+
+**Delete the stale artifacts before restarting, so this cannot be misread
+again:**
+
+    docker compose exec -T api sh -lc 'rm -f /tmp/w.exit /tmp/w.log /tmp/w.start'
+
+### Verified state at end of this session
+
+    git log --oneline -1                              d176115
+    git status --porcelain                            (clean)
+    git rev-list --left-right --count origin/main...HEAD   0  4
+    git rev-parse --short origin/fix/zt-targets-and-spend-floor   3f9164f
+    git branch --show-current                         fix/zt-targets-and-spend-floor
+    docker compose ps                                 api/db/keycloak/minio/redis healthy, web up
+
+Four commits above `origin/main`, clean tree, **still not pushed**; the remote
+branch is still pre-rebase at `3f9164f`, so the push still needs
+`--force-with-lease`.
+
+### Start Playwright and the adversarial reviewer
+
+**Run Claude Code from inside `SHIELD080306main/`, not from its parent.** This
+session ran from `C:\repos\SHIELD080326`, and as a result **the
+`adversarial-reviewer` subagent was not available at all** — project agents live
+in `SHIELD080306main/.claude/agents/`, and Claude Code only loads them when that
+directory is the working directory. The same applies to `CLAUDE.md` and every
+`.claude/commands/` slash command. If the agent list does not contain
+`adversarial-reviewer`, you are in the wrong directory; nothing else will fix it.
+
+**The adversarial reviewer** (`.claude/agents/adversarial-reviewer.md`, opus,
+Read/Grep/Glob only) is a subagent, not a process — there is nothing to "start"
+in advance. Invoke it with the Agent tool, `subagent_type:
+adversarial-reviewer`, once per thing under audit. Run it on the PR before
+opening it and again after any substantive change; never substitute a
+self-audit. When the work under review is itself a set of verdicts (as it is
+here — three passes and a test-suite claim), point it at the **verdicts and the
+method**, not the code. Note `/audit` is a different thing: a security/dependency
+sweep, not this.
+
+**Playwright** exists here in two unrelated forms; be explicit about which one
+you mean.
+
+1. *The Playwright MCP browser tools* (`mcp__playwright__*`) are registered and
+   available as deferred tools — load them with ToolSearch before calling. They
+   drive an ad-hoc browser; they are not the test suite.
+2. *The e2e suite* (`e2e/`, `@playwright/test`, chromium only, `workers: 1`,
+   serialized against one seeded DB) runs **on the host, not in a container**,
+   against the composed stack. `e2e/README.md` is canonical. First run on a
+   fresh box needs `cd e2e && npm ci && npx playwright install --with-deps
+   chromium`. With the stack already healthy (it is), just:
+
+       export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"
+       cd e2e && npx playwright test
+
+   Docker's CLI is not on Git Bash's PATH by default; that export is required in
+   every shell (#191 is that this failure is unhelpful). A full run is ~43 min.
+   If the DB has been mutated, do the full `down -v` bring-up in `e2e/README.md`
+   instead — it destroys local demo data on purpose.
+
+   The last e2e verdict still stands and does not need re-running for this
+   branch: `exit 1`, 77 passed / 3 failed / 12 skipped, all three failures
+   attributed (load flake, #196, #187).
+
+### Do these in order, next session
+
+1. `cd` into `SHIELD080306main` and start Claude Code there. Confirm
+   `adversarial-reviewer` is in the agent list before relying on it.
+2. Delete the stale `/tmp/w.*` (command above), then restart the full unit suite
+   detached — step 1 of the 2026-09-04 section, unchanged. ~1 hour.
+3. While it runs: judge it ONLY by whether the dot count is growing. The
+   container has no `ps` or `pgrep`, so any process count reads 0 and means
+   nothing. `docker compose restart api` is the reliable way to stop a run.
+4. **Push before anything else long-running.** `d176115` still exists in exactly
+   one place and carries three adversarial passes, the regression fix, the third
+   writer and the fixture corrections. A safe non-moving backup that overwrites
+   nothing and does not touch the gated branch tip:
+
+       git push origin HEAD:wip/zt-2026-09-04
+
+5. When the suite lands: confirm the log's **summary line** exists and the exit
+   file's mtime is **after** the log's last write, then read the code. Only then
+   is the gate cleared.
+6. Then `git push --force-with-lease` and open the PR with the Adversarial audit
+   block and `Auto-close-approved: 125, 126` — 2026-09-04 section, step 2.
+
+### Still open, unchanged
+
+#124 (the immediate next branch) is unstarted. #188–#196 are filed and none
+blocks this branch; #189 and #192 are worth doing soon, #196 is the one that
+costs somebody an afternoon of misattribution if left.
+
+Two known limits recorded here rather than in `CLAUDE.md`: the sign-in canary
+does not detect every kind of box degradation (it read 0.56s while the suite ran
+40% slow), and `CLAUDE.md`'s unit-suite timing is stale by more than an order of
+magnitude.
+
+---
+
+## Superseded — 2026-09-04 (end of session)
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every number
 below carries the command that produced it, or says it was not derived.
