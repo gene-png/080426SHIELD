@@ -33,7 +33,7 @@ when a different issue closes. Durable half keeps, volatile half goes. Every
 blocker belongs to an item in `DELIVERY_PLAN.md` — a property this list did NOT
 have on 2026-08-26, when four were orphaned. By item:
 
-- **7** — `#178` (`#131` closes with `fix/attack-approved-snapshot-wins`) ·
+- **7** — `#178` ·
   **9** — `#114 #115 #46 #109 #124 #125 #126` ·
   **6** — `#121 #122 #132` · **8** — `#123`
 - **11 (new)** — `#152 #153`, the redaction leaks item 10 filed rather than
