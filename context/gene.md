@@ -1,5 +1,93 @@
 # Gene's Context: 080426SHIELD
 
+## PICK UP HERE — 2026-09-06 (attack-dev, Track A: #131)
+
+**Supersedes the 2026-09-05 section below on what is in flight. It does NOT
+supersede that section's lessons** — the exit-file trap it records was applied
+this session and caught nothing, because the markers were fresh; see below.
+
+### What shipped
+
+`fix/attack-approved-snapshot-wins`, branched off `origin/main` at `f10955c`.
+**#131 only.** The approved D-053 snapshot's vendor and spelling now win the
+capability merge in `_client_capability_membership`; recorded as **D-064**.
+
+`#178` was NOT touched. The DISCARDED predicate it turns on is in the same
+function and is byte-identical to `origin/main`.
+
+### The stale instruction in the agent definition, since it will mislead again
+
+`.claude/agents/attack-dev.md` frontmatter still says the agent works on
+`feat/attack-ai-inputs-provenance`, "which already has a failing test", and its
+"Where you work" section says **do not cut a new branch**. That branch is
+**merged** — `gh pr list --state all --json number,headRefName,state` shows PR
+**#180 MERGED** on that head, and `git show
+origin/main:apps/api/tests/unit/test_attack_ai_inputs.py` returns 458 lines. The
+definition also still contains a `cd C:/repos/SHIELD080326/wt-attack` command,
+a worktree #172 withdrew. Following either instruction resumes merged work in a
+tree that does not exist.
+
+### The full unit suite DID complete this time, and here is how that was known
+
+The 2026-09-05 section is right that `test -f` on a marker proves existence and
+not freshness. Applied here:
+
+    docker compose exec -T api sh -lc 'ls -la --time-style=full-iso /tmp/unit131.exit /tmp/unit131.log'
+    ...12:33:02 ... /tmp/unit131.exit     <- contains "0"
+    ...12:32:47 ... /tmp/unit131.log      <- stopped growing FIRST
+
+The exit file is 15 seconds NEWER than the log, which is the opposite of the
+2026-09-05 incident, and the log ends at `[100%]`. Markers were `rm -f`'d before
+launch.
+
+**One thing from that incident reproduced exactly and is worth writing down: a
+`-q --no-header` run redirected to a file emits NO pytest summary line**, even
+on a clean completion. So "no `passed`/`failed` line in the log" is NOT evidence
+that a run died — it is normal for this invocation. The 2026-09-05 diagnosis
+still holds on its own evidence (the mtimes and the `[ 98%]` tail), but the
+missing-summary observation is not part of that evidence and should not be
+carried forward as a symptom.
+
+**Timing, since the file records 3 min / 13–16 min and neither matched.** The
+run took roughly 45 minutes wall-clock, and it is heavily front-loaded: the
+DB-fixture files crawl (8% at the 25-minute mark) and the rest goes in minutes.
+An extrapolation from the early rate predicts about eight hours and is wrong by
+an order of magnitude. Do not act on a partial-progress estimate for this suite.
+
+### Where it stopped
+
+**PR #206** — https://github.com/gene-png/080426SHIELD/pull/206, opened against
+`main` from `fix/attack-approved-snapshot-wins` at `0ee5eb6`.
+`gh pr view 206 --json closingIssuesReferences` names issue 131, so the close is
+confirmed from the API rather than from the guard's own message.
+
+The number is written here in the commit AFTER `gh pr create` returned, never
+before. An earlier draft of this section asserted "PR opened, not merged" while
+nothing had been pushed; the adversarial reviewer caught it, and it is the exact
+shape `CLAUDE.md` records under "a status word carries its output" — every OTHER
+PR number in this section was present and only this branch's own was missing.
+
+Not merged, and not mine to merge. #131 changes deliverable content, so it trips
+merge-rule condition 6 by definition, and condition 5 on `apps/api/tests/**`.
+**It comes to Gene.**
+
+**The file contention happened, and it resolved this way.** PR **#199**
+(`docs/plan-reconciliation`) merged while the unit suite was running — `main`
+moved from `f10955c` to `350b973` mid-run. The rebase conflicted in
+`DELIVERY_PLAN.md` and `CONTEXT.md`; both were resolved in **#199's** favour with
+only the `#131` clause re-applied on top, because #199's row is the newer
+derivation and it independently corrects the stale "PART 2 IN PROGRESS" status
+this session had also fixed. `git diff 287e877 HEAD --stat -- apps/` is empty
+across that rebase, so the green suite still describes the shipping code.
+
+**The item-7 estimate was deliberately NOT re-derived.** #199 sized item 7 as
+#131's 0.75-1.25 plus #178's 1-1.75. #131 is now spent, so the honest remaining
+figure is 1-1.75 — but `check_plan_totals.py` ties the item rows to the headline
+total, and `grep -n "12–18" DELIVERY_PLAN.md` returns live claims mixed with a
+historical record of how that total has moved. Telling those apart is a sizing
+judgement, not a status update. The spent share is recorded at the item row and
+at the decomposition; the total is Gene's to move.
+
 ## PICK UP HERE — 2026-09-05 (end of session)
 
 **Supersedes the 2026-09-04 section below.** That section is still accurate on

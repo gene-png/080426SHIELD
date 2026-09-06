@@ -97,14 +97,27 @@ def _admin(c: TestClient) -> dict:
     return {"Authorization": f"Bearer {r.json()['tokens']['access_token']}"}
 
 
-def _list_with_items(c: TestClient, h: dict, names: list[str]) -> tuple[str, list[str]]:
-    """A Tech Debt service + capability list carrying `names`, all in security scope."""
+def _list_with_items(
+    c: TestClient,
+    h: dict,
+    names: list[str],
+    vendors: list[str | None] | None = None,
+) -> tuple[str, list[str]]:
+    """A Tech Debt service + DRAFT capability list carrying `names`, all in security scope.
+
+    `vendors` is positional against `names` when given. It exists for #131: the
+    vendor column is half of what the D-053 snapshot freezes, so a test about
+    which list a vendor may come from cannot be written without it.
+    """
     from app.models.capability import CapabilityItem, CapabilityList
     from app.models.service import Service, ServiceKind
 
     svc_id = c.post(
         "/tech-debt/services", headers=h, json={"kind": "tech_debt", "title": "TD"}
     ).json()["id"]
+
+    vendor_of = list(vendors) if vendors is not None else [None] * len(names)
+    assert len(vendor_of) == len(names), "vendors must line up with names"
 
     eng = create_engine(os.environ["DATABASE_URL"], future=True)
     with sessionmaker(bind=eng, future=True)() as s:
@@ -114,8 +127,10 @@ def _list_with_items(c: TestClient, h: dict, names: list[str]) -> tuple[str, lis
         s.add(cap_list)
         s.flush()
         item_ids = []
-        for n in names:
-            it = CapabilityItem(capability_list_id=cap_list.id, name=n, security_related=True)
+        for n, v in zip(names, vendor_of, strict=True):
+            it = CapabilityItem(
+                capability_list_id=cap_list.id, name=n, vendor=v, security_related=True
+            )
             s.add(it)
             s.flush()
             item_ids.append(str(it.id))
@@ -137,6 +152,37 @@ def _membership(list_id: str) -> list | None:
     eng = create_engine(os.environ["DATABASE_URL"], future=True)
     with sessionmaker(bind=eng, future=True)() as s:
         return s.get(CapabilityList, uuid.UUID(list_id)).approved_membership
+
+
+def _candidates(c: TestClient) -> list:
+    """Name, vendor and description, from the function the egress path calls.
+
+    `_allow_list` projects the VENDOR away, so it cannot see the vendor half of
+    #131 at all — and it reaches the membership through `_client_tool_names`,
+    which has no production caller, so an assertion made there is one hop off the
+    path that reaches the model.
+
+    `build_attack_ai_request` calls `_client_capability_inputs` and builds its
+    `Candidate` list inline from the result. This calls that same function, so
+    what these tests assert on is what `_capability_payload` egresses.
+    """
+    from app.db.session import get_db
+    from app.routes.attack import _client_capability_inputs
+
+    gen = c.app.dependency_overrides[get_db]()
+    db = next(gen)
+    try:
+        return _client_capability_inputs(db, uuid.UUID(c.client_id))  # type: ignore[attr-defined]
+    finally:
+        gen.close()
+
+
+def _as_candidates(inputs: list) -> list:
+    """The inline projection `build_attack_ai_request` performs on its way to the
+    resolver. Two fields, copied here because production copies them there."""
+    from app.attack.citations import Candidate
+
+    return [Candidate(name=x.name, vendor=x.vendor) for x in inputs]
 
 
 def _allow_list(c: TestClient) -> list[str]:
@@ -459,3 +505,244 @@ def test_an_empty_snapshot_is_not_the_same_as_no_snapshot(app_client) -> None:
         json={"security_functions": ["prevent"]},
     )
     assert _allow_list(c) == [], "an empty snapshot fell back to live rows"
+
+
+# --- #131: the snapshot's own fields must win the merge ---------------------
+#
+# D-053 froze MEMBERSHIP, and `_client_capability_membership`'s docstring states
+# the vendor is part of it: "a vendor edited after approval would move the
+# allow-list exactly the way a name edit does". The dedupe block that merges two
+# lists did not honour that. It took a vendor from ANY contributing list, and a
+# client's non-DISCARDED DRAFT lists contribute — so an unapproved, freely
+# editable row could donate a vendor to an approved snapshot, and could win the
+# spelling contest against it.
+#
+# Both scenarios reach a client. The vendor decides what the resolver will
+# resolve a vendor-shaped citation to; the surviving spelling is what
+# `_capability_payload` sends, what `Resolution.name` returns, what
+# `_validate_tools` writes into `row.detection_tools`, and therefore what
+# appears in the ATT&CK deliverable.
+
+
+@pytest.mark.unit
+def test_a_draft_list_cannot_donate_a_vendor_to_an_approved_snapshot(app_client) -> None:
+    """#131 scenario A. The substitution D-053 exists to prevent.
+
+    Approved snapshot: `Umbrella`, no vendor. An open DRAFT on a second list
+    carries the same tool WITH `vendor="Cisco"`. The merge used to adopt that
+    vendor, so `_by_vendor["cisco"]` resolved to `Umbrella` and the citation was
+    applied. Without the draft edit that citation was `rejected_unknown` — a
+    consultant editing an unapproved list had changed what may be cited against
+    an approved one.
+    """
+    from app.attack.citations import CitationResolver
+
+    c = app_client
+    h = _admin(c)
+    approved_id, _ = _list_with_items(c, h, ["Umbrella"])
+    assert (
+        c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h).status_code == 200
+    )
+    _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])  # DRAFT, freely editable
+
+    assert [(x.name, x.vendor) for x in _candidates(c)] == [
+        ("Umbrella", None)
+    ], "an unapproved draft's vendor entered the approved snapshot's row"
+
+    # And the consequence, at the surface that consumes it: citing the donated
+    # vendor must still resolve to nothing.
+    cited = CitationResolver(_as_candidates(_candidates(c))).resolve("Cisco")
+    assert (cited.name, cited.rejected_reason) == (
+        None,
+        "unknown",
+    ), "a draft's vendor made a citation resolvable against an approved list"
+
+
+@pytest.mark.unit
+def test_a_donated_vendor_does_not_switch_off_another_tools_incomplete_vendor_flag(
+    app_client,
+) -> None:
+    """#131 scenario A's secondary effect — a defect-1 guard silently disarmed.
+
+    `CitationResolver._vendorless` holds the candidates with no vendor recorded.
+    While one of those is on the list, ANY vendor-shaped resolution is
+    unverifiable — the blank vendor could itself have been the cited string —
+    so it comes back `INCOMPLETE_VENDOR_DATA` rather than confirmed.
+
+    Adopting a draft's vendor removes the candidate from that set, so an
+    unaudited edit to an unapproved list stops a DIFFERENT tool's citation being
+    flagged. This asserts the flag on `CrowdStrike`, whose own row is untouched
+    by the edit under test.
+    """
+    from app.attack.citations import CitationResolver, ReviewReason
+
+    c = app_client
+    h = _admin(c)
+    approved_id, _ = _list_with_items(
+        c, h, ["Umbrella", "CrowdStrike Falcon"], vendors=[None, "CrowdStrike"]
+    )
+    assert (
+        c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h).status_code == 200
+    )
+    _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])
+
+    cited = CitationResolver(_as_candidates(_candidates(c))).resolve("CrowdStrike")
+    assert cited.name == "CrowdStrike Falcon"
+    assert cited.review_reason == ReviewReason.INCOMPLETE_VENDOR_DATA, (
+        "a vendor donated by a draft emptied `_vendorless`, so a vendor-shaped "
+        "citation the resolver cannot verify came back unflagged"
+    )
+
+
+@pytest.mark.unit
+def test_the_approved_snapshots_spelling_wins_over_a_drafts(app_client) -> None:
+    """#131 scenario B, and the "cosmetic" half of that framing is wrong.
+
+    Two lists can hold `Splunk Enterprise` and `SPLUNK ENTERPRISE` — one
+    extracted from an all-caps table. They dedupe to one candidate, and the
+    winner used to be the lexicographically smallest exact string, which puts
+    every ASCII-uppercase spelling ahead of its title-case twin. That string is
+    what reaches the client's ATT&CK deliverable, so an approved list losing the
+    contest to an editable draft crosses the same boundary as scenario A.
+    """
+    c = app_client
+    h = _admin(c)
+    approved_id, _ = _list_with_items(c, h, ["Splunk Enterprise"])
+    assert (
+        c.post(f"/tech-debt/capability-lists/{approved_id}/approve", headers=h).status_code == 200
+    )
+    _list_with_items(c, h, ["SPLUNK ENTERPRISE"])  # DRAFT, all-caps extraction
+
+    assert [x.name for x in _candidates(c)] == [
+        "Splunk Enterprise"
+    ], "the spelling that reaches the deliverable came from an unapproved draft"
+
+
+@pytest.mark.unit
+def test_one_approved_snapshot_may_still_complete_anothers_vendor(app_client) -> None:
+    """The other direction, and the reason the fix is a preference and not a lock.
+
+    A client can hold the same tool on two APPROVED lists, one of which recorded
+    a vendor. That donation is between two audited sources and is exactly what
+    the merge is for. Deleting the vendor-upgrade branch outright would satisfy
+    both tests above and break this one.
+    """
+    c = app_client
+    h = _admin(c)
+    first, _ = _list_with_items(c, h, ["Umbrella"])
+    second, _ = _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])
+    for list_id in (first, second):
+        assert (
+            c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200
+        )
+
+    assert [(x.name, x.vendor) for x in _candidates(c)] == [
+        ("Umbrella", "Cisco")
+    ], "an approved list's recorded vendor was refused by the snapshot preference"
+
+
+@pytest.mark.unit
+def test_two_draft_lists_still_complete_each_others_vendors(app_client) -> None:
+    """No snapshot is involved, so there is no frozen membership to protect.
+
+    Both lists read live and both are equally editable; refusing the merge here
+    would make a vendor-shaped citation unverifiable for no reason. Guards
+    against gating the upgrade on "the donor is a snapshot" alone.
+    """
+    c = app_client
+    h = _admin(c)
+    _list_with_items(c, h, ["Umbrella"])
+    _list_with_items(c, h, ["Umbrella"], vendors=["Cisco"])
+
+    assert [(x.name, x.vendor) for x in _candidates(c)] == [
+        ("Umbrella", "Cisco")
+    ], "two drafts stopped completing each other, which #131 did not ask for"
+
+
+def _list_with_fixed_item(
+    c: TestClient, h: dict, *, item_id: uuid.UUID, name: str, vendor: str, category: str
+) -> str:
+    """A Tech Debt service + DRAFT list holding ONE item with a chosen id.
+
+    The id has to be chosen rather than generated: the tiebreak under test IS
+    the id ordering, and a random UUID would decide the assertion.
+    """
+    from app.models.capability import CapabilityItem, CapabilityList
+    from app.models.service import Service
+
+    svc_id = c.post(
+        "/tech-debt/services", headers=h, json={"kind": "tech_debt", "title": "TD"}
+    ).json()["id"]
+
+    eng = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=eng, future=True)() as s:
+        svc = s.get(Service, uuid.UUID(svc_id))
+        cap_list = CapabilityList(service_id=svc.id, version=1)
+        s.add(cap_list)
+        s.flush()
+        s.add(
+            CapabilityItem(
+                id=item_id,
+                capability_list_id=cap_list.id,
+                name=name,
+                vendor=vendor,
+                category=category,
+                security_related=True,
+            )
+        )
+        s.commit()
+        return str(cap_list.id)
+
+
+@pytest.mark.unit
+def test_two_identical_rows_resolve_by_item_id_and_not_by_query_order(app_client) -> None:
+    """PRE-EXISTING (#103), narrowed by #131's sort and closed by its last element.
+
+    The comment above the dedupe has claimed since #103 that "the winner is
+    deterministic ... the query has no ORDER BY". The key did not deliver that.
+    Two rows agreeing on name AND vendor — one client holding the same tool on
+    two lists, the case the whole block exists for — tied on every element and
+    fell through to the order of `pairs`, which comes from an unordered query.
+
+    That is not cosmetic either. The winner's `item_id` is what
+    `live_by_id` is looked up with, so it decides the `category` and
+    `security_functions` that EGRESS to the model — the same tool described one
+    way or another way between two runs over unchanged data.
+
+    The lower id here belongs to the list inserted SECOND, so query order and id
+    order disagree and the assertion can tell them apart.
+
+    **That dependence is on the RED, not on the green.** Without the tiebreak the
+    winner is whichever row the unordered query returns first, and this test can
+    only go red while SQLite returns these two lists in insertion order — which
+    it is not obliged to do. Verified red on revert on 2026-09-06; if a future
+    query plan changes, this passes for free and nothing says so. With the
+    tiebreak the assertion does not depend on query order at all, which is the
+    whole point of it.
+    """
+    c = app_client
+    h = _admin(c)
+    first = _list_with_fixed_item(
+        c,
+        h,
+        item_id=uuid.UUID("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+        name="Umbrella",
+        vendor="Cisco",
+        category="from the list inserted first",
+    )
+    second = _list_with_fixed_item(
+        c,
+        h,
+        item_id=uuid.UUID("00000000-0000-4000-8000-000000000000"),
+        name="Umbrella",
+        vendor="Cisco",
+        category="from the list inserted second",
+    )
+    for list_id in (first, second):
+        assert (
+            c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200
+        )
+
+    assert [(x.name, x.category) for x in _candidates(c)] == [
+        ("Umbrella", "from the list inserted second")
+    ], "the description that egresses was decided by query order, not by the sort"

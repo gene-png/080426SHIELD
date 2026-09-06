@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Annotated, Any
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select, update
@@ -617,6 +617,112 @@ def _client_capability_inputs(db: Session, client_id: uuid.UUID) -> list[Capabil
     return _client_capability_membership(db, client_id).inputs()
 
 
+class _MergeCandidate(NamedTuple):
+    """One contributing row on its way into the dedupe below.
+
+    `from_snapshot` records which BRANCH below produced the row, set where that
+    branch is chosen rather than re-derived at the merge (#131).
+
+    Re-deriving it from `cap_list.status` would be wrong outright: a list
+    APPROVED before migration 0043 has no recorded membership and reads LIVE, so
+    its status says "approved" for a row that is not frozen. Re-deriving it from
+    `approved_membership is not None` would give the right answer and be a
+    second statement of a rule the branch below already applied -- correct until
+    somebody edits one of them. Neither is needed. The branch knows; the branch
+    says.
+    """
+
+    name: str
+    vendor: str | None
+    item_id: str | None
+    cap_list: CapabilityList
+    from_snapshot: bool
+
+
+def _merge_order(p: _MergeCandidate) -> tuple[bool, str, str, str]:
+    """Snapshot rows first, then the pre-existing order, then a total tiebreak.
+
+    The dedupe below keeps the first row it sees for a casefold key, so this
+    decides the surviving spelling — and that string is what
+    `_capability_payload` egresses, what `Resolution.name` returns, and what
+    reaches the client's ATT&CK deliverable. Ordering by the exact name alone put
+    every ASCII-uppercase spelling ahead of its title-case twin, so
+    `SPLUNK ENTERPRISE` from an editable draft beat `Splunk Enterprise` from the
+    approved snapshot (#131 scenario B).
+
+    **`from_snapshot` leads GLOBALLY and the dedupe key deliberately does not
+    appear here at all.** Grouping by the key first would be redundant: for a
+    stable sort, the first row reaching any key K is the minimum of the remaining
+    elements over the rows having K, with or without K leading. Worse than
+    redundant — a leading key that drifted out of step with the dedupe key would
+    REORDER within a group and silently reopen scenario B, which is the one thing
+    it looks like it is there to prevent. There is nothing to keep in step if it
+    is not written.
+
+    **`item_id` is last so the order is total over every snapshot this repo has
+    written**, which the comment at the loop has claimed since #103 and the key
+    did not deliver. Without it, two rows agreeing on name and vendor — one
+    client holding the same tool on two lists, the case this whole block exists
+    for — fall through to the order of `pairs`,
+    which comes from a query with no `ORDER BY`. The winner's `item_id` decides
+    the `category` and `security_functions` that EGRESS, and its list decides the
+    provenance the ai-inputs panel shows, so "arbitrary" there means the model is
+    told a different thing about the same tool between two runs of unchanged
+    data.
+
+    Totality is a property of the WRITER, not of this key, and the `or ""` is
+    written for the case where it fails: live rows carry a UUID primary key, and
+    snapshot rows carry whatever the JSON holds — `build_approved_membership`
+    records `str(i.id)` per item, so every snapshot this repo has written has
+    one. A snapshot entry with no `item_id` ties completely and falls back to the
+    order of `pairs`, which is the pre-#103 behaviour rather than a regression.
+    `str()` because that JSON is not type-checked here: a non-string would
+    otherwise raise `TypeError` inside `sorted` and pre-empt the named error the
+    validation loop below raises on purpose.
+    """
+    return (
+        not p.from_snapshot,
+        p.name or "",
+        p.vendor or "",
+        str(p.item_id or ""),
+    )
+
+
+def _may_donate_vendor(held: _MergeCandidate, donor: _MergeCandidate) -> bool:
+    """May `donor`'s vendor complete the vendor-less row already held? (#131 A)
+
+    D-053 froze MEMBERSHIP, and `_client_capability_membership`'s docstring
+    states the vendor is half of it: "a vendor edited after approval would move
+    the allow-list exactly the way a name edit does". The merge took a vendor
+    from ANY contributing list, and a client's non-DISCARDED DRAFT lists
+    contribute — so an unapproved, freely editable row could donate one to an
+    approved snapshot. `_by_vendor` then resolved a citation that was
+    `rejected_unknown` without the edit, and the donated vendor also removed the
+    row from `CitationResolver._vendorless`, silently disarming every OTHER
+    tool's `INCOMPLETE_VENDOR_DATA` flag.
+
+    A PREFERENCE, not a lock, for the reason D-053 itself is not a lock: two
+    approved lists completing each other is exactly what the merge is for, and
+    two drafts have no frozen membership to protect. Only the live-donates-to-
+    snapshot direction crosses a boundary.
+
+    Stated over BOTH operands, and deliberately not as the shorter
+    `return donor.from_snapshot` — "only an approved source may donate". That is
+    a different function, not a simplification of this one: it also refuses the
+    draft-to-draft donation, which #131 did not ask about and which the
+    vendor-less-duplicate reasoning above still wants. It would pass both of the
+    tests written for the scenarios here and fail
+    `test_two_draft_lists_still_complete_each_others_vendors`, which is why that
+    test exists.
+
+    The remaining combination — held live, donor snapshot — is allowed here and
+    is unreachable today, because `_merge_order` seeds a snapshot row first
+    wherever one exists for the key. It is answered on its merits rather than
+    left to that guarantee, so this stays correct if the sort ever changes.
+    """
+    return donor.from_snapshot or not held.from_snapshot
+
+
 def _client_capability_membership(db: Session, client_id: uuid.UUID) -> CapabilityMembership:
     """Security capabilities from the client's Tech Debt capability list(s).
 
@@ -627,7 +733,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     ATT&CK maps the client's security tooling to techniques; the canonical
     source is the Tech Debt capability list (Work Order D2).
 
-    Two filters, both load-bearing:
+    The filters, every one load-bearing:
 
     * **Security scope.** Tech Debt covers the whole software portfolio since
       migration 0038, so the raw list now includes payroll and CRM. Only rows in
@@ -702,8 +808,10 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         live_by_list[item.capability_list_id].append(item)
         live_by_id[str(item.id)] = item
 
-    # (name, vendor, item_id, list) — `item_id` is present for snapshot rows and
-    # is what makes the descriptive lookup below possible.
+    # `_MergeCandidate(name, vendor, item_id, cap_list, from_snapshot)` —
+    # `item_id` is present for snapshot rows and is what makes the descriptive
+    # lookup below possible; `from_snapshot` is set by whichever branch produces
+    # the row and decides the merge (#131, D-064).
     #
     # **`name`/`vendor` come from the SNAPSHOT; `category`/`security_functions`
     # are read LIVE.** That is not a compromise, it is the distinction D-053 is
@@ -714,7 +822,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     # frozen. `category` and `security_functions` describe a tool that is ALREADY
     # citable; a consultant re-classifying one after approval should reach the
     # next run rather than waiting for a re-approval that may never come.
-    pairs: list[tuple[str, str | None, str | None, CapabilityList]] = []
+    pairs: list[_MergeCandidate] = []
     dropped: list[WithheldCapability] = []
 
     for cap_list in lists:
@@ -734,7 +842,11 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         if cap_list.approved_membership is None:
             for item in live_by_list[cap_list.id]:
                 if in_security_scope(item):
-                    pairs.append((item.name, item.vendor, str(item.id), cap_list))
+                    pairs.append(
+                        _MergeCandidate(
+                            item.name, item.vendor, str(item.id), cap_list, from_snapshot=False
+                        )
+                    )
                 else:
                     dropped.append(
                         WithheldCapability(
@@ -763,7 +875,13 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
                 # that as UNKNOWN rather than as "no vendor" is the cautious
                 # direction: the resolver flags a vendor-shaped match it cannot
                 # verify instead of resolving it confidently.
-                (entry_name, entry.get("vendor"), entry.get("item_id"), cap_list)
+                _MergeCandidate(
+                    entry_name,
+                    entry.get("vendor"),
+                    entry.get("item_id"),
+                    cap_list,
+                    from_snapshot=True,
+                )
             )
 
         # A live row absent from the snapshot. Matched on NAME ONLY, and
@@ -818,49 +936,53 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     # Sorted so the winner is deterministic. The query has no ORDER BY, and
     # picking by row order meant the same inputs could resolve differently
     # between runs when two lists disagreed about a vendor.
-    by_key: dict[str, tuple[str, str | None, str | None, CapabilityList]] = {}
-    for name, vendor, item_id, cap_list in sorted(pairs, key=lambda p: (p[0] or "", p[1] or "")):
-        clean = (name or "").strip()
+    by_key: dict[str, _MergeCandidate] = {}
+    for cand in sorted(pairs, key=_merge_order):
+        clean = (cand.name or "").strip()
         if not clean:
             continue
         key = clean.casefold()
-        clean_vendor = (vendor or "").strip() or None
-        if key not in by_key:
-            by_key[key] = (clean, clean_vendor, item_id, cap_list)
-        elif by_key[key][1] is None and clean_vendor is not None:
+        clean_vendor = (cand.vendor or "").strip() or None
+        held = by_key.get(key)
+        if held is None:
+            by_key[key] = cand._replace(name=clean, vendor=clean_vendor)
+        elif held.vendor is None and clean_vendor is not None and _may_donate_vendor(held, cand):
             # Prefer a spelling that carries a vendor — a vendor-less duplicate
             # would make every vendor-shaped citation unverifiable for no reason.
             #
             # The winner's LIST is deliberately not moved with the vendor, so a
             # capability whose vendor was adopted from a second list is reported
             # under the first list's version and document. That provenance is
-            # mixed, and it is pre-existing: the line already took the second
+            # mixed, and it is pre-existing: the line already takes the second
             # list's `item_id` the same way, which decides `category` and
-            # `security_functions` too. Left exactly as it stands here because
-            # rewriting this branch changes which vendor reaches the client
-            # deliverable — tracked in #131, and not this change's business.
-            by_key[key] = (by_key[key][0], clean_vendor, by_key[key][2] or item_id, by_key[key][3])
+            # `security_functions` too. The `or` is a defensive no-op rather
+            # than a narrow live case: D-053 records the snapshot shape as
+            # `[{item_id, name}]` from its first version — W2 added `vendor`,
+            # not `item_id` — and migration 0043 backfills nothing, so every
+            # snapshot entry this codebase has written carries one. Nothing
+            # reachable loses a description by gating this branch.
+            by_key[key] = held._replace(vendor=clean_vendor, item_id=held.item_id or cand.item_id)
 
-    winners = sorted(by_key.values(), key=lambda w: (w[0], w[1] or "", w[2] or ""))
+    winners = sorted(by_key.values(), key=lambda w: (w.name, w.vendor or "", w.item_id or ""))
 
     # The snapshot stores `item_id` as a string (`str(i.id)` in the writer) and
     # the column is a UUID, so a stored value that is not a UUID is a bug in a
     # writer, not user input — it is raised with the offending entry named
     # rather than skipped, because skipping it would silently drop the
     # description and read as "this tool has no classification".
-    for name, _vendor, item_id, _cap_list in winners:
-        if not item_id:
+    for winner in winners:
+        if not winner.item_id:
             continue
         try:
-            uuid.UUID(str(item_id))
+            uuid.UUID(str(winner.item_id))
         except ValueError as exc:
             raise ValueError(
-                f"capability {name!r} carries an unusable approved-membership "
-                f"item_id: {item_id!r}"
+                f"capability {winner.name!r} carries an unusable approved-membership "
+                f"item_id: {winner.item_id!r}"
             ) from exc
 
     sent: list[CapabilityProvenance] = []
-    for name, vendor, item_id, cap_list in winners:
+    for name, vendor, item_id, cap_list, _from_snapshot in winners:
         # The descriptive half. Deliberately NOT re-filtered through the scope
         # rule: membership was already decided above, and re-filtering here
         # would drop the enrichment for exactly the row the confirm queue moved
@@ -892,7 +1014,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     # allow-list is the union of them, so reporting the second copy as withheld
     # would tell a consultant the model cannot cite a tool it can. That is the
     # defect `_unapproved_contributing_names` was withdrawn for.
-    survivors = {w[0].casefold() for w in winners}
+    survivors = {w.name.casefold() for w in winners}
     withheld: dict[str, WithheldCapability] = {}
     for drop in sorted(dropped, key=lambda d: (d.name or "", d.list_version, d.reason)):
         key = (drop.name or "").strip().casefold()
