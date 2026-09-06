@@ -21,7 +21,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from scripts.check_gate_fixtures import _EXTRA_GATES, DEFERRED, discover_gates, load_cases, main
 
 # CI runs `pytest -m unit tests/unit`. WITHOUT this marker every test in this
