@@ -230,9 +230,12 @@ class CsfDashboardResponse(BaseModel):
 
     functions: list[CsfFunctionDashboard]
     # Ranked, and TRUNCATED. `total_gap_count` above is the real total, and the
-    # UI must show it: #75 is open because the ZT exporter renders a 20-item
-    # slice with the true count nowhere on the page, so a client reads 20 of 37
-    # remediation items with no statement that anything was omitted.
+    # UI must show it: #75 was filed because the ZT exporter rendered a 20-item
+    # slice with the true count nowhere on the page, so a client read 20 of 37
+    # remediation items with no statement that anything was omitted. #75 is
+    # CLOSED (PR #86, D-049) — the requirement on this field is unchanged, but
+    # the reason is a precedent now, not a live defect. An earlier draft said
+    # "is open", which sends the next reader to fix something already fixed.
     top_gaps: list[CsfGapDashboard]
 
 
@@ -240,6 +243,25 @@ class ZtDashboardResponse(BaseModel):
     """Release-gated client-facing Zero Trust maturity dashboard payload (D-035).
 
     Deterministic current-vs-target maturity from the ZT scoring engine — no LLM.
+
+    TARGET STAGE comes from the client's intake choice, not from the
+    per-capability targets alone. That is #124, and it is #79's symptom in the
+    surface the client actually looks at: this endpoint used to derive the
+    target purely from per-row `target_stage` values, which only Run-AI and the
+    client's self-assessment ever write. A consultant-scored assessment leaves
+    every one of them NULL, so the target rolled up to None, every pillar's gap
+    computed as 0.0, and the client read "Target maturity: Unscored · +0 points
+    to target" beside a released PDF from the same assessment saying "37 gap(s)
+    at target S4". "+0 points to target" is not a wrong-LOOKING number — it
+    reads as good news, which is why this shipped unnoticed.
+
+    `target_stage_source` states which target was used, so a fallback is never
+    mistaken for a decision. It carries FOUR values, not the CSF twin's two,
+    because `zt/scoring.py::resolve_target_stage` distinguishes "the client
+    chose nothing" from "the client's choice could not be used" — and the
+    latter is answerable by re-asking them, so flattening the two would throw
+    away the more actionable fact. See `targetNote` in `lib/dashboards/zt.ts`,
+    which renders all four.
     """
 
     service_id: uuid.UUID
@@ -256,6 +278,36 @@ class ZtDashboardResponse(BaseModel):
     current_pct: float | None
     target_label: str
     target_pct: float | None
+
+    # The engagement-level target the gaps were computed against, and where it
+    # came from: "client" | "default" | "client_out_of_range" |
+    # "client_unparseable". Never silently conflated — see the docstring.
+    target_stage: int
+    target_stage_source: str
+
+    # How many capabilities the engagement stage above actually decided, i.e.
+    # carried no usable per-capability override. ZT differs from CSF here: CSF
+    # has no per-function targets, so its tier describes its percentage
+    # exactly, while a fully AI-scored ZT assessment can override every
+    # capability and leave the engagement stage deciding nothing. Without this,
+    # the UI cannot tell whether "your target, chosen at intake" describes the
+    # number beside it — which is #124's own defect facing the other way.
+    engagement_target_capability_count: int
+
+    # The real total: every gap the engine found, not a rendered subset. The ZT
+    # dashboard shows no truncated gap list today, and this is in the payload
+    # before one is added rather than after — #75 was exactly that omission in
+    # the ZT exporter (fixed, PR #86, D-049, and `_gap_plan_caption` now states
+    # the true total in all three renderers).
+    #
+    # NOT guaranteed equal to the released document's count, and an earlier
+    # draft of this comment said "matching the deliverable's". Both are
+    # computed by the same engine from the same approved answers, so they agree
+    # for a given target — but the deliverable is frozen at finalize while this
+    # is resolved per request from `ServiceRequest.zt_target_stage`, which
+    # `submit_self_assessment` can still write afterwards. Tracked in #209.
+    total_gap_count: int
+
     largest_gap_pillar: str | None
     largest_gap_pct: float
     pillars: list[ZtPillarDashboard]

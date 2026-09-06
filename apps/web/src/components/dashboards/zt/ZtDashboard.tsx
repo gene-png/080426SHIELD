@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboards/shared";
 import {
   pillarsByGap,
+  targetNote,
   type ZtDashboardData,
   type ZtPillar,
 } from "@/lib/dashboards/zt";
@@ -95,6 +96,14 @@ function MaturityBar({ pillar }: { pillar: ZtPillar }): JSX.Element {
           marginTop: 4,
         }}
       >
+        {/* CISA's four stage labels, hardcoded — and WRONG for a DoD
+            engagement, whose ladder is Not Started / Target / Advanced. The
+            bar and marker are positioned from `*_pct`, which `_maturity_pct`
+            already normalises against the framework's own level count, so the
+            geometry is right and only this legend lies. Filed as #208 and
+            deliberately not fixed here: #124 is about which target the
+            dashboard uses, not how the scale under it is drawn. Marked so the
+            next reader can tell a filed defect from an oversight. */}
         <span>Traditional</span>
         <span>Initial</span>
         <span>Advanced</span>
@@ -128,13 +137,39 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
         <KpiCard
           label="Target maturity"
           value={`${data.target_label} · ${pctText(data.target_pct)}`}
-          sub="12–18 month goal"
+          /* An assumed target is labelled as one, and a target the client
+             chose but that could not be used says so rather than reading as a
+             target nobody asked for. #124 shipped this card as "Unscored · —"
+             beside a released PDF listing gaps at the stage the client had
+             contracted for. */
+          sub={targetNote(data)}
           accent={C.green}
         />
         <KpiCard
-          label="Largest gap"
-          value={data.largest_gap_pillar ?? "—"}
-          sub={`+${Math.round(data.largest_gap_pct)} points to target`}
+          label="Gaps to close"
+          /* Computed by the same engine, against the same approved answers and
+             the same resolved engagement target, as the released document's
+             gap list — so the two agree for a given target instead of telling
+             opposite stories, which is #124.
+
+             NOT an unconditional equality claim, and an earlier draft of this
+             comment made one. The document is frozen at finalize while this is
+             recomputed per request from `ServiceRequest.zt_target_stage`, and
+             `submit_self_assessment` in `routes/zt.py` writes that field — so
+             a client submitting a self-assessment on a LATER draft moves this
+             number while the released PDF keeps the old one. Answers cannot
+             drift (`patch_answer` 409s once APPROVED), so the target is the
+             only moving part. Pre-existing behaviour, shared with the value
+             card and the CSF dashboard; whether it needs disclosing is a
+             product call, tracked in #209. */
+          value={String(data.total_gap_count)}
+          sub={
+            data.largest_gap_pillar
+              ? `Largest: ${data.largest_gap_pillar} · +${Math.round(
+                  data.largest_gap_pct,
+                )} points`
+              : "Across all pillars"
+          }
           accent={C.amber}
         />
       </KpiRow>

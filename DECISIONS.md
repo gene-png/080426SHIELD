@@ -3618,3 +3618,85 @@ dedupe key would reorder within a group and silently reopen the spelling defect,
 which is the one thing it looks like it is there to prevent. Found by the
 adversarial reviewer, and the wrong justification had already been written into
 a docstring as a requirement.
+
+## D-070
+
+**The per-capability ZT target rule is ONE function, shared by the gap engine
+and the client dashboard, rather than two copies of one predicate.**
+2026-09-06, with #124.
+
+`analyze_gaps` resolved "which target applies to this capability" in an inner
+closure, `_target_for`: use the stored per-capability target if it is a usable
+int, otherwise the engagement stage. Being a closure, nothing outside
+`analyze_gaps` could ask the question, so `zt_dashboard` — which needs the same
+answer to roll a target percentage up per pillar — could only get it by writing
+the test again.
+
+It did not even do that. It rolled up the raw per-capability map, and since only
+Run-AI and the client's self-assessment ever write those rows, a
+consultant-scored engagement rolled up nothing: `target_pct` None, every pillar
+"Unscored", every gap 0.0, beside a released PDF listing 37 gaps at the stage the
+client had contracted for (#124).
+
+**The fix is an extraction, not a second implementation**, and that is the whole
+decision. `effective_target_stages` returns the complete map; the predicate under
+it, `capability_target_override`, is called by both that map and by
+`engagement_target_capability_count`, so the number and the count cannot disagree
+about any capability. `analyze_gaps` now consumes the same function it used to
+contain.
+
+**Why an extraction rather than a copy, stated because a copy was the cheaper
+diff.** #84 is on record as `risk.py` re-deriving a gap comparison inline instead
+of calling `analyze_gaps`, and a COMPLETE call-site sweep reporting clean over
+it — a reimplementation shares the symptom and never the symbol. A second copy
+here would have been the same defect in the same subsystem, one function apart,
+with the client dashboard and the client's PDF as the two surfaces free to drift.
+`CLAUDE.md`'s "prefer a derivation over a synchronization" is the general form:
+the two consumers cannot be out of sync because there is nothing to keep in sync.
+
+**Verified behaviour-preserving by running, not by reading** — the ZT and
+export suites all pass, and no gap count moved:
+
+    <!-- counted: docker compose exec -T api sh -lc "cd /app && python -m
+         pytest tests/unit/test_zt_dashboard.py tests/unit/test_zt_exporters.py
+         tests/unit/test_zt_routes.py tests/unit/test_zt_acceptance.py
+         tests/unit/test_zt_target_stage_provenance.py
+         tests/unit/test_export_targets.py tests/unit/test_csf_dashboard.py"
+         -> 116 passed, 2026-09-06 -->
+
+"Pass" is about the RESULTS, not the files: `test_zt_dashboard.py` was itself
+edited on this branch. `GapAnalysis` / `ScoreResult` / `Gap` /
+`PillarScoreResult` gain no field, so the shape `zt/exporters.py` reads is
+untouched — which merge-rule condition 6 reserves.
+
+**Two known exemptions are carried over deliberately and asserted rather than
+described.** An out-of-range per-capability target still falls back silently
+(#188), and `isinstance(True, int)` still takes a stored bool at its int value
+(#189). Improving either in passing would have moved a client-facing gap count
+inside a change whose claim is that it moves none.
+
+**Those assertions pin the PREDICATE'S CONTRACT. They are not tripwires for
+#188 or #189, and a draft of this record said they were** — which would have
+been a guarantee of protection that does not exist, in an append-only log.
+Caught by the adversarial reviewer, and worth recording because the false
+version is the more natural thing to write: #189's fix is a validator on
+`ZtAnswerPatch.target_stage` at the SCHEMA, which does not change what
+`capability_target_override` returns for a bool, and #188's documented fix is a
+counter on `GapAnalysis`, which leaves the map value identical. Both tests stay
+green through both fixes. Each now states what would actually make it red.
+
+The general shape, since this repo keeps producing it: **a test that pins
+today's behaviour is not thereby a notification that the behaviour changed.**
+It fires only if the fix lands at the layer the test calls, and an exemption's
+fix usually lands somewhere else — which is what makes the claim feel true
+while being false.
+
+**One thing was NOT carried over: the range check on the engagement target.**
+The first draft delegated it to `analyze_gaps` on the reasonable-sounding grounds
+that refusing twice puts the refusal in two places. That was wrong in the
+direction that matters. `zt_dashboard` calls `effective_target_stages` BEFORE
+`analyze_gaps`, and an unresolved stage there produces a map of out-of-range
+values that `compute` silently discards as unscored — reproducing #124 exactly,
+inside the helper written to end it. The protection was real and lived in a
+different call in a different file, which is this repo's recorded shape for a
+gate whose correctness sits in somebody else's line. It now raises for itself.

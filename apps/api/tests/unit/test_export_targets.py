@@ -388,8 +388,13 @@ def test_zt_home_card_agrees_with_the_released_report_on_the_target(app_client) 
     everything scored at 3 reads "0 gaps" on the card and 37 in the report they
     were sent — #79's exact symptom, in the service #73 was filed against.
 
-    There is no ZT client dashboard gap count to compare against (it publishes
-    none), so the released document is the other surface.
+    The released document is the other surface compared here. `#124` since gave
+    `ZtDashboardResponse` a `total_gap_count`, so a THIRD surface now exists and
+    the card/dashboard/document triangle its CSF twin checks is checkable for ZT
+    too -- see `test_csf_export_and_home_card_agree_with_the_dashboard_on_the_
+    target`. Not extended here because `_zt_gap_total` still computes the card's
+    figure without carrying the target's provenance (#207), so the two ends of
+    that triangle are not yet comparable on the thing that matters.
     """
     c = app_client
     admin = _register(c, "admin@example.com")

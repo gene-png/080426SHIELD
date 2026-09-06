@@ -1,6 +1,86 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — 2026-09-06 (attack-dev, Track A: #131)
+## PICK UP HERE — 2026-09-06 (Track C, #124)
+
+**Maintained by the agent since D-063; Gene owns it by review.** Every claim
+about state outside the working tree carries the command that produced it.
+
+### The one-line state
+
+**#124 is implemented on `fix/zt-dashboard-engagement-target`, cut fresh from
+`origin/main` at `350b973`.** It comes back to you: it changes client dashboard
+numbers (merge-rule condition 6) and touches `apps/api/tests/**` and
+`app/zt/scoring.py` (condition 5). **Do not expect me to have merged it.**
+
+### What shipped in it
+
+The ZT client dashboard ignored the engagement target — `zt_dashboard` rolled up
+per-capability `target_stage` rows only, which only Run-AI and the client's
+self-assessment ever write. A consultant-scored assessment left every one NULL,
+so the client read "Target maturity: Unscored · +0 points to target" beside a
+released PDF saying "37 gap(s) at target S4".
+
+It now resolves through the existing `resolve_target_stage` (PR #197's, reused
+rather than re-derived) and carries `target_stage`, `target_stage_source`,
+`total_gap_count` and `engagement_target_capability_count`. The per-capability
+target rule that lived as a closure inside `analyze_gaps` is extracted to
+`effective_target_stages` / `capability_target_override`, so the dashboard and
+the gap engine apply ONE rule rather than two copies — #84's shape, which a
+call-site sweep cannot see.
+
+`DECISIONS.md` gained **D-070** for that extraction.
+
+**The reserved D-number ranges were exercised for real, and they worked.** This
+branch rebased onto `aba398f` (Track A's #206, merged 15:34 UTC) and
+`DECISIONS.md` conflicted at exactly the append point: Track A had taken D-064,
+I had taken D-070. Resolution was "keep both, in order" and took one edit.
+Without the ranges both tracks would have written D-064 and the rebase would
+have kept two blocks under one number — a file that looks fine and is wrong.
+
+**One thing I reverted because of that rebase, and it is worth your eye.** I had
+re-derived the plan's headline total from 12–18 to 11.25–17, on the reasoning
+that #124 shipping removes it from item 9's remaining set. Track A had recorded
+the opposite posture for #131 hours earlier in the same document — *"moving any
+item moves the headline total, and that is a sizing decision rather than a
+status update"* — and this file now says plainly that the total is yours to
+move. So I reverted it and recorded #124's spent share at the item row and the
+decomposition instead, matching Track A. `check_plan_totals.py` passes either
+way, which is the point: only the prose distinguishes them, and two agents
+landing the same day would otherwise have set two precedents.
+
+### What I did NOT do, deliberately
+
+- **`_zt_gap_total` and `_csf_gap_total` still discard the target's
+  provenance.** Filed as **#207**. The value card sums across services and
+  there is no honest single source for a mixed set; both twins are left
+  together on purpose, and the exemption is stated in the code.
+- **#114 not started, not folded in.** It earns its own branch.
+- The stale `mvp-blocking` mapping in `CONTEXT.md` (**#201**) is untouched — I
+  read the issue set live from `gh` rather than from that list.
+
+### Filed rather than fixed, all found by the adversarial reviewer
+
+- **#209** — a released dashboard recomputes against `ServiceRequest.zt_target_stage`,
+  which `submit_self_assessment` still writes after release, so a later
+  self-assessment can move a released dashboard's gap count away from the PDF.
+  Pre-existing and shared with the value card and the CSF dashboard.
+- **#208** — the ZT bar axis prints CISA's four stage labels under a DoD
+  engagement, whose ladder is `Not Started / Target / Advanced`.
+
+### The reviewer earned its cost on this one
+
+It found a **surviving mutant** the suite could not see: every test seeded a
+state where `total_gap_count` and `engagement_target_capability_count`
+coincided, so wiring the response field to the wrong one passed everything. One
+assertion in the fully-overridden test kills it, and I verified the kill by
+applying the mutation. It also found `targetNote` swallowing
+`client_out_of_range` whenever every per-row target happened to be set — the one
+state a consultant can act on, dropped by the function written to keep those
+states apart.
+
+### Superseded — 2026-09-05 (end of session)
+
+## 2026-09-06 — Track A (attack-dev): #131, MERGED as PR #206 (`aba398f`)
 
 **Supersedes the 2026-09-05 section below on what is in flight. It does NOT
 supersede that section's lessons** — the exit-file trap it records was applied
@@ -88,13 +168,13 @@ historical record of how that total has moved. Telling those apart is a sizing
 judgement, not a status update. The spent share is recorded at the item row and
 at the decomposition; the total is Gene's to move.
 
-## PICK UP HERE — 2026-09-05 (end of session)
+## Superseded — 2026-09-05 (end of session)
 
 **Supersedes the 2026-09-04 section below.** That section is still accurate on
 what the branch contains and why; it is WRONG on one instruction — see the
 correction immediately below, which is the first thing to read.
 
-### Correction: `/tmp/w.exit` is stale. Do not read it.
+#### [2026-09-05, superseded] Correction: `/tmp/w.exit` is stale. Do not read it.
 
 The 2026-09-04 session closed by telling Gene to read the result with `cat
 /tmp/w.exit` and treat `exit 0` as the outstanding gate cleared. (The file's
@@ -127,7 +207,7 @@ again:**
 
     docker compose exec -T api sh -lc 'rm -f /tmp/w.exit /tmp/w.log /tmp/w.start'
 
-### Instructions that fail by looking like success — the running record
+#### [2026-09-05, superseded] Instructions that fail by looking like success — the running record
 
 Three this session, all the same shape: the check runs, returns something that
 reads as a clean pass, and the pass is an artifact of the check rather than a
@@ -157,7 +237,7 @@ The general rule this produces: **a verification command must be able to fail.**
 Before trusting a clean result, ask what a dirty one would have looked like and
 confirm the command could have produced it.
 
-### The `main` bypass is documented, and it is worse than "unchecked"
+#### [2026-09-05, superseded] The `main` bypass is documented, and it is worse than "unchecked"
 
 Both docs-only pushes to `main` this session printed `Bypassed rule violations`
 — "Changes must be made through a pull request" and "7 of 7 required status
@@ -209,7 +289,7 @@ Neither of us was careless. **A line number is a property of a tree, not of a
 document**, and we were reading two trees. That is why the rule below is
 mechanical.)*
 
-### Citing and checking: the mechanical rule
+#### [2026-09-05, superseded] Citing and checking: the mechanical rule
 
 Prose did not hold this — both of us broke it the day after writing it down. So:
 
@@ -232,7 +312,7 @@ Prose did not hold this — both of us broke it the day after writing it down. S
    measurement has no line number to drift.**
 
 
-### The cwd question, settled: the three adversarial passes are clean
+#### [2026-09-05, superseded] The cwd question, settled: the three adversarial passes are clean
 
 The 2026-09-05 session ran from the parent directory and therefore had no
 `adversarial-reviewer`, no `CLAUDE.md` and no slash commands. The obvious
@@ -260,7 +340,7 @@ first was `attack-dev` dispatched from a branch that lacked its definition. The
 cheap standing guard is the one used above: have the agent read its own
 definition from disk and report any disagreement, so absence leaves a trace.
 
-### Do not create `wip/zt-2026-09-04`
+#### [2026-09-05, superseded] Do not create `wip/zt-2026-09-04`
 
 That name predates the date roll and nothing exists at it. `origin/wip/
 zt-2026-09-05` at `67142b3` already carries `e0efdba`, `d176115` and `67142b3`;
@@ -268,7 +348,7 @@ zt-2026-09-05` at `67142b3` already carries `e0efdba`, `d176115` and `67142b3`;
 **49 branches** with the 40-branch cleanup unstarted — a second ref at the same
 commits is one more thing to reason about, not insurance.
 
-### Verified state at end of this session
+#### [2026-09-05, superseded] Verified state at end of this session
 
     git log --oneline -1                              d176115
     git status --porcelain                            (clean)
@@ -281,7 +361,7 @@ Four commits above `origin/main`, clean tree, **still not pushed**; the remote
 branch is still pre-rebase at `3f9164f`, so the push still needs
 `--force-with-lease`.
 
-### Start Playwright and the adversarial reviewer
+#### [2026-09-05, superseded] Start Playwright and the adversarial reviewer
 
 **Run Claude Code from inside `SHIELD080306main/`, not from its parent.** This
 session ran from `C:\repos\SHIELD080326`, and as a result **the
@@ -327,7 +407,7 @@ you mean.
    branch: `exit 1`, 77 passed / 3 failed / 12 skipped, all three failures
    attributed (load flake, #196, #187).
 
-### Do these in order, next session
+#### [2026-09-05, superseded] Do these in order, next session
 
 1. `cd` into `SHIELD080306main` and start Claude Code there. Confirm
    `adversarial-reviewer` is in the agent list before relying on it.
@@ -349,7 +429,7 @@ you mean.
 6. Then `git push --force-with-lease` and open the PR with the Adversarial audit
    block and `Auto-close-approved: 125, 126` — 2026-09-04 section, step 2.
 
-### Still open, unchanged
+#### [2026-09-05, superseded] Still open, unchanged
 
 #124 (the immediate next branch) is unstarted. #188–#196 are filed and none
 blocks this branch; #189 and #192 are worth doing soon, #196 is the one that

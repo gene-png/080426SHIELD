@@ -45,13 +45,25 @@ In flight: `#165` closes with the prettier-pin PR. `#159` loses the label — it
 is developer tooling and does not meet "the MVP cannot ship while this is open",
 the definition now written into `DELIVERY_PLAN.md`.
 
-`#125` and `#126` close with Track C's first PR. **`#124` does NOT ship with
-them**, which departs from the "must land together" instruction in
-`DELIVERY_PLAN.md`; the deviation and its reason are recorded there beside that
-instruction, in `#143`'s form, and `#124` is the immediate next branch. The
-short version: the `#125` engine fix, landed alone, introduced a silent
+`#125` and `#126` closed with Track C's first PR (`#197`, merged 2026-09-05).
+**`#124` deliberately did NOT ship with them**, which departed from the "must
+land together" instruction in `DELIVERY_PLAN.md`; the deviation and its reason
+are recorded there beside that instruction, in `#143`'s form. The short
+version: the `#125` engine fix, landed alone, introduced a silent
 client-visible regression that a full green backend suite could not see, and a
 branch shown to do that is one to narrow rather than widen.
+
+**`#124` then shipped on its own branch, `fix/zt-dashboard-engagement-target`,
+as the immediate next one** — so the deviation's stated cost is paid rather
+than outstanding. The ZT client dashboard now resolves the engagement target
+through `resolve_target_stage` and carries `target_stage_source`, and the
+per-capability rule `analyze_gaps` applies is extracted so the dashboard and
+the deliverable cannot disagree about a target. What the review found in the new
+code is filed rather than fixed there: `#209` (a released dashboard recomputes
+against a target that stays writable after release), `#208` (the ZT bar axis
+prints CISA's four stage labels under a DoD engagement) and `#207` (the
+value-summary card reports ZT and CSF gap totals without saying which target
+they were computed against).
 
 That PR also carries fixes the review found rather than the issues named —
 notably that the Tech Debt exporter still called a floor a "Total" while the new
