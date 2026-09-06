@@ -1134,6 +1134,33 @@ Rules of the road:
   review reaches it: the defect lives in the relationship between a compose file
   and a directory, not in either one.
 
+- **While any agent holds the shared tree, the ORCHESTRATING SESSION changes
+  nothing that agent's work or its gates depend on.** That sentence is the rule;
+  everything below is examples and NOT the set. "Agents take turns in one tree"
+  above, and the agent definitions' "only one runs at a time", bind the agents and
+  the gates
+  -- not the session driving them, which has no definition of its own to carry a
+  rule.
+
+  The dependency set is wider than the checkout, and each category below already
+  has an incident in this file: tracked files and the index; **untracked and
+  ignored** files (the root `.env` decides `SHIELD_LLM_MODE`;
+  `.claude/sprint-queue.json` is loop state); shared refs and the object store --
+  `git stash drop`, `git branch -D`, `git tag -d` and `git gc --prune=now` write
+  no tracked file and are the destructive ones, and `refs/stash` is shared by
+  every linked worktree (`git -C <wt> rev-parse --git-path refs/stash` resolves
+  into the main `.git`); and **the single Docker stack** every containerised gate
+  attaches to. Creating a ref nothing else reads is fine; deleting or renumbering
+  one is not.
+
+  **A worktree at another path is not an exemption, and "host-side" is not the
+  test.** Host-run Playwright e2e issues no `docker compose exec` and still drives
+  the shared containers on `:3000` -- which is why a second stack was withdrawn
+  above. The test is whether the work needs anything from the shared stack or the
+  shared refs: a prose edit gated by prettier and the `check_*` scripts does not,
+  e2e does. A worktree cut from an old branch also carries a stale `CLAUDE.md`.
+  Tracked in #203.
+
 - **Two rules for reading a result, and they are one instinct against two
   failure modes.**
 
@@ -1623,6 +1650,30 @@ Rules of the road:
   whole adversarial review, produced within an hour of running the checklist
   that names `git stash list`. The checklist was not wrong; it fires at the
   wrong time.
+- **Archive a stash before dropping it -- salvage is a race, not a plan.**
+  `git stash drop` frees the reflog slot and prints the commit's SHA; the commit
+  itself stays in the object store until pruned -- `git gc --prune=now`
+  immediately, a plain `gc` once past `gc.pruneExpire` (default two weeks).
+  `git fsck --unreachable | grep commit` is git's documented recovery and works
+  even when the SHA was not kept, but it races an unknown `gc`, returns unlabelled
+  commits, and `git stash clear` prints no SHA at all. So archive first, and select
+  **by SHA, never by index** -- an index names a different entry the moment
+  anything else drops:
+
+      sha=$(git rev-parse "stash@{<n>}")
+      git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
+      git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
+
+  Check what the name already resolves to: this repo's archives carry a branch AND
+  a `-tag`-suffixed tag per stash because the bare name was taken. **Discharge any
+  decision-hold on dropping by regenerating the content FROM the archived ref
+  after the drop** -- a ref
+  existing proves a ref was written; a reproduced diffstat proves the content
+  survived. **Drop highest-numbered first**, because dropping `stash@{0}`
+  renumbers every higher-numbered entry. Assert the SHA immediately before each
+  drop -- and do none of this **while an agent holds the shared tree**: the drop
+  deletes a ref and renumbers every entry under it. See the orchestrating-session
+  rule above.
 - **Branch + PR for anything that changes behaviour or states a rule. Two
   exceptions go direct to `main`, and they are exceptions because practice
   already worked this way.**
