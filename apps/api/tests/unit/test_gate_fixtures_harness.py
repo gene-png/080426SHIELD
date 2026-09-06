@@ -16,10 +16,23 @@ a branch.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
-from scripts.check_gate_fixtures import DEFERRED, discover_gates, load_cases, main
+import pytest
+
+from scripts.check_gate_fixtures import _EXTRA_GATES, DEFERRED, discover_gates, load_cases, main
+
+# CI runs `pytest -m unit tests/unit`. WITHOUT this marker every test in this
+# file is DESELECTED, and the suite reports the same "7111 passed" as `main`
+# while running none of them -- which is exactly what the first CI run on this
+# branch did: +12 deselected, +0 passed, and the aggregate looked clean because
+# the pass count had not moved. A test suite going green over tests that never
+# executed is the shape this whole PR is about, produced in the PR's own
+# evidence. Module-level rather than 12 decorators so it cannot be forgotten on
+# test 13.
+pytestmark = pytest.mark.unit
 
 _PASSING_PLAN = """### Total remaining: 12-18 sessions across the FOUR SIZED items
 
@@ -58,8 +71,17 @@ def _root(tmp_path: Path) -> Path:
     real_scripts = Path(__file__).resolve().parents[2] / "scripts"
     link = tmp_path / "apps" / "api" / "scripts"
     link.mkdir(parents=True, exist_ok=True)
-    for src in real_scripts.glob("check_*.py"):
-        (link / src.name).write_bytes(src.read_bytes())
+    # Copy EVERY gate the harness discovers, not just `check_*.py`. An earlier
+    # version copied only the glob, so `leave_row_oracle.py` and
+    # `mutation_sweep.py` were absent, DEFERRED named two gates that did not
+    # exist in the fake tree, and `main` correctly returned 2 -- its stale-
+    # exemption branch -- where these tests expect 1. The harness was right and
+    # the helper was wrong, which is only visible now that these tests run at all.
+    names = {p.name for p in real_scripts.glob("check_*.py")} | set(_EXTRA_GATES)
+    for name in names:
+        src = real_scripts / name
+        if src.is_file():
+            (link / name).write_bytes(src.read_bytes())
     return root
 
 
@@ -92,32 +114,51 @@ def test_case_without_an_incident_is_rejected(tmp_path: Path) -> None:
     assert main(["x", str(root)]) == 2
 
 
-def test_no_negative_control_fails(tmp_path: Path) -> None:
+# The four tests below assert the exit code AND the specific message.
+#
+# Asserting the code alone does not discriminate, and that was not a theory: a
+# landed mutation disabling the negative-control requirement entirely
+# (`if False:`) left every one of them GREEN. In a temp root every other gate is
+# uncovered, so `main` returns 1 from "no fixtures and not in DEFERRED" no matter
+# what the test broke -- each test passed on a cause it was not testing. That is
+# the surviving-mutant shape this PR exists to catch, produced inside the PR's
+# own evidence, and found only by proving the mutation had landed before reading
+# the result.
+
+
+def test_no_negative_control_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Fixtures that only ever pass prove the gate RUNS, not that it discriminates.
 
-    This is the whole reason the harness exists, so it is the assertion that
-    must not be allowed to rot.
+    This is the whole reason the harness exists, so it is the assertion that must
+    not be allowed to rot.
     """
     root = _root(tmp_path)
     _case(root / "check_plan_totals" / "only-passing", expect=0, adversarial=True)
     assert main(["x", str(root)]) == 1
+    assert "NO NEGATIVE CONTROL" in capsys.readouterr().out
 
 
-def test_no_adversarial_case_fails(tmp_path: Path) -> None:
+def test_no_adversarial_case_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = _root(tmp_path)
     _case(root / "check_plan_totals" / "passing", expect=0)
     _case(root / "check_plan_totals" / "failing", expect=2)
     assert main(["x", str(root)]) == 1
+    assert "no case marked adversarial" in capsys.readouterr().out
 
 
-def test_wrong_exit_code_is_reported(tmp_path: Path) -> None:
+def test_wrong_exit_code_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = _root(tmp_path)
     _case(root / "check_plan_totals" / "passing", expect=0)
     _case(root / "check_plan_totals" / "mislabelled", expect=1, adversarial=True)
     assert main(["x", str(root)]) == 1
+    out = capsys.readouterr().out
+    assert "expected exit 1, got 0" in out
+    assert "mislabelled" in out
 
 
-def test_uncovered_gate_is_not_silently_skipped(tmp_path: Path) -> None:
+def test_uncovered_gate_is_not_silently_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Silence must not be how coverage shrinks.
 
     A gate with neither fixtures nor a DEFERRED reason fails, so adding a gate
@@ -126,9 +167,8 @@ def test_uncovered_gate_is_not_silently_skipped(tmp_path: Path) -> None:
     root = _root(tmp_path)
     _case(root / "check_plan_totals" / "passing", expect=0)
     _case(root / "check_plan_totals" / "failing", expect=2, adversarial=True)
-    # Every other real gate is uncovered here; the deferred ones are excused and
-    # the rest must be reported.
     assert main(["x", str(root)]) == 1
+    assert "no fixtures and not in DEFERRED" in capsys.readouterr().out
 
 
 def test_deferred_entries_all_name_a_real_gate(tmp_path: Path) -> None:
@@ -158,7 +198,17 @@ def test_universe_equals_the_other_gate_enumeration() -> None:
 
     Asserting equality is cheaper than either list noticing the other has grown.
     """
-    from test_gate_crash_exit_code import GATES
+    # Loaded by PATH, not by name: `tests/unit` is not guaranteed on sys.path,
+    # and a bare import made this test fail with ModuleNotFoundError -- which
+    # would have read as "the enumerations diverged" rather than "the import
+    # broke". A test whose failure names the wrong cause is its own defect.
+    spec = importlib.util.spec_from_file_location(
+        "_gate_crash_exit_code", Path(__file__).with_name("test_gate_crash_exit_code.py")
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    GATES = module.GATES
 
     scripts = Path(__file__).resolve().parents[2] / "scripts"
     mine = set(discover_gates(scripts))
