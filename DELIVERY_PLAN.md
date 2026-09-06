@@ -128,6 +128,23 @@ not by writing the rule.
 | 8 — W6 Risk export/publish split | 1–1.5 |
 | **Total** | **12–18** |
 
+**12–18 IS A FLOOR, AND THE LOW END IS NOT THE PLAN.** Most items that have
+landed came in at **2–3x** their estimate <!-- counted: historical --> (the ratio table records
+1.5–4x, with the largest item at the low end). Correcting a single estimate
+does not change the fact that estimates in this document run low; it removes one
+known error from a figure that still has that bias in it. 7b coming in under is
+one point against that band, not a reversal of it. **Read 12–18 as "not less
+than 12", never as "about 12".**
+
+**Governance runs ALONGSIDE this total, and is not inside it.** Keeping it
+outside the sized items is right for attribution and wrong for forecasting, so
+both halves are stated: Track C carried **631 insertions** of `CLAUDE.md`, the
+reviewer brief, `context/gene.md` and `CONTEXT.md` — real days, not overhead
+that happened between sessions. Every branch this week carried a comparable
+load. A schedule quoted as "12–18 sessions" with that excluded answers a
+question nobody asked; budget governance beside it at the rate the branches
+actually show, and re-measure it rather than assuming it decays.
+
 **Items 11 and 12 are NOT in that table and NOT in that total, on purpose.**
 Both are sized **on start**, so the total above covers four of the six remaining
 items and says so rather than implying otherwise. They are excluded from the
@@ -581,6 +598,14 @@ come in UNDER its estimate, and worth naming as such rather than quietly banking
 it — the ratio table above records 1.5–4x overruns, and one data point the other
 way does not move that band.
 
+**RULE, not just this row's justification: the DIFF is the mapping, never
+`closingIssuesReferences`.** A PR that bundles governance with a feature has a
+title and a closing reference **describing different halves of it**. Mapping
+issues to items through the closing reference therefore files the feature under
+the wrong item — silently, because the reference is real and resolves to a real
+issue. Read `git show --stat <merge>` and map from what changed. Measured
+instance below.
+
 **A correction to the row's own citation.** #180 closes **#108**, which is a
 governance issue about the audit gate's source contradicting itself — not item 7
 work. The PR bundled an `audit-gate.yml` and `CLAUDE.md` fix alongside the
@@ -643,8 +668,18 @@ code 13 files / 624 insertions; tests 11 files / 1242; e2e harness and
 roughly twice the code**, and that ratio predicts the remaining five better than
 any code count — one observation, not a rate.
 
-**Corrected rate: 0.75–1.0 per issue.** The five remaining from the original
-seven — #114, #115, #46, #109, #124 — therefore carry **3.75–5.0**.
+**Corrected rate: 0.75–1.0 per issue — DERIVED FROM A SMALL SAMPLE, NOT
+MEASURED.** The five remaining from the original seven — #114, #115, #46, #109,
+#124 — therefore carry **3.75–5.0**.
+
+**The caveat is load-bearing and belongs beside the number.** That rate is a
+sample of two projected onto five, and the five are not exchangeable with the <!-- counted: historical -->
+two: **#114 alone is eight call sites across four dashboards with one root
+cause**, which is a different shape of work from #125's and #126's per-service
+fixes. This is the same error as building an ETA from a rate sampled inside a
+DB-heavy stretch of the test suite — a window that is not representative of the
+run. Treat 3.75–5.0 as the best available derivation and expect #114 to move it;
+re-derive when #114 lands rather than carrying this figure forward.
 
 ### Item 9, correction 2 of 2 — the fold
 
