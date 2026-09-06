@@ -56,21 +56,37 @@ an order of magnitude. Do not act on a partial-progress estimate for this suite.
 
 ### Where it stopped
 
-PR: **see the number recorded in the commit that follows this one** — it is
-written after `gh pr create` returns, never before. (An earlier draft of this
-section asserted "PR opened, not merged" while nothing had been pushed. The
-adversarial reviewer caught it, and it is the exact shape `CLAUDE.md` records
-under "a status word carries its output": every OTHER PR number in this section
-is present and only this branch's own was missing.)
+**PR #206** — https://github.com/gene-png/080426SHIELD/pull/206, opened against
+`main` from `fix/attack-approved-snapshot-wins` at `0ee5eb6`.
+`gh pr view 206 --json closingIssuesReferences` names issue 131, so the close is
+confirmed from the API rather than from the guard's own message.
+
+The number is written here in the commit AFTER `gh pr create` returned, never
+before. An earlier draft of this section asserted "PR opened, not merged" while
+nothing had been pushed; the adversarial reviewer caught it, and it is the exact
+shape `CLAUDE.md` records under "a status word carries its output" — every OTHER
+PR number in this section was present and only this branch's own was missing.
 
 Not merged, and not mine to merge. #131 changes deliverable content, so it trips
 merge-rule condition 6 by definition, and condition 5 on `apps/api/tests/**`.
 **It comes to Gene.**
 
-**File contention to expect:** PR **#199** (`docs/plan-reconciliation`, open)
-rewrites the whole item-7 row of `DELIVERY_PLAN.md`, which is the row this PR
-also edits. Whichever lands second rebases. The estimate column was deliberately
-left alone here so the two edits collide on one clause rather than on a total.
+**The file contention happened, and it resolved this way.** PR **#199**
+(`docs/plan-reconciliation`) merged while the unit suite was running — `main`
+moved from `f10955c` to `350b973` mid-run. The rebase conflicted in
+`DELIVERY_PLAN.md` and `CONTEXT.md`; both were resolved in **#199's** favour with
+only the `#131` clause re-applied on top, because #199's row is the newer
+derivation and it independently corrects the stale "PART 2 IN PROGRESS" status
+this session had also fixed. `git diff 287e877 HEAD --stat -- apps/` is empty
+across that rebase, so the green suite still describes the shipping code.
+
+**The item-7 estimate was deliberately NOT re-derived.** #199 sized item 7 as
+#131's 0.75-1.25 plus #178's 1-1.75. #131 is now spent, so the honest remaining
+figure is 1-1.75 — but `check_plan_totals.py` ties the item rows to the headline
+total, and `grep -n "12–18" DELIVERY_PLAN.md` returns live claims mixed with a
+historical record of how that total has moved. Telling those apart is a sizing
+judgement, not a status update. The spent share is recorded at the item row and
+at the decomposition; the total is Gene's to move.
 
 ## PICK UP HERE — 2026-09-05 (end of session)
 
