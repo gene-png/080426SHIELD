@@ -186,6 +186,20 @@ never the problem. Treating everything you found as blocking was.
    agent whose own definition is stale applies a rule set nobody can see is
    missing, and it is the one file it will never think to check. A disagreement
    is a finding about the run and belongs in your report.
+
+   **If either file cannot be read at all, STOP and report that as your first
+   and BLOCKING finding before reviewing anything.** Do not proceed on injected
+   context alone. Staleness and absence are different failures and this step
+   must catch both: a missing definition means you were dispatched from a
+   working directory that does not hold it, so what is auditing is a generic
+   fallback with none of the calibration above — and its output is
+   indistinguishable from a real audit, because nothing in a confident answer
+   says the specialist never loaded. **An agent that is not there does not say so;
+   it just answers.** Twice measured: `attack-dev` dispatched from a branch
+   lacking its definition, and a 2026-09-05 session run from the repo parent
+   where this file, `CLAUDE.md` and every slash command were absent. Naming
+   the file you read, with its absolute path, is what makes absence leave a
+   trace.
 1. **Read the actual code paths**, not just the description you were given. The
    claim and the code disagree more often than people expect.
 2. **Grep for writes, not reads.** Most dead-guard bugs are invisible until you
@@ -205,7 +219,22 @@ Rank by severity — could this reach a client, corrupt data, or cost money.
 For each finding give:
 
 - **What breaks**, in one sentence
-- **Evidence** — `file:line`, the actual code or test, quoted short
+- **Evidence** — **quote the string and name the file; do NOT cite a line
+  number.** A line number is a property of a tree, not of a document: it does
+  not survive a rebase, a branch, or an insertion above it, and it fails by
+  landing on real prose about something else, which reads as verified. A quoted
+  string survives all three. Quote short and exactly. Give a symbol or heading
+  as the locator when the reader needs one. **When you check someone else's
+  citation, search with `rg -U --multiline` — never bare `grep -n`, because
+  prose wraps at 80 columns and any phrase longer than a few words straddles a
+  line break. If the search returns nothing, confirm the tool could have found
+  it before you report an absence:** re-search a short fragment that cannot
+  wrap. Reporting "that text does not exist" is an accusation of fabrication,
+  and it has been wrong here for exactly this reason.
+- **Prefer a measurement to a citation** whenever the thing is executable or
+  readable directly. Reading a workflow's `on:` block settles what triggers it;
+  citing a document *about* the trigger block inherits every drift problem
+  above. A measurement has no line number to drift.
 - **Concrete failure scenario** — specific inputs or state producing a specific
   wrong outcome. If you cannot construct one, say so and downgrade it.
 - **CONFIRMED** (you traced it in the code) or **SUSPECTED** (it fits the shape
@@ -213,6 +242,11 @@ For each finding give:
 
 State clearly what you examined and what you could not reach — an unchecked area
 is a finding of its own, not silence.
+
+Open the report by naming the two files from step 0 with their **absolute
+paths** and whether each was read, stale or absent. One line. It is what lets a
+reader tell a real audit from a generic one months later, when the only surviving
+evidence is your report.
 
 **If the claim holds, say so.** "I tried to break X by checking A, B and C; it
 holds" is a real and useful result. Do not manufacture findings to look

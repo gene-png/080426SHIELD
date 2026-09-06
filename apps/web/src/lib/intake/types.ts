@@ -214,10 +214,29 @@ export const ZT_TARGET_STAGES: Record<
     { value: 3, label: "Stage 3 · Advanced" },
     { value: 4, label: "Stage 4 · Optimal" },
   ],
+  // DoD ZTRA has THREE stages. `app/zt/maturity.py`'s `DOD_STAGES` is the
+  // authority and yields [1, 2, 3]; `level_count` returns 3. A fourth option
+  // here offered a stage the framework does not have, under "Optimal" -- CISA's
+  // label for ITS fourth stage, borrowed for a ladder that ends at three.
+  //
+  // That option is the front half of #125. A consultant picked Stage 4, intake
+  // stored it (the schema bound is `ge=2, le=4` with no framework
+  // discrimination), `analyze_gaps` clamped it to 3, and the finalize audit row
+  // reported `target_stage: 3, target_stage_source: "client"` -- the false value
+  // and the false attribution of it, side by side.
+  //
+  // Removing it stops NEW invalid values. Values already stored are handled at
+  // the other end: `resolve_target_stage` reports them as
+  // `client_out_of_range` rather than silently as the client's choice, and
+  // `normalizeTarget` in `ZtWorkspace.tsx` clamps to the framework's own ladder
+  // so the workspace never requests a stage the API will refuse. The label
+  // lookups in `IntakeQueue` and `Step6Review` resolve through `?.label ??
+  // null`, so a legacy stored 4 renders no label rather than throwing.
+  // `AssessmentsView` is NOT in that population -- it maps this array into
+  // <option>s in a creation form and never looks up a stored value's label.
   zero_trust_dod: [
     { value: 2, label: "Stage 2 · Target" },
     { value: 3, label: "Stage 3 · Advanced" },
-    { value: 4, label: "Stage 4 · Optimal" },
   ],
 };
 

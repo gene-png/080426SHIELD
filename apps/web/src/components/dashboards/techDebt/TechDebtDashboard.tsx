@@ -41,6 +41,55 @@ const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
   cut: { bg: "rgba(239,68,68,.18)", fg: "#fecaca", label: "Cut" },
 };
 
+/** The spend card's subtitle. THREE outcomes, mirroring the API's tri-state.
+ *
+ * #126: this card read "Across all tools" unconditionally, over a figure that
+ * is a floor whenever an item has no cost or a source row was excluded. The
+ * savings card directly beside it has carried "Floor - some cut tools lacked a
+ * cost" since it was written; the asymmetry was the defect.
+ *
+ * "unknown" is deliberately not phrased as a floor. A floor is a claim that the
+ * true figure is at least this much AND that something is missing; for a list
+ * that was never reconciled we know only that nobody checked. Saying "Floor"
+ * there would assert a defect nobody observed, which is the mirror image of
+ * calling the figure a total.
+ *
+ * The card LABEL is deliberately unchanged: `e2e/smoke/s29-tech-debt-dashboard.spec.ts`
+ * asserts `getByText("Annual license spend", { exact: true })`, and the
+ * disclosure belongs in the subtitle beside it either way.
+ */
+export function spendSub(data: TechDebtDashboardData): string {
+  if (data.spend_completeness === "unknown") {
+    return "May not be complete - upload not reconciled";
+  }
+  if (data.spend_completeness === "partial") {
+    if (data.excluded_count > 0 && data.source_rows_total !== null) {
+      return `Floor - ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`;
+    }
+    // The API reports "partial" for THREE causes and this renderer must not
+    // guess which. `spend_completeness` is a three-valued label over a
+    // four-state world, so the unbalanced case -- more items than there were
+    // source rows -- arrives here indistinguishable from an uncosted tool.
+    //
+    // Saying "some tools lacked a cost" for it would be a precise, checkable
+    // FALSEHOOD: in that state every tool is costed, and a client who went
+    // looking for the uncosted one would find nothing. A vague label converted
+    // into a confident wrong sentence is worse than the vague label.
+    //
+    // These two numbers are on the response, so the cause is recoverable here
+    // without the `attribution_complete` migration that naming it precisely
+    // would need (#193).
+    if (
+      data.source_rows_total !== null &&
+      data.included_count > data.source_rows_total
+    ) {
+      return "Floor - upload does not reconcile";
+    }
+    return "Floor - some tools lacked a cost";
+  }
+  return "Across all tools";
+}
+
 function DispositionChip({ value }: { value: string | null }): JSX.Element {
   if (!value || !DISPOSITION[value]) {
     return <span style={{ color: C.muted, fontSize: 11.5 }}>—</span>;
@@ -164,7 +213,7 @@ export function TechDebtDashboard({
         <KpiCard
           label="Annual license spend"
           value={usdFull(data.annual_spend_usd)}
-          sub="Across all tools"
+          sub={spendSub(data)}
           accent={C.accent2}
         />
         <KpiCard

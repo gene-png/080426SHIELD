@@ -390,6 +390,49 @@ of starting when the instinct runs the other way.
   a required check, and no client document or audit row depends on it. Stated
   rather than left unlabelled, because in a list "unlabelled" and "deliberately
   out of scope" look identical.
+- **#175** - `./packages:/app/packages` is bind-mounted with no `node_modules`
+  overlay, so a host `pnpm install` breaks the container for the five workspace
+  packages behind it. **Deliberately not on the MVP path and not labelled
+  `mvp-blocking`**, on the same reasoning as #143 directly above: it is
+  developer environment setup, and no client document or audit row depends on
+  it. The bar is the one written at the top of this file - MVP means all five
+  services producing correct documents - and a broken container produces no
+  document at all rather than a wrong one, which is the failure mode CI and a
+  rebuild already cover. Stated rather than left unlabelled, for the reason
+  #143 gives.
+
+  Recorded 2026-09-02 after the issue was cited in review as carrying
+  `mvp-blocking`. It does not, and never did - `gh issue view 175` returns an
+  empty label set, and it is absent from `gh issue list --label mvp-blocking
+  --state open`. The claim came from a summary table, not from the API. Noted
+  because an unlabelled issue and a deliberately-exempt one are the same bytes,
+  which is exactly what #143's last sentence is about, and because the blocking
+  set is what the delivery order is derived from: a phantom member distorts
+  every sequencing decision taken after it.
+- **#184** - CSF silently clamps an out-of-range `target_tier` and reports the
+  clamped value back as the one requested. **Deliberately not on the MVP path
+  and not labelled `mvp-blocking`**, same treatment as #143 and #175 above.
+
+  It is the CSF twin of #125 and it was labelled `mvp-blocking` on filing, on
+  the reasoning that `target_tier` renders verbatim into the client deliverable
+  - `csf/exporters.py:310`/`:402` headings, `:315`/`:407` empty state,
+  `:326`/`:421` every gap row - and that `routes/csf.py:2261` passes a
+  client-supplied value into `analyze_gaps`. Both facts are true. **The label
+  was still wrong**, because a render site only matters if a bad value can
+  reach it, and none can: `schemas/intake.py:75`/`:174` bound `csf_target_tier`
+  at `ge=2, le=4`, `schemas/csf.py:166` bounds the self-assessment write at
+  `ge=1, le=4`, and CSF's ceiling is 4. Every write path sits inside the ladder,
+  so the clamp is unreachable from stored data. The live defect is confined to
+  the `/gap-analysis` query parameter, which finalize never receives.
+
+  **The condition that flips it, written down because it is not hypothetical:**
+  a CSF variant whose ceiling falls BELOW its schema bound. That is precisely
+  what DoD ZTRA did to Zero Trust - a 3-stage ladder behind a schema still
+  permitting 4 - and #125 is what it cost. One new framework, or one widened
+  bound, converts #184 from latent to shipped with no other code change and
+  nothing on the path to catch it. Re-label it the day either happens.
+
+  Stated rather than left unlabelled, for the reason #143 gives.
 
 ### Scope correction, 2026-08-27 — half of item 7 part 2 already ships
 
@@ -771,7 +814,7 @@ So, as a strict order:
   `app/zt/scoring.py:243-244` and its label `routes/zt.py:1747`. That puts the
   #124/#125/#126 PR on **condition 5** (deterministic scoring engines) as well
   as condition 6.
-- **#125 is LIVE TODAY on the ZT finalize path — not latent.** An earlier draft
+- **#125 was LIVE on the ZT finalize path — not latent. Written 2026-09-03, BEFORE Track C's first PR; the trace below cites pre-fix code and the clamp it names no longer exists.** Kept in the past tense rather than rewritten, because it is the record of why the item was sized as it was, and the deviation record below states what shipped. An earlier draft
   of this bullet said it was "latent today only because the ZT dashboard
   publishes no target-source field". That second clause is true — `grep
   target_stage_source` returns `routes/zt.py:1747` and nothing in `clients.py` —
@@ -798,18 +841,21 @@ So, as a strict order:
   discriminates by framework: intake accepts 2-4 for both, validates presence
   only, and DoD's ceiling is 3.
 
-  **The UI OFFERS the invalid choice, which is where the fix has to start.**
-  `apps/web/src/lib/intake/types.ts:217-221` gives `zero_trust_dod` a
-  `{ value: 4, label: "Stage 4 · Optimal" }` option — and "Optimal" is CISA's
-  label for its fourth stage, which DoD does not have. So a consultant is shown
-  a stage that cannot exist for the framework they selected, under a name
-  borrowed from a different one. Every fix-site list for #125 must include it;
-  an earlier draft of this block omitted it and would have shipped a backend
-  fix under a UI that still offers the value.
+  **The UI OFFERED the invalid choice, and that is where the fix had to
+  start.** `ZT_TARGET_STAGES.zero_trust_dod` in `apps/web/src/lib/intake/types.ts`
+  gave `zero_trust_dod` a `{ value: 4, label: "Stage 4 · Optimal" }` option —
+  and "Optimal" is CISA's label for its fourth stage, which DoD does not have.
+  So a consultant was shown a stage that cannot exist for the framework they
+  selected, under a name borrowed from a different one. Every fix-site list for
+  #125 had to include it; an earlier draft of this block omitted it and would
+  have shipped a backend fix under a UI that still offered the value.
+  **Removed in Track C's first PR** — see the deviation record below for the
+  full list of sites that PR closed.
 
-  A DoD ZTRA engagement whose client picks Stage 4 at intake is silently clamped
-  to 3, and the finalize audit row on the deliverable says the target is 3 and
-  the client chose it. That ships today, with no dashboard involved.
+  A DoD ZTRA engagement whose client picked Stage 4 at intake was silently
+  clamped to 3, and the finalize audit row on the deliverable said the target
+  was 3 and the client chose it. That shipped, with no dashboard involved,
+  until Track C's first PR.
 
   **This is a PRODUCT defect, not a documentation one, and the distinction
   changes how its PR is reviewed.** The other defects in this section are
@@ -828,6 +874,58 @@ So, as a strict order:
   The instruction is unchanged — **#124 and #125 must land together** — but the
   reason is that #124 adds a second surface to an already-live mislabel, not
   that it wakes a sleeping one.
+
+  **DEVIATED FROM, deliberately, on 2026-09-04. Recorded in #143's form so the
+  departure is a stated decision rather than a silent one.** Track C's first PR
+  ships **#125 complete and #126**, and **NOT #124**. #124 becomes the
+  immediate next branch.
+
+  What changed between the instruction and the deviation: an adversarial review
+  of the branch found that the #125 backend fix, landed alone, **introduced a
+  silent client-visible regression** past a full green backend suite. Making
+  `analyze_gaps` refuse an out-of-range target instead of clamping it turned the
+  ZT workspace's first request for a DoD engagement at Stage 4 — exactly #125's
+  population — into a typed 422, which `refreshScoreAndGap` swallows in a bare
+  `catch {}` under a single `Promise.all`. Both the gap card and the score card
+  rendered blank, and the score card does not depend on the target at all.
+  Nothing in `apps/api` could see it.
+
+  A branch that has just been shown to do that is one to **narrow**, not widen.
+  The sequencing argument above — the paragraph beginning "Sequencing is unchanged: #125 ships in Track C's first PR" — says that #125 ships first because fixing #124
+  activates its second surface — was written without that knowledge and still
+  holds on its own terms; what it did not price is the review cost of carrying a
+  cross-cutting `clients.py` change in the same diff as a regression fix whose
+  blast radius is a rendered surface.
+
+  **What #125 closes here, in full** — spelled out as a list because the
+  correction above (the paragraph ending "an earlier draft of this block omitted
+  it") exists precisely so it is not abridged again, and because the first draft
+  of THIS list was abridged the same way, omitting a writer:
+
+  - the engine clamp (`zt/scoring.py`);
+  - the audit label (`routes/zt.py`);
+  - the `/gap-analysis` request path, which now answers a typed 422;
+  - the intake option offering a stage the framework lacks
+    (`ZT_TARGET_STAGES.zero_trust_dod` in `apps/web/src/lib/intake/types.ts`);
+  - the intake validation that checked presence and never range
+    (`_validate_targets` in `routes/intake.py`);
+  - **the ZT self-assessment submit path**, a THIRD writer of the stored target
+    that the first pass missed while its intake sibling carried a comment
+    calling itself the only door. Found by re-auditing the FIX, not the code;
+  - the framework-blind `normalizeTarget` in `ZtWorkspace.tsx`.
+
+  Two pydantic bounds — `ServiceRequestInput.zt_target_stage` and
+  `ZtSelfAssessmentSubmit.target_stage` — are deliberately **left at
+  `le=4`**. A field constraint cannot see the service, so the framework check
+  belongs in the route, and both routes now carry one. Stated rather than left
+  silent, because an unexplained `le=4` reads as the defect to whoever greps
+  next.
+
+  **The cost of the deviation, stated so it is not discovered later:** #124
+  remains open, so the ZT client dashboard still ignores the engagement target,
+  and `clients.py` takes a second pass. That is the chain this plan was
+  restructured to avoid, and it is being accepted once, with a reason, rather
+  than by default.
 
 **Item 6 is the one to watch, not to split.** #121 is fixed in `risk.py` and the
 AI prompt, but its symptom renders at `clients.py:959-1010`, so a test for it

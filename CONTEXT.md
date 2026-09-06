@@ -17,7 +17,7 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 **The count is not written here. Run it:**
 
-    gh issue list --label mvp-blocking --state open --json number | jq length
+    gh issue list --label mvp-blocking --state open --json number --jq length
 
 **A command instead of a number, and this is the endpoint of rule 1 rather than
 a new idea.** The heading used to say `14` under a paragraph certifying it
@@ -43,6 +43,19 @@ have on 2026-08-26, when four were orphaned. By item:
 In flight: `#165` closes with the prettier-pin PR. `#159` loses the label — it
 is developer tooling and does not meet "the MVP cannot ship while this is open",
 the definition now written into `DELIVERY_PLAN.md`.
+
+`#125` and `#126` close with Track C's first PR. **`#124` does NOT ship with
+them**, which departs from the "must land together" instruction in
+`DELIVERY_PLAN.md`; the deviation and its reason are recorded there beside that
+instruction, in `#143`'s form, and `#124` is the immediate next branch. The
+short version: the `#125` engine fix, landed alone, introduced a silent
+client-visible regression that a full green backend suite could not see, and a
+branch shown to do that is one to narrow rather than widen.
+
+That PR also carries fixes the review found rather than the issues named —
+notably that the Tech Debt exporter still called a floor a "Total" while the new
+client dashboard called the same list "partial". Two surfaces, one list,
+contradictory claims, and the document is the half the client keeps.
 
 Not labelled `mvp-blocking`, and deliberately so — recorded because unlabelled
 and out-of-scope look identical otherwise: **#151** (Tailwind classes naming

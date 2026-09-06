@@ -227,6 +227,84 @@ def _row_for(
     )
 
 
+def resolve_target_stage(framework: ZtFrameworkCode, chosen: object) -> tuple[int, str]:
+    """An engagement-level ZT target, plus WHERE IT CAME FROM.
+
+    Returns `(stage, source)` with source one of:
+
+      "client"               the client's stored choice, valid for this framework
+      "default"              the client chose nothing; the engine default applies
+      "client_out_of_range"  the stored choice is not a stage this framework has
+      "client_unparseable"   the stored value is not a whole number at all
+
+    The last two are the point of this function (#125). DoD ZTRA has three
+    stages and the intake UI offers a fourth, so a stored 4 is not a target at
+    all. `analyze_gaps` used to clamp it to 3 and the finalize audit row called
+    that 3 the client's choice -- the false value and the false attribution of
+    it side by side, in the record that exists to establish provenance.
+
+    Absence and failure are separate states on purpose. "The client chose
+    nothing" and "the client's choice could not be used" resolve to the same
+    NUMBER and are not the same fact, and a caller that cannot tell them apart
+    is the defect this replaces. For the same reason "could not be used because
+    this framework has no such stage" is kept apart from "was never a stage
+    number": the first is answerable by re-asking the client, the second means
+    the stored bytes are junk and says so.
+
+    RANGE IS JUDGED BEFORE COERCION, and the order is load-bearing rather than
+    stylistic. An earlier draft ran `int(chosen)` inside the range test, so 3.9
+    passed the test as 3.9 and was returned as 3 labelled "client" -- this
+    function reproducing, in its own body, the exact defect it exists to end.
+    `int()` is not a validator: `int(True) is 1` and `int(1.9) is 1`. So: reject
+    bools, parse to a real number, judge RANGE (a 4.9 on a 1-3 ladder is more
+    usefully reported as out of range than as a fraction), and only then reject
+    anything not whole. `"2"` and `2.0` are accepted, because refusing a value
+    the client plainly meant is the same defect facing the other way.
+
+    This ordering, and the two reason names, are deliberately the same as the
+    AI-apply path -- `_as_number` and the range check that follows it in
+    `routes/zt.py` -- which had it right first.
+
+    Never raises **for any input**, including types the annotation does not
+    admit -- a stored value is data, not a programming error, and refusing to
+    render an existing engagement is not an available response to it. An earlier
+    draft claimed this while raising `TypeError` on a list and `ValueError` on a
+    non-numeric string; `chosen` is typed `object` so the claim is now
+    checkable rather than aspirational. A later one still raised `OverflowError`
+    on an int too wide for a double, which is what an absolute claim costs when
+    the test behind it enumerates values someone thought of rather than
+    deriving them -- the parametrised sweep now covers all three arms of the
+    `except`. The engine entry point `analyze_gaps`
+    does raise, because by then the value has been resolved and anything out of
+    range is a caller bug.
+    """
+    max_stage = level_count(framework)
+    fallback = min(DEFAULT_TARGET_STAGE, max_stage)
+    if chosen is None:
+        return (fallback, "default")
+    # `bool` is a subclass of `int`, so this must precede the numeric parse or a
+    # stored `True` resolves to Stage 1 and gets attributed to the client.
+    if isinstance(chosen, bool):
+        return (fallback, "client_unparseable")
+    try:
+        n = float(chosen)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is NOT decorative: `float(10**400)` raises it, and an
+        # int wider than a double is ordinary JSON. `_as_number` in
+        # `routes/zt.py` carries this same catch with a comment explaining what
+        # an uncaught raise costs there; this function claimed parity with it
+        # and omitted the one guard it had learned. A parity claim covers the
+        # exception list too.
+        return (fallback, "client_unparseable")
+    if not math.isfinite(n):
+        return (fallback, "client_unparseable")
+    if not 1 <= n <= max_stage:
+        return (fallback, "client_out_of_range")
+    if n != int(n):
+        return (fallback, "client_unparseable")
+    return (int(n), "client")
+
+
 def analyze_gaps(
     framework: ZtFrameworkCode,
     answers: Mapping[str, int | None],
@@ -241,7 +319,21 @@ def analyze_gaps(
     the engagement-level `target_stage`."""
     max_stage = level_count(framework)
     if not (1 <= target_stage <= max_stage):
-        target_stage = min(DEFAULT_TARGET_STAGE, max_stage)
+        # REFUSE, do not clamp. This clamped to `min(DEFAULT_TARGET_STAGE,
+        # max_stage)` and returned the clamped value, so a DoD engagement asked
+        # for stage 4 got a GapAnalysis reading 3 with nothing recording that 4
+        # was ever asked for -- and `routes/zt.py` then stamped the audit row
+        # `target_stage_source: "client"` over it (#125). A silent clamp is a
+        # default-value fallback on error, which core principle 2 forbids.
+        #
+        # Callers resolve a CLIENT-SUPPLIED target through `resolve_target_stage`
+        # first, which names the fault instead of raising. Reaching here means a
+        # caller passed an unresolved value, which is a programming error.
+        raise ValueError(
+            f"target_stage {target_stage} is out of range for {framework.value} "
+            f"(valid 1-{max_stage}). Resolve a client-supplied target through "
+            f"resolve_target_stage() first."
+        )
     notes = notes or {}
     targets = targets or {}
     names = _pillar_name_lookup(framework)
@@ -250,6 +342,32 @@ def analyze_gaps(
         t = targets.get(code)
         if isinstance(t, int) and 1 <= t <= max_stage:
             return t
+        # DELIBERATE EXEMPTION, stated so it does not read as an oversight.
+        # An out-of-range PER-CAPABILITY target falls back here silently, the
+        # same shape #125 fixes one level up. It is left alone because naming
+        # that fault needs a counter on `GapAnalysis`, and this change is
+        # constrained not to alter the shape `zt/exporters.py` reads. Tracked
+        # in #188, which carries the expiry condition stated below.
+        #
+        # Not currently reachable, and the two writers are named rather than
+        # summarised, because an earlier draft of this comment said "no other
+        # code path writes `ZtAnswer.target_stage`" -- which is false, and
+        # false in the direction that stops a reader checking the writer they
+        # most need to see. Both writers bound the value first:
+        #
+        #   routes/zt.py, `patch_answer` -- its `target_stage must be 1-`
+        #     guard 422s on anything outside 1..level_count() for the answer's
+        #     OWN framework.
+        #   routes/zt.py, the AI-apply path -- `_as_number` plus the
+        #     `if not 1 <= n <= max_stage` check `continue`s to a
+        #     dropped-suggestion record, so an out-of-range suggestion is
+        #     never written.
+        #
+        # Both bound the RANGE. Neither refuses a bool at the schema, so
+        # `patch_answer` writes Stage 1 for `true` -- tracked in #189, and out
+        # of scope here because an in-range 1 never reaches this fallback.
+        #
+        # If a third writer appears, this exemption expires with it.
         return target_stage
 
     rows: list[Gap] = []
@@ -333,4 +451,5 @@ __all__ = [
     "analyze_gaps",
     "build_roadmap",
     "compute",
+    "resolve_target_stage",
 ]

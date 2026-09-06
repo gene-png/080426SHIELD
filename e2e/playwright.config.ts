@@ -11,6 +11,13 @@ import { resolveBaseUrl } from "./helpers/baseUrl";
  */
 export default defineConfig({
   testDir: ".",
+  // Fail a run whose stack changed under it. `uvicorn --reload` takes an
+  // `apps/api` edit mid-run while `apps/web` keeps serving the old build until
+  // it is recreated, so editing during a run silently tests a combination that
+  // exists nowhere -- and the log afterwards looks entirely ordinary. See
+  // helpers/containerIdentity.ts, including what it does NOT catch.
+  globalSetup: "./globalSetup.ts",
+  globalTeardown: "./globalTeardown.ts",
   // Next.js dev compiles routes on first hit; give flows room for cold compiles.
   timeout: 90_000,
   expect: { timeout: 10_000 },

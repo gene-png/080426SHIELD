@@ -78,3 +78,7 @@ keycloak-data/
 *.db
 *.sqlite
 *.sqlite3
+
+# Container-identity stamp written by the e2e globalSetup (see
+# e2e/helpers/containerIdentity.ts). Run-local, never committed.
+e2e/.playwright-container-ids.json

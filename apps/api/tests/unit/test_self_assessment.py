@@ -227,6 +227,83 @@ def test_admin_reviews_edits_and_approves_submitted_csf(
 
 
 @pytest.mark.unit
+def test_self_assessment_submit_refuses_a_stage_the_framework_lacks(
+    app_client: TestClient,
+) -> None:
+    """The THIRD writer of the engagement target, and the one #125 first missed.
+
+    `submit_self_assessment` persists `target_stage` onto the source request.
+    `ZtSelfAssessmentSubmit` bounds it `ge=1, le=4` for both frameworks -- a
+    field constraint cannot see the service -- and DoD ZTRA ends at 3, so this
+    route could store the impossible stage after intake had been taught to
+    refuse it. The intake fix even carried a comment calling itself "the only
+    place that can refuse it", which was true of its own schema and false of
+    the stored value.
+
+    Untested until now for a reason worth naming: the existing ZT submit test
+    posts `target_stage: 4` against a **CISA** service, where 4 is a real stage.
+    The assertion looked like coverage of the bound and could never have failed
+    on the framework that has the defect.
+    """
+    import sqlalchemy as sa
+
+    _register(app_client, "admin@example.com")
+    client = _register(app_client, "client@example.com")
+    bearer = client["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+
+    state = app_client.post(
+        "/intake/submit",
+        headers=h,
+        json={
+            "client": {"legal_name": "Atlas Defense Solutions"},
+            "service_requests": [{"service_type": "zero_trust_dod", "zt_target_stage": 3}],
+        },
+    )
+    assert state.status_code == 200, state.text
+    svc_id = _service_id(state.json(), "zero_trust_dod")
+    app_client.get(f"/zt/services/{svc_id}/self-assessment", headers=h)
+
+    def reset_to_draft() -> None:
+        """Put the assessment back in DRAFT so the guard is reachable again.
+
+        A submit flips the status, and the status check runs BEFORE the range
+        guard -- so a second submit on the same service returns 409 without
+        executing the code under test. An earlier version of this test looped
+        the stages over one service and accepted `status_code in (200, 409)`:
+        stage 3 took the 409 path every run, its `client_target_stage`
+        assertion sat behind `if rr.status_code == 200` and never executed, and
+        the comment above it claimed every DoD stage had been shown to submit.
+        It never had been.
+        """
+        eng = sa.create_engine(os.environ["DATABASE_URL"], future=True)
+        with eng.begin() as conn:
+            conn.execute(sa.text("UPDATE zt_assessments SET status = 'DRAFT'"))
+
+    def submit(stage: int):
+        return app_client.post(
+            f"/zt/services/{svc_id}/self-assessment/submit",
+            headers=h,
+            json={"target_stage": stage},
+        )
+
+    # THE DEFECT: DoD ZTRA has no Stage 4.
+    r = submit(4)
+    assert r.status_code == 422, r.text
+    err = r.json()["error"]
+    assert err["reason"] == "target_stage_out_of_range", err
+    assert "stages 1-3" in err["message"], err["message"]
+
+    # POSITIVE CONTROLS -- every stage DoD really has submits, each from a
+    # DRAFT so the status check cannot mask the guard, and each asserted
+    # UNCONDITIONALLY: a 409 here is a failure, not an accepted outcome.
+    for stage in (2, 3):
+        reset_to_draft()
+        rr = submit(stage)
+        assert rr.status_code == 200, (stage, rr.text)
+        assert rr.json()["client_target_stage"] == stage
+
+
 def test_client_fills_and_submits_zt(app_client: TestClient) -> None:
     bearer, state = _client_submit_intake(app_client)
     h = {"Authorization": f"Bearer {bearer}"}

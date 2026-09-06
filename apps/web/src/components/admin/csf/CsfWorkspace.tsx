@@ -54,7 +54,30 @@ export interface CsfWorkspaceProps {
   serviceTitle: string;
 }
 
-/** Clamp a stored target tier to the selectable 2-4 range; default 3. */
+/**
+ * Clamp a stored target tier to the selectable 2-4 range; default 3.
+ *
+ * DELIBERATELY LEFT FRAMEWORK-BLIND, and stated so it does not read as the
+ * half of a twin-fix that someone forgot.
+ *
+ * `ZtWorkspace.tsx`'s `normalizeTarget` was this function, character for
+ * character, and it had to change: DoD ZTRA ends at Stage 3 while the ZT
+ * ladder this shape assumes runs to 4, so a stored 4 on a DoD engagement
+ * produced a request the API refuses and blanked two cards (#125).
+ *
+ * CSF has exactly one ladder and its ceiling IS 4, so no tier in 2-4 can be
+ * absent here and the hardcoded range cannot currently be wrong. That is
+ * safety by COINCIDENCE rather than by construction -- the same standing
+ * assumption #184 records for `csf/playbook.py`'s clamp, and it expires under
+ * the same condition: a CSF variant, or any second ladder, whose ceiling falls
+ * below 4. Should that arrive, this function needs the ZT treatment (derive
+ * the selectable set from the catalog the dropdown is built from) and #184
+ * needs re-labelling on the same day.
+ *
+ * Not fixed pre-emptively because deriving from a catalog that has exactly one
+ * shape adds a moving part with no case to answer, and an unexercised branch
+ * is its own hazard.
+ */
 function normalizeTarget(value: number | null | undefined): number {
   return value === 2 || value === 3 || value === 4 ? value : 3;
 }

@@ -1325,6 +1325,40 @@ Rules of the road:
   gate and violates a rule neither ever saw. This binds `attack-dev` and
   `clients-dev` at creation, not afterwards.
 
+- **CITE A QUOTED STRING AND A FILE, NEVER A LINE NUMBER — and check a citation
+  with `rg -U --multiline`, never bare `grep -n`.**
+  **A line number is a property of a tree, not of a document.**
+
+  Measured 2026-09-05: `DELIVERY_PLAN.md:980` and `:1078` are both correct for
+  the same `enforce_admins` sentence — on `main` and on
+  `fix/zt-targets-and-spend-floor` respectively, which inserts 111 lines above
+  it. <!-- counted: git diff --stat origin/main..HEAD -- DELIVERY_PLAN.md -> 111 insertions, 2026-09-05 -->
+  Two people each "verified" the other wrong, and both were right. Four
+  citation errors in one exchange, on the subject of citations being <!-- counted: historical -->
+  unreliable; the only durable element was a quoted string.
+
+  The wrapping half is the dangerous one. Prose here wraps at 80 columns, so a
+  quoted phrase longer than a few words usually straddles a line break and a
+  line-wise `grep` returns NOTHING for text that is present:
+
+      grep -n "the largest remaining gap" DELIVERY_PLAN.md            # no match
+      rg -U --multiline -n "largest\s+remaining gap" DELIVERY_PLAN.md  # 1083-1084
+
+  A multiline tool is necessary and NOT sufficient: a literal space in the
+  pattern still will not cross the wrap, because what is there is a newline and
+  an indent. **Write every space in a quoted phrase as `\s+`.** Searching this
+  very rule for "property of a" returned nothing minutes after it was written;
+  `property\s+of a` found it on the line it wraps.
+
+  A no-match is a claim about the world. **Before reporting an absence, confirm
+  the tool could have found it** — re-search a fragment that cannot wrap. This
+  nearly produced an accusation of fabrication against correctly-quoted text.
+
+  **And prefer a MEASUREMENT to a citation wherever one exists.** Reading
+  `audit-gate.yml`'s `on:` block settles what triggers it; citing a document
+  about that block inherits every drift problem above. A measurement has no line
+  number to drift.
+
 - **SPOT-CHECK a subagent's `file:line` citations before they enter a document,
   and record the check. A sample, not all of them — what you need is the
   report's CALIBRATION.** This replaces "be skeptical of subagent output", which
@@ -1379,6 +1413,25 @@ Rules of the road:
   though `_zt_gap_total` does" survives the reflow and is greppable back to a
   line whenever one is needed. Line numbers are for finding the code today; the
   mechanism is what the entry is actually for.
+
+  **Corollary, and it is the same rule pointed at a CITATION rather than a plan
+  entry: cite the FILE and the QUOTED STRING, never the line.** A line number is
+  a claim that expires without notice, and it expires fastest in exactly the
+  documents people cite most, because those are the ones being edited. Write
+  `DELIVERY_PLAN.md, the paragraph quoting "Total annual cost"` rather than
+  `DELIVERY_PLAN.md:737` -- the quoted string survives every reflow, is greppable
+  to a line in one command, and cannot silently point at the wrong paragraph.
+
+  <!-- counted: historical -->
+  Three instances on 2026-09-02, in one session, from three different causes:
+  a reviewer's clone was pinned to an older commit and its citations were all
+  shifted; two plan notes added that morning moved a `DELIVERY_PLAN.md` citation
+  from :737 to :780 between one message and the next; and
+  `check_issue_references.py`'s fail-closed branch moved :152 to :162 between
+  two people reading the same file. None was a mistake anyone made. Every one
+  was a correct number that had stopped being correct, and the failure is
+  invisible: the wrong line usually still contains plausible code, which is the
+  same thing that makes a stale citation worse than a missing one.
 
 - **The rules for numbers in prose, and a gate that enforces the first two on
   the shared documents.** Every miss behind them is one pattern: a value written
