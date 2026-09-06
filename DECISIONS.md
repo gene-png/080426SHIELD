@@ -3533,3 +3533,88 @@ not edit, and `gene.md` because it is a status file rewritten most sessions, so
 a count gate would fire constantly on churn that is correct when written. Two
 files, two reasons, explicitly not interchangeable — one reason given for both
 would have gone quietly false the moment this decision landed.
+
+## D-064 — The approved snapshot's own fields win the capability merge
+
+**Date:** 2026-09-06 · **Context:** #131 · **Extends:** D-053
+
+D-053 froze approved MEMBERSHIP — which tools may be cited — because an approved
+capability list stays editable until release, so "confirmed against the approved
+list" was being checked against whatever the list had since become. The snapshot
+records `name` AND `vendor` precisely because the citation resolver matches on
+both.
+
+`_client_capability_membership` then merged rows from every one of a client's
+non-DISCARDED lists and picked a winner **by content**, which handed the decision
+back to the unfrozen source D-053 exists to exclude:
+
+- **Vendor.** The merge adopted a vendor from any contributing list. A DRAFT is
+  non-DISCARDED and freely editable, so a consultant typing `Cisco` onto an
+  unapproved row made `_by_vendor["cisco"]` resolve against an APPROVED list —
+  a citation that was `rejected_unknown` without the edit. The donated vendor
+  also removed the row from `CitationResolver._vendorless`, which silently
+  disarmed every OTHER tool's `INCOMPLETE_VENDOR_DATA` review flag: a defect-1
+  guard switched off by an unaudited edit to a different list.
+- **Spelling.** The surviving name for a casefold key was the first row under a
+  sort ordered by the exact string, so every ASCII-uppercase spelling outranked
+  its title-case twin and `SPLUNK ENTERPRISE` from a draft beat
+  `Splunk Enterprise` from the snapshot. That string is what `_capability_payload`
+  egresses, what `Resolution.name` returns, what `_validate_tools` writes into
+  `row.detection_tools`, and therefore what appears in the client's deliverable.
+
+**The decision: a snapshot row outranks a live row, as a PREFERENCE and not a
+lock.** Provenance is carried on each row (`_MergeCandidate.from_snapshot`) from
+the branch that already knows it, rather than re-derived at the merge. Snapshot
+rows sort first, so a snapshot spelling is the one seen first; and a vendor may
+be donated unless the holder is a snapshot row and the donor is not.
+
+**Not a lock, for the reason D-053 itself is not one.** Two approved lists
+completing each other's vendors is exactly what the merge is for, and two drafts
+have no frozen membership to protect. Only live-donates-to-snapshot crosses a
+boundary. The narrower rule "only an approved source may donate" passes both
+scenario tests and breaks the draft-to-draft case, which is why
+`test_two_draft_lists_still_complete_each_others_vendors` exists and was verified
+red against that mutant rather than merely asserted.
+
+**The accepted consequence, stated so it is not rediscovered as a bug.** An
+approved snapshot holding a poor spelling now beats a corrected spelling on a
+later draft. That is the rename case D-053 was written for, pointed at
+capitalisation: re-approval is the audited escape hatch, and
+`test_renaming_an_item_after_approval_does_not_rewrite_the_allow_list` already
+refuses a corrected NAME on the same grounds. It is silent in one direction,
+though — `approved_membership_stale` compares a list against its own live rows,
+so a correction typed onto a DIFFERENT list raises no flag anywhere.
+
+**A second accepted consequence, named because the first one was and this one is
+easier to miss.** A snapshot written after migration 0043 but before W2 added
+`vendor` carries no `vendor` key, so `entry.get("vendor")` is None — and a live
+DRAFT row holding the correct vendor can no longer complete it, where it could
+before. The row then stays in `CitationResolver._vendorless`, which keeps every
+OTHER tool's vendor-shaped citation on that client flagged
+`INCOMPLETE_VENDOR_DATA`. That is the right direction under "missing data
+defaults to UNCONFIRMED, never to confirmed", and re-approval refreshes the
+snapshot with vendors. **Reachability was not measured**: it needs a list
+approved inside the 0043-to-W2 window, and nothing here queries production.
+Stated rather than assumed, which is the part that was missing.
+
+**A pre-existing defect closed in passing, because the fix made it visible.** The
+comment above this block has claimed since #103 that "the winner is
+deterministic ... the query has no ORDER BY", and the sort key did not deliver
+it: two rows agreeing on name and vendor tied on every element and fell through
+to the order of `pairs`, which comes from an unordered query. The winner's
+`item_id` decides the `category` and `security_functions` that EGRESS, so the
+model could be told a different thing about the same tool between two runs over
+unchanged data. `item_id` is now the last sort element. That makes the order
+total over every snapshot this repo has written — totality is a property of
+`build_approved_membership`, which records `str(i.id)` per item, and not of the
+sort key, which reads `str(p.item_id or "")` precisely because that JSON is not
+type-checked at that point.
+
+**The dedupe key is deliberately NOT the leading sort element**, though an
+earlier draft made it one and justified it as necessary. It is not: for a stable
+sort the first row reaching any key is the same with or without the key leading.
+It is worse than redundant — a leading key that drifted out of step with the
+dedupe key would reorder within a group and silently reopen the spelling defect,
+which is the one thing it looks like it is there to prevent. Found by the
+adversarial reviewer, and the wrong justification had already been written into
+a docstring as a requirement.

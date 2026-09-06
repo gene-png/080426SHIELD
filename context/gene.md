@@ -1,5 +1,77 @@
 # Gene's Context: 080426SHIELD
 
+## PICK UP HERE — 2026-09-06 (attack-dev, Track A: #131)
+
+**Supersedes the 2026-09-05 section below on what is in flight. It does NOT
+supersede that section's lessons** — the exit-file trap it records was applied
+this session and caught nothing, because the markers were fresh; see below.
+
+### What shipped
+
+`fix/attack-approved-snapshot-wins`, branched off `origin/main` at `f10955c`.
+**#131 only.** The approved D-053 snapshot's vendor and spelling now win the
+capability merge in `_client_capability_membership`; recorded as **D-064**.
+
+`#178` was NOT touched. The DISCARDED predicate it turns on is in the same
+function and is byte-identical to `origin/main`.
+
+### The stale instruction in the agent definition, since it will mislead again
+
+`.claude/agents/attack-dev.md` frontmatter still says the agent works on
+`feat/attack-ai-inputs-provenance`, "which already has a failing test", and its
+"Where you work" section says **do not cut a new branch**. That branch is
+**merged** — `gh pr list --state all --json number,headRefName,state` shows PR
+**#180 MERGED** on that head, and `git show
+origin/main:apps/api/tests/unit/test_attack_ai_inputs.py` returns 458 lines. The
+definition also still contains a `cd C:/repos/SHIELD080326/wt-attack` command,
+a worktree #172 withdrew. Following either instruction resumes merged work in a
+tree that does not exist.
+
+### The full unit suite DID complete this time, and here is how that was known
+
+The 2026-09-05 section is right that `test -f` on a marker proves existence and
+not freshness. Applied here:
+
+    docker compose exec -T api sh -lc 'ls -la --time-style=full-iso /tmp/unit131.exit /tmp/unit131.log'
+    ...12:33:02 ... /tmp/unit131.exit     <- contains "0"
+    ...12:32:47 ... /tmp/unit131.log      <- stopped growing FIRST
+
+The exit file is 15 seconds NEWER than the log, which is the opposite of the
+2026-09-05 incident, and the log ends at `[100%]`. Markers were `rm -f`'d before
+launch.
+
+**One thing from that incident reproduced exactly and is worth writing down: a
+`-q --no-header` run redirected to a file emits NO pytest summary line**, even
+on a clean completion. So "no `passed`/`failed` line in the log" is NOT evidence
+that a run died — it is normal for this invocation. The 2026-09-05 diagnosis
+still holds on its own evidence (the mtimes and the `[ 98%]` tail), but the
+missing-summary observation is not part of that evidence and should not be
+carried forward as a symptom.
+
+**Timing, since the file records 3 min / 13–16 min and neither matched.** The
+run took roughly 45 minutes wall-clock, and it is heavily front-loaded: the
+DB-fixture files crawl (8% at the 25-minute mark) and the rest goes in minutes.
+An extrapolation from the early rate predicts about eight hours and is wrong by
+an order of magnitude. Do not act on a partial-progress estimate for this suite.
+
+### Where it stopped
+
+PR: **see the number recorded in the commit that follows this one** — it is
+written after `gh pr create` returns, never before. (An earlier draft of this
+section asserted "PR opened, not merged" while nothing had been pushed. The
+adversarial reviewer caught it, and it is the exact shape `CLAUDE.md` records
+under "a status word carries its output": every OTHER PR number in this section
+is present and only this branch's own was missing.)
+
+Not merged, and not mine to merge. #131 changes deliverable content, so it trips
+merge-rule condition 6 by definition, and condition 5 on `apps/api/tests/**`.
+**It comes to Gene.**
+
+**File contention to expect:** PR **#199** (`docs/plan-reconciliation`, open)
+rewrites the whole item-7 row of `DELIVERY_PLAN.md`, which is the row this PR
+also edits. Whichever lands second rebases. The estimate column was deliberately
+left alone here so the two edits collide on one clause rather than on a total.
+
 ## PICK UP HERE — 2026-09-05 (end of session)
 
 **Supersedes the 2026-09-04 section below.** That section is still accurate on
