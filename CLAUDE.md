@@ -1666,14 +1666,20 @@ Rules of the road:
 
   Check what the name already resolves to: this repo's archives carry a branch AND
   a `-tag`-suffixed tag per stash because the bare name was taken. **Discharge any
-  decision-hold on dropping by regenerating the content FROM the archived ref
-  after the drop, BOTH halves** -- `git stash show --stat <ref>` for the tracked
-  changes, and `git show --stat <ref>^3` for the untracked ones, which
-  `stash show` does not display at all. A `-u` stash keeps untracked files on a
-  third parent, and two of this repo's three archives have one -- a migration in
-  the first, a React component and its test in the second -- none of it visible
-  in the diffstat that was reported as proving recovery. A ref existing proves
-  only that a ref was written. **Drop highest-numbered first**, because dropping `stash@{0}`
+  decision-hold on dropping by ENUMERATING the archived ref's parents, never by
+  diffing it** -- a stash taken with `-u` keeps its untracked files on a THIRD
+  parent, which `git stash show` cannot display at all:
+
+      git rev-list --parents -n1 <ref>     # three parents means an untracked half
+      git ls-tree -r --name-only <ref>^3   # and this lists what it holds
+
+  Two of this repo's three archives have that third parent: a migration in one, a
+  React component and its test in the other. The diffstat written up as proving
+  recovery covered neither -- **and it was unsupported when written even though it
+  turned out to be true**, because the objects were on the remote all along. An
+  unsupported claim that happens to be correct is still unsupported, and recording
+  that as a near-loss would be the same error facing the other way. A ref existing
+  proves only that a ref was written; a diffstat proves only the tracked half. **Drop highest-numbered first**, because dropping `stash@{0}`
   renumbers every higher-numbered entry. Assert the SHA immediately before each
   drop -- and do none of this **while an agent holds the shared tree**: the drop
   deletes a ref and renumbers every entry under it. See the orchestrating-session
