@@ -255,6 +255,29 @@ class CannotScan(Exception):
     """
 
 
+# `tests/gates` holds FIXTURES for `check_gate_fixtures.py`: files that are data
+# which happens to be Python, whose exact text is the evidence. Several are
+# DELIBERATE violations -- the private-constant import below is the recorded #72
+# instance, kept verbatim so the harness can assert this gate exits 1 on it.
+#
+# Scanning them would make a passing repo impossible, and the alternative --
+# writing `# test-integrity: <reason>` into the fixture -- is editing fixture text
+# to satisfy a tool, which is the inversion the whole fixture corpus exists to
+# prevent. A justification comment inside a `check_test_integrity` fixture would
+# also change the behaviour of the very gate under test.
+#
+# LOAD-BEARING ON THE HARNESS RUNNING. What keeps these files honest is
+# `check_gate_fixtures` asserting their exit codes in CI, not this gate reading
+# them. If the "gates can fail" step is removed, skipped, or made
+# `continue-on-error`, this exclusion loses its justification and must go with it.
+_FIXTURE_DIR = "gates"
+
+
+def _is_gate_fixture(root: Path, path: Path) -> bool:
+    parts = path.relative_to(root).parts
+    return bool(parts) and parts[0] == _FIXTURE_DIR
+
+
 def scan_tree(root: Path) -> list[Finding]:
     """Every `test_*.py` under `root`, sorted for a stable report.
 
@@ -263,7 +286,7 @@ def scan_tree(root: Path) -> list[Finding]:
     """
     if not root.is_dir():
         raise CannotScan(f"{root} is not a directory")
-    paths = sorted(root.rglob("test_*.py"))
+    paths = sorted(p for p in root.rglob("test_*.py") if not _is_gate_fixture(root, p))
     if not paths:
         raise CannotScan(f"no test_*.py found under {root}")
     findings: list[Finding] = []
