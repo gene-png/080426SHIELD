@@ -69,17 +69,45 @@ DEFERRED: dict[str, str] = {
         "its input model needs a different harness than a fixture directory"
     ),
     "check_audit_evidence.py": (
-        "reads a PR body and a changed-file list -- the same input-model mismatch"
+        "reads a PR body and a changed-file list -- the same input-model mismatch. "
+        "AND it has a SECOND call path exit-code fixtures would not reach either: "
+        "audit-gate.yml:70 runs it as a process and reads the exit code, while "
+        "audit-gate.yml:118 imports missing_evidence() and reads the RETURN VALUE. "
+        "A harness that asserts exit codes says nothing about the second, so the "
+        "deferral is wider than the input-model mismatch alone implies"
     ),
     "check_separator_classes.py": (
         "reads one named module on the egress path, so a fixture would be a "
         "stand-in redact.py; a stand-in for the file whose realness is the whole "
         "point is worth less than the incident that would justify writing it"
     ),
+    "leave_row_oracle.py": (
+        "a real CI gate (ci.yml:96, --check-registry) that this harness could not "
+        "SEE until _EXTRA_GATES was added, because its name does not match check_*. "
+        "Deferred rather than fixtured for the same reason as separator_classes: "
+        "--check-registry validates LEAVE tables against the redaction module, so a "
+        "fixture would be a stand-in redact.py plus stand-in truth tables. Listed "
+        "here so the gap is a STATED exemption instead of an invisible one"
+    ),
+    "mutation_sweep.py": (
+        "not a CI gate -- mutation-sweep.yml is schedule-only and pipes through "
+        "tee, so its exit code never reaches the job. Carried here only to keep "
+        "this universe equal to test_gate_crash_exit_code.GATES; that file's own "
+        "comment records the same reasoning"
+    ),
 }
 
 _SELF = "check_gate_fixtures.py"
 _REQUIRED_KEYS = ("incident", "expect", "argv")
+
+# Gates whose FILENAME does not match `check_*`, listed because a glob cannot
+# see them. `CLAUDE.md` names this exact trap -- "leave_row_oracle.py (a CI gate
+# whose name does not match check_*)" -- and the first version of this file
+# globbed `check_*.py` and therefore could not see it. A discovery predicate
+# blind to a real gate is this tool's own #213 shape inside the tool built to
+# catch it, so the universe here is asserted equal to `test_gate_crash_exit_code
+# .GATES` by a unit test rather than left to two lists drifting apart.
+_EXTRA_GATES = ("leave_row_oracle.py", "mutation_sweep.py")
 
 
 def scripts_dir_for(root: Path) -> Path:
@@ -88,7 +116,9 @@ def scripts_dir_for(root: Path) -> Path:
 
 
 def discover_gates(scripts: Path) -> list[str]:
-    return sorted(p.name for p in scripts.glob("check_*.py") if p.name != _SELF)
+    found = {p.name for p in scripts.glob("check_*.py") if p.name != _SELF}
+    found |= {name for name in _EXTRA_GATES if (scripts / name).is_file()}
+    return sorted(found)
 
 
 def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:

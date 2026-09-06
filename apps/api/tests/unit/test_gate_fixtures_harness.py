@@ -146,6 +146,29 @@ def test_deferred_reasons_are_not_empty() -> None:
         assert reason.strip(), f"{gate} is deferred with no reason"
 
 
+def test_universe_equals_the_other_gate_enumeration() -> None:
+    """Two enumerations of this repo's gates must not drift apart.
+
+    `test_gate_crash_exit_code.GATES` pins the crash-exits-2 convention; this
+    harness pins can-it-fail-at-all. Nothing connected them, and they were
+    already unequal: this harness globbed `check_*.py` and therefore could not
+    see `leave_row_oracle.py`, a real CI gate (ci.yml:96) whose name does not
+    match -- a discovery predicate blind to a live gate, inside the tool written
+    to catch predicates blind to live cases.
+
+    Asserting equality is cheaper than either list noticing the other has grown.
+    """
+    from test_gate_crash_exit_code import GATES
+
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    mine = set(discover_gates(scripts))
+    theirs = {f"{stem}.py" for stem, _ in GATES}
+    assert mine == theirs, (
+        f"gate enumerations diverged -- only here: {sorted(mine - theirs)}; "
+        f"only in GATES: {sorted(theirs - mine)}"
+    )
+
+
 def test_load_cases_reports_problems_rather_than_skipping(tmp_path: Path) -> None:
     """A case it cannot parse must surface, never be dropped from the count."""
     d = tmp_path / "gate" / "no-spec"
