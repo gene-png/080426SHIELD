@@ -93,6 +93,10 @@ from app.zt.maturity import ZtFrameworkCode
 from app.zt.maturity import stage_label as zt_stage_label
 from app.zt.scoring import analyze_gaps as zt_analyze_gaps
 from app.zt.scoring import compute as zt_compute
+from app.zt.scoring import effective_target_stages as zt_effective_target_stages
+from app.zt.scoring import (
+    engagement_target_capability_count as zt_engagement_target_capability_count,
+)
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -327,9 +331,29 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
         # because this helper returns a bare gap TOTAL and has nowhere to put
         # it. That is a real disclosure gap -- a client on an out-of-range
         # target sees a number computed against a stage they did not choose,
-        # with no flag -- and it belongs to #124, which is rewriting this card
-        # to carry the engagement target and its provenance. Left rather than
-        # half-built, so #124 does not inherit a second partial surface.
+        # with no flag.
+        #
+        # #124 FIXED THE DASHBOARD, NOT THIS CARD, and this comment used to say
+        # otherwise -- it claimed #124 "is rewriting this card to carry the
+        # engagement target and its provenance", which would have been left
+        # standing as a false statement about shipped code. The scope is
+        # genuinely different: `zt_dashboard` reports on ONE service, so a
+        # single `target_stage_source` describes it exactly, while this helper
+        # sums across every released ZT service a client has and there is no
+        # honest single source for a mixed set -- one engagement on the client's
+        # own stage and another on the default is not "client" and not
+        # "default". Answering that needs a decision about what the value card
+        # should say, not a wider signature.
+        #
+        # Its CSF twin `_csf_gap_total` above loses the same FACT by a
+        # different MECHANISM, and the distinction matters to whoever picks
+        # this up: there is no CSF resolver to un-discard. That twin reads
+        # `_csf_client_target_tier` and passes the tier or nothing, so no
+        # source is ever computed, while this one computes a source and drops
+        # it. Same effect on the card, different repair. Fixing only one would
+        # leave the value card internally inconsistent -- the half-fix shape
+        # that made #79 worse than the defect it replaced. Both are left,
+        # together and on purpose, tracked in #207.
         resolved_stage, _source = zt_resolve_target_stage(fw, stage)
         total += zt_analyze_gaps(
             fw,
@@ -756,8 +780,38 @@ def zt_dashboard(
     answers: dict[str, int | None] = {r.capability_code: r.maturity_stage for r in rows}
     targets: dict[str, int | None] = {r.capability_code: r.target_stage for r in rows}
 
+    # The client's OWN target, resolved ONCE, with its provenance (#124).
+    #
+    # This used to be `zt_compute(fw, targets)` — the per-capability targets
+    # and nothing else. Only Run-AI and the client's self-assessment submit
+    # ever write those, so a consultant-scored assessment left every one NULL,
+    # `target_pct` came back None, and every pillar's gap rounded to 0.0 while
+    # the released PDF from the same assessment listed its gaps against the
+    # stage the client contracted for. Two surfaces, one assessment, opposite
+    # stories — #79's symptom one service over, in the view the client reads.
+    #
+    # `resolve_target_stage` is the same call `routes/zt.py` makes on the
+    # finalize path, so the number and its provenance come from one place
+    # rather than being derived independently by two pieces of code that can
+    # disagree (#125). `effective_target_stages` is the same rule `analyze_gaps`
+    # applies per capability, imported rather than re-derived — #84 is on
+    # record as `risk.py` re-deriving exactly this comparison inline, where a
+    # complete call-site sweep reported clean over it.
+    chosen = _zt_client_target_stage(db, service_id)
+    target_stage, target_stage_source = zt_resolve_target_stage(fw, chosen)
+    effective_targets = zt_effective_target_stages(fw, targets, target_stage)
+    # NOT `gap`: the per-pillar loop below binds that name to a float.
+    gap_analysis = zt_analyze_gaps(fw, answers, targets=targets, target_stage=target_stage)
+    # How much of the rendered target the ENGAGEMENT stage actually decided.
+    # Both ends are ordinary: a consultant-scored assessment sets no per-row
+    # target and this is every capability, while a fully AI-scored one can
+    # override all of them and this is zero. The UI needs it to avoid the
+    # mirror image of #124 -- captioning a percentage built entirely from
+    # per-capability overrides "your target, chosen at intake".
+    engagement_target_capability_count = zt_engagement_target_capability_count(fw, targets)
+
     current = zt_compute(fw, answers)
-    target = zt_compute(fw, targets)
+    target = zt_compute(fw, effective_targets)
     target_by_code = {p.pillar_code: p for p in target.by_pillar}
 
     pillars: list[ZtPillarDashboard] = []
@@ -791,6 +845,12 @@ def zt_dashboard(
         actor_user_id=str(user.id),
         framework=fw.value,
         current_pct=current.maturity_pct,
+        # The three values you would want when a client disputes the numbers,
+        # and the three this endpoint was most recently wrong about (#124).
+        total_gap_count=gap_analysis.total_gap_count,
+        target_stage=target_stage,
+        target_stage_source=target_stage_source,
+        engagement_target_capability_count=engagement_target_capability_count,
     )
 
     return ZtDashboardResponse(
@@ -805,6 +865,10 @@ def zt_dashboard(
         current_pct=current.maturity_pct,
         target_label=target.overall_stage_label,
         target_pct=target.maturity_pct,
+        target_stage=target_stage,
+        target_stage_source=target_stage_source,
+        engagement_target_capability_count=engagement_target_capability_count,
+        total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,
         pillars=pillars,

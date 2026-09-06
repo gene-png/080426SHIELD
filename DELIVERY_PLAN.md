@@ -80,7 +80,7 @@ what happened between 2026-08-26 and 2026-08-30.
 | 6 | **W1 Risk step (+ #84)** | Not started — **re-sized 2026-08-22** after an adversarial review of the item-9 sweep. Now also owns **#121** (the `risk_synthesize` prompt instructs tokens the parser rejects, so a live run stores entries with no likelihood/impact/tier and the client dashboard reports N open risks whose matrix sums to fewer than N — this is **F6**, which the 2026-08-08 plan says belongs in W1) and **#122** (the audit row counts findings received, never entries persisted) and **#132** (`risk.py` re-derives the ATT&CK citation drop as a two-line list comprehension with no counter, no reason and nothing in the audit row -- found by grepping the SHAPE, not the call sites, and absent from this plan entirely until the review of PR #157 noticed an `mvp-blocking` issue with no owning item). **#84 is two call sites, not one** — `risk.py:177` and `:193` | Nothing | **4–6 sessions** (re-sized 2026-08-25 — see "Why the range is wide") | — |
 | 7 | **W1 ATT&CK step** | **7b DONE — PR #180 merged 2026-09-02 (`fef3cf5`).** Re-measured 2026-09-05 on the merged tree, not carried forward. What shipped is exactly the 7b decomposition below: the endpoint and schema against the current resolver (`routes/attack.py` +624, `schemas/attack.py` +154), backend tests (`test_attack_ai_inputs.py` +458), and the whole web half (proxy route, `AttackAiInputsPanel.tsx` +664 with a +474 test, types, client, workspace wiring). It also carried an `audit-gate.yml` and `CLAUDE.md` fix, which is why its closing reference names a governance issue (#NNN in this prose, deliberately — see the rule below), NOT item 7 work; the title and the closing reference describe different halves of one PR. **REMAINING: #178 only.** **#131 is DONE** — `fix/attack-approved-snapshot-wins`, recorded as **D-064**: the approved snapshot's vendor and spelling now win the capability merge. It was an unapproved draft's vendor and spelling overriding the approved snapshot with the winning spelling reaching the client deliverable; same file and the same `pairs` tuple #133 widened. It changed deliverable content, so it went back to Gene rather than merging unattended. **#178** (NEW, `mvp-blocking`, filed after the 2026-08-27 sizing and therefore NOT inside the old 4–6) — ai-inputs cannot report the DISCARDED drop-path, so a discarded list is indistinguishable from no list; `attack.py:682`'s predicate is the only thing keeping an approved-then-discarded list's rows out of the egress projection, so it takes its own branch and its own reviewer pass. The superseded PART-2 narrative is kept below under "Re-sizing item 7" as the record of why the item was sized as it was — branch `feat/attack-ai-inputs-provenance` carries a committed failing test (`db43a86`) and no endpoint; that 404 is where work resumes. **Decision superseded 2026-08-26.** It read "port the `/ai-inputs` panel from #29's branch (6 new files, zero drift)". `feat/attack-ai-inputs-visibility` is now 104 commits behind `main` <!-- counted: git rev-list --count origin/feat/attack-ai-inputs-visibility..origin/main, 2026-08-27 --> and its `routes/attack.py` differs by 385 insertions / 626 deletions -- it predates the resolver rewrite (5a), the D-053 snapshot, #102's withholding and #133's enrichment, and the endpoint its four files call does not exist on `main` under that name -- **but the payload half of this item already SHIPS**, see the scope correction below. So: WRITE fresh against the current resolver using #29 as a shape reference, rewrite the enrichment, and re-derive #33's finding 5. **The 1-1.5 estimate rested on the porting assumption, which expired; the current 4-6 was derived bottom-up on 2026-08-27 (see "Re-sizing item 7") and needs no further work.** Also owns **#131** — an unapproved draft's vendor and spelling override the approved snapshot and the winning spelling reaches the client deliverable; same file and the same `pairs` tuple #133 widened | Nothing (5a is DONE) | **1.75–3 sessions** (re-derived 2026-09-05 — see "Re-sizing item 7 again, after 7b shipped"), of which **#131's 0.75–1.25 is now SPENT**, leaving #178's 1–1.75. **The number here and the table total are deliberately NOT re-derived by the #131 PR** — `grep -n '12–18' DELIVERY_PLAN.md` returns both live claims and a historical record of how the total has moved, and telling those apart is a judgement call belonging to whoever owns the sizing, not a side effect of landing an issue | **~2–3** for 7b, against 3–4.5 estimated |
 | 8 | **W6 — Risk export/publish split** | Not started. **SPLIT 2026-08-30:** #123 is the `routes/clients.py` half and queues behind #114 (same file — see "File-contention dependencies"); the export/publish half is independent. Also owns **#123** — clicking Generate 404s the client's Risk dashboard with "No finalized Risk Register for your organization yet" while the finalized v1 sits right there, because the query takes the highest version with no finalized filter | **#123 half: #114.** Export/publish half: nothing | **1–1.5 sessions** | — |
-| 9 | **Correctness defects only a code review catches** | **IN PROGRESS — #125 and #126 SHIPPED in PR #197, merged 2026-09-05 (`f10955c`); five of the original seven remain, and five more folded in.** Re-measured 2026-09-05 on the merged tree. **Remaining from the original seven:** #114, #115, #46, #109, #124. **Folded in 2026-09-05** from the adversarial passes over #197 — see "Reconciling #183-#196": **#188**, **#189**, **#195** (all `mvp-blocking`, all reach scoring and therefore the deliverable) and **#185**, **#194** (owned but NOT labelled; both fail the document bar, both are required for this item to be complete). #185 is the completion of #125 rather than an independent defect — the typed 422 #197 now returns is invisible to a consultant until it lands. #194 is the structural cause behind both #185 and #188. The estimate carries TWO separate corrections, recorded as two on purpose; see "Item 9, correction 1 of 2" and "correction 2 of 2". **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **5.25–7.5 sessions** (fixes only; re-sized 2026-09-05 in two recorded corrections) | **~1.5–2** for #125 + #126, against an implied ~1.15–1.7 |
+| 9 | **Correctness defects only a code review catches** | **IN PROGRESS — #125 and #126 SHIPPED in PR #197, merged 2026-09-05 (`f10955c`); #124 SHIPPED 2026-09-06 on `fix/zt-dashboard-engagement-target`.** Re-measured 2026-09-05 on the merged tree. **Remaining from the original seven:** #114, #115, #46, #109. **Folded in 2026-09-05** from the adversarial passes over #197 — see "Reconciling #183-#196": **#188**, **#189**, **#195** (all `mvp-blocking`, all reach scoring and therefore the deliverable) and **#185**, **#194** (owned but NOT labelled; both fail the document bar, both are required for this item to be complete). #185 is the completion of #125 rather than an independent defect — the typed 422 #197 now returns is invisible to a consultant until it lands. #194 is the structural cause behind both #185 and #188. The estimate carries TWO separate corrections, recorded as two on purpose; see "Item 9, correction 1 of 2" and "correction 2 of 2". **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. MVP-blocking, reclassified 2026-08-22. Carries #114 (all four client dashboards label released-deliverable numbers with a recomputed assessment — 8 call sites, one root cause), #115 (a partially-failed AI run is indistinguishable from a complete one), #46 (a wrong top-level key collapses to zero silently — the root of half of #115), #109 (an `unusable` citation leaves no per-row record). **#59 stays deferred**; #114 ships a loud typed error on NULL `parent_version` instead — see the note below. **The targeted twin-sweep is DONE** and its ~0.5–1 session is spent, not remaining: it found the ZT Gap-Plan caption defect (fixed, PR #127) and, once its own verdicts were adversarially reviewed, three more — **#124** (ZT client dashboard ignores the engagement target: "+0 points to target" beside a PDF saying 37 gaps at S4), **#125** (a DoD target of Stage 4 is silently clamped to 3 and then labelled `source: client`), **#126** (Tech Debt "Annual spend" is a floor with no flag, beside a `savings` figure that has one). The open-ended audits of CSF/ZT/Risk are #118, deferred with a firing trigger rather than to a backlog | Nothing | **5.25–7.5 sessions** (fixes only; re-sized 2026-09-05 in two recorded corrections), of which **#124's ~0.75–1.0 is now SPENT** (landed 2026-09-06), leaving #114, #115, #46, #109 and the fold. **The row and the table total are deliberately NOT re-derived by the #124 PR** — `check_plan_totals.py` ties the rows to the headline, so moving one moves the total, and that is a sizing judgement rather than a status update. Same posture Track A recorded for #131 the same day | **~1.5–2** for #125 + #126, against an implied ~1.15–1.7 |
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
 | 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). <!-- counted: historical --> Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
 | 11 | **The two redaction leaks item 10 filed rather than fixed — #152 + #153** | Not started. Filed by item 10 and **orphaned when it closed**: both are labelled `client-data-egress` on a FedRAMP Moderate/High target, so client identifiers reach a third-party provider. #152 — a signature block whose signatory line ends in punctuation or exceeds four words is not cut. #153 — bare UK national, E.164 without the plus, and the US international prefix all leak. One PR, batched by file per the item-10 rule: both live in `app/ai/redact.py` and are decided by the same corpus | Nothing | **On start** — see below | — |
@@ -652,8 +652,8 @@ number and concludes it covered both.** Precedent: item 6 was re-sized
 2026-08-22 on taking #121/#122/#132, and again 2026-08-25.
 
 The 4–6 was derived for these — #114, #115, #46, #109, #124, #125, #126 —
-an implied **0.57–0.86 per issue**. Two of those seven have now shipped, and they
-cost more than that rate:
+an implied **0.57–0.86 per issue**. #125, #126 and #124 have now shipped, and
+they cost more than that rate:
 
 **Actual for #125 + #126: ~1.5–2 sessions**, against an implied ~1.15–1.7 for two
 of seven. What the estimate did not contain:
@@ -681,8 +681,19 @@ roughly twice the code**, and that ratio predicts the remaining five better than
 any code count — one observation, not a rate.
 
 **Corrected rate: 0.75–1.0 per issue — DERIVED FROM A SMALL SAMPLE, NOT
-MEASURED.** The five remaining from the original seven — #114, #115, #46, #109,
-#124 — therefore carry **3.75–5.0**.
+MEASURED.** The five it was derived over — #114, #115, #46, #109, #124 —
+carried **3.75–5.0**.
+
+**#124 has since landed (2026-09-06), leaving four and ~3.0–4.0.** The rate
+itself is unchanged and is now a sample of three rather than two: #124 came in
+around the corrected rate, review included. Recorded here rather than by
+editing the figure, because the row and the headline move together and that is
+Gene's call.
+
+A draft of this PR did re-derive the total to 11.25–17. It was reverted on
+finding that Track A had recorded the opposite posture for #131 hours earlier,
+on the same document — worth keeping as a note, because the gate goes green
+either way and only the prose says which is intended.
 
 **The caveat is load-bearing and belongs beside the number.** That rate is a
 sample of two projected onto five, and the five are not exchangeable with the <!-- counted: historical -->
@@ -690,7 +701,7 @@ two: **#114 alone is eight call sites across four dashboards with one root
 cause**, which is a different shape of work from #125's and #126's per-service
 fixes. This is the same error as building an ETA from a rate sampled inside a
 DB-heavy stretch of the test suite — a window that is not representative of the
-run. Treat 3.75–5.0 as the best available derivation and expect #114 to move it;
+run. Treat 3.0–4.0 as the best available derivation and expect #114 to move it;
 re-derive when #114 lands rather than carrying this figure forward.
 
 ### Item 9, correction 2 of 2 — the fold
@@ -699,15 +710,29 @@ These issues from the adversarial passes over #197 join the item: **#188, #189,
 #195** (`mvp-blocking`) and **#185, #194** (owned, not labelled). Dispositions
 and reasons are in "Reconciling #183–#196" below.
 
-These are sized **below** the corrected per-issue rate, and the reason is
+These are sized **below** the corrected per-issue rate, and the reason WAS
 structural rather than optimistic: all five live in files that #124's work
-already opens, so batch-by-file applies. #194 is a constant extraction; #188,
+already opens, so batch-by-file applies.
+
+**That premise expired when #124 landed on 2026-09-06**, and it is flagged
+rather than silently re-sized because re-sizing it needs a judgement nobody has
+made yet. The batch-by-file discount assumed these would ride along in a branch
+that already had `clients.py`, `zt/scoring.py` and `routes/zt.py` open; they
+now need a branch that opens them cold. The fold is still **1.5–2.5** here
+because #188/#189/#195 remain validator fixes of a shape #197 solved once — but
+whoever picks them up should expect the low end to be gone, and should re-derive
+rather than inherit this number. #194 is a constant extraction; #188,
 #189 and #195 are validator fixes of a shape #197 has now solved once and can
 copy; #185 is a single error-surface in `ZtWorkspace`.
 
 **Fold recorded as 1.5–2.5.**
 
 **Item 9 recorded as 5.25–7.5** (3.75–5.0 + 1.5–2.5).
+
+**#124 landed 2026-09-06**, so ~0.75–1.0 of the 3.75–5.0 is spent and the
+remaining four — #114, #115, #46, #109 — carry ~3.0–4.0. The row above, this
+line and the summing table still read 5.25–7.5, for the reason recorded at the
+item row: the total is a sizing judgement and is Gene's to move.
 
 ### Governance overhead is tracked OUTSIDE the sized items
 
@@ -1029,10 +1054,18 @@ this document already has a bullet about.
 items:
 
 ```
-#124 ZT target ignored          clients.py:749  target = zt_compute(fw, targets)
-                                using per-row targets only; the client target
-                                (_zt_client_target_stage, :253) is never called
-                                in zt_dashboard, though _zt_gap_total uses it :322
+#124 ZT target ignored          SHIPPED 2026-09-06. clients.py, zt_dashboard:
+                                `zt_compute(fw, targets)` rolled up per-row
+                                targets ONLY, and never called
+                                _zt_client_target_stage, though _zt_gap_total
+                                did. Now resolves through resolve_target_stage
+                                and effective_target_stages, the same rule
+                                analyze_gaps applies. The line numbers this
+                                entry used to carry (:749, :253, :322) were all
+                                wrong within a day of being written -- the
+                                MECHANISM above is what survived, which is the
+                                argument for the rule in CLAUDE.md about citing
+                                a quoted string rather than a line.
 #126 Tech Debt spend floor      an unknown annual_cost_usd coerces to 0.0 (:878)
                                 and enters annual_spend for EVERY item (:879).
                                 savings_cost_known is set False (:882) only when
@@ -1087,9 +1120,16 @@ So, as a strict order:
   as condition 6.
 - **#125 was LIVE on the ZT finalize path — not latent. Written 2026-09-03, BEFORE Track C's first PR; the trace below cites pre-fix code and the clamp it names no longer exists.** Kept in the past tense rather than rewritten, because it is the record of why the item was sized as it was, and the deviation record below states what shipped. An earlier draft
   of this bullet said it was "latent today only because the ZT dashboard
-  publishes no target-source field". That second clause is true — `grep
-  target_stage_source` returns `routes/zt.py:1747` and nothing in `clients.py` —
-  and being true is exactly why it ended the check. The site it cites is
+  publishes no target-source field". That second clause was true — `grep
+  target_stage_source` returned a `routes/zt.py` hit and nothing in
+  `clients.py` — and being true is exactly why it ended the check.
+
+  **Both halves of that sentence are now stale, and it is left in the past
+  tense rather than updated**, because it is the RECORD of how the check ended,
+  not a verification to repeat. #124 gave `zt_dashboard` a
+  `target_stage_source`, so the grep now returns `clients.py` too; the `:1747`
+  it cited has moved. Updating the grep's result would only reset the clock on
+  a sentence whose whole point is that it was true when written. The site it cites is
   **finalize**, not the dashboard. Traced end to end:
 
   ```
@@ -1197,6 +1237,19 @@ So, as a strict order:
   and `clients.py` takes a second pass. That is the chain this plan was
   restructured to avoid, and it is being accepted once, with a reason, rather
   than by default.
+
+  **PAID AND CLOSED, 2026-09-06.** #124 shipped on its own branch as the
+  immediate next one, exactly as the deviation said it would, and the second
+  `clients.py` pass is the cost that was accepted above rather than an
+  overrun. Recorded here because a deviation record left open reads as an
+  outstanding debt to everyone who finds it, and this one is settled.
+
+  Worth keeping for the next sequencing call: narrowing the branch was right
+  for a reason the deviation did not claim. #124's own review found a
+  surviving mutant and a swallowed error state in the NEW code, neither
+  reachable from the backend suite -- so had it ridden along with #125/#126, it
+  would have been reviewed as the third item in a diff whose first two were the
+  regression fix that prompted the narrowing.
 
 **Item 6 is the one to watch, not to split.** #121 is fixed in `risk.py` and the
 AI prompt, but its symptom renders at `clients.py:959-1010`, so a test for it

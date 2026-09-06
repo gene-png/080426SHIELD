@@ -305,6 +305,143 @@ def resolve_target_stage(framework: ZtFrameworkCode, chosen: object) -> tuple[in
     return (int(n), "client")
 
 
+def effective_target_stages(
+    framework: ZtFrameworkCode,
+    targets: Mapping[str, int | None] | None,
+    target_stage: int,
+) -> dict[str, int]:
+    """The target actually applied to each capability: the per-capability
+    override where there is a usable one, otherwise the engagement stage.
+
+    Every capability in the framework gets an entry, so the result is a
+    complete map rather than the sparse one `targets` usually is. That
+    completeness is the point for `routes/clients.py::zt_dashboard`, which
+    rolls these up through `compute_scores` to get a target percentage: a
+    sparse map leaves `maturity_pct` None for every pillar nobody set a
+    per-row target on, which is #124 -- the client read "Target maturity:
+    Unscored, +0 points to target" beside a released PDF listing 37 gaps at
+    Stage 4.
+
+    EXTRACTED SO THERE IS ONE RULE, NOT TWO. This was a closure inside
+    `analyze_gaps`, so the dashboard had no way to ask "what target did the
+    gap engine use for this capability" except by rewriting the test --
+    which is #84's shape exactly (`risk.py` re-deriving a gap comparison
+    instead of calling `analyze_gaps`, and a complete call-site sweep
+    reporting clean over it because a reimplementation shares the symptom
+    and never the symbol). The dashboard's percentages and the deliverable's
+    gap counts now cannot disagree about a target, because they read it from
+    the same function rather than from two copies of the same three lines.
+
+    `target_stage` must already be resolved -- callers take it from
+    `resolve_target_stage` -- and this REFUSES an unresolved one rather than
+    trusting a neighbouring call to do it. An earlier draft delegated the check
+    to `analyze_gaps` on the grounds that refusing twice puts the refusal in two
+    places. That was wrong in the direction that matters: `zt_dashboard` calls
+    this function BEFORE `analyze_gaps`, and an out-of-range stage here yields a
+    map of out-of-range values that `compute`'s `_validated` silently discards
+    as unscored -- `target_pct` None and every gap 0.0, which is #124 exactly,
+    reintroduced by the helper written to fix it. The protection was real and
+    lived in a different call in a different file, which is the shape this repo
+    keeps finding (a gate whose correctness sits in someone else's line).
+    """
+    max_stage = level_count(framework)
+    if not (1 <= target_stage <= max_stage):
+        raise ValueError(
+            f"target_stage {target_stage} is out of range for {framework.value} "
+            f"(valid 1-{max_stage}). Resolve a client-supplied target through "
+            f"resolve_target_stage() first."
+        )
+    targets = targets or {}
+    return {
+        cap.code: _resolve_one(framework, targets.get(cap.code), target_stage)
+        for cap in capabilities(framework)
+    }
+
+
+def capability_target_override(framework: ZtFrameworkCode, stored: object) -> int | None:
+    """A stored per-capability target if it is usable, otherwise None.
+
+    The single predicate for "does this capability override the engagement
+    target" IN THIS ENGINE AND THE CLIENT DASHBOARD.
+    `effective_target_stages` applies it and
+    `engagement_target_capability_count` counts it, so the map and the count
+    cannot disagree about any capability -- two copies of one three-line test
+    is the shape that produced #84.
+
+    STATED EXEMPTION, because an unqualified "the single predicate" would be
+    false and false in the reassuring direction: `routes/risk.py` answers the
+    same question inline, against a hardcoded 3
+    (`r.target_stage if r.target_stage is not None else 3`), and calls nothing
+    here. That IS #84 -- still open, deliberately untouched by #124, and the
+    reason this docstring names a scope instead of a guarantee. Anyone changing
+    the rule below has THREE consumers to consider, and the third does not
+    import this module.
+
+    DELIBERATE EXEMPTION, stated so it does not read as an oversight. An
+    out-of-range PER-CAPABILITY target falls back to the engagement stage
+    SILENTLY, the same shape #125 fixes one level up. It is left alone because
+    naming that fault needs a counter on `GapAnalysis`, and that change is
+    constrained not to alter the shape `zt/exporters.py` reads. Tracked in
+    #188, which carries the expiry condition stated below.
+
+    Not currently reachable, and the two writers are named rather than
+    summarised, because an earlier draft of this comment said "no other code
+    path writes `ZtAnswer.target_stage`" -- which is false, and false in the
+    direction that stops a reader checking the writer they most need to see.
+    Both writers bound the value first:
+
+      routes/zt.py, `patch_answer` -- its `target_stage must be 1-` guard 422s
+        on anything outside 1..level_count() for the answer's OWN framework.
+      routes/zt.py, the AI-apply path -- `_as_number` plus the
+        `if not 1 <= n <= max_stage` check `continue`s to a dropped-suggestion
+        record, so an out-of-range suggestion is never written.
+
+    Both bound the RANGE. Neither refuses a bool at the schema, so
+    `patch_answer` writes Stage 1 for `true` -- tracked in #189, and out of
+    scope here because an in-range 1 never reaches this fallback. Note
+    `isinstance(True, int)` is True, so such a value would be taken as its int
+    value rather than falling back; that is #189's blast radius and is
+    deliberately UNCHANGED, because this extraction must not move a single gap
+    count and the predicate is carried over as it stood rather than improved in
+    passing.
+
+    If a third writer appears, this exemption expires with it.
+    """
+    max_stage = level_count(framework)
+    if isinstance(stored, int) and 1 <= stored <= max_stage:
+        return stored
+    return None
+
+
+def _resolve_one(framework: ZtFrameworkCode, stored: object, target_stage: int) -> int:
+    override = capability_target_override(framework, stored)
+    return override if override is not None else target_stage
+
+
+def engagement_target_capability_count(
+    framework: ZtFrameworkCode, targets: Mapping[str, int | None] | None
+) -> int:
+    """How many capabilities take the ENGAGEMENT target because they carry no
+    usable per-capability override.
+
+    The client dashboard needs this to describe its own target honestly. Only
+    Run-AI and the client's self-assessment write per-row targets, so the two
+    ends of the range are both ordinary: a consultant-scored assessment
+    overrides nothing and the engagement stage decides every capability, while
+    a fully AI-scored one can override all of them and the engagement stage
+    then decides nothing. Reporting "your target, chosen at intake" under a
+    percentage that no intake choice contributed to would be #124's own defect
+    -- a label that does not describe the number beside it -- pointed the other
+    way.
+    """
+    targets = targets or {}
+    return sum(
+        1
+        for cap in capabilities(framework)
+        if capability_target_override(framework, targets.get(cap.code)) is None
+    )
+
+
 def analyze_gaps(
     framework: ZtFrameworkCode,
     answers: Mapping[str, int | None],
@@ -335,40 +472,11 @@ def analyze_gaps(
             f"resolve_target_stage() first."
         )
     notes = notes or {}
-    targets = targets or {}
     names = _pillar_name_lookup(framework)
-
-    def _target_for(code: str) -> int:
-        t = targets.get(code)
-        if isinstance(t, int) and 1 <= t <= max_stage:
-            return t
-        # DELIBERATE EXEMPTION, stated so it does not read as an oversight.
-        # An out-of-range PER-CAPABILITY target falls back here silently, the
-        # same shape #125 fixes one level up. It is left alone because naming
-        # that fault needs a counter on `GapAnalysis`, and this change is
-        # constrained not to alter the shape `zt/exporters.py` reads. Tracked
-        # in #188, which carries the expiry condition stated below.
-        #
-        # Not currently reachable, and the two writers are named rather than
-        # summarised, because an earlier draft of this comment said "no other
-        # code path writes `ZtAnswer.target_stage`" -- which is false, and
-        # false in the direction that stops a reader checking the writer they
-        # most need to see. Both writers bound the value first:
-        #
-        #   routes/zt.py, `patch_answer` -- its `target_stage must be 1-`
-        #     guard 422s on anything outside 1..level_count() for the answer's
-        #     OWN framework.
-        #   routes/zt.py, the AI-apply path -- `_as_number` plus the
-        #     `if not 1 <= n <= max_stage` check `continue`s to a
-        #     dropped-suggestion record, so an out-of-range suggestion is
-        #     never written.
-        #
-        # Both bound the RANGE. Neither refuses a bool at the schema, so
-        # `patch_answer` writes Stage 1 for `true` -- tracked in #189, and out
-        # of scope here because an in-range 1 never reaches this fallback.
-        #
-        # If a third writer appears, this exemption expires with it.
-        return target_stage
+    # ONE rule for "which target applies to this capability", shared with the
+    # client dashboard rather than copied into it -- see
+    # `effective_target_stages`, which carries the per-capability exemptions.
+    resolved_targets = effective_target_stages(framework, targets, target_stage)
 
     rows: list[Gap] = []
     unscored: list[str] = []
@@ -377,7 +485,7 @@ def analyze_gaps(
         if s is None:
             unscored.append(cap.code)
             continue
-        cap_target = _target_for(cap.code)
+        cap_target = resolved_targets[cap.code]
         if s >= cap_target:
             continue
         pillar_name = names.get(cap.pillar_code, cap.pillar_code)
@@ -450,6 +558,9 @@ __all__ = [
     "WEAKEST_PER_PILLAR",
     "analyze_gaps",
     "build_roadmap",
+    "capability_target_override",
     "compute",
+    "effective_target_stages",
+    "engagement_target_capability_count",
     "resolve_target_stage",
 ]
