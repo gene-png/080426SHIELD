@@ -1,0 +1,6 @@
+{
+  "incident": "#72 / D-051: test_csf_ai_contract.py built its prompt-compliant response out of _PARSER_ROW_KEYS, the parser's own constants, so it agreed with the parser by construction and could never see the prose/JSON drift the csf_score prompt actually carries -- the one thing a contract test exists to catch. It was green and could never have been red.",
+  "expect": 1,
+  "adversarial": false,
+  "argv": ["{dir}/tests"]
+}

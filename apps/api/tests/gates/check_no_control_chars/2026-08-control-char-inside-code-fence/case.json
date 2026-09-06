@@ -1,0 +1,6 @@
+{
+  "incident": "Same incident, at the boundary: the control byte sits inside a fenced code block, where a reader reasonably expects an exemption. There is none, and there must not be -- DECISIONS.md quotes the patterns it decides, so the fence is exactly where these bytes land.",
+  "expect": 1,
+  "adversarial": true,
+  "argv": ["{dir}"]
+}

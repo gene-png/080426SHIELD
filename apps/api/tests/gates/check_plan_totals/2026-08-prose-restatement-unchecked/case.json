@@ -1,0 +1,7 @@
+{
+  "incident": "The gate's own docstring: the corrected table shipped twenty lines above a paragraph still opening '12-18.5 is a 54%-wide range' -- a live wrong total, in the PR that ADDED this gate. The table is internally consistent and the prose contradicts it, which is the single-file form of the two-agents-two-totals gap.",
+  "expect": 0,
+  "adversarial": false,
+  "argv": ["{dir}/DELIVERY_PLAN.md"],
+  "gap": { "should_be": 1, "issue": "#214" }
+}

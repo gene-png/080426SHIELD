@@ -1,0 +1,6 @@
+{
+  "incident": "PR #146: the heading read 12-18.5 for one draft while the parts summed to 12-18. Recorded in the gate's own docstring and in DELIVERY_PLAN.md's historical note. This is the defect the gate exists for; if it ever returns 0 here the gate is decorative.",
+  "expect": 1,
+  "adversarial": false,
+  "argv": ["{dir}/DELIVERY_PLAN.md"]
+}

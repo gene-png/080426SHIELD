@@ -1,0 +1,6 @@
+{
+  "incident": "CLAUDE.md records two limits of the mechanism, both load-bearing and both found by using it: the provenance window is the finding's line and two either side, so a marker spanning three lines has its closing delimiter outside the window and does not register. A reader who wrote a correct citation still gets flagged, which is why the rule says write markers on one line.",
+  "expect": 1,
+  "adversarial": true,
+  "argv": ["{dir}/CONTEXT.md"]
+}

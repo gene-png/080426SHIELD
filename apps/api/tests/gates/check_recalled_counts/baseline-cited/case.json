@@ -1,0 +1,6 @@
+{
+  "incident": "Control: rule 1 satisfied -- the list is the count and no cardinal is written, so the gate must accept it.",
+  "expect": 0,
+  "adversarial": false,
+  "argv": ["{dir}/CONTEXT.md"]
+}

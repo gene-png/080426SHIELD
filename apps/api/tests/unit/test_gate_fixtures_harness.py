@@ -1,0 +1,155 @@
+"""The fixture harness must fail closed, and be able to fail at all.
+
+This gate cannot fixture itself -- it is excluded from its own discovery, which
+is the shape `CLAUDE.md` records for `check_recalled_counts`, whose help text is
+a Python string its own pattern never reads. So its own both-states evidence
+lives here instead, and every failure mode below was executed on the host before
+being written down rather than reasoned about.
+
+The exit-code split is the point. Exit 2 means "I could not look" -- a missing
+root, a malformed case, an empty gate directory. Exit 1 means "I looked and
+something is wrong" -- a gate returned the wrong code, or its cases do not meet
+the contract. `check_audit_evidence`'s `is_code_change([])` printing
+"documentation-only change, exempt" and exiting 0 is why those must never share
+a branch.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from scripts.check_gate_fixtures import DEFERRED, discover_gates, load_cases, main
+
+_PASSING_PLAN = """### Total remaining: 12-18 sessions across the FOUR SIZED items
+
+| Item | Estimate |
+| --- | --- |
+| 7 - a | 1.75-3 |
+| 9 - b | 5.25-7.5 |
+| 6 - c | 4-6 |
+| 8 - d | 1-1.5 |
+| **Total** | **12-18** |
+"""
+
+
+def _case(
+    dir_: Path, *, expect: int, incident: str = "harness self-test", adversarial: bool = False
+) -> None:
+    dir_.mkdir(parents=True, exist_ok=True)
+    (dir_ / "DELIVERY_PLAN.md").write_text(_PASSING_PLAN, encoding="utf-8")
+    (dir_ / "case.json").write_text(
+        json.dumps(
+            {
+                "incident": incident,
+                "expect": expect,
+                "adversarial": adversarial,
+                "argv": ["{dir}/DELIVERY_PLAN.md"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _root(tmp_path: Path) -> Path:
+    """A fixture root positioned so the harness finds the real scripts dir."""
+    root = tmp_path / "apps" / "api" / "tests" / "gates"
+    root.mkdir(parents=True)
+    real_scripts = Path(__file__).resolve().parents[2] / "scripts"
+    link = tmp_path / "apps" / "api" / "scripts"
+    link.mkdir(parents=True, exist_ok=True)
+    for src in real_scripts.glob("check_*.py"):
+        (link / src.name).write_bytes(src.read_bytes())
+    return root
+
+
+def test_missing_root_is_two_not_zero(tmp_path: Path) -> None:
+    """The branch that matters: 'I could not look' must not read as a pass."""
+    assert main(["x", str(tmp_path / "nope")]) == 2
+
+
+def test_empty_gate_directory_is_two(tmp_path: Path) -> None:
+    """A gate directory with no cases is nothing-to-check, which is not clean."""
+    root = _root(tmp_path)
+    (root / "check_plan_totals").mkdir()
+    assert main(["x", str(root)]) == 2
+
+
+def test_malformed_case_is_two_not_one(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    d = root / "check_plan_totals" / "broken"
+    d.mkdir(parents=True)
+    (d / "case.json").write_text("{ not json", encoding="utf-8")
+    assert main(["x", str(root)]) == 2
+
+
+def test_case_without_an_incident_is_rejected(tmp_path: Path) -> None:
+    """An empty reason is not a reason -- the same rule test-integrity applies."""
+    root = _root(tmp_path)
+    d = root / "check_plan_totals" / "nameless"
+    d.mkdir(parents=True)
+    _case(d, expect=0, incident="   ")
+    assert main(["x", str(root)]) == 2
+
+
+def test_no_negative_control_fails(tmp_path: Path) -> None:
+    """Fixtures that only ever pass prove the gate RUNS, not that it discriminates.
+
+    This is the whole reason the harness exists, so it is the assertion that
+    must not be allowed to rot.
+    """
+    root = _root(tmp_path)
+    _case(root / "check_plan_totals" / "only-passing", expect=0, adversarial=True)
+    assert main(["x", str(root)]) == 1
+
+
+def test_no_adversarial_case_fails(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    _case(root / "check_plan_totals" / "passing", expect=0)
+    _case(root / "check_plan_totals" / "failing", expect=2)
+    assert main(["x", str(root)]) == 1
+
+
+def test_wrong_exit_code_is_reported(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    _case(root / "check_plan_totals" / "passing", expect=0)
+    _case(root / "check_plan_totals" / "mislabelled", expect=1, adversarial=True)
+    assert main(["x", str(root)]) == 1
+
+
+def test_uncovered_gate_is_not_silently_skipped(tmp_path: Path) -> None:
+    """Silence must not be how coverage shrinks.
+
+    A gate with neither fixtures nor a DEFERRED reason fails, so adding a gate
+    cannot quietly reduce what this harness examines.
+    """
+    root = _root(tmp_path)
+    _case(root / "check_plan_totals" / "passing", expect=0)
+    _case(root / "check_plan_totals" / "failing", expect=2, adversarial=True)
+    # Every other real gate is uncovered here; the deferred ones are excused and
+    # the rest must be reported.
+    assert main(["x", str(root)]) == 1
+
+
+def test_deferred_entries_all_name_a_real_gate(tmp_path: Path) -> None:
+    """A DEFERRED key that no longer exists is a stale exemption.
+
+    Same class as an agent definition citing a merged branch: the exemption
+    outlives the thing it excused, and nothing notices.
+    """
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    assert set(DEFERRED) <= set(discover_gates(scripts))
+
+
+def test_deferred_reasons_are_not_empty() -> None:
+    for gate, reason in DEFERRED.items():
+        assert reason.strip(), f"{gate} is deferred with no reason"
+
+
+def test_load_cases_reports_problems_rather_than_skipping(tmp_path: Path) -> None:
+    """A case it cannot parse must surface, never be dropped from the count."""
+    d = tmp_path / "gate" / "no-spec"
+    d.mkdir(parents=True)
+    cases, problems = load_cases(tmp_path / "gate")
+    assert cases == []
+    assert problems and "no case.json" in problems[0]
