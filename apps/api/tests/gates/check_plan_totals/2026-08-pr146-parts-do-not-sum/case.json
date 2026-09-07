@@ -1,6 +1,8 @@
 {
-  "incident": "PR #146: the heading read 12-18.5 for one draft while the parts summed to 12-18. Recorded in the gate's own docstring and in DELIVERY_PLAN.md's historical note. This is the defect the gate exists for; if it ever returns 0 here the gate is decorative.",
-  "expect": 1,
-  "adversarial": false,
-  "argv": ["{dir}/DELIVERY_PLAN.md"]
+ "incident": "PR #146: a stated total over parts that do not sum to it -- the defect this gate exists for. CORRECTED provenance: an earlier version of this field claimed the gate's docstring and DELIVERY_PLAN.md both record the same figures. They do not. The docstring says '12-18.5 over parts summing to 11.5-17.5'; DELIVERY_PLAN.md's historical note says the totals discussed were '12-18.5 and 12-18'. That discrepancy is PRE-EXISTING in those two files; the claim that they agreed was introduced here. This fixture reproduces the SHAPE -- stated total wider than the sum -- and cites no figure it cannot source.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "{dir}/DELIVERY_PLAN.md"
+ ]
 }

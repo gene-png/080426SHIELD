@@ -1,6 +1,8 @@
 {
-  "incident": "Control: rule 1 satisfied -- the list is the count and no cardinal is written, so the gate must accept it.",
-  "expect": 0,
-  "adversarial": false,
-  "argv": ["{dir}/CONTEXT.md"]
+ "incident": "Control: rule 1 satisfied -- the list IS the count and no cardinal is written, so the gate must accept it. NOTE the directory name says 'cited' and this input contains no citation, because it contains no count to cite; rule 1 (delete the count) and rule 2 (cite it) are different remedies and this is the first. Stated because the name misleads. Known limit of this trio: deleting the gate's provenance-exemption line leaves all three cases producing 1, 1, 0, so the corpus does not pin that mechanism -- test_recalled_counts_gate.py does.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "{dir}/CONTEXT.md"
+ ]
 }
