@@ -122,9 +122,30 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 
 ## Environment gotchas (learned the hard way)
 
-- **next dev hot-reload does NOT fire through the Windows bind mount.** After
-  ANY `apps/web` source edit: `docker compose up -d --force-recreate web`
+- **next dev hot-reload does NOT fire through the Windows bind mount.** After an
+  `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
+- **A DEPENDENCY change needs a different command, and `--force-recreate` will
+  report success while leaving the OLD package installed.** `node_modules` lives
+  in named volumes (`node-modules-root`, `node-modules-web`) and
+  `docker-compose.yml` guards the install on the binary EXISTING, not on its
+  version:
+
+      [ -f apps/web/node_modules/next/dist/bin/next ] || pnpm install;
+
+  So after a `package.json` or lockfile change, a recreate brings the stack up
+  green on the previous version, with the manifest and the lockfile both reading
+  the new one. Measured on the `next` 15.5.24 RCE patch: `package.json` said
+  15.5.24 and the running container said 15.5.23. Use:
+
+      docker compose exec -T web sh -lc "cd /app && pnpm install" && docker compose restart web
+      docker compose exec -T web sh -lc "node -p \"require('/app/apps/web/node_modules/next/package.json').version\""
+
+  **The second line is the confirmation step, and it is not optional.** The
+  version string is the only thing that distinguishes "the patch is applied" from
+  "the container started" — and on a security patch those read identically. A
+  guard keyed on a file being PRESENT rather than CURRENT will do this again for
+  every dependency bump, not just this one; tracked separately.
 - **`up -d --force-recreate web` silently recreates `api` too**, because `web`
   `depends_on` it and compose reconciles the dependency — so api picks up
   whatever the root `.env` says *at that moment*. This bit during W4: api had
