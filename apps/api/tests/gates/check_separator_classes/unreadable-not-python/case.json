@@ -1,0 +1,4 @@
+{"incident": "D-051, and this gate has its OWN recorded instance of the defect: its source records that it 'cited D-051 while collapsing its own 2 into a 1 -- the exit code the docstring promises was unreachable through main()'. A gate that could not return the code it promised. This fixture pins the repaired branch: input it cannot parse is exit 2, never 1 and never 0.",
+ "expect": 2, "adversarial": true,
+ "stdout_contains": "cannot parse",
+ "argv": ["{dir}/redact.py"]}

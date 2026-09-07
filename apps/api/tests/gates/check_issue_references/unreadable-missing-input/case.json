@@ -1,0 +1,4 @@
+{"incident": "D-051 fail-closed, and CLAUDE.md records this gate as the one case where writing the lesson down demonstrably WORKED: it was written months after check_audit_evidence's hole by someone who had read that entry, and its fail-closed path plus the test pinning it were in the first committed version. This fixture pins that property against the real gate rather than against the unit test that ships with it.",
+ "expect": 2, "adversarial": true,
+ "stdout_contains": "body file not found",
+ "argv": ["--title", "{dir}/title.txt", "--body", "{dir}/body.md", "--commits", "{dir}/commits.txt"]}

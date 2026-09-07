@@ -1,0 +1,3 @@
+{"incident": "Control for D-054's gate: a code PR carrying the literal Findings/Disposition block must pass, or the gate rejects compliant PRs and everyone learns to route around it.",
+ "expect": 0, "adversarial": false,
+ "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md"]}

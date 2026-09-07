@@ -1,0 +1,9 @@
+{
+ "incident": "D-051, and this gate's own source: _candidate_files raises SystemExit(2) for a root that is not a directory AND for a root holding no text files, because 'an empty listing supports neither reading. Fail closed rather than printing an encouraging sentence over input we could not read.' The recorded shape is check_audit_evidence's is_code_change([]) printing 'documentation-only change, exempt' and exiting 0. Added after the harness's own contract was tightened to require a fail-closed case per gate and reported this one missing -- the corpus proved the gate could find a violation and never that it could refuse to look.",
+ "expect": 2,
+ "adversarial": true,
+ "argv": [
+  "{dir}/no-such-tree"
+ ],
+ "stdout_contains": "check-control-chars: not a directory"
+}

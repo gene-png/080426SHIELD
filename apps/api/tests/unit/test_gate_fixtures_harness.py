@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.check_gate_fixtures import _EXTRA_GATES, DEFERRED, discover_gates, load_cases, main
+from scripts.check_gate_fixtures import _GATE_MARKER, DEFERRED, discover_gates, load_cases, main
 
 # CI runs `pytest -m unit tests/unit`. WITHOUT this marker every test in this
 # file is DESELECTED, and the suite reports the same "7111 passed" as `main`
@@ -70,17 +70,21 @@ def _root(tmp_path: Path) -> Path:
     real_scripts = Path(__file__).resolve().parents[2] / "scripts"
     link = tmp_path / "apps" / "api" / "scripts"
     link.mkdir(parents=True, exist_ok=True)
-    # Copy EVERY gate the harness discovers, not just `check_*.py`. An earlier
-    # version copied only the glob, so `leave_row_oracle.py` and
-    # `mutation_sweep.py` were absent, DEFERRED named two gates that did not
-    # exist in the fake tree, and `main` correctly returned 2 -- its stale-
-    # exemption branch -- where these tests expect 1. The harness was right and
-    # the helper was wrong, which is only visible now that these tests run at all.
-    names = {p.name for p in real_scripts.glob("check_*.py")} | set(_EXTRA_GATES)
-    for name in names:
-        src = real_scripts / name
-        if src.is_file():
-            (link / name).write_bytes(src.read_bytes())
+    # Copy every gate by the SAME predicate the harness discovers with -- the
+    # crash-is-not-a-verdict marker -- rather than by a glob. An earlier version
+    # copied only `check_*.py`, so `leave_row_oracle.py` and `mutation_sweep.py`
+    # were absent, DEFERRED named two gates missing from the fake tree, and `main`
+    # correctly returned 2 from its stale-exemption branch where these tests
+    # expect 1. The harness was right and the helper was wrong, which was only
+    # visible once these tests ran at all. Deriving the copy set from the same
+    # property keeps the helper from drifting away from the thing it stands in for.
+    for src in real_scripts.glob("*.py"):
+        try:
+            text = src.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _GATE_MARKER in text or src.name.startswith("check_"):
+            (link / src.name).write_bytes(src.read_bytes())
     return root
 
 

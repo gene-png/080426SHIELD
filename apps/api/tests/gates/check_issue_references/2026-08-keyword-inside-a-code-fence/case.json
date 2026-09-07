@@ -1,0 +1,3 @@
+{"incident": "CLAUDE.md: 'Quotes, code fences and HTML comments are not exempt.' A reader looking at a fenced block reasonably expects it to be inert -- it is an EXAMPLE of the bad form, in a document explaining the bad form -- and GitHub closes the issue anyway. The rule's own paragraph became an instance of the defect exactly this way, caught by the check rather than by a merge.",
+ "expect": 1, "adversarial": true,
+ "argv": ["--title", "{dir}/title.txt", "--body", "{dir}/body.md", "--commits", "{dir}/commits.txt"]}

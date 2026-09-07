@@ -1,0 +1,9 @@
+{
+ "incident": "D-051 fail-closed. This gate's 'I could not look' branch is distinct from its 'I found an uncited count' branch, and only the second was fixtured. A named target that cannot be read must exit 2, never 0: a counts gate that silently skips an unreadable document reports clean over exactly the file someone wanted checked. Added after the tightened contract reported this gate had no exit-2 case.",
+ "expect": 2,
+ "adversarial": true,
+ "argv": [
+  "{dir}/no-such-document.md"
+ ],
+ "stdout_contains": "MISSING target"
+}

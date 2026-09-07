@@ -1,6 +1,9 @@
 {
-  "incident": "CLAUDE.md: rglob on a path that does not exist yields nothing, so check_test_integrity /nope printed 'test-integrity: clean' and exited 0 -- a gate going green and blind. LATENT rather than live, because ci.yml carries working-directory: apps/api on that step, so the gate's correctness lived in a line in a DIFFERENT file that nothing checks. Its four anticipated failures are now decided and named, and all four exit 2.",
-  "expect": 2,
-  "adversarial": true,
-  "argv": ["{dir}/no-such-tests-dir"]
+ "incident": "CLAUDE.md: rglob on a path that does not exist yields nothing, so check_test_integrity /nope printed 'test-integrity: clean' and exited 0 -- a gate going green and blind. LATENT rather than live, because ci.yml carries working-directory: apps/api on that step, so the gate's correctness lived in a line in a DIFFERENT file that nothing checks. Its four anticipated failures are now decided and named, and all four exit 2.",
+ "expect": 2,
+ "adversarial": true,
+ "argv": [
+  "{dir}/no-such-tests-dir"
+ ],
+ "stdout_contains": "test-integrity: cannot scan"
 }

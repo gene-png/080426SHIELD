@@ -1,0 +1,8 @@
+{
+ "incident": "D-058: an enumerated class of space, tab and non-breaking space -- 'surely that is all of them'. Python's whitespace class matches 19 horizontal characters, so the list silently dropped SIXTEEN, and a street address separated by a narrow no-break space -- what PDF and Word extraction emit -- egressed verbatim with an empty removed_counts. It then RECURRED as _PHONE_SEP, 190 lines above the comment explaining the first one. This is the leak the gate exists for, on the single LLM egress path.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "{dir}/redact.py"
+ ]
+}

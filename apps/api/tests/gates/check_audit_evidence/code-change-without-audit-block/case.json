@@ -1,0 +1,3 @@
+{"incident": "D-054: three PRs and a cross-service sweep passed a REQUIRED check by recording an audit that had not happened, because nothing read the body. This is the violation the gate exists for; if it ever returns 0 here the gate is decorative.",
+ "expect": 1, "adversarial": false,
+ "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md"]}

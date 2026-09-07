@@ -64,50 +64,38 @@ from pathlib import Path
 # mapping nor the fixture tree FAILS the run: silence must not be how coverage
 # quietly shrinks.
 DEFERRED: dict[str, str] = {
-    "check_issue_references.py": (
-        "reads a PR title, body and commit messages rather than files on disk; "
-        "its input model needs a different harness than a fixture directory"
-    ),
-    "check_audit_evidence.py": (
-        "reads a PR body and a changed-file list -- the same input-model mismatch. "
-        "AND it has a SECOND call path exit-code fixtures would not reach either: "
-        "audit-gate.yml:70 runs it as a process and reads the exit code, while "
-        "audit-gate.yml:118 imports missing_evidence() and reads the RETURN VALUE. "
-        "A harness that asserts exit codes says nothing about the second, so the "
-        "deferral is wider than the input-model mismatch alone implies"
-    ),
-    "check_separator_classes.py": (
-        "reads one named module on the egress path, so a fixture would be a "
-        "stand-in redact.py; a stand-in for the file whose realness is the whole "
-        "point is worth less than the incident that would justify writing it"
-    ),
     "leave_row_oracle.py": (
-        "a real CI gate (ci.yml:96, --check-registry) that this harness could not "
-        "SEE until _EXTRA_GATES was added, because its name does not match check_*. "
-        "Deferred rather than fixtured for the same reason as separator_classes: "
-        "--check-registry validates LEAVE tables against the redaction module, so a "
-        "fixture would be a stand-in redact.py plus stand-in truth tables. Listed "
-        "here so the gap is a STATED exemption instead of an invisible one"
+        "STRUCTURALLY unfixturable, which is a stronger reason than the one first "
+        "recorded here. --check-registry takes no path: REPO_APP and TESTS are "
+        "derived from __file__, and discover_tables() imports the matrix modules by "
+        "name after a sys.path.insert. argv carries only the flag. There is no "
+        "invocation that points this gate at a fixture directory, so covering it "
+        "means changing the script rather than adding a case. The reason previously "
+        "written here -- 'a stand-in redact.py plus stand-in truth tables' -- was "
+        "shared with check_separator_classes, whose deferral did NOT survive review "
+        "and is now fixtured; anyone rejecting that argument would have read this "
+        "entry as the same rejected one and spent a session rediscovering the real "
+        "blocker"
     ),
     "mutation_sweep.py": (
-        "not a CI gate -- mutation-sweep.yml is schedule-only and pipes through "
-        "tee, so its exit code never reaches the job. Carried here only to keep "
-        "this universe equal to test_gate_crash_exit_code.GATES; that file's own "
-        "comment records the same reasoning"
+        "not a gate CI can fail on: mutation-sweep.yml carries continue-on-error on "
+        "the job, with the comment 'A survivor is a question to answer, not a build "
+        "failure. This job reports; it never blocks anything.' That is the binding "
+        "fact. Two weaker ones were recorded here first and one was wrong -- it is "
+        "schedule AND workflow_dispatch, not schedule-only, and the tee pipe is the "
+        "least of the three. Carried in this universe because it follows the same "
+        "0/1/2 convention and a developer running it by hand reads exit 1 as "
+        "'surviving mutants'"
     ),
 }
 
 _SELF = "check_gate_fixtures.py"
 _REQUIRED_KEYS = ("incident", "expect", "argv")
 
-# Gates whose FILENAME does not match `check_*`, listed because a glob cannot
-# see them. `CLAUDE.md` names this exact trap -- "leave_row_oracle.py (a CI gate
-# whose name does not match check_*)" -- and the first version of this file
-# globbed `check_*.py` and therefore could not see it. A discovery predicate
-# blind to a real gate is this tool's own #213 shape inside the tool built to
-# catch it, so the universe here is asserted equal to `test_gate_crash_exit_code
-# .GATES` by a unit test rather than left to two lists drifting apart.
-_EXTRA_GATES = ("leave_row_oracle.py", "mutation_sweep.py")
+# What MAKES a script a gate in this repo: the crash-is-not-a-verdict handler.
+# Every gate ends with it, no non-gate has it, and `test_gate_crash_exit_code`
+# already uses this exact string as its own marker.
+_GATE_MARKER = "crash != verdict"
 
 
 def scripts_dir_for(root: Path) -> Path:
@@ -116,8 +104,42 @@ def scripts_dir_for(root: Path) -> Path:
 
 
 def discover_gates(scripts: Path) -> list[str]:
-    found = {p.name for p in scripts.glob("check_*.py") if p.name != _SELF}
-    found |= {name for name in _EXTRA_GATES if (scripts / name).is_file()}
+    """Every gate, DERIVED from the convention that makes a script a gate.
+
+    A gate here is a script that returns 0/1/2 verdicts and therefore carries the
+    crash-is-not-a-verdict handler. That property is IN THE FILE, so this notices
+    a gate nobody told it about.
+
+    Two enumerations preceded this and both were wrong. The first globbed
+    `check_*.py` and could not see `leave_row_oracle.py`, a real CI gate whose
+    name does not match -- the trap `CLAUDE.md` names explicitly. The repair was a
+    two-name hand list pinned to a SECOND hand list in
+    `test_gate_crash_exit_code.GATES`: two enumerations that catch drift between
+    themselves while neither can notice the world grew. That is the same hole one
+    level up, and `CLAUDE.md` is explicit -- prefer a derivation over a
+    synchronisation.
+
+    Rejected alternative, recorded because it looks right: deriving from the
+    scripts the WORKFLOWS invoke. Measured, that returns 11 -- it picks up
+    `seed_demo.py` and `fire_scheduled_triggers.py`, which CI runs and which are
+    not gates. It answers "what does CI execute", not "what is a gate".
+
+    Residual, stated rather than papered over: a gate written WITHOUT the handler
+    is invisible here. That is a convention violation in its own right, and
+    `test_gate_crash_exit_code` exists to catch it -- but only for gates already
+    in its list, so a gate with neither the marker nor an entry is missed by both.
+    Narrower than a hand list, not zero.
+    """
+    found: set[str] = set()
+    for path in sorted(scripts.glob("*.py")):
+        if path.name == _SELF:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _GATE_MARKER in text:
+            found.add(path.name)
     return sorted(found)
 
 
@@ -151,24 +173,57 @@ def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:
     return cases, problems
 
 
-def run_case(scripts: Path, gate: str, case: dict) -> int:
+def run_case(scripts: Path, gate: str, case: dict) -> tuple[int, str]:
+    """Return (exit code, combined output).
+
+    The output is RETURNED rather than discarded because an exit code alone does
+    not discriminate. `check_plan_totals` has four distinct exit-2 branches; two
+    fixtures assert 2, and until `stdout_contains` existed either could have
+    started returning 2 from a different branch and still passed -- two copies of
+    one test wearing different names. This PR fixed exactly that defect in its own
+    unit tests, by adding message assertions after a landed mutation left all
+    twelve green, and did not carry the fix to the fixture schema until the
+    adversarial review pointed at it.
+
+    A `timeout` is passed because `test_gate_crash_exit_code._run` passes one and
+    this call site did not; a fixtured gate that hangs would otherwise hang the CI
+    job with no diagnostic.
+    """
     argv = [str(scripts / gate)] + [a.replace("{dir}", str(case["_dir"])) for a in case["argv"]]
     proc = subprocess.run(  # noqa: S603
         [sys.executable] + argv,
         capture_output=True,
         text=True,
+        timeout=120,
     )
-    return proc.returncode
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
 def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
     out: list[str] = []
     if not [c for c in cases if int(c["expect"]) == 0]:
         out.append(f"{gate}: no case that the gate passes")
-    if not [c for c in cases if int(c["expect"]) != 0]:
+    if not [c for c in cases if int(c["expect"]) == 1]:
         out.append(
-            f"{gate}: NO NEGATIVE CONTROL -- every case expects 0, so these "
+            f"{gate}: NO NEGATIVE CONTROL -- no case expects exit 1, so these "
             f"fixtures prove the gate runs, not that it discriminates"
+        )
+    # Exit 1 and exit 2 are the two codes D-051 exists to keep apart, so the
+    # negative control must be a 1 specifically. `!= 0` admitted a 2, which would
+    # have let a gate be "covered" by fixtures proving only that it can refuse to
+    # look -- the two branches merged, inside the gate whose organising principle
+    # is that they never share one. Latent when found: all four covered gates
+    # already had a 1.
+    for case in [c for c in cases if int(c["expect"]) == 2 and not c.get("stdout_contains")]:
+        out.append(
+            f"{gate}/{case['_dir'].name}: expects exit 2 without stdout_contains "
+            f"-- a gate has several 'could not look' branches and the code alone "
+            f"cannot say which one fired"
+        )
+    if not [c for c in cases if int(c["expect"]) == 2]:
+        out.append(
+            f"{gate}: no case expects exit 2 -- the fail-closed half of this "
+            f"gate ('I could not look') is unfixtured"
         )
     if not [c for c in cases if c.get("adversarial")]:
         out.append(
@@ -229,12 +284,19 @@ def main(argv: list[str]) -> int:
         for case in cases:
             checked += 1
             want = int(case["expect"])
-            got = run_case(scripts, gate, case)
+            got, output = run_case(scripts, gate, case)
             name = case["_dir"].name
             if got != want:
                 failures.append(
                     f"{gate}/{name}: expected exit {want}, got {got} "
                     f"[incident: {case['incident']}]"
+                )
+            needle = case.get("stdout_contains")
+            if needle and needle not in output:
+                failures.append(
+                    f"{gate}/{name}: exit {got} was correct but the output does "
+                    f"not contain {needle!r} -- the case may be passing from a "
+                    f"different branch than it names"
                 )
             gap = case.get("gap")
             if gap:
@@ -270,8 +332,15 @@ if __name__ == "__main__":
     # on an unhandled exception, which is this gate's violation code.
     try:
         raise SystemExit(main(sys.argv))
-    except SystemExit:
+    except (SystemExit, KeyboardInterrupt):
+        # KeyboardInterrupt re-raised, NOT relabelled 2. Every other gate does
+        # this, and `test_gate_crash_exit_code` forbids the alternative for all
+        # of them: reporting Ctrl-C as "I could not look" is a verdict the user
+        # never asked for. This file deviated until the adversarial review of
+        # PR #216 read the nine and then read this one.
         raise
-    except BaseException as exc:  # noqa: BLE001
-        print(f"check-gate-fixtures: CRASHED: {type(exc).__name__}: {exc}")
+    except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
+        # stderr, not stdout: the success line goes to stdout, and a crash notice
+        # sharing that stream is one grep away from being read as output.
+        print(f"check-gate-fixtures: CRASHED: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
