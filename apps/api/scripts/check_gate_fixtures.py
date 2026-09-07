@@ -21,15 +21,32 @@ Every gate under `apps/api/scripts/` is either covered by fixtures here or named
 in DEFERRED with a reason. A covered gate must have:
 
   * at least one case the gate PASSES (exit 0);
-  * at least one case the gate FAILS (non-zero) -- the NEGATIVE CONTROL, without
-    which the suite proves the gate runs and not that it discriminates;
+  * at least one case the gate FAILS with exit 1 -- the NEGATIVE CONTROL, without
+    which the suite proves the gate runs and not that it discriminates. A 2 does
+    not satisfy it: 1 and 2 are the codes D-051 exists to keep apart;
+  * at least one case expecting exit 2, so the fail-closed half is covered too,
+    and it carries `stdout_contains` -- a gate has several "could not look"
+    branches and the code alone cannot say which one fired;
   * at least one case marked `adversarial`: input a reasonable person would
     expect to pass, that must not. Ordinary cases test the rule; adversarial
     cases test the boundary, and the boundary is where all of these have broken.
 
-Every case names the INCIDENT it derives from. A fixture that cannot be traced
-to a recorded incident was derived from the rule rather than from the failure --
-the inversion that produced the defects above -- and is rejected here.
+Every case names the INCIDENT it derives from, because a fixture derived from the
+rule rather than from the failure is the inversion that produced the defects
+above.
+
+**What is mechanised is that the claim EXISTS; that it is TRUE is not, and
+cannot be.** This file rejects a missing or whitespace-only `incident`. It cannot
+tell whether the incident happened, whether the figures in it are real, or
+whether it describes this fixture. Four incident fields in this corpus were found
+inaccurate by an adversarial pass and corrected in `0ab309c` -- one claimed two
+documents agreed on a figure where they give 11.5-17.5 and 12-18, one cited a
+count that conflates three different populations, one described a two-line marker
+as spanning three. Every one passed this gate.
+
+That is the same scoping as the tier-1 claim below: form is mechanisable,
+implication is not. Read "traceable incident" as a convention this file makes
+visible, not a guarantee it enforces -- the enforcement is a reader.
 
 ## Fail-closed, per D-051
 
