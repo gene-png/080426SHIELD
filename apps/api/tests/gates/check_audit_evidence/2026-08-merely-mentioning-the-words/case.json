@@ -1,0 +1,3 @@
+{"incident": "test_merely_mentioning_the_words_is_not_evidence: prose describing an audit is explicitly not enough, because the failure mode D-054 records is a PR that says an audit happened. A reader skimming this body would call it compliant -- it names the reviewer and reports a clean result -- and it must not pass.",
+ "expect": 1, "adversarial": true,
+ "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md"]}

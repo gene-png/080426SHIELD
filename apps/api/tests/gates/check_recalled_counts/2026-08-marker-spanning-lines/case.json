@@ -1,0 +1,8 @@
+{
+ "incident": "CLAUDE.md records a limit of this gate found by using it: the provenance window is the finding's line and two either side, so a marker whose closing delimiter falls outside that window does not register, and a correctly-cited count is flagged anyway. CORRECTED: an earlier version described this fixture's marker as 'spanning three lines'. It spans two. What pushes the closing delimiter out of the window is the BLANK LINE between the sentence and the marker -- the mechanism is the window arithmetic, not the marker's height. Traced: match at index 2, window lines[0:5], delimiter at index 5.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "{dir}/CONTEXT.md"
+ ]
+}

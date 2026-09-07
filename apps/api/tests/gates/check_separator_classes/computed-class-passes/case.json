@@ -1,0 +1,8 @@
+{
+ "incident": "Control, and the shape CLAUDE.md prescribes as the fix: _HSPACE as a COMPUTED SUBTRACTION from the whitespace class rather than a hand-listed one. 'The list was wrong by sixteen characters and nothing could see it.' The gate must accept the corrected form or it rejects its own remedy.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "{dir}/redact.py"
+ ]
+}

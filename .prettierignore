@@ -31,3 +31,19 @@ DELIVERY_PLAN.md
 SMOKE_TEST.md
 SPRINT_*.md
 context/
+
+# Gate fixtures: data that happens to be Markdown/JSON, whose exact bytes are the
+# evidence that `check_gate_fixtures.py` asserts exit codes over. `pnpm format`
+# is MANDATORY before every commit and runs --write across this glob, so it is
+# the rewriting tool most likely to touch these files and was the only one with
+# no disposition. Two of them carry deliberate control bytes; prettier's markdown
+# parser treats U+2028 as a line terminator and would silently normalise it.
+#
+# Note 9 of the 14 markdown fixtures were already ignored BY ACCIDENT -- the
+# unanchored CONTEXT.md / DELIVERY_PLAN.md patterns above match at any depth --
+# and anchoring those (a reasonable future tidy-up) would have removed that
+# coverage with nothing to notice. This line is the deliberate version.
+#
+# LOAD-BEARING ON THE HARNESS RUNNING, like the ruff/black/test-integrity
+# exclusions: if the "gates can fail" step goes away, this goes with it.
+apps/api/tests/gates/

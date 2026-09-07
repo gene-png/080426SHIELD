@@ -64,6 +64,18 @@ jobs:
       - name: plan totals sum
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
+      # Every gate above proves something about the repo. NOTHING proved the
+      # gates themselves could fail, and this repo keeps shipping checks whose
+      # inputs cannot distinguish their pass state from their fail state (#213)
+      # -- a predicate that excluded the very operation that prompted it, a
+      # duplicate-D regex collapsing D-059a into D-059, a suite whose every
+      # fixture made two candidate fields coincide. Each gate now carries
+      # fixtures it must pass, fixtures it must FAIL, and at least one
+      # adversarial case; a gate with neither fixtures nor a stated deferral
+      # fails this step, so silence cannot be how coverage shrinks.
+      - name: gates can fail
+        run: python apps/api/scripts/check_gate_fixtures.py
+
       # An enumerated whitespace class in the single LLM egress path. Twice a
       # separator there was written by listing the characters someone could
       # think of, and both times it leaked -- the second 190 lines above the

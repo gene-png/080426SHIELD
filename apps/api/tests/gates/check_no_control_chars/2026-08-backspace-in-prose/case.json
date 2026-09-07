@@ -1,0 +1,6 @@
+{
+  "incident": "CLAUDE.md: an escape sequence written into prose becomes an invisible control byte. Four instances on one branch -- two pre-existing, one in the commit fixing those two, and one in the CI comment INTRODUCING the gate, inside the sentence describing the defect. The file parses, prettier passes, the diff looks fine.",
+  "expect": 1,
+  "adversarial": false,
+  "argv": ["{dir}"]
+}

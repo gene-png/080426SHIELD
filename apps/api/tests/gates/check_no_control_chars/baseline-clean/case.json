@@ -1,0 +1,6 @@
+{
+  "incident": "Control: ordinary prose the gate must accept, so a failure here means the gate rejects everything rather than discriminating.",
+  "expect": 0,
+  "adversarial": false,
+  "argv": ["{dir}"]
+}

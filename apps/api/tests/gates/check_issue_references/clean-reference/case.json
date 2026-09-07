@@ -1,0 +1,3 @@
+{"incident": "Control: the forms CLAUDE.md prescribes -- 'see #NNN', 'tracked in #NNN' -- must pass, or the rule it enforces is unfollowable and people route around the gate.",
+ "expect": 0, "adversarial": false,
+ "argv": ["--title", "{dir}/title.txt", "--body", "{dir}/body.md", "--commits", "{dir}/commits.txt"]}

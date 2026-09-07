@@ -1,0 +1,4 @@
+{"incident": "THE incident this whole harness is built on, pinned against the real gate at last. CLAUDE.md: is_code_change([]) returned False, so an empty changed-file list printed 'documentation-only change, exempt' and exited 0 -- a green gate, with an encouraging sentence, from input that supported neither reading. Not reachable through its own workflow, which is exactly why it survived review. This PR quoted that incident three times as motivation while deferring the gate itself; the deferral reason claimed an input-model mismatch, and the gate takes two file paths on argv.",
+ "expect": 2, "adversarial": true,
+ "stdout_contains": "no changed paths were collected",
+ "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md"]}

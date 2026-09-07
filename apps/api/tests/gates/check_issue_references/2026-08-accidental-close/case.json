@@ -1,0 +1,3 @@
+{"incident": "The same issue was closed by accident THREE times, each fix a better-worded rule; the second incident was the PR documenting the first, and the third was a sentence warning about the second. 'partially fixes #NNN' closes the issue -- GitHub's parser does not read the words around the keyword. That is why this became a check instead of a fourth paragraph.",
+ "expect": 1, "adversarial": false,
+ "argv": ["--title", "{dir}/title.txt", "--body", "{dir}/body.md", "--commits", "{dir}/commits.txt"]}

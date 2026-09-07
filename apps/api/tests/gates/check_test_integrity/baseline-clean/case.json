@@ -1,0 +1,6 @@
+{
+  "incident": "Control: a containment assertion whose needle carries literal text, which is the form the gate exists to require. If this fails the gate rejects compliant tests.",
+  "expect": 0,
+  "adversarial": false,
+  "argv": ["{dir}/tests"]
+}

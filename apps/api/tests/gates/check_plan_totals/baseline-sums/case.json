@@ -1,0 +1,6 @@
+{
+  "incident": "Control: the shape the gate must accept. Mirrors DELIVERY_PLAN.md's real table at aba398f, whose parts sum to its stated total.",
+  "expect": 0,
+  "adversarial": false,
+  "argv": ["{dir}/DELIVERY_PLAN.md"]
+}

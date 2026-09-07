@@ -1,7 +1,25 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-exclude = [".venv", "node_modules", "reference-docs"]
+# `tests/gates` holds gate FIXTURES: files that are data which happens to be
+# Python or Markdown, and whose exact text is the evidence. A linter that may
+# rewrite them can silently rewrite the inputs proving the gates discriminate --
+# the same shape `check_gate_fixtures.py` exists to catch, turned on its own
+# remedy. C420 wanted `dict.fromkeys` in the private-constant-import fixture;
+# harmless there only because `check_test_integrity` keys on the import line,
+# and nothing in the repo would have noticed it was harmless rather than
+# dangerous. What keeps these files honest is the harness asserting their exit
+# codes, NOT style enforcement -- so this exemption is load-bearing on the
+# harness actually running in CI. If the "gates can fail" step is ever removed
+# or skipped, this exemption must go with it.
+extend-exclude = [".venv", "node_modules", "reference-docs", "apps/api/tests/gates"]
+# Excludes are bypassed for EXPLICITLY NAMED paths unless this is set, and a
+# pre-commit hook names files explicitly -- which is precisely how #168 says the
+# hook set rewrites files. Without this, `ruff --fix` from a hook would edit the
+# fixtures in place and the harness would then assert exit codes over inputs a
+# tool had rewritten. Measured: `ruff check apps/api/tests/gates/` returned 1
+# before this line and 0 after.
+force-exclude = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "C4", "SIM"]
@@ -69,6 +87,13 @@ known-first-party = ["app"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+# Same reason as ruff's `apps/api/tests/gates` exclusion above: these are gate
+# fixtures whose exact bytes are the evidence, and reformatting them would edit
+# the inputs that prove the gates can fail.
+extend-exclude = "(^|/)apps/api/tests/gates/|(^|/)tests/gates/"
+# Same reason as ruff's force-exclude: a hook naming files explicitly would
+# otherwise reformat the fixtures whose exact bytes are the evidence.
+force-exclude = "(^|/)apps/api/tests/gates/|(^|/)tests/gates/"
 
 [tool.mypy]
 python_version = "3.12"

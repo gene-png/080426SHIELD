@@ -1,0 +1,8 @@
+{
+ "incident": "A DELIBERATE SCOPE BOUNDARY, not a gap. The gate's own docstring records the prose-restatement scan as 'written, measured, and rejected': keyed on any range in the discussion that is not the total, it fired on dates and hour ranges for twelve false positives against one true one -- a 7.7% signal, refused a fortiori by the precedent that refused a 12.2% one. So the table is checked and the prose beside it is not, on purpose, and 'this half stays human'. This fixture pins that boundary so nobody re-derives it: the input is a consistent table beside prose stating a different total, and the gate returns 0. CORRECTED: this case previously carried a gap marker asserting it 'should return 1 -- #214', which contradicted the measured decision above and would have sent a reader to build a check the gate had already refused. #214 is about two AGENTS holding contradictory totals across branches, which no single-file scan reaches.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "{dir}/DELIVERY_PLAN.md"
+ ]
+}

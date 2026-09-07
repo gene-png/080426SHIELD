@@ -1,0 +1,9 @@
+{
+ "incident": "CLAUDE.md: a row whose estimate did not parse hit the same continue as the column-header row, so an annotated cell (2-3 (needs-David)) was dropped from the sum IN SILENCE, and the cheapest route to green was to change the total to the short sum -- the gate steering its author into the defect it exists to catch. VERIFIED HERE: the repair was fail-closed refusal, not a parser extension. The gate now exits 2 (could not parse) rather than 1 (numbers disagree), keeping 'I could not look' off the same branch as 'nothing to complain about'. This fixture pins that distinction; if it ever returns 0 the silent drop is back, and if it returns 1 the two branches have been merged.",
+ "expect": 2,
+ "adversarial": true,
+ "argv": [
+  "{dir}/DELIVERY_PLAN.md"
+ ],
+ "stdout_contains": "cannot parse, so the sum"
+}

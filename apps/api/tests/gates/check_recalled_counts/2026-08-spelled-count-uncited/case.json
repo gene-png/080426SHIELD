@@ -1,0 +1,8 @@
+{
+ "incident": "CLAUDE.md records this gate catching 'Three checks drawn at random would have caught it' -- a spelled cardinal beside a plural noun, written in the paragraph documenting the rule against it, and the gate catching its own author. CORRECTED: an earlier version added 'Nine such counts were caught across two commits on one branch.' That figure is not sourceable. CLAUDE.md's three 'nine's are different populations -- nine live defects in a truth table, discipline failing nine recorded times, and a quoted illustration -- and conflating them is the exact shape #170 tracks. An uncited spelled count, inside the fixture for the gate that forbids uncited spelled counts.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "{dir}/CONTEXT.md"
+ ]
+}

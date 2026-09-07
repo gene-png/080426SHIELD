@@ -86,6 +86,13 @@ _SKIP_DIR_NAMES = {
 # `apps/web/src/app/api/proxy/attack/coverage/`. Same trap, same repo, and this
 # script walked into it anyway -- so anchor the ambiguous ones to a path.
 _SKIP_PATHS = {
+    # This gate's OWN fixture directory, and only its own. Those files carry
+    # deliberate control bytes -- they are how `check_gate_fixtures.py` proves
+    # this gate can fail at all, so scanning them would make a passing repo
+    # impossible. Anchored to this one gate rather than to `tests/gates`, so
+    # every OTHER gate's fixtures are still swept: a blanket exemption for the
+    # whole fixture tree would be a blind spot exactly where new files land.
+    Path("apps/api/tests/gates/check_no_control_chars"),
     Path("e2e/artifacts"),
     Path("e2e/test-results"),
     Path("e2e/playwright-report"),
