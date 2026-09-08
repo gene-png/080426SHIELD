@@ -33,12 +33,14 @@ layer down, in the shell instead of in Python: one program's verdict silently
 substituted for another's, and the substitution looks like success.
 
 **And it is not only pipes — an exit code can be wrong with nothing piped at
-all.** A block PASTED into PowerShell 5.1 that contains a `&&` runs every line
-above the bad one, prints a parser error, and exits **0**. Measured; the table is
-under **Real commands**. Nothing is substituted there and nothing is swallowed —
-the status simply does not describe what happened, which is the harder version of
-the same lesson: a green exit is evidence about the last thing the shell finished,
-not about the work you asked for.
+all.** Lines fed to PowerShell 5.1 statement-at-a-time, one of which contains a
+`&&`, run every line above the bad one, print a parser error, and exit **0**.
+Measured on stdin (`-Command -`); the table is under **Real commands**, and an
+interactive console paste is a different, unmeasured case stated there. Nothing is
+substituted here and nothing is swallowed — the status simply does not describe
+what happened, which is the harder version of the same lesson: a green exit is
+evidence about the last thing the shell finished, not about the work you asked
+for.
 
 ## What this is
 
@@ -121,14 +123,27 @@ catch you.** Nine lines, `&&` on the ninth only, measured 2026-09-08:
 | Submitted as | Lines 1-8 | Exit |
 | --- | --- | --- |
 | a script (`powershell.exe -File`) | **none ran** | 1 |
-| statement-at-a-time (a paste, or piped to `-Command -`) | **all ran** | **0** |
+| piped to `-Command -` (stdin, statement-at-a-time) | **all ran** | **0** |
 
-So a script is aborted whole, and a **pasted** block runs up to the bad line and
-then reports success — exit **0**, with a parser error on screen that no exit
-code records. Read that as: whichever way you submit it, you cannot tell from the
-status what ran. An earlier draft of this bullet said "nothing executes at all"
-unscoped; that is true of the script form only, and the paste form is the one a
-developer actually does.
+**The submission form changes the outcome, and one form reports success while
+failing.** A script is aborted whole. Fed statement-at-a-time, the same lines run
+up to the bad one and then exit **0**, with a parser error on screen that no exit
+code records. So the exit status does not tell you what ran, in either direction.
+
+**The interactive console paste is UNMEASURED and is not either row.** It is the
+case a developer actually hits, and it is deliberately not claimed here: a paste
+into `powershell.exe` goes through PSReadLine, which buffers multi-line input in
+the edit buffer, and whether it then submits statement-at-a-time or hands the
+whole block to the parser is a property of the host and the PSReadLine version —
+not of `-Command -`. **If it submits as one unit it behaves like the `-File` row,
+which is the opposite result.** An earlier draft labelled the stdin row "a paste"
+and asserted it was the common case; that certified something nobody had run, in
+a table annotated with shells and a date, which is the exact decorative-evidence
+failure the rule below forbids. Settle it in seconds if you need it: put the nine
+lines on the clipboard, paste into `powershell.exe`, read `$LASTEXITCODE`.
+
+An earlier draft of this bullet also said "nothing executes at all" unscoped. That
+is true of the script form only.
 
 Nothing partially applies in a way you can predict, and nothing tells you which
 line was at fault. This repo is developed on Windows, so the default shell in a
@@ -290,7 +305,10 @@ in review. The row was measured rather than the annotation narrowed.
   **Three separate lines, no OUTER `&&`, no backslash escaping, and no `-w`.**
   The first version of this block was authored and verified in Git Bash and
   published to a team developing on Windows, where it does not run: `&&` is a
-  parse error in PowerShell 5.1, so nothing executes at all, and the `\"`
+  parse error in PowerShell 5.1, and this block's `&&` was on the FIRST line, so
+  nothing ran — see the submission table under **Real commands** before
+  generalising that, because a `&&` further down does not behave the same way and
+  can exit 0. And the `\"`
   escaping inside `sh -lc "..."` is consumed by PowerShell before Docker sees
   it, giving `sh: 1: Syntax error: Unterminated quoted string` (exit 2).
   **PowerShell specifically, not "the host shell"** — measured 2026-09-08, the
