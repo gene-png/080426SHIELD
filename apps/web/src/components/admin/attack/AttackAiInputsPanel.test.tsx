@@ -382,8 +382,12 @@ describe("AttackAiInputsPanel", () => {
       );
       const row = screen.getByRole("row", { name: /Splunk/ });
       expect(row).toHaveTextContent(/list itself was discarded/);
-      expect(row).toHaveTextContent(/Un-discard the list/);
+      expect(row).toHaveTextContent(/Upload a replacement list/);
       expect(row).not.toHaveTextContent(/Re-approve the list to include it/);
+      // The remedy must not point at the resurrect path either: approving a
+      // discarded list silently un-discards it, which is a filed defect, and
+      // advice pointing at a bug ages badly the day the bug is fixed.
+      expect(row).not.toHaveTextContent(/approv/i);
     });
   });
 

@@ -352,9 +352,13 @@ class AttackAiInputWithheld(BaseModel):
       rows already withheld for their own reason. An out-of-scope row on a
       discarded list still reads ``security_scope``, because un-discarding the
       list would not make it citable and saying otherwise would misdescribe the
-      remedy. The remedy here is to un-discard the list or upload a new one —
-      which is the distinction the endpoint could not previously draw at all,
-      since a discarded list was indistinguishable from no list (#178).
+      remedy. The remedy here is to upload a replacement list — which is the
+      distinction the endpoint could not previously draw at all, since a
+      discarded list was indistinguishable from no list (#178).
+
+      Deliberately does NOT say "un-discard it". There is no un-discard control:
+      approving a discarded list silently resurrects it, which is #231, and copy
+      that points a consultant at a bug ages badly the day the bug is fixed.
     """
 
     name: str

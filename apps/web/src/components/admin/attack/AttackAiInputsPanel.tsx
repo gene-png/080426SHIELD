@@ -129,8 +129,10 @@ function withheldBreakdown(totals: AttackAiInputTotals): string {
  *
  * Each string ends with the REMEDY, because that is what the reader is here to
  * find, and the remedies differ: reclassify the tool, re-approve the list,
- * un-discard the list. A wrong remedy is worse than a missing one — it sends a
- * consultant to do something that cannot work.
+ * upload a replacement. A wrong remedy is worse than a missing one — it sends a
+ * consultant to do something that cannot work, and the first draft of the
+ * discarded row did exactly that: it said "un-discard the list", which is not a
+ * control this product has.
  *
  * Deliberately a map rather than a chain of ternaries. The previous form tested
  * one reason and let everything else fall to the other branch, so adding a
@@ -143,7 +145,7 @@ const REASON_COPY: Record<string, string> = {
   not_in_approved_snapshot:
     "Absent from the membership frozen when the list was approved. It was either added or reclassified into scope afterwards, and nothing on record separates those. Re-approve the list to include it.",
   list_discarded:
-    "The capability list itself was discarded, so nothing on it is offered. Un-discard the list, or upload a replacement — re-approving will not help.",
+    "The capability list itself was discarded, so nothing on it is offered. Upload a replacement list to make these tools citable again.",
 };
 
 /**

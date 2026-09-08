@@ -229,7 +229,9 @@ export interface AttackAiInputDocument {
  * only by the rows a discarded list would otherwise have contributed; a row
  * already withheld for its own reason keeps that reason, because un-discarding
  * the list would not make it citable. The remedies differ and a renderer must
- * not collapse them — re-approving does nothing for a discarded list.
+ * not collapse them. The remedy for a discarded list is a replacement list;
+ * do not render "re-approve" as the fix here, and do not render "un-discard"
+ * either — no such control exists.
  */
 export type AttackWithheldReason =
   "security_scope" | "not_in_approved_snapshot" | "list_discarded";
