@@ -3975,6 +3975,78 @@ Not built. Recorded here because it is the fix that removes the class rather tha
 another field that documents it, and because the same argument applies to every
 measured claim this repo writes into prose.
 
+## D-072 — #213's shape reached product code: four of five defects in one PR were checks that could not fail
+
+**Date:** 2026-09-08. **Context:** #178 / PR #234, the ATT&CK ai-inputs
+discarded-list disclosure. **Extends D-071** (a claim whose scope exceeds its
+evidence) and is where **#213** stops being about tooling.
+
+### The five defects, all introduced by the author of the fix
+
+Every one was found by adversarial review, none by a passing suite, and every one
+was in code written _while applying_ a rule that would have caught it.
+
+1. **A remedy naming a control the product does not have.** The panel told a
+   consultant to "un-discard the list — re-approving will not help". Re-approving
+   is the _only_ thing that works (#231), and there is no un-discard control at
+   all. Written into the column a reader consults to decide what to do next, in
+   the same file where a two-branch ternary had just been replaced for producing
+   that class of error.
+2. **One boolean producing three false statements**, in the exact state the
+   author's own test seeds. `is_latest_for_service` collapsed latest /
+   superseded / retired into a bool; every renderer reads
+   `!is_latest_for_service` as "superseded by a later version", so a
+   discarded-only client rendered "(superseded)", was counted in "includes 1
+   superseded version", and drew advice to discard a list already discarded.
+3. **`not_recorded` borrowed for retired lists.** That member renders as "N lists
+   predate the extraction record" — false of a list uploaded today and then
+   discarded. **The suppression it served was a PRESENTATION decision,
+   implemented by making the API assert something untrue.** It walked past a
+   guard in the same function reading "Do NOT name the cause here … the condition
+   observes ABSENCE; it cannot see WHY".
+4. **A fixture built from what the renderer needed rather than what the API
+   emits.** The retired-list vitest inherited `excluded_attribution: "complete"`
+   with `excluded_rows_named: 3` on a discarded list — a combination the endpoint
+   cannot produce. It agreed with the renderer by construction and was green over
+   defect 3. Made faithful, it fails.
+5. **An assertion restating the consequence of the assert above it.** After
+   `assert discard == 409` the list is APPROVED, so the following
+   `discarded AND has-snapshot` conjunction was False regardless of what the
+   snapshot held. It could not fail independently.
+
+### The finding
+
+**Four of those five are a check whose inputs cannot distinguish its pass state
+from its fail state** — #213's family (a), arriving in product code rather than
+in a gate script. Defects 2, 3 and 4 all render a _specific wrong claim_ where a
+reader looks for what to do; defect 5 is a test that cannot be red.
+
+That is the part worth carrying. #213 was catalogued from `check_audit_evidence`,
+`mutation_sweep`, `check_plan_totals` and `check_test_integrity` — tooling, where
+a silent pass costs a missed defect. Here the same shape sits on a client-facing
+disclosure, where it costs a consultant doing the wrong thing while being told
+they are doing the right one. **Tooling was where the shape was found. Product is
+where it always mattered.**
+
+### What actually caught them
+
+Not the suite: it was green over defects 1–4 throughout, and CI stayed green.
+They were caught by an adversarial reviewer reading the code against the claim,
+and by two habits that generalise:
+
+- **making a fixture faithful to the producer rather than to the consumer**, which
+  turned defect 3 from invisible to a failing assertion;
+- **mutation with proof the mutation landed and was restored**, which is what
+  established that each branch of the shared router is pinned by tests the other
+  does not cover.
+
+### Not a call for more review rounds
+
+The rounds that found these were narrow and scoped, and the reviewer set its own
+stopping condition each time. What generalises is the _questions_, not the
+cadence: does this conditional assert a specific cause it cannot know; does this
+fixture describe the producer or the consumer; can this assertion fail on its own.
+
 ## D-073 — A dashboard resolves its numbers FROM the record it names, not from whatever is newest
 
 **Date:** 2026-09-08. **Closes #114.** **Extends D-053** (a guarantee that needs

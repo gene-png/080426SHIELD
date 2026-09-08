@@ -1136,6 +1136,29 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     # allow-list is the union of them, so reporting the second copy as withheld
     # would tell a consultant the model cannot cite a tool it can. That is the
     # defect `_unapproved_contributing_names` was withdrawn for.
+    #
+    # **THIS IS A DISCLOSURE BOUNDARY, NOT TIDY SORTING. Do not simplify it away
+    # as a redundant de-duplication.**
+    #
+    # `WithheldCapability` carries `name` AND `vendor`, and since #178 a
+    # DISCARDED list produces withheld rows. Before that change the SQL
+    # `status != DISCARDED` meant a discarded list's tool names never left the
+    # database at all; now they reach `AttackAiInputWithheld` and render on an
+    # admin panel. That is intended — naming what was dropped is the whole point
+    # of the endpoint — and it is why this line matters more than it used to.
+    #
+    # What it guarantees: a tool that is citable through ANY list is never ALSO
+    # reported as withheld. Without it the panel would name the same tool in
+    # both columns and the reader could not tell which is true. The egress
+    # direction is safe by TYPE rather than by this filter —
+    # `CapabilityMembership.inputs()` projects `self.sent` only, and `withheld`
+    # is a sibling field consumed into the panel schema — so nothing here can
+    # widen what reaches the model. This protects the DISCLOSURE, and a wrong
+    # disclosure on a client-facing path is the failure this endpoint exists to
+    # prevent.
+    #
+    # Pinned by `test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld`:
+    # delete the `key in survivors` half and exactly that test fails.
     survivors = {w.name.casefold() for w in winners}
     withheld: dict[str, WithheldCapability] = {}
     for drop in sorted(dropped, key=lambda d: (d.name or "", d.list_version, d.reason)):
