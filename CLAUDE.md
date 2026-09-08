@@ -1284,6 +1284,28 @@ Rules of the road:
   is worse: "which tree is mounted right now" becomes invisible state deciding
   whether any gate result means anything. **Agents take turns in one tree.**
 
+  **The rule is bounded by its REASON, not by the word "worktree".** Everything
+  above is about the shared Docker stack, so: **a worktree that starts no
+  containers, runs no gates and writes nothing is outside this rule.** Stated
+  from the reason rather than as a carve-out, because a predicate broader than
+  its justification is the same over-broad-predicate defect this bullet exists to
+  record — and as it stood the rule forbade what its own argument could not
+  reach.
+
+  The case that matters: dispatching a READ-ONLY reviewer against
+  `git worktree add --detach ../review-<sha> <sha>` and giving it that absolute
+  path. It runs no `docker compose exec`, binds no ports, needs no `.env`, and
+  `--detach` takes no branch, so it can neither collide with a checkout elsewhere
+  nor create a ref for anyone to renumber. A branch switch in the main tree then
+  cannot reach it — the "ran, but not against this change" hazard becomes
+  impossible rather than detectable, which is a derivation rather than a window
+  someone has to remember to close.
+
+  Where one tree is kept anyway, the detection is `git reflog show HEAD | wc -l`
+  sampled before and after. **`git rev-parse HEAD` cannot do this** — a switch
+  away and back leaves it byte-identical, which is exactly the case being
+  checked. Both are tracked in #203.
+
   <!-- counted: gh issue view 170 --json comments, 2026-09-01 -->
   **This is another instance of a claim about state outside the working tree,
   asserted rather than run** — the layer asserted an isolation it never verified.
@@ -1454,6 +1476,38 @@ Rules of the road:
   cause was that there had been nothing to rebase onto. **A guard that fires
   correctly for a reason nobody would guess gets debugged in the wrong
   direction.** Each branch now names its own cause and what it implies.
+
+- **PUT THE DISCRIMINATOR WHERE THE CONFUSED READER IS STANDING, not where the
+  explanation lives.** A correct explanation sited one paragraph away from the
+  symptom does not reach the person looking at the symptom — and it is worse than
+  silence when a *different*, reassuring explanation is sited closer.
+
+  The instance: the stash-archive block explains name collisions as normal
+  ("these archives already carry suffixed names because the bare name was
+  taken"), four lines below a command that, run in the wrong shell, makes *every*
+  archive collide on one name. A reader hitting the collision meets the
+  reassuring reason first, and it is true — of a different cause. The tell is
+  disarmed before they reach anything that would distinguish the two. The fix was
+  one clause at the reassuring sentence, saying which observation means which
+  cause, rather than a better paragraph elsewhere.
+
+  Generalise it as: when you document a failure, find the sentence a confused
+  reader reaches FIRST and ask whether it sends them the wrong way.
+
+- **AN EXAMPLE OF A RULE BEING VIOLATED IS FALSIFIED BY THE RULE BEING FOLLOWED.
+  Cite the rule's SCOPE, never an instance of the breach.** Citing a specific
+  violation to illustrate a rule couples the citation's truth *inversely* to the
+  rule working: the cited instance is the first thing anyone fixes, and fixing it
+  makes your sentence false.
+
+  It happened inside a single commit here. A file-wide rule was supported by
+  naming one block that broke it; the same commit marked that block, leaving the
+  sentence citing its unmarked state standing. Picking a different instance
+  re-arms it rather than repairing it.
+
+  The durable form is structural — "command blocks appear under `## Environment
+  gotchas` and `Rules of the road` too, and the SCOPE line does not reach them" —
+  which survives every fix anyone makes. Recorded in D-071.
 
 - **A control that protects an agent from STALE STATE must be verifiable from
   INSIDE that state.** A rule written in a file the stale worktree does not have
@@ -1827,7 +1881,17 @@ Rules of the road:
   `archive/stash--x`, no error, no SHA. Every stash archived that way collides on
   one name, and the collision is pre-explained away by the very next paragraph
   here, which says these archives already carry suffixed names because the bare
-  name was taken. Use `$sha.Substring(0,8)` there, or run these in Git Bash.
+  name was taken. **Run these in Git Bash.** No PowerShell equivalent is offered
+  here, and the reason is the point: a marker covering the FAILURE does not cover
+  a REMEDY. A draft of this block recommended `$sha.Substring(0,8)` under exactly
+  that marker, measured for the failure and reasoned for the fix.
+
+  Measured 2026-09-08, PowerShell 5.1, when that was caught: it returns
+  `abcdef12` for a normal value, and **throws** both on a string shorter than
+  eight characters and on `$sha` arriving from parsed `git` output as an array
+  rather than a string. So the remedy is real but conditional, and publishing it
+  would mean publishing its two failure modes too. The block does not need it —
+  "run these in Git Bash" asserts nothing untested.
 
   Check what the name already resolves to: this repo's archives carry a branch AND
   a `-tag`-suffixed tag per stash because the bare name was taken. **But if EVERY
