@@ -77,6 +77,20 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 
 ## Real commands (use these, not generic equivalents)
 
+**SCOPE: these are GIT BASH forms, and several do not run in PowerShell.**
+Measured 2026-09-07: six commands in this section contain `&&`, which is a parse
+error in PowerShell 5.1 — not a wrong result, a statement that never executes. The
+`sh -lc "cd /app && ..."` shape is worse, because the host shell consumes the
+quoting before Docker sees it. This repo is developed on Windows, so the default
+shell in a fresh terminal is the one these do not work in.
+
+Stated as a scope rather than fixed per command, because the fix differs per case
+and the surprise is what costs time. Where a command's OUTPUT is the thing you are
+relying on — a version read, a confirmation step — write it shell-portable: no
+`&&`, no inner `sh -lc`, `-w <dir>` instead of `cd`, single quotes inside double.
+The dependency-remediation block below is the worked example, and it is there
+because the first version of it failed on exactly this.
+
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
 - Backend unit tests: `docker compose exec -T api pytest -m unit -q`
@@ -138,8 +152,21 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   the new one. Measured on the `next` 15.5.24 RCE patch: `package.json` said
   15.5.24 and the running container said 15.5.23. Use:
 
-      docker compose exec -T web sh -lc "cd /app && pnpm install" && docker compose restart web
-      docker compose exec -T web sh -lc "node -p \"require('/app/apps/web/node_modules/next/package.json').version\""
+      docker compose exec -T -w /app web pnpm install
+      docker compose restart web
+      docker compose exec -T web node -p "require('/app/apps/web/node_modules/next/package.json').version"
+
+  **Three separate lines, no `&&`, no inner `sh -lc`, and that is deliberate.**
+  The first version of this block was authored and verified in Git Bash and
+  published to a team developing on Windows, where it does not run: `&&` is a
+  parse error in PowerShell 5.1, so nothing executes at all, and the `\"`
+  escaping inside `sh -lc "..."` is consumed by the host shell before Docker
+  sees it, giving `sh: 1: Syntax error: Unterminated quoted string` (exit 2).
+  **The failure landed on the confirmation step**, which is the one line whose
+  job is to tell you whether you are still unpatched -- and its error reads as a
+  Docker problem rather than as "you are on the old version".
+  `-w /app` removes the `cd`, and single quotes inside double quotes remove the
+  escaping; the form above is verified on PowerShell 5.1 and Git Bash.
 
   **The second line is the confirmation step, and it is not optional.** The
   version string is the only thing that distinguishes "the patch is applied" from
