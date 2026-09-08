@@ -2259,14 +2259,26 @@ def ai_inputs(
                 sent_count=sent_per_list.get(cap_list.id, 0),
                 not_sent_count=withheld_per_list.get(cap_list.id, 0),
                 source_rows_total=cap_list.source_rows_total,
-                # "not_recorded" for a retired list: nothing was dropped that
-                # anyone should act on, and "unknown" would raise a warning
-                # about a list that feeds nothing. Not a lie — a discarded
-                # list's extraction record is genuinely not something this panel
-                # reports on.
-                excluded_attribution=(
-                    "not_recorded" if retired else _excluded_attribution(cap_list)
-                ),
+                # "retired" is its OWN member, not a reuse of "not_recorded".
+                #
+                # The first version wrote "not_recorded" here, and that member
+                # already means something specific: the panel renders it as
+                # "N lists predate the extraction record". A list uploaded this
+                # morning with a complete reconciliation on record, then
+                # discarded, was reported as predating the extraction record --
+                # flatly false, and it walked straight past the guard in
+                # `_excluded_attribution` that says "Do NOT name the cause here
+                # ... the condition observes ABSENCE; it cannot see WHY".
+                #
+                # The reason for suppressing the warning was a PRESENTATION
+                # decision, and it was implemented by making the API assert
+                # something untrue -- the wrong layer. A distinct member states
+                # the truth and lets each consumer decide, and it is enforced:
+                # `describeAttribution` is an exhaustive switch with no default,
+                # so TypeScript refuses to compile until every consumer handles
+                # it. A panel-side filter would have been a rule someone could
+                # drop with nothing to catch it.
+                excluded_attribution=("retired" if retired else _excluded_attribution(cap_list)),
                 excluded_rows_named=len(rows),
             )
         )

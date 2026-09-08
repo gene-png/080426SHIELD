@@ -367,17 +367,36 @@ describe("AttackAiInputsPanel", () => {
       await renderReady(
         inputs({
           sources: [
+            // FAITHFUL to what the API emits for a retired list, not to what
+            // this test needed to render. The first version inherited the
+            // fixture defaults -- `excluded_attribution: "complete"`,
+            // `excluded_rows_named: 3` -- a combination the endpoint CANNOT
+            // produce for a discarded list, because the route sends "retired"
+            // and suppresses the rows. A fixture written from what the renderer
+            // needs agrees with the renderer by construction and cannot see a
+            // contract defect, which is this repo's fixture rule pointed at an
+            // API contract rather than a prompt. `source_rows_total` stays 40:
+            // the upload really did have 40 rows, and that is the pairing the
+            // "Not reported" pill has to read sensibly beside.
             sourceList({
               status: "discarded",
               is_latest_for_service: null,
               sent_count: 0,
               not_sent_count: 1,
+              excluded_attribution: "retired",
+              excluded_rows_named: 0,
+              source_rows_total: 40,
             }),
           ],
           totals: totals({ sent: 0, not_sent: 1, withheld_list_discarded: 1 }),
         }),
       );
       expect(screen.queryByText(/superseded/i)).toBeNull();
+      // The defect this fixture now makes visible: reusing `not_recorded` for a
+      // retired list made the panel state, flatly, that a list uploaded today
+      // predates the extraction record.
+      expect(screen.queryByText(/predates the extraction record/i)).toBeNull();
+      expect(screen.getByText("Not reported")).toBeTruthy();
       expect(screen.getByTestId("attack-ai-inputs-retired")).toHaveTextContent(
         /discarded and contributes nothing/,
       );

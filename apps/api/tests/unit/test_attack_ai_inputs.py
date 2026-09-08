@@ -364,6 +364,7 @@ def _list_with_extraction_record(
     *,
     source_rows_total: int | None,
     excluded_rows: list | None,
+    status: CapabilityListStatus = CapabilityListStatus.APPROVED,
 ) -> None:
     """A Tech Debt list carrying a specific EXTRACTION record.
 
@@ -385,7 +386,7 @@ def _list_with_extraction_record(
         cl = CapabilityList(
             service_id=svc.id,
             version=1,
-            status=CapabilityListStatus.APPROVED,
+            status=status,
             source_rows_total=source_rows_total,
             excluded_rows=excluded_rows,
         )
@@ -716,3 +717,60 @@ def test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld(app_
         "a tool that survives on an active list must not also be reported "
         "withheld because a different, discarded list carried it"
     )
+
+
+@pytest.mark.unit
+def test_a_retired_list_reports_its_own_attribution_not_a_borrowed_one(app_client) -> None:
+    """A discarded list must not be described as predating the extraction record.
+
+    The first version of this feature reused `not_recorded` to suppress a
+    warning about a list that contributes nothing. That member is rendered as
+    "N lists predate the extraction record and make no claim either way" --
+    flatly false of a list uploaded this morning with a complete reconciliation
+    stored, and then discarded.
+
+    The suppression was a PRESENTATION decision implemented by making the API
+    assert something untrue. `retired` is its own member so the API keeps
+    reporting a fact and each consumer decides what to show; because
+    `describeAttribution` is an exhaustive switch with no default, TypeScript
+    refuses to compile until every consumer handles it.
+
+    Asserted here rather than only in the panel because it is an API contract:
+    the reason a vitest could not catch it is that its fixture had been written
+    from what the renderer needed rather than from what this endpoint emits.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    # A COMPLETE extraction record -- 40 rows uploaded, one named exclusion --
+    # on a list that was then discarded. This is the combination that made the
+    # borrowed member a lie: nothing here is missing or unknowable.
+    _list_with_extraction_record(
+        TestSession,
+        cid,
+        uid,
+        source_rows_total=40,
+        excluded_rows=[{"index": 3, "summary": "blank row"}],
+        status=CapabilityListStatus.DISCARDED,
+    )
+    sid = _attack_service(c, bearer, cid)
+
+    body = c.get(
+        f"/attack/services/{sid}/ai-inputs",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+    ).json()
+
+    src = body["sources"][0]
+    assert src["excluded_attribution"] == "retired", (
+        "a discarded list must carry its own attribution member, not borrow one "
+        "whose rendered meaning is false of it"
+    )
+    assert src["excluded_attribution"] != "not_recorded"
+    # Its stored record is untouched and still true -- the endpoint simply is
+    # not speaking for it. `source_rows_total` still reports the real upload.
+    assert src["source_rows_total"] == 40
+    assert src["excluded_rows_named"] == 0
+    assert body["excluded"] == []
+    assert (
+        body["totals"]["lists_with_unknown_exclusions"] == 0
+    ), "a retired list must not raise the cannot-say-what-it-dropped warning"

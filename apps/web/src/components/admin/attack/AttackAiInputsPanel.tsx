@@ -187,6 +187,18 @@ function describeAttribution(list: AttackAiInputSourceList): {
         title:
           "A reconciliation ran but its per-row half was not stored. Nothing was recorded either way, so this is NOT zero — it is unknown.",
       };
+    case "retired":
+      // Its own member precisely so this sentence can be true. Reusing
+      // "not_recorded" made the panel say a list uploaded today "predates the
+      // extraction record". Whatever this list's reconciliation says is still
+      // stored and still true -- the panel is simply not speaking for a list
+      // that contributes nothing.
+      return {
+        label: "Not reported",
+        tone: "neutral",
+        title:
+          "This list was discarded, so its extraction record is not reported here. Nothing is being claimed about what it dropped, in either direction.",
+      };
     case "not_recorded":
       return {
         label: "Not recorded",

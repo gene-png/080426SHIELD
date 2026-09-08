@@ -436,6 +436,12 @@ class AttackAiInputSourceList(BaseModel):
     #   refuses to report zero — that would be a silent under-report inside the
     #   endpoint built to end silent drops.
     # * ``not_recorded`` — pre-0036 list; no reconciliation was ever stored.
+    # * ``retired`` — the list is DISCARDED, so this endpoint does not report on
+    #   its extraction record at all. Its own member and NOT a reuse of
+    #   ``not_recorded``: that one is rendered as "predates the extraction
+    #   record", which is false of a list uploaded today and then discarded.
+    #   Whatever its reconciliation says is still stored and still true; this
+    #   value says only that the panel is not speaking for it.
     excluded_attribution: str = "not_recorded"
     # How many rows are NAMED in `excluded`, which is always literally true.
     # Deliberately not called a count of what was excluded: under ``unknown``

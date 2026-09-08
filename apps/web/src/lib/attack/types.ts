@@ -245,7 +245,11 @@ export type AttackWithheldReason =
  * and the API refuses to collapse them into a zero. See `_excluded_attribution`
  * in apps/api/app/routes/attack.py.
  */
-export type AttackExcludedAttribution = "not_recorded" | "complete" | "unknown";
+export type AttackExcludedAttribution =
+  | "not_recorded"
+  | "complete"
+  | "unknown"
+  | "retired";
 
 /** One capability the model WILL be offered, and where it came from. */
 export interface AttackAiInputCapability {
