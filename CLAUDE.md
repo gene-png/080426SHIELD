@@ -152,11 +152,11 @@ because the first version of it failed on exactly this.
   the new one. Measured on the `next` 15.5.24 RCE patch: `package.json` said
   15.5.24 and the running container said 15.5.23. Use:
 
-      docker compose exec -T -w /app web pnpm install
+      docker compose exec -T web sh -c "cd /app && pnpm install"
       docker compose restart web
       docker compose exec -T web node -p "require('/app/apps/web/node_modules/next/package.json').version"
 
-  **Three separate lines, no `&&`, no inner `sh -lc`, and that is deliberate.**
+  **Three separate lines, no OUTER `&&`, no backslash escaping, and no `-w`.**
   The first version of this block was authored and verified in Git Bash and
   published to a team developing on Windows, where it does not run: `&&` is a
   parse error in PowerShell 5.1, so nothing executes at all, and the `\"`
@@ -165,8 +165,21 @@ because the first version of it failed on exactly this.
   **The failure landed on the confirmation step**, which is the one line whose
   job is to tell you whether you are still unpatched -- and its error reads as a
   Docker problem rather than as "you are on the old version".
-  `-w /app` removes the `cd`, and single quotes inside double quotes remove the
-  escaping; the form above is verified on PowerShell 5.1 and Git Bash.
+  Each defect below is fixed by a different thing, and mixing them up is
+  how the SECOND version of this block also shipped broken:
+
+  * the **outer** `&&` joining two `docker` commands is what PowerShell cannot
+    parse -- so they are three lines. The **inner** `&&` inside `sh -c "..."` was
+    never the problem: it is one quoted argument handed to the container's shell,
+    and both host shells pass it through untouched.
+  * the `\"` escaping is fixed by single quotes inside double quotes.
+  * **`-w /app` is NOT the fix and must not be used here.** It works in PowerShell
+    and FAILS in Git Bash -- MSYS rewrites `/app` into a Windows path and Docker
+    answers `Cwd must be an absolute path`. The second draft of this block used it
+    and was published claiming both shells, having been run in only one.
+
+  Verified by running all three lines in **Git Bash and PowerShell 5.1**, this
+  time in both before the claim was written.
 
   **The second line is the confirmation step, and it is not optional.** The
   version string is the only thing that distinguishes "the patch is applied" from
