@@ -88,10 +88,25 @@ For seven days this was described as "two unauthenticated RCEs open". Measured:
 
 - `GHSA-p293-qw3h-jr36` is **windows-hosted servers only**. Production runs Linux
   containers. It was live on a Windows dev host, not in production.
-- `GHSA-2xp9-vwfh-vxw4` needs the **Image Optimization API**, which this app does
-  not use: 0 `next/image` imports, no `images` block in `next.config.mjs`, 0 `avif`
-  references. The one candidate chain — a user file served from the web origin at
-  `api/proxy/artifacts/[id]/download` — is blocked at three independent points:
+- `GHSA-2xp9-vwfh-vxw4` needs the **Image Optimization API**. No application code
+  calls it — 0 `next/image` imports, 0 `avif` references — but **that is not what
+  decides whether the route exists.** An earlier draft of this section cited "no
+  `images` block in `next.config.mjs`" as evidence the optimizer was not in play.
+  That is exactly backwards: the absence of that block is the state in which the
+  route WAS mounted, because `/_next/image` is mounted by the framework regardless
+  of what imports it.
+
+  **Measured against the standalone artifact** — the production build shape, not the
+  dev server: `/_next/image` answers **400 without** `images: { unoptimized: true }`
+  and **404 with** it, while a genuinely absent route answers 404 either way. 400 is
+  a mounted handler rejecting the request; 404 is no handler at all. So the route
+  was reachable and answering for as long as that line was absent, and the config
+  file's silence was the thing being read as its absence. PR #230 adds the line and
+  a CI step holds it there.
+
+  Reachable is not exploitable. The one candidate chain — a user file served from
+  the web origin at `api/proxy/artifacts/[id]/download` — is blocked at each of
+  these points, independently:
   `image/avif` is not in `ALLOWED_MIME` (415), the route returns 401 to the
   optimizer's cookie-less internal fetch, and artifacts are served
   `Content-Disposition: attachment` unconditionally.
