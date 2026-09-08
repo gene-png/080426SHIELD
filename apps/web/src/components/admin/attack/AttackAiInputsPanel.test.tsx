@@ -356,6 +356,37 @@ describe("AttackAiInputsPanel", () => {
     });
   });
 
+  describe("a retired (discarded) source list", () => {
+    it("is not counted or labelled as superseded", async () => {
+      // `null` is FALSY in TS, so the natural spelling `!s.is_latest_for_service`
+      // counts a retired list as superseded — and that is the one-line
+      // simplification a reviewer suggests back. This test makes `=== false`
+      // non-optional. Same construction as
+      // `test_an_empty_snapshot_is_not_the_same_as_no_snapshot`: the wrong
+      // spelling is the obvious one.
+      await renderReady(
+        inputs({
+          sources: [
+            sourceList({
+              status: "discarded",
+              is_latest_for_service: null,
+              sent_count: 0,
+              not_sent_count: 1,
+            }),
+          ],
+          totals: totals({ sent: 0, not_sent: 1, withheld_list_discarded: 1 }),
+        }),
+      );
+      expect(screen.queryByText(/superseded/i)).toBeNull();
+      expect(screen.getByTestId("attack-ai-inputs-retired")).toHaveTextContent(
+        /discarded and contributes nothing/,
+      );
+      expect(screen.getByTestId("attack-ai-inputs-retired")).toHaveTextContent(
+        /Nothing supersedes it/,
+      );
+    });
+  });
+
   describe("the reason column", () => {
     it("gives a discarded row the remedy that works, not the one that does not", async () => {
       // The column was a two-branch ternary: anything that was not

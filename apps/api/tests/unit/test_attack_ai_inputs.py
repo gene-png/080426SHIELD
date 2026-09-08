@@ -673,6 +673,46 @@ def test_a_discarded_lists_tools_never_reach_the_egress_payload(app_client) -> N
     )
     assert req.capabilities == []
     blob = str(req.preview.inputs).lower()
-    assert "splunk" not in blob and "crowdstrike" not in blob, (
-        "a discarded tool name appears in the outbound preview payload"
+    assert (
+        "splunk" not in blob and "crowdstrike" not in blob
+    ), "a discarded tool name appears in the outbound preview payload"
+
+
+@pytest.mark.unit
+def test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld(app_client) -> None:
+    """Survive-anywhere beats withheld-anywhere, and nothing else pins it.
+
+    `if not key or key in survivors: continue` is the ONLY thing making this
+    true, and it sits at the top of the loop #232 is filed to rewrite. Whoever
+    writes that 3x3 is choosing which REASON wins between two drops; this is a
+    different rule one line above, and folding it into a winner-selection
+    refactor is the natural mistake.
+
+    If it goes, `Splunk` reappears in `not_sent` under `list_discarded` while
+    also being sent — telling a consultant the model cannot cite a tool it can,
+    which is the defect `_unapproved_contributing_names` was withdrawn for. The
+    `withheld_list_discarded == 0` assertion is the one that fails loudly then.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    # Same tool on two lists of the same client: one thrown away, one live.
+    _tech_debt_list(
+        TestSession, cid, uid, [("Splunk", None, False)], status=CapabilityListStatus.DISCARDED
+    )
+    _tech_debt_list(
+        TestSession, cid, uid, [("Splunk", None, False)], status=CapabilityListStatus.DRAFT
+    )
+    sid = _attack_service(c, bearer, cid)
+
+    body = c.get(
+        f"/attack/services/{sid}/ai-inputs",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+    ).json()
+
+    assert "Splunk" in {cap["name"] for cap in body["capabilities"]}
+    assert "Splunk" not in {d["name"] for d in body["not_sent"]}
+    assert body["totals"]["withheld_list_discarded"] == 0, (
+        "a tool that survives on an active list must not also be reported "
+        "withheld because a different, discarded list carried it"
     )

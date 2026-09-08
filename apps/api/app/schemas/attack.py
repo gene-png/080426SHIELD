@@ -404,9 +404,13 @@ class AttackAiInputSourceList(BaseModel):
     # D-031 excludes a discarded row from the LATEST COMPUTATION; it does not
     # say the row is superseded, and reading it that way was my own over-reach.
     #
-    # No default: every producer knows which of the three it means, and a
-    # default here would be a fourth meaning ("nobody said") wearing the
-    # clothes of one of the three.
+    # NO DEFAULT, and this is a deliberate exemption from the C0 note at the top
+    # of this block ("every list field is defaulted so an older client parses a
+    # newer response"). Stated here rather than left silent, because an
+    # unexplained exemption reads as an oversight and the next person restores
+    # the default -- which re-collapses the tri-state, since any default is a
+    # FOURTH meaning ("nobody said") wearing the clothes of one of the three.
+    # Every producer of this field knows which of the three it means.
     is_latest_for_service: bool | None
     # True when the APPROVED snapshot decides membership; False when live rows
     # do (a DRAFT, or a list approved before migration 0043 — NULL means nobody
