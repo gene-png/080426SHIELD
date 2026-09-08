@@ -85,11 +85,25 @@ the next time a command is added here:
 
 <!-- counted: an earlier draft said "six"; the grep above returns 5 commands, 2026-09-08 -->
 
-It over-reports on purpose: this scope block discusses `&&` in prose and matches
-itself. Read the hits — the commands are the ones inside backticks under a `- `
-bullet. A pattern tightened until the prose fell out would be tuned to today's
-wording and would start missing commands the first time someone reflows a
-paragraph.
+Reading its output takes two corrections, and both are why the number is not
+written down:
+
+- **It over-reports on purpose.** This scope block discusses `&&` in prose and
+  matches itself, so most hits are not commands. The commands are the ones inside
+  backticks under a `- ` bullet. A pattern tightened until the prose fell out
+  would be tuned to today's wording and would start missing commands the first
+  time someone reflows a paragraph.
+- **Hit LINES are not commands.** The ruff/black bullet wraps across two source
+  lines and carries a `&&` on each, so counting command-shaped hits gives one
+  more than there are commands. Count bullets, not lines.
+
+**Empty output means the anchors moved, NOT that the section is PowerShell-safe.**
+Both headings are matched by prefix and the command must be run from the repo
+root. Reword the first heading and `sed` prints nothing, `grep` exits 1, and
+silence reads as the reassuring answer — the same branch collapse this file
+records in five of its own gates. Reword only the second and the range runs to
+EOF, dragging in JavaScript `&&` from the prose below. If you get nothing back,
+check the headings before you believe it.
 
 `&&` is a **parse** error in PowerShell 5.1, not a runtime one, and the
 distinction is the whole hazard: PowerShell parses the script before executing
@@ -136,6 +150,14 @@ matters, since `-w` is the one form here that breaks Git Bash. The inner `&&` is
 single quoted argument handed to the container's shell; both host shells pass it
 through untouched. Four of the five `&&` commands the grep above surfaces use that
 shape, including the MANDATORY pre-commit lint, and they work.
+
+**So exactly one command in this section actually needs rewriting for PowerShell,
+and it is the e2e one:** `cd e2e && npx playwright test [file]` is a host `cd`
+joined to a host command by an OUTER `&&`. Run it as two lines there. The other
+four are fine as written, and saying otherwise is not harmless — a Windows dev who
+believes the mandatory ruff/black line cannot be run either skips it, which is the
+Sprint 3 six-ruff-errors path this file already records, or rewrites it with `-w`
+and lands in the Git Bash failure above.
 
 The dependency-remediation block below is the worked example, and it is there
 because two versions of it failed on exactly this.
