@@ -32,6 +32,14 @@ status, not the gate's — so a fail-closed exit 2 reads as a clean 0. Use
 layer down, in the shell instead of in Python: one program's verdict silently
 substituted for another's, and the substitution looks like success.
 
+**And it is not only pipes — an exit code can be wrong with nothing piped at
+all.** A block PASTED into PowerShell 5.1 that contains a `&&` runs every line
+above the bad one, prints a parser error, and exits **0**. Measured; the table is
+under **Real commands**. Nothing is substituted there and nothing is swallowed —
+the status simply does not describe what happened, which is the harder version of
+the same lesson: a green exit is evidence about the last thing the shell finished,
+not about the work you asked for.
+
 ## What this is
 
 Durable project knowledge for every Claude session, every developer. If it's a
@@ -108,13 +116,12 @@ check the headings before you believe it.
 `&&` is a **parse** error in PowerShell 5.1, not a runtime one — and **how much
 it destroys depends on how the block is submitted, which is the part that will
 catch you.** Nine lines, `&&` on the ninth only, measured 2026-09-08:
+<!-- counted: historical -->
 
 | Submitted as | Lines 1-8 | Exit |
 | --- | --- | --- |
 | a script (`powershell.exe -File`) | **none ran** | 1 |
 | statement-at-a-time (a paste, or piped to `-Command -`) | **all ran** | **0** |
-
-<!-- counted: historical -->
 
 So a script is aborted whole, and a **pasted** block runs up to the bad line and
 then reports success — exit **0**, with a parser error on screen that no exit
