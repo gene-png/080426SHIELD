@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-06 (#131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-07 (the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -77,6 +77,56 @@ computed glue-alphabet sweep, filed with its reasoning and measured as searching
 an empty space), **#156** (ruff isort classifying `apps/api/scripts` by whether
 an unrelated top-level `scripts/` exists), **#143** (the pre-push hook's
 fail-open).
+
+### 2026-09-07 — the next RCE patch, and what the exposure actually was
+
+`next` 15.5.23 to 15.5.24 shipped in PR #225, covering `GHSA-p293-qw3h-jr36` and
+`GHSA-2xp9-vwfh-vxw4`. **The patch was correct to ship. The exposure language
+around it was not, and the corrected version is the one to carry.**
+
+For seven days this was described as "two unauthenticated RCEs open". Measured:
+
+- `GHSA-p293-qw3h-jr36` is **windows-hosted servers only**. Production runs Linux
+  containers. It was live on a Windows dev host, not in production.
+- `GHSA-2xp9-vwfh-vxw4` needs the **Image Optimization API**. No application code
+  calls it — 0 `next/image` imports, 0 `avif` references — but **that is not what
+  decides whether the route exists.** An earlier draft of this section cited "no
+  `images` block in `next.config.mjs`" as evidence the optimizer was not in play.
+  That is exactly backwards: the absence of that block is the state in which the
+  route WAS mounted, because `/_next/image` is mounted by the framework regardless
+  of what imports it.
+
+  **Measured against the standalone artifact** — the production build shape, not the
+  dev server: `/_next/image` answers **400 without** `images: { unoptimized: true }`
+  and **404 with** it, while a genuinely absent route answers 404 either way. 400 is
+  a mounted handler rejecting the request; 404 is no handler at all. So the route
+  was reachable and answering for as long as that line was absent, and the config
+  file's silence was the thing being read as its absence. PR #230 adds the line and
+  a CI step holds it there.
+
+  Reachable is not exploitable. The one candidate chain — a user file served from
+  the web origin at `api/proxy/artifacts/[id]/download` — is blocked at each of
+  these points, independently:
+  `image/avif` is not in `ALLOWED_MIME` (415), the route returns 401 to the
+  optimizer's cookie-less internal fetch, and artifacts are served
+  `Content-Disposition: attachment` unconditionally.
+
+**Do not round that to "we were never exposed."** The Windows advisory was live on a
+dev host, and the optimizer's credential behaviour is taken from documentation
+rather than from a request against a running instance — one `curl` settles it and
+has not been run. That distinction is the difference between a patch record and an
+incident record.
+
+**Two accepted-risk items are open and blocked on a named owner, not on work.** Both
+are installed-but-off-the-path with greppable firing conditions, written up in the
+tracking issue: `ecdsa` (no fix version; both JWT paths pin non-EC algorithms) and
+`sharp` (transitive under next only; no call path while the three image conditions
+above stay at zero). An agent must not supply the name.
+
+**One identification that was unresolved and is now settled**, because either half
+alone reads as full coverage: the sharp CVEs (GIF/TIFF/VIPS loaders) and the libheif
+overflow that the AVIF disable works around are **distinct**. Bumping sharp does
+nothing for libheif; the AVIF disable does nothing for the other three.
 
 ### 2026-08-24 — the redaction boundary over-matched every "fl" word (#130, D-058)
 
