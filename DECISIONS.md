@@ -3726,6 +3726,13 @@ All run in Git Bash and PowerShell 5.1 on 2026-09-08.
 | `sh -c "cd /app && ..."` — INNER `&&` | 0                                   | 0                               |
 | single quotes inside double           | 0                                   | 0                               |
 
+That row is the one most easily misread, and its first write-up was misread
+exactly that way. The block said the escaping "is consumed by **the host shell**".
+It is consumed by **PowerShell specifically** -- the identical line exits 0 in Git
+Bash and prints the version. "The host shell" reads as both, and that phrasing is
+why a Git Bash author can run the line, watch it work, and publish it as portable.
+The same sentence, scoped correctly, would have stopped the second broken draft.
+
 **The direction is the finding, not the content.** Two forms fail only in
 PowerShell; one fails only in Git Bash. So verifying in the shell you happen to
 use is structurally insufficient rather than lazy — it can only clear the rows

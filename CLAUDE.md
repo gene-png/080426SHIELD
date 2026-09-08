@@ -111,8 +111,15 @@ Reading its output takes two corrections:
 
 **Empty output means the anchors moved, NOT that the section is PowerShell-safe.**
 Both headings match by prefix and it must be run from the repo root. Reword the
-first heading and `sed` prints nothing, `grep` exits 1, and silence reads as the
+FIRST heading and `sed` prints nothing, `grep` exits 1, and silence reads as the
 reassuring answer — the branch collapse this file records in its own gates.
+Reword only the SECOND and the range never closes, running to EOF and dragging in
+JavaScript `&&` from the prose below; wrong, but visibly wrong. The two failures
+do not look alike, and only one of them announces itself.
+
+This matters here more than it would elsewhere: **this repo is developed on
+Windows, so the default shell in a fresh terminal is the one that cannot parse
+these commands.**
 
 **What breaks where.** The forms this repo has actually hit, a floor rather than
 a census. Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**. The
@@ -143,7 +150,8 @@ So, where a command's OUTPUT is what you rely on — a version read, a confirmat
 step — the prescription is only these: **no OUTER `&&` between two host commands
 (use separate lines); no backslash-escaped quotes inside a quoted argument (use
 single quotes inside double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is
-FINE and is the replacement for `-w`.
+FINE and is the replacement for `-w` — its `&&` is inside a single quoted argument
+handed to the container's shell, which both host shells pass through untouched.
 
 **Exactly one command in this section needs rewriting for PowerShell:**
 `cd e2e && npx playwright test [file]`, a host `cd` joined to a host command by an
@@ -1806,6 +1814,12 @@ Rules of the road:
       sha=$(git rev-parse "stash@{<n>}")
       git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
       git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
+
+  **Git Bash only, and this one fails QUIETLY elsewhere.** In PowerShell
+  `${sha:0:8}` is a variable named `sha:0:8`, not a substring — so the tag name
+  comes out malformed and the third line pushes it. Rewrite it for your shell or
+  run these in Git Bash; do not paste them into PowerShell and read the absence of
+  an error as success.
 
   Check what the name already resolves to: this repo's archives carry a branch AND
   a `-tag`-suffixed tag per stash because the bare name was taken. **Discharge any
