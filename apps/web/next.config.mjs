@@ -1,5 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Unmounts /_next/image entirely. Measured: the route answers HTTP 400 without
+  // this line and HTTP 404 with it, so this is an elimination rather than a
+  // mitigation. It costs nothing here -- the app has zero `next/image` imports and
+  // had no `images` block -- and it converts a reachability ARGUMENT about
+  // sharp/libvips and libheif into a configuration FACT that is greppable and
+  // gateable. An exception carries an owner, a scope, an expiry and a re-review
+  // cadence forever; a config line carries none of those and cannot silently stop
+  // being true. Removing this line re-enables the optimizer and re-opens the
+  // question -- see the tracking issue before doing so.
+  images: { unoptimized: true },
   reactStrictMode: true,
   poweredByHeader: false,
   // Next.js standalone output keeps the prod Docker image small.
