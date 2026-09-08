@@ -3837,3 +3837,66 @@ it was the reviewer's original `Read` output, which contained text `main` does n
 have. Controls filed on #203; `git reflog show HEAD | wc -l` sampled before and
 after is the detection, and `git rev-parse HEAD` cannot work because a
 switch-away-and-back leaves it identical.
+
+### The shape, corrected — a claim whose scope exceeds its evidence
+
+The first framing of this record said the repeated defect was "a measurement of
+one case written up as a general property". The adversarial reviewer corrected
+that after the race result above, and the correction is the useful part. The
+species below are distinct, and only the first is a reading failure:
+
+- **Scope over-reach** — one case measured, all cases claimed. The outer-`&&` Git
+  Bash row certified by a block annotation; the stdin row labelled "a paste";
+  "the hazard itself is bash's". A more careful reading catches each of these.
+- **Stability over-reach** — one _observation_ of a non-deterministic value,
+  written as a property. `python x.py | Select-Object -First 1` reporting 2, which
+  reproduces once in fifteen runs.
+
+**The second survives every check this branch built.** Shells named, date written,
+a real run, a real recorded exit code — everything about it was evidence, and all
+of it was true. The defect was in what a single observation can support, which no
+annotation field asks about. That is why the branch was cut back to its measured
+parts rather than reviewed a fourth time: the section was producing claims faster
+than it was producing measurements, and one of them was unreachable by more care.
+
+### Why the instruction records a SET and not an N
+
+The obvious repair — add an N to the annotation — was proposed and rejected, and
+the reasoning generalises.
+
+**An N of 15 reporting `LASTEXITCODE=2` would have been worse than the original**:
+certified, repeated, and still wrong, because the author reports the value they
+saw rather than the mode. What made the race visible was not looking fifteen
+times; it was writing down `-1 x14, 2 x1`. So the field that works is _what did
+you see_, not _how many times did you look_ — a distribution in an annotation is
+self-announcing and no reader mistakes it for a property.
+
+A blanket N would also be filled ritually, because most measurements here are
+deterministic by construction: a parse error is a parse error, MSYS path rewriting
+has no timing component. A decorative N is the exact decorative-evidence failure
+this record exists to describe, and it would have been the third annotation field
+added in three review rounds — growth in KIND, which the size ratchet says to
+resist.
+
+Hence the trigger is a property of the **command** rather than of the author:
+early termination, concurrency, or ordering. `Select-Object -First 1` announces
+itself.
+
+**And the cheaper instrument was already used and under-credited.**
+`"nothing" | findstr "zzz"` returning 1 established whose exit code was being read,
+in a single deterministic run. That is a check whose two sides can only agree if
+the thing is true — this repo's stated preference — and it settled the question
+more cheaply than fifteen repetitions did.
+
+### Not built, and the better answer
+
+**Measurements in prose can only be believed; measurements in a script can be
+re-run.** Every figure in this record is a claim a future reader must take on
+trust, and the whole incident above is what that costs. The alternative is a
+script under `apps/api/scripts/` that performs these probes and prints the table,
+so the next reader derives it instead of citing it — derivation over
+synchronization, applied to evidence rather than to values.
+
+Not built. Recorded here because it is the fix that removes the class rather than
+another field that documents it, and because the same argument applies to every
+measured claim this repo writes into prose.

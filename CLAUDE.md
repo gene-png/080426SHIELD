@@ -176,6 +176,16 @@ block-level marker over a table certifies every cell at once, offers no way to
 write "measured, except this row", and has twice certified something nobody ran
 (D-071).
 
+**And where the command involves early termination, concurrency or ordering, run
+it more than once and record the OBSERVED SET rather than a single value.** The
+trigger is a property of the command, visible before you run it —
+`Select-Object -First 1` stops a pipeline early and says so in its own name — not
+a judgement about how careful you are being. Record `-1 x14, 2 x1`, never "15
+runs": a count can be filled in ritually and still report the value you happened
+to see, while a distribution is self-announcing and no reader mistakes it for a
+property. This exists because a measurement of that kind was taken once, recorded with
+a real exit code and a real date, and was the minority outcome (D-071).
+
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
 - Backend unit tests: `docker compose exec -T api pytest -m unit -q`
