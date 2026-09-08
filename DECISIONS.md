@@ -3886,6 +3886,51 @@ this record exists to describe, and it would have been the third annotation fiel
 added in three review rounds — growth in KIND, which the size ratchet says to
 resist.
 
+### An example of a rule being VIOLATED is falsified by the rule being followed
+
+The file-wide default originally carried a supporting instance: a named block that
+was bash-only and **carried no marker**. That citation was wrong in a way worth
+naming, because it generalises past this sentence.
+
+The rule says unmarked blocks should be marked or verified. Citing a specific
+unmarked block therefore makes that block the first candidate for marking -- and
+marking it makes the citing sentence false. **The citation's truth is inversely
+coupled to the rule working.** It stays true only while everyone ignores the rule,
+which is not evidence of anything. It happened here inside one commit: the fix that
+added the marker left the sentence citing its absence standing.
+
+Picking a different unmarked block does not repair this, it re-arms it. So the
+example was deleted rather than repointed.
+
+**The durable form, if an instance is ever wanted: cite the rule's SCOPE, never a
+violation of it.** "Command blocks appear under `## Environment gotchas` and
+`Rules of the road` too, and the SCOPE line does not reach them" is structural and
+survives every marker anyone adds. The old sentence conflated that durable fact
+with a volatile one about a particular block's marker state, and only the first
+ever supported the claim.
+
+### A third species: inference transcribed as measurement
+
+The species named above are scope over-reach and stability over-reach. Another
+appeared while fixing the second, and it is the one most likely to recur.
+
+The `${sha:0:8}` behaviour came from the adversarial reviewer's read-only
+_reasoning_, offered as inference and labelled as such. It was written into
+`CLAUDE.md` as fact and shipped. The reviewer had done nothing wrong; the defect
+is at the boundary, where a careful reviewer's confident prose is
+indistinguishable from a measurement once it leaves the thread that framed it.
+
+It was also wrong in the direction that matters. The inference said the tag name
+"comes out malformed". Measured, `${sha:0:8}` expands to **nothing** -- no error,
+no SHA, so every archive collides on one name. "Malformed" invites a look at the
+name; "silently identical for every stash" does not, and this repo's stash block
+already explains name collisions as normal four lines below, which disarms the
+tell before a reader reaches it.
+
+**So: a claim that arrives from a reviewer, a subagent or a colleague carries who
+established it and how, or it gets run before it is written down.** The settling
+command is usually one line, and it was here.
+
 ### Two arguments the rule rests on, recovered
 
 Both were dropped rather than moved when the branch was cut, and both are reasons

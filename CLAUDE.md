@@ -1830,7 +1830,12 @@ Rules of the road:
   name was taken. Use `$sha.Substring(0,8)` there, or run these in Git Bash.
 
   Check what the name already resolves to: this repo's archives carry a branch AND
-  a `-tag`-suffixed tag per stash because the bare name was taken. **Discharge any
+  a `-tag`-suffixed tag per stash because the bare name was taken. **But if EVERY
+  archive collides on one name, that is the PowerShell expansion above, not a name
+  clash** — the SHA segment is empty, so they are all literally the same string.
+  The discriminator matters because the sentence you just read explains a
+  collision away, and it is the sentence a confused reader reaches first.
+  **Discharge any
   decision-hold on dropping by ENUMERATING the archived ref's parents, never by
   diffing it** -- a stash taken with `-u` keeps its untracked files on a THIRD
   parent, which `git stash show` cannot display at all:
