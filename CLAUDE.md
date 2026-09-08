@@ -77,12 +77,30 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
 
 ## Real commands (use these, not generic equivalents)
 
-**SCOPE: these are GIT BASH forms, and several do not run in PowerShell.**
-Measured 2026-09-07: six commands in this section contain `&&`, which is a parse
-error in PowerShell 5.1 — not a wrong result, a statement that never executes. The
-`sh -lc "cd /app && ..."` shape is worse, because the host shell consumes the
-quoting before Docker sees it. This repo is developed on Windows, so the default
-shell in a fresh terminal is the one these do not work in.
+**SCOPE: these are GIT BASH forms, and several do not run in PowerShell.** The
+ones carrying `&&` are a grep rather than a number, because a number goes stale
+the next time a command is added here:
+
+    sed -n '/^## Real commands/,/^## Environment gotchas/p' CLAUDE.md | grep -n '&&'
+
+<!-- counted: an earlier draft said "six"; the grep above returns 5 commands, 2026-09-08 -->
+
+It over-reports on purpose: this scope block discusses `&&` in prose and matches
+itself. Read the hits — the commands are the ones inside backticks under a `- `
+bullet. A pattern tightened until the prose fell out would be tuned to today's
+wording and would start missing commands the first time someone reflows a
+paragraph.
+
+`&&` is a **parse** error in PowerShell 5.1, not a runtime one, and the
+distinction is the whole hazard: PowerShell parses the script before executing
+any of it, so a single `&&` on the last line aborts **every statement above it
+too**. Measured 2026-09-08 — a nine-line script whose only defect was a trailing
+`&&` ran none of its first eight lines and printed one parser error.
+<!-- counted: historical -->
+Nothing partially applies, and nothing tells you which line was at fault. The
+`sh -lc "cd /app && ..."` shape is worse still, because the host shell consumes
+the quoting before Docker sees it. This repo is developed on Windows, so the
+default shell in a fresh terminal is the one these do not work in.
 
 Stated as a scope rather than fixed per command, because the fix differs per case
 and the surprise is what costs time. Where a command's OUTPUT is the thing you are
@@ -90,6 +108,24 @@ relying on — a version read, a confirmation step — write it shell-portable: 
 `&&`, no inner `sh -lc`, `-w <dir>` instead of `cd`, single quotes inside double.
 The dependency-remediation block below is the worked example, and it is there
 because the first version of it failed on exactly this.
+
+**The rule that produced this scope line, and it binds every command block in
+this file: a block that claims it runs anywhere carries the SHELLS it was
+actually run in and the DATE it was run.** "Portable", "works in both",
+"shell-agnostic" and "cross-platform" are claims about execution, and every one
+of them here was written from reading rather than from running — twice, in
+consecutive drafts of the same block, the second draft published as verified in
+both shells having been run in one. A portability claim with no shells and no
+date beside it is the first thing to distrust, and re-running it costs seconds.
+
+**No annotation means no claim, and that is the DEFAULT rather than an
+omission.** An unmarked block in this file is a Git Bash form that nobody has
+run anywhere else. That default cannot go stale and needs no upkeep, which is
+why the burden sits on the block making the claim instead of on every block that
+makes none — annotating all of them would be an enumeration to maintain, and
+this file has a bullet about those. Never put the marker on a block you did not
+run in the shells it names: it is evidence, and a decorative one is worse than
+silence, because it is exactly what the reader checks instead of running it.
 
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
@@ -178,8 +214,11 @@ because the first version of it failed on exactly this.
     answers `Cwd must be an absolute path`. The second draft of this block used it
     and was published claiming both shells, having been run in only one.
 
-  Verified by running all three lines in **Git Bash and PowerShell 5.1**, this
-  time in both before the claim was written.
+  **Run in Git Bash and PowerShell 5.1 on 2026-09-08**, in both before the claim
+  was written, and re-run in both since. The shells and the date are the form
+  every portability claim in this file takes — see the rule under **Real
+  commands** — and they are here because the previous draft carried the claim
+  without them.
 
   **The second line is the confirmation step, and it is not optional.** The
   version string is the only thing that distinguishes "the patch is applied" from
