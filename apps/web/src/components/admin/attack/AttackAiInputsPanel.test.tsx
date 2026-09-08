@@ -57,6 +57,7 @@ function totals(over: Partial<AttackAiInputTotals> = {}): AttackAiInputTotals {
     awaiting_signoff: 0,
     withheld_security_scope: 0,
     withheld_not_in_approved_snapshot: 0,
+    withheld_list_discarded: 0,
     excluded_rows_named: 3,
     lists_with_unknown_exclusions: 0,
     sent_without_source_document: 0,
@@ -320,6 +321,69 @@ describe("AttackAiInputsPanel", () => {
       expect(line).toHaveTextContent(
         /3 absent from the membership frozen at approval/,
       );
+    });
+
+    it("names all three reasons, and joins them without a stray separator", async () => {
+      // The breakdown used to hand-write its separators between exactly two
+      // clauses. A third reason arriving would have needed that punctuation
+      // re-reasoned, so the join is asserted here rather than the clauses alone.
+      await renderReady(
+        inputs({
+          totals: totals({
+            not_sent: 6,
+            withheld_security_scope: 1,
+            withheld_not_in_approved_snapshot: 2,
+            withheld_list_discarded: 3,
+          }),
+        }),
+      );
+      const line = screen.getByTestId("attack-ai-inputs-not-sent");
+      expect(line).toHaveTextContent(
+        /1 ruled out of the security subset, 2 absent from the membership frozen at approval and 3 on a list that was discarded\./,
+      );
+    });
+
+    it("shows only the reason that applies when it is the sole one", async () => {
+      await renderReady(
+        inputs({
+          totals: totals({ not_sent: 3, withheld_list_discarded: 3 }),
+        }),
+      );
+      const line = screen.getByTestId("attack-ai-inputs-not-sent");
+      expect(line).toHaveTextContent(/— 3 on a list that was discarded\./);
+      expect(line).not.toHaveTextContent(/ruled out of the security subset/);
+      expect(line).not.toHaveTextContent(/frozen at approval/);
+    });
+  });
+
+  describe("the reason column", () => {
+    it("gives a discarded row the remedy that works, not the one that does not", async () => {
+      // The column was a two-branch ternary: anything that was not
+      // `security_scope` rendered as the approved-snapshot copy, whose remedy
+      // is "Re-approve the list to include it". For a DISCARDED list that is
+      // the wrong action and it cannot work -- the list needs un-discarding.
+      // A conditional over a growing set does not fail when the set grows, it
+      // MISLABELS, and it does so in the column a consultant reads to decide
+      // what to do next.
+      await renderReady(
+        inputs({
+          totals: totals({ not_sent: 1, withheld_list_discarded: 1 }),
+          not_sent: [
+            {
+              name: "Splunk",
+              vendor: null,
+              reason: "list_discarded",
+              capability_list_id: "cl-1",
+              source_list_version: 1,
+              source_document: null,
+            },
+          ],
+        }),
+      );
+      const row = screen.getByRole("row", { name: /Splunk/ });
+      expect(row).toHaveTextContent(/list itself was discarded/);
+      expect(row).toHaveTextContent(/Un-discard the list/);
+      expect(row).not.toHaveTextContent(/Re-approve the list to include it/);
     });
   });
 

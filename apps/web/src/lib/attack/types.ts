@@ -224,9 +224,15 @@ export interface AttackAiInputDocument {
  * `not_in_approved_snapshot` names the observable STATE and not a cause: the
  * row was either created after approval or reclassified into scope after, and
  * nothing readable at request time separates those. Do not render it as either.
+ *
+ * `list_discarded` is a LIST-level reason, unlike the other two. It is carried
+ * only by the rows a discarded list would otherwise have contributed; a row
+ * already withheld for its own reason keeps that reason, because un-discarding
+ * the list would not make it citable. The remedies differ and a renderer must
+ * not collapse them — re-approving does nothing for a discarded list.
  */
 export type AttackWithheldReason =
-  "security_scope" | "not_in_approved_snapshot";
+  "security_scope" | "not_in_approved_snapshot" | "list_discarded";
 
 /**
  * How much the API may honestly say about rows dropped at extraction.
@@ -321,6 +327,7 @@ export interface AttackAiInputTotals {
   awaiting_signoff: number;
   withheld_security_scope: number;
   withheld_not_in_approved_snapshot: number;
+  withheld_list_discarded: number;
   excluded_rows_named: number;
   /**
    * Contributing lists whose extraction-time exclusions cannot be reported.

@@ -8,6 +8,7 @@ import { AttackProxyError, fetchAttackAiInputs } from "@/lib/attack/client";
 import type {
   AttackAiInputCapability,
   AttackAiInputSourceList,
+  AttackAiInputTotals,
   AttackAiInputs,
 } from "@/lib/attack/types";
 
@@ -92,6 +93,58 @@ function describeError(err: unknown): string {
 function plural(n: number, one: string, many: string): string {
   return n === 1 ? one : many;
 }
+
+/**
+ * The one-line breakdown under the not-offered count, built from a list.
+ *
+ * The previous form hand-wrote the separators —
+ * `${a > 0 ? "," : " —"}` between two clauses — which is a two-item
+ * enumeration whose punctuation has to be re-reasoned every time a reason is
+ * added, and which was already asymmetric: the second clause knew about the
+ * first, the first knew about nothing. Adding `list_discarded` as a third
+ * would have needed a condition over both.
+ *
+ * Derived instead: each reason contributes a clause or nothing, and the join
+ * decides the punctuation once. Adding a fourth reason is one entry.
+ */
+function withheldBreakdown(totals: AttackAiInputTotals): string {
+  const clauses = [
+    totals.withheld_security_scope > 0
+      ? `${totals.withheld_security_scope} ruled out of the security subset`
+      : null,
+    totals.withheld_not_in_approved_snapshot > 0
+      ? `${totals.withheld_not_in_approved_snapshot} absent from the membership frozen at approval`
+      : null,
+    totals.withheld_list_discarded > 0
+      ? `${totals.withheld_list_discarded} on a list that was discarded`
+      : null,
+  ].filter((c): c is string => c !== null);
+  if (clauses.length === 0) return "";
+  if (clauses.length === 1) return ` — ${clauses[0]}`;
+  return ` — ${clauses.slice(0, -1).join(", ")} and ${clauses[clauses.length - 1]}`;
+}
+
+/**
+ * Why a named capability is not offered to the model, keyed by the API's reason.
+ *
+ * Each string ends with the REMEDY, because that is what the reader is here to
+ * find, and the remedies differ: reclassify the tool, re-approve the list,
+ * un-discard the list. A wrong remedy is worse than a missing one — it sends a
+ * consultant to do something that cannot work.
+ *
+ * Deliberately a map rather than a chain of ternaries. The previous form tested
+ * one reason and let everything else fall to the other branch, so adding a
+ * third reason would have silently relabelled it as the second rather than
+ * failing.
+ */
+const REASON_COPY: Record<string, string> = {
+  security_scope:
+    "Ruled out of the security subset — the model called it non-security and a consultant agreed.",
+  not_in_approved_snapshot:
+    "Absent from the membership frozen when the list was approved. It was either added or reclassified into scope afterwards, and nothing on record separates those. Re-approve the list to include it.",
+  list_discarded:
+    "The capability list itself was discarded, so nothing on it is offered. Un-discard the list, or upload a replacement — re-approving will not help.",
+};
 
 /**
  * What a source list may honestly say about rows dropped at extraction.
@@ -284,16 +337,8 @@ export function AttackAiInputsPanel({
               named {plural(totals.not_sent, "capability", "capabilities")} on
               those lists {plural(totals.not_sent, "is", "are")} NOT offered to
               the model
-              {totals.withheld_security_scope > 0
-                ? ` — ${totals.withheld_security_scope} ruled out of the security subset`
-                : ""}
-              {totals.withheld_not_in_approved_snapshot > 0
-                ? `${totals.withheld_security_scope > 0 ? "," : " —"} ${
-                    totals.withheld_not_in_approved_snapshot
-                  } absent from the membership frozen at approval`
-                : ""}
-              . The model cannot cite {plural(totals.not_sent, "it", "them")},
-              so a technique{" "}
+              {withheldBreakdown(totals)}. The model cannot cite{" "}
+              {plural(totals.not_sent, "it", "them")}, so a technique{" "}
               {plural(totals.not_sent, "it covers", "they cover")} will read as
               a gap.
             </>
@@ -536,9 +581,21 @@ export function AttackAiInputsPanel({
                       {item.vendor ?? "—"}
                     </td>
                     <td className="py-1 pr-3 text-ink-secondary">
-                      {item.reason === "security_scope"
-                        ? "Ruled out of the security subset — the model called it non-security and a consultant agreed."
-                        : "Absent from the membership frozen when the list was approved. It was either added or reclassified into scope afterwards, and nothing on record separates those. Re-approve the list to include it."}
+                      {/*
+                        A LOOKUP, not a ternary. This was `reason ===
+                        "security_scope" ? a : b`, so every reason that was not
+                        the first one rendered as the second — and when
+                        `list_discarded` was added the discarded rows would have
+                        read "Re-approve the list to include it", which is the
+                        wrong remedy for a list that needs un-discarding. A
+                        two-branch conditional over a growing set does not fail
+                        when the set grows, it MISLABELS, and it does so in the
+                        column a consultant reads to decide what to do next.
+
+                        The fallback names the reason instead of guessing one.
+                      */}
+                      {REASON_COPY[item.reason] ??
+                        `Withheld for a reason this panel does not recognise (${item.reason}). It is not being offered to the model; the API knows why and this build does not.`}
                     </td>
                     <td className="py-1 text-ink-secondary">
                       {item.source_document

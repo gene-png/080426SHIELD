@@ -620,6 +620,12 @@ class WithheldCapability:
 
 WITHHELD_SECURITY_SCOPE = "security_scope"
 WITHHELD_NOT_IN_APPROVED_SNAPSHOT = "not_in_approved_snapshot"
+# A LIST-level reason, unlike the two above, which are row-level. It is applied
+# to the rows a discarded list would otherwise have contributed — not to every
+# row on it, because a row already out of security scope did not lose its place
+# to the discard and saying so would tell a reader that un-discarding restores
+# it (#197: a reason names the cause that is true of the row).
+WITHHELD_LIST_DISCARDED = "list_discarded"
 
 
 @dataclass(frozen=True)
@@ -779,13 +785,19 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
       rows whose non-security call is unconfirmed, because this list is a hard
       allow-list on what the model may cite: a tool missing from it cannot be
       named, and the technique it covers reads as uncovered.
-    * **List status.** Previously absent entirely, so a DISCARDED list's rows
-      stayed citable forever — a consultant throwing a draft away did not stop
-      its tools being offered as evidence. Only DISCARDED is excluded here:
-      DRAFT still counts, because mapping ATT&CK before approving the tech-debt
-      list is a normal order of work. Superseded versions also still count,
-      which is arguably wrong but is pre-existing behaviour and not this
-      change's business.
+    * **List status.** A DISCARDED list contributes nothing citable. DRAFT still
+      counts, because mapping ATT&CK before approving the tech-debt list is a
+      normal order of work, and superseded versions still count, which is
+      arguably wrong but is pre-existing behaviour and not this change's
+      business.
+
+      **The discard is now applied in PYTHON and reported, not applied in SQL
+      and hidden** (#178). The query used to carry
+      `status != DISCARDED`, which made a discarded list byte-identical to no
+      list at all: a client whose only list was thrown away read "No Tech Debt
+      capability list feeds this mapping", and re-upload versus un-discard are
+      completely different next actions. The predicate was also load-bearing in
+      a way its one line did not show — see `_offer` below.
     * **Approved membership (W3).** For a list that has been approved, the
       APPROVED SNAPSHOT is the membership, not the live rows. An approved list
       stays editable until release — `_editable_list_or_404` blocks RELEASED and
@@ -823,7 +835,6 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
             .where(
                 Service.client_id == client_id,
                 Service.kind == ServiceKind.TECH_DEBT,
-                CapabilityList.status != CapabilityListStatus.DISCARDED,
             )
         )
         .scalars()
@@ -863,6 +874,45 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     pairs: list[_MergeCandidate] = []
     dropped: list[WithheldCapability] = []
 
+    def _offer(
+        cap_list: CapabilityList,
+        name: str,
+        vendor: str | None,
+        item_id: str | None,
+        source_artifact_id: uuid.UUID | None,
+        *,
+        from_snapshot: bool,
+    ) -> None:
+        """Route a row the membership rules would otherwise make citable.
+
+        **Both branches below go through here rather than appending to `pairs`
+        themselves, and that is the fix for #178 rather than an abstraction.**
+        The classifier has two branches and only the live one applies a per-item
+        predicate; the snapshot branch appends every entry unconditionally. So
+        the SQL `status != DISCARDED` was the only thing keeping an
+        approved-then-discarded list's snapshot rows out of the egress
+        projection, and removing it while guarding only the visible per-item
+        branch would have sent every one of them to the model — tooling a
+        consultant deliberately threw away, cited in a client deliverable.
+
+        One router means the gate cannot be applied to one branch and forgotten
+        in the other. A guard written twice is two statements of one rule, and
+        they agree only until somebody edits one of them.
+        """
+        if cap_list.status == CapabilityListStatus.DISCARDED:
+            dropped.append(
+                WithheldCapability(
+                    name=name,
+                    vendor=vendor,
+                    reason=WITHHELD_LIST_DISCARDED,
+                    capability_list_id=cap_list.id,
+                    list_version=cap_list.version,
+                    source_artifact_id=source_artifact_id,
+                )
+            )
+            return
+        pairs.append(_MergeCandidate(name, vendor, item_id, cap_list, from_snapshot=from_snapshot))
+
     for cap_list in lists:
         # Lists whose approved membership was never recorded read live: a DRAFT
         # by design (mapping ATT&CK before approving the tech-debt list is a
@@ -880,10 +930,13 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         if cap_list.approved_membership is None:
             for item in live_by_list[cap_list.id]:
                 if in_security_scope(item):
-                    pairs.append(
-                        _MergeCandidate(
-                            item.name, item.vendor, str(item.id), cap_list, from_snapshot=False
-                        )
+                    _offer(
+                        cap_list,
+                        item.name,
+                        item.vendor,
+                        str(item.id),
+                        item.source_artifact_id,
+                        from_snapshot=False,
                     )
                 else:
                     dropped.append(
@@ -908,18 +961,23 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         for entry in cap_list.approved_membership:
             entry_name = entry.get("name") or ""
             snapshot_names.add(entry_name.strip().casefold())
-            pairs.append(
-                # A snapshot written before W2 carries no `vendor` key. Reading
-                # that as UNKNOWN rather than as "no vendor" is the cautious
-                # direction: the resolver flags a vendor-shaped match it cannot
-                # verify instead of resolving it confidently.
-                _MergeCandidate(
-                    entry_name,
-                    entry.get("vendor"),
-                    entry.get("item_id"),
-                    cap_list,
-                    from_snapshot=True,
-                )
+            # A snapshot written before W2 carries no `vendor` key. Reading that
+            # as UNKNOWN rather than as "no vendor" is the cautious direction:
+            # the resolver flags a vendor-shaped match it cannot verify instead
+            # of resolving it confidently.
+            #
+            # `source_artifact_id` is read from the LIVE row the entry points at,
+            # because the snapshot does not carry one. It is used only when this
+            # entry is withheld — a missing live row then means no document to
+            # cite, which is honest rather than a lookup failure.
+            snapshot_item = live_by_id.get(str(entry.get("item_id") or ""))
+            _offer(
+                cap_list,
+                entry_name,
+                entry.get("vendor"),
+                entry.get("item_id"),
+                snapshot_item.source_artifact_id if snapshot_item is not None else None,
+                from_snapshot=True,
             )
 
         # A live row absent from the snapshot. Matched on NAME ONLY, and
@@ -2062,14 +2120,32 @@ def ai_inputs(
     # A later version of the same tech-debt list does NOT retire an earlier one:
     # every non-discarded version still feeds the mapping. Surfaced, not fixed —
     # it is pre-existing behaviour and routinely surprises people.
+    #
+    # A DISCARDED version is RETIRED from this computation, which is the same
+    # rule `_latest_attack_assessment` applies to a discarded assessment (D-031,
+    # "retired from every latest consumer"). Without it, discarding v2 would
+    # make a live v1 read as superseded by a list nobody can use — a pill that
+    # tells a consultant to go and look at something that has been thrown away.
+    # It is not a filter on `membership.lists`: a discarded list still appears
+    # as a source, it just does not get a vote on what "latest" means.
     latest_version: dict[uuid.UUID, int] = {}
     for cap_list in membership.lists:
+        if cap_list.status == CapabilityListStatus.DISCARDED:
+            continue
         latest_version[cap_list.service_id] = max(
             latest_version.get(cap_list.service_id, 0), cap_list.version
         )
+    # Keyed off `membership.lists`, NOT off `latest_version` — the two stopped
+    # being the same set when discarded lists lost their vote above, and a
+    # discarded-only service has no `latest_version` entry while still needing a
+    # title. The comment on `tech_debt_service_title` below asserts a miss is
+    # impossible; sourcing this from anything narrower than the lists themselves
+    # is what would make that false.
     titles = dict(
         db.execute(
-            select(Service.id, Service.title).where(Service.id.in_(latest_version.keys()))
+            select(Service.id, Service.title).where(
+                Service.id.in_({cl.service_id for cl in membership.lists})
+            )
         ).all()
     )
 
@@ -2097,7 +2173,15 @@ def ai_inputs(
                 tech_debt_service_title=titles[cap_list.service_id],
                 version=cap_list.version,
                 status=cap_list.status.value,
-                is_latest_for_service=cap_list.version >= latest_version[cap_list.service_id],
+                # A discarded list is never "latest" — it is retired, and the
+                # dict above may hold no entry for its service at all when every
+                # list for that service was discarded. Indexed for the live
+                # case, exactly as before, because a miss there IS impossible.
+                is_latest_for_service=(
+                    False
+                    if cap_list.status == CapabilityListStatus.DISCARDED
+                    else cap_list.version >= latest_version[cap_list.service_id]
+                ),
                 membership_from_snapshot=from_snapshot,
                 # CALLED, not re-derived. The row-level split above answers a
                 # different question — "can the model cite this string?", keyed
@@ -2125,6 +2209,7 @@ def ai_inputs(
         withheld_not_in_approved_snapshot=sum(
             1 for d in not_sent if d.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT
         ),
+        withheld_list_discarded=sum(1 for d in not_sent if d.reason == WITHHELD_LIST_DISCARDED),
         excluded_rows_named=len(excluded),
         lists_with_unknown_exclusions=sum(
             1 for s in sources if s.excluded_attribution == "unknown"

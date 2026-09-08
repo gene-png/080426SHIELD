@@ -346,6 +346,15 @@ class AttackAiInputWithheld(BaseModel):
       into scope after, and nothing readable at request time separates those.
       Re-approval is the remedy, and it is exactly what clears
       `approved_membership_stale`.
+    * ``list_discarded`` — the capability list itself was discarded, so nothing
+      on it is offered. A LIST-level reason, unlike the two above: it is
+      applied to the rows the list would otherwise have contributed, and NOT to
+      rows already withheld for their own reason. An out-of-scope row on a
+      discarded list still reads ``security_scope``, because un-discarding the
+      list would not make it citable and saying otherwise would misdescribe the
+      remedy. The remedy here is to un-discard the list or upload a new one —
+      which is the distinction the endpoint could not previously draw at all,
+      since a discarded list was indistinguishable from no list (#178).
     """
 
     name: str
@@ -419,6 +428,7 @@ class AttackAiInputTotals(BaseModel):
     awaiting_signoff: int = 0
     withheld_security_scope: int = 0
     withheld_not_in_approved_snapshot: int = 0
+    withheld_list_discarded: int = 0
     excluded_rows_named: int = 0
     # Contributing lists whose extraction-time exclusions cannot be reported.
     # Rendered beside `excluded_rows_named` for the same reason a withheld count
