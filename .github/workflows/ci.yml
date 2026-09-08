@@ -64,6 +64,29 @@ jobs:
       - name: plan totals sum
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
+      # The image optimizer stays unmounted. `images: { unoptimized: true }` is what
+      # makes sharp's affected loaders unreachable from this app -- measured against
+      # the STANDALONE artifact, not the dev server: /_next/image answers 400 without
+      # the line and 404 with it, while a genuinely absent route answers 404 either
+      # way. Removing the line silently re-opens that path, and a config fact with
+      # nothing asserting it is a convention.
+      #
+      # Deliberately a grep rather than a fixture under the exemption registry
+      # (#223): that registry is filed and unbuilt, so "gate it there" resolves to
+      # "gate it never, for now". A crude gate that exists beats an elegant one that
+      # is filed. Fold this into #223's registry when #223 is built.
+      - name: image optimizer stays unmounted
+        run: |
+          set -euo pipefail
+          if ! grep -qE 'images:[[:space:]]*\{[^}]*unoptimized:[[:space:]]*true' apps/web/next.config.mjs; then
+            echo "next.config.mjs no longer sets images.unoptimized = true." >&2
+            echo "That re-mounts /_next/image and re-opens this app's path into" >&2
+            echo "sharp's affected image loaders. If this is deliberate, the sharp" >&2
+            echo "reachability argument needs re-establishing first." >&2
+            exit 1
+          fi
+          echo "image optimizer: unoptimized=true present, route stays unmounted"
+
       # Every gate above proves something about the repo. NOTHING proved the
       # gates themselves could fail, and this repo keeps shipping checks whose
       # inputs cannot distinguish their pass state from their fail state (#213)
