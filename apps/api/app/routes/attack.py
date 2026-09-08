@@ -1159,15 +1159,31 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     #
     # Pinned by `test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld`,
     # and that is a MEASUREMENT rather than a claim about what a change would do.
-    # Run 2026-09-08: replacing this line with `if not key:` gives 1 failed,
-    # 10 passed in `test_attack_ai_inputs.py`, and the one failure is that test.
-    # Nothing else in the file notices, so no other assertion is standing in for
-    # it — remove the guard and this is the single thing that objects.
+    # Run 2026-09-08 on `test_attack_ai_inputs.py`:
     #
-    # The mutation was proved to LAND before its result was read (the code line
-    # gone, the comment above still quoting the phrase, so an occurrence count
-    # alone would have read as "did not land") and the restore proved by sha256
-    # rather than assumed.
+    #     unmutated (baseline)          11 passed, 0 failed
+    #     `if not key or key in survivors:` -> `if not key:`
+    #                                   10 passed, 1 failed
+    #     and the 1 is that test
+    #
+    # The BASELINE is half the measurement, not a formality: without it, "exactly
+    # one test goes red" cannot be told apart from "one went red and one was
+    # already red" — `mutation_sweep.py`'s own recorded defect, the one
+    # `BaselineNotGreen` exists for. It was captured here AFTER the mutation
+    # rather than before, which got the right answer by sequencing rather than by
+    # design; capture it first.
+    #
+    # Nothing else in the file notices, so no other assertion is standing in for
+    # this guard — remove it and this is the single thing that objects.
+    #
+    # Two procedural notes, because one nearly misfired. The mutation was proved
+    # to LAND before its result was read, and an occurrence count would have got
+    # that WRONG: `rg -c 'key in survivors'` returns 1 after the mutation,
+    # because the comment above quotes the phrase. A count of a string appearing
+    # in both code and prose is not evidence about the code — classify the hits.
+    # The restore was proved by sha256 against the pre-mutation file (byte
+    # identical), not by re-running and seeing green, which is also what a failed
+    # restore of an unrelated file looks like.
     survivors = {w.name.casefold() for w in winners}
     withheld: dict[str, WithheldCapability] = {}
     for drop in sorted(dropped, key=lambda d: (d.name or "", d.list_version, d.reason)):
