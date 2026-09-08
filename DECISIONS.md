@@ -3716,18 +3716,19 @@ two authors' shells, both clean.
 
 ### The measurements
 
-All run in Git Bash and PowerShell 5.1 on 2026-09-08.
+**The table lives in `CLAUDE.md` under "What breaks where", and is deliberately
+not reproduced here.** Two copies of five measured rows is a synchronization with
+nothing deriving one from the other, and the copies had already diverged in the
+one way that matters: the `CLAUDE.md` original carries the clause saying the
+annotation covers exit codes and not row labels, and the copy here did not -- so
+the RECORD held the weaker form of the very annotation this record exists to
+criticise. One home, and it is the one a reader consults daily.
 
-| Form                                  | Git Bash                            | PowerShell 5.1                  |
-| ------------------------------------- | ----------------------------------- | ------------------------------- |
-| OUTER `&&` joining two host commands  | 0                                   | parse error                     |
-| `\"` escaping inside `sh -lc "..."`   | 0                                   | 2, `Unterminated quoted string` |
-| `-w /app`                             | 128, `Cwd must be an absolute path` | 0                               |
-| `sh -c "cd /app && ..."` — INNER `&&` | 0                                   | 0                               |
-| single quotes inside double           | 0                                   | 0                               |
+What belongs here is what the table cannot say.
 
-That row is the one most easily misread, and its first write-up was misread
-exactly that way. The block said the escaping "is consumed by **the host shell**".
+**The `\"`-escaping row is the one most easily misread**, and its first write-up
+was misread exactly that way. The block said the escaping "is consumed by
+**the host shell**".
 It is consumed by **PowerShell specifically** -- the identical line exits 0 in Git
 Bash and prints the version. "The host shell" reads as both, and that phrasing is
 why a Git Bash author can run the line, watch it work, and publish it as portable.
@@ -3884,6 +3885,27 @@ has no timing component. A decorative N is the exact decorative-evidence failure
 this record exists to describe, and it would have been the third annotation field
 added in three review rounds — growth in KIND, which the size ratchet says to
 resist.
+
+### Two arguments the rule rests on, recovered
+
+Both were dropped rather than moved when the branch was cut, and both are reasons
+for decisions this branch made, which is what this file is for.
+
+**Why the rule binds negative claims as well as positive ones.** Exempting "it
+does not run there" would invert this repo's standing treatment of absence --
+_missing data defaults to UNCONFIRMED, never to confirmed_. A positive claim would
+need evidence while a negative one could retire a working command on a hunch, and
+the negative direction is the one nobody disproves, because nobody runs the thing
+they have been told is broken. That is not a separate principle; it is the
+existing one applied to a claim about shells.
+
+**Why the trigger is a shape and not a list of phrasings.** A rule keyed on a
+hand-listed set of spellings is the defect recorded under numbering rule 4 -- one
+literal is one spelling, and a sweep over one spelling is silent about every other
+-- and under `_HSPACE`, where a hand-listed character class was wrong by sixteen
+characters with nothing able to see it. The phrasings a future author reaches for
+are not enumerable, so the rule asks what the sentence CLAIMS rather than which
+words it uses.
 
 Hence the trigger is a property of the **command** rather than of the author:
 early termination, concurrency, or ordering. `Select-Object -First 1` announces

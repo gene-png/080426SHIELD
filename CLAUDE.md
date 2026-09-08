@@ -124,7 +124,9 @@ these commands.**
 **What breaks where.** The forms this repo has actually hit, a floor rather than
 a census. Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**. The
 cells are exit codes and the annotation covers those — it does not cover the row
-labels, which is how a mislabelled row once passed underneath it.
+labels. A marker like this one has already certified a table whose row label was
+wrong — a different table, recorded in D-071 — because the label was never in
+what the marker claimed.
 
 | Form | Git Bash | PowerShell 5.1 |
 | --- | --- | --- |
@@ -174,8 +176,12 @@ by anyone who obeys it.
 before running it elsewhere.** That is a default for the READER: the file asserts
 nothing, most of these blocks have not been run anywhere else, and absence of a
 marker is absence of evidence rather than evidence of absence. It holds file-wide,
-not only in this section — the stash-archiving block under **Rules of the road**
-is bash-only and carries no marker.
+not only in this section.
+
+No example is cited for that, on purpose. The obvious one — a block that is
+bash-only and unmarked — stops being an example the moment anyone marks it, which
+is what acting on this rule does. An illustration that decays when the rule is
+obeyed teaches the wrong thing on its second reading.
 
 Never put the marker on a block you did not run in the shells it names: a
 decorative one is worse than silence, because it is what the reader checks
@@ -1815,11 +1821,13 @@ Rules of the road:
       git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
       git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
 
-  **Git Bash only, and this one fails QUIETLY elsewhere.** In PowerShell
-  `${sha:0:8}` is a variable named `sha:0:8`, not a substring — so the tag name
-  comes out malformed and the third line pushes it. Rewrite it for your shell or
-  run these in Git Bash; do not paste them into PowerShell and read the absence of
-  an error as success.
+  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08 to establish what it does
+  there, and it does something worse than fail:** `${sha:0:8}` is read as a
+  variable named `sha:0:8`, which does not exist, so it expands to **nothing** —
+  `archive/stash--x`, no error, no SHA. Every stash archived that way collides on
+  one name, and the collision is pre-explained away by the very next paragraph
+  here, which says these archives already carry suffixed names because the bare
+  name was taken. Use `$sha.Substring(0,8)` there, or run these in Git Bash.
 
   Check what the name already resolves to: this repo's archives carry a branch AND
   a `-tag`-suffixed tag per stash because the bare name was taken. **Discharge any
