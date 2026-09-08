@@ -305,7 +305,15 @@ export interface AttackAiInputSourceList {
    * False => a LATER version of the same list exists and this one still counts.
    * Every non-discarded version feeds the mapping, not just the newest.
    */
-  is_latest_for_service: boolean;
+  /**
+   * `true` latest, `false` superseded by a later version, `null` RETIRED.
+   *
+   * `null` is a discarded list: not latest, and not superseded either, because
+   * nothing replaced it. Renderers must not treat `!is_latest_for_service` as
+   * "superseded" — that reads a retired list as one standing behind a newer
+   * one, which is a different fact with a different remedy.
+   */
+  is_latest_for_service: boolean | null;
   /** True when the APPROVED snapshot decides membership; false when live rows do. */
   membership_from_snapshot: boolean;
   /** The snapshot no longer matches current security scope; re-approval clears it. */

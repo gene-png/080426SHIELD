@@ -509,8 +509,16 @@ def _approved_then_discarded_list(
         cl.approved_membership = build_approved_membership(db, cl.id)
         db.flush()
 
-        # Discarded AFTER approval. `_editable_list_or_404` blocks RELEASED and
-        # DISCARDED, so this is a terminal state a consultant reaches on purpose.
+        # Discarded AFTER approval -- by direct row write, because NO ROUTE CAN
+        # DO THIS. `discard_capability_list` accepts only a DRAFT and 409s on an
+        # APPROVED list; `test_capability_list_status_graph.py` pins that. An
+        # earlier version of this comment cited `_editable_list_or_404`, which
+        # governs EDITS and does not decide discardability -- a real guard named
+        # for a job it does not do.
+        #
+        # So this fixture is defence-in-depth against a future writer, not a
+        # reproduction of a reachable state, and the PR body says so. It stays
+        # because the snapshot branch has no per-row predicate of its own.
         cl.status = CapabilityListStatus.DISCARDED
         db.commit()
 
@@ -609,7 +617,62 @@ def test_a_discarded_only_client_reports_the_list_rather_than_no_list_at_all(app
     assert src["status"] == "discarded"
     assert src["sent_count"] == 0
     assert src["not_sent_count"] == 1
-    assert src["is_latest_for_service"] is False, (
-        "a discarded list is retired, not the latest -- otherwise it supersedes "
-        "live versions of the same service"
+    assert src["is_latest_for_service"] is None, (
+        "a discarded list is RETIRED: not latest, and not superseded either. "
+        "False was the first draft and it was wrong in a way that reached the "
+        "screen -- every renderer reads `!is_latest_for_service` as 'superseded "
+        "by a later version', so a discarded list rendered '(superseded)', was "
+        "counted in 'includes N superseded versions', and drew a paragraph "
+        "telling the reader to discard a list already discarded"
+    )
+
+
+@pytest.mark.unit
+def test_a_discarded_lists_tools_never_reach_the_egress_payload(app_client) -> None:
+    """The claim that matters, asserted against the REAL builder.
+
+    Every other test here reads `body["capabilities"]` from the ai-inputs
+    endpoint. That endpoint and the outbound payload share a construction, so
+    those assertions hold for the payload only BY that shared construction —
+    which is an argument, not evidence. If someone gives the payload its own
+    capability source, every one of them stays green while discarded tooling
+    egresses.
+
+    So this one goes through `build_attack_ai_request`, which is what a Run-AI
+    actually sends, and asserts on `valid_tools` and `capabilities` directly.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    _tech_debt_list(
+        TestSession,
+        cid,
+        uid,
+        [("Splunk", None, False), ("CrowdStrike", True, False)],
+        status=CapabilityListStatus.DISCARDED,
+    )
+    sid = _attack_service(c, bearer, cid)
+    c.post(
+        f"/attack/services/{sid}/assessments",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+        json={},
+    )
+
+    from app.models.client import Client
+    from app.models.service import Service as ServiceModel
+    from app.routes.attack import build_attack_ai_request
+
+    with TestSession() as db:
+        svc = db.get(ServiceModel, _uuid.UUID(sid))
+        client = db.get(Client, _uuid.UUID(cid))
+        req = build_attack_ai_request(db, svc, client)
+
+    assert req.valid_tools == frozenset(), (
+        "a discarded list's tools reached valid_tools -- the model may cite "
+        "tooling a consultant deliberately threw away"
+    )
+    assert req.capabilities == []
+    blob = str(req.preview.inputs).lower()
+    assert "splunk" not in blob and "crowdstrike" not in blob, (
+        "a discarded tool name appears in the outbound preview payload"
     )

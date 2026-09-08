@@ -119,6 +119,18 @@ function withheldBreakdown(totals: AttackAiInputTotals): string {
       ? `${totals.withheld_list_discarded} on a list that was discarded`
       : null,
   ].filter((c): c is string => c !== null);
+  // A RESIDUAL, because the clauses above are a floor and `not_sent` is the
+  // truth. Today the three reasons partition it exactly, so this emits nothing
+  // — but `REASON_COPY` already anticipates an unrecognised reason and this
+  // function assumed none could exist, which is a guard applied to one branch
+  // and forgotten in its twin, in the same file.
+  const counted =
+    totals.withheld_security_scope +
+    totals.withheld_not_in_approved_snapshot +
+    totals.withheld_list_discarded;
+  if (totals.not_sent > counted) {
+    clauses.push(`${totals.not_sent - counted} for another reason`);
+  }
   if (clauses.length === 0) return "";
   if (clauses.length === 1) return ` — ${clauses[0]}`;
   return ` — ${clauses.slice(0, -1).join(", ")} and ${clauses[clauses.length - 1]}`;
@@ -278,8 +290,16 @@ export function AttackAiInputsPanel({
     (s) => s.excluded_attribution === "not_recorded",
   ).length;
   const staleLists = sources.filter((s) => s.membership_stale).length;
+  // `=== false`, NOT `!`. The field is a tri-state and `null` means RETIRED —
+  // a discarded list, which nothing supersedes. `!null` is true, so the falsy
+  // test counted every discarded list as superseded and drove three separate
+  // sentences that were then false: the row suffix, the pill, and the
+  // paragraph telling the reader to discard a list already discarded.
   const supersededLists = sources.filter(
-    (s) => !s.is_latest_for_service,
+    (s) => s.is_latest_for_service === false,
+  ).length;
+  const retiredLists = sources.filter(
+    (s) => s.is_latest_for_service === null,
   ).length;
 
   return (
@@ -451,6 +471,24 @@ export function AttackAiInputsPanel({
         </p>
       ) : null}
 
+      {/*
+        Its own sentence, and deliberately not folded into the one above. That
+        paragraph's advice is "discard it to take it out", which is already done
+        here — printing it over a discarded list tells a consultant to repeat an
+        action they have taken, which reads as the action not having worked.
+      */}
+      {retiredLists > 0 ? (
+        <p
+          className="text-xs text-ink-secondary"
+          data-testid="attack-ai-inputs-retired"
+        >
+          {retiredLists} {plural(retiredLists, "list is", "lists are")}{" "}
+          discarded and {plural(retiredLists, "contributes", "contribute")}{" "}
+          nothing. Nothing supersedes {plural(retiredLists, "it", "them")} —
+          upload a replacement list if those tools should be mapped.
+        </p>
+      ) : null}
+
       {sources.length > 0 ? (
         <details data-testid="attack-ai-inputs-sources">
           <summary className="cursor-pointer text-sm font-medium text-brand-600 hover:text-brand-500">
@@ -498,7 +536,11 @@ export function AttackAiInputsPanel({
                         className="py-1 pr-3 font-medium text-ink-primary"
                       >
                         {list.tech_debt_service_title} v{list.version}
-                        {list.is_latest_for_service ? "" : " (superseded)"}
+                        {list.is_latest_for_service === false
+                          ? " (superseded)"
+                          : list.is_latest_for_service === null
+                            ? " (discarded)"
+                            : ""}
                       </th>
                       <td className="py-1 pr-3 text-ink-secondary">
                         {list.status}

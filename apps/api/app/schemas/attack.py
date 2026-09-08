@@ -391,10 +391,23 @@ class AttackAiInputSourceList(BaseModel):
     tech_debt_service_title: str
     version: int
     status: str
-    # False => a LATER version of the same list exists and this one still
-    # counts. Surfaced because it routinely surprises people: every
-    # non-discarded version feeds the mapping, not just the newest.
-    is_latest_for_service: bool = True
+    # TRI-STATE. True => latest. False => a LATER version of the same list
+    # exists and this one STILL COUNTS, which routinely surprises people: every
+    # non-discarded version feeds the mapping, not just the newest. None =>
+    # RETIRED, i.e. discarded.
+    #
+    # `None` rather than `False` for a discarded list because it is not
+    # superseded — nothing replaced it. Collapsing the two made a renderer say
+    # "(superseded)" about a list nobody replaced, count it in "includes N
+    # superseded versions", and print advice telling the reader to discard
+    # something already discarded: three false statements out of one boolean.
+    # D-031 excludes a discarded row from the LATEST COMPUTATION; it does not
+    # say the row is superseded, and reading it that way was my own over-reach.
+    #
+    # No default: every producer knows which of the three it means, and a
+    # default here would be a fourth meaning ("nobody said") wearing the
+    # clothes of one of the three.
+    is_latest_for_service: bool | None
     # True when the APPROVED snapshot decides membership; False when live rows
     # do (a DRAFT, or a list approved before migration 0043 — NULL means nobody
     # recorded it, which is not the same as nothing having been approved).

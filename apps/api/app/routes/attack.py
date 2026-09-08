@@ -889,11 +889,31 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         themselves, and that is the fix for #178 rather than an abstraction.**
         The classifier has two branches and only the live one applies a per-item
         predicate; the snapshot branch appends every entry unconditionally. So
-        the SQL `status != DISCARDED` was the only thing keeping an
-        approved-then-discarded list's snapshot rows out of the egress
-        projection, and removing it while guarding only the visible per-item
-        branch would have sent every one of them to the model — tooling a
-        consultant deliberately threw away, cited in a client deliverable.
+        removing the SQL `status != DISCARDED` while guarding only the visible
+        per-item branch would send every snapshot entry to the model.
+
+        **That data state is UNREACHABLE today, and this is defence in depth
+        rather than a live-leak fix.** `approved_membership` is written in one
+        place, which also sets APPROVED, and discard accepts only a DRAFT — so
+        approved-and-discarded cannot be produced through the API.
+        `tests/unit/test_capability_list_status_graph.py` pins both halves, and
+        exists so this docstring cannot quietly regrow into the stronger claim
+        it made in its first draft.
+
+        It is kept, and the reasoning is not "one day it might matter":
+
+        * the DISCARDED branch here FIRES today, on every DRAFT-discarded list.
+          What is unreachable is a data state, not this code path;
+        * the value is that `pairs.append` has ONE site. Un-sharing it restores
+          the two-writer shape where a predicate is applied to one branch and
+          forgotten in the other — the half-fix this repo records for #75, #79
+          and #84;
+        * the state is one line from reachable, and the same file proves the
+          line gets missed: `approve_capability_list` fails to refuse DISCARDED
+          (#231) while two other guards in it list DISCARDED explicitly;
+        * the asymmetry. An unfiring guard costs one branch. Its absence costs
+          discarded tooling reaching a hard allow-list and a client
+          deliverable.
 
         One router means the gate cannot be applied to one branch and forgotten
         in the other. A guard written twice is two statements of one rule, and
@@ -976,6 +996,12 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
                 entry_name,
                 entry.get("vendor"),
                 entry.get("item_id"),
+                # `None` here is honest about the VALUE and silent about the
+                # REASON: an absent live row renders identically to a row with
+                # no document. `CapabilityProvenance` has `live_row_missing` for
+                # exactly that distinction and `WithheldCapability` does not.
+                # Latent -- reachable only in the state #231 is one line from
+                # creating. Tracked as #233.
                 snapshot_item.source_artifact_id if snapshot_item is not None else None,
                 from_snapshot=True,
             )
@@ -1119,6 +1145,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         seen = withheld.get(key)
         if seen is None:
             withheld[key] = drop
+        # NOT re-derived for three reasons -- see #232 for the 3x3 this needs.
         elif seen.reason != drop.reason and drop.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT:
             # Withheld for both reasons across two lists. `security_scope` says
             # a human decided this is not security tooling; the copy that is in
@@ -2160,7 +2187,38 @@ def ai_inputs(
     sources: list[AttackAiInputSourceList] = []
     for cap_list in membership.lists:
         from_snapshot = cap_list.approved_membership is not None
-        rows = _excluded_source_rows(cap_list)
+        # DISCARDED lists reach this loop for the first time (#178), and every
+        # aggregate below ran for years under a query that excluded them. Each
+        # is a SEPARATE decision, and the one you notice is not the set — so all
+        # six are stated here rather than left to whichever the author happened
+        # to think about.
+        #
+        # `retired` gates the two that would raise a NEW WARNING about a list
+        # that contributes nothing:
+        #
+        #  * `_excluded_source_rows` — the panel renders these as bare
+        #    "Row {index}: {summary}" with NO list identity, so a thrown-away
+        #    upload's orphan rows would sit indistinguishably beside live ones,
+        #    with indexes colliding across lists. Inviting investigation into a
+        #    file somebody already discarded is worse than saying nothing.
+        #  * `_excluded_attribution` — a discarded list with `source_rows_total`
+        #    set and no stored `excluded_rows` returns "unknown", which renders
+        #    as "N of the M lists cannot say what they dropped". True of the
+        #    row and useless as advice.
+        #
+        # The other four are deliberately NOT gated, and why:
+        #
+        #  * `sent_count` / `not_sent_count` — the point of the change. A
+        #    discarded list reads 0 sent and N not-sent, which is the disclosure
+        #    #178 exists to add.
+        #  * `membership_stale` — computed only when `from_snapshot`, which a
+        #    discarded list cannot be today (`test_capability_list_status_graph`
+        #    pins that). Left live so it stays correct if the state graph
+        #    changes; its "re-approve" warning would need revisiting then, which
+        #    is noted on #231.
+        #  * `status` — the whole point is that it is now visible.
+        retired = cap_list.status == CapabilityListStatus.DISCARDED
+        rows = [] if retired else _excluded_source_rows(cap_list)
         excluded.extend(rows)
         sources.append(
             AttackAiInputSourceList(
@@ -2177,8 +2235,14 @@ def ai_inputs(
                 # dict above may hold no entry for its service at all when every
                 # list for that service was discarded. Indexed for the live
                 # case, exactly as before, because a miss there IS impossible.
+                # None, NOT False. A discarded list is retired: it is not the
+                # latest and nothing supersedes it, and `False` is read by every
+                # renderer as "superseded by a later version". The dict may also
+                # hold no entry for its service at all when every list there was
+                # discarded — indexed only in the live branch, where a miss is
+                # genuinely impossible.
                 is_latest_for_service=(
-                    False
+                    None
                     if cap_list.status == CapabilityListStatus.DISCARDED
                     else cap_list.version >= latest_version[cap_list.service_id]
                 ),
@@ -2195,7 +2259,14 @@ def ai_inputs(
                 sent_count=sent_per_list.get(cap_list.id, 0),
                 not_sent_count=withheld_per_list.get(cap_list.id, 0),
                 source_rows_total=cap_list.source_rows_total,
-                excluded_attribution=_excluded_attribution(cap_list),
+                # "not_recorded" for a retired list: nothing was dropped that
+                # anyone should act on, and "unknown" would raise a warning
+                # about a list that feeds nothing. Not a lie — a discarded
+                # list's extraction record is genuinely not something this panel
+                # reports on.
+                excluded_attribution=(
+                    "not_recorded" if retired else _excluded_attribution(cap_list)
+                ),
                 excluded_rows_named=len(rows),
             )
         )
