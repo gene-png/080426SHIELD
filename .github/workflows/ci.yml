@@ -64,6 +64,173 @@ jobs:
       - name: plan totals sum
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
+      # The image optimizer stays unmounted, AND nothing imports sharp directly.
+      # Together those are the whole reachability argument for the sharp advisory;
+      # neither alone is. Measured against the STANDALONE artifact, not the dev
+      # server: /_next/image answers 400 without the config line and 404 with it,
+      # while a genuinely absent route answers 404 either way. sharp is traced into
+      # the standalone bundle regardless, so the config removes the ROUTE, not the
+      # dependency -- which is why the second half below matters.
+      #
+      # THE TWO HALVES HAVE DIFFERENT FAILURE CHARACTERISTICS AND ONLY ONE IS
+      # COMPLETE. Read that before trusting the second further than it can carry.
+      #
+      #   images.unoptimized -- a PRESENCE claim over a CLOSED set. The value is
+      #   true or it is not, and the node import reads what the build consumes.
+      #   This half is complete.
+      #
+      #   no direct sharp import -- an ABSENCE claim over an OPEN set. There is no
+      #   finite list of ways to name a module, so this pattern is a FLOOR, not a
+      #   census. It fails loudly the day someone adds an import it recognises, and
+      #   it is silent about spellings nobody has thought of. Same standing as
+      #   leave_row_oracle's registry check being the one gateable property while
+      #   the oracle itself is not automated.
+      #
+      # Its known false-positive surface is a bare quoted string exactly "sharp" or
+      # "sharp/...", which fails visibly rather than silently -- the right direction
+      # for a security assertion. "sharp-corner", "sharpen", "sharpness", prose and
+      # `{ sharp: boolean }` all correctly miss.
+      #
+      # THAT FALSE POSITIVE IS DELIBERATE. If it fires on a variable or literal,
+      # RENAME THE VARIABLE. Do not loosen the pattern back toward a
+      # statement-shaped one (`from "sharp"`, `require("sharp")`) -- that is the
+      # version this replaced, and it missed dynamic import, subpath imports and
+      # require with internal spacing while reporting green. A false positive that
+      # someone "fixes" by weakening the check is how these regress.
+      #
+      # `@img/sharp-*` is KNOWINGLY OUT OF SCOPE. Those are sharp's own platform
+      # binaries and nothing imports them directly, so matching them would be noise.
+      # Recorded as a decision rather than left as an accident, because that exact
+      # scoped family is what defeated the lockfile scope-check on #225: being
+      # quoted and scoped is what made a pattern there unable to fail. If anyone
+      # ever imports one directly, this gate is silent about it.
+      #
+      # Reads the VALUE via a node import rather than grepping the source: prettier
+      # reflows a growing config object across lines as a matter of course, and a
+      # line-anchored pattern would go red on correct code. ci.yml already records
+      # why that is worse than not running -- a check red on every PR regardless of
+      # the diff teaches everyone to ignore it.
+      #
+      # Deliberately a step rather than a fixture under the exemption registry
+      # (#223): that registry is filed and unbuilt, so "gate it there" resolves to
+      # "gate it never, for now". Fold this in when #223 is built.
+      - name: image optimizer stays unmounted
+        run: |
+          # `-e` is ON whether or not it is written here: GitHub invokes this
+          # step as `bash -e {0}`, and `set -uo pipefail` does not cancel it.
+          # Made explicit so the `|| rc=$?` guards below read as necessary
+          # rather than as belt-and-braces -- without them, `-e` aborts the
+          # script at a command substitution whose command "failed", and grep
+          # FAILS WHEN IT FINDS NOTHING. This gate exited 1 with no output on a
+          # clean tree for exactly that reason; see the note at the foot of the
+          # step.
+          set -euo pipefail
+          CFG=apps/web/next.config.mjs
+          # "I could not look" is exit 2 and never exit 1 (D-051). A missing or
+          # unevaluable config must not read as "the line was removed".
+          if [ ! -r "$CFG" ]; then
+            echo "cannot read $CFG -- refusing to guess whether the route is mounted" >&2
+            exit 2
+          fi
+          # `|| node_rc=$?` is what keeps `-e` from killing the script here.
+          # Without it a missing or broken node aborts at this line and the
+          # step exits 1 with no message -- reported as "the line was removed"
+          # when the truth is "I could not look", which is the exact inversion
+          # D-051 exists to prevent.
+          node_rc=0
+          val=$(node --input-type=module -e "
+            const m = await import('./apps/web/next.config.mjs');
+            process.stdout.write(String(m.default?.images?.unoptimized));
+          " 2>/dev/null) || node_rc=$?
+          if [ "$node_rc" -ne 0 ] || [ -z "$val" ]; then
+            echo "could not evaluate $CFG -- refusing to guess" >&2
+            exit 2
+          fi
+          if [ "$val" != "true" ]; then
+            echo "images.unoptimized is '$val', not true." >&2
+            echo "That re-mounts /_next/image and re-opens this app's path into" >&2
+            echo "sharp's affected image loaders. If deliberate, the sharp" >&2
+            echo "reachability argument needs re-establishing first." >&2
+            exit 1
+          fi
+          # Matches the MODULE SPECIFIER, not the statement form. A
+          # statement-shaped pattern (`from "sharp"`, `require("sharp")`) missed
+          # three real spellings when tested: dynamic `await import("sharp")`, a
+          # subpath `"sharp/lib/resize"`, and `require( "sharp" )` with spaces.
+          # The subpath is the one that matters -- it reaches the same library
+          # through the same install and is a plausible thing to write. Anchoring
+          # on the quoted specifier covers static, dynamic, require with any
+          # spacing, and subpaths in one pattern, and cannot be defeated by
+          # formatting.
+          #
+          # Excludes build output and vendored deps: Next ships its own
+          # `_sharp = require('sharp')` inside next/dist/server/image-optimizer.js,
+          # which this matched on its first run. That line is the optimizer calling
+          # sharp -- the thing the config unmounts -- not one of our callers.
+          # THE BUG THIS STEP SHIPPED WITH, kept named because the fix looks
+          # like noise otherwise: grep exits 1 when it finds NOTHING, so under
+          # `-e` this assignment aborted the script on a CLEAN tree. The step
+          # exited 1, printed nothing at all, and its pass state was the only
+          # state it could not reach. `rc=$?` on the next line never ran.
+          # Found by CI, on the first completed run -- four local runs in four
+          # directions could not see it, because an interactive `bash` has no
+          # `-e`.
+          rc=0
+          hits=$(grep -rnE "['\"]sharp(/[^'\"]*)?['\"]"                    apps packages --include=*.ts --include=*.tsx --include=*.js --include=*.mjs                    --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist --exclude-dir=build 2>/dev/null) || rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "could not search for sharp imports -- refusing to guess" >&2
+            exit 2
+          fi
+          if [ -n "$hits" ]; then
+            echo "a direct sharp import appeared:" >&2
+            echo "$hits" >&2
+            echo "sharp is unpatched at 0.34.5; a direct caller reaches the" >&2
+            echo "affected GIF/TIFF/VIPS loaders regardless of the optimizer." >&2
+            exit 1
+          fi
+          echo "image optimizer unmounted (images.unoptimized=true), no direct sharp import"
+          # ---------------------------------------------------------------
+          # THE NOTE, referenced above. Read it before "simplifying" the
+          # `|| rc=$?` guards away.
+          #
+          # This step's defect history is the worked example on #223, and the
+          # last entry is the one that matters here: it was verified locally in
+          # four directions and was RED on its first completed CI run, exiting 1
+          # with EMPTY output on a clean tree. Cause: `bash -e` plus grep's
+          # exit-1-on-no-match. Local runs used an interactive `bash`, which has
+          # no `-e`, so no amount of local care could have reached it.
+          #
+          # THE LESSON: a CI step is not the script you wrote, it is the script
+          # AS THE RUNNER INVOKES IT. Verify it that way:
+          #
+          #   python - <<'PY'
+          #   import yaml
+          #   d = yaml.safe_load(open(".github/workflows/ci.yml"))
+          #   s = [x for x in d["jobs"]["python"]["steps"]
+          #        if x.get("name") == "image optimizer stays unmounted"]
+          #   open("gate-step.sh", "w", newline="\n").write(s[0]["run"])
+          #   PY
+          #   bash -e gate-step.sh; echo "exit=$?"; rm -f gate-step.sh
+          #
+          # Git Bash form, run from the repo root; not run in PowerShell. The
+          # path is RELATIVE on purpose: the first draft of this note wrote
+          # `/tmp/step.sh`, and on Windows that is `C:\tmp` to Python and
+          # somewhere else entirely to Git Bash, so the documented command
+          # failed the first time it was executed verbatim -- in the same
+          # session that added the rule requiring exactly that check.
+          #
+          # `bash -e` is not optional in that command. Without it you reproduce
+          # your own shell, not the runner's, and this gate passed that way for
+          # its whole life while being incapable of passing in CI.
+          #
+          # Directions verified this way on 2026-09-08, each producing the exit
+          # code named: clean tree 0; config line removed 1; config file absent
+          # 2; config reformatted by prettier 0; static / require / spaced
+          # require / dynamic / subpath / single-quoted sharp specifiers all 1;
+          # `sharpen`, `"sharp-corner"`, `@img/sharp-linux-x64` and a `// sharp`
+          # comment all 0. Re-run the set after ANY edit here.
+          # ---------------------------------------------------------------
+
       # Every gate above proves something about the repo. NOTHING proved the
       # gates themselves could fail, and this repo keeps shipping checks whose
       # inputs cannot distinguish their pass state from their fail state (#213)
