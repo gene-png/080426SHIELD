@@ -34,12 +34,12 @@ substituted for another's, and the substitution looks like success.
 
 **That remedy is BASH-ONLY, and its failure in PowerShell is silent.** There is no
 `PIPESTATUS` in PowerShell 5.1: `${PIPESTATUS[0]}` parses as a variable named
-`PIPESTATUS[0]` and evaluates to `$null` with no error — measured 2026-09-08. Use
-`$LASTEXITCODE`. And the hazard itself is bash's, not a universal one: measured the
-same day, `python x.py | Select-Object -First 1` leaves `$LASTEXITCODE` at the
-python exit code (2), because a cmdlet does not overwrite it. Two shells, two
-remedies, and reaching for the wrong one gives you an empty string rather than a
-complaint.
+`PIPESTATUS[0]` and evaluates to `$null` with no error. Use `$LASTEXITCODE` — but
+note it holds the last **native** command's code, so `python x.py | findstr .`
+reports findstr's 0 and loses python's 2, exactly as bash does. **The hazard is
+not bash's. Only the remedy is**, and in neither shell should you pipe when you
+need the exit code. Measured 2026-09-08 (D-071, which also records how the first
+draft of this paragraph got it backwards).
 
 **And it is not only pipes — an exit code can be wrong with nothing piped at
 all.** Lines fed to PowerShell 5.1 statement-at-a-time, one of which contains a
@@ -102,170 +102,79 @@ the next time a command is added here:
 
     sed -n '/^## Real commands/,/^## Environment gotchas/p' CLAUDE.md | grep -n '&&'
 
-<!-- counted: an earlier draft said "six"; the grep above returns 5 commands, 2026-09-08 -->
+Reading its output takes two corrections:
 
-Reading its output takes two corrections, and both are why the number is not
-written down:
-
-- **It over-reports on purpose.** This scope block discusses `&&` in prose and
-  matches itself, so most hits are not commands. The commands are the ones inside
-  backticks under a `- ` bullet. A pattern tightened until the prose fell out
-  would be tuned to today's wording and would start missing commands the first
-  time someone reflows a paragraph.
+- **It over-reports on purpose.** This block discusses `&&` in prose and matches
+  itself. The commands are the ones inside backticks under a `- ` bullet.
 - **Hit LINES are not commands.** The ruff/black bullet wraps across two source
-  lines and carries a `&&` on each, so counting command-shaped hits gives one
-  more than there are commands. Count bullets, not lines.
+  lines and carries a `&&` on each. Count bullets, not lines.
 
 **Empty output means the anchors moved, NOT that the section is PowerShell-safe.**
-Both headings are matched by prefix and the command must be run from the repo
-root. Reword the first heading and `sed` prints nothing, `grep` exits 1, and
-silence reads as the reassuring answer — the same branch collapse this file
-records in its own gates. Reword only the second and the range runs to
-EOF, dragging in JavaScript `&&` from the prose below. If you get nothing back,
-check the headings before you believe it.
+Both headings match by prefix and it must be run from the repo root. Reword the
+first heading and `sed` prints nothing, `grep` exits 1, and silence reads as the
+reassuring answer — the branch collapse this file records in its own gates.
 
-`&&` is a **parse** error in PowerShell 5.1, not a runtime one — and **how much
-it destroys depends on how the block is submitted, which is the part that will
-catch you.** Nine lines, `&&` on the ninth only, measured 2026-09-08:
-<!-- counted: historical -->
-
-| Submitted as | Lines 1-8 | Exit |
-| --- | --- | --- |
-| a script (`powershell.exe -File`) | **none ran** | 1 |
-| piped to `-Command -` (stdin, statement-at-a-time) | **all ran** | **0** |
-
-**The submission form changes the outcome, and one form reports success while
-failing.** A script is aborted whole. Fed statement-at-a-time, the same lines run
-up to the bad one and then exit **0**, with a parser error on screen that no exit
-code records. So the exit status does not tell you what ran, in either direction.
-
-**The interactive console paste is UNMEASURED and is not either row.** It is the
-case a developer actually hits, and it is deliberately not claimed here: a paste
-into `powershell.exe` goes through PSReadLine, which buffers multi-line input in
-the edit buffer, and whether it then submits statement-at-a-time or hands the
-whole block to the parser is a property of the host and the PSReadLine version —
-not of `-Command -`. **If it submits as one unit it behaves like the `-File` row,
-which is the opposite result.** An earlier draft labelled the stdin row "a paste"
-and asserted it was the common case; that certified something nobody had run, in
-a table annotated with shells and a date, which is the exact decorative-evidence
-failure the rule below forbids. Settle it in seconds if you need it: put the nine
-lines on the clipboard, paste into `powershell.exe`, read `$LASTEXITCODE`.
-
-An earlier draft of this bullet also said "nothing executes at all" unscoped. That
-is true of the script form only.
-
-Nothing tells you which line was at fault. This repo is developed on Windows, so
-the default shell in a fresh terminal is the one that cannot parse it.
-
-**The forms below are the ones this repo has actually hit — a floor, not a
-census.** Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**, both
-shells, exit codes as printed.
-
-**Breaks somewhere** — and every row passes clean in one shell:
+**What breaks where.** The forms this repo has actually hit, a floor rather than
+a census. Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**. The
+cells are exit codes and the annotation covers those — it does not cover the row
+labels, which is how a mislabelled row once passed underneath it.
 
 | Form | Git Bash | PowerShell 5.1 |
 | --- | --- | --- |
-| OUTER `&&` joining two host commands | 0 | **parse error**, per the table above |
-| `\"` escaping inside `sh -lc "..."` | **0** | **2** — `sh: 1: Syntax error: Unterminated quoted string` |
+| OUTER `&&` joining two host commands | 0 | **parse error** |
+| `\"` escaping inside `sh -lc "..."` | **0** | **2** — `Unterminated quoted string` |
 | `-w /app` | **128** — `Cwd must be an absolute path` | 0 |
-
-**Works in both:**
-
-| Form | Git Bash | PowerShell 5.1 |
-| --- | --- | --- |
 | `sh -c "cd /app && ..."` — INNER `&&` | 0 | 0 |
 | single quotes inside double | 0 | 0 |
 
-The first table is the instruction, and **the direction of its rows is the point,
-not just their content: the breaking forms do not all break in the same shell.**
-Two of them fail in PowerShell and pass clean in Git Bash; the third fails in Git
-Bash and passes clean in PowerShell. So verifying in your own shell is not lazy,
-it is **structurally insufficient** — it can only ever clear the rows that break
-elsewhere, and it clears them by staying silent. That is how two consecutive
-drafts of the block below shipped broken, in **opposite** directions, each
-verified by an author whose own shell was clean.
+**No shell shows you every breaking row** — two of them fail only in PowerShell,
+one only in Git Bash — so verifying in the shell you happen to use is
+structurally insufficient, and it clears the rows it cannot see by staying
+silent. Both directions have cost this repo a broken published block (**D-071**).
+
+**A PowerShell `&&` parse error can exit 0.** Submitted statement-at-a-time it
+runs every line above the offending one and then reports success; submitted as a
+script it runs none and exits 1. The error names the line it is on, but nothing
+tells you which lines RAN and the exit status does not either — so do not read it
+as one. D-071 carries the measurements, and the interactive-console-paste case
+that is deliberately unmeasured.
 
 So, where a command's OUTPUT is what you rely on — a version read, a confirmation
-step — the prescription is narrow and it is only these: **no OUTER `&&` between
-two host commands (use separate lines); no backslash-escaped quotes inside a
-quoted argument (use single quotes inside double); and no `-w <dir>`.**
+step — the prescription is only these: **no OUTER `&&` between two host commands
+(use separate lines); no backslash-escaped quotes inside a quoted argument (use
+single quotes inside double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is
+FINE and is the replacement for `-w`.
 
-**`sh -lc "cd <dir> && ..."` is FINE and is the replacement for `-w`.** An earlier
-draft of this paragraph said to prefer `-w <dir>` over `cd`, and called the
-`sh -lc` shape "worse still" — both wrong, and wrong in the direction that
-matters, since `-w` is the one form here that breaks Git Bash. The inner `&&` is a
-single quoted argument handed to the container's shell; both host shells pass it
-through untouched. Four of the five `&&` commands the grep above surfaces use that
-shape, including the MANDATORY pre-commit lint, and they work.
-
-**So exactly one command in this section actually needs rewriting for PowerShell,
-and it is the e2e one:** `cd e2e && npx playwright test [file]` is a host `cd`
-joined to a host command by an OUTER `&&`. Run it as two lines there. The other
-four are fine as written, and saying otherwise is not harmless — a Windows dev who
-believes the mandatory ruff/black line cannot be run either skips it, which is the
-Sprint 3 six-ruff-errors path this file already records, or rewrites it with `-w`
-and lands in the Git Bash failure above.
+**Exactly one command in this section needs rewriting for PowerShell:**
+`cd e2e && npx playwright test [file]`, a host `cd` joined to a host command by an
+OUTER `&&`. Run it as two lines there. The other four use the `sh -lc` shape,
+including the MANDATORY pre-commit lint, and they work as written.
 
 The dependency-remediation block below is the worked example, and it is there
-because two versions of it failed on exactly this.
+because two versions of it shipped broken (D-071).
 
-**The rule that produced this scope line, and it binds every command block in
-this file: a block that claims it runs anywhere carries the SHELLS it was
-actually run in and the DATE it was run.**
+**The rule, and it binds every command block in this file: a block that claims it
+runs anywhere carries the SHELLS it was actually run in and the DATE it was run.**
+What counts is a SHAPE, not a word list — any sentence asserting a block **runs,
+or does not run,** in more than one shell, however phrased. "Portable", "works in
+both", "fails in Git Bash", "cross-platform" are examples and explicitly not the
+set. **The negative direction is the more dangerous**, because nobody runs the
+thing they have been told is broken, so a false negative claim is never disproved
+by anyone who obeys it.
 
-**What counts as such a claim is a SHAPE, not a word list.** Any sentence
-asserting a block **runs, or does not run,** in more than one shell, however
-phrased — and phrasings are not enumerable, which is the point.
+**Absent an annotation, assume the block was written for Git Bash and verify
+before running it elsewhere.** That is a default for the READER: the file asserts
+nothing, most of these blocks have not been run anywhere else, and absence of a
+marker is absence of evidence rather than evidence of absence. It holds file-wide,
+not only in this section — the stash-archiving block under **Rules of the road**
+is bash-only and carries no marker.
 
-**Both directions, and the negative one is the more dangerous.** An earlier draft
-covered only "it runs everywhere", which exempts "it does not run there" — and
-that is the direction that produced this rule: the BLOCKING finding on this very
-branch was `the sh -lc "cd /app && ..." shape is worse still`, a claim that a
-working form does not work, made from reading. A false negative claim is never
-disproved by anyone who obeys it, because **nobody runs the thing they have been
-told is broken.** Exempting it would also invert this file's standing treatment of
-absence — missing data defaults to unconfirmed, never to confirmed — by letting a
-positive claim need evidence while a negative one retires a working command on a
-hunch. "Portable", "works in both",
-"shell-agnostic", "cross-platform" and "runs anywhere" are examples and are
-explicitly not the set; a rule keyed on a hand-listed set of spellings is the
-defect this file records under numbering rule 4 and under `_HSPACE`. If you are
-asking whether your wording is on the list, it is a claim.
-
-Every such claim in this file was written from reading rather than from running —
-twice, in consecutive drafts of the same block, the second draft published as
-verified in both shells having been run in one. A portability claim with no
-shells and no date beside it is the first thing to distrust, and re-running it
-costs seconds.
-
-**No annotation means NO CLAIM IS MADE, and that is the DEFAULT rather than an
-omission.** Note what that does and does not say. It does **not** say nobody has
-run the block elsewhere — that is a claim about the past this file cannot
-support, and it is plainly false of the daily `docker compose exec` gates, since
-PowerShell is the primary shell here. It says only that **the block asserts
-nothing**, so a reader who needs cross-shell behaviour must go and check. Absence
-of a marker is absence of evidence, never evidence of absence.
-
-**And "assume Git Bash" is the file-wide default, not a property of this section.**
-The SCOPE line above speaks for `## Real commands`; nothing spoke for the rest,
-so an unmarked block elsewhere read as neutral once this rule existed — which is
-worse than before it, because "no claim" now sounds deliberate. It is not
-neutral: every command block in this file is a Git Bash form unless annotated
-otherwise. The sharpest case is the stash-archiving block under **Rules of the
-road**, which is unmarked, uses `$(...)` and `${sha:0:8}` — PowerShell has
-neither, and `${sha:0:8}` there is a variable named `sha:0:8` — and ends in a
-`git push`, so the failure is a malformed tag name pushed to the remote rather
-than a loud error.
-
-That default cannot go stale and needs no upkeep, which is why the burden sits on
-the block making the claim instead of on every block that makes none — annotating
-all of them would be an enumeration to maintain, and this file has a bullet about
-those. Never put the marker on a block you did not run in the shells it names: it
-is evidence, and a decorative one is worse than silence, because it is exactly
-what the reader checks instead of running it. **The table above is the worked
-example of satisfying this rule, and it was itself caught failing it** — its
-block-level annotation certified an outer-`&&` Git Bash row nobody had run, found
-in review. The row was measured rather than the annotation narrowed.
+Never put the marker on a block you did not run in the shells it names: a
+decorative one is worse than silence, because it is what the reader checks
+instead of running it. **State what it covers, not only where it ran** — a
+block-level marker over a table certifies every cell at once, offers no way to
+write "measured, except this row", and has twice certified something nobody ran
+(D-071).
 
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
@@ -333,39 +242,16 @@ in review. The row was measured rather than the annotation narrowed.
       docker compose exec -T web node -p "require('/app/apps/web/node_modules/next/package.json').version"
 
   **Three separate lines, no OUTER `&&`, no backslash escaping, and no `-w`.**
-  The first version of this block was authored and verified in Git Bash and
-  published to a team developing on Windows, where it does not run: `&&` is a
-  parse error in PowerShell 5.1, and this block's `&&` was on the FIRST line, so
-  nothing ran — see the submission table under **Real commands** before
-  generalising that, because a `&&` further down does not behave the same way and
-  can exit 0. And the `\"`
-  escaping inside `sh -lc "..."` is consumed by PowerShell before Docker sees
-  it, giving `sh: 1: Syntax error: Unterminated quoted string` (exit 2).
-  **PowerShell specifically, not "the host shell"** — measured 2026-09-08, the
-  identical line exits 0 in Git Bash and prints the version. An earlier draft
-  said "the host shell", which reads as both and is the reason a Git Bash author
-  can run this line, watch it work, and publish it as portable.
+  Each of those is fixed by a different thing, and mixing them up is how the
+  SECOND version of this block also shipped broken. The measurements are in the
+  table under **Real commands**; the incident is D-071.
+
   **The failure landed on the confirmation step**, which is the one line whose
   job is to tell you whether you are still unpatched -- and its error reads as a
   Docker problem rather than as "you are on the old version".
-  Each defect below is fixed by a different thing, and mixing them up is
-  how the SECOND version of this block also shipped broken:
-
-  * the **outer** `&&` joining two `docker` commands is what PowerShell cannot
-    parse -- so they are three lines. The **inner** `&&` inside `sh -c "..."` was
-    never the problem: it is one quoted argument handed to the container's shell,
-    and both host shells pass it through untouched.
-  * the `\"` escaping is fixed by single quotes inside double quotes.
-  * **`-w /app` is NOT the fix and must not be used here.** It works in PowerShell
-    and FAILS in Git Bash -- MSYS rewrites `/app` into a Windows path and Docker
-    answers `Cwd must be an absolute path`. The second draft of this block used it
-    and was published claiming both shells, having been run in only one.
 
   **Run in Git Bash and PowerShell 5.1 on 2026-09-08**, in both before the claim
-  was written, and re-run in both since. The shells and the date are the form
-  every portability claim in this file takes — see the rule under **Real
-  commands** — and they are here because the previous draft carried the claim
-  without them.
+  was written, and re-run in both since.
 
   **The second line is the confirmation step, and it is not optional.** The
   version string is the only thing that distinguishes "the patch is applied" from

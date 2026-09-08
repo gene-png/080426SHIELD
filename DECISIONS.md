@@ -3700,3 +3700,140 @@ values that `compute` silently discards as unscored — reproducing #124 exactly
 inside the helper written to end it. The protection was real and lived in a
 different call in a different file, which is this repo's recorded shape for a
 gate whose correctness sits in somebody else's line. It now raises for itself.
+
+## D-071 — Shell portability is a per-row measurement, and a block-level annotation cannot express it
+
+**Date:** 2026-09-08. **Supersedes nothing; extends D-062** (`CLAUDE.md` is
+INSTRUCTIONS, this file is the RECORD). The instruction lives under **Real
+commands**; everything below is why.
+
+### What prompted it
+
+The dependency-remediation block in `CLAUDE.md` was authored and verified in Git
+Bash and published to a team developing on Windows, where it did not run. The
+fix for that shipped broken too, in the opposite direction. Two published blocks,
+two authors' shells, both clean.
+
+### The measurements
+
+All run in Git Bash and PowerShell 5.1 on 2026-09-08.
+
+| Form                                  | Git Bash                            | PowerShell 5.1                  |
+| ------------------------------------- | ----------------------------------- | ------------------------------- |
+| OUTER `&&` joining two host commands  | 0                                   | parse error                     |
+| `\"` escaping inside `sh -lc "..."`   | 0                                   | 2, `Unterminated quoted string` |
+| `-w /app`                             | 128, `Cwd must be an absolute path` | 0                               |
+| `sh -c "cd /app && ..."` — INNER `&&` | 0                                   | 0                               |
+| single quotes inside double           | 0                                   | 0                               |
+
+**The direction is the finding, not the content.** Two forms fail only in
+PowerShell; one fails only in Git Bash. So verifying in the shell you happen to
+use is structurally insufficient rather than lazy — it can only clear the rows
+that break elsewhere, and it clears them **by staying silent**. That is why two
+consecutive drafts shipped broken in opposite directions, each verified by an
+author whose own shell was clean.
+
+The first draft's prescription was itself wrong in that direction: it told readers
+to prefer `-w <dir>` over `cd`, which is the one form here that breaks Git Bash,
+and called `sh -lc "cd /app && ..."` "worse still" when that shape works in both.
+Four of the five `&&` commands in the section use it, including the MANDATORY
+pre-commit lint — so the text impugned working commands, with a real cost path: a
+Windows dev either skips the lint, which is the Sprint 3 six-ruff-errors route, or
+rewrites it with `-w` and lands in the Git Bash failure.
+
+### How a `&&` parse error fails, which depends on submission form
+
+Nine lines, `&&` on the ninth only:
+
+| Submitted as                                       | Lines 1-8 | Exit  |
+| -------------------------------------------------- | --------- | ----- |
+| a script (`powershell.exe -File`)                  | none ran  | 1     |
+| piped to `-Command -` (stdin, statement-at-a-time) | all ran   | **0** |
+
+A script aborts whole; fed statement-at-a-time the same lines run up to the bad
+one and report **success**. The parser error names its own line, but nothing says
+which lines ran, and the exit status does not either.
+
+**The interactive console paste is UNMEASURED and is neither row.** It is the case
+a developer actually hits. A paste into `powershell.exe` goes through PSReadLine,
+which buffers multi-line input in the edit buffer; whether it then submits
+statement-at-a-time or hands the whole block to the parser is a property of the
+host and the PSReadLine version, not of `-Command -`. **If it submits as one unit
+it behaves like the `-File` row — the opposite result.** Settle it by putting the
+nine lines on the clipboard, pasting into `powershell.exe`, and reading
+`$LASTEXITCODE`. An earlier draft labelled the stdin row "a paste" and called it
+the common case, which certified something nobody had run.
+
+### The `PIPESTATUS` correction, and why the first draft was backwards
+
+`${PIPESTATUS[0]}` does not exist in PowerShell 5.1 — it parses as a variable
+named `PIPESTATUS[0]` and evaluates to `$null` silently. The first draft then
+claimed the pipeline-masking hazard "is bash's, not a universal one", citing
+`python x.py | Select-Object -First 1` leaving `$LASTEXITCODE` at 2.
+
+Both halves were wrong, and the second is the instructive one.
+
+| Pipeline                                      | `$LASTEXITCODE`                    |
+| --------------------------------------------- | ---------------------------------- |
+| `python x.py`                                 | 2                                  |
+| `python x.py \| findstr .` (native to native) | **0** — findstr's; python's 2 lost |
+| `python x.py \| Where-Object { $_ }`          | 2                                  |
+| `python x.py \| Select-Object -First 99`      | 2                                  |
+| `python x.py \| Select-Object -First 1`       | **-1**, usually                    |
+
+`$LASTEXITCODE` holds the last **native** command's code, so `native | native`
+masks exactly as bash does. The cited example survived only because
+`Select-Object` is a cmdlet — and it does not even survive reliably: `-First 1`
+stops the pipeline early, killing the native command. Over fifteen runs it gave
+`-1` fourteen times and `2` once.
+
+**The original measurement hit the one-in-fifteen outcome and was written up as a
+property.** That is the sharpest lesson on this branch: everything about it looked
+like evidence — it was run, the exit code was recorded, the date was written down
+— and a single observation cannot tell you the result is not stable. The rule
+requiring shells and a date would not have caught it. A measurement used to
+support a general claim should be run more than once.
+
+### Why the annotation form itself is the defect
+
+Three claims on this branch were measurements of one case written up as general
+properties, each inside a paragraph annotated with shells and a date, each
+authored immediately after fixing the previous one. The mechanism:
+
+**The annotation's unit is the BLOCK. The evidence's unit is the ROW.** "Every row
+run in both shells" makes one claim over ten cells. To write it truthfully an
+author must hold ten results at once, and the form offers no way to record a
+partial one. Faced with "nine measured, one not", the options are to withhold the
+marker and lose the nine, or write it and round up. **Authors round up.** That is
+not a discipline failure; it is the only expressible outcome — the same
+no-false-branch defect this repo records in its own gates, where a checker with no
+way to emit "I could not look" emits nothing and nothing reads as clean.
+
+A second mechanism sits on top: the marker's stated scope was "exit codes as
+printed", and one defect was in a row's **label**, which that scope never covered.
+The marker did not lie — its scope was narrower than a reader assumes, positioned
+exactly where they check.
+
+**So the instruction in `CLAUDE.md` is to state what the marker covers, not only
+where it ran.** The stronger fix, not yet built, is to move the evidence into the
+row — a `Measured` column permitting `not measured` — so partial evidence becomes
+writable and a neighbour's annotation cannot silently cover an un-run row. That
+converts a synchronization into a derivation, which is the preference this repo
+already states.
+
+### Process note
+
+Three adversarial-review rounds. Round 1 found two BLOCKING; round 2 three
+BLOCKING and three ADVISORY; round 3 two BLOCKING and two ADVISORY. Every BLOCKING
+finding after round 1 was the same shape above, and none was in the remediation
+block or the measurement table — the parts that were actually run. They were all
+in the material generalising from them. The branch was cut back to the measured
+parts on that evidence rather than reviewed a fourth time.
+
+One round was nearly invalidated by the orchestrating session switching the
+working tree while the reviewer was reading it. The post-hoc canary sent to detect
+that could not have worked — it reads the tree after the switch-back. What settled
+it was the reviewer's original `Read` output, which contained text `main` does not
+have. Controls filed on #203; `git reflog show HEAD | wc -l` sampled before and
+after is the detection, and `git rev-parse HEAD` cannot work because a
+switch-away-and-back leaves it identical.
