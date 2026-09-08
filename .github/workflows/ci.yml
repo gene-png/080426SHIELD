@@ -88,7 +88,22 @@ jobs:
       #
       # Its known false-positive surface is a bare quoted string exactly "sharp" or
       # "sharp/...", which fails visibly rather than silently -- the right direction
-      # for a security assertion. "sharp-corner" and "sharpen" do not match.
+      # for a security assertion. "sharp-corner", "sharpen", "sharpness", prose and
+      # `{ sharp: boolean }` all correctly miss.
+      #
+      # THAT FALSE POSITIVE IS DELIBERATE. If it fires on a variable or literal,
+      # RENAME THE VARIABLE. Do not loosen the pattern back toward a
+      # statement-shaped one (`from "sharp"`, `require("sharp")`) -- that is the
+      # version this replaced, and it missed dynamic import, subpath imports and
+      # require with internal spacing while reporting green. A false positive that
+      # someone "fixes" by weakening the check is how these regress.
+      #
+      # `@img/sharp-*` is KNOWINGLY OUT OF SCOPE. Those are sharp's own platform
+      # binaries and nothing imports them directly, so matching them would be noise.
+      # Recorded as a decision rather than left as an accident, because that exact
+      # scoped family is what defeated the lockfile scope-check on #225: being
+      # quoted and scoped is what made a pattern there unable to fail. If anyone
+      # ever imports one directly, this gate is silent about it.
       #
       # Reads the VALUE via a node import rather than grepping the source: prettier
       # reflows a growing config object across lines as a matter of course, and a
