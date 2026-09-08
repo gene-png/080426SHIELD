@@ -72,9 +72,23 @@ jobs:
       # the standalone bundle regardless, so the config removes the ROUTE, not the
       # dependency -- which is why the second half below matters.
       #
-      # The unoptimized assertion is a PRESENCE claim and fails loudly if removed.
-      # The sharp-import assertion is an ABSENCE claim, mechanised so it fails the
-      # day someone adds the import rather than quietly ceasing to be true.
+      # THE TWO HALVES HAVE DIFFERENT FAILURE CHARACTERISTICS AND ONLY ONE IS
+      # COMPLETE. Read that before trusting the second further than it can carry.
+      #
+      #   images.unoptimized -- a PRESENCE claim over a CLOSED set. The value is
+      #   true or it is not, and the node import reads what the build consumes.
+      #   This half is complete.
+      #
+      #   no direct sharp import -- an ABSENCE claim over an OPEN set. There is no
+      #   finite list of ways to name a module, so this pattern is a FLOOR, not a
+      #   census. It fails loudly the day someone adds an import it recognises, and
+      #   it is silent about spellings nobody has thought of. Same standing as
+      #   leave_row_oracle's registry check being the one gateable property while
+      #   the oracle itself is not automated.
+      #
+      # Its known false-positive surface is a bare quoted string exactly "sharp" or
+      # "sharp/...", which fails visibly rather than silently -- the right direction
+      # for a security assertion. "sharp-corner" and "sharpen" do not match.
       #
       # Reads the VALUE via a node import rather than grepping the source: prettier
       # reflows a growing config object across lines as a matter of course, and a
@@ -110,11 +124,21 @@ jobs:
             echo "reachability argument needs re-establishing first." >&2
             exit 1
           fi
+          # Matches the MODULE SPECIFIER, not the statement form. A
+          # statement-shaped pattern (`from "sharp"`, `require("sharp")`) missed
+          # three real spellings when tested: dynamic `await import("sharp")`, a
+          # subpath `"sharp/lib/resize"`, and `require( "sharp" )` with spaces.
+          # The subpath is the one that matters -- it reaches the same library
+          # through the same install and is a plausible thing to write. Anchoring
+          # on the quoted specifier covers static, dynamic, require with any
+          # spacing, and subpaths in one pattern, and cannot be defeated by
+          # formatting.
+          #
           # Excludes build output and vendored deps: Next ships its own
           # `_sharp = require('sharp')` inside next/dist/server/image-optimizer.js,
           # which this matched on its first run. That line is the optimizer calling
           # sharp -- the thing the config unmounts -- not one of our callers.
-          hits=$(grep -rnE "from ['\"]sharp['\"]|require\(['\"]sharp['\"]\)"                    apps packages --include=*.ts --include=*.tsx --include=*.js --include=*.mjs                    --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist --exclude-dir=build 2>/dev/null)
+          hits=$(grep -rnE "['\"]sharp(/[^'\"]*)?['\"]"                    apps packages --include=*.ts --include=*.tsx --include=*.js --include=*.mjs                    --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist --exclude-dir=build 2>/dev/null)
           rc=$?
           if [ $rc -eq 2 ]; then
             echo "could not search for sharp imports -- refusing to guess" >&2
