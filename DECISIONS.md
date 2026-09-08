@@ -3700,3 +3700,277 @@ values that `compute` silently discards as unscored — reproducing #124 exactly
 inside the helper written to end it. The protection was real and lived in a
 different call in a different file, which is this repo's recorded shape for a
 gate whose correctness sits in somebody else's line. It now raises for itself.
+
+## D-071 — Shell portability is a per-row measurement, and a block-level annotation cannot express it
+
+**Date:** 2026-09-08. **Supersedes nothing; extends D-062** (`CLAUDE.md` is
+INSTRUCTIONS, this file is the RECORD). The instruction lives under **Real
+commands**; everything below is why.
+
+### What prompted it
+
+The dependency-remediation block in `CLAUDE.md` was authored and verified in Git
+Bash and published to a team developing on Windows, where it did not run. The
+fix for that shipped broken too, in the opposite direction. Two published blocks,
+two authors' shells, both clean.
+
+### The measurements
+
+**The table lives in `CLAUDE.md` under "What breaks where", and is deliberately
+not reproduced here.** Two copies of five measured rows is a synchronization with
+nothing deriving one from the other, and the copies had already diverged in the
+one way that matters: the `CLAUDE.md` original carries the clause saying the
+annotation covers exit codes and not row labels, and the copy here did not -- so
+the RECORD held the weaker form of the very annotation this record exists to
+criticise. One home, and it is the one a reader consults daily.
+
+What belongs here is what the table cannot say.
+
+**The `\"`-escaping row is the one most easily misread**, and its first write-up
+was misread exactly that way. The block said the escaping "is consumed by
+**the host shell**".
+It is consumed by **PowerShell specifically** -- the identical line exits 0 in Git
+Bash and prints the version. "The host shell" reads as both, and that phrasing is
+why a Git Bash author can run the line, watch it work, and publish it as portable.
+The same sentence, scoped correctly, would have stopped the second broken draft.
+
+**The direction is the finding, not the content.** Two forms fail only in
+PowerShell; one fails only in Git Bash. So verifying in the shell you happen to
+use is structurally insufficient rather than lazy — it can only clear the rows
+that break elsewhere, and it clears them **by staying silent**. That is why two
+consecutive drafts shipped broken in opposite directions, each verified by an
+author whose own shell was clean.
+
+The first draft's prescription was itself wrong in that direction: it told readers
+to prefer `-w <dir>` over `cd`, which is the one form here that breaks Git Bash,
+and called `sh -lc "cd /app && ..."` "worse still" when that shape works in both.
+Four of the five `&&` commands in the section use it, including the MANDATORY
+pre-commit lint — so the text impugned working commands, with a real cost path: a
+Windows dev either skips the lint, which is the Sprint 3 six-ruff-errors route, or
+rewrites it with `-w` and lands in the Git Bash failure.
+
+### How a `&&` parse error fails, which depends on submission form
+
+Nine lines, `&&` on the ninth only:
+
+| Submitted as                                       | Lines 1-8 | Exit  |
+| -------------------------------------------------- | --------- | ----- |
+| a script (`powershell.exe -File`)                  | none ran  | 1     |
+| piped to `-Command -` (stdin, statement-at-a-time) | all ran   | **0** |
+
+A script aborts whole; fed statement-at-a-time the same lines run up to the bad
+one and report **success**. The parser error names its own line, but nothing says
+which lines ran, and the exit status does not either.
+
+**The interactive console paste is UNMEASURED and is neither row.** It is the case
+a developer actually hits. A paste into `powershell.exe` goes through PSReadLine,
+which buffers multi-line input in the edit buffer; whether it then submits
+statement-at-a-time or hands the whole block to the parser is a property of the
+host and the PSReadLine version, not of `-Command -`. **If it submits as one unit
+it behaves like the `-File` row — the opposite result.** Settle it by putting the
+nine lines on the clipboard, pasting into `powershell.exe`, and reading
+`$LASTEXITCODE`. An earlier draft labelled the stdin row "a paste" and called it
+the common case, which certified something nobody had run.
+
+### The `PIPESTATUS` correction, and why the first draft was backwards
+
+`${PIPESTATUS[0]}` does not exist in PowerShell 5.1 — it parses as a variable
+named `PIPESTATUS[0]` and evaluates to `$null` silently. The first draft then
+claimed the pipeline-masking hazard "is bash's, not a universal one", citing
+`python x.py | Select-Object -First 1` leaving `$LASTEXITCODE` at 2.
+
+Both halves were wrong, and the second is the instructive one.
+
+| Pipeline                                      | `$LASTEXITCODE`                    |
+| --------------------------------------------- | ---------------------------------- |
+| `python x.py`                                 | 2                                  |
+| `python x.py \| findstr .` (native to native) | **0** — findstr's; python's 2 lost |
+| `python x.py \| Where-Object { $_ }`          | 2                                  |
+| `python x.py \| Select-Object -First 99`      | 2                                  |
+| `python x.py \| Select-Object -First 1`       | **-1**, usually                    |
+
+`$LASTEXITCODE` holds the last **native** command's code, so `native | native`
+masks exactly as bash does. The cited example survived only because
+`Select-Object` is a cmdlet — and it does not even survive reliably: `-First 1`
+stops the pipeline early, killing the native command. Over fifteen runs it gave
+`-1` fourteen times and `2` once.
+
+**The original measurement hit the one-in-fifteen outcome and was written up as a
+property.** That is the sharpest lesson on this branch: everything about it looked
+like evidence — it was run, the exit code was recorded, the date was written down
+— and a single observation cannot tell you the result is not stable. The rule
+requiring shells and a date would not have caught it. A measurement used to
+support a general claim should be run more than once.
+
+### Why the annotation form itself is the defect
+
+Three claims on this branch were measurements of one case written up as general
+properties, each inside a paragraph annotated with shells and a date, each
+authored immediately after fixing the previous one. The mechanism:
+
+**The annotation's unit is the BLOCK. The evidence's unit is the ROW.** "Every row
+run in both shells" makes one claim over ten cells. To write it truthfully an
+author must hold ten results at once, and the form offers no way to record a
+partial one. Faced with "nine measured, one not", the options are to withhold the
+marker and lose the nine, or write it and round up. **Authors round up.** That is
+not a discipline failure; it is the only expressible outcome — the same
+no-false-branch defect this repo records in its own gates, where a checker with no
+way to emit "I could not look" emits nothing and nothing reads as clean.
+
+A second mechanism sits on top: the marker's stated scope was "exit codes as
+printed", and one defect was in a row's **label**, which that scope never covered.
+The marker did not lie — its scope was narrower than a reader assumes, positioned
+exactly where they check.
+
+**So the instruction in `CLAUDE.md` is to state what the marker covers, not only
+where it ran.** The stronger fix, not yet built, is to move the evidence into the
+row — a `Measured` column permitting `not measured` — so partial evidence becomes
+writable and a neighbour's annotation cannot silently cover an un-run row. That
+converts a synchronization into a derivation, which is the preference this repo
+already states.
+
+### Process note
+
+Three adversarial-review rounds. Round 1 found two BLOCKING; round 2 three
+BLOCKING and three ADVISORY; round 3 two BLOCKING and two ADVISORY. Every BLOCKING
+finding after round 1 was the same shape above, and none was in the remediation
+block or the measurement table — the parts that were actually run. They were all
+in the material generalising from them. The branch was cut back to the measured
+parts on that evidence rather than reviewed a fourth time.
+
+One round was nearly invalidated by the orchestrating session switching the
+working tree while the reviewer was reading it. The post-hoc canary sent to detect
+that could not have worked — it reads the tree after the switch-back. What settled
+it was the reviewer's original `Read` output, which contained text `main` does not
+have. Controls filed on #203; `git reflog show HEAD | wc -l` sampled before and
+after is the detection, and `git rev-parse HEAD` cannot work because a
+switch-away-and-back leaves it identical.
+
+### The shape, corrected — a claim whose scope exceeds its evidence
+
+The first framing of this record said the repeated defect was "a measurement of
+one case written up as a general property". The adversarial reviewer corrected
+that after the race result above, and the correction is the useful part. The
+species below are distinct, and only the first is a reading failure:
+
+- **Scope over-reach** — one case measured, all cases claimed. The outer-`&&` Git
+  Bash row certified by a block annotation; the stdin row labelled "a paste";
+  "the hazard itself is bash's". A more careful reading catches each of these.
+- **Stability over-reach** — one _observation_ of a non-deterministic value,
+  written as a property. `python x.py | Select-Object -First 1` reporting 2, which
+  reproduces once in fifteen runs.
+
+**The second survives every check this branch built.** Shells named, date written,
+a real run, a real recorded exit code — everything about it was evidence, and all
+of it was true. The defect was in what a single observation can support, which no
+annotation field asks about. That is why the branch was cut back to its measured
+parts rather than reviewed a fourth time: the section was producing claims faster
+than it was producing measurements, and one of them was unreachable by more care.
+
+### Why the instruction records a SET and not an N
+
+The obvious repair — add an N to the annotation — was proposed and rejected, and
+the reasoning generalises.
+
+**An N of 15 reporting `LASTEXITCODE=2` would have been worse than the original**:
+certified, repeated, and still wrong, because the author reports the value they
+saw rather than the mode. What made the race visible was not looking fifteen
+times; it was writing down `-1 x14, 2 x1`. So the field that works is _what did
+you see_, not _how many times did you look_ — a distribution in an annotation is
+self-announcing and no reader mistakes it for a property.
+
+A blanket N would also be filled ritually, because most measurements here are
+deterministic by construction: a parse error is a parse error, MSYS path rewriting
+has no timing component. A decorative N is the exact decorative-evidence failure
+this record exists to describe, and it would have been the third annotation field
+added in three review rounds — growth in KIND, which the size ratchet says to
+resist.
+
+### An example of a rule being VIOLATED is falsified by the rule being followed
+
+The file-wide default originally carried a supporting instance: a named block that
+was bash-only and **carried no marker**. That citation was wrong in a way worth
+naming, because it generalises past this sentence.
+
+The rule says unmarked blocks should be marked or verified. Citing a specific
+unmarked block therefore makes that block the first candidate for marking -- and
+marking it makes the citing sentence false. **The citation's truth is inversely
+coupled to the rule working.** It stays true only while everyone ignores the rule,
+which is not evidence of anything. It happened here inside one commit: the fix that
+added the marker left the sentence citing its absence standing.
+
+Picking a different unmarked block does not repair this, it re-arms it. So the
+example was deleted rather than repointed.
+
+**The durable form, if an instance is ever wanted: cite the rule's SCOPE, never a
+violation of it.** "Command blocks appear under `## Environment gotchas` and
+`Rules of the road` too, and the SCOPE line does not reach them" is structural and
+survives every marker anyone adds. The old sentence conflated that durable fact
+with a volatile one about a particular block's marker state, and only the first
+ever supported the claim.
+
+### A third species: inference transcribed as measurement
+
+The species named above are scope over-reach and stability over-reach. Another
+appeared while fixing the second, and it is the one most likely to recur.
+
+The `${sha:0:8}` behaviour came from the adversarial reviewer's read-only
+_reasoning_, offered as inference and labelled as such. It was written into
+`CLAUDE.md` as fact and shipped. The reviewer had done nothing wrong; the defect
+is at the boundary, where a careful reviewer's confident prose is
+indistinguishable from a measurement once it leaves the thread that framed it.
+
+It was also wrong in the direction that matters. The inference said the tag name
+"comes out malformed". Measured, `${sha:0:8}` expands to **nothing** -- no error,
+no SHA, so every archive collides on one name. "Malformed" invites a look at the
+name; "silently identical for every stash" does not, and this repo's stash block
+already explains name collisions as normal four lines below, which disarms the
+tell before a reader reaches it.
+
+**So: a claim that arrives from a reviewer, a subagent or a colleague carries who
+established it and how, or it gets run before it is written down.** The settling
+command is usually one line, and it was here.
+
+### Two arguments the rule rests on, recovered
+
+Both were dropped rather than moved when the branch was cut, and both are reasons
+for decisions this branch made, which is what this file is for.
+
+**Why the rule binds negative claims as well as positive ones.** Exempting "it
+does not run there" would invert this repo's standing treatment of absence --
+_missing data defaults to UNCONFIRMED, never to confirmed_. A positive claim would
+need evidence while a negative one could retire a working command on a hunch, and
+the negative direction is the one nobody disproves, because nobody runs the thing
+they have been told is broken. That is not a separate principle; it is the
+existing one applied to a claim about shells.
+
+**Why the trigger is a shape and not a list of phrasings.** A rule keyed on a
+hand-listed set of spellings is the defect recorded under numbering rule 4 -- one
+literal is one spelling, and a sweep over one spelling is silent about every other
+-- and under `_HSPACE`, where a hand-listed character class was wrong by sixteen
+characters with nothing able to see it. The phrasings a future author reaches for
+are not enumerable, so the rule asks what the sentence CLAIMS rather than which
+words it uses.
+
+Hence the trigger is a property of the **command** rather than of the author:
+early termination, concurrency, or ordering. `Select-Object -First 1` announces
+itself.
+
+**And the cheaper instrument was already used and under-credited.**
+`"nothing" | findstr "zzz"` returning 1 established whose exit code was being read,
+in a single deterministic run. That is a check whose two sides can only agree if
+the thing is true — this repo's stated preference — and it settled the question
+more cheaply than fifteen repetitions did.
+
+### Not built, and the better answer
+
+**Measurements in prose can only be believed; measurements in a script can be
+re-run.** Every figure in this record is a claim a future reader must take on
+trust, and the whole incident above is what that costs. The alternative is a
+script under `apps/api/scripts/` that performs these probes and prints the table,
+so the next reader derives it instead of citing it — derivation over
+synchronization, applied to evidence rather than to values.
+
+Not built. Recorded here because it is the fix that removes the class rather than
+another field that documents it, and because the same argument applies to every
+measured claim this repo writes into prose.

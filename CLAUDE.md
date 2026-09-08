@@ -32,6 +32,25 @@ status, not the gate's — so a fail-closed exit 2 reads as a clean 0. Use
 layer down, in the shell instead of in Python: one program's verdict silently
 substituted for another's, and the substitution looks like success.
 
+**That remedy is BASH-ONLY, and its failure in PowerShell is silent.** There is no
+`PIPESTATUS` in PowerShell 5.1: `${PIPESTATUS[0]}` parses as a variable named
+`PIPESTATUS[0]` and evaluates to `$null` with no error. Use `$LASTEXITCODE` — but
+note it holds the last **native** command's code, so `python x.py | findstr .`
+reports findstr's 0 and loses python's 2, exactly as bash does. **The hazard is
+not bash's. Only the remedy is**, and in neither shell should you pipe when you
+need the exit code. Measured 2026-09-08 (D-071, which also records how the first
+draft of this paragraph got it backwards).
+
+**And it is not only pipes — an exit code can be wrong with nothing piped at
+all.** Lines fed to PowerShell 5.1 statement-at-a-time, one of which contains a
+`&&`, run every line above the bad one, print a parser error, and exit **0**.
+Measured on stdin (`-Command -`); the table is under **Real commands**, and an
+interactive console paste is a different, unmeasured case stated there. Nothing is
+substituted here and nothing is swallowed — the status simply does not describe
+what happened, which is the harder version of the same lesson: a green exit is
+evidence about the last thing the shell finished, not about the work you asked
+for.
+
 ## What this is
 
 Durable project knowledge for every Claude session, every developer. If it's a
@@ -76,6 +95,110 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
    older rows parse unchanged (the C0 pattern).
 
 ## Real commands (use these, not generic equivalents)
+
+**SCOPE: these are GIT BASH forms, and several do not run in PowerShell.** The
+ones carrying `&&` are a grep rather than a number, because a number goes stale
+the next time a command is added here:
+
+    sed -n '/^## Real commands/,/^## Environment gotchas/p' CLAUDE.md | grep -n '&&'
+
+Reading its output takes two corrections:
+
+- **It over-reports on purpose.** This block discusses `&&` in prose and matches
+  itself. The commands are the ones inside backticks under a `- ` bullet.
+- **Hit LINES are not commands.** The ruff/black bullet wraps across two source
+  lines and carries a `&&` on each. Count bullets, not lines.
+
+**Empty output means the anchors moved, NOT that the section is PowerShell-safe.**
+Both headings match by prefix and it must be run from the repo root. Reword the
+FIRST heading and `sed` prints nothing, `grep` exits 1, and silence reads as the
+reassuring answer — the branch collapse this file records in its own gates.
+Reword only the SECOND and the range never closes, running to EOF and dragging in
+JavaScript `&&` from the prose below; wrong, but visibly wrong. The two failures
+do not look alike, and only one of them announces itself.
+
+This matters here more than it would elsewhere: **this repo is developed on
+Windows, so the default shell in a fresh terminal is the one that cannot parse
+these commands.**
+
+**What breaks where.** The forms this repo has actually hit, a floor rather than
+a census. Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**. The
+cells are exit codes and the annotation covers those — it does not cover the row
+labels. A marker like this one has already certified a table whose row label was
+wrong — a different table, recorded in D-071 — because the label was never in
+what the marker claimed.
+
+| Form | Git Bash | PowerShell 5.1 |
+| --- | --- | --- |
+| OUTER `&&` joining two host commands | 0 | **parse error** |
+| `\"` escaping inside `sh -lc "..."` | **0** | **2** — `Unterminated quoted string` |
+| `-w /app` | **128** — `Cwd must be an absolute path` | 0 |
+| `sh -c "cd /app && ..."` — INNER `&&` | 0 | 0 |
+| single quotes inside double | 0 | 0 |
+
+**No shell shows you every breaking row** — two of them fail only in PowerShell,
+one only in Git Bash — so verifying in the shell you happen to use is
+structurally insufficient, and it clears the rows it cannot see by staying
+silent. Both directions have cost this repo a broken published block (**D-071**).
+
+**A PowerShell `&&` parse error can exit 0.** Submitted statement-at-a-time it
+runs every line above the offending one and then reports success; submitted as a
+script it runs none and exits 1. The error names the line it is on, but nothing
+tells you which lines RAN and the exit status does not either — so do not read it
+as one. D-071 carries the measurements, and the interactive-console-paste case
+that is deliberately unmeasured.
+
+So, where a command's OUTPUT is what you rely on — a version read, a confirmation
+step — the prescription is only these: **no OUTER `&&` between two host commands
+(use separate lines); no backslash-escaped quotes inside a quoted argument (use
+single quotes inside double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is
+FINE and is the replacement for `-w` — its `&&` is inside a single quoted argument
+handed to the container's shell, which both host shells pass through untouched.
+
+**Exactly one command in this section needs rewriting for PowerShell:**
+`cd e2e && npx playwright test [file]`, a host `cd` joined to a host command by an
+OUTER `&&`. Run it as two lines there. The other four use the `sh -lc` shape,
+including the MANDATORY pre-commit lint, and they work as written.
+
+The dependency-remediation block below is the worked example, and it is there
+because two versions of it shipped broken (D-071).
+
+**The rule, and it binds every command block in this file: a block that claims it
+runs anywhere carries the SHELLS it was actually run in and the DATE it was run.**
+What counts is a SHAPE, not a word list — any sentence asserting a block **runs,
+or does not run,** in more than one shell, however phrased. "Portable", "works in
+both", "fails in Git Bash", "cross-platform" are examples and explicitly not the
+set. **The negative direction is the more dangerous**, because nobody runs the
+thing they have been told is broken, so a false negative claim is never disproved
+by anyone who obeys it.
+
+**Absent an annotation, assume the block was written for Git Bash and verify
+before running it elsewhere.** That is a default for the READER: the file asserts
+nothing, most of these blocks have not been run anywhere else, and absence of a
+marker is absence of evidence rather than evidence of absence. It holds file-wide,
+not only in this section.
+
+No example is cited for that, on purpose. The obvious one — a block that is
+bash-only and unmarked — stops being an example the moment anyone marks it, which
+is what acting on this rule does. An illustration that decays when the rule is
+obeyed teaches the wrong thing on its second reading.
+
+Never put the marker on a block you did not run in the shells it names: a
+decorative one is worse than silence, because it is what the reader checks
+instead of running it. **State what it covers, not only where it ran** — a
+block-level marker over a table certifies every cell at once, offers no way to
+write "measured, except this row", and has twice certified something nobody ran
+(D-071).
+
+**And where the command involves early termination, concurrency or ordering, run
+it more than once and record the OBSERVED SET rather than a single value.** The
+trigger is a property of the command, visible before you run it —
+`Select-Object -First 1` stops a pipeline early and says so in its own name — not
+a judgement about how careful you are being. Record `-1 x14, 2 x1`, never "15
+runs": a count can be filled in ritually and still report the value you happened
+to see, while a distribution is self-announcing and no reader mistakes it for a
+property. This exists because a measurement of that kind was taken once, recorded with
+a real exit code and a real date, and was the minority outcome (D-071).
 
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
@@ -138,8 +261,21 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
   the new one. Measured on the `next` 15.5.24 RCE patch: `package.json` said
   15.5.24 and the running container said 15.5.23. Use:
 
-      docker compose exec -T web sh -lc "cd /app && pnpm install" && docker compose restart web
-      docker compose exec -T web sh -lc "node -p \"require('/app/apps/web/node_modules/next/package.json').version\""
+      docker compose exec -T web sh -c "cd /app && pnpm install"
+      docker compose restart web
+      docker compose exec -T web node -p "require('/app/apps/web/node_modules/next/package.json').version"
+
+  **Three separate lines, no OUTER `&&`, no backslash escaping, and no `-w`.**
+  Each of those is fixed by a different thing, and mixing them up is how the
+  SECOND version of this block also shipped broken. The measurements are in the
+  table under **Real commands**; the incident is D-071.
+
+  **The failure landed on the confirmation step**, which is the one line whose
+  job is to tell you whether you are still unpatched -- and its error reads as a
+  Docker problem rather than as "you are on the old version".
+
+  **Run in Git Bash and PowerShell 5.1 on 2026-09-08**, in both before the claim
+  was written, and re-run in both since.
 
   **The second line is the confirmation step, and it is not optional.** The
   version string is the only thing that distinguishes "the patch is applied" from
@@ -1148,6 +1284,28 @@ Rules of the road:
   is worse: "which tree is mounted right now" becomes invisible state deciding
   whether any gate result means anything. **Agents take turns in one tree.**
 
+  **The rule is bounded by its REASON, not by the word "worktree".** Everything
+  above is about the shared Docker stack, so: **a worktree that starts no
+  containers, runs no gates and writes nothing is outside this rule.** Stated
+  from the reason rather than as a carve-out, because a predicate broader than
+  its justification is the same over-broad-predicate defect this bullet exists to
+  record — and as it stood the rule forbade what its own argument could not
+  reach.
+
+  The case that matters: dispatching a READ-ONLY reviewer against
+  `git worktree add --detach ../review-<sha> <sha>` and giving it that absolute
+  path. It runs no `docker compose exec`, binds no ports, needs no `.env`, and
+  `--detach` takes no branch, so it can neither collide with a checkout elsewhere
+  nor create a ref for anyone to renumber. A branch switch in the main tree then
+  cannot reach it — the "ran, but not against this change" hazard becomes
+  impossible rather than detectable, which is a derivation rather than a window
+  someone has to remember to close.
+
+  Where one tree is kept anyway, the detection is `git reflog show HEAD | wc -l`
+  sampled before and after. **`git rev-parse HEAD` cannot do this** — a switch
+  away and back leaves it byte-identical, which is exactly the case being
+  checked. Both are tracked in #203.
+
   <!-- counted: gh issue view 170 --json comments, 2026-09-01 -->
   **This is another instance of a claim about state outside the working tree,
   asserted rather than run** — the layer asserted an isolation it never verified.
@@ -1318,6 +1476,38 @@ Rules of the road:
   cause was that there had been nothing to rebase onto. **A guard that fires
   correctly for a reason nobody would guess gets debugged in the wrong
   direction.** Each branch now names its own cause and what it implies.
+
+- **PUT THE DISCRIMINATOR WHERE THE CONFUSED READER IS STANDING, not where the
+  explanation lives.** A correct explanation sited one paragraph away from the
+  symptom does not reach the person looking at the symptom — and it is worse than
+  silence when a *different*, reassuring explanation is sited closer.
+
+  The instance: the stash-archive block explains name collisions as normal
+  ("these archives already carry suffixed names because the bare name was
+  taken"), four lines below a command that, run in the wrong shell, makes *every*
+  archive collide on one name. A reader hitting the collision meets the
+  reassuring reason first, and it is true — of a different cause. The tell is
+  disarmed before they reach anything that would distinguish the two. The fix was
+  one clause at the reassuring sentence, saying which observation means which
+  cause, rather than a better paragraph elsewhere.
+
+  Generalise it as: when you document a failure, find the sentence a confused
+  reader reaches FIRST and ask whether it sends them the wrong way.
+
+- **AN EXAMPLE OF A RULE BEING VIOLATED IS FALSIFIED BY THE RULE BEING FOLLOWED.
+  Cite the rule's SCOPE, never an instance of the breach.** Citing a specific
+  violation to illustrate a rule couples the citation's truth *inversely* to the
+  rule working: the cited instance is the first thing anyone fixes, and fixing it
+  makes your sentence false.
+
+  It happened inside a single commit here. A file-wide rule was supported by
+  naming one block that broke it; the same commit marked that block, leaving the
+  sentence citing its unmarked state standing. Picking a different instance
+  re-arms it rather than repairing it.
+
+  The durable form is structural — "command blocks appear under `## Environment
+  gotchas` and `Rules of the road` too, and the SCOPE line does not reach them" —
+  which survives every fix anyone makes. Recorded in D-071.
 
 - **A control that protects an agent from STALE STATE must be verifiable from
   INSIDE that state.** A rule written in a file the stale worktree does not have
@@ -1685,8 +1875,31 @@ Rules of the road:
       git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
       git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
 
+  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08 to establish what it does
+  there, and it does something worse than fail:** `${sha:0:8}` is read as a
+  variable named `sha:0:8`, which does not exist, so it expands to **nothing** —
+  `archive/stash--x`, no error, no SHA. Every stash archived that way collides on
+  one name, and the collision is pre-explained away by the very next paragraph
+  here, which says these archives already carry suffixed names because the bare
+  name was taken. **Run these in Git Bash.** No PowerShell equivalent is offered
+  here, and the reason is the point: a marker covering the FAILURE does not cover
+  a REMEDY. A draft of this block recommended `$sha.Substring(0,8)` under exactly
+  that marker, measured for the failure and reasoned for the fix.
+
+  Measured 2026-09-08, PowerShell 5.1, when that was caught: it returns
+  `abcdef12` for a normal value, and **throws** both on a string shorter than
+  eight characters and on `$sha` arriving from parsed `git` output as an array
+  rather than a string. So the remedy is real but conditional, and publishing it
+  would mean publishing its two failure modes too. The block does not need it —
+  "run these in Git Bash" asserts nothing untested.
+
   Check what the name already resolves to: this repo's archives carry a branch AND
-  a `-tag`-suffixed tag per stash because the bare name was taken. **Discharge any
+  a `-tag`-suffixed tag per stash because the bare name was taken. **But if EVERY
+  archive collides on one name, that is the PowerShell expansion above, not a name
+  clash** — the SHA segment is empty, so they are all literally the same string.
+  The discriminator matters because the sentence you just read explains a
+  collision away, and it is the sentence a confused reader reaches first.
+  **Discharge any
   decision-hold on dropping by ENUMERATING the archived ref's parents, never by
   diffing it** -- a stash taken with `-u` keeps its untracked files on a THIRD
   parent, which `git stash show` cannot display at all:
