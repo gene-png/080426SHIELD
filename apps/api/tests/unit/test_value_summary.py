@@ -129,7 +129,16 @@ def _add_service(db: Session, client_id, opened_by, kind):
     return svc
 
 
-def _release(db: Session, service_id, releaser) -> None:
+def _release(db: Session, service_id, releaser, *, parent_version: int = 1) -> None:
+    """Seed a released deliverable the way FINALIZE builds one.
+
+    `parent_version` is stamped here because all four finalize routes stamp it
+    (`attack.py`, `csf.py`, `zt.py`, `tech_debt.py`, each `parent_version=<parent>.version`)
+    and `seed_demo.py` stamps it too — a deliverable without it is a row only a
+    pre-migration-0041 database can hold. This fixture left it NULL, so it
+    described a world the product cannot produce, and every assertion built on it
+    was silently exercising the legacy path rather than the shipped one (#114).
+    """
     from app.models.deliverable import Deliverable
 
     db.add(
@@ -137,6 +146,7 @@ def _release(db: Session, service_id, releaser) -> None:
             service_id=service_id,
             title="report",
             version=1,
+            parent_version=parent_version,
             finalized_at=_NOW,
             finalized_by=releaser,
             released_at=_NOW,
@@ -205,7 +215,15 @@ def _make_released_zt(db, client_id, opened_by, *, gap_codes, released=True) -> 
     else:
         from app.models.deliverable import Deliverable
 
-        db.add(Deliverable(service_id=svc.id, title="draft", version=1, finalized_at=_NOW))
+        db.add(
+            Deliverable(
+                service_id=svc.id,
+                title="draft",
+                version=1,
+                parent_version=1,
+                finalized_at=_NOW,
+            )
+        )
         db.flush()
 
 
@@ -525,3 +543,60 @@ def test_value_summary_admin_via_header(app_client) -> None:
     )
     assert r.status_code == 200, r.text
     assert r.json()["csf_gap_count"] == 2
+
+
+@pytest.mark.unit
+def test_value_summary_ignores_a_post_release_APPROVED_reassessment(app_client) -> None:
+    """#114, the value-summary half — the case its §12 twin above cannot reach.
+
+    `test_value_summary_ignores_post_release_draft` cuts v2 as a DRAFT, and the
+    old "latest APPROVED or RELEASED" rule already excluded drafts. So that test
+    passed for the life of the defect while proving nothing about it: the status
+    filter it exercised was never the half that broke. The state that breaks is
+    v2 APPROVED — which is not an edge case but the mandatory step before v2 can
+    be finalized at all.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    admin_id = admin["user"]["id"]
+
+    from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
+
+    db = _session(c)
+    # Released v1 with 5 gaps.
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    svc_id = db.execute(select(CsfAssessment.service_id)).scalar_one()
+    # A v2 re-assessment with 9 gaps, APPROVED and NOT finalized: nothing has
+    # been delivered, and the client still holds only the v1 report.
+    v2 = CsfAssessment(
+        service_id=svc_id,
+        client_id=_uuid.UUID(cid),
+        version=2,
+        status=CsfAssessmentStatus.APPROVED,
+    )
+    db.add(v2)
+    db.flush()
+    for code in _csf_codes(9):
+        db.add(
+            CsfAnswer(
+                assessment_id=v2.id,
+                client_id=_uuid.UUID(cid),
+                subcategory_code=code,
+                maturity_tier=1,
+            )
+        )
+    db.commit()
+    db.close()
+
+    r = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["csf_gap_count"] == 5, (
+        "the executive card reported v2's 9 gaps from an assessment the client "
+        "has never been given, with no version label beside the number to say so"
+    )

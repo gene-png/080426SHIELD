@@ -1,6 +1,110 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — 2026-09-06 (Track C, #124)
+## PICK UP HERE — 2026-09-08 (Track C, #114)
+
+**Maintained by the agent since D-063; Gene owns it by review.** Every claim
+about state outside the working tree carries the command that produced it.
+
+### The one-line state
+
+**#114 is implemented on `fix/dashboard-version-pairing`, cut fresh from
+`origin/main` at `a3137d5`** (`git log --oneline -1 origin/main`). It comes back
+to you unconditionally: it changes client dashboard numbers (merge-rule
+condition 6) and touches `apps/api/tests/**` (condition 5). **I did not merge it
+and did not open it for merging.**
+
+### What shipped in it
+
+All four client dashboards and the four value-loop cards resolved their
+assessment with `_latest_finalized` — "highest-version APPROVED-or-RELEASED row"
+— while labelling the response with `deliverable_version` and `released_at` from
+the released **deliverable**. Two records, one label. The moment a consultant
+approved v2 (the prerequisite for finalizing it), the client's dashboard served
+v2's numbers under a header naming the v1 report they had downloaded.
+
+All eight call sites now resolve through `Deliverable.parent_version`.
+`_latest_finalized` is **deleted** rather than narrowed — no status filter can
+answer "which assessment is this report", because the answer is not in the
+assessment table. An unresolvable link refuses with a typed 404 and a WARNING
+naming the cause; it never falls back to "latest", which would reinstate the
+defect for exactly the services most likely to have several versions.
+
+Recorded as **D-073**. `#59` stays deferred, which is the call `DELIVERY_PLAN.md`
+had already made and which I re-measured rather than assumed.
+
+### Two-sided, per surface, against the real route responses
+
+Each row is one test asserted red with the fix reverted and green with it
+restored. The revert was proved landed (`git diff --stat origin/main` empty,
+`grep -c` on the new symbols returning 0) and the restore proved by sha256.
+
+| Surface | Without the fix | With it | The released document |
+| --- | --- | --- | --- |
+| ATT&CK dashboard | 20 covered | 5 | 5 |
+| CSF dashboard | 100.0% current | 50.0% | 50% |
+| ZT dashboard | 100.0% current | 50.0% | 50% |
+| Tech Debt dashboard | $708,000 savings | $38,000 | $38,000 |
+| `/value-summary` card | 9 CSF gaps | 5 | 5 |
+
+Every "without" figure was served under `deliverable_version: 1`.
+
+### What I did NOT do, deliberately
+
+- **`apps/web/src/app/**` is untouched, and there are TWO consequences, not
+  one.** The dashboard pages key their error copy on the HTTP status rather than
+  `reason`, so the refusal reads as "hasn't been released to your organization
+  yet" — false for that branch. Worse: `/value-summary` raising takes down the
+  whole client **home page**, which fetches it in an unguarded `Promise.all`
+  beside the deliverables list, engagements and inbox, with no Next error
+  boundary anywhere under `apps/web/src/app` (I checked). **Filed as #236.** My
+  first draft disclosed the dashboard half and silently omitted this one — the
+  reviewer caught it, and it is the #79 shape in my own exemption note. Both are
+  unreachable through the product, and the path is in none of my territory
+  lists.
+- **`risk_dashboard`'s READ is correct — but "Risk was checked" was too broad a
+  verdict and I have narrowed it.** The read takes `version` and `entries` from
+  one `RiskRegister` row, so it has no pairing to break. The register's SOURCE
+  selection is a separate question I had not asked: `routes/risk.py::_latest`
+  picks the newest assessment excluding only DISCARDED — no finalized filter, no
+  deliverable link, looser than the rule I just deleted — so a DRAFT
+  re-assessment can be synthesized into a register that is exported and served.
+  **Filed as #237, `mvp-blocking`.** This is the fifth service, and
+  `DELIVERY_PLAN.md` predicted it.
+- **The refusal's log names two of three possible causes.** A row present at
+  `parent_version` with a non-finalized status reads as "no row at that
+  version". Unreachable until a reopen path lands; **#238**, and the trigger is
+  written into the issue.
+- **I did not null the value-summary slot instead of raising, and the reviewer
+  was right that I owed you the reason.** It is implementable in
+  `routes/clients.py` alone and would keep `/home` alive. Rejected because a
+  null slot already renders as "Pending", so a client who HAS a released report
+  would be told they do not — the same falsehood the dashboard refusal refuses
+  to write — and if all four kinds nulled, `has_any_data` goes False and the
+  card vanishes silently. A judgement call, not a clear loss, so it is written
+  into the docstring at the raise rather than left unstated. **If you disagree,
+  this is the one decision in the PR I would expect you to overturn.**
+- **`deliverable_release.py` and migration 0041 both say a re-release repairs a
+  NULL `parent_version`. It does not**, and my new docstring says so — which
+  makes the correct claim the minority statement in the tree, two-to-one. Not
+  fixed here: both files are outside my territory, and **#59 already owns it**
+  ("correct the two comments" is in its own suggested resolution). Recorded as a
+  pointer in D-073 so the next reader does not have to rediscover the conflict.
+- **The item 9 estimate and the plan total are NOT re-derived.** The sizing note
+  says to re-derive when #114 lands; `check_plan_totals.py` ties rows to the
+  headline, so that is your judgement call, not a side effect of landing the
+  issue. Flagged in the plan rather than done silently.
+- **#231 untouched**, per your instruction.
+
+### One thing I could not run, and did not claim
+
+`pytest -m unit` in full — the same host-memory limit you hit. I ran the six
+affected suites (46 passed, exit 0) and collected the full unit set: **7128**
+(`pytest -m unit --collect-only -q`, summed per file). That is `main`'s 7123
+plus the 5 tests this branch adds, and the diff adds 5 `def test_` and removes
+0 — so no test was silently deselected (#235's signature). CI's Python job is
+the full-suite evidence.
+
+### Superseded — 2026-09-06 (Track C, #124)
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every claim
 about state outside the working tree carries the command that produced it.

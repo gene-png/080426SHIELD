@@ -490,3 +490,61 @@ def test_a_recorded_zero_cost_is_not_a_missing_cost(app_client) -> None:
         "a recorded zero was treated as a missing cost - absence and zero are "
         "different facts and this is the tri-state's whole point"
     )
+
+
+@pytest.mark.unit
+def test_tech_debt_dashboard_numbers_come_from_the_version_the_header_claims(app_client) -> None:
+    """#114, Tech Debt's half — the twin the issue did not suspect.
+
+    Released v1 cuts two tools (38k savings). A v2 list cutting everything (708k)
+    is approved and never finalized. The client's dashboard must keep reporting
+    38k under its "v1, released" header: the released XLSX says 38k, and a card
+    claiming 708k of identified savings beside a version label naming that
+    document is a money figure contradicting the deliverable it cites.
+    """
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+    h = {"Authorization": f"Bearer {bearer_admin}"}
+
+    svc_id = _seed_release(c, provider, bearer_admin, release=True)
+
+    artifact_id = c.post(
+        "/artifacts",
+        headers=h,
+        files={"file": ("inv2.csv", io.BytesIO(_inventory_csv()), "text/csv")},
+    ).json()["id"]
+    v2 = c.post(
+        f"/tech-debt/services/{svc_id}/capability-lists/extract",
+        headers=h,
+        json={"artifact_id": artifact_id},
+    )
+    assert v2.status_code == 201, v2.text
+    v2 = v2.json()
+    assert v2["version"] == 2, "the preamble did not actually cut a second list version"
+    for item in v2["items"]:
+        c.patch(
+            f"/tech-debt/capability-items/{item['id']}",
+            headers=h,
+            json={"disposition": "cut"},
+        )
+    assert c.post(f"/tech-debt/capability-lists/{v2['id']}/approve", headers=h).status_code == 200
+
+    c.headers["X-Client-Id"] = client_id
+    r = c.get(
+        f"/clients/{client_id}/tech-debt/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    b = r.json()
+
+    assert b["deliverable_version"] == 1, "the header stopped naming the released report"
+    assert b["identified_savings_usd"] == 38000.0, (
+        "the dashboard served v2's 708k of identified savings under a header "
+        "naming the released v1 report, whose XLSX says 38k"
+    )
+    assert b["annual_spend_usd"] == 708000.0
+    assert b["total_applications"] == 5

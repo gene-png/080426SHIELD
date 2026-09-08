@@ -592,3 +592,49 @@ def test_dashboard_does_not_credit_intake_for_a_fully_overridden_target(
     # line `total_gap_count=engagement_target_capability_count` passes the
     # whole suite -- a surviving mutant found by the adversarial reviewer.
     assert body["total_gap_count"] == _CISA_CAPABILITY_COUNT
+
+
+@pytest.mark.unit
+def test_zt_dashboard_numbers_come_from_the_version_the_header_claims(app_client) -> None:
+    """#114, ZT's half. Released v1 at stage 2; v2 approved at stage 4, unfinalized.
+
+    The dashboard must keep reporting v1's 50% under its "v1, released" header
+    rather than swapping to v2's 100% the moment the consultant approves it.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+    h = {"Authorization": f"Bearer {bearer_admin}"}
+
+    svc_id = _seed_release(c, bearer_admin, release=True)
+
+    v2 = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    assert v2.status_code == 201, v2.text
+    v2 = v2.json()
+    assert v2["version"] == 2, "the preamble did not actually cut a second version"
+    for ans in v2["answers"]:
+        c.patch(
+            f"/zt/answers/{ans['id']}",
+            headers=h,
+            json={"maturity_stage": 4, "target_stage": 4},
+        )
+    assert c.post(f"/zt/assessments/{v2['id']}/approve", headers=h).status_code == 200
+
+    c.headers["X-Client-Id"] = client_id
+    r = c.get(
+        f"/clients/{client_id}/zt/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["deliverable_version"] == 1, "the header stopped naming the released report"
+    assert body["current_pct"] == 50.0, (
+        "the dashboard served v2's stage-4 score (100%) under a header naming the "
+        "released v1 report, whose PDF says 50%"
+    )
+    assert body["current_label"] == "Initial", "the maturity label followed the wrong version"
+    assert body["largest_gap_pct"] == 50.0, "the gap figure came from the wrong version too"

@@ -3975,6 +3975,141 @@ Not built. Recorded here because it is the fix that removes the class rather tha
 another field that documents it, and because the same argument applies to every
 measured claim this repo writes into prose.
 
+## D-073 — A dashboard resolves its numbers FROM the record it names, not from whatever is newest
+
+**Date:** 2026-09-08. **Closes #114.** **Extends D-053** (a guarantee that needs
+to know what the state WAS, not what it has become) and applies its shape to a
+second subsystem. **Does not supersede anything.**
+
+### The instruction, which is all most readers need
+
+When a response carries both a VALUE and a LABEL identifying where the value came
+from, resolve the value from the labelled record. Never resolve the two
+independently and render them together. `routes/clients.py` did the latter for
+the life of the client dashboards, and the two rules agreed for exactly as long
+as nobody started a second round of work.
+
+### What was wrong
+
+Four client dashboards and four value-loop cards resolved their assessment with
+`_latest_finalized` — highest-version row whose status is APPROVED or RELEASED —
+while the same response reported `deliverable_version` and `released_at` from the
+released **deliverable**. Two records, one label.
+
+The helper's docstring claimed the filter "keeps the summary pinned to released
+work so a post-release draft can never leak its in-progress numbers to the client
+(§12)". That is true of a DRAFT and false of the next status along. Approving v2
+is the mandatory step before v2 can be finalized at all, so the stated guarantee
+expired at the first ordinary action of the next engagement round, and the client
+saw v2's numbers under a header naming the v1 report they had downloaded.
+
+**The guard was keyed on the wrong thing, not merely set too loosely.** No
+tightening of a status filter fixes it, because the question "which assessment is
+this report" is not answerable from the assessment table at all. `parent_version`
+— stamped at finalize, which is where content freezes — is the only record of it,
+and `deliverable_release.py` was already using it.
+
+### What the tests could never have caught, and why
+
+`test_value_summary_ignores_post_release_draft` existed for the whole life of the
+defect and asserts the §12 guarantee by name. It cuts v2 as a **DRAFT**, and the
+old status filter did exclude drafts. So it exercised the half that worked and
+was structurally blind to the half that did not — a passing test named for the
+guarantee that broke.
+
+That is this repo's recorded shape (a test that cannot fail) reached by a route
+not previously written down: not a test deriving its expectation from the code,
+but a test whose **scenario** sits on the safe side of the boundary it claims to
+police. The tell is available without running anything: the test's setup uses one
+value of an enum, and the predicate under test discriminates several.
+
+`test_value_summary.py`'s fixtures made it worse. They built deliverables by
+direct SQL with `parent_version` left NULL — a row only a pre-migration-0041
+database can hold, since all four finalize routes and `seed_demo.py` stamp it. So
+every assertion in that file was exercising the legacy path rather than the
+shipped one, and nothing said so. A fixture that omits a field the product always
+writes does not merely under-test; it silently tests a different program.
+
+### The refusal, and why it is not a fallback
+
+Where `parent_version` is NULL, or no finalized row carries that version, the
+routes **refuse**: a typed 404 `dashboard_version_unresolved`, plus a WARNING
+naming which of the two causes fired. `DELIVERY_PLAN.md` decided this before the
+work started, and the implementation matched the decision without needing it
+relaxed.
+
+Falling back to "latest finalized" for those rows would reinstate the defect for
+precisely the services most likely to hold several versions — a fallback whose
+failure mode is concentrated exactly where the population it serves lives.
+
+The blast radius was measured rather than assumed, and re-measured on the branch:
+`Deliverable(` is constructed in **four** places in `apps/api/app`, all four
+finalize routes, all four stamping `parent_version`; `seed_demo.py` stamps it
+too. Nothing the product or the seed can build reaches the refusal.
+
+<!-- counted: grep -rn "Deliverable(" apps/api/app --include=*.py, 2026-09-08 -->
+
+**That number carries its command because it licenses a live decision** — "the
+refusal is unreachable, so #236 can stay filed rather than fixed" — and it
+expires silently the day a fifth construction site lands without a stamp, which
+is the precise event that would reintroduce this defect. A certifying sentence
+with no command beside it is what this repo records as ending the check rather
+than inviting it.
+
+### What is deliberately left, so it is not read as an oversight
+
+**`risk_dashboard`'s READ is correct, and that is a narrower verdict than "Risk
+was checked".** It reads `version` and `entries` from the SAME `RiskRegister`
+row, so it has no pairing to break. But the register's own SOURCE selection was
+never in this sweep, and it is looser than the rule deleted here:
+`routes/risk.py::_latest` picks the newest assessment excluding only DISCARDED,
+with no finalized filter and no deliverable link, so a DRAFT re-assessment can
+be synthesized into a register that is then exported and served. Filed as #237.
+
+The first draft of this record said only "It was checked, not skipped", which is
+true of the read and reads as clearance for the service. That is this file's own
+narrower-than-the-reader-assumes shape, produced in the paragraph disclosing
+exemptions — and it was caught by the reviewer, not by the author.
+
+**Two refusal consequences, and the first draft disclosed one of them.** The
+dashboard half was stated; its value-summary twin was omitted, which is the
+half-fix shape recorded against #79.
+
+- **Dashboards.** The web layer keys its error copy on the HTTP **status**, not
+  on `reason`, so the new refusal renders under "hasn't been released to your
+  organization yet" — false for that branch, since the report has been released.
+  Pre-existing (the same copy already covers a wrong-tenant 404), widened by one
+  case here.
+- **Value summary, and it is the worse half.** The refusal takes the whole
+  `/value-summary` response with it, and `apps/web/src/app/home/page.tsx`
+  fetches that endpoint inside an unguarded `Promise.all` beside the
+  deliverables list, engagements and inbox, with no Next error boundary anywhere
+  under `apps/web/src/app`. So the client loses the home page, not one card.
+  Filed as #236.
+
+Neither is fixed: `apps/web/src/app/**` is outside this track's territory, and
+both branches are unreachable through the product. The refusal's log also names
+two of its three possible causes — a row present at that version with a
+non-finalized status reads as no row at all — which is unreachable until a
+reopen path lands; #238.
+
+**The option that was NOT taken is named in `_released_parent`'s docstring, not
+here.** Nulling the whole slot for an unresolvable service kind is implementable
+in `routes/clients.py` alone and would have kept the home page alive; it was
+rejected because a null slot already means "pending", which would tell a client
+who HAS a released report that they do not — trading one false claim for
+another. It is a judgement call rather than a clear loss, which is exactly why it
+is written at the raise instead of left as an unstated exemption.
+
+**And the correction this record makes is contradicted twice elsewhere in the
+tree, deliberately left.** `deliverable_release.py` and migration 0041 both state
+that re-releasing repairs a NULL `parent_version`. It does not — `_release_parent`
+returns at the NULL check — which is #59's central finding, and #59's own
+suggested resolution already names "correct the two comments". Both files are
+outside this track's territory, so the pointer is recorded rather than the fix
+applied. Noted because a correct claim that is the MINORITY statement in the tree
+will lose to the two older ones.
+
 ## D-075 — A suite that must change for a defect to be fixed is evidence the defect was SPECIFIED
 
 **Date:** 2026-09-08. **From #237.** Distinct from D-072 and recorded separately

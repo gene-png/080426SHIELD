@@ -292,3 +292,60 @@ def test_client_dashboard_withholds_the_same_rows_the_released_pdf_does(app_clie
     # The status still travels — clearing the citation puts the technique back
     # into it — so the flag is carried BESIDE the status, never over it.
     assert {t["status"] for t in withheld} == {"covered"}
+
+
+def _cut_and_approve_next_version(c: TestClient, bearer: str, svc_id: str, *, covered: int) -> int:
+    """Open a NEW assessment version, score `covered` techniques, approve it, and
+    stop there — no finalize, no release. That is the #114 sequence: approving is
+    a PREREQUISITE for finalizing v2, so it happens on every re-assessment long
+    before anything is delivered. Returns the new version number."""
+    h = {"Authorization": f"Bearer {bearer}"}
+    nxt = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    assert nxt.status_code == 201, nxt.text
+    nxt = nxt.json()
+    for cov in nxt["coverage"][:covered]:
+        r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "covered"})
+        assert r.status_code == 200, r.text
+    r = c.post(f"/attack/assessments/{nxt['id']}/approve", headers=h)
+    assert r.status_code == 200, r.text
+    return nxt["version"]
+
+
+@pytest.mark.unit
+def test_dashboard_numbers_come_from_the_version_the_header_claims(app_client) -> None:
+    """#114. The rollup and the version label must name the SAME record.
+
+    Sequence: release v1 (5 covered), then re-assess and APPROVE v2 (20 covered)
+    without finalizing it. Before the fix the header read "Report v1, released"
+    over v2's numbers, because the version came from the released deliverable and
+    the numbers came from `_latest_finalized` — two records, one label. The
+    client's PDF and their dashboard disagreed, both labelled v1.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+
+    svc_id = _seed_finalize_release(c, bearer_admin, release=True)
+    v2 = _cut_and_approve_next_version(c, bearer_admin, svc_id, covered=20)
+    assert v2 == 2, "the preamble did not actually cut a second version"
+
+    c.headers["X-Client-Id"] = client_id
+    r = c.get(
+        f"/clients/{client_id}/attack/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["deliverable_version"] == 1, "the header stopped naming the released report"
+    assert body["rollup"]["covered"] == 5, (
+        "the dashboard served v2's 20 covered techniques under a header reading "
+        "'Report v1, released' — the client's PDF says 5 and their dashboard says "
+        "20, both labelled v1"
+    )
+    assert (
+        len([t for t in body["techniques"] if t["status"] == "covered"]) == 5
+    ), "the technique matrix came from a different version than the header claims"

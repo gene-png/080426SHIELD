@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-07 (the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-08 (#114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -77,6 +77,54 @@ computed glue-alphabet sweep, filed with its reasoning and measured as searching
 an empty space), **#156** (ruff isort classifying `apps/api/scripts` by whether
 an unrelated top-level `scripts/` exists), **#143** (the pre-push hook's
 fail-open).
+
+### 2026-09-08 — the client dashboards labelled one record's numbers with another's (#114, D-073)
+
+Four client dashboards (ATT&CK, ZT, CSF, Tech Debt) and the four value-loop
+cards behind `/value-summary` resolved their assessment with `_latest_finalized`
+— highest-version row whose status is APPROVED or RELEASED — while reporting
+`deliverable_version` and `released_at` from the released **deliverable**. Two
+independent lookups, rendered as one claim.
+
+The helper's docstring asserted this kept the client "pinned to released work".
+It did, until a consultant clicked Approve on v2 — the mandatory step before v2
+can be finalized. From that moment the client's dashboard showed v2's numbers
+under a header naming the v1 report they had downloaded, with nothing marking it
+a preview.
+
+All eight call sites now resolve through `Deliverable.parent_version`, which is
+stamped at finalize and is the only record of which assessment a report was built
+from. `_latest_finalized` is **deleted** rather than narrowed: no status filter
+can answer the question, because the answer does not live in the assessment
+table. A NULL or unresolvable link refuses with a typed 404
+(`dashboard_version_unresolved`) and a WARNING naming which of the two causes
+fired — never a fallback to "latest", which would reinstate the defect for
+exactly the services most likely to hold several versions.
+
+Measured before and after against the real route responses, per surface:
+ATT&CK 20 covered → 5; CSF 100% → 50%; ZT 100% → 50%; Tech Debt $708,000 of
+identified savings → $38,000; the executive card 9 gaps → 5. Every one of those
+was rendered under `deliverable_version: 1`.
+
+**`risk_dashboard`'s READ is correct** — it takes `version` and `entries` from
+the same `RiskRegister` row, so it has no pairing to break. The register's
+SOURCE selection is a different question and was not in this sweep:
+`routes/risk.py::_latest` picks the newest assessment excluding only DISCARDED,
+so a DRAFT can be synthesized into a register that is exported to the client.
+Filed as #237.
+
+Two consequences of the refusal are filed rather than fixed, both outside this
+track's territory: the dashboard pages key their error copy on HTTP status
+rather than `reason`, so the refusal reads as "not released yet"; and
+`/value-summary` raising takes down the whole client home page, which fetches it
+in an unguarded `Promise.all` with no error boundary (#236). The refusal's log
+names two of three possible causes (#238).
+
+**#59 stays deferred**, as `DELIVERY_PLAN.md` decided before the work started.
+Every `Deliverable` the product builds (four finalize routes) and the one
+`seed_demo.py` builds stamp `parent_version`, so the refusal is unreachable
+except on rows finalized before migration 0041. If it ever fires it has named a
+genuinely un-repairable legacy row, which is when #59 stops being deferrable.
 
 ### 2026-09-07 — the next RCE patch, and what the exposure actually was
 
