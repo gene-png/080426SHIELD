@@ -246,10 +246,7 @@ export type AttackWithheldReason =
  * in apps/api/app/routes/attack.py.
  */
 export type AttackExcludedAttribution =
-  | "not_recorded"
-  | "complete"
-  | "unknown"
-  | "retired";
+  "not_recorded" | "complete" | "unknown" | "retired";
 
 /** One capability the model WILL be offered, and where it came from. */
 export interface AttackAiInputCapability {
