@@ -105,24 +105,37 @@ records in five of its own gates. Reword only the second and the range runs to
 EOF, dragging in JavaScript `&&` from the prose below. If you get nothing back,
 check the headings before you believe it.
 
-`&&` is a **parse** error in PowerShell 5.1, not a runtime one, and the
-distinction is the whole hazard: PowerShell parses the script before executing
-any of it, so a single `&&` on the last line aborts **every statement above it
-too**. Measured 2026-09-08 — a nine-line script whose only defect was a trailing
-`&&` ran none of its first eight lines and printed one parser error.
+`&&` is a **parse** error in PowerShell 5.1, not a runtime one — and **how much
+it destroys depends on how the block is submitted, which is the part that will
+catch you.** Nine lines, `&&` on the ninth only, measured 2026-09-08:
+
+| Submitted as | Lines 1-8 | Exit |
+| --- | --- | --- |
+| a script (`powershell.exe -File`) | **none ran** | 1 |
+| statement-at-a-time (a paste, or piped to `-Command -`) | **all ran** | **0** |
+
 <!-- counted: historical -->
-Nothing partially applies, and nothing tells you which line was at fault. This
-repo is developed on Windows, so the default shell in a fresh terminal is the one
-that cannot parse it.
 
-**The whole hazard is four forms, and NO single shell shows you more than two of
-them.** Each row run in both shells on 2026-09-08, exit codes as printed:
+So a script is aborted whole, and a **pasted** block runs up to the bad line and
+then reports success — exit **0**, with a parser error on screen that no exit
+code records. Read that as: whichever way you submit it, you cannot tell from the
+status what ran. An earlier draft of this bullet said "nothing executes at all"
+unscoped; that is true of the script form only, and the paste form is the one a
+developer actually does.
 
-**Breaks somewhere** — and note every row passes clean in one shell:
+Nothing partially applies in a way you can predict, and nothing tells you which
+line was at fault. This repo is developed on Windows, so the default shell in a
+fresh terminal is the one that cannot parse it.
+
+**The forms below are the ones this repo has actually hit — a floor, not a
+census.** Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**, both
+shells, exit codes as printed.
+
+**Breaks somewhere** — and every row passes clean in one shell:
 
 | Form | Git Bash | PowerShell 5.1 |
 | --- | --- | --- |
-| OUTER `&&` joining two host commands | 0 | **parse error; the whole script is aborted** |
+| OUTER `&&` joining two host commands | 0 | **parse error**, per the table above |
 | `\"` escaping inside `sh -lc "..."` | **0** | **2** — `sh: 1: Syntax error: Unterminated quoted string` |
 | `-w /app` | **128** — `Cwd must be an absolute path` | 0 |
 
@@ -133,10 +146,14 @@ them.** Each row run in both shells on 2026-09-08, exit codes as printed:
 | `sh -c "cd /app && ..."` — INNER `&&` | 0 | 0 |
 | single quotes inside double | 0 | 0 |
 
-The first table is the instruction, and its shape is the reason this keeps
-happening: no shell shows you every row. Whichever you test in, some row passes
-and stays silent — which is exactly how two consecutive drafts of the block below
-shipped broken, each verified by an author whose shell was clean.
+The first table is the instruction, and **the direction of its rows is the point,
+not just their content: the breaking forms do not all break in the same shell.**
+Two of them fail in PowerShell and pass clean in Git Bash; the third fails in Git
+Bash and passes clean in PowerShell. So verifying in your own shell is not lazy,
+it is **structurally insufficient** — it can only ever clear the rows that break
+elsewhere, and it clears them by staying silent. That is how two consecutive
+drafts of the block below shipped broken, in **opposite** directions, each
+verified by an author whose own shell was clean.
 
 So, where a command's OUTPUT is what you rely on — a version read, a confirmation
 step — the prescription is narrow and it is only these: **no OUTER `&&` between
@@ -164,21 +181,39 @@ because two versions of it failed on exactly this.
 
 **The rule that produced this scope line, and it binds every command block in
 this file: a block that claims it runs anywhere carries the SHELLS it was
-actually run in and the DATE it was run.** "Portable", "works in both",
-"shell-agnostic" and "cross-platform" are claims about execution, and every one
-of them here was written from reading rather than from running — twice, in
-consecutive drafts of the same block, the second draft published as verified in
-both shells having been run in one. A portability claim with no shells and no
-date beside it is the first thing to distrust, and re-running it costs seconds.
+actually run in and the DATE it was run.**
 
-**No annotation means no claim, and that is the DEFAULT rather than an
-omission.** An unmarked block in this file is a Git Bash form that nobody has
-run anywhere else. That default cannot go stale and needs no upkeep, which is
-why the burden sits on the block making the claim instead of on every block that
-makes none — annotating all of them would be an enumeration to maintain, and
-this file has a bullet about those. Never put the marker on a block you did not
-run in the shells it names: it is evidence, and a decorative one is worse than
-silence, because it is exactly what the reader checks instead of running it.
+**What counts as such a claim is a SHAPE, not a word list.** Any sentence
+asserting a block runs in more than one shell, however phrased — and phrasings
+are not enumerable, which is the point. "Portable", "works in both",
+"shell-agnostic", "cross-platform" and "runs anywhere" are examples and are
+explicitly not the set; a rule keyed on a hand-listed set of spellings is the
+defect this file records under numbering rule 4 and under `_HSPACE`. If you are
+asking whether your wording is on the list, it is a claim.
+
+Every such claim in this file was written from reading rather than from running —
+twice, in consecutive drafts of the same block, the second draft published as
+verified in both shells having been run in one. A portability claim with no
+shells and no date beside it is the first thing to distrust, and re-running it
+costs seconds.
+
+**No annotation means NO CLAIM IS MADE, and that is the DEFAULT rather than an
+omission.** Note what that does and does not say. It does **not** say nobody has
+run the block elsewhere — that is a claim about the past this file cannot
+support, and it is plainly false of the daily `docker compose exec` gates, since
+PowerShell is the primary shell here. It says only that **the block asserts
+nothing**, so a reader who needs cross-shell behaviour must go and check. Absence
+of a marker is absence of evidence, never evidence of absence.
+
+That default cannot go stale and needs no upkeep, which is why the burden sits on
+the block making the claim instead of on every block that makes none — annotating
+all of them would be an enumeration to maintain, and this file has a bullet about
+those. Never put the marker on a block you did not run in the shells it names: it
+is evidence, and a decorative one is worse than silence, because it is exactly
+what the reader checks instead of running it. **The table above is the worked
+example of satisfying this rule, and it was itself caught failing it** — its
+block-level annotation certified an outer-`&&` Git Bash row nobody had run, found
+in review. The row was measured rather than the annotation narrowed.
 
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
