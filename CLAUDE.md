@@ -32,6 +32,15 @@ status, not the gate's — so a fail-closed exit 2 reads as a clean 0. Use
 layer down, in the shell instead of in Python: one program's verdict silently
 substituted for another's, and the substitution looks like success.
 
+**That remedy is BASH-ONLY, and its failure in PowerShell is silent.** There is no
+`PIPESTATUS` in PowerShell 5.1: `${PIPESTATUS[0]}` parses as a variable named
+`PIPESTATUS[0]` and evaluates to `$null` with no error — measured 2026-09-08. Use
+`$LASTEXITCODE`. And the hazard itself is bash's, not a universal one: measured the
+same day, `python x.py | Select-Object -First 1` leaves `$LASTEXITCODE` at the
+python exit code (2), because a cmdlet does not overwrite it. Two shells, two
+remedies, and reaching for the wrong one gives you an empty string rather than a
+complaint.
+
 **And it is not only pipes — an exit code can be wrong with nothing piped at
 all.** Lines fed to PowerShell 5.1 statement-at-a-time, one of which contains a
 `&&`, run every line above the bad one, print a parser error, and exit **0**.
@@ -111,7 +120,7 @@ written down:
 Both headings are matched by prefix and the command must be run from the repo
 root. Reword the first heading and `sed` prints nothing, `grep` exits 1, and
 silence reads as the reassuring answer — the same branch collapse this file
-records in five of its own gates. Reword only the second and the range runs to
+records in its own gates. Reword only the second and the range runs to
 EOF, dragging in JavaScript `&&` from the prose below. If you get nothing back,
 check the headings before you believe it.
 
@@ -145,9 +154,8 @@ lines on the clipboard, paste into `powershell.exe`, read `$LASTEXITCODE`.
 An earlier draft of this bullet also said "nothing executes at all" unscoped. That
 is true of the script form only.
 
-Nothing partially applies in a way you can predict, and nothing tells you which
-line was at fault. This repo is developed on Windows, so the default shell in a
-fresh terminal is the one that cannot parse it.
+Nothing tells you which line was at fault. This repo is developed on Windows, so
+the default shell in a fresh terminal is the one that cannot parse it.
 
 **The forms below are the ones this repo has actually hit — a floor, not a
 census.** Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**, both
@@ -206,8 +214,19 @@ this file: a block that claims it runs anywhere carries the SHELLS it was
 actually run in and the DATE it was run.**
 
 **What counts as such a claim is a SHAPE, not a word list.** Any sentence
-asserting a block runs in more than one shell, however phrased — and phrasings
-are not enumerable, which is the point. "Portable", "works in both",
+asserting a block **runs, or does not run,** in more than one shell, however
+phrased — and phrasings are not enumerable, which is the point.
+
+**Both directions, and the negative one is the more dangerous.** An earlier draft
+covered only "it runs everywhere", which exempts "it does not run there" — and
+that is the direction that produced this rule: the BLOCKING finding on this very
+branch was `the sh -lc "cd /app && ..." shape is worse still`, a claim that a
+working form does not work, made from reading. A false negative claim is never
+disproved by anyone who obeys it, because **nobody runs the thing they have been
+told is broken.** Exempting it would also invert this file's standing treatment of
+absence — missing data defaults to unconfirmed, never to confirmed — by letting a
+positive claim need evidence while a negative one retires a working command on a
+hunch. "Portable", "works in both",
 "shell-agnostic", "cross-platform" and "runs anywhere" are examples and are
 explicitly not the set; a rule keyed on a hand-listed set of spellings is the
 defect this file records under numbering rule 4 and under `_HSPACE`. If you are
@@ -226,6 +245,17 @@ support, and it is plainly false of the daily `docker compose exec` gates, since
 PowerShell is the primary shell here. It says only that **the block asserts
 nothing**, so a reader who needs cross-shell behaviour must go and check. Absence
 of a marker is absence of evidence, never evidence of absence.
+
+**And "assume Git Bash" is the file-wide default, not a property of this section.**
+The SCOPE line above speaks for `## Real commands`; nothing spoke for the rest,
+so an unmarked block elsewhere read as neutral once this rule existed — which is
+worse than before it, because "no claim" now sounds deliberate. It is not
+neutral: every command block in this file is a Git Bash form unless annotated
+otherwise. The sharpest case is the stash-archiving block under **Rules of the
+road**, which is unmarked, uses `$(...)` and `${sha:0:8}` — PowerShell has
+neither, and `${sha:0:8}` there is a variable named `sha:0:8` — and ends in a
+`git push`, so the failure is a malformed tag name pushed to the remote rather
+than a loud error.
 
 That default cannot go stale and needs no upkeep, which is why the burden sits on
 the block making the claim instead of on every block that makes none — annotating
