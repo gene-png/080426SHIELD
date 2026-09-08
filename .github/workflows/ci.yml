@@ -64,28 +64,70 @@ jobs:
       - name: plan totals sum
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
-      # The image optimizer stays unmounted. `images: { unoptimized: true }` is what
-      # makes sharp's affected loaders unreachable from this app -- measured against
-      # the STANDALONE artifact, not the dev server: /_next/image answers 400 without
-      # the line and 404 with it, while a genuinely absent route answers 404 either
-      # way. Removing the line silently re-opens that path, and a config fact with
-      # nothing asserting it is a convention.
+      # The image optimizer stays unmounted, AND nothing imports sharp directly.
+      # Together those are the whole reachability argument for the sharp advisory;
+      # neither alone is. Measured against the STANDALONE artifact, not the dev
+      # server: /_next/image answers 400 without the config line and 404 with it,
+      # while a genuinely absent route answers 404 either way. sharp is traced into
+      # the standalone bundle regardless, so the config removes the ROUTE, not the
+      # dependency -- which is why the second half below matters.
       #
-      # Deliberately a grep rather than a fixture under the exemption registry
+      # The unoptimized assertion is a PRESENCE claim and fails loudly if removed.
+      # The sharp-import assertion is an ABSENCE claim, mechanised so it fails the
+      # day someone adds the import rather than quietly ceasing to be true.
+      #
+      # Reads the VALUE via a node import rather than grepping the source: prettier
+      # reflows a growing config object across lines as a matter of course, and a
+      # line-anchored pattern would go red on correct code. ci.yml already records
+      # why that is worse than not running -- a check red on every PR regardless of
+      # the diff teaches everyone to ignore it.
+      #
+      # Deliberately a step rather than a fixture under the exemption registry
       # (#223): that registry is filed and unbuilt, so "gate it there" resolves to
-      # "gate it never, for now". A crude gate that exists beats an elegant one that
-      # is filed. Fold this into #223's registry when #223 is built.
+      # "gate it never, for now". Fold this in when #223 is built.
       - name: image optimizer stays unmounted
         run: |
-          set -euo pipefail
-          if ! grep -qE 'images:[[:space:]]*\{[^}]*unoptimized:[[:space:]]*true' apps/web/next.config.mjs; then
-            echo "next.config.mjs no longer sets images.unoptimized = true." >&2
+          set -uo pipefail
+          CFG=apps/web/next.config.mjs
+          # "I could not look" is exit 2 and never exit 1 (D-051). A missing or
+          # unevaluable config must not read as "the line was removed".
+          if [ ! -r "$CFG" ]; then
+            echo "cannot read $CFG -- refusing to guess whether the route is mounted" >&2
+            exit 2
+          fi
+          val=$(node --input-type=module -e "
+            const m = await import('./apps/web/next.config.mjs');
+            process.stdout.write(String(m.default?.images?.unoptimized));
+          " 2>/dev/null)
+          if [ $? -ne 0 ] || [ -z "$val" ]; then
+            echo "could not evaluate $CFG -- refusing to guess" >&2
+            exit 2
+          fi
+          if [ "$val" != "true" ]; then
+            echo "images.unoptimized is '$val', not true." >&2
             echo "That re-mounts /_next/image and re-opens this app's path into" >&2
-            echo "sharp's affected image loaders. If this is deliberate, the sharp" >&2
+            echo "sharp's affected image loaders. If deliberate, the sharp" >&2
             echo "reachability argument needs re-establishing first." >&2
             exit 1
           fi
-          echo "image optimizer: unoptimized=true present, route stays unmounted"
+          # Excludes build output and vendored deps: Next ships its own
+          # `_sharp = require('sharp')` inside next/dist/server/image-optimizer.js,
+          # which this matched on its first run. That line is the optimizer calling
+          # sharp -- the thing the config unmounts -- not one of our callers.
+          hits=$(grep -rnE "from ['\"]sharp['\"]|require\(['\"]sharp['\"]\)"                    apps packages --include=*.ts --include=*.tsx --include=*.js --include=*.mjs                    --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist --exclude-dir=build 2>/dev/null)
+          rc=$?
+          if [ $rc -eq 2 ]; then
+            echo "could not search for sharp imports -- refusing to guess" >&2
+            exit 2
+          fi
+          if [ -n "$hits" ]; then
+            echo "a direct sharp import appeared:" >&2
+            echo "$hits" >&2
+            echo "sharp is unpatched at 0.34.5; a direct caller reaches the" >&2
+            echo "affected GIF/TIFF/VIPS loaders regardless of the optimizer." >&2
+            exit 1
+          fi
+          echo "image optimizer unmounted (images.unoptimized=true), no direct sharp import"
 
       # Every gate above proves something about the repo. NOTHING proved the
       # gates themselves could fail, and this repo keeps shipping checks whose
