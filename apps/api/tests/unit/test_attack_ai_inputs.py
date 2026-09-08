@@ -649,8 +649,17 @@ def test_a_discarded_lists_tools_never_reach_the_egress_payload(app_client) -> N
         TestSession,
         cid,
         uid,
-        [("Splunk", None, False), ("CrowdStrike", True, False)],
+        [("Splunk", None, False)],
         status=CapabilityListStatus.DISCARDED,
+    )
+    # A SECOND, ACTIVE list, and it is what makes this test discriminate.
+    # `valid_tools == frozenset()` alone is equally satisfied by a builder that
+    # returns nothing for every client -- so the discarded tool being absent
+    # would prove the filter works OR that the builder is broken, and the test
+    # could not tell which. With a live tool that MUST survive, only one of
+    # those readings passes.
+    _tech_debt_list(
+        TestSession, cid, uid, [("CrowdStrike", True, False)], status=CapabilityListStatus.DRAFT
     )
     sid = _attack_service(c, bearer, cid)
     c.post(
@@ -668,15 +677,15 @@ def test_a_discarded_lists_tools_never_reach_the_egress_payload(app_client) -> N
         client = db.get(Client, _uuid.UUID(cid))
         req = build_attack_ai_request(db, svc, client)
 
-    assert req.valid_tools == frozenset(), (
-        "a discarded list's tools reached valid_tools -- the model may cite "
-        "tooling a consultant deliberately threw away"
+    assert req.valid_tools == frozenset({"crowdstrike"}), (
+        "the discarded list's tool must be ABSENT and the active list's tool "
+        "PRESENT -- an empty set here would also be produced by a builder that "
+        "returns nothing at all, which is not what this test is for"
     )
-    assert req.capabilities == []
+    assert [cap.name for cap in req.capabilities] == ["CrowdStrike"]
     blob = str(req.preview.inputs).lower()
-    assert (
-        "splunk" not in blob and "crowdstrike" not in blob
-    ), "a discarded tool name appears in the outbound preview payload"
+    assert "splunk" not in blob, "a discarded tool name reached the outbound preview payload"
+    assert "crowdstrike" in blob, "positive control missing: the builder returned nothing at all"
 
 
 @pytest.mark.unit

@@ -303,11 +303,10 @@ export interface AttackAiInputSourceList {
   version: number;
   status: string;
   /**
-   * False => a LATER version of the same list exists and this one still counts.
-   * Every non-discarded version feeds the mapping, not just the newest.
-   */
-  /**
    * `true` latest, `false` superseded by a later version, `null` RETIRED.
+   *
+   * `false` still COUNTS: every non-discarded version feeds the mapping, not
+   * just the newest, which routinely surprises people.
    *
    * `null` is a discarded list: not latest, and not superseded either, because
    * nothing replaced it. Renderers must not treat `!is_latest_for_service` as

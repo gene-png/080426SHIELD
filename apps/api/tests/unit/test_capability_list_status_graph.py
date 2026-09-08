@@ -18,7 +18,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.capability import CapabilityList, CapabilityListStatus
@@ -91,6 +91,37 @@ def _draft_list(TestSession: sessionmaker, cid: str, uid: str) -> str:
         return str(cl.id)
 
 
+def _assert_no_discarded_row_carries_a_snapshot(TestSession: sessionmaker) -> None:
+    """No row ANYWHERE is both DISCARDED and carrying an approved snapshot.
+
+    Table-wide on purpose. The first version asserted this on the single list
+    the test had just driven, immediately after asserting discard returned 409 --
+    so the list was APPROVED, the left conjunct was False, and the assertion held
+    whatever `approved_membership` contained. It restated the 409's consequence
+    and could not fail independently of it.
+
+    Run after BOTH sequences here, because the discard -> approve one is what
+    actually writes a snapshot onto a formerly-discarded row, and nothing
+    checked the invariant on that path at all.
+    """
+    with TestSession() as db:
+        offenders = (
+            db.execute(
+                select(CapabilityList).where(
+                    CapabilityList.status == CapabilityListStatus.DISCARDED,
+                    CapabilityList.approved_membership.is_not(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert offenders == [], (
+        "a row is both DISCARDED and carrying an approved snapshot -- the state "
+        "`_offer`'s snapshot branch guards is no longer unreachable, and the "
+        "PR body's defence-in-depth framing needs revisiting"
+    )
+
+
 def test_approving_a_discarded_list_resurrects_it(app_client) -> None:
     """CURRENT behaviour, pinned as a DEFECT rather than endorsed.
 
@@ -100,9 +131,20 @@ def test_approving_a_discarded_list_resurrects_it(app_client) -> None:
     a typed 409 — this path returns 200 and silently clears the discard, with an
     approval audit row and no record that anything was resurrected.
 
-    Tracked as #231. When it is fixed this test goes RED, and it should:
-    the ai-inputs panel's `list_discarded` copy names the remedy for a discarded
-    list, and that copy has to change in the same commit.
+    Tracked as #231. When it is fixed this test goes RED, and it should — the
+    behaviour genuinely changed.
+
+    **Do NOT read that red as "go and edit the list_discarded copy".** An earlier
+    version of this docstring said exactly that, and it was stale the moment the
+    copy was rewritten in the same commit: the panel now says "Upload a
+    replacement list", which does not depend on the resurrect path at all. When
+    #231 is fixed, uploading a replacement becomes the ONLY remedy, so that copy
+    gets MORE accurate, not stale.
+
+    What the red is for: re-read the `list_discarded` prose in
+    `schemas/attack.py` and `lib/attack/types.ts`, both of which describe the
+    resurrect path as a defect that exists. Those go stale; the remedy does
+    not.
     """
     c, TestSession = app_client
     bearer, cid = _admin(c)
@@ -118,9 +160,16 @@ def test_approving_a_discarded_list_resurrects_it(app_client) -> None:
     with TestSession() as db:
         after = db.get(CapabilityList, _uuid.UUID(lid))
         assert (resp.status_code, after.status) == (200, CapabilityListStatus.APPROVED), (
-            "if this now refuses, the defect is fixed -- update the ai-inputs "
-            "list_discarded remedy copy in the same commit"
+            "if this now refuses, #231 is fixed. Re-read the list_discarded "
+            "prose in schemas/attack.py and types.ts, which describe the "
+            "resurrect path as live. The panel's REMEDY copy needs no change -- "
+            "it was written not to depend on this path"
         )
+
+    # The resurrect path is the ONLY sequence that writes a snapshot onto a
+    # formerly-discarded row, so the invariant is checked here rather than only
+    # on the path that 409s.
+    _assert_no_discarded_row_carries_a_snapshot(TestSession)
 
 
 def test_a_list_cannot_be_both_discarded_and_carry_an_approved_snapshot(app_client) -> None:
@@ -143,8 +192,4 @@ def test_a_list_cannot_be_both_discarded_and_carry_an_approved_snapshot(app_clie
     discarded = c.post(f"/tech-debt/capability-lists/{lid}/discard", headers=h)
     assert discarded.status_code == 409, "an APPROVED list must not be discardable"
 
-    with TestSession() as db:
-        cl = db.get(CapabilityList, _uuid.UUID(lid))
-        assert not (
-            cl.status == CapabilityListStatus.DISCARDED and cl.approved_membership is not None
-        )
+    _assert_no_discarded_row_carries_a_snapshot(TestSession)

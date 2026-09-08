@@ -2189,12 +2189,15 @@ def ai_inputs(
         from_snapshot = cap_list.approved_membership is not None
         # DISCARDED lists reach this loop for the first time (#178), and every
         # aggregate below ran for years under a query that excluded them. Each
-        # is a SEPARATE decision, and the one you notice is not the set — so all
-        # six are stated here rather than left to whichever the author happened
-        # to think about.
+        # is a SEPARATE decision, and the one you notice is not the set — so
+        # every one is stated here rather than left to whichever the author
+        # happened to think about. No count is written: this block is meant to
+        # be AUDITED against the loop, and a number lets a reader tick off the
+        # tally and stop. An earlier draft said "six", reached six by counting
+        # `status` (a bare passthrough that was never in question) and omitting
+        # `is_latest_for_service` — the field this change is actually about.
         #
-        # `retired` gates the two that would raise a NEW WARNING about a list
-        # that contributes nothing:
+        # DECIDED — reported differently for a retired list:
         #
         #  * `_excluded_source_rows` — the panel renders these as bare
         #    "Row {index}: {summary}" with NO list identity, so a thrown-away
@@ -2206,7 +2209,12 @@ def ai_inputs(
         #    as "N of the M lists cannot say what they dropped". True of the
         #    row and useless as advice.
         #
-        # The other four are deliberately NOT gated, and why:
+        #  * `is_latest_for_service` — set to None, not False, three lines
+        #    below with its own reasoning. Listed here because this block is the
+        #    checklist and it is the field the change is about; a reader
+        #    auditing "was every aggregate decided?" must not find it missing.
+        #
+        # DELIBERATELY NOT GATED, and why:
         #
         #  * `sent_count` / `not_sent_count` — the point of the change. A
         #    discarded list reads 0 sent and N not-sent, which is the disclosure
@@ -2216,7 +2224,8 @@ def ai_inputs(
         #    pins that). Left live so it stays correct if the state graph
         #    changes; its "re-approve" warning would need revisiting then, which
         #    is noted on #231.
-        #  * `status` — the whole point is that it is now visible.
+        #  * `status` — a passthrough of the column. Listed for completeness,
+        #    not as a decision: nothing about it was ever in question.
         retired = cap_list.status == CapabilityListStatus.DISCARDED
         rows = [] if retired else _excluded_source_rows(cap_list)
         excluded.extend(rows)
@@ -2231,16 +2240,12 @@ def ai_inputs(
                 tech_debt_service_title=titles[cap_list.service_id],
                 version=cap_list.version,
                 status=cap_list.status.value,
-                # A discarded list is never "latest" — it is retired, and the
-                # dict above may hold no entry for its service at all when every
-                # list for that service was discarded. Indexed for the live
-                # case, exactly as before, because a miss there IS impossible.
-                # None, NOT False. A discarded list is retired: it is not the
-                # latest and nothing supersedes it, and `False` is read by every
-                # renderer as "superseded by a later version". The dict may also
-                # hold no entry for its service at all when every list there was
-                # discarded — indexed only in the live branch, where a miss is
-                # genuinely impossible.
+                # None, NOT False. A discarded list is RETIRED: not the latest,
+                # and nothing supersedes it — while `False` is read by every
+                # renderer as "superseded by a later version". `latest_version`
+                # may also hold no entry for this service at all when every list
+                # on it was discarded, so it is indexed only in the live branch,
+                # where a miss is genuinely impossible.
                 is_latest_for_service=(
                     None
                     if cap_list.status == CapabilityListStatus.DISCARDED
