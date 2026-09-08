@@ -1157,8 +1157,17 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     # disclosure on a client-facing path is the failure this endpoint exists to
     # prevent.
     #
-    # Pinned by `test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld`:
-    # delete the `key in survivors` half and exactly that test fails.
+    # Pinned by `test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld`,
+    # and that is a MEASUREMENT rather than a claim about what a change would do.
+    # Run 2026-09-08: replacing this line with `if not key:` gives 1 failed,
+    # 10 passed in `test_attack_ai_inputs.py`, and the one failure is that test.
+    # Nothing else in the file notices, so no other assertion is standing in for
+    # it — remove the guard and this is the single thing that objects.
+    #
+    # The mutation was proved to LAND before its result was read (the code line
+    # gone, the comment above still quoting the phrase, so an occurrence count
+    # alone would have read as "did not land") and the restore proved by sha256
+    # rather than assumed.
     survivors = {w.name.casefold() for w in winners}
     withheld: dict[str, WithheldCapability] = {}
     for drop in sorted(dropped, key=lambda d: (d.name or "", d.list_version, d.reason)):
