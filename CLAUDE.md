@@ -97,17 +97,48 @@ any of it, so a single `&&` on the last line aborts **every statement above it
 too**. Measured 2026-09-08 — a nine-line script whose only defect was a trailing
 `&&` ran none of its first eight lines and printed one parser error.
 <!-- counted: historical -->
-Nothing partially applies, and nothing tells you which line was at fault. The
-`sh -lc "cd /app && ..."` shape is worse still, because the host shell consumes
-the quoting before Docker sees it. This repo is developed on Windows, so the
-default shell in a fresh terminal is the one these do not work in.
+Nothing partially applies, and nothing tells you which line was at fault. This
+repo is developed on Windows, so the default shell in a fresh terminal is the one
+that cannot parse it.
 
-Stated as a scope rather than fixed per command, because the fix differs per case
-and the surprise is what costs time. Where a command's OUTPUT is the thing you are
-relying on — a version read, a confirmation step — write it shell-portable: no
-`&&`, no inner `sh -lc`, `-w <dir>` instead of `cd`, single quotes inside double.
+**The whole hazard is four forms, and NO single shell shows you more than two of
+them.** Each row run in both shells on 2026-09-08, exit codes as printed:
+
+**Breaks somewhere** — and note every row passes clean in one shell:
+
+| Form | Git Bash | PowerShell 5.1 |
+| --- | --- | --- |
+| OUTER `&&` joining two host commands | 0 | **parse error; the whole script is aborted** |
+| `\"` escaping inside `sh -lc "..."` | **0** | **2** — `sh: 1: Syntax error: Unterminated quoted string` |
+| `-w /app` | **128** — `Cwd must be an absolute path` | 0 |
+
+**Works in both:**
+
+| Form | Git Bash | PowerShell 5.1 |
+| --- | --- | --- |
+| `sh -c "cd /app && ..."` — INNER `&&` | 0 | 0 |
+| single quotes inside double | 0 | 0 |
+
+The first table is the instruction, and its shape is the reason this keeps
+happening: no shell shows you every row. Whichever you test in, some row passes
+and stays silent — which is exactly how two consecutive drafts of the block below
+shipped broken, each verified by an author whose shell was clean.
+
+So, where a command's OUTPUT is what you rely on — a version read, a confirmation
+step — the prescription is narrow and it is only these: **no OUTER `&&` between
+two host commands (use separate lines); no backslash-escaped quotes inside a
+quoted argument (use single quotes inside double); and no `-w <dir>`.**
+
+**`sh -lc "cd <dir> && ..."` is FINE and is the replacement for `-w`.** An earlier
+draft of this paragraph said to prefer `-w <dir>` over `cd`, and called the
+`sh -lc` shape "worse still" — both wrong, and wrong in the direction that
+matters, since `-w` is the one form here that breaks Git Bash. The inner `&&` is a
+single quoted argument handed to the container's shell; both host shells pass it
+through untouched. Four of the five `&&` commands the grep above surfaces use that
+shape, including the MANDATORY pre-commit lint, and they work.
+
 The dependency-remediation block below is the worked example, and it is there
-because the first version of it failed on exactly this.
+because two versions of it failed on exactly this.
 
 **The rule that produced this scope line, and it binds every command block in
 this file: a block that claims it runs anywhere carries the SHELLS it was
@@ -196,8 +227,12 @@ silence, because it is exactly what the reader checks instead of running it.
   The first version of this block was authored and verified in Git Bash and
   published to a team developing on Windows, where it does not run: `&&` is a
   parse error in PowerShell 5.1, so nothing executes at all, and the `\"`
-  escaping inside `sh -lc "..."` is consumed by the host shell before Docker
-  sees it, giving `sh: 1: Syntax error: Unterminated quoted string` (exit 2).
+  escaping inside `sh -lc "..."` is consumed by PowerShell before Docker sees
+  it, giving `sh: 1: Syntax error: Unterminated quoted string` (exit 2).
+  **PowerShell specifically, not "the host shell"** — measured 2026-09-08, the
+  identical line exits 0 in Git Bash and prints the version. An earlier draft
+  said "the host shell", which reads as both and is the reason a Git Bash author
+  can run this line, watch it work, and publish it as portable.
   **The failure landed on the confirmation step**, which is the one line whose
   job is to tell you whether you are still unpatched -- and its error reads as a
   Docker problem rather than as "you are on the old version".
