@@ -69,7 +69,14 @@
  * tree after it.
  *
  * Usage:  node e2e/scripts/check-immediate-reads.mjs [path ...]
- *         (defaults to the directory this script lives in, one level up)
+ *
+ * **If you pipe it, `set -o pipefail` first — or do not pipe.** This script's
+ * exit 2 is the whole point of it having exit codes, and `... | head` reports
+ * head's 0 and loses it. Two instances of a pipe swallowing a gate's status
+ * turned up in this repo in one day, both found by accident. In PowerShell
+ * there is no `pipefail` and no `PIPESTATUS`: `$LASTEXITCODE` holds the last
+ * NATIVE command's code, so a pipe loses it there too. Do not pipe when the
+ * status is what you need.
  */
 
 import fs from "node:fs";

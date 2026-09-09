@@ -2572,8 +2572,32 @@ function writeLog(
   // Same failure this file records everywhere else: the thing keeping a number
   // honest must live in the artifact carrying the number, not beside it.
   // ==========================================================================
-  const measured = ok + failed;
-  const notMeasured = missed + unknown;
+  // DERIVED from a total classification, not from two hand-written sums.
+  //
+  // It was `ok + failed` and `missed + unknown`. Those happen to be correct,
+  // but nothing enforced that the two sums partition the outcomes: a fifth
+  // outcome would have been silently absent from BOTH, and the verdict would
+  // have quietly described fewer steps than the run recorded.
+  //
+  // `Record<Outcome, ...>` makes the classification exhaustive — adding an
+  // outcome without deciding which side it falls on is a compile error, not a
+  // reporting gap. Which side matters: `indeterminate` means "I could not
+  // look", so it belongs with NOTHING. Putting it on the reached side would
+  // make the verdict flattering in exactly the category the fourth outcome
+  // exists to protect — and run 1, which had zero indeterminate steps, could
+  // not have exposed that.
+  const CONCLUSION: Record<Outcome, "reached" | "nothing"> = {
+    ok: "reached",
+    failed: "reached",
+    unreachable: "nothing",
+    indeterminate: "nothing",
+  };
+  const measured = rec.steps.filter(
+    (s) => CONCLUSION[s.outcome] === "reached",
+  ).length;
+  const notMeasured = rec.steps.filter(
+    (s) => CONCLUSION[s.outcome] === "nothing",
+  ).length;
   const clean = failed === 0 && notMeasured === 0;
 
   lines.push("## Verdict");
