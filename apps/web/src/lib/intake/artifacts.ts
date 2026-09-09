@@ -52,9 +52,14 @@ export async function listArtifacts(): Promise<ArtifactListResponse> {
 }
 
 async function safeJson(res: Response): Promise<unknown> {
+  // Read the body ONCE; see the note in `lib/api.ts`. `res.json()` consumes
+  // the stream even when it throws, so the `res.text()` fallback raises
+  // "body stream already read" and that TypeError escapes in place of the
+  // value this function exists to return.
+  const raw = await res.text();
   try {
-    return await res.json();
+    return JSON.parse(raw);
   } catch {
-    return await res.text();
+    return raw;
   }
 }

@@ -26,11 +26,29 @@ to a premise someone reasoned about instead of executing. It is the cheapest
 habit here and the highest-yield.
 
 **Its unstated precondition: verify that what you are measuring is the thing you
-think you are measuring.** `python gate.py | head -1; echo $?` reports `head`'s
-status, not the gate's — so a fail-closed exit 2 reads as a clean 0. Use
-`${PIPESTATUS[0]}`, or do not pipe. That is the crash-versus-verdict shape one
-layer down, in the shell instead of in Python: one program's verdict silently
-substituted for another's, and the substitution looks like success.
+think you are measuring.** An exit status is set by whichever step ran LAST, not
+by the step you cared about, and every form of that failure looks like success.
+Three shapes, one property, all three hit on 2026-09-09 alone:
+
+| what was written | whose status you got |
+| --- | --- |
+| `python gate.py \| head -1; echo $?` | `head`'s — a fail-closed **2** read as a clean **0** |
+| `hits=$(grep -c X file)` under `bash -e` | `grep`'s — a legitimate zero-count **exits the script** |
+| `python fix.py; echo done` | `echo`'s — python crashed on line 26 and the chain reported **0** |
+
+**One remedy covers all three: `set -euo pipefail` at the top.** Reach for
+`${PIPESTATUS[0]}` only where a pipeline's non-final status is genuinely wanted.
+Where the OUTPUT is what you rely on, do not pipe at all.
+
+That is the crash-versus-verdict shape one layer down, in the shell instead of
+in Python: one program's verdict silently substituted for another's, and the
+substitution looks like success.
+
+**The detection is worth as much as the remedy, because the status tells you
+nothing by construction.** The third row was caught by `git diff --stat` showing
+ONE changed file where five were expected — an independent signal about the
+work, not about the exit code. When a command's status cannot be trusted, check
+the artifact it was supposed to produce.
 
 **That remedy is BASH-ONLY, and its failure in PowerShell is silent.** There is no
 `PIPESTATUS` in PowerShell 5.1: `${PIPESTATUS[0]}` parses as a variable named
@@ -1009,8 +1027,24 @@ a real exit code and a real date, and was the minority outcome (D-071).
   moment the box is slow — expose an explicit phase instead.
 - A `fetch` Response body can be read ONCE. An error path that tries
   `res.json()` and then falls back to `res.text()` throws "body stream
-  already read" and masks the real status — this hid a 404 behind a confusing
-  error in all six `lib/*/client.ts` wrappers until the 2026-08-04 fix pass.
+  already read", and THAT TypeError propagates in place of the typed error the
+  block exists to build — destroying the status and the correlation id at the
+  moment they are needed. Read the body once with `res.text()`, then
+  `JSON.parse` it.
+
+  **This entry used to say the 2026-08-04 pass fixed it "in all six
+  `lib/*/client.ts` wrappers". That was true of the glob and false of the
+  defect, and it is why nobody looked again for four weeks.** Swept by SHAPE on
+  2026-09-09, five more sites had it: `lib/api.ts` — the shared wrapper the six
+  call — plus `lib/admin/audit.ts` and `lib/ai/preview.ts`, whose
+  `AuditProxyError` and `AiPreviewError` were equally never constructed, and
+  both `lib/intake/` helpers. Filed as #174, which itself named only
+  `lib/api.ts`.
+
+  The transferable part is the failure, not the count: **the sweep predicate
+  was a PATH instead of a defect.** A completed sweep over `lib/*/client.ts`
+  reads as a completed sweep, and the sentence recording it is what stops the
+  next reader checking.
 - Demo stack: web :3000, API docs :8000/docs, Keycloak :8080, MinIO :9001,
   MailHog :8025. Logins: `admin@kentro.example` / `DemoPass!2026` (Kentro
   consultant), `client@atlas.example` / `DemoPass!2026` (Atlas tenant).
