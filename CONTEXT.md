@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-09 (#237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split into `_latest_register` for the gate and a filtered read for synthesis, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-09 (#237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -113,9 +113,12 @@ branch was written, `routes/risk.py::_latest` picked the newest assessment
 excluding only DISCARDED, so a DRAFT could be synthesized into a register that
 is exported to the client. That was filed as #237 and has since shipped: PR
 #242 landed on `main` at `851348b` and closed it (`gh issue view 237` ->
-CLOSED/COMPLETED, 2026-09-09), splitting the helper in two -- `_latest_register`
-for the gate, an APPROVED/RELEASED filter for synthesis -- and recorded as
-D-075. **There is no `_latest` in `routes/risk.py` any more**, so the symbol
+CLOSED/COMPLETED, 2026-09-09), splitting the helper THREE ways -- and recorded
+as D-075. Verified by reading `risk.py` at `851348b`, not from the PR title:
+`_exists_for_gate` answers the gate (its three call sites are the ATT&CK, CSF
+and ZT existence checks), `_finalized_for_synthesis` applies the
+APPROVED/RELEASED filter, and `_latest_register` fetches the register row --
+which is NOT the gate. **There is no `_latest` in `routes/risk.py` any more**, so the symbol
 this paragraph used to name will not resolve. **A SECOND residual sits in `routes/clients.py` itself** —
 `risk_dashboard` takes the highest-`version` register with no finalized filter,
 so generating v2 hides a finalized v1 the client already has. Tracked in #123,

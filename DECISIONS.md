@@ -4078,8 +4078,8 @@ re-assessment could be synthesized into a register that is then exported and
 served. Filed as #237.
 
 **True as at 2026-09-08, and no longer true.** #237 shipped in PR #242 the
-following day (D-075, `main` at `851348b`); `_latest` no longer exists and
-`_latest_register` answers only the gate's question. Written in the past tense
+following day (D-075, `main` at `851348b`); `_latest` no longer exists, split
+into `_exists_for_gate`, `_finalized_for_synthesis` and `_latest_register`. Written in the past tense
 rather than deleted, because what this record is FOR is the reasoning that found
 the residual, and that reasoning is unaffected by the fix. Qualified here rather
 than left standing because the sentence named a live `mvp-blocking` defect in a
@@ -4090,8 +4090,9 @@ sweep DID cover.** The paragraph above names `routes/risk.py::_latest` and stops
 which sends a reader asking "what was left in Risk?" one issue short:
 
 - `routes/risk.py::_latest` — which assessments feed synthesis. Was tracked in
-  #237; shipped in PR #242, D-075. The helper is now `_latest_register` and is
-  the gate's alone.
+  #237; shipped in PR #242, D-075. Synthesis now reads through
+  `_finalized_for_synthesis`; the gate is `_exists_for_gate` and still admits a
+  DRAFT, deliberately.
 - `routes/clients.py::risk_dashboard` — WHICH REGISTER the dashboard shows. It
   selects the highest-`version` register and then refuses if that one is not
   finalized, so generating v2 hides a finalized v1 the client has been

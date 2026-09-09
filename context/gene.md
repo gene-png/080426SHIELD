@@ -77,8 +77,10 @@ Every "without" figure was served under `deliverable_version: 1`.
   served. **Filed as #237, `mvp-blocking`.** This is the fifth service, and
   `DELIVERY_PLAN.md` predicted it.
   **Shipped 2026-09-09 in PR #242** (D-075, `main` at `851348b`); `gh issue view
-  237` reads CLOSED/COMPLETED. `_latest` is gone, split into `_latest_register`
-  for the gate and an APPROVED/RELEASED filter for synthesis. Kept in the past
+  237` reads CLOSED/COMPLETED. `_latest` is gone, split THREE ways:
+  `_exists_for_gate` (the gate, which still admits a DRAFT on purpose),
+  `_finalized_for_synthesis` (the APPROVED/RELEASED filter), and
+  `_latest_register` (fetches the register row -- not the gate). Kept in the past
   tense rather than deleted: the finding is the useful part and it still stands
   as a record of what the sweep missed.
 - **And a SECOND Risk residual, in `routes/clients.py` rather than
