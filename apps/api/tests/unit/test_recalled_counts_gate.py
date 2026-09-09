@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import scripts.check_recalled_counts as check_recalled_counts
 from scripts.check_recalled_counts import (
     ADVISORY_TARGETS,
     ENFORCED_TARGETS,
@@ -149,7 +150,7 @@ def test_one_missing_target_exits_2_rather_than_being_skipped(tmp_path: Path) ->
 
 
 @pytest.mark.unit
-def test_the_clean_message_states_a_count_of_documents(tmp_path: Path, capsys) -> None:
+def test_the_clean_message_states_all_three_bounds(tmp_path: Path, capsys) -> None:
     """Pins the message FORMAT. It cannot pin which value produced it.
 
     The gate now derives that number by counting reads rather than taking
@@ -180,7 +181,50 @@ def test_the_clean_message_states_a_count_of_documents(tmp_path: Path, capsys) -
         (tmp_path / name).write_text("nothing to see\n", encoding="utf-8")
 
     assert main(["prog", "a.md", "b.md"], root=tmp_path) == 0
-    assert "clean (2 documents)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "clean (2 documents," in out
+    assert "spelled cardinals only" in out
+    assert "volatile nouns" in out
+
+
+@pytest.mark.unit
+def test_the_printed_bound_is_derived_from_the_constants_not_typed(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """The one thing the bound line can get wrong, and it CAN fail.
+
+    The clean line states three limits, and the third -- the noun census -- is
+    the reason it exists: `services` is not a volatile noun, so the seed's
+    "4 services" over five seeded services is invisible on three independent
+    counts and only that one is unguessable.
+
+    A census typed into the message would be the recalled-count defect inside
+    the gate that polices recalled counts, and it would be wrong immediately:
+    the change request that added this line specified 27 nouns and the
+    alternation does not hold 27.
+
+    Asserting the number equals `len(_VOLATILE.split("|"))` would be the #72
+    shape -- test and code reading one constant, agreeing by construction. So
+    this MUTATES the constant instead and requires the printed figure to move.
+    A hardcoded number survives an equality assertion and cannot survive this.
+    """
+    (tmp_path / "a.md").write_text("nothing to see\n", encoding="utf-8")
+
+    assert main(["prog", "a.md"], root=tmp_path) == 0
+    before = capsys.readouterr().out
+
+    monkeypatch.setattr(
+        check_recalled_counts,
+        "_VOLATILE",
+        check_recalled_counts._VOLATILE + "|widgets?",
+    )
+    assert main(["prog", "a.md"], root=tmp_path) == 0
+    after = capsys.readouterr().out
+
+    assert before != after, (
+        "the printed noun census did not move when _VOLATILE gained an entry, "
+        "so it is a typed number rather than a derived one"
+    )
 
 
 @pytest.mark.unit

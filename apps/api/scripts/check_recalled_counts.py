@@ -118,8 +118,49 @@ _PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+
 # The provenance marker, in the shape this repo already uses for exemptions
 # (`# test-integrity:`, `# separator-class:`). An empty marker is not a marker.
+def _bound(checked: int) -> str:
+    """What this gate ACTUALLY looked at, printed on every clean result.
+
+    A clean line is a claim, and this one was reading as much broader than it
+    is. Three limits decide its coverage and only the first is guessable:
+
+    1. The document set. Markdown only, and a fixed list -- a digit inside a
+       Python string in `seed_demo.py` is not in scope and never was.
+    2. SPELLED cardinals only. A digit is deliberately unmatched, because a
+       digit beside its command is the prescribed form and flagging it would
+       punish the correction.
+    3. The noun census. `_VOLATILE` is a hand-built alternation that the
+       module docstring already calls a FLOOR rather than a census.
+
+    Limit 3 is the one nobody predicts. Measured 2026-09-09: the seed's
+    "Demo seed complete: 4 services" is wrong -- five services are seeded --
+    and it fails to match on THREE independent counts, of which the surprising
+    one is that `services` is not a volatile noun. Spelling it "four services"
+    still does not fire.
+
+    Every number here is DERIVED from the constants at run time, never typed.
+    That is not fastidiousness: the request to add this line specified "27
+    volatile nouns", and the alternation holds a different number. A hardcoded
+    census inside the gate that polices recalled counts would be the defect
+    itself, one level up, and it would be wrong on arrival.
+
+    Deliberately NOT a fix for the underlying limit. Widening the pattern makes
+    it fire on everything -- the finding already recorded for TI001 and for the
+    prose-total gate -- so the bound is stated instead of stretched, the way
+    `check-control-chars` prints its file count and `immediate-reads` prints
+    how many files it scanned.
+    """
+    cardinals = len(_CARDINALS.split("|"))
+    nouns = len(_VOLATILE.split("|"))
+    return (
+        f"{checked} documents, spelled cardinals only "
+        f"[{cardinals} recognised], {nouns} volatile nouns"
+    )
+
+
 _PROVENANCE = re.compile(r"<!--\s*counted:\s*(\S.*?)-->", re.IGNORECASE | re.DOTALL)
 
 # A count immediately followed by its own list is the FIXED form of rule 1 only
@@ -287,7 +328,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 0
 
     if not all_findings:
-        print(f"check-recalled-counts: clean ({checked} documents)")
+        print(f"check-recalled-counts: clean ({_bound(checked)})")
         return 0
 
     print("check-recalled-counts: spelled counts of things that change")
