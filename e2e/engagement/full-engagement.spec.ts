@@ -111,6 +111,21 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  * the app is the mechanism, not carelessness; the fix is to write down the
  * enumeration and the grep that produced it.
  *
+ * ## It carries a workaround for an OPEN defect, and says so every run
+ *
+ * The intake wizard auto-saves, and advancing a step before the save lands
+ * loses the typed value — measured across three runs, where runs 2 and 3
+ * stored the email-domain fallback instead of the legal name. **#252.** This
+ * spec waits on `SaveStatus` reporting "Saved" before advancing.
+ *
+ * That wait makes everything downstream measurable, and it also HIDES #252
+ * from every future run. So it is RECORDED: each wait reports whether it
+ * actually did work, and the step log carries a "Workarounds in force" section
+ * directly under the verdict. A clean run that depended on a workaround must
+ * not read like a clean run that did not — and when #252 is fixed, the log
+ * starts saying "not needed" on its own instead of waiting for someone to
+ * think to check.
+ *
  * **Current status: nothing here is a contract yet.** Once Gene has watched the
  * video and read the step log, we decide together which observations become
  * assertions. Until that conversation happens, adding an assertion to this file
@@ -384,6 +399,32 @@ class Indeterminate extends Error {
 class Recorder {
   readonly steps: StepRecord[] = [];
   readonly notes: string[] = [];
+  /**
+   * Workarounds this run has in force for a KNOWN OPEN DEFECT, and whether
+   * each was actually needed.
+   *
+   * A workaround that disappears into passing behaviour is how a known defect
+   * stops being known: every future run comes back clean, and the cleanliness
+   * silently depends on a wait nobody can see. So the log names the issue, and
+   * records whether the workaround did any work — if the underlying defect is
+   * ever fixed, `needed: false` starts appearing and somebody learns something.
+   * A silent workaround teaches nobody, forever.
+   */
+  readonly workarounds: Array<{
+    ref: string;
+    needed: boolean;
+    detail: string;
+  }> = [];
+
+  /** Record that a workaround for `ref` was applied, and whether it did work. */
+  workaround(ref: string, needed: boolean, detail: string): void {
+    this.workarounds.push({ ref, needed, detail });
+    // eslint-disable-next-line no-console
+    console.log(
+      `      w/a   ${ref} ${needed ? "NEEDED" : "not needed"} — ${detail}`,
+    );
+  }
+
   /**
    * Steps ENTERED but not yet completed, outermost first. Non-empty when the
    * run was abandoned mid-step — `writeLog` reports it as the in-flight chain.
@@ -723,6 +764,76 @@ async function pageState(page: Page): Promise<PageState> {
   }
 
   return { kind: "loaded" };
+}
+
+/**
+ * Wait for the intake wizard's AUTO-SAVE to land before advancing a step.
+ *
+ * ## Why this exists, and why it is recorded rather than done quietly
+ *
+ * The wizard auto-saves on change and `SaveStatus` reports the state
+ * ("Saving…" / "Saved" / "Couldn't save: …"). Filling a field and clicking
+ * "Next →" immediately races that save. Measured across three runs of
+ * unchanged product code: run 1 stored the typed legal name, runs 2 and 3
+ * stored the email-domain fallback instead — the save had not landed when the
+ * step advanced. **Tracked as #252.**
+ *
+ * Run 1 was not a counter-example, it was a control: its service-selection
+ * loop aborted on the first checkbox, so it performed a fraction of the
+ * interactions before reaching Submit. Fixing that loop is what made this race
+ * reachable on every run — one defect had been masking another.
+ *
+ * **This is a workaround for an open defect, and it is recorded as one.** A
+ * workaround that vanishes into passing behaviour is how a known defect stops
+ * being known: every later run reads clean, and the cleanliness quietly
+ * depends on a wait nobody can see. So each call records to `rec.workarounds`
+ * whether the wait ACTUALLY DID WORK — if the save was already landed, that is
+ * evidence the race is gone, and `not needed` starts appearing in the log.
+ *
+ * Deliberately NOT worked around any other way. Resolving the tenant by its
+ * fallback name, or by id from another source, would turn the run green while
+ * making the instrument blind to exactly the class of defect it exists to
+ * catch.
+ */
+async function waitForIntakeSave(
+  page: Page,
+  rec: Recorder,
+  after: string,
+): Promise<void> {
+  const started = Date.now();
+  const saved = page.getByText(/^Saved\b/).first();
+  try {
+    await saved.waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    // Distinguish "the app said it could not save" from "nothing ever
+    // reported". `SaveStatus` renders the failure as its own message, and
+    // conflating the two would report a product error as an instrument
+    // timeout.
+    const saveError = page.getByText(/^Couldn.t save/).first();
+    // immediate-read: only reached after the wait above already timed out, so
+    // there is nothing left to wait for; this reads which of two terminal
+    // states the page settled into.
+    const errText = await saveError.textContent().catch(() => null);
+    if (errText !== null) {
+      throw new Error(`intake auto-save FAILED after ${after}: ${errText}`);
+    }
+    throw new Indeterminate(
+      `intake auto-save never reported "Saved" within 15s after ${after} — cannot tell whether the value persisted`,
+    );
+  }
+  const waitedMs = Date.now() - started;
+  // Under ~400ms means the save had effectively already landed and the wait
+  // did no work. That is the signal worth watching: when #252 is fixed this
+  // flips to "not needed" and the log says so on its own.
+  const needed = waitedMs >= 400;
+  rec.workaround(
+    "#252",
+    needed,
+    `waited ${waitedMs}ms for the intake auto-save after ${after}` +
+      (needed
+        ? " — the save had NOT landed when the step was ready to advance"
+        : " — the save had already landed; this wait did no work"),
+  );
 }
 
 /**
@@ -1418,6 +1529,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
       await page.locator("#website").fill("https://engagement-demo.example");
       await page.locator("#city").fill("Arlington");
       await page.locator("#state").fill("VA");
+      // #252. The legal name is the value the whole run is identified by —
+      // "resolve the new tenant" matches on it, and every step after that
+      // depends on the match. Advancing before the save lands is what stored
+      // the email-domain fallback on runs 2 and 3.
+      await waitForIntakeSave(page, rec, "the organization step");
     });
 
     await rec.step("intake", "fill the contact step", "ui", async () => {
@@ -1426,6 +1542,7 @@ test("full engagement: intake -> five services -> release -> client view -> back
       await affordance(full, "contact full-name field");
       await full.fill(`Demo Client ${stamp}`);
       await page.locator("#title").fill("CISO");
+      await waitForIntakeSave(page, rec, "the contact step");
     });
 
     await rec.step("intake", "fill the systems step", "ui", async () => {
@@ -1488,6 +1605,12 @@ test("full engagement: intake -> five services -> release -> client view -> back
           }
           await sel.selectOption({ index: 1 });
           targetsSet.push(id);
+        }
+        // #252 again. These targets gate the Submit button
+        // (`targetsIncomplete` in Step6Review), so advancing before they save
+        // is a second route to a disabled Submit with no cause established.
+        if (targetsSet.length > 0) {
+          await waitForIntakeSave(page, rec, "the per-service targets");
         }
       },
     );
@@ -2496,6 +2619,54 @@ function writeLog(
     `- concluded nothing: ${notMeasured} — of which unreachable ${missed}, indeterminate ${unknown}`,
   );
   lines.push("");
+
+  // ==========================================================================
+  // WORKAROUNDS, stated where a reader of a CLEAN run will see them.
+  //
+  // The whole point: a clean run that depended on a workaround for an open
+  // defect must not read as a clean run that did not. Buried in `## Notes`
+  // among sixty lines, this would be invisible; here it sits directly under
+  // the verdict it qualifies.
+  //
+  // And it reports whether each workaround DID WORK, so the day the underlying
+  // defect is fixed the log starts saying "not needed" on its own rather than
+  // waiting for someone to think to check.
+  // ==========================================================================
+  if (rec.workarounds.length > 0) {
+    const refs = [...new Set(rec.workarounds.map((w) => w.ref))].sort();
+    const neededRefs = [
+      ...new Set(rec.workarounds.filter((w) => w.needed).map((w) => w.ref)),
+    ].sort();
+    lines.push("### Workarounds in force");
+    lines.push("");
+    lines.push(
+      `This run applied workarounds for open defects: ${refs.join(", ")}.`,
+    );
+    lines.push("");
+    if (neededRefs.length > 0) {
+      lines.push(
+        `**${neededRefs.join(", ")} DID work this run — the defect is still live.** Any`,
+      );
+      lines.push(
+        "conclusion below holds only because of it, and would not hold without it.",
+      );
+    } else {
+      lines.push(
+        "**None of them did any work this run.** That is evidence the underlying",
+      );
+      lines.push(
+        "defects may be fixed — worth checking whether these waits can be removed,",
+      );
+      lines.push("rather than carrying them forward forever.");
+    }
+    lines.push("");
+    for (const w of rec.workarounds) {
+      lines.push(
+        `- ${w.ref} — ${w.needed ? "**needed**" : "not needed"}: ${w.detail}`,
+      );
+    }
+    lines.push("");
+  }
   lines.push(
     "Read `indeterminate` as a statement about this run, not about the product.",
   );
@@ -2623,6 +2794,10 @@ function writeLog(
         // False means the walk stopped early: absence below is the run's, not
         // the product's. Machine-readable twin of the banner in the Markdown.
         completed: ctx.completed,
+        // Open defects this run worked around, and whether each did work. A
+        // consumer treating a clean run as clean must be able to see what the
+        // cleanliness depended on.
+        workarounds: rec.workarounds,
         stepOrder: "completion",
         // Steps entered but never completed — they have no entry in `steps`.
         inFlightAtStop: rec.inFlight.map((f) => ({
