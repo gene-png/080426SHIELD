@@ -118,8 +118,104 @@ _PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+
 # The provenance marker, in the shape this repo already uses for exemptions
 # (`# test-integrity:`, `# separator-class:`). An empty marker is not a marker.
+def _bound(checked: int, targets: list[str], root: Path) -> str:
+    """What this gate ACTUALLY looked at, printed on every clean result.
+
+    A clean line is a claim, and this one was reading as much broader than it
+    is. Three limits decide its coverage and only the first is guessable:
+
+    1. The document set. Markdown only, and a fixed list -- a digit inside a
+       Python string in `seed_demo.py` is not in scope and never was.
+    2. SPELLED cardinals only. A digit is deliberately unmatched, because a
+       digit beside its command is the prescribed form and flagging it would
+       punish the correction.
+    3. The noun census. `_VOLATILE` is a hand-built alternation that the
+       module docstring already calls a FLOOR rather than a census.
+
+    The document list is printed BY NAME, not merely counted, and that is the
+    load-bearing half. `6 documents` is a number a reader accepts; six names are
+    a set a reader can check against what they assumed. The case that forced it:
+    `DECISIONS.md` is NOT in either target list -- the string does not appear in
+    `ENFORCED_TARGETS` or `ADVISORY_TARGETS` -- while `CLAUDE.md` describes this gate as
+    "blocking on the shared documents" and its own ownership table lists
+    `DECISIONS.md` as a shared document. So the repo's instructions assert
+    coverage this gate does not provide, over the one file the size ratchet
+    actively routes narrative INTO. Printing the names is what makes that
+    visible at the point someone reads a clean result.
+
+    Whether `DECISIONS.md` SHOULD be covered is deliberately not decided here.
+    Adding it is a judgement with a real cost -- one branch alone carries at
+    least nine repo- and database-derived counts with no provenance markers, so
+    enforcing it would turn `main` red and the cheapest route to green would be
+    deleting records. That decision belongs to a human; this change only stops
+    the gap being invisible.
+
+    Limit 3 is the one nobody predicts. Measured 2026-09-09: the seed's
+    "Demo seed complete: 4 services" is wrong -- five services are seeded --
+    and it fails to match on THREE independent counts, of which the surprising
+    one is that `services` is not a volatile noun. Spelling it "four services"
+    still does not fire.
+
+    Every number here is DERIVED from the constants at run time, never typed.
+    That is not fastidiousness: the request to add this line specified "27
+    volatile nouns", and the alternation holds a different number. A hardcoded
+    census inside the gate that polices recalled counts would be the defect
+    itself, one level up, and it would be wrong on arrival.
+
+    Deliberately NOT a fix for the underlying limit. Widening the pattern makes
+    it fire on everything -- the finding already recorded for TI001 and for the
+    prose-total gate -- so the bound is stated instead of stretched.
+
+    The precedent is `check_test_integrity` (`test-integrity: clean {root}`)
+    and `check_issue_references` (`issue-close guard: clean (N declared close:
+    ...)`), both of which name the SET rather than a tally. `check_no_control_chars`
+    prints `clean (N files)`, a bare count, which is the weaker form this
+    docstring argues against -- cited as the thing not to copy.
+
+    ## What the bound does NOT certify, said here so it is not assumed
+
+    `root` identifies the working TREE, not the revision. Two branches checked
+    out at the same path produce a byte-identical clean line, so this line is
+    not evidence about which commit was scanned. That is the same gap as a
+    collected-count carrying its command but no ref; naming the tree narrows it
+    and does not close it. If a run's revision matters, record it beside the
+    output rather than reading it out of this line.
+
+    **Same path, different revision is the DEFAULT re-run here, not an edge
+    case.** `CLAUDE.md` has agents taking turns in one tree, because a second
+    docker stack was withdrawn -- so colliding runs at one path is the normal
+    way this gate gets re-run, and the collision is silent. It happened during
+    the review of this very change: a detached review worktree was read at one
+    revision and a gate was run in it at another, and the two were
+    distinguishable only because the code had changed in between.
+
+    **Deliberately not closed, and the cheap fix is wrong exactly here.**
+    Deriving a revision needs a `git` subprocess, which fails when git is
+    absent or the path is not a repository and therefore needs its own "could
+    not look" branch -- in the one gate whose organising principle is that
+    branch never sharing an exit with "nothing to complain about". The
+    `.git/HEAD` shortcut is worse: in a linked worktree `.git` is a FILE, not a
+    directory, so the obvious implementation breaks first in the setup this
+    review ran in.
+
+    The `--porcelain` path returns BEFORE this function and prints no bound at
+    all. That is deliberate: stdout there is a machine stream consumed by CI's
+    baseline diff, so the bound goes to stderr instead. See `main`.
+    """
+    cardinals = len(_CARDINALS.split("|"))
+    nouns = len(_VOLATILE.split("|"))
+    names = ", ".join(targets)
+    return (
+        f"{checked} documents in {root} ({names}); "
+        f"spelled cardinals only [{cardinals} recognised] "
+        f"beside one of {nouns} volatile nouns; "
+        f"every other file and every digit is OUT of scope"
+    )
+
+
 _PROVENANCE = re.compile(r"<!--\s*counted:\s*(\S.*?)-->", re.IGNORECASE | re.DOTALL)
 
 # A count immediately followed by its own list is the FIXED form of rule 1 only
@@ -278,6 +374,16 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 2
 
     if "--porcelain" in flags:
+        # The bound goes to STDERR here, not stdout. stdout on this path is a
+        # machine stream: CI runs `--advisory --porcelain > /tmp/live.txt` and
+        # diffs it against a baseline, so a human-readable line there would
+        # corrupt the comparison. Without this the advisory path -- the one
+        # covering `context/gene.md`, where the "(20)" heading that motivated
+        # this gate lived -- would carry no scope statement at all, and the
+        # only description of its coverage would be a hardcoded copy of
+        # ADVISORY_TARGETS typed into `ci.yml`. That copy is free to drift, and
+        # `ci.yml` forbids exactly that for the ENFORCED set two steps above.
+        print(f"check-recalled-counts: {_bound(checked, targets, root)}", file=sys.stderr)
         # file<TAB>phrase<TAB>line-text. Keyed on the TEXT, never the line
         # number: a baseline keyed on line numbers reports a whole file as new
         # the first time someone inserts a paragraph above it, which is the
@@ -287,7 +393,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 0
 
     if not all_findings:
-        print(f"check-recalled-counts: clean ({checked} documents)")
+        print(f"check-recalled-counts: clean ({_bound(checked, targets, root)})")
         return 0
 
     print("check-recalled-counts: spelled counts of things that change")

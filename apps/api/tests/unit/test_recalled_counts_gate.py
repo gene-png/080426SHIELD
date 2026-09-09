@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import scripts.check_recalled_counts as check_recalled_counts
 from scripts.check_recalled_counts import (
     ADVISORY_TARGETS,
     ENFORCED_TARGETS,
@@ -149,7 +150,7 @@ def test_one_missing_target_exits_2_rather_than_being_skipped(tmp_path: Path) ->
 
 
 @pytest.mark.unit
-def test_the_clean_message_states_a_count_of_documents(tmp_path: Path, capsys) -> None:
+def test_the_clean_message_states_all_three_bounds(tmp_path: Path, capsys) -> None:
     """Pins the message FORMAT. It cannot pin which value produced it.
 
     The gate now derives that number by counting reads rather than taking
@@ -180,7 +181,70 @@ def test_the_clean_message_states_a_count_of_documents(tmp_path: Path, capsys) -
         (tmp_path / name).write_text("nothing to see\n", encoding="utf-8")
 
     assert main(["prog", "a.md", "b.md"], root=tmp_path) == 0
-    assert "clean (2 documents)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "clean (2 documents" in out
+    assert "spelled cardinals only" in out
+    assert "volatile nouns" in out
+    # The NAMES, not just the count, and asserted from names this TEST chose
+    # rather than from the module's own constant -- so it cannot be satisfied
+    # by a count, and it is not the #72 shape.
+    #
+    # A bare `6 documents` is a number a reader accepts. Six names are a set a
+    # reader can check against what they assumed they were getting, which is
+    # the whole point: `DECISIONS.md` is in neither target list, while
+    # `CLAUDE.md` calls this gate "blocking on the shared documents" and lists
+    # `DECISIONS.md` as one. Only the names make that visible.
+    assert "a.md" in out
+    assert "b.md" in out
+    assert "OUT of scope" in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("constant", ["_VOLATILE", "_CARDINALS"])
+def test_the_printed_bound_is_derived_from_the_constants_not_typed(
+    tmp_path: Path, capsys, monkeypatch, constant: str
+) -> None:
+    """BOTH derived figures in the bound line, and this test CAN fail.
+
+    The clean line states three limits, and the third -- the noun census -- is
+    the reason it exists: `services` is not a volatile noun, so the seed's
+    "4 services" over five seeded services is invisible on three independent
+    counts and only that one is unguessable.
+
+    A census typed into the message would be the recalled-count defect inside
+    the gate that polices recalled counts, and it would be wrong immediately:
+    the change request that added this line specified 27 nouns and the
+    alternation does not hold 27.
+
+    Asserting the number equals `len(_VOLATILE.split("|"))` would be the #72
+    shape -- test and code reading one constant, agreeing by construction. So
+    this MUTATES the constant instead and requires the printed figure to move.
+    A hardcoded number survives an equality assertion and cannot survive this.
+
+    **Parametrised over BOTH constants, because one was not enough and the gap
+    was measured rather than imagined.** The first version mutated `_VOLATILE`
+    only. Hardcoding `cardinals = 28` then passed the entire file, exit 0 --
+    under a docstring calling this "the one thing the bound line can get
+    wrong". The bound prints two derived figures and a test covering one of
+    them certifies neither.
+    """
+    (tmp_path / "a.md").write_text("nothing to see\n", encoding="utf-8")
+
+    assert main(["prog", "a.md"], root=tmp_path) == 0
+    before = capsys.readouterr().out
+
+    monkeypatch.setattr(
+        check_recalled_counts,
+        constant,
+        getattr(check_recalled_counts, constant) + "|widgets?",
+    )
+    assert main(["prog", "a.md"], root=tmp_path) == 0
+    after = capsys.readouterr().out
+
+    assert before != after, (
+        f"the printed bound did not move when {constant} gained an entry, "
+        "so that figure is typed rather than derived"
+    )
 
 
 @pytest.mark.unit

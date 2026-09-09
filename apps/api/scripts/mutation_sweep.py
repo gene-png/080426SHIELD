@@ -196,6 +196,13 @@ def _run_tests(tests: str, extra: list[str]) -> bool:
         [sys.executable, "-m", "pytest", "-q", "-x", "--no-header", tests, *extra],
         capture_output=True,
         text=True,
+        # Both ends pinned; see the note in `check_gate_fixtures.py`. Setting
+        # only `encoding` makes a decode error return an EMPTY capture with a
+        # normal exit code, and this function reads that capture to decide red
+        # from green -- a wrong verdict from the tool that certifies tests can
+        # fail.
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8",
     )
     return proc.returncode == 0
 

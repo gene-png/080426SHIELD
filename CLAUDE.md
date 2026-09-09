@@ -245,6 +245,54 @@ a real exit code and a real date, and was the minority outcome (D-071).
 
 ## Environment gotchas (learned the hard way)
 
+- **Git Bash rewrites an argument beginning with `/` into a Windows path when
+  it crosses into a NATIVE WINDOWS EXECUTABLE, and does it silently.** Not a
+  Docker quirk and not a `gh` quirk: it is MSYS argument marshalling at the
+  Win32 boundary, so it reaches `gh.exe`, `python.exe`, `docker.exe` and every
+  other `.exe` you pass a leading-slash string to. Prefix with
+  `MSYS_NO_PATHCONV=1`.
+
+  **It is NOT "any command", and getting that wrong would discredit working
+  ones.** Measured 2026-09-09, Git Bash, `MSYS_NO_PATHCONV` unset:
+
+      echo /admin/management                        -> /admin/management
+      sed -n '/^## Environment gotchas/p' CLAUDE.md -> ## Environment gotchas ...
+      python -c "print(sys.argv[1])" /admin/management
+                                                    -> C:/Program Files/Git/admin/management
+
+  Bash builtins are unaffected and MSYS-native binaries handle it themselves.
+  The load-bearing consequence: **the portability grep this file publishes
+  under "Real commands" — `sed -n '/^## Real commands/,...'` — still works**,
+  returning 19. A draft of this entry said "any command", which predicts that
+  grep broken; running it is what showed the mechanism was the exe boundary
+  rather than the shell.
+  Measured 2026-09-09, Git Bash: a bare `/admin/management` argument arrives as
+  `C:/Program Files/Git/admin/management`; with `MSYS_NO_PATHCONV=1` it arrives
+  intact. **The widely-recommended `//` escape is NOT a remedy here** — it
+  arrives as `//admin/management`, leading slash doubled rather than fixed.
+
+  **Recorded as the MECHANISM because the enumeration already failed.** The
+  `-w /app` row in the shell-forms table above is this same rewrite, written
+  down as one tool's literal symptom, and it was no help at all the second
+  time: nothing in it says "any argument", so a `gh issue create --title
+  /admin/...` finds no prior art. The `//` escape widely recommended for this
+  is not a remedy — it arrives with the slash doubled, per the block above. `CLAUDE.md` carried zero occurrences of
+  `msys`; the only one in the repo is an aside inside D-071 about annotation
+  fields, which a search for a path-mangling problem hits and learns nothing
+  from.
+
+  **The observability difference is why the `-w /app` case got recorded and
+  the `gh` case did not, and it is the more useful half.** `-w /app` fails LOUDLY —
+  Docker rejects it, exit 128, `Cwd must be an absolute path`. The `gh` case
+  failed SILENTLY: the title was mangled, `gh` accepted it, exit 0, and printed
+  a cheerful confirmation containing the corrupted string that nobody read. Same
+  mechanism, opposite observability, and only the loud one made it into the
+  file. Assume every quiet instance of a known-loud failure exists and has not
+  been noticed.
+
+  Do not add a row per tool. That is how the table above got to its current
+  size, and a row per tool is an enumeration of what its author happened to hit.
+
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
@@ -1597,6 +1645,76 @@ Rules of the road:
   about that block inherits every drift problem above. A measurement has no line
   number to drift.
 
+- **A CITATION'S WORTH IS WHETHER IT FAILS LOUDLY. Pin to an immutable object
+  where you can; where you must cite something mutable, the citation has to be
+  MACHINE-CHECKED so the change trips something.** Derived on 2026-09-09 by
+  breaking three weaker forms in a row, each proposed as the durable one:
+
+  - *"A claim about a completed action cannot be falsified by later action."*
+    False. A completed-action claim that AGGREGATES OVER AN OPEN POPULATION
+    goes stale on the next member, because the population keeps acquiring
+    them. A diff range shows it without needing any record: `a3137d5..851348b`
+    reproduces forever, `a3137d5..HEAD` does not — and both are measurements
+    of completed diffs. This file already applies the remedy elsewhere, in the
+    bullet that says instances "accumulate on **#170** rather than in a count
+    here".
+  - *"Cite something that cannot change without someone having to edit it."*
+    False. Deliberate edits are routine. A phrase quoted from
+    `AttackAiInputsPanel.test.tsx` survived a correct edit that moved it into a
+    `title` attribute; the citation went vacuous in silence.
+  - *A quoted string is safe because it survives a reflow.* True of reflows and
+    beside the point. The failure mode that matters is not motion, it is
+    SILENCE.
+
+  Rank the forms by how they fail. A phrase quoted in prose just stops being
+  there — **silent**. A phrase quoted in an ASSERTION is worse than silent: it
+  keeps reporting success, which is the #72 shape reached from the citation
+  rule.
+
+  **A SHA is the loud form, and NOT for the reason a first draft of this bullet
+  gave.** It said a SHA "stops resolving". It does not. A rebase ORPHANS a
+  commit without deleting it, so the object answers `git cat-file -t` with
+  `commit` until garbage collection — which can be a fortnight. A citation
+  check asking "does this resolve?" therefore PASSES on a SHA that is no longer
+  on the branch, and pointing a reader at that check is worse than pointing
+  them at nothing.
+
+  **What fails loudly is ANCESTRY, and only if someone asks:**
+
+      git merge-base --is-ancestor <sha> HEAD
+
+  Measured 2026-09-09 on `fix/ai-inputs-discarded-list` after it was rebased
+  from `a3137d5` onto `e3163f9`: `db85e79`, `e3ca777`, `e16eadc` and `f41c0c4`
+  all answered `cat-file -t` with `commit`, and none was an ancestor of the
+  rebased tip. Two CI certificates and a review-coverage claim in that PR's body
+  were pinned to one of them.
+
+  This correction is itself the third time in one evening a rule here was
+  falsified by its own author within hours of writing it, by applying it. The
+  first two produced gates. **The gate this one wants, and the scope is
+  the whole decision:** every SHA cited gets `--is-ancestor` checked, so an
+  orphaned citation fails the gate rather than the reader.
+
+  **Built over changed FILES it would close the smaller half and read as
+  closing all of it.** Both stale citations that prompted this rule were in PR
+  BODIES — a test-count identity in one, four orphaned SHAs in another — and a
+  body is not a file, so a tree-walking gate reaches neither. The version that
+  covers both runs `on: pull_request` and reads
+  `github.event.pull_request.body`, which is the surface with no gate, the most
+  readers, and permanence under squash. Decide that before writing it; deciding
+  after is what this entry is a record of. Not built.
+
+  **A number carrying its command must also name its REF, and this is where the
+  rule pays for itself.** Re-deriving means choosing a tree, and the tree a
+  reader picks is `main`. `context/gene.md` reported a collected unit-test total of
+  **7128**, citing `pytest -m unit --collect-only -q` summed per file, and
+  named no tree. `main` later moved to 7128 itself, so re-running the command on
+  `main` REPRODUCED the written number while the branch was really 7137 — a
+  false confirmation manufactured by the one sentence whose purpose is to
+  license not checking. Write `7137 (<command>, at d1d927d)`: on the wrong tree
+  the ref fails to reproduce and the reader learns something instead of being
+  reassured.
+
 - **SPOT-CHECK a subagent's `file:line` citations before they enter a document,
   and record the check. A sample, not all of them — what you need is the
   report's CALIBRATION.** This replaces "be skeptical of subagent output", which
@@ -1790,7 +1908,11 @@ Rules of the road:
      sources into one, establish which one the machine actually reads.**
 
   **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
-  `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
+  `ci.yml`: blocking on the documents named in `ENFORCED_TARGETS`, report-only
+  on `context/*.md`. **NOT "the shared documents" — `DECISIONS.md` is in
+  neither list**, and the gate now prints the set it actually read on every
+  clean result, so the covered documents are a measurement rather than a
+  claim in this file
   (`dave.md` is owner-write-only, so a blocking gate there would hold Gene's PR
   red on a line Gene may not edit; `gene.md` is agent-maintained since D-063 and
   is advisory for the different reason that its churn is hourly). It matches SPELLED cardinals and
