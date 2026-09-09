@@ -90,6 +90,13 @@ Every "without" figure was served under `deliverable_version: 1`.
   card vanishes silently. A judgement call, not a clear loss, so it is written
   into the docstring at the raise rather than left unstated. **If you disagree,
   this is the one decision in the PR I would expect you to overturn.**
+  **YOU DID, 2026-09-09.** The slot nulls with a stated reason now, and the
+  reversal turned on two things I did not have: the raise fires when ONE of four
+  kinds is unresolvable where nulling needs ALL FOUR, and there is no
+  `error*.tsx` anywhere under `apps/web/src/app`, so it was never one card — it
+  was the whole home page. My "Pending" objection was right and is what made a
+  bare null insufficient; the fix is the reason carried beside the null, not the
+  raise.
 - **`deliverable_release.py` and migration 0041 both say a re-release repairs a
   NULL `parent_version`. It does not**, and my new docstring says so — which
   makes the correct claim the minority statement in the tree, two-to-one. Not

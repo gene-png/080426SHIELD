@@ -1117,9 +1117,17 @@ items:
                                 (_deliverable_parent / _released_parent), and a
                                 NULL link refuses with a typed 404 rather than
                                 falling back. See D-073
-#123 Risk dashboard 404         the register query takes the highest VERSION with
-                                no finalized filter (:974), then 404s with a
-                                message asserting nothing is finalized (:982)
+#123 Risk dashboard 404         clients.py, risk_dashboard: the register query
+                                takes the highest VERSION with no finalized
+                                filter, then 404s with a message asserting
+                                nothing is finalized. The line numbers this
+                                entry carried (:974, :982) resolved into
+                                zt_dashboard by 2026-09-09 -- and landed on a
+                                same-shaped `dashboard_not_released` 404, which
+                                is what made them read as verified. The
+                                neighbouring #114 entry already carries a
+                                disclaimer about its own numbers; this one had
+                                none, so its numbers certified themselves
 ```
 
 **Every entry above names the MECHANISM, not only the line.** A line number goes

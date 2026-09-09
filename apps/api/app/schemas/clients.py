@@ -458,12 +458,20 @@ class ValueSummaryResponse(BaseModel):
 
     tech_debt_savings_usd: float | None
     tech_debt_savings_cost_known: bool
-    tech_debt_savings_unresolved: bool = False
+    tech_debt_savings_unresolved: bool
     zt_gap_count: int | None
-    zt_gap_unresolved: bool = False
+    zt_gap_unresolved: bool
     attack_uncovered_count: int | None
-    attack_uncovered_unresolved: bool = False
+    attack_uncovered_unresolved: bool
     csf_gap_count: int | None
-    csf_gap_unresolved: bool = False
+    csf_gap_unresolved: bool
     has_any_data: bool
-    has_unresolved: bool = False
+    has_unresolved: bool
+
+    # REQUIRED, not `= False`. These shipped with a default for one commit, and
+    # the default pointed the reassuring way: a construction site that forgot
+    # one would publish "Pending" over a figure that could not be resolved,
+    # silently. That is the direction the standing rule forbids -- missing data
+    # defaults to UNCONFIRMED, never to confirmed -- and the C0 argument for
+    # optional fields does not apply, because these are written by the server
+    # rather than parsed from an older one.

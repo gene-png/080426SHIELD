@@ -636,6 +636,44 @@ def _break_parent_link(db: Session, service_id) -> None:
 
 
 @pytest.mark.unit
+def test_value_summary_flags_are_false_when_everything_resolves(app_client) -> None:
+    """The FALSE side of every flag, which nothing else pins.
+
+    Three tests assert the flags go True. None asserted they stay False, so an
+    implementation that set `unresolved=True` unconditionally would satisfy all
+    of them — the flag would be a constant wearing a predicate's name. This is
+    the same both-halves discipline a guard needs: watching it fire proves it
+    fires, never that it passes.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    admin_id = admin["user"]["id"]
+
+    db = _session(c)
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    db.commit()
+    db.close()
+
+    body = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    ).json()
+
+    assert body["csf_gap_count"] == 5, "precondition: this kind DID resolve"
+    assert body["has_unresolved"] is False
+    for flag in (
+        "csf_gap_unresolved",
+        "zt_gap_unresolved",
+        "attack_uncovered_unresolved",
+        "tech_debt_savings_unresolved",
+    ):
+        assert body[flag] is False, flag
+
+
+@pytest.mark.unit
 def test_value_summary_reports_an_unresolvable_kind_instead_of_refusing(app_client) -> None:
     """One unresolvable kind nulls ITS slot and flags it. The others still compute.
 

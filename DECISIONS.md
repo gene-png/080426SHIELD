@@ -4111,6 +4111,31 @@ two of its three possible causes — a row present at that version with a
 non-finalized status reads as no row at all — which is unreachable until a
 reopen path lands; #238.
 
+**OVERTURNED 2026-09-09, and the paragraph below is kept as the record of what
+was decided first.** The raise is gone: `_released_parent` returns None, the
+kind is reported UNRESOLVED beside its null, and `ValueLoopCard` renders a third
+state. `#236` is no longer reachable from this endpoint. Anyone reading the next
+paragraph as current would either build an error boundary for a failure that
+cannot occur, or reinstate the raise citing a rejection that has since been
+reversed.
+
+Two facts inverted the weighing, and neither was available when it was made.
+**The trigger rates are not comparable**: the raise fires when ONE of four kinds
+is unresolvable, while nulling loses the card only when ALL FOUR are — so
+raising was the common case argued as though it were the edge case. And **there
+is no `error*.tsx` anywhere under `apps/web/src/app`** (glob: only
+`not-found.tsx`), so with `/home` fetching `/value-summary` in an unguarded
+`Promise.all` it was never one card failing, it was the entire client home page
+with no boundary and no partial render. The client's report also stays reachable
+from `/results`, so a missing figure is contradicted one click away — the
+recoverable direction.
+
+The defect the original reasoning correctly identified — that a bare null means
+"pending" — was real, and is why nulling ALONE was not the answer. The reason is
+now carried beside the null.
+
+_What follows is the superseded decision, left in place rather than rewritten._
+
 **The option that was NOT taken is named in `_released_parent`'s docstring, not
 here.** Nulling the whole slot for an unresolvable service kind is implementable
 in `routes/clients.py` alone and would have kept the home page alive; it was
