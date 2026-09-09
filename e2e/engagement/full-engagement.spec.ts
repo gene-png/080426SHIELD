@@ -239,12 +239,34 @@ const RUN_STAMP = new Date()
   .replace(/[:.]/g, "-")
   .replace("T", "_")
   .slice(0, 19);
-const RUN_DIR = path.resolve(
-  __dirname,
-  "..",
-  "artifacts",
-  `engagement-${RUN_STAMP}`,
-);
+
+const ARTIFACT_ROOT = path.resolve(__dirname, "..", "artifacts");
+
+/**
+ * The run folder. NOT a `const`, because the stamp is module scope and a RETRY
+ * is not.
+ *
+ * `playwright.config.ts` sets `retries: 1` when `CI` is set. A retry re-enters
+ * the test and reassigns `runState`, but `RUN_STAMP` is computed once at module
+ * load — so both attempts resolve the same folder and the retry's `step-log.md`
+ * silently overwrites the failed attempt's. The failed attempt is the one worth
+ * reading.
+ *
+ * Suffixed per attempt instead. Low likelihood — this spec is opt-in and CI
+ * never sets its flag — but the cost of being wrong is losing exactly the
+ * record this instrument exists to produce.
+ */
+let RUN_DIR = path.join(ARTIFACT_ROOT, `engagement-${RUN_STAMP}`);
+
+/** Point `RUN_DIR` at this attempt's folder. Called once, at test start. */
+function resolveRunDir(retry: number): void {
+  RUN_DIR = path.join(
+    ARTIFACT_ROOT,
+    retry > 0
+      ? `engagement-${RUN_STAMP}-retry${retry}`
+      : `engagement-${RUN_STAMP}`,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Step log
@@ -316,6 +338,16 @@ class Indeterminate extends Error {
 class Recorder {
   readonly steps: StepRecord[] = [];
   readonly notes: string[] = [];
+  /**
+   * Steps ENTERED but not yet completed, outermost first. Non-empty when the
+   * run was abandoned mid-step — `writeLog` reports it as the in-flight chain.
+   */
+  readonly inFlight: Array<{
+    phase: string;
+    name: string;
+    via: Via;
+    started: number;
+  }> = [];
   private seq = 0;
 
   /** Next row number. Called at PUSH time so `#` always equals row position. */
@@ -348,6 +380,28 @@ class Recorder {
     body: () => Promise<T>,
   ): Promise<T | undefined> {
     const started = Date.now();
+
+    // ENTRY MARKER. Observed on the way IN, and it is the only record a step
+    // that HANGS will ever produce.
+    //
+    // On a test timeout Playwright abandons the body mid-`await`, so the
+    // in-flight step's own `try`/`catch` never runs and it pushes no row. The
+    // log then arrives with the PARTIAL banner and no row naming the step that
+    // consumed the budget — on a forty-step walk carrying 240s and 300s waits,
+    // the single most valuable datum in the file, missing.
+    //
+    // A STACK rather than one slot, because steps nest: the per-artifact
+    // downloads run inside "read the released deliverable", and reporting only
+    // the innermost would lose which service it belonged to.
+    //
+    // This is not a success record, so "write the success record where the
+    // success is" does not bar it — it asserts only that the step was ENTERED,
+    // which is true at the moment it is written. The outcome is still recorded
+    // exclusively in the completion branches below.
+    this.inFlight.push({ phase, name, via, started });
+    // eslint-disable-next-line no-console
+    console.log(`  ...   [${phase}] ${name} (${via}) ENTERED`);
+
     // The sequence number is assigned when the record is PUSHED, not on entry.
     //
     // Steps nest — the per-artifact downloads run inside "read the released
@@ -360,6 +414,7 @@ class Recorder {
       const value = await body();
       const ms = Date.now() - started;
       const seq = this.nextSeq();
+      this.inFlight.pop();
       this.steps.push({ seq, phase, name, outcome: "ok", via, ms, detail: "" });
       // eslint-disable-next-line no-console
       console.log(`  ok    [${phase}] ${name} (${via}, ${ms}ms)`);
@@ -374,6 +429,7 @@ class Recorder {
             : "failed";
       const detail = describe(err);
       const seq = this.nextSeq();
+      this.inFlight.pop();
       this.steps.push({ seq, phase, name, outcome, via, ms, detail });
       const marker = {
         unreachable: "MISS ",
@@ -590,6 +646,57 @@ async function pageState(page: Page): Promise<PageState> {
   }
 
   return { kind: "loaded" };
+}
+
+/**
+ * Did we actually land on the page we asked for, as the identity we assumed?
+ *
+ * `visit()` used to capture the `goto` status into a variable that appeared
+ * only inside message strings — it decided nothing. The verdict was "no error
+ * card, and some `<h1>` exists", and TWO `<h1>`s in this app mean the opposite
+ * of arrival:
+ *
+ *  - `app/admin/layout.tsx` renders `<h1>Not authorized</h1>` for an
+ *    authenticated NON-admin.
+ *  - `app/sign-in/page.tsx` renders `<h1>Sign in</h1>`, and that page does not
+ *    redirect an already-signed-in user, so a bounce there is a real 200 with
+ *    a real `<h1>`.
+ *
+ * The constructible failure: Phase 6's "admin signs back in" records `failed`
+ * and the run continues by design, after which all eight `adminPages` visits
+ * land on `/sign-in` or the Not-authorized shell and every one records `ok`.
+ * One `failed` row, eight rows earlier, against eight confident `ok`s.
+ *
+ * Returns null when nothing is wrong. `status` comes from `goto`, which is
+ * null for a client-side navigation.
+ */
+function landingProblem(
+  page: Page,
+  target: string,
+  status: number | null,
+  h1: string | null,
+): { fatal: boolean; message: string } | null {
+  if (status !== null && status >= 400) {
+    return { fatal: true, message: `HTTP ${status}` };
+  }
+  const here = new URL(page.url()).pathname;
+  const wanted = new URL(target, page.url()).pathname;
+  if (here.startsWith("/sign-in") && !wanted.startsWith("/sign-in")) {
+    return {
+      // Not `fatal`: this says the SESSION is not what the phase assumed, which
+      // makes every reading off this page meaningless rather than wrong. It is
+      // an "I could not look", so it records `indeterminate`.
+      fatal: false,
+      message: `bounced to ${here} — the session is not what this phase assumed, so nothing here describes ${wanted}`,
+    };
+  }
+  if (h1 !== null && /^\s*Not authorized\s*$/.test(h1)) {
+    return {
+      fatal: true,
+      message: `the admin shell rendered "Not authorized" — this session is authenticated but not a Kentro consultant`,
+    };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -857,6 +964,21 @@ async function visit(
     const status = response ? response.status() : null;
     const quiet = await settled(page);
 
+    // BEFORE anything is read off the page: are we even on it, as the identity
+    // this phase assumed? The status is a verdict here, not decoration.
+    const earlyH1 = await page
+      .locator("h1")
+      .first()
+      .textContent({ timeout: 5_000 })
+      .catch(() => null);
+    const landing = landingProblem(page, url, status, earlyH1);
+    if (landing) {
+      if (landing.fatal) {
+        throw new Error(`${url}: ${landing.message}`);
+      }
+      throw new Indeterminate(`${url}: ${landing.message}`);
+    }
+
     const state = await pageState(page);
     if (state.kind === "load-error") {
       throw new Error(
@@ -937,10 +1059,17 @@ async function visit(
  * still reasoned rather than measured. One measurement does not certify its
  * neighbours.
  *
- * The per-step `console.log` in `Recorder.step` is kept regardless. It is the
- * mitigation that needs no hook to fire, because it writes as the run goes
- * rather than at the end — and it is what would still survive the three cases
- * above that nobody has measured.
+ * The per-step `console.log` in `Recorder.step` is kept regardless: it needs no
+ * hook to fire, so it is what survives the three unmeasured cases above.
+ *
+ * **Precise about what it writes, because the previous wording was not.** It
+ * said the console line "writes as the run goes rather than at the end". Both
+ * outcome lines are inside the completion branches, so as written it wrote for
+ * every step that COMPLETED and nothing for the one that HUNG — narrower than
+ * the sentence implied, sited exactly where someone reasoning about a timeout
+ * would look. `Recorder.step` now also logs an `ENTERED` line on the way in,
+ * and pushes the step onto `inFlight`, so a hanging step appears both in the
+ * terminal and in the log's in-flight chain.
  */
 interface RunState {
   rec: Recorder;
@@ -966,7 +1095,7 @@ test.afterEach(async () => {
   } catch {
     videoPath = null; // page torn down; the path is a convenience, not the record
   }
-  writeLog(runState.rec, {
+  const ctx = {
     legalName: runState.legalName,
     clientEmail: runState.clientEmail,
     clientId: runState.clientId,
@@ -974,7 +1103,30 @@ test.afterEach(async () => {
     videoPath,
     outputDir: test.info().outputDir,
     completed: runState.completed,
-  });
+  };
+  try {
+    writeLog(runState.rec, ctx);
+  } catch (err) {
+    // `logged` is set BEFORE the write, so a throw here would otherwise mean
+    // no file and no retry — "I could not write" sharing a branch with
+    // "already written", which is the shape this whole file is about. The flag
+    // stays (a retry would just throw again on a full disk or a bad path);
+    // what changes is that the record is not LOST. Dump it to stdout, which
+    // needs no filesystem, and say plainly that the files are missing.
+    //
+    // eslint-disable-next-line no-console
+    console.log(
+      `\nfull-engagement: writeLog FAILED (${describe(err)}). No step-log.md or step-log.json was written. The complete record follows as JSON.\n`,
+    );
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify(
+        { ctx, steps: runState.rec.steps, notes: runState.rec.notes },
+        null,
+        2,
+      ),
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -987,6 +1139,9 @@ test("full engagement: intake -> five services -> release -> client view -> back
   test.setTimeout(RUN_BUDGET_MS);
 
   const rec = new Recorder();
+  // Before the folder is created: a retry gets its own, so it cannot overwrite
+  // the failed attempt's log.
+  resolveRunDir(test.info().retry);
   fs.mkdirSync(RUN_DIR, { recursive: true });
 
   const stamp = `${Date.now()}`;
@@ -1162,8 +1317,17 @@ test("full engagement: intake -> five services -> release -> client view -> back
       // Give it a moment to settle first (the review step recomputes from
       // auto-saved state), then report the SYMPTOM plus the facts this run
       // actually established, and let the reader diagnose.
+      // Branch on `settled`'s ANSWER. Discarding it is the defect this file
+      // has a rule about: a false return means the page is still fetching, so
+      // the re-read below describes nothing, and reporting `unreachable` off it
+      // claims "I looked and it was not there" on the strength of a look that
+      // did not happen.
       if (await submit.isDisabled()) {
-        await settled(page, 10_000);
+        if (!(await settled(page, 10_000))) {
+          throw new Indeterminate(
+            "Submit intake read as disabled and the review step never went quiet — cannot separate a disabled button from an unhydrated one",
+          );
+        }
       }
       if (await submit.isDisabled()) {
         throw new Unreachable(
@@ -1230,11 +1394,28 @@ test("full engagement: intake -> five services -> release -> client view -> back
               `the intake queue rendered a "not available yet" gate, which is not an idiom this admin surface was expected to use: ${queueState.detail}`,
             );
           }
-          await affordance(
+          const queueH1 = await affordance(
             page.locator("h1").first(),
-            "intake queue <h1> (renders only when the queue loaded)",
+            "an <h1> on the intake queue",
             60_000,
           );
+          // The comment here used to read "renders only when the queue loaded".
+          // That is true of `IntakeQueue` and false of the page you may
+          // actually be on: `/sign-in` and the admin shell's "Not authorized"
+          // both render an `<h1>` too, and a bounce to either would have
+          // satisfied the wait and let the loop below report zero unpublished
+          // requests off a page that never showed any.
+          const queueLanding = landingProblem(
+            page,
+            "/admin/queue",
+            null,
+            await queueH1.textContent().catch(() => null),
+          );
+          if (queueLanding) {
+            throw new Indeterminate(
+              `not on the intake queue: ${queueLanding.message}`,
+            );
+          }
 
           // One "Publish for processing" button per unfulfilled request. Each
           // click re-renders the list, so re-query rather than holding handles.
@@ -1316,6 +1497,17 @@ test("full engagement: intake -> five services -> release -> client view -> back
       const serviceId = serviceIds.get(svc.type);
       if (!serviceId) {
         await rec.step(svc.slug, "open workspace", "ui", async () => {
+          // Same threading as `publishOk`: the message must not assert a fact
+          // about a tenant nothing ever looked at. When `clientId` never
+          // resolved, the whole publish block was skipped — no queue was
+          // opened, no request was published, no engagement list was read — so
+          // "no service was opened for this tenant" would be a claim with no
+          // observation behind it.
+          if (clientId === null) {
+            throw new Indeterminate(
+              `${svc.type}: the tenant was never resolved, so the publish block did not run and nothing looked at this service — its absence here is the run's, not the product's`,
+            );
+          }
           throw new Unreachable(
             `no ${svc.type} service was opened for this tenant`,
           );
@@ -1476,7 +1668,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
           // be logged as a product state. The cause is NOT asserted — the first
           // draft blamed "this assessment status" with nothing to support it.
           if (await runAi.isDisabled()) {
-            await settled(page, 10_000);
+            if (!(await settled(page, 10_000))) {
+              throw new Indeterminate(
+                `${svc.slug}: Run AI read as disabled and the workspace never went quiet — cannot separate a disabled button from an unhydrated one`,
+              );
+            }
           }
           if (await runAi.isDisabled()) {
             throw new Unreachable(
@@ -1523,7 +1719,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
           // calling it disabled, so "React had not attached yet" is not
           // recorded as "the product disabled this control".
           if (await approve.isDisabled()) {
-            await settled(page, 10_000);
+            if (!(await settled(page, 10_000))) {
+              throw new Indeterminate(
+                `${svc.slug}: Approve read as disabled and the workspace never went quiet — cannot separate a disabled button from an unhydrated one`,
+              );
+            }
           }
           if (await approve.isDisabled()) {
             throw new Unreachable(
@@ -1593,7 +1793,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
         // released, but a disabled read here may equally be a pre-hydration
         // one, and this run cannot tell the two apart from the button alone.
         if (await finalize.isDisabled()) {
-          await settled(page, 10_000);
+          if (!(await settled(page, 10_000))) {
+            throw new Indeterminate(
+              `${svc.slug}: Finalize read as disabled and the workspace never went quiet — cannot separate a disabled button from an unhydrated one`,
+            );
+          }
         }
         if (await finalize.isDisabled()) {
           throw new Unreachable(
@@ -1904,6 +2108,32 @@ function writeLog(
     );
     lines.push("> conclusions from what is missing.");
     lines.push("");
+    // The in-flight chain, named FIRST. A step abandoned mid-await pushes no
+    // row of its own, so without this the step that consumed the budget is the
+    // one step absent from the table — precisely the thing you opened the file
+    // to find.
+    if (rec.inFlight.length > 0) {
+      lines.push("**IN FLIGHT WHEN THE RUN STOPPED** (outermost first):");
+      lines.push("");
+      for (const f of rec.inFlight) {
+        lines.push(
+          `- \`[${f.phase}] ${f.name}\` (${f.via}) — running for ${Date.now() - f.started}ms, no row of its own below`,
+        );
+      }
+      lines.push("");
+      lines.push(
+        "This is the likeliest place the budget went. It has no row in the Steps",
+      );
+      lines.push(
+        "table because a step abandoned mid-await never reaches its own record.",
+      );
+      lines.push("");
+    } else {
+      lines.push(
+        "No step was in flight, so the run stopped between steps rather than inside one.",
+      );
+      lines.push("");
+    }
   }
   lines.push(
     "This run asserts nothing about content. Every line below is an OBSERVATION.",
@@ -1987,6 +2217,25 @@ function writeLog(
   lines.push("");
   lines.push("## Notes");
   lines.push("");
+  if (!ctx.completed) {
+    // Notes and steps are separate arrays, and a note written partway through a
+    // step SURVIVES that step being abandoned. So on a partial run a note can
+    // describe work whose step has no row — e.g. "run-ai -> 200" with no Run AI
+    // row, because the note fired and the reload after it hung. That is not a
+    // contradiction in the product; it is this file's two records having
+    // different granularity, and saying so here is cheaper than someone
+    // deducing it.
+    lines.push(
+      "> On a PARTIAL run a note may describe work whose step has no row above:",
+    );
+    lines.push(
+      "> notes are written as a step proceeds, and an abandoned step never records",
+    );
+    lines.push(
+      "> its own outcome. Cross-check against the in-flight chain at the top.",
+    );
+    lines.push("");
+  }
   for (const n of rec.notes) lines.push(`- ${n.replace(/\|/g, "\\|")}`);
   lines.push("");
 
@@ -2016,6 +2265,13 @@ function writeLog(
         // the product's. Machine-readable twin of the banner in the Markdown.
         completed: ctx.completed,
         stepOrder: "completion",
+        // Steps entered but never completed — they have no entry in `steps`.
+        inFlightAtStop: rec.inFlight.map((f) => ({
+          phase: f.phase,
+          name: f.name,
+          via: f.via,
+          runningMs: Date.now() - f.started,
+        })),
         steps: rec.steps,
         notes: rec.notes,
       },
