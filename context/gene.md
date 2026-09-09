@@ -7,8 +7,13 @@ about state outside the working tree carries the command that produced it.
 
 ### The one-line state
 
-**#114 is implemented on `fix/dashboard-version-pairing`, cut fresh from
-`origin/main` at `a3137d5`** (`git log --oneline -1 origin/main`). It comes back
+**#114 is implemented on `fix/dashboard-version-pairing`, now based on
+`origin/main` at `851348b`** (`git rev-parse origin/main`, 2026-09-09). It was
+cut from `a3137d5` and REBASED onto `851348b` after PR #242 merged; the one
+conflict was `DECISIONS.md`, where both branches appended a record. Stated
+because the earlier SHA sat under this file's standing promise that every claim
+about state outside the working tree carries the command that produced it — and
+a certified SHA is exactly what stops the next reader checking. It comes back
 to you unconditionally: it changes client dashboard numbers (merge-rule
 condition 6) and touches `apps/api/tests/**` (condition 5). **I did not merge it
 and did not open it for merging.**
@@ -66,11 +71,16 @@ Every "without" figure was served under `deliverable_version: 1`.
   verdict and I have narrowed it.** The read takes `version` and `entries` from
   one `RiskRegister` row, so it has no pairing to break. The register's SOURCE
   selection is a separate question I had not asked: `routes/risk.py::_latest`
-  picks the newest assessment excluding only DISCARDED — no finalized filter, no
-  deliverable link, looser than the rule I just deleted — so a DRAFT
-  re-assessment can be synthesized into a register that is exported and served.
-  **Filed as #237, `mvp-blocking`.** This is the fifth service, and
+  picked the newest assessment excluding only DISCARDED — no finalized filter,
+  no deliverable link, looser than the rule I just deleted — so a DRAFT
+  re-assessment could be synthesized into a register that is exported and
+  served. **Filed as #237, `mvp-blocking`.** This is the fifth service, and
   `DELIVERY_PLAN.md` predicted it.
+  **Shipped 2026-09-09 in PR #242** (D-075, `main` at `851348b`); `gh issue view
+  237` reads CLOSED/COMPLETED. `_latest` is gone, split into `_latest_register`
+  for the gate and an APPROVED/RELEASED filter for synthesis. Kept in the past
+  tense rather than deleted: the finding is the useful part and it still stands
+  as a record of what the sweep missed.
 - **And a SECOND Risk residual, in `routes/clients.py` rather than
   `routes/risk.py`.** `risk_dashboard` selects the highest-`version` register and
   refuses if it is not finalized, so a consultant generating v2 hides the
@@ -113,11 +123,36 @@ Every "without" figure was served under `deliverable_version: 1`.
 ### One thing I could not run, and did not claim
 
 `pytest -m unit` in full — the same host-memory limit you hit. I ran the six
-affected suites (46 passed, exit 0) and collected the full unit set: **7128**
-(`pytest -m unit --collect-only -q`, summed per file). That is `main`'s 7123
-plus the 5 tests this branch adds, and the diff adds 5 `def test_` and removes
-0 — so no test was silently deselected (#235's signature). CI's Python job is
-the full-suite evidence.
+affected suites (46 passed, exit 0). The collected-set identity, **re-measured
+2026-09-09 against the rebased head and not carried forward**:
+
+| tree | collected |
+| --- | --- |
+| `main` @ `851348b` | **7128** |
+| this branch @ `d1d927d` | **7137** |
+
+`docker compose exec -T api sh -lc "cd /app && python -m pytest -m unit
+--collect-only -q"`, summed per file (119 files both sides). The diff adds
+**9** `def test_` and removes 0, and 7128 + 9 = 7137 — so no test was silently
+deselected (#235's signature). CI's Python job is the full-suite evidence.
+
+**This sentence previously read "7128 … `main`'s 7123 plus the 5 tests this
+branch adds", and it was wrong TWICE over. Recorded rather than quietly
+corrected, because the second way is a trap.**
+
+The 5 was true at `4a3f4aa`, this branch's FIRST commit. `c855358` took it to 8
+and `adbe5df` to 9, so the branch invalidated its own figure
+before #242 existed — the number was already wrong when the rebase started, and
+the rebase is not what broke it. Then #242 added five tests of its own and moved
+`main` off 7123.
+
+**The trap: `main` now collects 7128 — exactly the figure this paragraph used to
+state as THIS BRANCH's count.** Anyone re-deriving it on `main` gets a number
+matching the written one and concludes the claim checks out, while the branch is
+really 7137. A false confirmation, produced by the one sentence whose stated
+purpose is to license not checking. That is why this was repaired rather than
+date-qualified: a stale number invites a check, and this one would have survived
+the check it invited.
 
 ### Superseded — 2026-09-06 (Track C, #124)
 

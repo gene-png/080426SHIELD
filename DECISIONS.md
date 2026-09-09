@@ -4072,16 +4072,26 @@ than inviting it.
 was checked".** It reads `version` and `entries` from the SAME `RiskRegister`
 row, so it has no pairing to break. But the register's own SOURCE selection was
 never in this sweep, and it is looser than the rule deleted here:
-`routes/risk.py::_latest` picks the newest assessment excluding only DISCARDED,
-with no finalized filter and no deliverable link, so a DRAFT re-assessment can
-be synthesized into a register that is then exported and served. Filed as #237.
+`routes/risk.py::_latest` picked the newest assessment excluding only
+DISCARDED, with no finalized filter and no deliverable link, so a DRAFT
+re-assessment could be synthesized into a register that is then exported and
+served. Filed as #237.
+
+**True as at 2026-09-08, and no longer true.** #237 shipped in PR #242 the
+following day (D-075, `main` at `851348b`); `_latest` no longer exists and
+`_latest_register` answers only the gate's question. Written in the past tense
+rather than deleted, because what this record is FOR is the reasoning that found
+the residual, and that reasoning is unaffected by the fix. Qualified here rather
+than left standing because the sentence named a live `mvp-blocking` defect in a
+client-facing export, which is a claim someone would act on.
 
 **There are TWO residuals in Risk, not one, and the second is in the file this
 sweep DID cover.** The paragraph above names `routes/risk.py::_latest` and stops,
 which sends a reader asking "what was left in Risk?" one issue short:
 
-- `routes/risk.py::_latest` — which assessments feed synthesis. Tracked in
-  #237.
+- `routes/risk.py::_latest` — which assessments feed synthesis. Was tracked in
+  #237; shipped in PR #242, D-075. The helper is now `_latest_register` and is
+  the gate's alone.
 - `routes/clients.py::risk_dashboard` — WHICH REGISTER the dashboard shows. It
   selects the highest-`version` register and then refuses if that one is not
   finalized, so generating v2 hides a finalized v1 the client has been
