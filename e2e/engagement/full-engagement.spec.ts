@@ -69,7 +69,20 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  * first — `affordance()` or `settled()`, never a bare `isVisible()`/`count()` —
  * and where it cannot, it records `Indeterminate` rather than `ok` and rather
  * than a specific cause invented to explain a symptom. `visit()` does not treat
- * "some heading exists" as arrival, because the house error card is a heading.
+ * "some heading exists" as arrival, because the error card is a heading — and
+ * on the five CLIENT DASHBOARDS the gated and failed states each render an
+ * `<h1>` of their own, so even "an `<h1>` exists" is not arrival there.
+ *
+ * **And when you widen a probe, enumerate what it matches instead of asserting
+ * a shape.** The version of `pageState` before this one called itself "a
+ * PREDICATE ... so a new error surface is caught without an edit". That was
+ * true of the eight admin surfaces it was derived from and false of the five
+ * client dashboards, which are the entire subject of Phase 5 — it recorded
+ * `ok` over a client who could see nothing. Its `[role="alert"]` half was
+ * broader still: 59 sites across 42 files, most of them healthy-page notices,
+ * one of which this run triggers by design. A docstring generalising from half
+ * the app is the mechanism, not carelessness; the fix is to write down the
+ * enumeration and the grep that produced it.
  *
  * **Current status: nothing here is a contract yet.** Once Gene has watched the
  * video and read the step log, we decide together which observations become
@@ -447,39 +460,136 @@ async function settled(page: Page, timeout = 20_000): Promise<boolean> {
 }
 
 /**
- * The house error card: every failed fetch in this app renders a card titled
- * "Couldn't load ..." (IntakeQueue, CsfWorkspace, ZtWorkspace, AttackWorkspace,
- * TechDebtWorkspace, AssessmentsView, IntakeWizard, both self-assessments), or
- * sets an inline `[role="alert"]`. Derived as a PREDICATE over that shape rather
- * than enumerated per page, so a new error surface is caught without an edit.
+ * What state is this page in?
  *
- * Returns the error text if the page is showing one, else null.
+ * ## The scope, ENUMERATED — this app has TWO error idioms, not one
  *
- * THE TWO BARE `isVisible()` CALLS BELOW ARE DELIBERATE, and they are the only
- * ones in this file. Everywhere else a bare `isVisible()` is the defect
- * described in the header; here it is correct, and the difference is worth
- * stating because the grep in that header hits these two lines.
+ * The previous version of this claimed to be "a PREDICATE over that shape
+ * rather than enumerated per page, so a new error surface is caught without an
+ * edit". That sentence was true of the surfaces it was derived from and false
+ * of the whole app, and asserting it over everything produced two live
+ * defects. What follows is what the probes ACTUALLY match, per idiom.
  *
- * This is a "is an error on screen RIGHT NOW" probe, not a decision about
- * whether something arrived. Waiting would invert its meaning: `waitFor` on an
- * error card would sit for the full timeout on every healthy page and then
- * report no error — the correct answer reached slowly, on every single call.
- * And a null return is never treated as proof of health; it only means "no
- * error was showing at this instant", after which the CALLER still has to
- * establish arrival positively (`settled()`, then an `<h1>` or an
- * `affordance()`). So this function can produce a false negative and nothing
- * downstream depends on it not doing so.
+ * **Idiom 1 — the admin/intake error card.** A `CardTitle`, which renders an
+ * `<h3>`, reading "Couldn't load ...". Matched by the heading probe.
+ *
+ *     grep -rn "Couldn&apos;t load" --include=*.tsx apps/web/src
+ *
+ * Covers IntakeQueue, CsfWorkspace, ZtWorkspace, AttackWorkspace,
+ * TechDebtWorkspace, AssessmentsView, IntakeWizard, and both self-assessments.
+ *
+ * **Idiom 2 — the CLIENT DASHBOARD gate, which the card probe cannot see.**
+ * All five client dashboards (`csf`, `zt`, `attack`, `tech-debt`, `risk`)
+ * render an `<h1>` "... not available yet" with the discriminating sentence in
+ * a sibling `<p>`. There is no "Couldn't load" HEADING anywhere on them, so
+ * idiom 1's probe returns nothing and the `<h1>` resolves — which is how five
+ * dashboards a client cannot see were recorded `ok`. Worse, that `<h1>` is
+ * byte-identical whether the report was never released or the fetch failed, so
+ * the heading alone cannot separate them. Hence `notAvailable()` below reads
+ * the `<p>`.
+ *
+ * ## Why there is no generic `[role="alert"]` probe any more
+ *
+ * There was, and it manufactured a finding. `role="alert"` is this app's
+ * general announcement mechanism, not its load-failure surface:
+ *
+ *     grep -rn 'role="alert"' --include=*.tsx apps/web/src | grep -v '\.test\.'
+ *
+ * returns 59 sites across 42 files — form validation, save errors, session
+ * warnings, MFA enrolment, and accounting notices on healthy pages. The one
+ * that bites this run is `AttackCitationAccounting`, which renders an alert
+ * whenever `rejected > 0` ("N citations named tools that are not on the list
+ * and were dropped"). This run does ATT&CK Run-AI before the Tech Debt list is
+ * approved, so rejections are expected, and Phase 6 re-visits that workspace —
+ * the old probe would have read a designed notice on a working page and
+ * recorded `failed`.
+ *
+ * The probe is now TEXT-SCOPED to the load-failure copy ("Failed to load ...",
+ * "Couldn't load ..."), which is what `DeliverablesTable` renders and what the
+ * s40 incident in CLAUDE.md was about. Narrowing rather than deleting keeps
+ * that case; the scope is the copy, not the role.
+ *
+ * ## On the bare `isVisible()` calls below
+ *
+ * Deliberate, and the only ones in this file. This is an "is X on screen RIGHT
+ * NOW" probe, not a decision about arrival. Waiting would invert its meaning: a
+ * `waitFor` on an error card would sit for the full timeout on every healthy
+ * page and then report no error. A `loaded` result is never treated as proof of
+ * health — the CALLER still establishes arrival positively afterwards — so this
+ * function may return a false negative and nothing downstream depends on it not
+ * doing so.
  */
-async function errorCardText(page: Page): Promise<string | null> {
+type PageState =
+  | { kind: "loaded" }
+  | { kind: "load-error"; text: string }
+  | {
+      kind: "not-available";
+      heading: string;
+      /**
+       * `gated`       — the report has not been released/finalized yet.
+       * `load-failed` — the dashboard fetch failed.
+       * `unknown`     — the copy matched neither; do NOT guess which.
+       */
+      reason: "gated" | "load-failed" | "unknown";
+      detail: string;
+    };
+
+async function pageState(page: Page): Promise<PageState> {
+  // Idiom 1: the admin/intake error card.
   const card = page.getByRole("heading", { name: /Couldn.t load/i }).first();
   if (await card.isVisible().catch(() => false)) {
-    return (await card.textContent().catch(() => null)) ?? "Couldn't load (…)";
+    return {
+      kind: "load-error",
+      text: (await card.textContent().catch(() => null)) ?? "Couldn't load (…)",
+    };
   }
-  const alert = page.getByRole("alert").first();
+
+  // Idiom 2: the client-dashboard gate. Covers both wordings — the four
+  // service dashboards say "Dashboard not available yet", the Risk Register
+  // says "Risk Register not available yet".
+  const gate = page
+    .getByRole("heading", { name: /not available yet\s*$/i })
+    .first();
+  if (await gate.isVisible().catch(() => false)) {
+    const heading = (
+      (await gate.textContent().catch(() => null)) ?? "not available yet"
+    ).trim();
+    // The discriminating sentence is in a sibling <p>, so read the region
+    // rather than the heading. Reading the heading alone is what made these
+    // two states indistinguishable.
+    const body =
+      (await page
+        .locator("main")
+        .first()
+        .textContent()
+        .catch(() => null)) ?? "";
+    const reason = /hasn.t been (released|finalized)/i.test(body)
+      ? "gated"
+      : /We couldn.t load/i.test(body)
+        ? "load-failed"
+        : "unknown";
+    return {
+      kind: "not-available",
+      heading,
+      reason,
+      detail: body.trim().slice(0, 300),
+    };
+  }
+
+  // Text-scoped inline load failure. NOT a bare `role="alert"` — see above.
+  const alert = page
+    .getByRole("alert")
+    .filter({ hasText: /(Failed|Unable) to load|Couldn.t load/i })
+    .first();
   if (await alert.isVisible().catch(() => false)) {
-    return (await alert.textContent().catch(() => null)) ?? "[role=alert]";
+    return {
+      kind: "load-error",
+      text:
+        (await alert.textContent().catch(() => null)) ?? "[load-failure alert]",
+    };
   }
-  return null;
+
+  return { kind: "loaded" };
 }
 
 // ---------------------------------------------------------------------------
@@ -714,14 +824,24 @@ async function saveDeliverableArtifacts(
  * recorded `ok`, and three steps downstream read state off it and wrote a
  * product defect into the log that did not exist.
  *
- * The house pattern makes a real discriminator available: on success these
- * pages render an `<h1>`; the error card renders no `<h1>` at all. So:
+ * For the ADMIN surfaces a real discriminator is available: on success they
+ * render an `<h1>`, and the error card renders no `<h1>` at all. The CLIENT
+ * DASHBOARDS are the case that breaks: they render an `<h1>` on the gated and
+ * failed paths too, so "an `<h1>` exists" is not arrival there either. See
+ * `pageState`, which separates the two idioms.
  *
- *  - error card or inline alert visible -> `failed`, quoting what it said.
- *  - `<h1>` present                     -> `ok`, recording its text.
- *  - neither, and the network settled   -> `ok` with a note (some pages have no
- *                                          `<h1>`; that is not a fault).
- *  - neither, and it never settled      -> `indeterminate`. No claim is made.
+ *  - load error (either idiom)   -> `failed`, quoting what it said.
+ *  - "not available yet" + gated -> `unreachable`. Looked; the content is not
+ *                                   there. NOT `ok` — a client seeing this for
+ *                                   a released report is the #114/#207 defect
+ *                                   this whole crossing exists to catch.
+ *  - "not available yet" + fetch failed -> `failed`.
+ *  - "not available yet" + copy unrecognised -> `indeterminate`; do not guess
+ *                                   which branch rendered.
+ *  - `<h1>` present              -> `ok`, recording its text.
+ *  - no `<h1>`, network settled  -> `ok` with a note (some pages have no `<h1>`;
+ *                                   that is not a fault).
+ *  - no `<h1>`, never settled    -> `indeterminate`. No claim is made.
  *
  * The HTTP status from `goto` is recorded either way — the most primitive
  * signal available, and the one that survives any renderer confusion.
@@ -737,10 +857,31 @@ async function visit(
     const status = response ? response.status() : null;
     const quiet = await settled(page);
 
-    const errorText = await errorCardText(page);
-    if (errorText !== null) {
+    const state = await pageState(page);
+    if (state.kind === "load-error") {
       throw new Error(
-        `${url} rendered an error state (HTTP ${status ?? "?"}): ${errorText.trim().slice(0, 200)}`,
+        `${url} rendered an error state (HTTP ${status ?? "?"}): ${state.text.trim().slice(0, 200)}`,
+      );
+    }
+    if (state.kind === "not-available") {
+      const where = `${url} (HTTP ${status ?? "?"}) shows ${JSON.stringify(state.heading)}`;
+      if (state.reason === "load-failed") {
+        throw new Error(`${where} because the fetch FAILED: ${state.detail}`);
+      }
+      if (state.reason === "gated") {
+        // `unreachable`, not `failed`: the page worked, the content is not
+        // there. Deliberately NOT judged here — whether that is correct
+        // depends on what the run released, and `visit` does not know. The
+        // Risk Register in particular has no release concept at all in
+        // `routes/risk.py`, so this state may be entirely legitimate for
+        // `/dashboards/risk`. Recording it distinctly is the job; deciding
+        // what it means is Gene's.
+        throw new Unreachable(
+          `${where} — content GATED, not released/finalized to this client: ${state.detail}`,
+        );
+      }
+      throw new Indeterminate(
+        `${where} but the copy matched neither the gated nor the load-failed wording — cannot say which: ${state.detail}`,
       );
     }
 
@@ -1075,10 +1216,18 @@ test("full engagement: intake -> five services -> release -> client view -> back
           // `<h1>` only on the success path — the error card has no `<h1>` —
           // so this is a state only a loaded queue reaches, not merely "some
           // heading exists".
-          const err = await errorCardText(page);
-          if (err !== null) {
+          // `/admin/queue/<id>` is an admin surface, so idiom 1 applies and
+          // the "not available yet" idiom cannot occur here — but branch on
+          // the state rather than assume, so a surprise reads as itself.
+          const queueState = await pageState(page);
+          if (queueState.kind === "load-error") {
             throw new Error(
-              `the intake queue is showing an error, nothing can be published: ${err.trim().slice(0, 200)}`,
+              `the intake queue is showing an error, nothing can be published: ${queueState.text.trim().slice(0, 200)}`,
+            );
+          }
+          if (queueState.kind === "not-available") {
+            throw new Indeterminate(
+              `the intake queue rendered a "not available yet" gate, which is not an idiom this admin surface was expected to use: ${queueState.detail}`,
             );
           }
           await affordance(
@@ -1632,10 +1781,18 @@ test("full engagement: intake -> five services -> release -> client view -> back
             "/results never went quiet — a download-link count taken now would be a guess, and a low one",
           );
         }
-        const err = await errorCardText(page);
-        if (err !== null) {
+        const resultsState = await pageState(page);
+        if (resultsState.kind === "load-error") {
           throw new Error(
-            `/results is showing an error, so any link count is meaningless: ${err.trim().slice(0, 200)}`,
+            `/results is showing an error, so any link count is meaningless: ${resultsState.text.trim().slice(0, 200)}`,
+          );
+        }
+        if (resultsState.kind === "not-available") {
+          // A gated /results is a real observation about what this client can
+          // see, and counting links under it would report zero as if the page
+          // had listed nothing.
+          throw new Unreachable(
+            `/results shows ${JSON.stringify(resultsState.heading)} (${resultsState.reason}), so there is no link list to count: ${resultsState.detail}`,
           );
         }
         const links = page.getByRole("link", {
