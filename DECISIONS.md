@@ -4028,6 +4028,36 @@ disclosure, where it costs a consultant doing the wrong thing while being told
 they are doing the right one. **Tooling was where the shape was found. Product is
 where it always mattered.**
 
+### The sharpest instance, added later: a count whose input could not produce the interesting value
+
+Asked how many clients are in the legacy-only state — the population that decides
+whether #114's value-summary slot may raise — the obvious query, run against the
+dev database, returns:
+
+    clients_with_any_released 13 | clients_legacy_only 0 | released_rows_unresolvable 0
+
+**A clean zero, from a real query, over real rows.** Read at face value it says the
+population is empty and raising is a safe stopgap.
+
+It is worthless, and nothing in the output says so. All four `Deliverable(...)`
+construction sites stamp `parent_version` at finalize, `seed_demo.py` sets it
+explicitly, and every dev row postdates migration 0041. **The dev database
+contains no row that could be in the state**, so the query's "nothing found" and
+its "this corpus cannot express the thing you are looking for" are the same
+output.
+
+That is this record's own shape at its purest: not a wrong answer, not a crash — a
+correct computation over a corpus structurally incapable of producing the
+interesting value, whose pass state and could-not-look state are identical and
+separated only by someone noticing when the rows were written. It is
+`CLAUDE.md`'s seed-data rule (a corpus drawn from your own assumptions cannot
+falsify them) arriving as a _population statistic_ rather than as a test fixture.
+
+**Before running a count that decides a design, ask what would have to be true of
+the corpus for the interesting value to appear in it.** Here: a row released
+before 0041, on a service that already had more than one version. Neither is
+constructible in dev.
+
 ### What actually caught them
 
 Not the suite: it was green over defects 1–4 throughout, and CI stayed green.
@@ -4039,6 +4069,30 @@ and by two habits that generalise:
 - **mutation with proof the mutation landed and was restored**, which is what
   established that each branch of the shared router is pinned by tests the other
   does not cover.
+
+### The version that will recur: a TRUE claim that travelled past its scope
+
+D-071's instances are claims whose scope exceeded their evidence. This one is
+narrower and harder, and it came from the #114 track rather than this one.
+
+An agent reported **"risk_dashboard was checked and is correct."** It was true.
+The dashboard's read genuinely is correct — it gates on `finalized_at` and refuses
+an unfinalized register. Its reviewer caught that the sentence had been _received_
+as clearance for the Risk service, and it is not: `routes/risk.py::_latest` has no
+finalized filter at all, so DRAFT assessments unlock the gate and feed synthesis
+(#237).
+
+**Nothing in the sentence was wrong.** It was a claim about a READ that was read as
+a claim about a SERVICE, and the gap is invisible precisely because checking the
+claim confirms it. Scope over-reach and stability over-reach are both detectable
+by re-deriving the claim; this one survives re-derivation, because the claim is
+true.
+
+The countermeasure is not more scepticism about the claim. It is: **when a check
+clears something, state what it cleared and what it did not** — "the read is
+correct; I did not check the writers" — because the reader will otherwise take
+the largest reading the sentence supports, and that reading is usually the one
+they wanted.
 
 ### Not a call for more review rounds
 
@@ -4250,6 +4304,59 @@ suggested resolution already names "correct the two comments". Both files are
 outside this track's territory, so the pointer is recorded rather than the fix
 applied. Noted because a correct claim that is the MINORITY statement in the tree
 will lose to the two older ones.
+
+## D-074 — Sweep the SHAPE, never the symbol, and write down what you leave alone
+
+**Date:** 2026-09-08. **Promotes a habit to a stated expectation**, on the
+evidence below. Extends `CLAUDE.md`'s existing "grep the SYMPTOM as well as the
+call sites" bullet, which this makes into a procedure with a required artifact.
+
+### The expectation
+
+Before fixing a defect that could have siblings:
+
+1. **Write the SHAPE down first** — what the defect looks like, in words that name
+   no function, symbol or file. If it cannot be described without naming where it
+   was found, it has not been generalised and the sweep will miss.
+2. **Grep the shape, never the symbol.** A reimplementation shares the symptom and
+   never the name.
+3. **Produce a table**: every site, whether it has the property, whether its
+   output can reach a client (or whatever the consequence axis is), and a
+   decision.
+4. **Write the exclusions into the code where they live**, with the reason — not
+   only into the sweep table. A site left alone with a stated reason is a
+   decision; a site left alone silently is an unstated exemption, which reads as
+   an oversight to everyone who finds it later.
+
+### Why it is an expectation rather than advice
+
+Three for three this week, and **both times the finding was the SCOPE rather than
+the fix**:
+
+|          | Issue's suspicion                      | Shape sweep found                                                                      | What the sweep changed                                                                                                                     |
+| -------- | -------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **#114** | 3 call sites                           | **8**                                                                                  | five more surfaces silently wrong                                                                                                          |
+| **#237** | "a DRAFT reaches the client dashboard" | 51 sites over 11 files, 10 classified                                                  | **the stated defect was false** — the dashboard does gate on `finalized_at`; the real defect is that nothing gates the register's CONTENTS |
+| **#178** | one service                            | the twin sweep found the reason column, the totals breakdown and the enumeration block | three more sites in one file                                                                                                               |
+
+On #237 a caller search for `_latest` would have returned **one** of the fifty-one.
+And the sweep did not merely widen the fix — it showed that the fix as filed would
+have been aimed at nothing, which no amount of care applied to the named site
+would have revealed.
+
+### The cost, stated so it is not oversold
+
+The sweep is cheap and the classification is not: 51 hits took one pass to find
+and several to judge. Budget for the judging. The output is worth more than the
+fix — on #237 the table is the deliverable and the code change follows from it.
+
+### Placement
+
+Recorded here rather than in `CLAUDE.md` because that file is under a standing
+instruction not to grow while its 600-line budget question is open. **It wants a
+one-line pointer from `CLAUDE.md`'s twin-sweep bullet when that is settled** —
+this is a procedure someone should meet before they need it, and a decision record
+is consulted after.
 
 ## D-075 — A suite that must change for a defect to be fixed is evidence the defect was SPECIFIED
 
