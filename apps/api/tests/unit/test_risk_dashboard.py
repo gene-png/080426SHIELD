@@ -94,6 +94,11 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> None:
     za = c.post(f"/zt/services/{zsvc['id']}/assessments", headers=h).json()
     zans = za["answers"][0]
     c.patch(f"/zt/answers/{zans['id']}", headers=h, json={"maturity_stage": 1})
+    # Approve both -- #237. Synthesis reads only APPROVED/RELEASED assessments,
+    # because what it produces is exported under the client's name. This seed
+    # left them DRAFT and the generate below used to succeed.
+    assert c.post(f"/attack/assessments/{a['id']}/approve", headers=h).status_code == 200
+    assert c.post(f"/zt/assessments/{za['id']}/approve", headers=h).status_code == 200
 
 
 def _generate_and_finalize(c: TestClient, bearer: str, cid: str) -> None:

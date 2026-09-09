@@ -376,6 +376,12 @@ def _latest_assessment_status(db: Session, svc: Service) -> str | None:
     retired from the engagement card, and a discarded-only service reads as
     having no active assessment (None), never "discarded".
     """
+    # #237 SWEEP, EXCLUDED DELIBERATELY. This resolves the WORKING record for a
+    # consultant editing it, and "latest non-discarded" is the right answer to
+    # "what am I on". It is NOT a provenance question: nothing here is exported
+    # under a client's name, and every caller is behind `_admin_required`. It
+    # would become in scope the moment a client-facing route reads it — the
+    # client surface is `clients.py`, whose eight resolvers moved in #114.
     if svc.kind == ServiceKind.NIST_CSF:
         row = db.execute(
             select(CsfAssessment.status)

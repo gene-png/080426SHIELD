@@ -236,6 +236,21 @@ export function RiskRegisterDashboard(): JSX.Element {
     );
   }
 
+  // UNLOCKED but not synthesizable: the inputs exist and are unapproved (#237).
+  // Rendered BEFORE the locked branch is irrelevant — the two are disjoint, and
+  // this one has to exist at all so the refusal is visible before it is hit. A
+  // consultant who unlocks the gate, clicks generate and meets a 409 has walked
+  // into a wall the UI told them was not there, which is worse than a lock.
+  const notFinalized = gate?.not_finalized ?? [];
+  if (gate && gate.unlocked && notFinalized.length > 0) {
+    return (
+      <EmptyState
+        title="Approve the source assessments first"
+        description={`These exist but are not approved, so they cannot be synthesised into a register for ${clientName}: ${notFinalized.join("; ")}.`}
+      />
+    );
+  }
+
   if (gate && !gate.unlocked) {
     return (
       <EmptyState

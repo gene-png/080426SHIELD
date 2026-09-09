@@ -128,6 +128,12 @@ def _latest_list_or_none(db: Session, service_id: uuid.UUID) -> CapabilityList |
     # D-031: a DISCARDED list is retired from every "latest" consumer (GET
     # latest, the draft-reuse guard, deliverable finalize). The next-version
     # mint deliberately does NOT use this helper - see _max_list_version.
+    # #237 SWEEP, EXCLUDED DELIBERATELY. This resolves the WORKING record for a
+    # consultant editing it, and "latest non-discarded" is the right answer to
+    # "what am I on". It is NOT a provenance question: nothing here is exported
+    # under a client's name, and every caller is behind `_admin_required`. It
+    # would become in scope the moment a client-facing route reads it — the
+    # client surface is `clients.py`, whose eight resolvers moved in #114.
     return db.execute(
         select(CapabilityList)
         .where(

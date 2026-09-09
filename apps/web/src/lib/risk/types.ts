@@ -3,7 +3,18 @@ export interface RiskGate {
   has_attack: boolean;
   has_csf: boolean;
   has_zt: boolean;
+  /** ABSENT — no assessment of this kind exists. Remedy: create one. */
   missing: string[];
+  /**
+   * EXISTS but is not approved, so it cannot be synthesized into a register
+   * that will be exported under the client's name (#237). Remedy: approve it.
+   *
+   * Separate from `missing` because the remedies differ, and a renderer that
+   * joins them into one "first complete:" sentence tells a consultant to create
+   * an assessment they already have. Optional so an older client parses a newer
+   * response.
+   */
+  not_finalized?: string[];
 }
 
 export interface RiskEntry {

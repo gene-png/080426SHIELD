@@ -18,7 +18,21 @@ class RiskGateStatus(BaseModel):
     has_attack: bool
     has_csf: bool
     has_zt: bool
+    # ABSENT — no assessment of this kind exists. Remedy: create one.
     missing: list[str]
+    # EXISTS but is not APPROVED or RELEASED, so it cannot be synthesized into a
+    # register that will be exported under the client's name (#237). Remedy:
+    # approve it.
+    #
+    # A SEPARATE FIELD, deliberately, though both feed one sentence. "There is no
+    # ATT&CK mapping" and "the ATT&CK mapping is a draft" are different facts
+    # with different remedies, and putting the second into a field named
+    # `missing` would make the API assert something untrue in order to serve a
+    # message. #234 shipped exactly that (`not_recorded` borrowed to mean
+    # "retired") and had to correct it; it is not repeated here one issue later.
+    #
+    # Defaulted, so an older client parses a newer response (the C0 pattern).
+    not_finalized: list[str] = []
 
 
 class RiskEntryResponse(BaseModel):

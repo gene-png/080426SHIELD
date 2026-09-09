@@ -295,6 +295,12 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
 def _latest_assessment(db: Session, service_id: uuid.UUID) -> ZtAssessment | None:
     # D-031: a DISCARDED assessment is retired from every "latest" consumer.
     # The next-version mint uses _max_assessment_version, not this helper.
+    # #237 SWEEP, EXCLUDED DELIBERATELY. This resolves the WORKING record for a
+    # consultant editing it, and "latest non-discarded" is the right answer to
+    # "what am I on". It is NOT a provenance question: nothing here is exported
+    # under a client's name, and every caller is behind `_admin_required`. It
+    # would become in scope the moment a client-facing route reads it — the
+    # client surface is `clients.py`, whose eight resolvers moved in #114.
     return db.execute(
         select(ZtAssessment)
         .where(
