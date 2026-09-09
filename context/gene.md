@@ -53,7 +53,8 @@ Every "without" figure was served under `deliverable_version: 1`.
 - **`apps/web/src/app/**` is untouched, and there are TWO consequences, not
   one.** The dashboard pages key their error copy on the HTTP status rather than
   `reason`, so the refusal reads as "hasn't been released to your organization
-  yet" — false for that branch. Worse: `/value-summary` raising takes down the
+  yet" — false for that branch. Worse **at the time, and overturned 2026-09-09 —
+  it no longer raises**: `/value-summary` raising took down the
   whole client **home page**, which fetches it in an unguarded `Promise.all`
   beside the deliverables list, engagements and inbox, with no Next error
   boundary anywhere under `apps/web/src/app` (I checked). **Filed as #236.** My

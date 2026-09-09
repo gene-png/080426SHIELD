@@ -46,6 +46,16 @@ interface Metric {
   /** The figure could not be resolved for a report the client HAS. Renders the
    *  third state instead of "Pending" — see `ValueSummary`. */
   unresolved: boolean;
+  /** What the figure is computed OVER, plural, in the client's words.
+   *
+   *  Load-bearing for the unresolved copy rather than decoration. The state is
+   *  per KIND and wholesale — `_KindTotal`'s docstring says "A kind goes
+   *  unresolved WHOLESALE rather than per service", and each `_*_total` returns
+   *  on the FIRST unresolvable service — so a sentence saying "this service"
+   *  is false whenever the client has more than one. Zero Trust is the sharp
+   *  case: `zt_ids` concatenates ZERO_TRUST_CISA and ZERO_TRUST_DOD, so one
+   *  slot can span two frameworks and any number of engagements. */
+  kindNoun: string;
 }
 
 function pluralGaps(n: number): string {
@@ -57,6 +67,7 @@ function buildMetrics(summary: ValueSummary): Metric[] {
   return [
     {
       label: "Tech debt savings identified",
+      kindNoun: "software-portfolio reports",
       value:
         savings === null
           ? null
@@ -71,6 +82,7 @@ function buildMetrics(summary: ValueSummary): Metric[] {
     },
     {
       label: "Zero Trust",
+      kindNoun: "Zero Trust reports",
       value:
         summary.zt_gap_count === null ? null : pluralGaps(summary.zt_gap_count),
       hint: "Capabilities below your target maturity stage.",
@@ -78,6 +90,7 @@ function buildMetrics(summary: ValueSummary): Metric[] {
     },
     {
       label: "MITRE ATT&CK",
+      kindNoun: "MITRE ATT&CK reports",
       value:
         summary.attack_uncovered_count === null
           ? null
@@ -89,6 +102,7 @@ function buildMetrics(summary: ValueSummary): Metric[] {
     },
     {
       label: "NIST CSF 2.0",
+      kindNoun: "NIST CSF reports",
       value:
         summary.csf_gap_count === null
           ? null
@@ -141,20 +155,30 @@ export function ValueLoopCard({
                 {m.label}
               </dt>
               <dd className="mt-1 text-lg font-semibold text-ink-primary">
-                {m.value ??
-                  (m.unresolved ? (
-                    <span className="text-base font-normal text-status-warning-fg">
-                      Not available
-                    </span>
-                  ) : (
+                {/* THE FLAG DECIDES, NOT THE VALUE, and the order matters.
+                    This read `m.value ?? (m.unresolved ? …)`, so a response
+                    carrying BOTH a value and the flag rendered the number while
+                    the hint below — which switches on `m.unresolved` alone —
+                    said we were not showing one. No backend path produces that
+                    pair today (every unresolved `_KindTotal` carries `None`),
+                    but "unreachable because the server is well-behaved" is a
+                    guarantee held in another file, and this ordering makes the
+                    renderer honest without depending on it. */}
+                {m.unresolved ? (
+                  <span className="text-base font-normal text-status-warning-fg">
+                    Not available
+                  </span>
+                ) : (
+                  (m.value ?? (
                     <span className="text-base font-normal text-ink-tertiary">
                       Pending
                     </span>
-                  ))}
+                  ))
+                )}
               </dd>
               <p className="mt-1 text-xs text-ink-tertiary">
                 {m.unresolved
-                  ? "Your report for this service is released and available under Results — but this figure can't be matched to it, so we're not showing a number. Ask your analyst to confirm it."
+                  ? `We can't match this figure to your ${m.kindNoun}, so we're not showing a number — including for any of them that are fine. They are still available under Results. Your analyst will need to look into it.`
                   : m.hint}
               </p>
             </div>

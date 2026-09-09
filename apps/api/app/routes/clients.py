@@ -116,6 +116,12 @@ def _artifact_title(db: Session, artifact_id: uuid.UUID | None) -> str | None:
     response_model=ClientDeliverableListResponse,
     summary="Released deliverables for the client (client + admin)",
 )
+# SEE `_released_service_ids_by_kind` ABOVE: this endpoint's result set is
+# asserted by a client-facing sentence on the home page ("still available under
+# Results"). Narrowing what this returns -- hiding superseded rows, a visibility
+# flag, a soft-delete, filtering by kind -- makes that sentence false without
+# touching it. Nothing here enforces the agreement; it is stated so the next
+# editor knows the dependency exists.
 def list_client_deliverables(
     client_id: uuid.UUID,
     user: Annotated[User, Depends(current_user)],
@@ -371,6 +377,30 @@ def _released_parent(db: Session, model, service_id: uuid.UUID, statuses):
         )
         return None
     return row
+
+    # SYNCHRONIZED WITH `list_client_deliverables`, NOT DERIVED FROM IT, AND A
+    # CLIENT-FACING SENTENCE DEPENDS ON THE TWO AGREEING.
+    #
+    # Both select on `Service.client_id == client.id` and
+    # `Deliverable.released_at.is_not(None)`. `ValueLoopCard`'s unresolved copy
+    # tells the client their reports are "still available under Results", which
+    # is true only while this predicate and that one describe the same set.
+    # Nothing ties them and no update closes the window, because it is not a
+    # race -- it is two independently maintained predicates that happen to be
+    # identical today.
+    #
+    # The WIDENING direction is guarded by a stated rule (`_released_parent`:
+    # "Released only, never the admin-preview `finalized` fallback"). The
+    # NARROWING direction has no guard at all: if the Results list ever hides
+    # superseded rows -- it already computes `superseded` and today still lists
+    # them -- or gains a per-artifact visibility flag, a soft-delete, or filters
+    # by kind, then a client whose only report of a kind is filtered out reads
+    # "still available under Results" over a list that does not contain it.
+    #
+    # The person making that change is editing a list endpoint and has no way to
+    # know a string on the home page asserts its result set. That is what this
+    # comment buys. Deriving both from one helper is the real fix and is a
+    # refactor across two routes; filed rather than done here.
 
 
 def _released_service_ids_by_kind(

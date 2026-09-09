@@ -637,13 +637,22 @@ def _break_parent_link(db: Session, service_id) -> None:
 
 @pytest.mark.unit
 def test_value_summary_flags_are_false_when_everything_resolves(app_client) -> None:
-    """The FALSE side of every flag, which nothing else pins.
+    """The FALSE side of every flag, through every flag's SUCCESS return.
 
     Three tests assert the flags go True. None asserted they stay False, so an
-    implementation that set `unresolved=True` unconditionally would satisfy all
-    of them — the flag would be a constant wearing a predicate's name. This is
-    the same both-halves discipline a guard needs: watching it fire proves it
-    fires, never that it passes.
+    implementation setting `unresolved=True` unconditionally would satisfy all
+    of them — the flag would be a constant wearing a predicate's name.
+
+    **All four kinds are seeded, and that is the point rather than thoroughness.**
+    The first version of this test seeded CSF alone, so `attack_uncovered_unresolved`
+    and `tech_debt_savings_unresolved` read False through
+    `if not service_ids: return _KindTotal(None, False)` — the empty-list early
+    return — and never through the success return the assertion is about. The
+    docstring claimed "every flag" while pinning two, which is the defect this
+    test exists to prevent, one level down. Flipping
+    `_attack_uncovered_total`'s final `_KindTotal(total, False)` to `True` left
+    the whole suite green while a client would see a real technique count
+    captioned "we're not showing a number".
     """
     c = app_client
     admin = _register(c, "admin@example.com")
@@ -654,6 +663,9 @@ def test_value_summary_flags_are_false_when_everything_resolves(app_client) -> N
 
     db = _session(c)
     _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _make_released_attack(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_attack_codes(3))
+    _make_released_tech_debt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), cut_costs=[1000])
     db.commit()
     db.close()
 
@@ -662,7 +674,12 @@ def test_value_summary_flags_are_false_when_everything_resolves(app_client) -> N
         headers={"Authorization": f"Bearer {bearer_client}"},
     ).json()
 
-    assert body["csf_gap_count"] == 5, "precondition: this kind DID resolve"
+    # Preconditions: every kind reached its SUCCESS return. Without these the
+    # flag assertions below pass through the empty-list branch and say nothing.
+    assert body["csf_gap_count"] == 5
+    assert body["zt_gap_count"] == 4
+    assert body["attack_uncovered_count"] == 3
+    assert body["tech_debt_savings_usd"] == 1000.0
     assert body["has_unresolved"] is False
     for flag in (
         "csf_gap_unresolved",

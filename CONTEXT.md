@@ -121,9 +121,11 @@ track's territory: the dashboard pages key their error copy on HTTP status
 rather than `reason`, so the refusal reads as "not released yet"; and
 `/value-summary` USED TO RAISE, which took down the whole client home page —
 overturned 2026-09-09, so the slot now nulls with a stated reason and `#236` is
-not reachable from this endpoint. The paragraph below describes the superseded
-behaviour: it raised, and `/home` fetches it
-in an unguarded `Promise.all` with no error boundary (#236). The refusal's log
+not reachable from this endpoint. **The superseded behaviour is described in
+the rest of THIS sentence, not in the paragraph below** — which is the live
+"#59 stays deferred" decision and is not superseded by anything: it raised, and
+`/home` fetches it in an unguarded `Promise.all` with no error boundary
+(#236). The refusal's log
 names two of three possible causes (#238).
 
 **#59 stays deferred**, as `DELIVERY_PLAN.md` decided before the work started.

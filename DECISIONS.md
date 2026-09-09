@@ -4033,8 +4033,13 @@ writes does not merely under-test; it silently tests a different program.
 ### The refusal, and why it is not a fallback
 
 Where `parent_version` is NULL, or no finalized row carries that version, the
-routes **refuse**: a typed 404 `dashboard_version_unresolved`, plus a WARNING
-naming which of the two causes fired. `DELIVERY_PLAN.md` decided this before the
+**four per-service dashboard routes** refuse: a typed 404
+`dashboard_version_unresolved`, plus a WARNING naming which of the two causes
+fired. **The four value-summary callers no longer do** — that raise was
+overturned 2026-09-09 and they report the kind unresolved beside a null instead;
+see the OVERTURNED paragraph below. Naming the surface rather than "the routes"
+because the behaviour now differs by surface, and an unqualified plural is what
+sends a reader to build for a refusal that half of them no longer make. `DELIVERY_PLAN.md` decided this before the
 work started, and the implementation matched the decision without needing it
 relaxed.
 
@@ -4049,8 +4054,13 @@ too. Nothing the product or the seed can build reaches the refusal.
 
 <!-- counted: grep -rn "Deliverable(" apps/api/app --include=*.py, 2026-09-08 -->
 
-**That number carries its command because it licenses a live decision** — "the
-refusal is unreachable, so #236 can stay filed rather than fixed" — and it
+**That number carried its command because it licensed a live decision** — "the
+refusal is unreachable, so #236 can stay filed rather than fixed". **That is no
+longer the decision it licenses**: after the 2026-09-09 overturn, #236's
+disposition turns on the value-summary raise being gone rather than on the
+refusal being unreachable, and #236 stays open for the other three fetches on
+that page. The command stays because the count still describes the per-service
+dashboards, and it
 expires silently the day a fifth construction site lands without a stamp, which
 is the precise event that would reintroduce this defect. A certifying sentence
 with no command beside it is what this repo records as ending the check rather
@@ -4098,12 +4108,17 @@ half-fix shape recorded against #79.
   organization yet" — false for that branch, since the report has been released.
   Pre-existing (the same copy already covers a wrong-tenant 404), widened by one
   case here.
-- **Value summary, and it is the worse half.** The refusal takes the whole
-  `/value-summary` response with it, and `apps/web/src/app/home/page.tsx`
-  fetches that endpoint inside an unguarded `Promise.all` beside the
-  deliverables list, engagements and inbox, with no Next error boundary anywhere
-  under `apps/web/src/app`. So the client loses the home page, not one card.
-  Filed as #236.
+- **Value summary, and it WAS the worse half — this is the reason it was
+  overturned on 2026-09-09, and the bullet is kept in the past tense rather than
+  deleted.** The refusal took the whole `/value-summary` response with it, and
+  `apps/web/src/app/home/page.tsx` fetches that endpoint inside an unguarded
+  `Promise.all` beside the deliverables list, engagements and inbox, with no
+  Next error boundary anywhere under `apps/web/src/app`. So the client lost the
+  home page, not one card. **`/value-summary` no longer raises**: the kind is
+  reported unresolved beside its null and the card renders a third state, so
+  #236 is not reachable from this endpoint — though #236 itself stays open,
+  because the other three fetches on that page are unchanged and there is still
+  no boundary. See the OVERTURNED paragraph below.
 
 Neither is fixed: `apps/web/src/app/**` is outside this track's territory, and
 both branches are unreachable through the product. The refusal's log also names

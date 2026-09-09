@@ -82,8 +82,15 @@ describe("ValueLoopCard", () => {
     expect(screen.getByText("4 gaps to close")).toBeInTheDocument();
     // ATT&CK and Tech debt are genuinely pending — two of them, and exactly two.
     expect(screen.getAllByText("Pending")).toHaveLength(2);
+    // Names the KIND and says the withholding is wider than one report. The
+    // previous copy said "your report for this service", false whenever the
+    // client has more than one — and Zero Trust can span two frameworks in one
+    // slot, because `zt_ids` concatenates CISA and DoD.
     expect(
-      screen.getByText(/can't be matched to it, so we're not showing a number/),
+      screen.getByText(/can't match this figure to your NIST CSF reports/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/including for any of them that are fine/),
     ).toBeInTheDocument();
   });
 
@@ -96,11 +103,37 @@ describe("ValueLoopCard", () => {
       />,
     );
     expect(
-      screen.getByText(/released and available under Results/),
+      screen.getByText(/still available under Results/),
     ).toBeInTheDocument();
+    // NOT "ask your analyst to confirm it". The analyst's only in-product move
+    // is to re-release, and `deliverable_release.py` and migration 0041 both
+    // claim that repairs a NULL `parent_version` when it does not —
+    // `_release_parent` returns at the NULL check (#59). Routing a client to a
+    // remedy the tree records as a no-op is the defect, not the wording.
+    expect(screen.queryByText(/confirm it/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Ask your analyst to confirm it/),
+      screen.getByText(/analyst will need to look into it/),
     ).toBeInTheDocument();
+  });
+
+  it("lets the FLAG win over a value, so a number never sits under 'not showing a number'", () => {
+    // Finding D, and it is the same defect as the untested flag one level up:
+    // the render read `m.value ?? (m.unresolved ? …)`, so a response carrying
+    // BOTH printed the figure while the hint below said we were not showing
+    // one. No backend path produces that pair today — but that is a guarantee
+    // held in another file, and this pins the renderer instead of trusting it.
+    render(
+      <ValueLoopCard
+        summary={summary({
+          csf_gap_count: 7,
+          csf_gap_unresolved: true,
+          has_any_data: true,
+          has_unresolved: true,
+        })}
+      />,
+    );
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByText("7 gaps to close")).not.toBeInTheDocument();
   });
 
   it("still renders a resolved figure with no unresolved noise", () => {
