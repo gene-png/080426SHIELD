@@ -773,8 +773,8 @@ async function visit(
  * ## Why this is not a local inside a `try/finally`
  *
  * It was, and the `finally`'s own comment claimed it meant "a hard failure
- * anywhere above still leaves a legible record". That is very likely FALSE for
- * the most probable hard failure this run has.
+ * anywhere above still leaves a legible record". That was FALSE for the most
+ * probable hard failure this run has.
  *
  * Playwright does not unwind a test body when the test times out — it abandons
  * the pending `await` and tears the fixtures down, so a `finally` in the body
@@ -783,15 +783,23 @@ async function visit(
  * and 300s on the register, a timeout is the single most likely way this run
  * ends badly — and it is exactly the run whose partial record is worth most.
  *
- * **This is REASONED FROM PLAYWRIGHT'S DOCUMENTED SEMANTICS, NOT MEASURED.**
- * Nobody has executed this file in any shell. To settle it, set
- * `RUN_BUDGET_MS` to 30 seconds and run the spec: if `step-log.md` appears in
- * the run folder, the `afterEach` path works; if it does not, the per-step
- * `console.log` below is the only surviving record and this comment is wrong.
+ * **MEASURED 2026-09-09, not inferred.** A throwaway spec with a 3s test
+ * timeout awaited 30s inside a `try`, with a `finally` and an `afterEach` each
+ * appending a marker. Complete output: `afterEach RAN`. The `finally` marker
+ * never appeared and the body never completed. So the `finally` genuinely did
+ * lose the log on a timeout, and `afterEach` genuinely saves it.
+ *
+ * **What that covers, and only that:** Playwright's lifecycle on a TEST
+ * TIMEOUT, on this version, in a spec that navigated nowhere. It says nothing
+ * about a crashed browser, a killed process, or a `globalTeardown` failure —
+ * for those, the `logged` flag and the early video-handle capture below are
+ * still reasoned rather than measured. One measurement does not certify its
+ * neighbours.
  *
  * The per-step `console.log` in `Recorder.step` is kept regardless. It is the
- * mitigation that already works, because it writes as the run goes rather than
- * at the end, and it needs no hook to fire.
+ * mitigation that needs no hook to fire, because it writes as the run goes
+ * rather than at the end — and it is what would still survive the three cases
+ * above that nobody has measured.
  */
 interface RunState {
   rec: Recorder;
