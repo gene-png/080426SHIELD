@@ -138,8 +138,8 @@ def _bound(checked: int, targets: list[str], root: Path) -> str:
     The document list is printed BY NAME, not merely counted, and that is the
     load-bearing half. `6 documents` is a number a reader accepts; six names are
     a set a reader can check against what they assumed. The case that forced it:
-    `DECISIONS.md` is NOT in either target list -- the string "DECISIONS" does
-    not appear in this file at all -- while `CLAUDE.md` describes this gate as
+    `DECISIONS.md` is NOT in either target list -- the string does not appear in
+    `ENFORCED_TARGETS` or `ADVISORY_TARGETS` -- while `CLAUDE.md` describes this gate as
     "blocking on the shared documents" and its own ownership table lists
     `DECISIONS.md` as a shared document. So the repo's instructions assert
     coverage this gate does not provide, over the one file the size ratchet
@@ -183,6 +183,23 @@ def _bound(checked: int, targets: list[str], root: Path) -> str:
     collected-count carrying its command but no ref; naming the tree narrows it
     and does not close it. If a run's revision matters, record it beside the
     output rather than reading it out of this line.
+
+    **Same path, different revision is the DEFAULT re-run here, not an edge
+    case.** `CLAUDE.md` has agents taking turns in one tree, because a second
+    docker stack was withdrawn -- so colliding runs at one path is the normal
+    way this gate gets re-run, and the collision is silent. It happened during
+    the review of this very change: a detached review worktree was read at one
+    revision and a gate was run in it at another, and the two were
+    distinguishable only because the code had changed in between.
+
+    **Deliberately not closed, and the cheap fix is wrong exactly here.**
+    Deriving a revision needs a `git` subprocess, which fails when git is
+    absent or the path is not a repository and therefore needs its own "could
+    not look" branch -- in the one gate whose organising principle is that
+    branch never sharing an exit with "nothing to complain about". The
+    `.git/HEAD` shortcut is worse: in a linked worktree `.git` is a FILE, not a
+    directory, so the obvious implementation breaks first in the setup this
+    review ran in.
 
     The `--porcelain` path returns BEFORE this function and prints no bound at
     all. That is deliberate: stdout there is a machine stream consumed by CI's

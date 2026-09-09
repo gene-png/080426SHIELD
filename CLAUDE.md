@@ -275,7 +275,8 @@ a real exit code and a real date, and was the minority outcome (D-071).
   `-w /app` row in the shell-forms table above is this same rewrite, written
   down as one tool's literal symptom, and it was no help at all the second
   time: nothing in it says "any argument", so a `gh issue create --title
-  /admin/...` finds no prior art. `CLAUDE.md` carried zero occurrences of
+  /admin/...` finds no prior art. The `//` escape widely recommended for this
+  is not a remedy — it arrives with the slash doubled, per the block above. `CLAUDE.md` carried zero occurrences of
   `msys`; the only one in the repo is an aside inside D-071 about annotation
   fields, which a search for a path-mangling problem hits and learns nothing
   from.
@@ -1652,7 +1653,7 @@ Rules of the road:
   - *"A claim about a completed action cannot be falsified by later action."*
     False. A completed-action claim that AGGREGATES OVER AN OPEN POPULATION
     goes stale on the next member, because the population keeps acquiring
-    them. A diff range shows it without needing any record: `a3137d5..83c051a`
+    them. A diff range shows it without needing any record: `a3137d5..851348b`
     reproduces forever, `a3137d5..HEAD` does not — and both are measurements
     of completed diffs. This file already applies the remedy elsewhere, in the
     bullet that says instances "accumulate on **#170** rather than in a count

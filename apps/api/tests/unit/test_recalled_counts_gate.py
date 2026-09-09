@@ -204,7 +204,7 @@ def test_the_clean_message_states_all_three_bounds(tmp_path: Path, capsys) -> No
 def test_the_printed_bound_is_derived_from_the_constants_not_typed(
     tmp_path: Path, capsys, monkeypatch, constant: str
 ) -> None:
-    """The one thing the bound line can get wrong, and it CAN fail.
+    """BOTH derived figures in the bound line, and this test CAN fail.
 
     The clean line states three limits, and the third -- the noun census -- is
     the reason it exists: `services` is not a volatile noun, so the seed's
