@@ -92,9 +92,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
  *
  * **The other 50 are UNTRIAGED, not benign.** Nobody has checked whether any of
  * them decides a recorded outcome, which is the only question that makes an
- * immediate read a defect. They are filed as a triage issue rather than left
- * here as noise — visible and counted beats suppressed. Widen this default when
- * that issue closes, not before.
+ * immediate read a defect. Filed as #253 rather than left here as noise —
+ * visible and counted beats suppressed. Widen this default when #253 closes,
+ * not before.
  *
  * Pass a path to override:  node e2e/scripts/check-immediate-reads.mjs e2e
  */
