@@ -245,6 +245,36 @@ a real exit code and a real date, and was the minority outcome (D-071).
 
 ## Environment gotchas (learned the hard way)
 
+- **Git Bash (MSYS) rewrites ANY argument beginning with `/` into a Windows
+  path, in ANY command, and usually does it silently.** Not a Docker quirk and
+  not a `gh` quirk — it is the shell, so it reaches every tool you will ever
+  pass a leading-slash string to. Prefix the command with `MSYS_NO_PATHCONV=1`.
+  Measured 2026-09-09, Git Bash: a bare `/admin/management` argument arrives as
+  `C:/Program Files/Git/admin/management`; with `MSYS_NO_PATHCONV=1` it arrives
+  intact. **The widely-recommended `//` escape is NOT a remedy here** — it
+  arrives as `//admin/management`, leading slash doubled rather than fixed.
+
+  **Recorded as the MECHANISM because the enumeration already failed.** The
+  `-w /app` row in the shell-forms table above is this same rewrite, written
+  down as one tool's literal symptom, and it was no help at all the second
+  time: nothing in it says "any argument", so a `gh issue create --title
+  /admin/...` finds no prior art. `CLAUDE.md` carried zero occurrences of
+  `msys`; the only one in the repo is an aside inside D-071 about annotation
+  fields, which a search for a path-mangling problem hits and learns nothing
+  from.
+
+  **The observability difference is why the `-w /app` case got recorded and
+  the `gh` case did not, and it is the more useful half.** `-w /app` fails LOUDLY —
+  Docker rejects it, exit 128, `Cwd must be an absolute path`. The `gh` case
+  failed SILENTLY: the title was mangled, `gh` accepted it, exit 0, and printed
+  a cheerful confirmation containing the corrupted string that nobody read. Same
+  mechanism, opposite observability, and only the loud one made it into the
+  file. Assume every quiet instance of a known-loud failure exists and has not
+  been noticed.
+
+  Do not add a row per tool. That is how the table above got to its current
+  size, and a row per tool is an enumeration of what its author happened to hit.
+
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
