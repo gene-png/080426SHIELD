@@ -76,6 +76,33 @@ def _gh(*args: str) -> str:
         capture_output=True,
         text=True,
         check=False,
+        # `encoding` WITHOUT `PYTHONIOENCODING`, which the three sibling sites
+        # (`check_gate_fixtures`, `mutation_sweep`, `test_gate_crash_exit_code`)
+        # call worse than neither. Stated here because an unexplained
+        # difference from three twins reads as an oversight.
+        #
+        # The remedy does not transfer, because the CHILD decides it:
+        #
+        #   Python child on Windows  -> writes cp1252, so decoding utf-8 raises
+        #                               inside subprocess's reader thread and
+        #                               returns an EMPTY capture with a normal
+        #                               return code. Both ends must be pinned.
+        #   `gh` (a Go binary)       -> writes UTF-8 on every platform. There is
+        #                               no writer to pin, and PYTHONIOENCODING
+        #                               reaches nothing in a non-Python child.
+        #
+        # So here `encoding="utf-8"` is the CORRECT read and `text=True` alone
+        # is the broken one -- the reverse of the sibling sites. Measured
+        # 2026-09-09 on Windows against `gh issue view --json title`, by
+        # codepoint rather than by eye, because a console renders both wrongly:
+        #
+        #   text=True only    -> U+00E2 U+20AC U+201D  (E2 80 94 read as cp1252)
+        #   encoding=utf-8    -> U+2014                (EM DASH, correct)
+        #
+        # This script runs only on `ubuntu-latest`
+        # (`.github/workflows/scheduled-triggers.yml`), where UTF-8 is already
+        # the default, so the line is belt-and-braces there and load-bearing
+        # only for a developer running it on Windows.
         encoding="utf-8",
     )
     if proc.returncode != 0:
