@@ -32,11 +32,40 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  *
  * **There is no `expect` in this file at all**, and that is checkable in one
  * grep rather than taken on trust. Waiting is done with `locator.waitFor` via
- * the `affordance()` helper, which converts a timeout into a recorded
+ * the `affordance()` helper, which converts a TIMEOUT into a recorded
  * `unreachable` observation instead of a failure — so a screen that never
  * rendered is logged and the run CONTINUES to the next service. `helpers/auth`
  * and `helpers/ai` do assert internally; a throw from either surfaces as a
  * recorded `failed` step, never as an aborted run.
+ *
+ * ## The rule this file kept breaking, stated once
+ *
+ * **Every place this spec writes an outcome, "I could not look" must be a
+ * DIFFERENT recorded value from "I looked and it was not there" and from "I
+ * looked and it was fine."** See the `Outcome` type for the four kinds.
+ *
+ * That is not a style preference. A step that reads state off a page which
+ * never finished loading and records `ok` does not lose information, it
+ * MANUFACTURES a finding — and a manufactured finding in a log whose whole
+ * purpose is to be believed is worse than no log. The first draft of this file
+ * did exactly that throughout: `isVisible()` and `count()` return immediately,
+ * and sat behind `waitForLoadState("networkidle").catch(() => undefined)`,
+ * which swallows its own timeout. The worst instance read an error card as a
+ * loaded intake queue and wrote "publishing silently fails to open workspaces"
+ * about a product that does nothing of the kind.
+ *
+ * The sites are not enumerated here, because an enumeration goes stale the next
+ * time one is added or fixed. The shape is greppable instead, and a hit is a
+ * defect unless it is waiting first:
+ *
+ *     grep -nE "isVisible\(\)|\.count\(\)|isDisabled\(\)|networkidle\"\)\.catch" \
+ *       e2e/engagement/full-engagement.spec.ts
+ *
+ * So, when editing this file: anything that decides a step's outcome waits
+ * first — `affordance()` or `settled()`, never a bare `isVisible()`/`count()` —
+ * and where it cannot, it records `Indeterminate` rather than `ok` and rather
+ * than a specific cause invented to explain a symptom. `visit()` does not treat
+ * "some heading exists" as arrival, because the house error card is a heading.
  *
  * **Current status: nothing here is a contract yet.** Once Gene has watched the
  * video and read the step log, we decide together which observations become
@@ -186,15 +215,32 @@ const RUN_DIR = path.resolve(
 // ---------------------------------------------------------------------------
 
 /**
- * Three outcomes, not two.
+ * FOUR outcomes, and the fourth is the one this instrument kept getting wrong.
  *
- * `unreachable` is separated from `failed` on purpose: CLAUDE.md's fail-closed
- * rule is that "I could not look" must never share a branch with "nothing to
- * complain about", and the same distinction is what makes this log readable.
- * "The Release button never appeared" and "the release request returned 500"
- * are different findings, and collapsing them costs the reader the diagnosis.
+ * CLAUDE.md's fail-closed rule is that "I could not look" must never share a
+ * branch with "nothing to complain about". These four keep three different
+ * questions apart, and every one of them was collapsed into another at least
+ * once in the first draft of this file:
+ *
+ *  - `ok`            — I looked, and it was fine.
+ *  - `failed`        — I looked, and it went wrong. Carries the real error.
+ *  - `unreachable`   — I looked, and the thing was not there within budget.
+ *  - `indeterminate` — I COULD NOT LOOK. The page never settled, the locator
+ *                      was ambiguous, the read raced the render. No claim is
+ *                      made about the product at all.
+ *
+ * The distinction is not pedantry, it is the difference between a true log and
+ * a false one. A step that reads state off a page which never finished loading
+ * and records `ok` does not merely lose information — it MANUFACTURES a
+ * finding. `unpublished service requests remaining: 0` read off an error card
+ * is a sentence about a defect that does not exist, and it is indistinguishable
+ * from the real thing at the point where someone reads it.
+ *
+ * So: anything that decides a step's outcome must WAIT first. Where it cannot,
+ * the answer is `indeterminate` — never `ok`, and never a specific cause
+ * invented to explain a symptom.
  */
-type Outcome = "ok" | "failed" | "unreachable";
+type Outcome = "ok" | "failed" | "unreachable" | "indeterminate";
 
 /** Which surface actually performed the step. */
 type Via = "ui" | "api" | "api-fallback" | "n/a";
@@ -214,6 +260,20 @@ class Unreachable extends Error {
   constructor(message: string) {
     super(message);
     this.name = "Unreachable";
+  }
+}
+
+/**
+ * Thrown when the run could not establish what the product was doing.
+ *
+ * Distinct from `Unreachable` on purpose: "the button was not there" is a claim
+ * about the page, and "I could not tell whether the button was there" is a
+ * claim about the run. Recording the second as the first invents a defect.
+ */
+class Indeterminate extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "Indeterminate";
   }
 }
 
@@ -257,20 +317,22 @@ class Recorder {
       return value;
     } catch (err) {
       const ms = Date.now() - started;
-      const unreachable = err instanceof Unreachable;
+      const outcome: Outcome =
+        err instanceof Unreachable
+          ? "unreachable"
+          : err instanceof Indeterminate
+            ? "indeterminate"
+            : "failed";
       const detail = describe(err);
-      this.steps.push({
-        seq,
-        phase,
-        name,
-        outcome: unreachable ? "unreachable" : "failed",
-        via,
-        ms,
-        detail,
-      });
+      this.steps.push({ seq, phase, name, outcome, via, ms, detail });
+      const marker = {
+        unreachable: "MISS ",
+        indeterminate: "?????",
+        failed: "FAIL ",
+      }[outcome as Exclude<Outcome, "ok">];
       // eslint-disable-next-line no-console
       console.log(
-        `  ${unreachable ? "MISS " : "FAIL "} [${phase}] ${name} (${via}, ${ms}ms) — ${detail}`,
+        `  ${marker} [${phase}] ${name} (${via}, ${ms}ms) — ${detail}`,
       );
       return undefined;
     }
@@ -283,11 +345,27 @@ function describe(err: unknown): string {
 }
 
 /**
- * Wait for an affordance and hand it back, or report it UNREACHABLE.
+ * Wait for an affordance and hand it back, classifying a failure HONESTLY.
  *
- * The distinction this preserves is the reason the whole run does not stop: a
- * button that never rendered is a finding about that one screen, and the four
- * services after it are still worth walking.
+ * A bare `catch` here is a bug, and it was one: `locator.waitFor` rejects for at
+ * least four different reasons, and only ONE of them means "it never appeared".
+ * Relabelling all four as `Unreachable` writes a confident, specific, wrong
+ * sentence into the log — Gene reads "the Release button never rendered", opens
+ * the video, and finds two of them.
+ *
+ *  - `TimeoutError`            -> genuinely not there within budget: `unreachable`.
+ *  - strict-mode violation     -> the locator matched 2+ elements. That is a
+ *                                REAL finding about the page, so the original
+ *                                error propagates and is recorded `failed` with
+ *                                Playwright's own message naming the count.
+ *  - page/context/browser closed -> the run cannot look at all: `indeterminate`.
+ *  - anything else             -> propagate unchanged rather than guess.
+ *
+ * Deliberately NOT fixed by adding `.first()` to the ambiguous call sites
+ * (`Release to client`, `Yes, release`, `Export XLSX / PDF / Word`,
+ * `/^(Generate|Regenerate)$/`). `.first()` would silently pick one of two
+ * buttons and record `ok` — it hides exactly the defect this instrument exists
+ * to surface. They stay strict, and a duplicate now reports itself accurately.
  */
 async function affordance(
   loc: Locator,
@@ -296,10 +374,75 @@ async function affordance(
 ): Promise<Locator> {
   try {
     await loc.waitFor({ state: "visible", timeout });
-  } catch {
-    throw new Unreachable(`affordance never appeared: ${label}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const name = err instanceof Error ? err.name : "";
+    if (/has been closed|Target crashed/i.test(message)) {
+      throw new Indeterminate(
+        `could not look for ${label}: ${message.split("\n")[0]}`,
+      );
+    }
+    if (name === "TimeoutError") {
+      throw new Unreachable(
+        `affordance never appeared within ${timeout}ms: ${label}`,
+      );
+    }
+    throw err;
   }
   return loc;
+}
+
+/**
+ * Wait for the network to go quiet, and REPORT whether it did.
+ *
+ * `waitForLoadState("networkidle").catch(() => undefined)` is the shape that
+ * made this instrument lie: it swallows its own timeout, so the next line reads
+ * state off a page that may still be fetching and records the result as fact.
+ * Callers must branch on the return value rather than ignoring it.
+ */
+async function settled(page: Page, timeout = 20_000): Promise<boolean> {
+  try {
+    await page.waitForLoadState("networkidle", { timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The house error card: every failed fetch in this app renders a card titled
+ * "Couldn't load ..." (IntakeQueue, CsfWorkspace, ZtWorkspace, AttackWorkspace,
+ * TechDebtWorkspace, AssessmentsView, IntakeWizard, both self-assessments), or
+ * sets an inline `[role="alert"]`. Derived as a PREDICATE over that shape rather
+ * than enumerated per page, so a new error surface is caught without an edit.
+ *
+ * Returns the error text if the page is showing one, else null.
+ *
+ * THE TWO BARE `isVisible()` CALLS BELOW ARE DELIBERATE, and they are the only
+ * ones in this file. Everywhere else a bare `isVisible()` is the defect
+ * described in the header; here it is correct, and the difference is worth
+ * stating because the grep in that header hits these two lines.
+ *
+ * This is a "is an error on screen RIGHT NOW" probe, not a decision about
+ * whether something arrived. Waiting would invert its meaning: `waitFor` on an
+ * error card would sit for the full timeout on every healthy page and then
+ * report no error — the correct answer reached slowly, on every single call.
+ * And a null return is never treated as proof of health; it only means "no
+ * error was showing at this instant", after which the CALLER still has to
+ * establish arrival positively (`settled()`, then an `<h1>` or an
+ * `affordance()`). So this function can produce a false negative and nothing
+ * downstream depends on it not doing so.
+ */
+async function errorCardText(page: Page): Promise<string | null> {
+  const card = page.getByRole("heading", { name: /Couldn.t load/i }).first();
+  if (await card.isVisible().catch(() => false)) {
+    return (await card.textContent().catch(() => null)) ?? "Couldn't load (…)";
+  }
+  const alert = page.getByRole("alert").first();
+  if (await alert.isVisible().catch(() => false)) {
+    return (await alert.textContent().catch(() => null)) ?? "[role=alert]";
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,31 +654,60 @@ async function saveDeliverableArtifacts(
   }
 }
 
-/** Open a page and wait for a heading to render, as synchronisation only. */
+/**
+ * Open a page and establish, honestly, whether it LOADED.
+ *
+ * The first draft waited on `page.getByRole("heading").first()` and called that
+ * arrival. It is not arrival. `IntakeQueue` early-returns an error card on a
+ * failed fetch, that card's title is a `CardTitle` — an `<h3>` — and it
+ * satisfies "some heading exists" perfectly. So a queue that failed to load was
+ * recorded `ok`, and three steps downstream read state off it and wrote a
+ * product defect into the log that did not exist.
+ *
+ * The house pattern makes a real discriminator available: on success these
+ * pages render an `<h1>`; the error card renders no `<h1>` at all. So:
+ *
+ *  - error card or inline alert visible -> `failed`, quoting what it said.
+ *  - `<h1>` present                     -> `ok`, recording its text.
+ *  - neither, and the network settled   -> `ok` with a note (some pages have no
+ *                                          `<h1>`; that is not a fault).
+ *  - neither, and it never settled      -> `indeterminate`. No claim is made.
+ *
+ * The HTTP status from `goto` is recorded either way — the most primitive
+ * signal available, and the one that survives any renderer confusion.
+ */
 async function visit(
   page: Page,
   rec: Recorder,
   phase: string,
   url: string,
-  waitFor?: Locator,
 ): Promise<void> {
   await rec.step(phase, `visit ${url}`, "ui", async () => {
-    await page.goto(url);
-    if (waitFor) {
-      await affordance(waitFor, `landmark on ${url}`, 60_000);
-    } else {
-      // No known landmark: settle on the network instead, so the video and the
-      // trace snapshot a loaded page rather than a spinner. Never a content
-      // check — just "the page stopped fetching".
-      await page.waitForLoadState("networkidle").catch(() => undefined);
+    const response = await page.goto(url);
+    const status = response ? response.status() : null;
+    const quiet = await settled(page);
+
+    const errorText = await errorCardText(page);
+    if (errorText !== null) {
+      throw new Error(
+        `${url} rendered an error state (HTTP ${status ?? "?"}): ${errorText.trim().slice(0, 200)}`,
+      );
     }
-    // Record the document title as an observation. `textContent`, not
-    // `innerText`: a CSS-uppercased heading reads back uppercased and would pin
-    // the styling instead of the copy.
+
+    // `textContent`, not `innerText`: a CSS-uppercased heading reads back
+    // uppercased and would pin the styling instead of the copy.
     const h1 = page.locator("h1").first();
     const title = await h1.textContent({ timeout: 5_000 }).catch(() => null);
+
+    if (title === null && !quiet) {
+      throw new Indeterminate(
+        `${url}: no <h1> and the network never went quiet (HTTP ${status ?? "?"}) — cannot say whether this page loaded`,
+      );
+    }
     rec.note(
-      `${url} -> h1 ${title === null ? "(none)" : JSON.stringify(title)}`,
+      `${url} -> HTTP ${status ?? "?"}, settled=${quiet}, h1 ${
+        title === null ? "(none — page has no h1)" : JSON.stringify(title)
+      }`,
     );
   });
 }
@@ -593,7 +765,20 @@ test("full engagement: intake -> five services -> release -> client view -> back
         // that shape.
         const box = page.getByRole("checkbox", { name: svc.intakeLabel });
         await affordance(box, `intake checkbox ${svc.intakeLabel}`);
+        // Verify the RESULT, do not assume the click landed. A pre-hydration
+        // `isChecked()` reads the DOM default, so a box that was already on
+        // could be toggled OFF here — silently dropping a service from the
+        // engagement, which then reads downstream as "publish never opened it".
+        // Cheap to check, and the failure mode is the expensive kind.
         if (!(await box.isChecked())) await box.click();
+        if (!(await box.isChecked())) {
+          await box.click();
+          if (!(await box.isChecked())) {
+            throw new Unreachable(
+              `intake: ${svc.intakeLabel} would not stay checked after two clicks`,
+            );
+          }
+        }
       }
     });
 
@@ -617,16 +802,32 @@ test("full engagement: intake -> five services -> release -> client view -> back
 
     await rec.step("intake", "fill the systems step", "ui", async () => {
       await page.getByRole("button", { name: "Next →" }).click();
-      await page.waitForLoadState("networkidle").catch(() => undefined);
-      const systems = page.locator("textarea").first();
-      if (await systems.isVisible().catch(() => false)) {
-        await systems.fill(
-          "Cloud-first estate: Okta IAM, CrowdStrike EDR, Splunk SIEM, Tenable VM. Two datacenters, one AWS region.",
+      if (!(await settled(page))) {
+        throw new Indeterminate(
+          "the systems step never went quiet — cannot tell whether its field rendered",
         );
-      } else {
-        rec.note("systems step: no textarea found; left blank");
       }
+      const systems = page.locator("textarea").first();
+      // A real wait. `isVisible()` on a step that is still rendering answers
+      // "no" and the run records "no textarea found" about a field that was
+      // simply late.
+      try {
+        await systems.waitFor({ state: "visible", timeout: 15_000 });
+      } catch {
+        rec.note(
+          "systems step: no textarea after a 15s wait; left blank (this is an observation, not a failure)",
+        );
+        return;
+      }
+      await systems.fill(
+        "Cloud-first estate: Okta IAM, CrowdStrike EDR, Splunk SIEM, Tenable VM. Two datacenters, one AWS region.",
+      );
     });
+
+    // Threaded into the submit step below so a disabled Submit is never
+    // explained by a cause this run did not establish.
+    const targetsSet: string[] = [];
+    const targetsMissing: string[] = [];
 
     await rec.step(
       "intake",
@@ -634,7 +835,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
       "ui",
       async () => {
         await page.getByRole("button", { name: "Next →" }).click();
-        await page.waitForLoadState("networkidle").catch(() => undefined);
+        if (!(await settled(page))) {
+          throw new Indeterminate(
+            "the notes step never went quiet — cannot tell which target selects rendered",
+          );
+        }
         // Ids are stable and generated from the service_type
         // (`svc-${type}-tier` / `-profile` / `-stage`). Selecting by INDEX
         // rather than by option label deliberately: the label sets
@@ -646,11 +851,15 @@ test("full engagement: intake -> five services -> release -> client view -> back
           "#svc-zero_trust_cisa-stage",
         ]) {
           const sel = page.locator(id);
-          if (await sel.isVisible().catch(() => false)) {
-            await sel.selectOption({ index: 1 });
-          } else {
-            rec.note(`target select ${id} not present on the notes step`);
+          try {
+            await sel.waitFor({ state: "visible", timeout: 15_000 });
+          } catch {
+            targetsMissing.push(id);
+            rec.note(`target select ${id}: not visible after a 15s wait`);
+            continue;
           }
+          await sel.selectOption({ index: 1 });
+          targetsSet.push(id);
         }
       },
     );
@@ -661,15 +870,34 @@ test("full engagement: intake -> five services -> release -> client view -> back
         name: /^(Submit|Re-submit) intake$/,
       });
       await affordance(submit, "Submit intake button", 60_000);
-      // If it is disabled the wizard is telling us a target or the legal name
-      // did not stick — report that rather than clicking into a no-op.
+
+      // Submit is disabled while `picks.length === 0 || !legalName ||
+      // targetsIncomplete` (Step6Review). The first draft read a disabled
+      // button and asserted ONE of those three as the cause. It had no basis
+      // for choosing — that is an invented explanation, and an invented
+      // explanation in a log is worse than "I don't know", because it ends the
+      // reader's search in the wrong place.
+      //
+      // Give it a moment to settle first (the review step recomputes from
+      // auto-saved state), then report the SYMPTOM plus the facts this run
+      // actually established, and let the reader diagnose.
+      if (await submit.isDisabled()) {
+        await settled(page, 10_000);
+      }
       if (await submit.isDisabled()) {
         throw new Unreachable(
-          "Submit intake is disabled — a required target or the legal name did not save",
+          `Submit intake is still disabled. Cause not established. Targets this run set: [${
+            targetsSet.join(", ") || "none"
+          }]; targets it could not find: [${targetsMissing.join(", ") || "none"}]. ` +
+            "The button gates on services-picked AND legal-name AND targets-complete; this run did not determine which is unsatisfied.",
         );
       }
       await submit.click();
-      await page.waitForLoadState("networkidle").catch(() => undefined);
+      if (!(await settled(page))) {
+        rec.note(
+          "intake submit: the page never went quiet afterwards; downstream steps may be reading a mid-flight state",
+        );
+      }
     });
 
     await rec.step("intake", "client signs out", "ui", () => signOut(page));
@@ -692,33 +920,67 @@ test("full engagement: intake -> five services -> release -> client view -> back
       })) ?? null;
 
     if (clientId) {
-      await visit(
-        page,
-        rec,
-        "admin",
-        `/admin/queue/${clientId}`,
-        page.getByRole("heading").first(),
-      );
+      await visit(page, rec, "admin", `/admin/queue/${clientId}`);
 
-      await rec.step(
+      const publishOk = await rec.step(
         "admin",
         "publish every requested service for processing",
         "ui",
         async () => {
+          // PRECONDITION FIRST. Everything below reads the queue's DOM to
+          // decide what happened, so a queue that did not load must stop this
+          // step rather than let it report zeros. `IntakeQueue` renders its
+          // `<h1>` only on the success path — the error card has no `<h1>` —
+          // so this is a state only a loaded queue reaches, not merely "some
+          // heading exists".
+          const err = await errorCardText(page);
+          if (err !== null) {
+            throw new Error(
+              `the intake queue is showing an error, nothing can be published: ${err.trim().slice(0, 200)}`,
+            );
+          }
+          await affordance(
+            page.locator("h1").first(),
+            "intake queue <h1> (renders only when the queue loaded)",
+            60_000,
+          );
+
           // One "Publish for processing" button per unfulfilled request. Each
           // click re-renders the list, so re-query rather than holding handles.
+          let published = 0;
           for (let i = 0; i < SERVICES.length + 2; i += 1) {
             const btn = page
               .getByRole("button", { name: "Publish for processing" })
               .first();
-            if (!(await btn.isVisible().catch(() => false))) break;
+            // A real wait, not a bare `isVisible()`. `isVisible()` returns
+            // immediately, so on a still-rendering queue it answers "no" and
+            // the loop exits reporting everything published.
+            try {
+              await btn.waitFor({ state: "visible", timeout: 15_000 });
+            } catch {
+              break; // none left to publish
+            }
             await btn.click();
-            await page.waitForLoadState("networkidle").catch(() => undefined);
+            if (!(await settled(page))) {
+              throw new Indeterminate(
+                `published ${published + 1} request(s), then the queue never went quiet — cannot tell how many landed`,
+              );
+            }
+            published += 1;
+          }
+
+          if (!(await settled(page))) {
+            throw new Indeterminate(
+              "the queue never went quiet after publishing — the remaining count would be a guess",
+            );
           }
           const left = await page
             .getByRole("button", { name: "Publish for processing" })
             .count();
-          rec.note(`unpublished service requests remaining: ${left}`);
+          rec.note(
+            `published ${published} service request(s); unpublished remaining: ${left}`,
+          );
+          return true;
         },
       );
 
@@ -737,10 +999,20 @@ test("full engagement: intake -> five services -> release -> client view -> back
           );
           const missing = SERVICES.filter((s) => !serviceIds.has(s.type));
           if (missing.length) {
-            // Not a throw: the run walks whatever DID open. Naming the gap here
-            // is the finding.
+            // Not a throw: the run walks whatever DID open. But the WORDING is
+            // load-bearing, and the first draft got it wrong in the most
+            // expensive way. "NOT opened by publish" attributes a cause, and
+            // that attribution is only available if publishing actually
+            // completed. When the publish step did not, the honest sentence
+            // names the missing services WITHOUT blaming a step that never ran
+            // to completion — otherwise the log reports a product defect
+            // ("publishing silently fails to open workspaces") invented out of
+            // the instrument's own uncertainty.
+            const names = missing.map((m) => m.type).join(", ");
             rec.note(
-              `NOT opened by publish: ${missing.map((m) => m.type).join(", ")}`,
+              publishOk === true
+                ? `NOT opened by publish, which completed: ${names}`
+                : `absent, cause UNKNOWN — the publish step did not complete, so this is not evidence about publishing: ${names}`,
             );
           }
         },
@@ -765,7 +1037,6 @@ test("full engagement: intake -> five services -> release -> client view -> back
         rec,
         svc.slug,
         `/admin/services/${serviceId}/${svc.workspaceSegment}`,
-        page.getByRole("heading").first(),
       );
 
       // --- score the assessment ------------------------------------------
@@ -791,12 +1062,24 @@ test("full engagement: intake -> five services -> release -> client view -> back
             // Offline: the upload only LISTS the file; extraction is an
             // explicit guarded click (the Run-AI guard exists so an upload
             // cannot silently produce canned output).
+            //
+            // A real wait, not a bare `isVisible()`. The button appears only
+            // after the upload round-trips, so an immediate read reliably
+            // answers "no" — and the old code then fell through to `await
+            // extractDone` and blocked for three minutes on a POST that was
+            // never going to be sent, reporting the timeout as if the
+            // extraction itself had hung.
             const extract = page
               .getByRole("button", { name: "Extract from this" })
               .first();
-            if (await extract.isVisible().catch(() => false)) {
+            try {
+              await extract.waitFor({ state: "visible", timeout: 30_000 });
               await extract.click();
               await acknowledgeOfflineAi(page);
+            } catch {
+              rec.note(
+                "tech-debt: no 'Extract from this' button after a 30s wait — the upload may have auto-extracted, or the upload did not land",
+              );
             }
             await extractDone;
           },
@@ -897,9 +1180,16 @@ test("full engagement: intake -> five services -> release -> client view -> back
           // silent miss.
           const runAi = page.getByRole("button", { name: /^Run AI\b/ }).first();
           await affordance(runAi, `${svc.slug} Run AI button`, 60_000);
+          // Settle before believing a disabled read: a visible-but-unhydrated
+          // button reports disabled, and "React had not attached yet" must not
+          // be logged as a product state. The cause is NOT asserted — the first
+          // draft blamed "this assessment status" with nothing to support it.
+          if (await runAi.isDisabled()) {
+            await settled(page, 10_000);
+          }
           if (await runAi.isDisabled()) {
             throw new Unreachable(
-              `${svc.slug}: Run AI is disabled at this assessment status`,
+              `${svc.slug}: Run AI is present but disabled; cause not established`,
             );
           }
           const ran = page.waitForResponse(
@@ -914,7 +1204,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
           // Post-Run-AI state is read after a reload: StrictMode double-loads
           // and the panel can otherwise be read mid-swap.
           await page.reload();
-          await page.waitForLoadState("networkidle").catch(() => undefined);
+          if (!(await settled(page))) {
+            rec.note(
+              `${svc.slug}: the workspace never went quiet after the post-Run-AI reload; the approve step below may be reading a mid-flight page`,
+            );
+          }
         });
 
         await rec.step(svc.slug, "approve the assessment", "ui", async () => {
@@ -932,20 +1226,40 @@ test("full engagement: intake -> five services -> release -> client view -> back
           const approve = page
             .getByRole("button", { name: /^Approve( client inputs)?$/ })
             .first();
-          if (await approve.isVisible().catch(() => false)) {
-            if (await approve.isDisabled()) {
-              throw new Unreachable(`${svc.slug}: Approve is disabled`);
-            }
-            await approve.click();
-            await page.waitForLoadState("networkidle").catch(() => undefined);
-            return;
+          await affordance(approve, `${svc.slug} Approve control`, 60_000);
+
+          // A visible button can still be pre-hydration. Give it a beat before
+          // calling it disabled, so "React had not attached yet" is not
+          // recorded as "the product disabled this control".
+          if (await approve.isDisabled()) {
+            await settled(page, 10_000);
           }
-          throw new Unreachable(`${svc.slug}: no Approve control on the page`);
+          if (await approve.isDisabled()) {
+            throw new Unreachable(
+              `${svc.slug}: Approve is present but disabled; cause not established`,
+            );
+          }
+
+          // waitForResponse BEFORE the click — the same pattern Run AI,
+          // finalize and release already use in this file, and the reason
+          // matters: `waitForLoadState("networkidle")` after a click does not
+          // wait for THIS request, so the approve POST could still be in
+          // flight when the fallback below reads the status, sees `draft`, and
+          // reports that the UI control did not work.
+          const approved = page.waitForResponse(
+            (r) =>
+              r.url().includes("/approve") && r.request().method() === "POST",
+            { timeout: 120_000 },
+          );
+          await approve.click();
+          const res = await approved;
+          rec.note(`${svc.slug}: approve -> ${res.status()}`);
+          return res.ok();
         });
 
-        // The UI Approve is the interesting path; if it did not land, the
-        // deliverable steps below are all unreachable, which is a poor trade
-        // for an instrument. Fall back through the API and SAY SO.
+        // The UI Approve is the interesting path; if it did not land, every
+        // deliverable step below is unreachable, which is a poor trade for an
+        // instrument. Fall back through the API — and say ONLY what is known.
         await rec.step(
           svc.slug,
           "ensure the assessment is approved",
@@ -963,8 +1277,13 @@ test("full engagement: intake -> five services -> release -> client view -> back
                 "post",
                 `/api/proxy/${svc.apiPrefix}/assessments/${latest.id}/approve`,
               );
+              // The wording is the finding, so it must not over-claim. This
+              // step cannot see whether the UI step succeeded; the log rows are
+              // adjacent and the reader can compare them. Asserting "the UI
+              // control did not do it" from a status read that may simply have
+              // raced the POST is how an instrument invents a defect.
               rec.note(
-                `${svc.slug}: approved via API — the UI control did not do it`,
+                `${svc.slug}: approved via API. Read the preceding "approve the assessment" row for whether the UI control had already done it.`,
               );
             }
           },
@@ -978,9 +1297,16 @@ test("full engagement: intake -> five services -> release -> client view -> back
           .getByRole("button", { name: /^(Finalize|Re-finalize)$/ })
           .first();
         await affordance(finalize, `${svc.slug} Finalize button`, 60_000);
+        // Same settle-then-recheck as Run AI and Approve. The cause is not
+        // asserted: `canFinalize` gates on the assessment being approved OR
+        // released, but a disabled read here may equally be a pre-hydration
+        // one, and this run cannot tell the two apart from the button alone.
+        if (await finalize.isDisabled()) {
+          await settled(page, 10_000);
+        }
         if (await finalize.isDisabled()) {
           throw new Unreachable(
-            `${svc.slug}: Finalize is disabled — the assessment is not approved`,
+            `${svc.slug}: Finalize is present but disabled; cause not established (it gates on the assessment being approved or released)`,
           );
         }
         const done = page.waitForResponse(
@@ -1032,13 +1358,7 @@ test("full engagement: intake -> five services -> release -> client view -> back
     // === Phase 4: the Risk Register (client-level, synthesized) ============
 
     if (clientId) {
-      await visit(
-        page,
-        rec,
-        "Risk-Register",
-        "/admin/risk-register",
-        page.getByRole("heading", { name: "Risk Register", exact: true }),
-      );
+      await visit(page, rec, "Risk-Register", "/admin/risk-register");
 
       await rec.step("Risk-Register", "read the gate", "api", async () => {
         const g = await proxyJson<{ unlocked: boolean; missing: string[] }>(
@@ -1161,7 +1481,21 @@ test("full engagement: intake -> five services -> release -> client view -> back
       "api",
       async () => {
         await page.goto("/results");
-        await page.waitForLoadState("networkidle").catch(() => undefined);
+        // A count is a CLAIM, and "0 download links" is one of the more
+        // alarming claims this log can make. It is only worth writing if the
+        // page had finished rendering — an unsettled read reports zero for a
+        // page that simply had not painted yet.
+        if (!(await settled(page))) {
+          throw new Indeterminate(
+            "/results never went quiet — a download-link count taken now would be a guess, and a low one",
+          );
+        }
+        const err = await errorCardText(page);
+        if (err !== null) {
+          throw new Error(
+            `/results is showing an error, so any link count is meaningless: ${err.trim().slice(0, 200)}`,
+          );
+        }
         const links = page.getByRole("link", {
           name: /PDF|XLSX|Word|Download/i,
         });
@@ -1245,6 +1579,7 @@ function writeLog(
   const ok = rec.steps.filter((s) => s.outcome === "ok").length;
   const failed = rec.steps.filter((s) => s.outcome === "failed").length;
   const missed = rec.steps.filter((s) => s.outcome === "unreachable").length;
+  const unknown = rec.steps.filter((s) => s.outcome === "indeterminate").length;
 
   const lines: string[] = [];
   lines.push(`# Full-engagement observation run — ${RUN_STAMP}`);
@@ -1259,9 +1594,24 @@ function writeLog(
   lines.push("## Summary");
   lines.push("");
   lines.push(`- steps recorded: ${rec.steps.length}`);
-  lines.push(`- ok: ${ok}`);
-  lines.push(`- failed: ${failed}`);
-  lines.push(`- unreachable (affordance never appeared): ${missed}`);
+  lines.push(`- ok — looked, it was fine: ${ok}`);
+  lines.push(`- failed — looked, it went wrong: ${failed}`);
+  lines.push(`- unreachable — looked, it was not there: ${missed}`);
+  lines.push(`- indeterminate — COULD NOT LOOK, no claim made: ${unknown}`);
+  lines.push("");
+  lines.push(
+    "Read `indeterminate` as a statement about this run, not about the product.",
+  );
+  lines.push(
+    "It means a page never settled or a read raced the render, so nothing was",
+  );
+  lines.push(
+    "concluded. Every downstream row after one is suspect for the same reason —",
+  );
+  lines.push(
+    "an earlier draft of this file recorded such reads as `ok` and thereby",
+  );
+  lines.push("reported a product defect that did not exist.");
   lines.push("");
   lines.push("## Engagement");
   lines.push("");
@@ -1316,7 +1666,13 @@ function writeLog(
     JSON.stringify(
       {
         stamp: RUN_STAMP,
-        summary: { total: rec.steps.length, ok, failed, unreachable: missed },
+        summary: {
+          total: rec.steps.length,
+          ok,
+          failed,
+          unreachable: missed,
+          indeterminate: unknown,
+        },
         engagement: {
           legalName: ctx.legalName,
           clientEmail: ctx.clientEmail,
@@ -1336,6 +1692,6 @@ function writeLog(
 
   // eslint-disable-next-line no-console
   console.log(
-    `\nfull-engagement: ${ok} ok, ${failed} failed, ${missed} unreachable — ${RUN_DIR}\n`,
+    `\nfull-engagement: ${ok} ok, ${failed} failed, ${missed} unreachable, ${unknown} indeterminate — ${RUN_DIR}\n`,
   );
 }
