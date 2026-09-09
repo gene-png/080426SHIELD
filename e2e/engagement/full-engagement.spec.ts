@@ -2431,42 +2431,70 @@ function writeLog(
     "A `failed` or `unreachable` row is a finding to look at, not a broken test.",
   );
   lines.push("");
-  lines.push("## Summary");
-  lines.push("");
-  lines.push(`- steps recorded: ${rec.steps.length}`);
-  lines.push(`- ok — looked, it was fine: ${ok}`);
-  lines.push(`- failed — looked, it went wrong: ${failed}`);
-  lines.push(`- unreachable — looked, it was not there: ${missed}`);
-  lines.push(`- indeterminate — COULD NOT LOOK, no claim made: ${unknown}`);
-  lines.push("");
-  // MEASURED vs NOT MEASURED, stated before anyone reads the counts as a score.
+  // ==========================================================================
+  // THE HEADLINE MUST NOT BE SPLITTABLE INTO SOMETHING FLATTERING.
   //
-  // `ok` and `failed` are results: something was exercised and it worked or it
-  // did not. `unreachable` and `indeterminate` are NOT results — they are work
-  // the run did not get to do. Listing all four together invites reading a high
-  // `ok` count as broad coverage, and on the first real run that reading would
-  // have been badly wrong: 38 ok looked reassuring while 11 unreachable rows
-  // meant three services, the whole deliverable path and the Risk Register were
-  // never exercised at all. D-051's distinction, applied to the summary rather
-  // than to a single step.
+  // The requirement is stronger than "be accurate". It is that an accurate
+  // quotation of PART of this block must not be misleading. "38 ok" is true
+  // and, on its own, false in effect — it was true of a run in which three
+  // services, the entire deliverable path and the Risk Register were never
+  // exercised at all.
+  //
+  // So the smallest quotable unit carries both halves. There is no bare `ok`
+  // count on a line of its own anywhere above the breakdown, and the verdict
+  // sentence names reached AND not-reached together or it does not render.
+  // The per-outcome numbers still appear, but BELOW the verdict and under a
+  // heading that travels with them if excerpted.
+  //
+  // Same failure this file records everywhere else: the thing keeping a number
+  // honest must live in the artifact carrying the number, not beside it.
+  // ==========================================================================
   const measured = ok + failed;
   const notMeasured = missed + unknown;
+  const clean = failed === 0 && notMeasured === 0;
+
+  lines.push("## Verdict");
+  lines.push("");
+  if (clean) {
+    lines.push(
+      `**CLEAN — all ${rec.steps.length} steps reached a conclusion and none failed.**`,
+    );
+  } else {
+    // One sentence, both numbers, no separable flattering half.
+    lines.push(
+      `**NOT CLEAN — ${measured} of ${rec.steps.length} steps reached a conclusion ` +
+        `(${failed} of them a FAILURE); ${notMeasured} steps concluded NOTHING.**`,
+    );
+  }
+  lines.push("");
   lines.push(
-    `**${measured} of ${rec.steps.length} steps actually MEASURED the product** (ok + failed).`,
+    "A step MEASURED the product only if it reached a conclusion — `ok` or `failed`.",
+  );
+  lines.push(
+    "`unreachable` and `indeterminate` are not passes and not failures: they are",
+  );
+  lines.push(
+    "work this run did not get to do, so they mark what it says NOTHING about.",
   );
   if (notMeasured > 0) {
     lines.push("");
     lines.push(
-      `The other ${notMeasured} did not: they are steps the run could not reach or could not`,
+      `> Quoting any single figure below without the ${notMeasured} not-reached alongside it`,
     );
     lines.push(
-      "read, so they are UNMEASURED rather than clean. A high `ok` count does not",
+      "> overstates what this run covered. Quote the verdict line, not a tally.",
     );
-    lines.push(
-      "mean broad coverage while these are outstanding — read them as the list of",
-    );
-    lines.push("things this run says nothing about.");
   }
+  lines.push("");
+  lines.push("### Breakdown");
+  lines.push("");
+  lines.push(`- steps recorded: ${rec.steps.length}`);
+  lines.push(
+    `- reached a conclusion: ${measured} — of which ok ${ok}, failed ${failed}`,
+  );
+  lines.push(
+    `- concluded nothing: ${notMeasured} — of which unreachable ${missed}, indeterminate ${unknown}`,
+  );
   lines.push("");
   lines.push(
     "Read `indeterminate` as a statement about this run, not about the product.",
@@ -2564,8 +2592,21 @@ function writeLog(
     JSON.stringify(
       {
         stamp: RUN_STAMP,
+        // FIRST key, and deliberately a compound string: whatever a script or
+        // a person grabs first from this file should be the figure that
+        // degrades SAFELY, not the flattering one. `summary.ok` alone is the
+        // number that misleads, so it is nested a level down behind a verdict
+        // that cannot be read as clean when it is not.
+        headline: clean
+          ? `CLEAN — all ${rec.steps.length} steps reached a conclusion and none failed`
+          : `NOT CLEAN — ${measured}/${rec.steps.length} steps reached a conclusion (${failed} failed); ${notMeasured} concluded nothing`,
+        clean,
         summary: {
           total: rec.steps.length,
+          // `reachedAConclusion` and `concludedNothing` are the pair that must
+          // travel together; the four raw counts sit under them.
+          reachedAConclusion: measured,
+          concludedNothing: notMeasured,
           ok,
           failed,
           unreachable: missed,
@@ -2601,6 +2642,12 @@ function writeLog(
 
   // eslint-disable-next-line no-console
   console.log(
-    `\nfull-engagement: ${ok} ok, ${failed} failed, ${missed} unreachable, ${unknown} indeterminate — ${RUN_DIR}\n`,
+    // Terminal line, same rule: this is the most-quoted single line the run
+    // produces, so it leads with the verdict rather than with the ok count.
+    `\nfull-engagement: ${
+      clean
+        ? `CLEAN — all ${rec.steps.length} steps reached a conclusion`
+        : `NOT CLEAN — ${measured}/${rec.steps.length} reached a conclusion (${failed} failed); ${notMeasured} concluded nothing`
+    }\n  (ok ${ok}, failed ${failed}, unreachable ${missed}, indeterminate ${unknown})\n  ${RUN_DIR}\n`,
   );
 }

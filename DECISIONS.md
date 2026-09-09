@@ -4669,3 +4669,66 @@ When you write "X, because Y" about a merge, a guard, a sweep or a gate: state Y
 as a standalone proposition and ask what would falsify it. If a counterexample
 exists in the very set you are describing, the reason is wrong even though the
 answer is right — and the answer being right is what stops anyone looking.
+## D-078 — The full-engagement instrument exits 0 with failures on record, by design
+
+**Date:** 2026-09-09. Records a design choice for
+`e2e/engagement/full-engagement.spec.ts`, and the condition under which that
+choice becomes a defect.
+
+### The decision
+
+**The spec's process exit code reports that THE WALK COMPLETED. It is not a
+claim about the product, and specifically not a claim that the observations
+were clean.**
+
+Its first real run exited 0 while its own step log recorded five `failed` rows.
+Playwright printed "1 passed". Two instruments, one run, disagreeing — and the
+machine-readable one said pass.
+
+### Why it is that way
+
+The spec is an observation instrument, not a gate. It walks a whole client
+engagement and records what it saw; it asserts nothing about content and
+contains no `expect(`. Every step is wrapped in a recorder that catches, so a
+step that fails is written down and the walk continues.
+
+Asserting on content would abort the walk. A run that stops at step 4 records
+nothing about steps 5 through 54 — and the steps it never reached are exactly
+the ones nobody has looked at. That trade is the whole instrument, and the exit
+code follows from it: "the walk completed" and "what the walk saw" are
+different questions, and conflating them is what would break it.
+
+### When this becomes a defect
+
+**The moment its exit code is read as "something is wrong".** Concretely: wiring
+it into CI, into a pre-merge check, or into any script that branches on
+non-zero. There it would sit green over a broken product — which is #213's
+shape (a check whose green means nothing because no input it saw could have
+made it red) occurring inside an instrument built to find that shape.
+
+This is written here rather than left to be discovered because the person who
+wires it up will be reading the exit code, not this file.
+
+### What a CI-wired version would need instead
+
+Not built, and named so the next person does not invent something worse:
+
+- A threshold over the log's own outcome counts (`step-log.json`), or
+- a separate assertion pass over that recorded JSON, run after the walk.
+
+Either way the walk itself keeps recording rather than aborting; the verdict is
+taken from the record afterwards.
+
+**And any such threshold must treat `unreachable` as NOT MEASURED, never as
+passed.** The four outcomes are not two results and two flavours of failure:
+`ok` and `failed` are conclusions about the product, while `unreachable` and
+`indeterminate` are work the run did not get to do. The first run is the
+argument — 38 `ok` looked reassuring beside 11 `unreachable`, and those eleven
+meant three services, the entire deliverable path and the Risk Register were
+never exercised at all. A threshold keyed on failures alone would have passed
+that run while the product went untested in precisely the places a defect is
+most likely.
+
+The step log states this itself, in a form built to survive being excerpted:
+its headline carries the reached and not-reached counts together, because
+"38 ok" is true on its own and false in effect.
