@@ -5,6 +5,20 @@
 *.pem
 *.key
 
+# Key-shaped files by NAME, not just by extension. `*.key` covers the
+# extension nobody uses for a pasted API key; the file that actually exists on
+# this machine is `API Key.txt`, and `.txt` is ignored by nothing. This repo is
+# PUBLIC (anonymous `git ls-remote` succeeds), so one `git add .` from a
+# directory holding such a file is a published credential.
+#
+# Today both copies live in the repo's PARENT directory and are therefore out
+# of reach, which is a property of where someone happened to put them rather
+# than of anything enforced. These patterns make the placement irrelevant.
+*[Aa][Pp][Ii]?[Kk]ey*
+*[Ss]ecret*.txt
+*[Cc]redential*.txt
+*[Tt]oken*.txt
+
 # Node
 node_modules/
 .pnpm-store/
