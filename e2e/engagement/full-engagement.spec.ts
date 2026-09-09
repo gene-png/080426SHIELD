@@ -918,8 +918,19 @@ test("full engagement: intake -> five services -> release -> client view -> back
         });
 
         await rec.step(svc.slug, "approve the assessment", "ui", async () => {
+          // The label is status-dependent: "Approve" on a DRAFT and "Approve
+          // client inputs" on a SUBMITTED one (CsfWorkspace / ZtWorkspace /
+          // AttackWorkspace all share the branch). This run creates drafts, so
+          // "Approve" is the expected label — but an anchored regex covering
+          // both costs nothing and keeps the step from reading `unreachable`
+          // if the client self-assessment path ever submits first.
+          //
+          // Anchored deliberately: `getByRole` name matching is SUBSTRING, so a
+          // bare "Approve" would also match the DISABLED "Approved" and
+          // "Approving…" states and the step would click a no-op and call it
+          // done.
           const approve = page
-            .getByRole("button", { name: "Approve", exact: true })
+            .getByRole("button", { name: /^Approve( client inputs)?$/ })
             .first();
           if (await approve.isVisible().catch(() => false)) {
             if (await approve.isDisabled()) {
