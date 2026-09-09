@@ -121,7 +121,7 @@ _PATTERN = re.compile(
 
 # The provenance marker, in the shape this repo already uses for exemptions
 # (`# test-integrity:`, `# separator-class:`). An empty marker is not a marker.
-def _bound(checked: int) -> str:
+def _bound(checked: int, targets: list[str]) -> str:
     """What this gate ACTUALLY looked at, printed on every clean result.
 
     A clean line is a claim, and this one was reading as much broader than it
@@ -134,6 +134,24 @@ def _bound(checked: int) -> str:
        punish the correction.
     3. The noun census. `_VOLATILE` is a hand-built alternation that the
        module docstring already calls a FLOOR rather than a census.
+
+    The document list is printed BY NAME, not merely counted, and that is the
+    load-bearing half. `6 documents` is a number a reader accepts; six names are
+    a set a reader can check against what they assumed. The case that forced it:
+    `DECISIONS.md` is NOT in either target list -- the string "DECISIONS" does
+    not appear in this file at all -- while `CLAUDE.md` describes this gate as
+    "blocking on the shared documents" and its own ownership table lists
+    `DECISIONS.md` as a shared document. So the repo's instructions assert
+    coverage this gate does not provide, over the one file the size ratchet
+    actively routes narrative INTO. Printing the names is what makes that
+    visible at the point someone reads a clean result.
+
+    Whether `DECISIONS.md` SHOULD be covered is deliberately not decided here.
+    Adding it is a judgement with a real cost -- one branch alone carries at
+    least nine repo- and database-derived counts with no provenance markers, so
+    enforcing it would turn `main` red and the cheapest route to green would be
+    deleting records. That decision belongs to a human; this change only stops
+    the gap being invisible.
 
     Limit 3 is the one nobody predicts. Measured 2026-09-09: the seed's
     "Demo seed complete: 4 services" is wrong -- five services are seeded --
@@ -155,9 +173,12 @@ def _bound(checked: int) -> str:
     """
     cardinals = len(_CARDINALS.split("|"))
     nouns = len(_VOLATILE.split("|"))
+    names = ", ".join(targets)
     return (
-        f"{checked} documents, spelled cardinals only "
-        f"[{cardinals} recognised], {nouns} volatile nouns"
+        f"{checked} documents ({names}); "
+        f"spelled cardinals only [{cardinals} recognised] "
+        f"beside one of {nouns} volatile nouns; "
+        f"every other file and every digit is OUT of scope"
     )
 
 
@@ -328,7 +349,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 0
 
     if not all_findings:
-        print(f"check-recalled-counts: clean ({_bound(checked)})")
+        print(f"check-recalled-counts: clean ({_bound(checked, targets)})")
         return 0
 
     print("check-recalled-counts: spelled counts of things that change")

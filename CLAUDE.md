@@ -1597,6 +1597,42 @@ Rules of the road:
   about that block inherits every drift problem above. A measurement has no line
   number to drift.
 
+- **A CITATION'S WORTH IS WHETHER IT FAILS LOUDLY. Pin to an immutable object
+  where you can; where you must cite something mutable, the citation has to be
+  MACHINE-CHECKED so the change trips something.** Derived on 2026-09-09 by
+  breaking three weaker forms in a row, each proposed as the durable one:
+
+  - *"A claim about a completed action cannot be falsified by later action."*
+    False. A completed-action claim that AGGREGATES OVER AN OPEN POPULATION
+    goes stale on the next member — D-076's "From two independent occurrences
+    on two separately reviewed PRs" is entirely in the past and D-076 itself
+    records that it rots, because "the population is DEFINED as one that
+    grows". A diff range is the same trap: `a3137d5..83c051a` reproduces
+    forever, `a3137d5..HEAD` does not.
+  - *"Cite something that cannot change without someone having to edit it."*
+    False. Deliberate edits are routine. A phrase quoted from
+    `AttackAiInputsPanel.test.tsx` survived a correct edit that moved it into a
+    `title` attribute; the citation went vacuous in silence.
+  - *A quoted string is safe because it survives a reflow.* True of reflows and
+    beside the point. The failure mode that matters is not motion, it is
+    SILENCE.
+
+  Rank the forms by how they fail. A SHA stops resolving or its content
+  visibly differs — **loud**. A phrase quoted in prose just stops being there —
+  **silent**. A phrase quoted in an ASSERTION is worse than silent: it keeps
+  reporting success, which is the #72 shape reached from the citation rule.
+
+  **A number carrying its command must also name its REF, and this is where the
+  rule pays for itself.** Re-deriving means choosing a tree, and the tree a
+  reader picks is `main`. `context/gene.md` said "collected the full unit set:
+  **7128** (`pytest -m unit --collect-only -q`)" without naming where it was
+  measured. `main` later moved to 7128 itself, so re-running the command on
+  `main` REPRODUCED the written number while the branch was really 7137 — a
+  false confirmation manufactured by the one sentence whose purpose is to
+  license not checking. Write `7137 (<command>, at d1d927d)`: on the wrong tree
+  the ref fails to reproduce and the reader learns something instead of being
+  reassured.
+
 - **SPOT-CHECK a subagent's `file:line` citations before they enter a document,
   and record the check. A sample, not all of them — what you need is the
   report's CALIBRATION.** This replaces "be skeptical of subagent output", which

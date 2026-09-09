@@ -182,9 +182,21 @@ def test_the_clean_message_states_all_three_bounds(tmp_path: Path, capsys) -> No
 
     assert main(["prog", "a.md", "b.md"], root=tmp_path) == 0
     out = capsys.readouterr().out
-    assert "clean (2 documents," in out
+    assert "clean (2 documents" in out
     assert "spelled cardinals only" in out
     assert "volatile nouns" in out
+    # The NAMES, not just the count, and asserted from names this TEST chose
+    # rather than from the module's own constant -- so it cannot be satisfied
+    # by a count, and it is not the #72 shape.
+    #
+    # A bare `6 documents` is a number a reader accepts. Six names are a set a
+    # reader can check against what they assumed they were getting, which is
+    # the whole point: `DECISIONS.md` is in neither target list, while
+    # `CLAUDE.md` calls this gate "blocking on the shared documents" and lists
+    # `DECISIONS.md` as one. Only the names make that visible.
+    assert "a.md" in out
+    assert "b.md" in out
+    assert "OUT of scope" in out
 
 
 @pytest.mark.unit
