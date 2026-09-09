@@ -620,6 +620,12 @@ class WithheldCapability:
 
 WITHHELD_SECURITY_SCOPE = "security_scope"
 WITHHELD_NOT_IN_APPROVED_SNAPSHOT = "not_in_approved_snapshot"
+# A LIST-level reason, unlike the two above, which are row-level. It is applied
+# to the rows a discarded list would otherwise have contributed — not to every
+# row on it, because a row already out of security scope did not lose its place
+# to the discard and saying so would tell a reader that un-discarding restores
+# it (#197: a reason names the cause that is true of the row).
+WITHHELD_LIST_DISCARDED = "list_discarded"
 
 
 @dataclass(frozen=True)
@@ -779,13 +785,19 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
       rows whose non-security call is unconfirmed, because this list is a hard
       allow-list on what the model may cite: a tool missing from it cannot be
       named, and the technique it covers reads as uncovered.
-    * **List status.** Previously absent entirely, so a DISCARDED list's rows
-      stayed citable forever — a consultant throwing a draft away did not stop
-      its tools being offered as evidence. Only DISCARDED is excluded here:
-      DRAFT still counts, because mapping ATT&CK before approving the tech-debt
-      list is a normal order of work. Superseded versions also still count,
-      which is arguably wrong but is pre-existing behaviour and not this
-      change's business.
+    * **List status.** A DISCARDED list contributes nothing citable. DRAFT still
+      counts, because mapping ATT&CK before approving the tech-debt list is a
+      normal order of work, and superseded versions still count, which is
+      arguably wrong but is pre-existing behaviour and not this change's
+      business.
+
+      **The discard is now applied in PYTHON and reported, not applied in SQL
+      and hidden** (#178). The query used to carry
+      `status != DISCARDED`, which made a discarded list byte-identical to no
+      list at all: a client whose only list was thrown away read "No Tech Debt
+      capability list feeds this mapping", and re-upload versus un-discard are
+      completely different next actions. The predicate was also load-bearing in
+      a way its one line did not show — see `_offer` below.
     * **Approved membership (W3).** For a list that has been approved, the
       APPROVED SNAPSHOT is the membership, not the live rows. An approved list
       stays editable until release — `_editable_list_or_404` blocks RELEASED and
@@ -823,7 +835,6 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
             .where(
                 Service.client_id == client_id,
                 Service.kind == ServiceKind.TECH_DEBT,
-                CapabilityList.status != CapabilityListStatus.DISCARDED,
             )
         )
         .scalars()
@@ -863,6 +874,65 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     pairs: list[_MergeCandidate] = []
     dropped: list[WithheldCapability] = []
 
+    def _offer(
+        cap_list: CapabilityList,
+        name: str,
+        vendor: str | None,
+        item_id: str | None,
+        source_artifact_id: uuid.UUID | None,
+        *,
+        from_snapshot: bool,
+    ) -> None:
+        """Route a row the membership rules would otherwise make citable.
+
+        **Both branches below go through here rather than appending to `pairs`
+        themselves, and that is the fix for #178 rather than an abstraction.**
+        The classifier has two branches and only the live one applies a per-item
+        predicate; the snapshot branch appends every entry unconditionally. So
+        removing the SQL `status != DISCARDED` while guarding only the visible
+        per-item branch would send every snapshot entry to the model.
+
+        **That data state is UNREACHABLE today, and this is defence in depth
+        rather than a live-leak fix.** `approved_membership` is written in one
+        place, which also sets APPROVED, and discard accepts only a DRAFT — so
+        approved-and-discarded cannot be produced through the API.
+        `tests/unit/test_capability_list_status_graph.py` pins both halves, and
+        exists so this docstring cannot quietly regrow into the stronger claim
+        it made in its first draft.
+
+        It is kept, and the reasoning is not "one day it might matter":
+
+        * the DISCARDED branch here FIRES today, on every DRAFT-discarded list.
+          What is unreachable is a data state, not this code path;
+        * the value is that `pairs.append` has ONE site. Un-sharing it restores
+          the two-writer shape where a predicate is applied to one branch and
+          forgotten in the other — the half-fix this repo records for #75, #79
+          and #84;
+        * the state is one line from reachable, and the same file proves the
+          line gets missed: `approve_capability_list` fails to refuse DISCARDED
+          (#231) while two other guards in it list DISCARDED explicitly;
+        * the asymmetry. An unfiring guard costs one branch. Its absence costs
+          discarded tooling reaching a hard allow-list and a client
+          deliverable.
+
+        One router means the gate cannot be applied to one branch and forgotten
+        in the other. A guard written twice is two statements of one rule, and
+        they agree only until somebody edits one of them.
+        """
+        if cap_list.status == CapabilityListStatus.DISCARDED:
+            dropped.append(
+                WithheldCapability(
+                    name=name,
+                    vendor=vendor,
+                    reason=WITHHELD_LIST_DISCARDED,
+                    capability_list_id=cap_list.id,
+                    list_version=cap_list.version,
+                    source_artifact_id=source_artifact_id,
+                )
+            )
+            return
+        pairs.append(_MergeCandidate(name, vendor, item_id, cap_list, from_snapshot=from_snapshot))
+
     for cap_list in lists:
         # Lists whose approved membership was never recorded read live: a DRAFT
         # by design (mapping ATT&CK before approving the tech-debt list is a
@@ -880,10 +950,13 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         if cap_list.approved_membership is None:
             for item in live_by_list[cap_list.id]:
                 if in_security_scope(item):
-                    pairs.append(
-                        _MergeCandidate(
-                            item.name, item.vendor, str(item.id), cap_list, from_snapshot=False
-                        )
+                    _offer(
+                        cap_list,
+                        item.name,
+                        item.vendor,
+                        str(item.id),
+                        item.source_artifact_id,
+                        from_snapshot=False,
                     )
                 else:
                     dropped.append(
@@ -908,18 +981,29 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         for entry in cap_list.approved_membership:
             entry_name = entry.get("name") or ""
             snapshot_names.add(entry_name.strip().casefold())
-            pairs.append(
-                # A snapshot written before W2 carries no `vendor` key. Reading
-                # that as UNKNOWN rather than as "no vendor" is the cautious
-                # direction: the resolver flags a vendor-shaped match it cannot
-                # verify instead of resolving it confidently.
-                _MergeCandidate(
-                    entry_name,
-                    entry.get("vendor"),
-                    entry.get("item_id"),
-                    cap_list,
-                    from_snapshot=True,
-                )
+            # A snapshot written before W2 carries no `vendor` key. Reading that
+            # as UNKNOWN rather than as "no vendor" is the cautious direction:
+            # the resolver flags a vendor-shaped match it cannot verify instead
+            # of resolving it confidently.
+            #
+            # `source_artifact_id` is read from the LIVE row the entry points at,
+            # because the snapshot does not carry one. It is used only when this
+            # entry is withheld — a missing live row then means no document to
+            # cite, which is honest rather than a lookup failure.
+            snapshot_item = live_by_id.get(str(entry.get("item_id") or ""))
+            _offer(
+                cap_list,
+                entry_name,
+                entry.get("vendor"),
+                entry.get("item_id"),
+                # `None` here is honest about the VALUE and silent about the
+                # REASON: an absent live row renders identically to a row with
+                # no document. `CapabilityProvenance` has `live_row_missing` for
+                # exactly that distinction and `WithheldCapability` does not.
+                # Latent -- reachable only in the state #231 is one line from
+                # creating. Tracked as #233.
+                snapshot_item.source_artifact_id if snapshot_item is not None else None,
+                from_snapshot=True,
             )
 
         # A live row absent from the snapshot. Matched on NAME ONLY, and
@@ -1052,6 +1136,54 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
     # allow-list is the union of them, so reporting the second copy as withheld
     # would tell a consultant the model cannot cite a tool it can. That is the
     # defect `_unapproved_contributing_names` was withdrawn for.
+    #
+    # **THIS IS A DISCLOSURE BOUNDARY, NOT TIDY SORTING. Do not simplify it away
+    # as a redundant de-duplication.**
+    #
+    # `WithheldCapability` carries `name` AND `vendor`, and since #178 a
+    # DISCARDED list produces withheld rows. Before that change the SQL
+    # `status != DISCARDED` meant a discarded list's tool names never left the
+    # database at all; now they reach `AttackAiInputWithheld` and render on an
+    # admin panel. That is intended — naming what was dropped is the whole point
+    # of the endpoint — and it is why this line matters more than it used to.
+    #
+    # What it guarantees: a tool that is citable through ANY list is never ALSO
+    # reported as withheld. Without it the panel would name the same tool in
+    # both columns and the reader could not tell which is true. The egress
+    # direction is safe by TYPE rather than by this filter —
+    # `CapabilityMembership.inputs()` projects `self.sent` only, and `withheld`
+    # is a sibling field consumed into the panel schema — so nothing here can
+    # widen what reaches the model. This protects the DISCLOSURE, and a wrong
+    # disclosure on a client-facing path is the failure this endpoint exists to
+    # prevent.
+    #
+    # Pinned by `test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld`,
+    # and that is a MEASUREMENT rather than a claim about what a change would do.
+    # Run 2026-09-08 on `test_attack_ai_inputs.py`:
+    #
+    #     unmutated (baseline)          11 passed, 0 failed
+    #     `if not key or key in survivors:` -> `if not key:`
+    #                                   10 passed, 1 failed
+    #     and the 1 is that test
+    #
+    # The BASELINE is half the measurement, not a formality: without it, "exactly
+    # one test goes red" cannot be told apart from "one went red and one was
+    # already red" — `mutation_sweep.py`'s own recorded defect, the one
+    # `BaselineNotGreen` exists for. It was captured here AFTER the mutation
+    # rather than before, which got the right answer by sequencing rather than by
+    # design; capture it first.
+    #
+    # Nothing else in the file notices, so no other assertion is standing in for
+    # this guard — remove it and this is the single thing that objects.
+    #
+    # Two procedural notes, because one nearly misfired. The mutation was proved
+    # to LAND before its result was read, and an occurrence count would have got
+    # that WRONG: `rg -c 'key in survivors'` returns 1 after the mutation,
+    # because the comment above quotes the phrase. A count of a string appearing
+    # in both code and prose is not evidence about the code — classify the hits.
+    # The restore was proved by sha256 against the pre-mutation file (byte
+    # identical), not by re-running and seeing green, which is also what a failed
+    # restore of an unrelated file looks like.
     survivors = {w.name.casefold() for w in winners}
     withheld: dict[str, WithheldCapability] = {}
     for drop in sorted(dropped, key=lambda d: (d.name or "", d.list_version, d.reason)):
@@ -1061,6 +1193,7 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
         seen = withheld.get(key)
         if seen is None:
             withheld[key] = drop
+        # NOT re-derived for three reasons -- see #232 for the 3x3 this needs.
         elif seen.reason != drop.reason and drop.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT:
             # Withheld for both reasons across two lists. `security_scope` says
             # a human decided this is not security tooling; the copy that is in
@@ -2062,14 +2195,32 @@ def ai_inputs(
     # A later version of the same tech-debt list does NOT retire an earlier one:
     # every non-discarded version still feeds the mapping. Surfaced, not fixed —
     # it is pre-existing behaviour and routinely surprises people.
+    #
+    # A DISCARDED version is RETIRED from this computation, which is the same
+    # rule `_latest_attack_assessment` applies to a discarded assessment (D-031,
+    # "retired from every latest consumer"). Without it, discarding v2 would
+    # make a live v1 read as superseded by a list nobody can use — a pill that
+    # tells a consultant to go and look at something that has been thrown away.
+    # It is not a filter on `membership.lists`: a discarded list still appears
+    # as a source, it just does not get a vote on what "latest" means.
     latest_version: dict[uuid.UUID, int] = {}
     for cap_list in membership.lists:
+        if cap_list.status == CapabilityListStatus.DISCARDED:
+            continue
         latest_version[cap_list.service_id] = max(
             latest_version.get(cap_list.service_id, 0), cap_list.version
         )
+    # Keyed off `membership.lists`, NOT off `latest_version` — the two stopped
+    # being the same set when discarded lists lost their vote above, and a
+    # discarded-only service has no `latest_version` entry while still needing a
+    # title. The comment on `tech_debt_service_title` below asserts a miss is
+    # impossible; sourcing this from anything narrower than the lists themselves
+    # is what would make that false.
     titles = dict(
         db.execute(
-            select(Service.id, Service.title).where(Service.id.in_(latest_version.keys()))
+            select(Service.id, Service.title).where(
+                Service.id.in_({cl.service_id for cl in membership.lists})
+            )
         ).all()
     )
 
@@ -2084,7 +2235,51 @@ def ai_inputs(
     sources: list[AttackAiInputSourceList] = []
     for cap_list in membership.lists:
         from_snapshot = cap_list.approved_membership is not None
-        rows = _excluded_source_rows(cap_list)
+        # DISCARDED lists reach this loop for the first time (#178), and every
+        # aggregate below ran for years under a query that excluded them. Each
+        # is a SEPARATE decision, and the one you notice is not the set — so
+        # every one is stated here rather than left to whichever the author
+        # happened to think about. No count is written: this block is meant to
+        # be AUDITED against the loop, and a number lets a reader tick off the
+        # tally and stop. An earlier draft said "six", reached six by counting
+        # `status` (a bare passthrough that was never in question) and omitting
+        # `is_latest_for_service` — the field this change is actually about.
+        #
+        # DECIDED — reported differently for a retired list:
+        #
+        #  * `_excluded_source_rows` — the panel renders these as bare
+        #    "Row {index}: {summary}" with NO list identity, so a thrown-away
+        #    upload's orphan rows would sit indistinguishably beside live ones,
+        #    with indexes colliding across lists. Inviting investigation into a
+        #    file somebody already discarded is worse than saying nothing.
+        #  * `_excluded_attribution` — a discarded list with `source_rows_total`
+        #    set and no stored `excluded_rows` returns "unknown", which renders
+        #    as "N of the M lists cannot say what they dropped". True of the
+        #    row and useless as advice.
+        #
+        #  * `is_latest_for_service` — set to None, not False, at the
+        #    `sources.append(` below, with its own reasoning there. (This said
+        #    "three lines below"; the target is thirty-seven lines away. A
+        #    distance is a claim that expires the next time anyone edits
+        #    between here and there, which is why the rule is to cite the
+        #    symbol rather than the offset.) Listed here because this block is
+        #    the checklist and it is the field the change is about; a reader
+        #    auditing "was every aggregate decided?" must not find it missing.
+        #
+        # DELIBERATELY NOT GATED, and why:
+        #
+        #  * `sent_count` / `not_sent_count` — the point of the change. A
+        #    discarded list reads 0 sent and N not-sent, which is the disclosure
+        #    #178 exists to add.
+        #  * `membership_stale` — computed only when `from_snapshot`, which a
+        #    discarded list cannot be today (`test_capability_list_status_graph`
+        #    pins that). Left live so it stays correct if the state graph
+        #    changes; its "re-approve" warning would need revisiting then, which
+        #    is noted on #231.
+        #  * `status` — a passthrough of the column. Listed for completeness,
+        #    not as a decision: nothing about it was ever in question.
+        retired = cap_list.status == CapabilityListStatus.DISCARDED
+        rows = [] if retired else _excluded_source_rows(cap_list)
         excluded.extend(rows)
         sources.append(
             AttackAiInputSourceList(
@@ -2097,7 +2292,17 @@ def ai_inputs(
                 tech_debt_service_title=titles[cap_list.service_id],
                 version=cap_list.version,
                 status=cap_list.status.value,
-                is_latest_for_service=cap_list.version >= latest_version[cap_list.service_id],
+                # None, NOT False. A discarded list is RETIRED: not the latest,
+                # and nothing supersedes it — while `False` is read by every
+                # renderer as "superseded by a later version". `latest_version`
+                # may also hold no entry for this service at all when every list
+                # on it was discarded, so it is indexed only in the live branch,
+                # where a miss is genuinely impossible.
+                is_latest_for_service=(
+                    None
+                    if cap_list.status == CapabilityListStatus.DISCARDED
+                    else cap_list.version >= latest_version[cap_list.service_id]
+                ),
                 membership_from_snapshot=from_snapshot,
                 # CALLED, not re-derived. The row-level split above answers a
                 # different question — "can the model cite this string?", keyed
@@ -2111,7 +2316,26 @@ def ai_inputs(
                 sent_count=sent_per_list.get(cap_list.id, 0),
                 not_sent_count=withheld_per_list.get(cap_list.id, 0),
                 source_rows_total=cap_list.source_rows_total,
-                excluded_attribution=_excluded_attribution(cap_list),
+                # "retired" is its OWN member, not a reuse of "not_recorded".
+                #
+                # The first version wrote "not_recorded" here, and that member
+                # already means something specific: the panel renders it as
+                # "N lists predate the extraction record". A list uploaded this
+                # morning with a complete reconciliation on record, then
+                # discarded, was reported as predating the extraction record --
+                # flatly false, and it walked straight past the guard in
+                # `_excluded_attribution` that says "Do NOT name the cause here
+                # ... the condition observes ABSENCE; it cannot see WHY".
+                #
+                # The reason for suppressing the warning was a PRESENTATION
+                # decision, and it was implemented by making the API assert
+                # something untrue -- the wrong layer. A distinct member states
+                # the truth and lets each consumer decide, and it is enforced:
+                # `describeAttribution` is an exhaustive switch with no default,
+                # so TypeScript refuses to compile until every consumer handles
+                # it. A panel-side filter would have been a rule someone could
+                # drop with nothing to catch it.
+                excluded_attribution=("retired" if retired else _excluded_attribution(cap_list)),
                 excluded_rows_named=len(rows),
             )
         )
@@ -2125,6 +2349,7 @@ def ai_inputs(
         withheld_not_in_approved_snapshot=sum(
             1 for d in not_sent if d.reason == WITHHELD_NOT_IN_APPROVED_SNAPSHOT
         ),
+        withheld_list_discarded=sum(1 for d in not_sent if d.reason == WITHHELD_LIST_DISCARDED),
         excluded_rows_named=len(excluded),
         lists_with_unknown_exclusions=sum(
             1 for s in sources if s.excluded_attribution == "unknown"

@@ -364,12 +364,17 @@ def _list_with_extraction_record(
     *,
     source_rows_total: int | None,
     excluded_rows: list | None,
+    status: CapabilityListStatus = CapabilityListStatus.APPROVED,
 ) -> None:
     """A Tech Debt list carrying a specific EXTRACTION record.
 
-    The three `excluded_attribution` states are decided entirely by these two
-    stored columns, so they are set here directly rather than by driving an
-    extraction -- the point is to pin what the READER does with each stored
+    The three states this PRODUCER can return -- `complete`, `unknown`,
+    `not_recorded` -- are decided entirely by these two stored columns, so they
+    are set here directly rather than by driving an extraction. (The wire field
+    has FOUR members: `retired` is applied by the caller at `sources.append(`,
+    not by `_excluded_attribution`, which is why this helper cannot produce it
+    and why the two other "tri-state" mentions in this file are correctly
+    scoped and must not be widened.) -- the point is to pin what the READER does with each stored
     shape, including the shape a clean run and a failed attribution both produce.
     """
     with TestSession() as db:
@@ -385,7 +390,7 @@ def _list_with_extraction_record(
         cl = CapabilityList(
             service_id=svc.id,
             version=1,
-            status=CapabilityListStatus.APPROVED,
+            status=status,
             source_rows_total=source_rows_total,
             excluded_rows=excluded_rows,
         )
@@ -456,3 +461,329 @@ def test_excluded_attribution_is_a_tri_state_over_the_stored_record(
     else:
         assert totals["excluded_rows_named"] == 0
         assert totals["lists_with_unknown_exclusions"] == (1 if expected == "unknown" else 0)
+
+
+def _approved_then_discarded_list(
+    TestSession: sessionmaker,
+    cid: str,
+    user_id: str,
+) -> None:
+    """A list APPROVED (so it has a snapshot) and THEN discarded.
+
+    The order matters and is the whole point: `_client_capability_membership`
+    has two branches, and only the live one applies a per-item predicate. A
+    list discarded while still a DRAFT exercises the live branch, which is the
+    easy half. This one exercises the SNAPSHOT branch, where every entry is
+    appended unconditionally -- so a fix that guards only the live branch
+    passes a draft-discarded test and leaks here (#178).
+
+    Snapshot written by `build_approved_membership`, the production writer,
+    for the reason its sibling fixture states: a hand-written snapshot agrees
+    with the reader by construction.
+    """
+    with TestSession() as db:
+        svc = Service(
+            kind=ServiceKind.TECH_DEBT,
+            status=ServiceStatus.IN_PROGRESS,
+            title="Acme Tech Debt",
+            client_id=_uuid.UUID(cid),
+            opened_by=_uuid.UUID(user_id),
+        )
+        db.add(svc)
+        db.flush()
+        cl = CapabilityList(service_id=svc.id, version=1, status=CapabilityListStatus.APPROVED)
+        db.add(cl)
+        db.flush()
+        for name, related, confirmed in [
+            ("Splunk", None, False),  # in scope -> snapshotted
+            ("CrowdStrike", True, False),  # in scope -> snapshotted
+            ("Figma", False, True),  # out of scope -> the writer drops it
+        ]:
+            db.add(
+                CapabilityItem(
+                    capability_list_id=cl.id,
+                    name=name,
+                    security_related=related,
+                    security_class_confirmed=confirmed,
+                )
+            )
+        db.flush()
+
+        from app.routes.tech_debt import build_approved_membership
+
+        cl.approved_membership = build_approved_membership(db, cl.id)
+        db.flush()
+
+        # Discarded AFTER approval -- by direct row write, because NO ROUTE CAN
+        # DO THIS. `discard_capability_list` accepts only a DRAFT and 409s on an
+        # APPROVED list; `test_capability_list_status_graph.py` pins that. An
+        # earlier version of this comment cited `_editable_list_or_404`, which
+        # governs EDITS and does not decide discardability -- a real guard named
+        # for a job it does not do.
+        #
+        # So this fixture is defence-in-depth against a future writer, not a
+        # reproduction of a reachable state, and the PR body says so. It stays
+        # because the snapshot branch has no per-row predicate of its own.
+        cl.status = CapabilityListStatus.DISCARDED
+        db.commit()
+
+
+@pytest.mark.unit
+def test_an_approved_then_discarded_lists_snapshot_never_reaches_capabilities(app_client) -> None:
+    """The snapshot branch is the one that leaks, so it gets the named test.
+
+    Both halves asserted in one test on purpose: absent from `capabilities` is
+    only half a claim, because a filter that dropped EVERYTHING would satisfy
+    it. The tools must also be NAMED, with the reason that is true of them.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    _approved_then_discarded_list(TestSession, cid, uid)
+    sid = _attack_service(c, bearer, cid)
+
+    body = c.get(
+        f"/attack/services/{sid}/ai-inputs",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+    ).json()
+
+    cited = {cap["name"] for cap in body["capabilities"]}
+    assert "Splunk" not in cited, "a discarded list's snapshot row reached the egress projection"
+    assert "CrowdStrike" not in cited
+    assert cited == set(), "no other list exists, so nothing may be citable"
+
+    discarded = {d["name"]: d for d in body["not_sent"] if d["reason"] == "list_discarded"}
+    assert set(discarded) == {"Splunk", "CrowdStrike"}, (
+        "the discard must be REPORTED, not merely applied -- an absent tool with no "
+        "reason is the silent drop this endpoint exists to end"
+    )
+    assert body["totals"]["withheld_list_discarded"] == 2
+
+
+@pytest.mark.unit
+def test_a_draft_discarded_lists_live_rows_are_reported_by_their_own_reasons(app_client) -> None:
+    """The live branch, and the half a naive fix gets right.
+
+    Also pins the ATTRIBUTION rule: an out-of-scope row on a discarded list
+    keeps `security_scope`. Reporting it as `list_discarded` would tell a
+    reader that un-discarding restores it, which is false -- it would still be
+    out of scope. Reasons name the cause that is true of the row (#197).
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    _tech_debt_list(
+        TestSession,
+        cid,
+        uid,
+        [("Splunk", None, False), ("Figma", False, True)],
+        status=CapabilityListStatus.DISCARDED,
+    )
+    sid = _attack_service(c, bearer, cid)
+
+    body = c.get(
+        f"/attack/services/{sid}/ai-inputs",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+    ).json()
+
+    assert {cap["name"] for cap in body["capabilities"]} == set()
+    reasons = {d["name"]: d["reason"] for d in body["not_sent"]}
+    assert reasons == {"Splunk": "list_discarded", "Figma": "security_scope"}
+
+
+@pytest.mark.unit
+def test_a_discarded_only_client_reports_the_list_rather_than_no_list_at_all(app_client) -> None:
+    """The second effect: the `if not lists` short-circuit stopped firing.
+
+    "No Tech Debt capability list feeds this mapping" was byte-identical to
+    "one was uploaded and thrown away", and the correct next action differs
+    completely. A discarded list must appear in `sources` carrying its status.
+
+    Also pins the pill: a DISCARDED version is retired from the latest-version
+    computation, the same rule `_latest_attack_assessment` applies to a
+    DISCARDED assessment (D-031). Without that, discarding v2 would make a live
+    v1 read as superseded by a list nobody can use.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    _tech_debt_list(
+        TestSession, cid, uid, [("Splunk", None, False)], status=CapabilityListStatus.DISCARDED
+    )
+    sid = _attack_service(c, bearer, cid)
+
+    body = c.get(
+        f"/attack/services/{sid}/ai-inputs",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+    ).json()
+
+    assert len(body["sources"]) == 1, "the discarded list must be visible as a source"
+    src = body["sources"][0]
+    assert src["status"] == "discarded"
+    assert src["sent_count"] == 0
+    assert src["not_sent_count"] == 1
+    assert src["is_latest_for_service"] is None, (
+        "a discarded list is RETIRED: not latest, and not superseded either. "
+        "False was the first draft and it was wrong in a way that reached the "
+        "screen -- every renderer reads `!is_latest_for_service` as 'superseded "
+        "by a later version', so a discarded list rendered '(superseded)', was "
+        "counted in 'includes N superseded versions', and drew a paragraph "
+        "telling the reader to discard a list already discarded"
+    )
+
+
+@pytest.mark.unit
+def test_a_discarded_lists_tools_never_reach_the_egress_payload(app_client) -> None:
+    """The claim that matters, asserted against the REAL builder.
+
+    Every other test here reads `body["capabilities"]` from the ai-inputs
+    endpoint. That endpoint and the outbound payload share a construction, so
+    those assertions hold for the payload only BY that shared construction —
+    which is an argument, not evidence. If someone gives the payload its own
+    capability source, every one of them stays green while discarded tooling
+    egresses.
+
+    So this one goes through `build_attack_ai_request`, which is what a Run-AI
+    actually sends, and asserts on `valid_tools` and `capabilities` directly.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    _tech_debt_list(
+        TestSession,
+        cid,
+        uid,
+        [("Splunk", None, False)],
+        status=CapabilityListStatus.DISCARDED,
+    )
+    # A SECOND, ACTIVE list, and it is what makes this test discriminate.
+    # `valid_tools == frozenset()` alone is equally satisfied by a builder that
+    # returns nothing for every client -- so the discarded tool being absent
+    # would prove the filter works OR that the builder is broken, and the test
+    # could not tell which. With a live tool that MUST survive, only one of
+    # those readings passes.
+    _tech_debt_list(
+        TestSession, cid, uid, [("CrowdStrike", True, False)], status=CapabilityListStatus.DRAFT
+    )
+    sid = _attack_service(c, bearer, cid)
+    c.post(
+        f"/attack/services/{sid}/assessments",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+        json={},
+    )
+
+    from app.models.client import Client
+    from app.models.service import Service as ServiceModel
+    from app.routes.attack import build_attack_ai_request
+
+    with TestSession() as db:
+        svc = db.get(ServiceModel, _uuid.UUID(sid))
+        client = db.get(Client, _uuid.UUID(cid))
+        req = build_attack_ai_request(db, svc, client)
+
+    assert req.valid_tools == frozenset({"crowdstrike"}), (
+        "the discarded list's tool must be ABSENT and the active list's tool "
+        "PRESENT -- an empty set here would also be produced by a builder that "
+        "returns nothing at all, which is not what this test is for"
+    )
+    assert [cap.name for cap in req.capabilities] == ["CrowdStrike"]
+    blob = str(req.preview.inputs).lower()
+    assert "splunk" not in blob, "a discarded tool name reached the outbound preview payload"
+    assert "crowdstrike" in blob, "positive control missing: the builder returned nothing at all"
+
+
+@pytest.mark.unit
+def test_a_tool_on_both_a_discarded_and_an_active_list_is_sent_not_withheld(app_client) -> None:
+    """Survive-anywhere beats withheld-anywhere, and nothing else pins it.
+
+    `if not key or key in survivors: continue` is the ONLY thing making this
+    true, and it sits at the top of the loop #232 is filed to rewrite. Whoever
+    writes that 3x3 is choosing which REASON wins between two drops; this is a
+    different rule one line above, and folding it into a winner-selection
+    refactor is the natural mistake.
+
+    If it goes, `Splunk` reappears in `not_sent` under `list_discarded` while
+    also being sent — telling a consultant the model cannot cite a tool it can,
+    which is the defect `_unapproved_contributing_names` was withdrawn for. The
+    `withheld_list_discarded == 0` assertion is the one that fails loudly then.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    # Same tool on two lists of the same client: one thrown away, one live.
+    _tech_debt_list(
+        TestSession, cid, uid, [("Splunk", None, False)], status=CapabilityListStatus.DISCARDED
+    )
+    _tech_debt_list(
+        TestSession, cid, uid, [("Splunk", None, False)], status=CapabilityListStatus.DRAFT
+    )
+    sid = _attack_service(c, bearer, cid)
+
+    body = c.get(
+        f"/attack/services/{sid}/ai-inputs",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+    ).json()
+
+    assert "Splunk" in {cap["name"] for cap in body["capabilities"]}
+    assert "Splunk" not in {d["name"] for d in body["not_sent"]}
+    assert body["totals"]["withheld_list_discarded"] == 0, (
+        "a tool that survives on an active list must not also be reported "
+        "withheld because a different, discarded list carried it"
+    )
+
+
+@pytest.mark.unit
+def test_a_retired_list_reports_its_own_attribution_not_a_borrowed_one(app_client) -> None:
+    """A discarded list must not be described as predating the extraction record.
+
+    The first version of this feature reused `not_recorded` to suppress a
+    warning about a list that contributes nothing. That member is rendered as
+    "N lists predate the extraction record and make no claim either way" --
+    flatly false of a list uploaded this morning with a complete reconciliation
+    stored, and then discarded.
+
+    The suppression was a PRESENTATION decision implemented by making the API
+    assert something untrue. `retired` is its own member so the API keeps
+    reporting a fact and each consumer decides what to show; because
+    `describeAttribution` is an exhaustive switch with no default, TypeScript
+    refuses to compile until every consumer handles it.
+
+    Asserted here rather than only in the panel because it is an API contract:
+    the reason a vitest could not catch it is that its fixture had been written
+    from what the renderer needed rather than from what this endpoint emits.
+    """
+    c, TestSession = app_client
+    bearer, cid = _admin(c)
+    uid = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()["id"]
+    # A COMPLETE extraction record -- 40 rows uploaded, one named exclusion --
+    # on a list that was then discarded. This is the combination that made the
+    # borrowed member a lie: nothing here is missing or unknowable.
+    _list_with_extraction_record(
+        TestSession,
+        cid,
+        uid,
+        source_rows_total=40,
+        excluded_rows=[{"index": 3, "summary": "blank row"}],
+        status=CapabilityListStatus.DISCARDED,
+    )
+    sid = _attack_service(c, bearer, cid)
+
+    body = c.get(
+        f"/attack/services/{sid}/ai-inputs",
+        headers={"Authorization": f"Bearer {bearer}", "X-Client-Id": cid},
+    ).json()
+
+    src = body["sources"][0]
+    assert src["excluded_attribution"] == "retired", (
+        "a discarded list must carry its own attribution member, not borrow one "
+        "whose rendered meaning is false of it"
+    )
+    assert src["excluded_attribution"] != "not_recorded"
+    # Its stored record is untouched and still true -- the endpoint simply is
+    # not speaking for it. `source_rows_total` still reports the real upload.
+    assert src["source_rows_total"] == 40
+    assert src["excluded_rows_named"] == 0
+    assert body["excluded"] == []
+    assert (
+        body["totals"]["lists_with_unknown_exclusions"] == 0
+    ), "a retired list must not raise the cannot-say-what-it-dropped warning"

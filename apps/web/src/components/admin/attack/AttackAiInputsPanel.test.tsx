@@ -57,6 +57,7 @@ function totals(over: Partial<AttackAiInputTotals> = {}): AttackAiInputTotals {
     awaiting_signoff: 0,
     withheld_security_scope: 0,
     withheld_not_in_approved_snapshot: 0,
+    withheld_list_discarded: 0,
     excluded_rows_named: 3,
     lists_with_unknown_exclusions: 0,
     sent_without_source_document: 0,
@@ -87,7 +88,11 @@ describe("AttackAiInputsPanel", () => {
     vi.clearAllMocks();
   });
 
-  describe("the excluded_attribution tri-state", () => {
+  // Three of the field's FOUR members. `retired` has its own block below --
+  // named here because a three-member block titled "tri-state" is what lets a
+  // reader auditing member coverage conclude it is complete, which is the
+  // reasoning the panel header now warns about.
+  describe("excluded_attribution: complete, unknown, not_recorded", () => {
     // The reason this endpoint exists. `Reconciliation.attribution_complete` is
     // not persisted, so an empty `excluded_rows` is the stored form of BOTH
     // "nothing was excluded" and "attribution failed". Rendering the second as a
@@ -320,6 +325,268 @@ describe("AttackAiInputsPanel", () => {
       expect(line).toHaveTextContent(
         /3 absent from the membership frozen at approval/,
       );
+    });
+
+    it("names all three reasons, and joins them without a stray separator", async () => {
+      // The breakdown used to hand-write its separators between exactly two
+      // clauses. A third reason arriving would have needed that punctuation
+      // re-reasoned, so the join is asserted here rather than the clauses alone.
+      await renderReady(
+        inputs({
+          totals: totals({
+            not_sent: 6,
+            withheld_security_scope: 1,
+            withheld_not_in_approved_snapshot: 2,
+            withheld_list_discarded: 3,
+          }),
+        }),
+      );
+      const line = screen.getByTestId("attack-ai-inputs-not-sent");
+      expect(line).toHaveTextContent(
+        /1 ruled out of the security subset, 2 absent from the membership frozen at approval and 3 on a list that was discarded\./,
+      );
+    });
+
+    it("shows only the reason that applies when it is the sole one", async () => {
+      await renderReady(
+        inputs({
+          totals: totals({ not_sent: 3, withheld_list_discarded: 3 }),
+        }),
+      );
+      const line = screen.getByTestId("attack-ai-inputs-not-sent");
+      expect(line).toHaveTextContent(/— 3 on a list that was discarded\./);
+      expect(line).not.toHaveTextContent(/ruled out of the security subset/);
+      expect(line).not.toHaveTextContent(/frozen at approval/);
+    });
+  });
+
+  describe("a retired (discarded) source list", () => {
+    it("is not counted or labelled as superseded", async () => {
+      // `null` is FALSY in TS, so the natural spelling `!s.is_latest_for_service`
+      // counts a retired list as superseded — and that is the one-line
+      // simplification a reviewer suggests back. This test makes `=== false`
+      // non-optional. Same construction as
+      // `test_an_empty_snapshot_is_not_the_same_as_no_snapshot`: the wrong
+      // spelling is the obvious one.
+      await renderReady(
+        inputs({
+          sources: [
+            // FAITHFUL to what the API emits for a retired list, not to what
+            // this test needed to render. The first version inherited the
+            // fixture defaults -- `excluded_attribution: "complete"`,
+            // `excluded_rows_named: 3` -- a combination the endpoint CANNOT
+            // produce for a discarded list, because the route sends "retired"
+            // and suppresses the rows. A fixture written from what the renderer
+            // needs agrees with the renderer by construction and cannot see a
+            // contract defect, which is this repo's fixture rule pointed at an
+            // API contract rather than a prompt. `source_rows_total` stays 40:
+            // the upload really did have 40 rows, and that is the pairing the
+            // "Not reported" pill has to read sensibly beside.
+            sourceList({
+              status: "discarded",
+              is_latest_for_service: null,
+              sent_count: 0,
+              not_sent_count: 1,
+              excluded_attribution: "retired",
+              excluded_rows_named: 0,
+              source_rows_total: 40,
+            }),
+          ],
+          // `excluded_rows_named: 0` is not cosmetic. The `totals()` helper
+          // defaults it to 3, and the route computes it as `len(excluded)`
+          // while sending no rows at all for a retired list -- so 0 is the ONLY
+          // value the endpoint can emit for this payload. Left at 3, this
+          // fixture was FAITHFUL in `sources` and IMPOSSIBLE in `totals`: the
+          // panel rendered "3 named. Every source row is accounted for." inside
+          // the very test written to prove the retired path renders honestly.
+          // The comment four lines above already said that combination cannot
+          // be produced; it was applied to one half of the fixture and not the
+          // other.
+          totals: totals({
+            sent: 0,
+            not_sent: 1,
+            withheld_list_discarded: 1,
+            excluded_rows_named: 0,
+          }),
+        }),
+      );
+      expect(screen.queryByText(/superseded/i)).toBeNull();
+      // The defect this fixture now makes visible: reusing `not_recorded` for a
+      // retired list made the panel state, flatly, that a list uploaded today
+      // predates the extraction record.
+      // Re-pointed at the copy that RENDERS. This used to assert the absence of
+      // "predates the extraction record", which was the not_recorded paragraph
+      // until that paragraph stopped naming a cause it cannot observe. The
+      // phrase now survives only in a `title` attribute, which `queryByText`
+      // cannot match — so the old assertion passed for a new reason and pinned
+      // nothing. The subject was never the wording: it is that a RETIRED list
+      // must not be described with the not_recorded copy.
+      expect(screen.queryByText(/no extraction record stored/i)).toBeNull();
+      expect(screen.getByText("Not reported")).toBeTruthy();
+      expect(screen.getByTestId("attack-ai-inputs-retired")).toHaveTextContent(
+        /discarded and contributes nothing/,
+      );
+      expect(screen.getByTestId("attack-ai-inputs-retired")).toHaveTextContent(
+        /Nothing supersedes it/,
+      );
+      // ASSERT THE OTHER BRANCH IS ABSENT. Proving the retired paragraph
+      // renders says nothing about what renders BESIDE it, and what rendered
+      // beside it was a false assurance: a retired list scores 0 on both of
+      // the operands that gated this sentence, so it fell into the reassuring
+      // branch while its dropped rows were neither named nor counted. The
+      // guard is now derived from `excluded_attribution !== "complete"`, and
+      // this is the assertion that holds it there.
+      expect(
+        screen.queryByText(/Every source row is accounted for/),
+      ).toBeNull();
+    });
+
+    it("does not claim every row is accounted for when a list is retired", async () => {
+      // The positive control for the assertion above: the SAME panel, one
+      // `complete` list beside the retired one, so the sentence is reachable in
+      // principle and is still withheld. Without this, a guard that never
+      // renders the sentence at all would pass the test above for free.
+      await renderReady(
+        inputs({
+          sources: [
+            sourceList({
+              // Distinct ids. Both sources inherited the helper's "list-1"
+              // when this was written, so the fixture described two lists
+              // sharing one primary key -- impossible for the endpoint, and it
+              // duplicates the React key and the attribution `data-testid`.
+              capability_list_id: "list-complete",
+              status: "approved",
+              is_latest_for_service: true,
+              excluded_attribution: "complete",
+              excluded_rows_named: 0,
+              source_rows_total: 10,
+            }),
+            sourceList({
+              capability_list_id: "list-retired",
+              status: "discarded",
+              is_latest_for_service: null,
+              sent_count: 0,
+              not_sent_count: 1,
+              excluded_attribution: "retired",
+              excluded_rows_named: 0,
+              source_rows_total: 40,
+            }),
+          ],
+          totals: totals({
+            sent: 0,
+            not_sent: 1,
+            withheld_list_discarded: 1,
+            excluded_rows_named: 0,
+          }),
+        }),
+      );
+      expect(
+        screen.queryByText(/Every source row is accounted for/),
+      ).toBeNull();
+    });
+
+    it("counts only attributable lists in the unknown-exclusions denominator", async () => {
+      // The numerator (`lists_with_unknown_exclusions`) is a backend total that
+      // a retired list can never enter -- the route sends no rows for one. So
+      // counting retired lists in the DENOMINATOR reports "1 of 2" where only
+      // one list was ever in the numerator's population, which reads as though
+      // a list had been checked and cleared when it was never asked.
+      //
+      // This test exists because the fix survived its mutation: reverting the
+      // denominator to `sources.length` left all 25 tests green.
+      await renderReady(
+        inputs({
+          sources: [
+            sourceList({
+              capability_list_id: "list-unknown-attr",
+              status: "approved",
+              is_latest_for_service: true,
+              excluded_attribution: "unknown",
+              excluded_rows_named: 0,
+              source_rows_total: 10,
+            }),
+            sourceList({
+              capability_list_id: "list-retired-2",
+              status: "discarded",
+              is_latest_for_service: null,
+              sent_count: 0,
+              not_sent_count: 1,
+              excluded_attribution: "retired",
+              excluded_rows_named: 0,
+              source_rows_total: 40,
+            }),
+          ],
+          totals: totals({
+            not_sent: 1,
+            withheld_list_discarded: 1,
+            excluded_rows_named: 0,
+            lists_with_unknown_exclusions: 1,
+          }),
+        }),
+      );
+      const unknown = screen.getByTestId("attack-ai-inputs-excluded-unknown");
+      // textContent, not innerText: innerText returns CSS-TRANSFORMED text, so
+      // asserting on it pins the styling rather than the copy.
+      expect(unknown.textContent).toMatch(/1 of the 1 list cannot say/);
+      expect(unknown.textContent).not.toMatch(/of the 2 lists/);
+    });
+
+    it("does claim every row is accounted for when nothing is retired or unknown", async () => {
+      // And the negative control, so the two tests above cannot both pass by
+      // the sentence being unreachable. This is the only state in which the
+      // assurance is TRUE, and it must still render.
+      await renderReady(
+        inputs({
+          sources: [
+            sourceList({
+              status: "approved",
+              is_latest_for_service: true,
+              excluded_attribution: "complete",
+              excluded_rows_named: 0,
+              source_rows_total: 10,
+            }),
+          ],
+          totals: totals({ excluded_rows_named: 0 }),
+        }),
+      );
+      expect(
+        screen.getByText(/Every source row is accounted for/),
+      ).toBeTruthy();
+    });
+  });
+
+  describe("the reason column", () => {
+    it("gives a discarded row the remedy that works, not the one that does not", async () => {
+      // The column was a two-branch ternary: anything that was not
+      // `security_scope` rendered as the approved-snapshot copy, whose remedy
+      // is "Re-approve the list to include it". For a DISCARDED list that is
+      // the wrong action and it cannot work -- the list needs un-discarding.
+      // A conditional over a growing set does not fail when the set grows, it
+      // MISLABELS, and it does so in the column a consultant reads to decide
+      // what to do next.
+      await renderReady(
+        inputs({
+          totals: totals({ not_sent: 1, withheld_list_discarded: 1 }),
+          not_sent: [
+            {
+              name: "Splunk",
+              vendor: null,
+              reason: "list_discarded",
+              capability_list_id: "cl-1",
+              source_list_version: 1,
+              source_document: null,
+            },
+          ],
+        }),
+      );
+      const row = screen.getByRole("row", { name: /Splunk/ });
+      expect(row).toHaveTextContent(/list itself was discarded/);
+      expect(row).toHaveTextContent(/Upload a replacement list/);
+      expect(row).not.toHaveTextContent(/Re-approve the list to include it/);
+      // The remedy must not point at the resurrect path either: approving a
+      // discarded list silently un-discards it, which is a filed defect, and
+      // advice pointing at a bug ages badly the day the bug is fixed.
+      expect(row).not.toHaveTextContent(/approv/i);
     });
   });
 

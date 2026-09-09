@@ -346,6 +346,19 @@ class AttackAiInputWithheld(BaseModel):
       into scope after, and nothing readable at request time separates those.
       Re-approval is the remedy, and it is exactly what clears
       `approved_membership_stale`.
+    * ``list_discarded`` — the capability list itself was discarded, so nothing
+      on it is offered. A LIST-level reason, unlike the two above: it is
+      applied to the rows the list would otherwise have contributed, and NOT to
+      rows already withheld for their own reason. An out-of-scope row on a
+      discarded list still reads ``security_scope``, because un-discarding the
+      list would not make it citable and saying otherwise would misdescribe the
+      remedy. The remedy here is to upload a replacement list — which is the
+      distinction the endpoint could not previously draw at all, since a
+      discarded list was indistinguishable from no list (#178).
+
+      Deliberately does NOT say "un-discard it". There is no un-discard control:
+      approving a discarded list silently resurrects it, which is #231, and copy
+      that points a consultant at a bug ages badly the day the bug is fixed.
     """
 
     name: str
@@ -378,10 +391,27 @@ class AttackAiInputSourceList(BaseModel):
     tech_debt_service_title: str
     version: int
     status: str
-    # False => a LATER version of the same list exists and this one still
-    # counts. Surfaced because it routinely surprises people: every
-    # non-discarded version feeds the mapping, not just the newest.
-    is_latest_for_service: bool = True
+    # TRI-STATE. True => latest. False => a LATER version of the same list
+    # exists and this one STILL COUNTS, which routinely surprises people: every
+    # non-discarded version feeds the mapping, not just the newest. None =>
+    # RETIRED, i.e. discarded.
+    #
+    # `None` rather than `False` for a discarded list because it is not
+    # superseded — nothing replaced it. Collapsing the two made a renderer say
+    # "(superseded)" about a list nobody replaced, count it in "includes N
+    # superseded versions", and print advice telling the reader to discard
+    # something already discarded: three false statements out of one boolean.
+    # D-031 excludes a discarded row from the LATEST COMPUTATION; it does not
+    # say the row is superseded, and reading it that way was my own over-reach.
+    #
+    # NO DEFAULT, and this is a deliberate exemption from the C0 note at the top
+    # of this block ("every list field is defaulted so an older client parses a
+    # newer response"). Stated here rather than left silent, because an
+    # unexplained exemption reads as an oversight and the next person restores
+    # the default -- which re-collapses the tri-state, since any default is a
+    # FOURTH meaning ("nobody said") wearing the clothes of one of the three.
+    # Every producer of this field knows which of the three it means.
+    is_latest_for_service: bool | None
     # True when the APPROVED snapshot decides membership; False when live rows
     # do (a DRAFT, or a list approved before migration 0043 — NULL means nobody
     # recorded it, which is not the same as nothing having been approved).
@@ -406,6 +436,12 @@ class AttackAiInputSourceList(BaseModel):
     #   refuses to report zero — that would be a silent under-report inside the
     #   endpoint built to end silent drops.
     # * ``not_recorded`` — pre-0036 list; no reconciliation was ever stored.
+    # * ``retired`` — the list is DISCARDED, so this endpoint does not report on
+    #   its extraction record at all. Its own member and NOT a reuse of
+    #   ``not_recorded``: that one is rendered as "predates the extraction
+    #   record", which is false of a list uploaded today and then discarded.
+    #   Whatever its reconciliation says is still stored and still true; this
+    #   value says only that the panel is not speaking for it.
     excluded_attribution: str = "not_recorded"
     # How many rows are NAMED in `excluded`, which is always literally true.
     # Deliberately not called a count of what was excluded: under ``unknown``
@@ -419,6 +455,7 @@ class AttackAiInputTotals(BaseModel):
     awaiting_signoff: int = 0
     withheld_security_scope: int = 0
     withheld_not_in_approved_snapshot: int = 0
+    withheld_list_discarded: int = 0
     excluded_rows_named: int = 0
     # Contributing lists whose extraction-time exclusions cannot be reported.
     # Rendered beside `excluded_rows_named` for the same reason a withheld count

@@ -224,20 +224,39 @@ export interface AttackAiInputDocument {
  * `not_in_approved_snapshot` names the observable STATE and not a cause: the
  * row was either created after approval or reclassified into scope after, and
  * nothing readable at request time separates those. Do not render it as either.
+ *
+ * `list_discarded` is a LIST-level reason, unlike the other two. It is carried
+ * only by the rows a discarded list would otherwise have contributed; a row
+ * already withheld for its own reason keeps that reason, because un-discarding
+ * the list would not make it citable. The remedies differ and a renderer must
+ * not collapse them. The remedy for a discarded list is a replacement list;
+ * do not render "re-approve" as the fix here, and do not render "un-discard"
+ * either — there is no un-discard CONTROL. There is an un-discard EFFECT:
+ * approving a discarded list silently resurrects it, which is #231, an open
+ * defect. That is why the copy points at a replacement rather than at
+ * re-approving — copy that points a consultant at a bug ages badly the day the
+ * bug is fixed. Stated here as well as on the API side because two copies of
+ * one rule that disagree in SCOPE are worse than one copy: the flatter version
+ * lived in this file, which is the one a web developer reads.
  */
 export type AttackWithheldReason =
-  "security_scope" | "not_in_approved_snapshot";
+  "security_scope" | "not_in_approved_snapshot" | "list_discarded";
 
 /**
  * How much the API may honestly say about rows dropped at extraction.
  *
- * A TRI-STATE, and the third member is the whole point. `unknown` must never
+ * FOUR members, and `unknown` is the one the type exists for. (It was a
+ * tri-state until `retired` joined it; the panel's positive assurance was
+ * still gated on the two members that predated `retired`, which is how a
+ * discarded list came to render under "Every source row is accounted for".)
+ * `unknown` must never
  * render as a number — `Reconciliation.attribution_complete` is not persisted,
  * so "nothing was excluded" and "attribution failed" are the same stored bytes
  * and the API refuses to collapse them into a zero. See `_excluded_attribution`
  * in apps/api/app/routes/attack.py.
  */
-export type AttackExcludedAttribution = "not_recorded" | "complete" | "unknown";
+export type AttackExcludedAttribution =
+  "not_recorded" | "complete" | "unknown" | "retired";
 
 /** One capability the model WILL be offered, and where it came from. */
 export interface AttackAiInputCapability {
@@ -294,10 +313,17 @@ export interface AttackAiInputSourceList {
   version: number;
   status: string;
   /**
-   * False => a LATER version of the same list exists and this one still counts.
-   * Every non-discarded version feeds the mapping, not just the newest.
+   * `true` latest, `false` superseded by a later version, `null` RETIRED.
+   *
+   * `false` still COUNTS: every non-discarded version feeds the mapping, not
+   * just the newest, which routinely surprises people.
+   *
+   * `null` is a discarded list: not latest, and not superseded either, because
+   * nothing replaced it. Renderers must not treat `!is_latest_for_service` as
+   * "superseded" — that reads a retired list as one standing behind a newer
+   * one, which is a different fact with a different remedy.
    */
-  is_latest_for_service: boolean;
+  is_latest_for_service: boolean | null;
   /** True when the APPROVED snapshot decides membership; false when live rows do. */
   membership_from_snapshot: boolean;
   /** The snapshot no longer matches current security scope; re-approval clears it. */
@@ -321,6 +347,7 @@ export interface AttackAiInputTotals {
   awaiting_signoff: number;
   withheld_security_scope: number;
   withheld_not_in_approved_snapshot: number;
+  withheld_list_discarded: number;
   excluded_rows_named: number;
   /**
    * Contributing lists whose extraction-time exclusions cannot be reported.

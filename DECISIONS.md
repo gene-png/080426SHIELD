@@ -3975,6 +3975,234 @@ Not built. Recorded here because it is the fix that removes the class rather tha
 another field that documents it, and because the same argument applies to every
 measured claim this repo writes into prose.
 
+## D-072 — #213's shape reached product code: checks that could not fail, in a PR about checks that could not fail
+
+**Date:** 2026-09-08. **Context:** #178 / PR #234, the ATT&CK ai-inputs
+discarded-list disclosure. **Extends D-071** (a claim whose scope exceeds its
+evidence) and is where **#213** stops being about tooling.
+
+### A sixth, and it is a variant this repo has not recorded: the defect was introduced by a CORRECT change somewhere else
+
+**Added 2026-09-09, from round four.** Every instance below was introduced by
+the author of the fix, in the fix. This one was not introduced by anybody.
+
+`AttackAiInputsPanel.test.tsx` asserted
+`expect(screen.queryByText(/predates the extraction record/i)).toBeNull()` — a
+retired list must not be described with the `not_recorded` copy. That was
+discriminating when written. Round four then corrected the `not_recorded`
+paragraph, because it named a cause the stored bytes cannot support, and after
+that correction the phrase survives **only in a `title` attribute**, which
+`queryByText` cannot match at all. So the assertion became unfalsifiable: it
+would have gone on passing forever while pinning nothing, and nothing anywhere
+would have gone red to say so.
+
+**The shape, stated so it can be looked for:** a test whose PASS state and whose
+COULD-NOT-LOOK state became identical as a side effect of a correct change
+elsewhere. The other five here are a fix that could not fail. This is a fix that
+_stopped_ being able to fail, later, without being touched — and the change that
+did it was right, was reviewed, and had no reason to look at that test.
+
+**Why the existing rules do not catch it.** Red-on-revert proves a test can fail
+_at the moment it is written_; this one passed that. `check_test_integrity` is a
+static pass over the test, and the test did not change. The mutation sweep
+mutates the code under test, and the copy that broke this assertion is in a
+different file from the code the test exercises. Nothing in the harness watches
+for an assertion's needle disappearing from the rendered output.
+
+**The cheap check, and it is the one from the copy rule:** when you change any
+user-facing string, grep the exact old phrase across `e2e/` and `apps/web`
+before moving on — `CLAUDE.md` already says this, and this is the case where it
+has to include ABSENCE assertions, not just the positive matches everyone
+remembers to look for. A `queryByText(...).toBeNull()` on a string you just
+deleted is the failure, and it looks like a passing test.
+
+Re-pointed at the copy that renders, and proved discriminating again by
+mutation: count a retired list as `not_recorded` and exactly that test goes red.
+
+### The original five, all introduced by the author of the fix
+
+_Four of these five were checks that could not fail. The count is of the round
+recorded on 2026-09-08 and does not grow; the variant above was added later and
+is deliberately not folded into it, because the two have different causes._
+
+Every one was found by adversarial review, none by a passing suite, and every one
+was in code written _while applying_ a rule that would have caught it.
+
+1. **A remedy naming a control the product does not have.** The panel told a
+   consultant to "un-discard the list — re-approving will not help", and both
+   halves were wrong: there is no un-discard control at all, and re-approving is
+   not useless. Written into the column a reader consults to decide what to do
+   next, in the same file where a two-branch ternary had just been replaced for
+   producing that class of error.
+
+   **What the shipped remedy is, stated here because an earlier draft of this
+   entry got it wrong in the other direction.** That draft said "re-approving is
+   the _only_ thing that works", which is false and worse than the defect it was
+   describing: **uploading a replacement list works**, it is what the corrected
+   sites now say, and it is the path `s4-techdebt` already drives. (No count:
+   the sites live outside this document, so the rule is to write the command
+   rather than a number or a marker --
+   `rg -n "[Uu]pload a replacement" apps/web/src apps/api/app`. The marker that
+   stood here said `historical` over a present-tense claim about current code,
+   which can grow; and it certified a COUNT that the command beside it does not
+   return -- so the sentence arguing "write the command rather than a number"
+   wrote a number its own command refutes. The count is deleted rather than
+   corrected, per rule 1: run the command. Measured at `db85e79`, it returns 5
+   hits across 3 files, which is neither the figure that stood here nor the file
+   count, so no correction would have been a reconciliation between them.)
+   Re-approving restores _that particular list_ — but only through #231, which
+   is an open defect, so it is not a remedy to point a consultant at. A reader
+   consulting this entry to understand the `list_discarded` copy would have
+   reverted a consultant-facing string to name a filed bug.
+
+2. **One boolean producing three false statements**, in the exact state the
+   author's own test seeds. `is_latest_for_service` collapsed latest /
+   superseded / retired into a bool; every renderer reads
+   `!is_latest_for_service` as "superseded by a later version", so a
+   discarded-only client rendered "(superseded)", was counted in "includes 1
+   superseded version", and drew advice to discard a list already discarded.
+3. **`not_recorded` borrowed for retired lists.** That member renders as "N lists
+   predate the extraction record" — false of a list uploaded today and then
+   discarded. **The suppression it served was a PRESENTATION decision,
+   implemented by making the API assert something untrue.** It walked past a
+   guard in the same function reading "Do NOT name the cause here … the condition
+   observes ABSENCE; it cannot see WHY".
+4. **A fixture built from what the renderer needed rather than what the API
+   emits.** The retired-list vitest inherited `excluded_attribution: "complete"`
+   with `excluded_rows_named: 3` on a discarded list — a combination the endpoint
+   cannot produce. It agreed with the renderer by construction and was green over
+   defect 3. Made faithful, it fails.
+5. **An assertion restating the consequence of the assert above it.** After
+   `assert discard == 409` the list is APPROVED, so the following
+   `discarded AND has-snapshot` conjunction was False regardless of what the
+   snapshot held. It could not fail independently.
+
+### The finding
+
+**Four of those five are a check whose inputs cannot distinguish its pass state
+from its fail state** — #213's family (a), arriving in product code rather than
+in a gate script. Defects 2, 3 and 4 all render a _specific wrong claim_ where a
+reader looks for what to do; defect 5 is a test that cannot be red.
+
+That is the part worth carrying. #213 was catalogued from `check_audit_evidence`,
+`mutation_sweep`, `check_plan_totals` and `check_test_integrity` — tooling, where
+a silent pass costs a missed defect. Here the same shape sits on a client-facing
+disclosure, where it costs a consultant doing the wrong thing while being told
+they are doing the right one. **Tooling was where the shape was found. Product is
+where it always mattered.**
+
+### The sharpest instance, added later: a count whose input could not produce the interesting value
+
+Asked how many clients are in the legacy-only state — the population that decided,
+at the time, whether #114's value-summary slot might raise (it does not: the raise
+was overturned and the slot now nulls with a stated reason, D-073) — the obvious query, run against the
+dev database on 2026-09-08, returned:
+
+    clients_with_any_released 13 | clients_legacy_only 0 | released_rows_unresolvable 0
+
+**A clean zero, from a real query, over real rows — as at 2026-09-08.** Read at
+face value it says the population is empty and raising is a safe stopgap.
+
+**Pinned rather than re-measured, and the reason is not caution.** This record
+names "the obvious query" and shows three lines of output; it does not contain
+the SQL. So the figure cannot be re-derived from what is written here — only
+reconstructed from a label and then published under this sentence's
+certificate, which would be a different measurement wearing the first one's
+clothes. The dev database is also re-rolled by every demo run, so a fresh
+number would go stale the same afternoon: updating it resets a clock instead of
+stopping it.
+
+None of that weakens the argument, because the load-bearing claim below is not
+the digits. It is that the dev database contains no row that could be in the
+interesting state, which is established structurally — and a teardown-and-reseed
+makes that MORE true, not less.
+
+It is worthless, and nothing in the output says so. All four `Deliverable(...)`
+construction sites stamp `parent_version` at finalize, `seed_demo.py` sets it
+explicitly, and every dev row postdates migration 0041. **The dev database
+contains no row that could be in the state**, so the query's "nothing found" and
+its "this corpus cannot express the thing you are looking for" are the same
+output.
+
+That is this record's own shape at its purest: not a wrong answer, not a crash — a
+correct computation over a corpus structurally incapable of producing the
+interesting value, whose pass state and could-not-look state are identical and
+separated only by someone noticing when the rows were written. It is
+`CLAUDE.md`'s seed-data rule (a corpus drawn from your own assumptions cannot
+falsify them) arriving as a _population statistic_ rather than as a test fixture.
+
+**Before running a count that decides a design, ask what would have to be true of
+the corpus for the interesting value to appear in it.** Here: a row released
+before 0041, on a service that already had more than one version. Neither is
+constructible in dev.
+
+### What actually caught them
+
+Not the suite: it was green over defects 1–4 throughout, and CI stayed green.
+They were caught by an adversarial reviewer reading the code against the claim,
+and by two habits that generalise:
+
+- **making a fixture faithful to the producer rather than to the consumer**, which
+  turned defect 3 from invisible to a failing assertion;
+- **mutation with proof the mutation landed and was restored**, which is what
+  established that each branch of the shared router is pinned by tests the other
+  does not cover.
+
+### The version that will recur: a TRUE claim that travelled past its scope
+
+D-071's instances are claims whose scope exceeded their evidence. This one is
+narrower and harder, and it came from the #114 track rather than this one.
+
+An agent reported **"risk_dashboard was checked and is correct."** It was true.
+The dashboard's read genuinely is correct — it gates on `finalized_at` and refuses
+an unfinalized register. Its reviewer caught that the sentence had been _received_
+as clearance for the Risk service, and it is not: as of 2026-09-08
+`routes/risk.py::_latest` had no finalized filter at all, so DRAFT assessments
+both unlocked the gate and fed synthesis (#237).
+
+**That sentence has since split in half, and the half that survived is the one
+that hides the other. Four facts, stated separately because stating three
+reconstructs the fourth by omission** — verified at `e3163f9`, not carried
+forward:
+
+1. **`_latest` no longer exists.** #242 replaced it, so the symbol above will
+   not resolve.
+2. **Synthesis filters now.** `_finalized_for_synthesis` selects on
+   `_FINALIZED = ("approved", "released")`, so "feed synthesis" is FALSE.
+   Recorded as D-075.
+3. **The gate still admits a DRAFT.** `_exists_for_gate` returns true for one,
+   so "unlock the gate" is STILL TRUE.
+4. **That is deliberate, and a named test pins it.** Its docstring: "A DRAFT
+   counts: mapping ATT&CK before the tech-debt list is approved is a normal
+   order of work." `test_the_gate_path_must_not_filter_on_finalized` in
+   `test_risk_register.py` fails if anyone tightens it.
+
+**Clause 4 is the one that gets dropped, and it is the only one that stops the
+inference.** Write "#237 shipped and `_latest` is gone" and a reader concludes
+the gate tightened too — which would make the fix look like a workflow
+restriction nobody asked for, and would send someone to "repair" a behaviour
+that a test exists to protect. That omission was made twice on this branch's
+sibling before it was made correctly here.
+
+**Nothing in the sentence was wrong.** It was a claim about a READ that was read as
+a claim about a SERVICE, and the gap is invisible precisely because checking the
+claim confirms it. Scope over-reach and stability over-reach are both detectable
+by re-deriving the claim; this one survives re-derivation, because the claim is
+true.
+
+The countermeasure is not more scepticism about the claim. It is: **when a check
+clears something, state what it cleared and what it did not** — "the read is
+correct; I did not check the writers" — because the reader will otherwise take
+the largest reading the sentence supports, and that reading is usually the one
+they wanted.
+
+### Not a call for more review rounds
+
+The rounds that found these were narrow and scoped, and the reviewer set its own
+stopping condition each time. What generalises is the _questions_, not the
+cadence: does this conditional assert a specific cause it cannot know; does this
+fixture describe the producer or the consumer; can this assertion fail on its own.
+
 ## D-073 — A dashboard resolves its numbers FROM the record it names, not from whatever is newest
 
 **Date:** 2026-09-08. **Closes #114.** **Extends D-053** (a guarantee that needs
@@ -4178,6 +4406,59 @@ suggested resolution already names "correct the two comments". Both files are
 outside this track's territory, so the pointer is recorded rather than the fix
 applied. Noted because a correct claim that is the MINORITY statement in the tree
 will lose to the two older ones.
+
+## D-074 — Sweep the SHAPE, never the symbol, and write down what you leave alone
+
+**Date:** 2026-09-08. **Promotes a habit to a stated expectation**, on the
+evidence below. Extends `CLAUDE.md`'s existing "grep the SYMPTOM as well as the
+call sites" bullet, which this makes into a procedure with a required artifact.
+
+### The expectation
+
+Before fixing a defect that could have siblings:
+
+1. **Write the SHAPE down first** — what the defect looks like, in words that name
+   no function, symbol or file. If it cannot be described without naming where it
+   was found, it has not been generalised and the sweep will miss.
+2. **Grep the shape, never the symbol.** A reimplementation shares the symptom and
+   never the name.
+3. **Produce a table**: every site, whether it has the property, whether its
+   output can reach a client (or whatever the consequence axis is), and a
+   decision.
+4. **Write the exclusions into the code where they live**, with the reason — not
+   only into the sweep table. A site left alone with a stated reason is a
+   decision; a site left alone silently is an unstated exemption, which reads as
+   an oversight to everyone who finds it later.
+
+### Why it is an expectation rather than advice
+
+Three for three this week, and the finding was the SCOPE rather than the fix --
+on #237, the target itself:
+
+|          | Issue's suspicion                      | Shape sweep found                                                                      | What the sweep changed                                                                                                                     |
+| -------- | -------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **#114** | 3 call sites                           | **8**                                                                                  | five more surfaces silently wrong                                                                                                          |
+| **#237** | "a DRAFT reaches the client dashboard" | 51 sites over 11 files, 10 classified                                                  | **the stated defect was false** — the dashboard does gate on `finalized_at`; the real defect is that nothing gates the register's CONTENTS |
+| **#178** | one service                            | the twin sweep found the reason column, the totals breakdown and the enumeration block | three more sites in one file                                                                                                               |
+
+On #237 a caller search for `_latest` would have returned **one** of the fifty-one.
+And the sweep did not merely widen the fix — it showed that the fix as filed would
+have been aimed at nothing, which no amount of care applied to the named site
+would have revealed.
+
+### The cost, stated so it is not oversold
+
+The sweep is cheap and the classification is not: 51 hits took one pass to find
+and several to judge. Budget for the judging. The output is worth more than the
+fix — on #237 the table is the deliverable and the code change follows from it.
+
+### Placement
+
+Recorded here rather than in `CLAUDE.md` because that file is under a standing
+instruction not to grow while its 600-line budget question is open. **It wants a
+one-line pointer from `CLAUDE.md`'s twin-sweep bullet when that is settled** —
+this is a procedure someone should meet before they need it, and a decision record
+is consulted after.
 
 ## D-075 — A suite that must change for a defect to be fixed is evidence the defect was SPECIFIED
 

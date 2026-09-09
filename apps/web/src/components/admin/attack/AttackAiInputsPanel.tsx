@@ -8,6 +8,7 @@ import { AttackProxyError, fetchAttackAiInputs } from "@/lib/attack/client";
 import type {
   AttackAiInputCapability,
   AttackAiInputSourceList,
+  AttackAiInputTotals,
   AttackAiInputs,
 } from "@/lib/attack/types";
 
@@ -40,7 +41,7 @@ import type { JSX } from "react";
  * guard.
  *
  * THE ONE THING THIS COMPONENT MUST NOT DO is render an unknowable count as a
- * number. `excluded_attribution` is a tri-state because
+ * number. `excluded_attribution` has FOUR members because
  * `Reconciliation.attribution_complete` is not persisted, so an empty
  * `excluded_rows` is the stored form of BOTH "nothing was excluded" and
  * "attribution failed". A "0 rows dropped" over the second is the persuasive
@@ -54,10 +55,19 @@ import type { JSX } from "react";
  * genuinely means zero, and `AttackHeatmapCard.test.tsx:53` rightly asserts
  * that absence means nothing was withheld.
  *
- * Here the field is a TRI-STATE, and two of its three values mean the
- * opposite of zero: `not_recorded` and `unknown` both mean WE CANNOT KNOW.
- * Only `complete` licenses a digit. So `?? 0` is right there and wrong here,
- * and the difference is in the field's shape rather than in house style.
+ * Here the field has FOUR members, and only ONE of them licenses a digit:
+ * `complete`. `not_recorded` and `unknown` both mean WE CANNOT KNOW, and
+ * `retired` means the panel is deliberately not speaking for that list at all.
+ * So `?? 0` is right there and wrong here, and the difference is in the field's
+ * shape rather than in house style.
+ *
+ * It was a tri-state until `retired` joined it, and this paragraph said so for
+ * one commit after that stopped being true. That mattered: the positive
+ * assurance below was gated on the two members that predated `retired`, and a
+ * reader auditing "which members may print a digit" from a three-value
+ * enumeration concludes `retired` licenses one. It does not -- the route sends
+ * no rows for a discarded list, so `excluded_rows_named` is 0 by construction,
+ * and printing it would be the false zero this component must not produce.
  *
  * Written down because the inconsistency is the kind someone reconciles
  * later -- and reconciling it in this direction puts the silent under-report
@@ -94,9 +104,75 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /**
+ * The one-line breakdown under the not-offered count, built from a list.
+ *
+ * The previous form hand-wrote the separators —
+ * `${a > 0 ? "," : " —"}` between two clauses — which is a two-item
+ * enumeration whose punctuation has to be re-reasoned every time a reason is
+ * added, and which was already asymmetric: the second clause knew about the
+ * first, the first knew about nothing. Adding `list_discarded` as a third
+ * would have needed a condition over both.
+ *
+ * Derived instead: each reason contributes a clause or nothing, and the join
+ * decides the punctuation once. Adding a fourth reason is one entry.
+ */
+function withheldBreakdown(totals: AttackAiInputTotals): string {
+  const clauses = [
+    totals.withheld_security_scope > 0
+      ? `${totals.withheld_security_scope} ruled out of the security subset`
+      : null,
+    totals.withheld_not_in_approved_snapshot > 0
+      ? `${totals.withheld_not_in_approved_snapshot} absent from the membership frozen at approval`
+      : null,
+    totals.withheld_list_discarded > 0
+      ? `${totals.withheld_list_discarded} on a list that was discarded`
+      : null,
+  ].filter((c): c is string => c !== null);
+  // A RESIDUAL, because the clauses above are a floor and `not_sent` is the
+  // truth. Today the three reasons partition it exactly, so this emits nothing
+  // — but `REASON_COPY` already anticipates an unrecognised reason and this
+  // function assumed none could exist, which is a guard applied to one branch
+  // and forgotten in its twin, in the same file.
+  const counted =
+    totals.withheld_security_scope +
+    totals.withheld_not_in_approved_snapshot +
+    totals.withheld_list_discarded;
+  if (totals.not_sent > counted) {
+    clauses.push(`${totals.not_sent - counted} for another reason`);
+  }
+  if (clauses.length === 0) return "";
+  if (clauses.length === 1) return ` — ${clauses[0]}`;
+  return ` — ${clauses.slice(0, -1).join(", ")} and ${clauses[clauses.length - 1]}`;
+}
+
+/**
+ * Why a named capability is not offered to the model, keyed by the API's reason.
+ *
+ * Each string ends with the REMEDY, because that is what the reader is here to
+ * find, and the remedies differ: reclassify the tool, re-approve the list,
+ * upload a replacement. A wrong remedy is worse than a missing one — it sends a
+ * consultant to do something that cannot work, and the first draft of the
+ * discarded row did exactly that: it said "un-discard the list", which is not a
+ * control this product has.
+ *
+ * Deliberately a map rather than a chain of ternaries. The previous form tested
+ * one reason and let everything else fall to the other branch, so adding a
+ * third reason would have silently relabelled it as the second rather than
+ * failing.
+ */
+const REASON_COPY: Record<string, string> = {
+  security_scope:
+    "Ruled out of the security subset — the model called it non-security and a consultant agreed.",
+  not_in_approved_snapshot:
+    "Absent from the membership frozen when the list was approved. It was either added or reclassified into scope afterwards, and nothing on record separates those. Re-approve the list to include it.",
+  list_discarded:
+    "The capability list itself was discarded, so nothing on it is offered. Upload a replacement list to make these tools citable again.",
+};
+
+/**
  * What a source list may honestly say about rows dropped at extraction.
  *
- * Three returns for three states, and none of them is a bare zero. `unknown`
+ * Four returns for four states, and none of them is a bare zero. `unknown`
  * deliberately produces no digit at all: there is no number to round, hedge or
  * caveat, because the stored bytes do not contain one.
  */
@@ -120,6 +196,18 @@ function describeAttribution(list: AttackAiInputSourceList): {
         title:
           "A reconciliation ran but its per-row half was not stored. Nothing was recorded either way, so this is NOT zero — it is unknown.",
       };
+    case "retired":
+      // Its own member precisely so this sentence can be true. Reusing
+      // "not_recorded" made the panel say a list uploaded today "predates the
+      // extraction record". Whatever this list's reconciliation says is still
+      // stored and still true -- the panel is simply not speaking for a list
+      // that contributes nothing.
+      return {
+        label: "Not reported",
+        tone: "neutral",
+        title:
+          "This list was discarded, so its extraction record is not reported here. Nothing is being claimed about what it dropped, in either direction.",
+      };
     case "not_recorded":
       return {
         label: "Not recorded",
@@ -134,7 +222,8 @@ function describeAttribution(list: AttackAiInputSourceList): {
  * A capability whose snapshot entry outlived its live row keeps its name and
  * vendor and loses everything descriptive. Rendering those cells as "—" would
  * say "uncategorised" where the truth is "we cannot look" — the same
- * conflation, one row down, that the tri-state above exists to refuse.
+ * conflation, one row down, that the attribution enumeration above exists to
+ * refuse.
  */
 function describeCell(
   capability: AttackAiInputCapability,
@@ -223,9 +312,35 @@ export function AttackAiInputsPanel({
     (s) => s.excluded_attribution === "not_recorded",
   ).length;
   const staleLists = sources.filter((s) => s.membership_stale).length;
+  // `=== false`, NOT `!`. The field is a tri-state and `null` means RETIRED —
+  // a discarded list, which nothing supersedes. `!null` is true, so the falsy
+  // test counted every discarded list as superseded and drove three separate
+  // sentences that were then false: the row suffix, the pill, and the
+  // paragraph telling the reader to discard a list already discarded.
   const supersededLists = sources.filter(
-    (s) => !s.is_latest_for_service,
+    (s) => s.is_latest_for_service === false,
   ).length;
+  const retiredLists = sources.filter(
+    (s) => s.is_latest_for_service === null,
+  ).length;
+  // DERIVED, not enumerated -- and that is the fix rather than a style choice.
+  // The positive assurance below used to be gated on the two attributions that
+  // happened to be members when it was written. `retired` was added later and
+  // fell straight into the reassuring branch, because a retired list scores 0
+  // on BOTH of those operands BY DESIGN: the route sends `rows = [] if
+  // retired`, so it contributes no named rows and is not `not_recorded`. The
+  // panel then printed "Every source row is accounted for" over a list whose
+  // extraction record it was deliberately declining to report. Any future
+  // member would have done the same. So the question is asked the other way
+  // round: nothing is accounted for unless EVERY source says `complete`.
+  const notFullyAccounted = sources.filter(
+    (s) => s.excluded_attribution !== "complete",
+  ).length;
+  // The denominator for the unknown-exclusions sentence. `sources.length`
+  // over-counts it: a retired list is excluded from the NUMERATOR by design,
+  // so counting it below the line reports "1 of 3" where only 2 lists could
+  // ever have been in the numerator's population.
+  const attributableLists = sources.length - retiredLists;
 
   return (
     <div
@@ -265,7 +380,7 @@ export function AttackAiInputsPanel({
       {/* Rendered whenever there are lists, including when nothing was
           withheld. A line that only appears on a bad run is one whose absence
           reads as zero — and "zero withheld" is a claim the panel is entitled
-          to make, unlike the extraction tri-state below. */}
+          to make, unlike the extraction attribution below. */}
       {sources.length > 0 ? (
         <p
           className="text-sm text-ink-secondary"
@@ -284,16 +399,8 @@ export function AttackAiInputsPanel({
               named {plural(totals.not_sent, "capability", "capabilities")} on
               those lists {plural(totals.not_sent, "is", "are")} NOT offered to
               the model
-              {totals.withheld_security_scope > 0
-                ? ` — ${totals.withheld_security_scope} ruled out of the security subset`
-                : ""}
-              {totals.withheld_not_in_approved_snapshot > 0
-                ? `${totals.withheld_security_scope > 0 ? "," : " —"} ${
-                    totals.withheld_not_in_approved_snapshot
-                  } absent from the membership frozen at approval`
-                : ""}
-              . The model cannot cite {plural(totals.not_sent, "it", "them")},
-              so a technique{" "}
+              {withheldBreakdown(totals)}. The model cannot cite{" "}
+              {plural(totals.not_sent, "it", "them")}, so a technique{" "}
               {plural(totals.not_sent, "it covers", "they cover")} will read as
               a gap.
             </>
@@ -301,8 +408,8 @@ export function AttackAiInputsPanel({
         </p>
       ) : null}
 
-      {/* The tri-state, in prose. No branch here prints a zero for `unknown`,
-          and none may ever be added. */}
+      {/* The attribution enumeration, in prose. No branch here prints a zero
+          for `unknown` or for `retired`, and none may ever be added. */}
       {sources.length > 0 ? (
         <p
           className="text-sm text-ink-secondary"
@@ -319,8 +426,8 @@ export function AttackAiInputsPanel({
               data-testid="attack-ai-inputs-excluded-unknown"
             >
               {" "}
-              {totals.lists_with_unknown_exclusions} of the {sources.length}{" "}
-              {plural(sources.length, "list", "lists")} cannot say what{" "}
+              {totals.lists_with_unknown_exclusions} of the {attributableLists}{" "}
+              {plural(attributableLists, "list", "lists")} cannot say what{" "}
               {plural(totals.lists_with_unknown_exclusions, "it", "they")}{" "}
               dropped: the extraction record does not distinguish &ldquo;nothing
               was excluded&rdquo; from &ldquo;we could not tell&rdquo;, so the
@@ -334,14 +441,25 @@ export function AttackAiInputsPanel({
           {notRecordedLists > 0 ? (
             <span data-testid="attack-ai-inputs-excluded-not-recorded">
               {" "}
+              {/* DOES NOT NAME THE CAUSE, and the tooltip for this same member
+                  and `_excluded_attribution` in `routes/attack.py` both already
+                  refused to. This paragraph said the lists "predate the
+                  extraction record" — a cause the stored bytes cannot support:
+                  `seed_demo.py` builds lists with neither column, so every
+                  seeded and e2e list would be described as predating a record
+                  it was created minutes after. The route says it outright:
+                  "The condition observes ABSENCE; it cannot see WHY." One copy
+                  was made honest and its twin was not, and the twin is the
+                  paragraph rather than the hover. */}
               {notRecordedLists}{" "}
-              {plural(notRecordedLists, "list predates", "lists predate")} the
-              extraction record and {plural(notRecordedLists, "makes", "make")}{" "}
-              no claim either way.
+              {plural(notRecordedLists, "list has", "lists have")} no extraction
+              record stored, so{" "}
+              {plural(notRecordedLists, "it makes", "they make")} no claim
+              either way. Hover a row for what that does and does not tell you.
             </span>
           ) : null}
           {totals.lists_with_unknown_exclusions === 0 &&
-          notRecordedLists === 0 ? (
+          notFullyAccounted === 0 ? (
             <span> Every source row is accounted for.</span>
           ) : null}
         </p>
@@ -404,6 +522,24 @@ export function AttackAiInputsPanel({
         </p>
       ) : null}
 
+      {/*
+        Its own sentence, and deliberately not folded into the one above. That
+        paragraph's advice is "discard it to take it out", which is already done
+        here — printing it over a discarded list tells a consultant to repeat an
+        action they have taken, which reads as the action not having worked.
+      */}
+      {retiredLists > 0 ? (
+        <p
+          className="text-xs text-ink-secondary"
+          data-testid="attack-ai-inputs-retired"
+        >
+          {retiredLists} {plural(retiredLists, "list is", "lists are")}{" "}
+          discarded and {plural(retiredLists, "contributes", "contribute")}{" "}
+          nothing. Nothing supersedes {plural(retiredLists, "it", "them")} —
+          upload a replacement list if those tools should be mapped.
+        </p>
+      ) : null}
+
       {sources.length > 0 ? (
         <details data-testid="attack-ai-inputs-sources">
           <summary className="cursor-pointer text-sm font-medium text-brand-600 hover:text-brand-500">
@@ -451,7 +587,11 @@ export function AttackAiInputsPanel({
                         className="py-1 pr-3 font-medium text-ink-primary"
                       >
                         {list.tech_debt_service_title} v{list.version}
-                        {list.is_latest_for_service ? "" : " (superseded)"}
+                        {list.is_latest_for_service === false
+                          ? " (superseded)"
+                          : list.is_latest_for_service === null
+                            ? " (discarded)"
+                            : ""}
                       </th>
                       <td className="py-1 pr-3 text-ink-secondary">
                         {list.status}
@@ -536,9 +676,21 @@ export function AttackAiInputsPanel({
                       {item.vendor ?? "—"}
                     </td>
                     <td className="py-1 pr-3 text-ink-secondary">
-                      {item.reason === "security_scope"
-                        ? "Ruled out of the security subset — the model called it non-security and a consultant agreed."
-                        : "Absent from the membership frozen when the list was approved. It was either added or reclassified into scope afterwards, and nothing on record separates those. Re-approve the list to include it."}
+                      {/*
+                        A LOOKUP, not a ternary. This was `reason ===
+                        "security_scope" ? a : b`, so every reason that was not
+                        the first one rendered as the second — and when
+                        `list_discarded` was added the discarded rows would have
+                        read "Re-approve the list to include it", which is the
+                        wrong remedy for a list that needs un-discarding. A
+                        two-branch conditional over a growing set does not fail
+                        when the set grows, it MISLABELS, and it does so in the
+                        column a consultant reads to decide what to do next.
+
+                        The fallback names the reason instead of guessing one.
+                      */}
+                      {REASON_COPY[item.reason] ??
+                        `Withheld for a reason this panel does not recognise (${item.reason}). It is not being offered to the model; the API knows why and this build does not.`}
                     </td>
                     <td className="py-1 text-ink-secondary">
                       {item.source_document
