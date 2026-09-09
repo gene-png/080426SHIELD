@@ -82,6 +82,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -120,43 +121,53 @@ const IMMEDIATE = new RegExp(
 const WAIVER = /immediate-read:\s*(\S.*)$/;
 
 /**
- * Collect every `.ts` file under `root`, skipping node_modules.
+ * Collect the TRACKED `.ts` files under `root`, via `git ls-files`.
  *
- * `.ts` ONLY, and that is a fix rather than an oversight. The pattern below
- * matches a method NAME and cannot see its receiver, so `.isDirectory()` on a
- * Node `Dirent` reads exactly like `.isVisible()` on a Locator — this gate
- * reported two such hits in its own source on its first cross-directory run.
- * Playwright test code is `.ts` here, so scoping the scan to it removes that
- * whole class of false positive without weakening the pattern.
+ * ## Why git and not a filesystem walk
  *
- * The residual is stated rather than assumed: a `.ts` file calling
- * `.isDirectory()` or any same-named method on a non-Locator would still be
- * reported. That is what the waiver comment is for, and a false positive
- * carrying a written reason is cheaper than a pattern narrowed until it misses.
+ * The walk this replaces excluded `node_modules` by name. That is a rule
+ * someone has to remember, and forgetting it is not hypothetical: a `grep -r`
+ * over `e2e/` traversed the vendored `playwright-core` typings and counted
+ * Playwright's own JSDoc code samples as call sites, producing a count that
+ * disagreed with this gate's by two and listing three methods with zero call
+ * sites anywhere in the suite.
+ *
+ * `git ls-files` makes vendored and generated code unreachable BY
+ * CONSTRUCTION — `node_modules` is gitignored, so it cannot appear no matter
+ * what anyone remembers. Derivation over synchronization, applied to the file
+ * list.
+ *
+ * A file that is untracked is also invisible here. That is the right default
+ * for a gate reporting on the committed suite, and it is stated rather than
+ * left as a surprise: a brand-new spec reports nothing until it is `git add`ed.
+ *
+ * `.ts` ONLY. The pattern above matches a method NAME and cannot see its
+ * receiver, so `.isDirectory()` on a Node `Dirent` reads exactly like
+ * `.isVisible()` on a Locator — this gate reported two such hits in its own
+ * `.mjs` source on its first cross-directory run. Playwright test code is `.ts`
+ * here, so scoping to it removes that class of false positive without
+ * weakening the pattern. The residual stands: a `.ts` file calling a
+ * same-named method on a non-Locator is still reported, and that is what the
+ * waiver is for.
+ *
+ * Returns null when it could not look — a missing path, or git unavailable.
+ * The caller turns that into exit 2, never into "clean".
  */
 function collect(root) {
-  const out = [];
-  const walk = (dir) => {
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (e.name === "node_modules" || e.name.startsWith(".")) continue;
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) walk(full);
-      else if (/\.ts$/.test(e.name) && !e.name.endsWith(".d.ts")) {
-        out.push(full);
-      }
-    }
-  };
-  const stat = fs.statSync(root, { throwIfNoEntry: false });
-  if (stat === undefined) return null; // could not look
-  if (stat.isDirectory()) walk(root);
-  else out.push(root);
-  return out;
+  if (fs.statSync(root, { throwIfNoEntry: false }) === undefined) return null;
+  let stdout;
+  try {
+    stdout = execFileSync("git", ["ls-files", "-z", "--", root], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+  } catch {
+    return null; // not a git repo, or git is not on PATH: could not look
+  }
+  return stdout
+    .split("\0")
+    .filter((f) => f !== "" && /\.ts$/.test(f) && !f.endsWith(".d.ts"))
+    .map((f) => path.resolve(f));
 }
 
 /**
@@ -213,7 +224,7 @@ function main() {
   }
   if (files.length === 0) {
     console.error(
-      `immediate-reads: cannot look — no .ts files under: ${targets.join(", ")}`,
+      `immediate-reads: cannot look — no tracked .ts files under (or git unavailable): ${targets.join(", ")}`,
     );
     return 2;
   }
