@@ -18,6 +18,7 @@ import {
 } from "@/lib/dashboards/zt";
 
 import type { JSX } from "react";
+import { stageAxis } from "./stageAxis";
 
 const MaturityRadar = dynamic(
   () => import("./ZtCharts").then((m) => m.MaturityRadar),
@@ -28,9 +29,16 @@ function pctText(n: number | null): string {
   return n === null ? "—" : `${Math.round(n)}`;
 }
 
-function MaturityBar({ pillar }: { pillar: ZtPillar }): JSX.Element {
+function MaturityBar({
+  pillar,
+  framework,
+}: {
+  pillar: ZtPillar;
+  framework: string;
+}): JSX.Element {
   const cur = pillar.current_pct ?? 0;
   const tgt = pillar.target_pct ?? 0;
+  const axis = stageAxis(framework);
   return (
     <div>
       <div
@@ -96,18 +104,19 @@ function MaturityBar({ pillar }: { pillar: ZtPillar }): JSX.Element {
           marginTop: 4,
         }}
       >
-        {/* CISA's four stage labels, hardcoded — and WRONG for a DoD
-            engagement, whose ladder is Not Started / Target / Advanced. The
-            bar and marker are positioned from `*_pct`, which `_maturity_pct`
-            already normalises against the framework's own level count, so the
-            geometry is right and only this legend lies. Filed as #208 and
-            deliberately not fixed here: #124 is about which target the
-            dashboard uses, not how the scale under it is drawn. Marked so the
-            next reader can tell a filed defect from an oversight. */}
-        <span>Traditional</span>
-        <span>Initial</span>
-        <span>Advanced</span>
-        <span>Optimal</span>
+        {/* Derived from the framework the payload already carries, never
+            hardcoded. This was CISA's four stages under every framework, so a
+            DoD engagement read its maturity against another framework's
+            ladder — "Optimal" is not a DoD stage. #208.
+
+            `stageAxis` returns null for a framework it does not recognise, and
+            that renders NO legend rather than a plausible wrong one. The bar
+            and marker are unaffected: they are positioned from `*_pct`, which
+            the server normalises against the framework's own level count, so
+            the geometry stays right either way. */}
+        {axis?.map((label) => (
+          <span key={label}>{label}</span>
+        ))}
       </div>
     </div>
   );
@@ -211,7 +220,7 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
               }}
             >
               <div style={{ fontSize: 15, fontWeight: 700 }}>{p.name}</div>
-              <MaturityBar pillar={p} />
+              <MaturityBar pillar={p} framework={data.framework} />
               {p.weakest.length > 0 ? (
                 <div>
                   <div
