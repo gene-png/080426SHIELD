@@ -242,18 +242,24 @@ export function RiskRegisterDashboard(): JSX.Element {
   // consultant who unlocks the gate, clicks generate and meets a 409 has walked
   // into a wall the UI told them was not there, which is worse than a lock.
   // Gated on `synthesizable_missing`, NOT `not_finalized`. The latter reports
-  // every unapproved input; only some of them block. Gating this screen on the
-  // reporting field would tell a consultant to approve an assessment that is
-  // not required and is still being worked on.
+  // every unapproved input; only some of them block. Gating on the reporting
+  // field would tell a consultant to approve an assessment that is not required
+  // and is still being worked on.
+  //
+  // A BANNER INSIDE THE PAGE, never an early return. The first version returned
+  // an EmptyState above every other branch, which took the whole page with it:
+  // an existing register generated and exported last week -- its version, its
+  // entries, its heatmap and the XLSX/PDF/Word download links to artifacts the
+  // client already holds -- vanished the moment a consultant started a new
+  // draft assessment. A state that blocks the NEXT register is not a reason to
+  // hide the LAST one.
+  //
+  // It also dropped `<h1>Risk Register</h1>`, which is the shape CLAUDE.md
+  // records: when a heading renders in every state except one, "heading
+  // visible" silently becomes a proxy for "the page works", and a spec waiting
+  // on it fails as a timeout rather than as an assertion.
   const blocking = gate?.synthesizable_missing ?? [];
-  if (gate && gate.unlocked && blocking.length > 0) {
-    return (
-      <EmptyState
-        title="Approve the source assessments first"
-        description={`These exist but are not approved, so they cannot be synthesised into a register for ${clientName}: ${blocking.join("; ")}.`}
-      />
-    );
-  }
+  const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
 
   if (gate && !gate.unlocked) {
     return (
@@ -269,6 +275,16 @@ export function RiskRegisterDashboard(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-6">
+      {blockedFromGenerating ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-unapproved-sources"
+        >
+          A new register cannot be generated until these are approved:{" "}
+          {blocking.join("; ")}. Anything already generated below is unaffected.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink-primary">

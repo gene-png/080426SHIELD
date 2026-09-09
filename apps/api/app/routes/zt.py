@@ -295,12 +295,29 @@ def _serialize_assessment(db: Session, a: ZtAssessment) -> ZtAssessmentResponse:
 def _latest_assessment(db: Session, service_id: uuid.UUID) -> ZtAssessment | None:
     # D-031: a DISCARDED assessment is retired from every "latest" consumer.
     # The next-version mint uses _max_assessment_version, not this helper.
-    # #237 SWEEP, EXCLUDED DELIBERATELY. This resolves the WORKING record for a
-    # consultant editing it, and "latest non-discarded" is the right answer to
-    # "what am I on". It is NOT a provenance question: nothing here is exported
-    # under a client's name, and every caller is behind `_admin_required`. It
-    # would become in scope the moment a client-facing route reads it — the
-    # client surface is `clients.py`, whose eight resolvers moved in #114.
+    # #237 SWEEP, EXCLUDED DELIBERATELY -- and the reason below is the SECOND
+    # one written here, because the first was false on both of its clauses.
+    #
+    # It claimed "nothing here is exported under a client's name" (the finalize
+    # routes do exactly that) and "every caller is behind `_admin_required`"
+    # (the self-assessment routes take `current_user`, and `intake`'s engagement
+    # list is read by clients). A correct exclusion with a false citation is
+    # worse than an unexplained one: a developer adding an exporting caller
+    # reads it and stops looking.
+    #
+    # THE TRUE REASONS, both of which have to hold:
+    #
+    #  * where this DOES feed a client-named deliverable, the exporting caller
+    #    enforces provenance ITSELF -- each finalize checks the assessment is
+    #    APPROVED or RELEASED before rendering. The guard is at the export, not
+    #    in this resolver, which is why "latest non-discarded" is safe here.
+    #  * where the caller is NOT admin-only, it is the client reading their own
+    #    input -- their questionnaire answers, their engagement list -- rather
+    #    than consultant analysis being published back to them.
+    #
+    # It would come into scope if either stopped holding: a new caller that
+    # exports without its own APPROVED/RELEASED check, or one that renders
+    # consultant analysis to a client. The test is NOT "is the caller admin".
     return db.execute(
         select(ZtAssessment)
         .where(

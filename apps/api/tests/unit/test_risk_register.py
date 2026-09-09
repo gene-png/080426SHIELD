@@ -529,7 +529,12 @@ def test_the_synthesis_path_must_filter_on_finalized(app_client) -> None:
     assert "unapproved" in body and "MITRE ATT&CK" in body
     # NOT an empty register generated successfully, which would read to a client
     # as "no risks found" -- a confident absence in place of unreviewed content.
-    assert c.get(f"/risk/clients/{cid}/register", headers=bh).status_code == 404
+    #
+    # `/register/latest`, NOT `/register`. The first version asserted 404 on
+    # `/register`, which IS NOT A ROUTE -- the 404 came from FastAPI's router and
+    # passed identically whether or not a register had been created. A vacuous
+    # assertion carrying the sentence above it.
+    assert c.get(f"/risk/clients/{cid}/register/latest", headers=bh).status_code == 404
 
 
 @pytest.mark.unit
@@ -584,17 +589,39 @@ def test_a_draft_sourced_register_is_never_generated(app_client) -> None:
     locked: this still passes. Merge them so synthesis stops filtering and a
     draft-sourced register generates: this is the only test that fails.
     """
-    c, _ = app_client
+    c, provider = app_client
     bearer, cid = _admin(c)
     _seed_drafts_only(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
 
+    # A WORKING fixture, and it is what makes the assertion below mean anything.
+    # Without it this test registers no `risk_synthesize` response, so if the
+    # provenance filter is ever removed the run reaches the provider, every
+    # batch raises `KeyError`, and generate returns 502 -- so `!= 201` passed BY
+    # CONSTRUCTION under every possible mutation, while carrying the sentence
+    # "a register was generated from unapproved assessments". The test could not
+    # reach a successful synthesis, which is the one outcome it exists to forbid.
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(
+            '{"entries": [{"title": "Credential theft exposure",'
+            ' "description": "EDR gap", "axis": "detection",'
+            ' "source": "coverage_finding", "source_id": "T1078",'
+            ' "linked_techniques": [], "linked_controls": [],'
+            ' "likelihood": "high", "impact": "catastrophic",'
+            ' "recommended_action": "remediate", "rationale": "..."}]}'
+        ),
+    )
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
     assert r.status_code != 201, (
         "a register was generated from unapproved assessments -- its contents "
         "are exported under the client's name"
     )
-    assert r.status_code == 409
+    # 4xx, not 409 specifically. The docstring says this test is "deliberately
+    # indifferent to WHICH refusal fires", and `== 409` contradicted that: under
+    # a merge that locks the gate the refusal is still a 409, but pinning the
+    # exact code made the claim false of its own assertion.
+    assert 400 <= r.status_code < 500, f"expected a refusal, got {r.status_code}"
 
 
 @pytest.mark.unit

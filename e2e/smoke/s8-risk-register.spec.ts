@@ -202,6 +202,21 @@ test("register is locked with only ATT&CK and unlocks once a ZT assessment exist
   ).toBeVisible({ timeout: 60000 });
   await expect(page.getByText("Risk Register is locked")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Generate" })).toBeVisible();
+
+  // #237. The gate unlocks on EXISTENCE, so the page is fully rendered — but
+  // both assessments here are DRAFTS, and synthesis reads only approved work.
+  // The page must say so rather than let the consultant discover it by pressing
+  // Generate and meeting a 409.
+  //
+  // Asserted POSITIVELY first (the heading above) and only then the notice: a
+  // `toHaveCount(0)` on a page still fetching passes vacuously, and this spec's
+  // whole subject is a page whose state changed.
+  await expect(
+    page.getByTestId("risk-register-unapproved-sources"),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/an approved MITRE ATT&CK coverage mapping/),
+  ).toBeVisible();
 });
 
 test("Generate derives tiers in code, renders KPIs + 5x5 heatmap, cites only the client's own techniques; Regenerate bumps version; exports download", async ({
