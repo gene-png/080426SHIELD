@@ -96,6 +96,20 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> tuple[str, str]
     zans = za.json()["answers"][0]
     capability = zans["capability_code"]
     c.patch(f"/zt/answers/{zans['id']}", headers=h, json={"maturity_stage": 1})
+
+    # APPROVE BOTH. Added by #237, and the reason is worth keeping: before that
+    # change this helper left both assessments as DRAFTS and every test below
+    # generated a Risk Register from them. The suite was exercising the defect
+    # on every generate path and reporting green -- synthesis had no provenance
+    # filter, so unapproved work flowed into a register that is exported under
+    # the client's name.
+    #
+    # Ten tests went red when the filter landed. That is the two-sided evidence,
+    # and it is why this call is here rather than the filter being relaxed.
+    ar = c.post(f"/attack/assessments/{a.json()['id']}/approve", headers=h)
+    assert ar.status_code == 200, ar.text
+    zr = c.post(f"/zt/assessments/{za.json()['id']}/approve", headers=h)
+    assert zr.status_code == 200, zr.text
     return technique, capability
 
 
@@ -289,6 +303,11 @@ def _seed_many_gaps(c: TestClient, bearer: str, cid: str, count: int) -> tuple[l
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
     zans = za.json()["answers"][0]
     c.patch(f"/zt/answers/{zans['id']}", headers=h, json={"maturity_stage": 1})
+    # Approve both -- #237. Synthesis reads only APPROVED/RELEASED assessments,
+    # because what it produces is exported under the client's name. This seed
+    # left them DRAFT and the generate below used to succeed.
+    assert c.post(f"/attack/assessments/{a.json()['id']}/approve", headers=h).status_code == 200
+    assert c.post(f"/zt/assessments/{za.json()['id']}/approve", headers=h).status_code == 200
     return [r["technique_code"] for r in rows], zans["capability_code"]
 
 
@@ -440,3 +459,228 @@ def test_generate_object_entries_is_refused_not_iterated_as_keys(app_client) -> 
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
     assert r.status_code == 502, r.text
     assert r.json()["error"]["reason"] == "ai_call_failed"
+
+
+def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> None:
+    """ATT&CK + ZT assessments that EXIST and are not approved."""
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    asvc = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    )
+    a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
+    cov = a.json()["coverage"][0]
+    c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
+    zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
+    za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
+    c.patch(f"/zt/answers/{za.json()['answers'][0]['id']}", headers=h, json={"maturity_stage": 1})
+
+
+@pytest.mark.unit
+def test_the_gate_path_must_not_filter_on_finalized(app_client) -> None:
+    """The gate unlocks on EXISTENCE. A draft counts.
+
+    This is half of a two-sided constraint and it has a red state on purpose.
+    If someone "tidies" `_exists_for_gate` and `_finalized_for_synthesis` back
+    into one helper, one of these two tests fails whichever way they merge it:
+    filter the shared helper on finalized and THIS test goes red; stop filtering
+    and its sibling below goes red. The types make the merge awkward; these
+    tests make it loud.
+
+    Unlock stays on existence deliberately — mapping ATT&CK before the tech-debt
+    list is approved is a normal order of work, and requiring
+    finalize-everything-first would be a workflow restriction nobody asked for.
+    """
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _seed_drafts_only(c, bearer, cid)
+    g = c.get(f"/risk/clients/{cid}/gate", headers={"Authorization": f"Bearer {bearer}"}).json()
+
+    assert g["unlocked"] is True, "a draft must still unlock the gate"
+    assert g["has_attack"] is True and g["has_zt"] is True
+    assert g["missing"] == [], "nothing is ABSENT -- both assessments exist"
+
+
+@pytest.mark.unit
+def test_the_synthesis_path_must_filter_on_finalized(app_client) -> None:
+    """Synthesis refuses unapproved work, and says which input and why.
+
+    The other half. What synthesis produces is exported under the client's name,
+    so a DRAFT reaching it is unreviewed content leaving as a deliverable — a
+    different and worse failure than a correct number under a wrong label.
+    """
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _seed_drafts_only(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    assert set(g["not_finalized"]) == {
+        "the MITRE ATT&CK coverage mapping",
+        "the Zero Trust assessment",
+    }, "the gate must NAME the unapproved inputs, not merely refuse later"
+    assert g["missing"] == [], (
+        "'absent' and 'exists but unapproved' are separate fields -- collapsing "
+        "them would make the API say an assessment does not exist when it does"
+    )
+
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 409, "a draft-sourced register must be REFUSED"
+    body = r.json()["error"]["message"]
+    assert "unapproved" in body and "MITRE ATT&CK" in body
+    # NOT an empty register generated successfully, which would read to a client
+    # as "no risks found" -- a confident absence in place of unreviewed content.
+    #
+    # `/register/latest`, NOT `/register`. The first version asserted 404 on
+    # `/register`, which IS NOT A ROUTE -- the 404 came from FastAPI's router and
+    # passed identically whether or not a register had been created. A vacuous
+    # assertion carrying the sentence above it.
+    assert c.get(f"/risk/clients/{cid}/register/latest", headers=bh).status_code == 404
+
+
+@pytest.mark.unit
+def test_approving_the_same_inputs_lets_synthesis_through(app_client) -> None:
+    """The positive control, on the REAL synthesis call.
+
+    Without it, the refusal above is equally satisfied by a generate endpoint
+    that refuses everything. Same client, same assessments, only the approval
+    differs — so the two tests bracket the change rather than each proving half.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, capability = _seed_attack_and_zt(c, bearer, cid)  # identical seed, plus approve
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    assert g["unlocked"] is True
+    assert g["not_finalized"] == [], "approved inputs must clear the provenance list"
+
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(
+            '{"entries": [{"title": "Credential theft exposure",'
+            ' "description": "EDR gap", "axis": "detection",'
+            ' "source": "coverage_finding", "source_id": "' + technique + '",'
+            ' "linked_techniques": ["' + technique + '"],'
+            ' "linked_controls": ["' + capability + '"],'
+            ' "likelihood": "high", "impact": "catastrophic",'
+            ' "recommended_action": "remediate", "rationale": "..."}]}'
+        ),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, r.text
+    assert r.json()["entries"], "the register must actually carry entries"
+
+
+@pytest.mark.unit
+def test_a_draft_sourced_register_is_never_generated(app_client) -> None:
+    """No 201 from unapproved inputs, whatever the reason for the refusal.
+
+    This exists to make the two merge directions DISCRIMINABLE, and that gap was
+    real: with only the two tests above, direction B's red set was a strict
+    SUBSET of direction A's. `synthesis_path` died under both — under A because
+    the gate reports the assessments as absent, which is a side effect of the
+    gate change rather than an independent signal — so nothing failed under B
+    alone. A shared red set cannot tell you which of two merges happened, which
+    is the collapse #213 is about, one level up in the evidence rather than in
+    the code.
+
+    This one is deliberately indifferent to WHICH refusal fires. Merge the
+    helpers so the gate filters on finalized and the register is refused as
+    locked: this still passes. Merge them so synthesis stops filtering and a
+    draft-sourced register generates: this is the only test that fails.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_drafts_only(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    # A WORKING fixture, and it is what makes the assertion below mean anything.
+    # Without it this test registers no `risk_synthesize` response, so if the
+    # provenance filter is ever removed the run reaches the provider, every
+    # batch raises `KeyError`, and generate returns 502 -- so `!= 201` passed BY
+    # CONSTRUCTION under every possible mutation, while carrying the sentence
+    # "a register was generated from unapproved assessments". The test could not
+    # reach a successful synthesis, which is the one outcome it exists to forbid.
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(
+            '{"entries": [{"title": "Credential theft exposure",'
+            ' "description": "EDR gap", "axis": "detection",'
+            ' "source": "coverage_finding", "source_id": "T1078",'
+            ' "linked_techniques": [], "linked_controls": [],'
+            ' "likelihood": "high", "impact": "catastrophic",'
+            ' "recommended_action": "remediate", "rationale": "..."}]}'
+        ),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code != 201, (
+        "a register was generated from unapproved assessments -- its contents "
+        "are exported under the client's name"
+    )
+    # 4xx, not 409 specifically. The docstring says this test is "deliberately
+    # indifferent to WHICH refusal fires", and `== 409` contradicted that: under
+    # a merge that locks the gate the refusal is still a 409, but pinning the
+    # exact code made the claim false of its own assertion.
+    assert 400 <= r.status_code < 500, f"expected a refusal, got {r.status_code}"
+
+
+@pytest.mark.unit
+def test_an_unapproved_OPTIONAL_input_does_not_block_generation(app_client) -> None:
+    """The refusal must mirror the UNLOCK, not exceed it.
+
+    Unlock is `has_attack and (has_csf or has_zt)` — CSF and ZT are
+    ALTERNATIVES. The first version of the provenance refusal blocked on any
+    present-but-unapproved input regardless of whether it was needed, so:
+
+        ATT&CK approved + CSF approved + ZT draft  ->  409
+
+    Two assessments that fully satisfy the unlock rule produced nothing, and the
+    only remedies were to approve unfinished work — the exact thing this change
+    exists to prevent — or discard it.
+
+    Live rather than exotic: `_FINALIZED` deliberately excludes `submitted`, and
+    submitted is the routine transient state of a CSF or ZT engagement sitting
+    in a consultant's review queue. A client answering their questionnaire would
+    have blocked the Risk Register.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, capability = _seed_attack_and_zt(c, bearer, cid)  # both approved
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    # A THIRD assessment, started and not approved. CSF here, so ATT&CK+ZT
+    # already satisfy the unlock rule without it.
+    csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h)
+
+    g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    assert g["unlocked"] is True
+    assert (
+        "the CSF assessment" in g["not_finalized"]
+    ), "an unapproved input must still be REPORTED even when it does not block"
+
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(
+            '{"entries": [{"title": "Credential theft exposure",'
+            ' "description": "EDR gap", "axis": "detection",'
+            ' "source": "coverage_finding", "source_id": "' + technique + '",'
+            ' "linked_techniques": ["' + technique + '"],'
+            ' "linked_controls": ["' + capability + '"],'
+            ' "likelihood": "high", "impact": "catastrophic",'
+            ' "recommended_action": "remediate", "rationale": "..."}]}'
+        ),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, (
+        "an unapproved OPTIONAL input must not block a register the unlock rule "
+        f"already permits -- got {r.status_code}: {r.text}"
+    )
+    # ...and the exclusion is DISCLOSED rather than silent. Without this the
+    # register is a figure over a withheld population, which is the trade this
+    # fix must not make: a hard block replaced by a quiet partial.
+    assert "the CSF assessment" in r.json()["excluded_inputs"], (
+        "a present-but-unapproved assessment contributed nothing and the "
+        "register does not say so"
+    )

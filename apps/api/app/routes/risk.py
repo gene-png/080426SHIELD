@@ -86,35 +86,170 @@ def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
     return LLMClient.from_db(db)
 
 
-def _latest(db: Session, model, client_id: uuid.UUID, *, active_only: bool = False):
-    """Latest row for a client by version. With active_only=True, DISCARDED
-    assessments are excluded (D-031) so a discarded highest-version assessment
-    never unlocks the Risk gate or feeds synthesis. RiskRegister has no discard
-    state, so its callers leave active_only=False."""
-    stmt = select(model).where(model.client_id == client_id)
-    if active_only:
-        stmt = stmt.where(model.status != "discarded")
+# APPROVED or RELEASED. What "finalized" means for an assessment, and the same
+# pair `clients.py` used before #114 deleted its helper. SUBMITTED is NOT in it:
+# on CSF and ZT that is a client having answered, not a consultant having signed
+# off, and synthesis is the consultant's signature reaching a deliverable.
+_FINALIZED = ("approved", "released")
+
+
+def _exists_for_gate(db: Session, model, client_id: uuid.UUID) -> bool:
+    """Does the client have a live assessment of this kind AT ALL? (#237)
+
+    EXISTENCE, and deliberately not provenance. A DRAFT counts: mapping ATT&CK
+    before the tech-debt list is approved is a normal order of work, and forcing
+    finalize-everything-then-start-Risk would be a workflow restriction nobody
+    asked for. DISCARDED does not count (D-031).
+
+    **This function and `_finalized_for_synthesis` must never be merged, and the
+    protection is the SIGNATURE rather than this paragraph.** They return
+    different types — `bool` here, a model or None there — so collapsing them
+    into one helper cannot be done as a casual tidy: it requires changing types
+    and touching every call site, which is the point where somebody notices.
+
+    Prose alone would not hold. This file's own history is the argument: the
+    single `_latest` these replace carried a docstring explaining precisely what
+    `active_only` protected, and it was still asked to answer two questions —
+    "is there work" and "may this be synthesized" — for as long as it existed.
+    The docstring says why; the types are what hold.
+
+    Pinned by `test_the_gate_path_must_not_filter_on_finalized`, which fails if
+    this ever starts excluding drafts.
+    """
+    return (
+        db.execute(
+            select(model.id)
+            .where(model.client_id == client_id, model.status != "discarded")
+            .limit(1)
+        ).scalar_one_or_none()
+        is not None
+    )
+
+
+def _finalized_for_synthesis(db: Session, model, client_id: uuid.UUID):
+    """The latest APPROVED-or-RELEASED assessment, or None. (#237)
+
+    PROVENANCE, and the reason this is separate from `_exists_for_gate`. What
+    synthesis reads is exported under a client's name, so a DRAFT must not reach
+    it — that is unreviewed content leaving as a deliverable, which is a
+    different and worse failure than a correct number under a wrong label.
+
+    Returning None here does NOT mean "no assessment": it means none that may be
+    synthesized. `_gate` reports that distinction so unlock and synthesis stop
+    disagreeing silently — a consultant walking into a refusal the UI said was
+    not there is worse than a locked gate.
+
+    See `_exists_for_gate` for why the two are typed differently on purpose.
+
+    Pinned by `test_the_synthesis_path_must_filter_on_finalized`, which fails if
+    this ever stops excluding drafts.
+    """
     return db.execute(
-        stmt.order_by(model.version.desc(), model.created_at.desc()).limit(1)
+        select(model)
+        .where(model.client_id == client_id, model.status.in_(_FINALIZED))
+        .order_by(model.version.desc(), model.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
+    """The client's current Risk Register version.
+
+    Typed to `RiskRegister` and taking no `model` argument, deliberately. The
+    generic `_latest(db, model, ...)` this replaces was an escape hatch: it
+    accepted any of the four models, which is how one helper came to answer both
+    the gate's question and synthesis's. Removing the parameter removes the
+    hatch — an assessment cannot be passed to this at all.
+
+    No status filter: a register has no discard state, and `finalized_at` is what
+    gates the client-facing dashboard (`clients.py::risk_dashboard`).
+    """
+    return db.execute(
+        select(RiskRegister)
+        .where(RiskRegister.client_id == client_id)
+        .order_by(RiskRegister.version.desc(), RiskRegister.created_at.desc())
+        .limit(1)
     ).scalar_one_or_none()
 
 
 def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
-    has_attack = _latest(db, AttackAssessment, client_id, active_only=True) is not None
-    has_csf = _latest(db, CsfAssessment, client_id, active_only=True) is not None
-    has_zt = _latest(db, ZtAssessment, client_id, active_only=True) is not None
+    """Whether the Risk Register can be generated, in THREE dimensions (#237).
+
+    `missing` — ABSENT. `not_finalized` — EXISTS, unapproved, REPORTED.
+    `synthesizable_missing` — what actually BLOCKS, and it mirrors the unlock
+    rule over finalized inputs rather than exceeding it.
+
+    The third field exists because the second was briefly used as the refusal,
+    which blocked a register the unlock rule already permitted: CSF and ZT are
+    alternatives, so a draft ZT beside an approved CSF produced a 409 whose only
+    remedies were to approve unfinished work or discard it.
+
+    Unlock stays on EXISTENCE. What changed is that the gate also reports which
+    existing inputs cannot be synthesized because they are not finalized.
+
+    `missing` and `not_finalized` are separate fields and are NOT merged, though
+    both feed one sentence. "There is no ATT&CK mapping" and "the ATT&CK mapping
+    is a draft" are different facts with different remedies — create one versus
+    approve one — and putting the second into a field named `missing` would make
+    the API assert something untrue to serve a message. That is the exact defect
+    #234 shipped and corrected (`not_recorded` borrowed for retired lists), so it
+    is not repeated here one issue later.
+    """
+    has_attack = _exists_for_gate(db, AttackAssessment, client_id)
+    has_csf = _exists_for_gate(db, CsfAssessment, client_id)
+    has_zt = _exists_for_gate(db, ZtAssessment, client_id)
     unlocked = has_attack and (has_csf or has_zt)
+
     missing: list[str] = []
     if not has_attack:
         missing.append("a MITRE ATT&CK coverage mapping")
     if not (has_csf or has_zt):
         missing.append("a CSF or Zero Trust assessment")
+
+    # EXISTS but cannot be synthesized. Named individually so the state is
+    # visible on the gate rather than discovered by hitting it.
+    #
+    # **REPORTING, NOT BLOCKING, and the distinction is load-bearing.** An
+    # earlier version refused generation on ANY entry here, which exceeded the
+    # unlock rule: CSF and ZT are ALTERNATIVES, so ATT&CK + CSF both approved
+    # with a ZT draft in progress produced a 409 over two assessments that
+    # satisfied unlock. The only remedies were to approve unfinished work --
+    # what this change exists to prevent -- or discard it. And it was the normal
+    # path, not an edge: `_FINALIZED` excludes `submitted`, which is where a CSF
+    # or ZT engagement sits while a consultant reviews it, so a client answering
+    # their questionnaire blocked the Risk Register.
+    #
+    # What BLOCKS is `synthesizable_missing` below, which mirrors unlock exactly.
+    # What is merely listed here is disclosed on the register instead.
+    not_finalized: list[str] = []
+    finalized_attack = _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
+    finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
+    finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
+    for label, present, finalized in (
+        ("the MITRE ATT&CK coverage mapping", has_attack, finalized_attack),
+        ("the CSF assessment", has_csf, finalized_csf),
+        ("the Zero Trust assessment", has_zt, finalized_zt),
+    ):
+        if present and not finalized:
+            not_finalized.append(label)
+
+    # The unlock rule restated over FINALIZED inputs. Same shape as `missing`
+    # above and deliberately so: if these two predicates ever diverge again, the
+    # gate promises something synthesis will refuse.
+    synthesizable_missing: list[str] = []
+    if not finalized_attack:
+        synthesizable_missing.append("an approved MITRE ATT&CK coverage mapping")
+    if not (finalized_csf or finalized_zt):
+        synthesizable_missing.append("an approved CSF or Zero Trust assessment")
+
     return RiskGateStatus(
         unlocked=unlocked,
         has_attack=has_attack,
         has_csf=has_csf,
         has_zt=has_zt,
         missing=missing,
+        not_finalized=not_finalized,
+        synthesizable_missing=synthesizable_missing,
     )
 
 
@@ -149,7 +284,7 @@ def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set
     valid_techniques: set[str] = set()
     valid_controls: set[str] = set()
 
-    attack = _latest(db, AttackAssessment, client_id, active_only=True)
+    attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
     if attack is not None:
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == attack.id))
@@ -168,7 +303,7 @@ def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set
                     }
                 )
 
-    csf = _latest(db, CsfAssessment, client_id, active_only=True)
+    csf = _finalized_for_synthesis(db, CsfAssessment, client_id)
     if csf is not None:
         for r in (
             db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id)).scalars().all()
@@ -184,7 +319,7 @@ def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set
                     }
                 )
 
-    zt = _latest(db, ZtAssessment, client_id, active_only=True)
+    zt = _finalized_for_synthesis(db, ZtAssessment, client_id)
     if zt is not None:
         for r in (
             db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars().all()
@@ -343,6 +478,20 @@ def generate(
             status_code=status.HTTP_409_CONFLICT,
             detail="Risk Register is locked. Missing: " + "; ".join(g.missing) + ".",
         )
+    # REFUSE rather than synthesize from nothing (#237). Without this, moving
+    # `_gather_findings` onto `_finalized_for_synthesis` would turn a
+    # draft-sourced run into an EMPTY register instead of a refusal -- a register
+    # with no entries, generated successfully, which reads as "no risks found".
+    # That is a WORSE failure than the one being fixed: it replaces unreviewed
+    # content with a confident absence, and both go out under the client's name.
+    if g.synthesizable_missing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Risk Register cannot be generated from unapproved work. "
+                "Approve first: " + "; ".join(g.synthesizable_missing) + "."
+            ),
+        )
 
     findings, valid_techniques, valid_controls = _gather_findings(db, cid)
     client_org = None if client.legal_name == "(pending intake)" else client.legal_name
@@ -361,7 +510,7 @@ def generate(
     data = {"entries": entries_draft}
 
     # New version; supersede the prior current one.
-    prior = _latest(db, RiskRegister, cid)
+    prior = _latest_register(db, cid)
     next_version = (prior.version + 1) if prior is not None else 1
     register = RiskRegister(client_id=cid, version=next_version, generated_by=admin.id)
     db.add(register)
@@ -417,7 +566,16 @@ def generate(
         },
     )
     db.commit()
-    return _serialize(db, register, batches_total=batches_total, batches_failed=batches_failed)
+    # `g.not_finalized` is the full present-but-unapproved set; the refusal
+    # above already cleared the ones that block. Whatever remains contributed
+    # nothing to this register, and the register says so.
+    return _serialize(
+        db,
+        register,
+        excluded_inputs=g.not_finalized,
+        batches_total=batches_total,
+        batches_failed=batches_failed,
+    )
 
 
 def _write_artifact(
@@ -462,7 +620,43 @@ def export(
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
 ) -> RiskRegisterResponse:
     client = _require_client(db, cid)
-    reg = _latest(db, RiskRegister, cid)
+    # #237 GUARDS GENERATE, NOT EXPORT, AND THE BLAST RADIUS IS STATED RATHER
+    # THAN ASSUMED. `CLAUDE.md` requires checking it, and the 0044 precedent
+    # worked because the radius was countable ("zero RELEASED assessments").
+    #
+    # Here it is NOT countable, and that is the finding rather than an excuse.
+    # Every register created before this change was synthesized under the old
+    # `_latest`, which read DRAFT assessments. Those rows stay exportable, and
+    # `export` sets `finalized_at` -- the single condition
+    # `clients.py::risk_dashboard` gates the CLIENT dashboard on -- so exporting
+    # one publishes it.
+    #
+    # `models/risk_register.py` records no provenance: no source assessment ids,
+    # no excluded inputs. So NO SINGLE COLUMN answers "was this draft-sourced".
+    #
+    # That is not the same as unanswerable, and an earlier draft of this note
+    # said "INDISTINGUISHABLE ... in any database", which ended the check
+    # `CLAUDE.md` requires instead of performing it. A reconstruction bounds it:
+    # join each register's `created_at` against the assessment `_latest` would
+    # have picked (highest non-discarded version) and ask whether that row's
+    # `approved_at` was null or later. Measured on the dev database 2026-09-09:
+    # **6 of 6 registers were built from an ATT&CK assessment unapproved at
+    # build time, 6 of 6 from an unapproved ZT one, and 5 of the 6 are
+    # finalized** -- so on this database the radius is every register, and
+    # finalizing published five of them.
+    #
+    # The reconstruction is APPROXIMATE and its error direction is stated: it
+    # reads today's discard state and today's version ordering, so a row
+    # discarded or re-versioned since would change which assessment `_latest`
+    # picked. It bounds the radius; it does not settle any individual row.
+    # Persisting provenance at generate is what makes the question answerable
+    # exactly, and that is #240.
+    #
+    # Guarding export on TODAY's statuses would be wrong for a different reason
+    # -- D-053: it would re-read statuses that have moved since the register was
+    # built. The fix is to record provenance AT GENERATE and check that, which
+    # needs a migration and is #240.
+    reg = _latest_register(db, cid)
     if reg is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -543,7 +737,7 @@ def latest(
     db: Annotated[Session, Depends(get_db)],
 ) -> RiskRegisterResponse:
     _require_client(db, cid)
-    reg = _latest(db, RiskRegister, cid)
+    reg = _latest_register(db, cid)
     if reg is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -556,6 +750,7 @@ def _serialize(
     db: Session,
     register: RiskRegister,
     *,
+    excluded_inputs: list[str] | None = None,
     batches_total: int = 0,
     batches_failed: int = 0,
 ) -> RiskRegisterResponse:
@@ -581,6 +776,7 @@ def _serialize(
         return art.title if art else None
 
     return RiskRegisterResponse(
+        excluded_inputs=excluded_inputs or [],
         id=register.id,
         client_id=register.client_id,
         version=register.version,

@@ -154,6 +154,15 @@ export function RiskRegisterDashboard(): JSX.Element {
   const [clientName, setClientName] = React.useState("Client");
   const [gate, setGate] = React.useState<RiskGate | null>(null);
   const [register, setRegister] = React.useState<RiskRegister | null>(null);
+  // HELD SEPARATELY FROM `register`, and that separation is the fix rather than
+  // a style choice. `export` returns `_serialize(db, reg)` with no
+  // `excluded_inputs`, which the schema defaults to `[]` -- so
+  // `setRegister(await exportRiskRegister(cid))` overwrote the disclosure with
+  // an empty list and the banner unmounted at the exact moment the consultant
+  // did the thing it warns about. The withheld set is a property of what the
+  // register was BUILT from; no later response can revise it, so no later
+  // response gets to clear it either.
+  const [excludedInputs, setExcludedInputs] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState<"generate" | "export" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -178,6 +187,10 @@ export function RiskRegisterDashboard(): JSX.Element {
         setClientName(name);
         setGate(g);
         setRegister(reg);
+        // `latest` always returns `[]` here (nothing is persisted -- #240), so
+        // this seeds empty on a reload and the banner is generate-scoped. That
+        // is the stated limitation, not an accident.
+        setExcludedInputs(reg?.excluded_inputs ?? []);
       } catch (err) {
         if (active) setError(describeRiskError(err));
       } finally {
@@ -194,7 +207,10 @@ export function RiskRegisterDashboard(): JSX.Element {
     setBusy("generate");
     setError(null);
     try {
-      setRegister(await generateRiskRegister(cid));
+      const reg = await generateRiskRegister(cid);
+      setRegister(reg);
+      // The ONLY producer of a non-empty withheld set.
+      setExcludedInputs(reg.excluded_inputs);
     } catch (err) {
       setError(describeRiskError(err));
     } finally {
@@ -207,6 +223,9 @@ export function RiskRegisterDashboard(): JSX.Element {
     setBusy("export");
     setError(null);
     try {
+      // Deliberately does NOT touch `excludedInputs`. See the state
+      // declaration: the export response cannot carry it, so assigning from
+      // here would erase it.
       setRegister(await exportRiskRegister(cid));
     } catch (err) {
       setError(describeRiskError(err));
@@ -236,6 +255,42 @@ export function RiskRegisterDashboard(): JSX.Element {
     );
   }
 
+  // UNLOCKED but not synthesizable: the inputs exist and are unapproved (#237).
+  // Rendered BEFORE the locked branch is irrelevant — the two are disjoint, and
+  // this one has to exist at all so the refusal is visible before it is hit. A
+  // consultant who unlocks the gate, clicks generate and meets a 409 has walked
+  // into a wall the UI told them was not there, which is worse than a lock.
+  // Gated on `synthesizable_missing`, NOT `not_finalized`. The latter reports
+  // every unapproved input; only some of them block. Gating on the reporting
+  // field would tell a consultant to approve an assessment that is not required
+  // and is still being worked on.
+  //
+  // A BANNER INSIDE THE PAGE, never an early return. The first version returned
+  // an EmptyState above every other branch, which took the whole page with it:
+  // an existing register generated and exported last week -- its version, its
+  // entries, its heatmap and the XLSX/PDF/Word download links to artifacts the
+  // client already holds -- vanished the moment a consultant started a new
+  // draft assessment. A state that blocks the NEXT register is not a reason to
+  // hide the LAST one.
+  //
+  // It also dropped `<h1>Risk Register</h1>`, which is the shape CLAUDE.md
+  // records: when a heading renders in every state except one, "heading
+  // visible" silently becomes a proxy for "the page works", and a spec waiting
+  // on it fails as a timeout rather than as an assertion.
+  const blocking = gate?.synthesizable_missing ?? [];
+  const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
+  // Inputs that existed, were not approved, did not BLOCK (the unlock rule was
+  // satisfied without them) and therefore contributed nothing. The `??` guards
+  // `register` being null before anything is generated -- not an absent field,
+  // which the API always sends.
+  //
+  // **This banner survives until the page is reloaded and no further**, because
+  // nothing about the exclusion is persisted: `GET .../register/latest` returns
+  // `[]`. That is #240, which needs a migration. It is worth rendering anyway --
+  // the moment a consultant generates is the moment the omission is actionable,
+  // and for one review round this field reached no surface at all, which made
+  // "the register says so" true of nobody.
+
   if (gate && !gate.unlocked) {
     return (
       <EmptyState
@@ -250,6 +305,28 @@ export function RiskRegisterDashboard(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-6">
+      {excludedInputs.length > 0 ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-excluded-inputs"
+        >
+          Generated without {excludedInputs.join("; ")}. Those assessments exist
+          but are not approved, so nothing from them is in this register. The
+          exported documents do not say so — re-generate after approving them if
+          they should be included.
+        </p>
+      ) : null}
+
+      {blockedFromGenerating ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-unapproved-sources"
+        >
+          A new register cannot be generated until these are approved:{" "}
+          {blocking.join("; ")}. Anything already generated below is unaffected.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink-primary">

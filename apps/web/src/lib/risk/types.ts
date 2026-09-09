@@ -3,7 +3,28 @@ export interface RiskGate {
   has_attack: boolean;
   has_csf: boolean;
   has_zt: boolean;
+  /** ABSENT — no assessment of this kind exists. Remedy: create one. */
   missing: string[];
+  /**
+   * EXISTS but is not approved, so it cannot be synthesized into a register
+   * that will be exported under the client's name (#237). Remedy: approve it.
+   *
+   * Separate from `missing` because the remedies differ, and a renderer that
+   * joins them into one "first complete:" sentence tells a consultant to create
+   * an assessment they already have. Optional so an older client parses a newer
+   * response.
+   */
+  not_finalized?: string[];
+  /**
+   * What actually BLOCKS generation — the unlock rule restated over APPROVED
+   * inputs. Distinct from `not_finalized`, which reports.
+   *
+   * A renderer must gate the "approve first" screen on THIS, not on
+   * `not_finalized`: an unapproved input that is not required does not block,
+   * and telling a consultant to approve it would send them to approve
+   * unfinished work.
+   */
+  synthesizable_missing?: string[];
 }
 
 export interface RiskEntry {
@@ -27,6 +48,18 @@ export interface RiskEntry {
 }
 
 export interface RiskRegister {
+  /**
+   * Inputs that EXISTED and were not approved, so they contributed nothing to
+   * this register. Present and populated on the POST /generate response only.
+   *
+   * **`GET .../register/latest` always returns `[]`, and that is a limit rather
+   * than a bug in this type.** Nothing about the exclusion is persisted, so a
+   * read path cannot reconstruct it without a schema change -- tracked in #240.
+   * The consequence is that the banner below survives until the page is
+   * reloaded and no further, which the renderer says out loud rather than
+   * implying durability it does not have.
+   */
+  excluded_inputs: string[];
   id: string;
   client_id: string;
   version: number;
