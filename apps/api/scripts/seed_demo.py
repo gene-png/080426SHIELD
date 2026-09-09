@@ -653,7 +653,89 @@ def _seed_csf(db: Session, storage: StorageBackend, admin: User, org: Client) ->
         ),
         stage="csf.deliverable",
     )
+
+    _seed_csf_v2_approved(db, admin, org, svc, tier_map)
     return svc
+
+
+def _seed_csf_v2_approved(
+    db: Session,
+    admin: User,
+    org: Client,
+    svc: Service,
+    v1_tiers: dict[str, int],
+) -> None:
+    """DEFECT STATE 2: v1 RELEASED beside v2 APPROVED, deliberately not finalized.
+
+    ## Why this state and not another
+
+    It is the #114 surface. Before PR #239 the client dashboards resolved their
+    numbers from "the latest APPROVED-or-RELEASED assessment" while labelling
+    the response with the RELEASED deliverable's version -- so in exactly this
+    state a client saw v2's numbers under v1's label. #239 made the numbers
+    resolve from the deliverable's `parent_version` instead.
+
+    **Unseeded, the demo cannot reach the state and therefore avoids the
+    defect. Seeded, the demo DEMONSTRATES the fix**: v1's numbers, v1's label,
+    v2 sitting approved behind them. That is the difference between proving the
+    plumbing works and showing a consultant something worth watching.
+
+    ## It is ordinary, not exotic, and that was checked before building it
+
+    Read out of the routes rather than assumed:
+
+    - `finalize` refuses anything that is not APPROVED or RELEASED (HTTP 409),
+      so approving v2 is MANDATORY before a v2 deliverable can exist. This state
+      is on the only path to a second deliverable, not off to one side.
+    - a new version is minted as `_max_assessment_version + 1` and is only NOT
+      minted when the prior row is still DRAFT. With v1 released, v2 mints
+      normally.
+
+    So every service that is ever re-assessed passes through this state. The
+    seed stops one step short of finalizing v2, which is where a consultant
+    would be between approving a re-assessment and publishing it.
+
+    ## The tiers differ from v1 ON PURPOSE
+
+    If v2 scored identically the state would be untestable: both resolutions
+    return the same numbers and a regression to "latest APPROVED" would look
+    correct. v2 improves every tier that has room, so the dashboard showing v1's
+    lower figures is positive evidence rather than an absence.
+    """
+    v2 = CsfAssessment(
+        service_id=svc.id,
+        client_id=org.id,
+        version=2,
+        status=CsfAssessmentStatus.APPROVED,
+        approved_at=utcnow(),
+        approved_by=admin.id,
+    )
+    db.add(v2)
+    db.flush()
+
+    db.add_all(
+        [
+            CsfAnswer(
+                assessment_id=v2.id,
+                client_id=org.id,
+                subcategory_code=sc.code,
+                maturity_tier=min(4, v1_tiers.get(sc.code, 1) + 1),
+                notes="Re-assessed after remediation." if idx % 5 == 0 else None,
+                answered_by=admin.id,
+                answered_at=utcnow(),
+            )
+            for idx, sc in enumerate(CSF_SUBS)
+        ]
+    )
+    db.flush()
+    audit(
+        db,
+        action="csf.assessment.approved",
+        target_type="csf_assessment",
+        target_id=v2.id,
+        actor_user_id=admin.id,
+        details={"version": 2, "seed": True, "state": "v1-released-v2-approved"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1212,6 +1294,7 @@ def main() -> None:
 
     engine = _engine()
     with Session(engine, future=True) as db:
+        seeded: list[str] = []
         admin, client_user, org = _bootstrap_org(db)
         _ensure_client_domain(db, org, admin)
         if db.execute(select(Service).limit(1)).scalar_one_or_none() is not None:
@@ -1224,10 +1307,12 @@ def main() -> None:
         print("Seeding Tech Debt service...")
         td = _seed_tech_debt(db, storage, admin, org)
         print(f"  -> {td.id}")
+        seeded.append("Tech Debt")
 
         print("Seeding CSF service...")
         csf = _seed_csf(db, storage, admin, org)
         print(f"  -> {csf.id}")
+        seeded.append("CSF")
 
         print("Seeding Zero Trust (CISA) service...")
         zt_cisa = _seed_zt(
@@ -1242,6 +1327,7 @@ def main() -> None:
             title="Atlas Defense — Zero Trust (CISA ZTMM 2.0)",
         )
         print(f"  -> {zt_cisa.id}")
+        seeded.append("Zero Trust (CISA)")
 
         print("Seeding Zero Trust (DoD) service...")
         zt_dod = _seed_zt(
@@ -1256,10 +1342,12 @@ def main() -> None:
             title="Atlas Defense — Zero Trust (DoD ZTRA)",
         )
         print(f"  -> {zt_dod.id}")
+        seeded.append("Zero Trust (DoD)")
 
         print("Seeding MITRE ATT&CK Coverage service...")
         attack = _seed_attack(db, storage, admin, org)
         print(f"  -> {attack.id}")
+        seeded.append("MITRE ATT&CK")
 
         print("Seeding synthesized Risk Register...")
         register = _seed_risk_register(db, storage, admin, org)
@@ -1268,7 +1356,20 @@ def main() -> None:
         db.commit()
 
     print()
-    print("Demo seed complete: 4 services + a synthesized Risk Register, all released.")
+    # Derived, not typed. The line said "4 services ... all released" and both
+    # halves were wrong: five services are seeded (`_seed_zt` runs twice, CISA
+    # and DoD), and CSF now carries an approved v2 that is deliberately NOT
+    # released. `check_recalled_counts` cannot see either error -- it reads six
+    # markdown documents and matches spelled cardinals, and this is a digit in
+    # a Python string.
+    print(
+        f"Demo seed complete: {len(seeded)} services "
+        f"({', '.join(seeded)}) + a synthesized Risk Register."
+    )
+    print(
+        "  NIST CSF carries defect state 2: v1 RELEASED beside v2 APPROVED and "
+        "deliberately not finalized (the #114 surface)."
+    )
     print("Sign in:")
     print(f"  admin: {ADMIN_EMAIL} / {PASSWORD}")
     print(f"  client: {CLIENT_EMAIL} / {PASSWORD}")
