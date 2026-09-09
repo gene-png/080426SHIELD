@@ -89,8 +89,16 @@ run_in_container() {
 }
 
 tsc()    { run_in_container "cd apps/web && ./node_modules/.bin/tsc --noEmit"; }
-vitest() { run_in_container "cd apps/web && ./node_modules/.bin/vitest run --reporter=dot"; }
-eslint() { run_in_container "cd apps/web && ./node_modules/.bin/eslint . --max-warnings=0"; }
+vitest() { run_in_container "cd apps/web && ./node_modules/.bin/vitest run"; }
+# EXACTLY what the repo gate runs, not stricter. `apps/web/package.json`
+# defines `"lint": "eslint ."` and `ci.yml` runs `pnpm -F web lint`. A first
+# draft of this file passed `--max-warnings=0` over `src`, and independent
+# verification measured the difference: `eslint .` exits 0 with 3 warnings,
+# `eslint src --max-warnings=0` exits 1 with 2. A harness stricter than the
+# gate produces a red no CI run can reproduce, and the natural repair is to
+# "fix" untouched files -- here two `window.location.assign` call sites CI
+# accepts. That is a harness steering an author into changes nobody asked for.
+eslint() { run_in_container "cd apps/web && ./node_modules/.bin/eslint ."; }
 
 self_test() {
   local probe="apps/web/src/lib/__verify_probe.ts"
