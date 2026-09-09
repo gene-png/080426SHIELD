@@ -591,6 +591,23 @@ async function affordance(
 }
 
 /**
+ * Compile-time exhaustiveness.
+ *
+ * `value: never` only type-checks when every member of a union has already
+ * been handled, so adding one and forgetting a branch is a BUILD failure
+ * rather than a silent fall-through into whichever branch happens to be last.
+ *
+ * This is the same move as the verdict's `Record<Outcome, ...>`, and it is
+ * worth naming why it works there and not everywhere: both cover CLOSED SETS
+ * THIS FILE OWNS. Where the set belongs to somebody else — Playwright's
+ * `Locator` methods, say — no type can make a member unavailable, and a gate
+ * is the only instrument left.
+ */
+function assertNever(value: never, context: string): never {
+  throw new Error(`${context}: unhandled variant ${JSON.stringify(value)}`);
+}
+
+/**
  * Wait for the network to go quiet, and REPORT whether it did.
  *
  * `waitForLoadState("networkidle").catch(() => undefined)` is the shape that
@@ -1251,6 +1268,19 @@ async function visit(
     }
 
     const state = await pageState(page);
+    // EXHAUSTIVE. The chain below used to fall through to "loaded" for any
+    // unhandled kind, so a page state added later would have been recorded
+    // `ok` — silently, and specifically for a state added because it needed
+    // handling. Same defect the verdict's two hand-written sums had: a new
+    // member vanishing into the safe-looking branch. `assertNever` makes it a
+    // compile error instead.
+    if (
+      state.kind !== "load-error" &&
+      state.kind !== "not-available" &&
+      state.kind !== "loaded"
+    ) {
+      assertNever(state, `unhandled page state on ${url}`);
+    }
     if (state.kind === "load-error") {
       throw new Error(
         `${url} rendered an error state (HTTP ${status ?? "?"}): ${state.text.trim().slice(0, 200)}`,
