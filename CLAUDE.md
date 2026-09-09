@@ -1691,9 +1691,18 @@ Rules of the road:
 
   This correction is itself the third time in one evening a rule here was
   falsified by its own author within hours of writing it, by applying it. The
-  first two produced gates. **The gate this one wants: every SHA cited in
-  changed prose gets `--is-ancestor` checked, so an orphaned citation fails the
-  gate rather than the reader.** Not built.
+  first two produced gates. **The gate this one wants, and the scope is
+  the whole decision:** every SHA cited gets `--is-ancestor` checked, so an
+  orphaned citation fails the gate rather than the reader.
+
+  **Built over changed FILES it would close the smaller half and read as
+  closing all of it.** Both stale citations that prompted this rule were in PR
+  BODIES — a test-count identity in one, four orphaned SHAs in another — and a
+  body is not a file, so a tree-walking gate reaches neither. The version that
+  covers both runs `on: pull_request` and reads
+  `github.event.pull_request.body`, which is the surface with no gate, the most
+  readers, and permanence under squash. Decide that before writing it; deciding
+  after is what this entry is a record of. Not built.
 
   **A number carrying its command must also name its REF, and this is where the
   rule pays for itself.** Re-deriving means choosing a tree, and the tree a
