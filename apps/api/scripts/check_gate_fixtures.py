@@ -73,6 +73,7 @@ Usage:  python apps/api/scripts/check_gate_fixtures.py [FIXTURE_ROOT]
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -211,6 +212,27 @@ def run_case(scripts: Path, gate: str, case: dict) -> tuple[int, str]:
         [sys.executable] + argv,
         capture_output=True,
         text=True,
+        # BOTH ends pinned, and one alone is worse than neither.
+        #
+        # `text=True` alone decodes with the ANSI codepage on Windows, so a
+        # gate printing an em dash, a section sign or a curly quote comes back
+        # mojibake and silently stops matching its fixture.
+        #
+        # Adding `encoding="utf-8"` alone is WORSE: the child still WRITES
+        # cp1252, so decoding raises UnicodeDecodeError inside subprocess's
+        # reader THREAD, which swallows it and hands back an EMPTY string with
+        # a normal return code. Measured on
+        # `check_audit_evidence/2026-08-empty-changed-file-list`: 96 chars and
+        # the expected phrase became 0 chars and a failed contract, with no
+        # error surfacing to this caller. A decode failure that reads as "the
+        # gate printed nothing" is the silent-success shape in the harness
+        # built to find it.
+        #
+        # `PYTHONIOENCODING` makes the child EMIT utf-8, so the two ends agree
+        # by construction rather than by the platform defaults happening to
+        # match -- derivation over synchronization.
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8",
         timeout=120,
     )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")

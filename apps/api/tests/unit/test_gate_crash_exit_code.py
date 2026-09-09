@@ -27,6 +27,7 @@ copy anywhere else is a different program.
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import sys
@@ -86,6 +87,9 @@ def _run(stem: str, source: str) -> subprocess.CompletedProcess[str]:
             [sys.executable, str(mutant)],
             capture_output=True,
             text=True,
+            # Both ends pinned; see the note in `check_gate_fixtures.py`.
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            encoding="utf-8",
             cwd=str(API_ROOT),
             timeout=120,
         )
