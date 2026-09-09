@@ -245,10 +245,27 @@ a real exit code and a real date, and was the minority outcome (D-071).
 
 ## Environment gotchas (learned the hard way)
 
-- **Git Bash (MSYS) rewrites ANY argument beginning with `/` into a Windows
-  path, in ANY command, and usually does it silently.** Not a Docker quirk and
-  not a `gh` quirk — it is the shell, so it reaches every tool you will ever
-  pass a leading-slash string to. Prefix the command with `MSYS_NO_PATHCONV=1`.
+- **Git Bash rewrites an argument beginning with `/` into a Windows path when
+  it crosses into a NATIVE WINDOWS EXECUTABLE, and does it silently.** Not a
+  Docker quirk and not a `gh` quirk: it is MSYS argument marshalling at the
+  Win32 boundary, so it reaches `gh.exe`, `python.exe`, `docker.exe` and every
+  other `.exe` you pass a leading-slash string to. Prefix with
+  `MSYS_NO_PATHCONV=1`.
+
+  **It is NOT "any command", and getting that wrong would discredit working
+  ones.** Measured 2026-09-09, Git Bash, `MSYS_NO_PATHCONV` unset:
+
+      echo /admin/management                        -> /admin/management
+      sed -n '/^## Environment gotchas/p' CLAUDE.md -> ## Environment gotchas ...
+      python -c "print(sys.argv[1])" /admin/management
+                                                    -> C:/Program Files/Git/admin/management
+
+  Bash builtins are unaffected and MSYS-native binaries handle it themselves.
+  The load-bearing consequence: **the portability grep this file publishes
+  under "Real commands" — `sed -n '/^## Real commands/,...'` — still works**,
+  returning 19. A draft of this entry said "any command", which predicts that
+  grep broken; running it is what showed the mechanism was the exe boundary
+  rather than the shell.
   Measured 2026-09-09, Git Bash: a bare `/admin/management` argument arrives as
   `C:/Program Files/Git/admin/management`; with `MSYS_NO_PATHCONV=1` it arrives
   intact. **The widely-recommended `//` escape is NOT a remedy here** — it
@@ -1634,11 +1651,12 @@ Rules of the road:
 
   - *"A claim about a completed action cannot be falsified by later action."*
     False. A completed-action claim that AGGREGATES OVER AN OPEN POPULATION
-    goes stale on the next member — D-076's "From two independent occurrences
-    on two separately reviewed PRs" is entirely in the past and D-076 itself
-    records that it rots, because "the population is DEFINED as one that
-    grows". A diff range is the same trap: `a3137d5..83c051a` reproduces
-    forever, `a3137d5..HEAD` does not.
+    goes stale on the next member, because the population keeps acquiring
+    them. A diff range shows it without needing any record: `a3137d5..83c051a`
+    reproduces forever, `a3137d5..HEAD` does not — and both are measurements
+    of completed diffs. This file already applies the remedy elsewhere, in the
+    bullet that says instances "accumulate on **#170** rather than in a count
+    here".
   - *"Cite something that cannot change without someone having to edit it."*
     False. Deliberate edits are routine. A phrase quoted from
     `AttackAiInputsPanel.test.tsx` survived a correct edit that moved it into a
@@ -1654,9 +1672,9 @@ Rules of the road:
 
   **A number carrying its command must also name its REF, and this is where the
   rule pays for itself.** Re-deriving means choosing a tree, and the tree a
-  reader picks is `main`. `context/gene.md` said "collected the full unit set:
-  **7128** (`pytest -m unit --collect-only -q`)" without naming where it was
-  measured. `main` later moved to 7128 itself, so re-running the command on
+  reader picks is `main`. `context/gene.md` reported a collected unit-test total of
+  **7128**, citing `pytest -m unit --collect-only -q` summed per file, and
+  named no tree. `main` later moved to 7128 itself, so re-running the command on
   `main` REPRODUCED the written number while the branch was really 7137 — a
   false confirmation manufactured by the one sentence whose purpose is to
   license not checking. Write `7137 (<command>, at d1d927d)`: on the wrong tree
