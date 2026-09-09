@@ -231,7 +231,13 @@ export interface AttackAiInputDocument {
  * the list would not make it citable. The remedies differ and a renderer must
  * not collapse them. The remedy for a discarded list is a replacement list;
  * do not render "re-approve" as the fix here, and do not render "un-discard"
- * either — no such control exists.
+ * either — there is no un-discard CONTROL. There is an un-discard EFFECT:
+ * approving a discarded list silently resurrects it, which is #231, an open
+ * defect. That is why the copy points at a replacement rather than at
+ * re-approving — copy that points a consultant at a bug ages badly the day the
+ * bug is fixed. Stated here as well as on the API side because two copies of
+ * one rule that disagree in SCOPE are worse than one copy: the flatter version
+ * lived in this file, which is the one a web developer reads.
  */
 export type AttackWithheldReason =
   "security_scope" | "not_in_approved_snapshot" | "list_discarded";
@@ -239,7 +245,11 @@ export type AttackWithheldReason =
 /**
  * How much the API may honestly say about rows dropped at extraction.
  *
- * A TRI-STATE, and the third member is the whole point. `unknown` must never
+ * FOUR members, and `unknown` is the one the type exists for. (It was a
+ * tri-state until `retired` joined it; the panel's positive assurance was
+ * still gated on the two members that predated `retired`, which is how a
+ * discarded list came to render under "Every source row is accounted for".)
+ * `unknown` must never
  * render as a number — `Reconciliation.attribution_complete` is not persisted,
  * so "nothing was excluded" and "attribution failed" are the same stored bytes
  * and the API refuses to collapse them into a zero. See `_excluded_attribution`

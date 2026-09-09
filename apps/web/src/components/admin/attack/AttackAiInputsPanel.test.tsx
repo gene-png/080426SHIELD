@@ -388,7 +388,22 @@ describe("AttackAiInputsPanel", () => {
               source_rows_total: 40,
             }),
           ],
-          totals: totals({ sent: 0, not_sent: 1, withheld_list_discarded: 1 }),
+          // `excluded_rows_named: 0` is not cosmetic. The `totals()` helper
+          // defaults it to 3, and the route computes it as `len(excluded)`
+          // while sending no rows at all for a retired list -- so 0 is the ONLY
+          // value the endpoint can emit for this payload. Left at 3, this
+          // fixture was FAITHFUL in `sources` and IMPOSSIBLE in `totals`: the
+          // panel rendered "3 named. Every source row is accounted for." inside
+          // the very test written to prove the retired path renders honestly.
+          // The comment four lines above already said that combination cannot
+          // be produced; it was applied to one half of the fixture and not the
+          // other.
+          totals: totals({
+            sent: 0,
+            not_sent: 1,
+            withheld_list_discarded: 1,
+            excluded_rows_named: 0,
+          }),
         }),
       );
       expect(screen.queryByText(/superseded/i)).toBeNull();
@@ -403,6 +418,121 @@ describe("AttackAiInputsPanel", () => {
       expect(screen.getByTestId("attack-ai-inputs-retired")).toHaveTextContent(
         /Nothing supersedes it/,
       );
+      // ASSERT THE OTHER BRANCH IS ABSENT. Proving the retired paragraph
+      // renders says nothing about what renders BESIDE it, and what rendered
+      // beside it was a false assurance: a retired list scores 0 on both of
+      // the operands that gated this sentence, so it fell into the reassuring
+      // branch while its dropped rows were neither named nor counted. The
+      // guard is now derived from `excluded_attribution !== "complete"`, and
+      // this is the assertion that holds it there.
+      expect(
+        screen.queryByText(/Every source row is accounted for/),
+      ).toBeNull();
+    });
+
+    it("does not claim every row is accounted for when a list is retired", async () => {
+      // The positive control for the assertion above: the SAME panel, one
+      // `complete` list beside the retired one, so the sentence is reachable in
+      // principle and is still withheld. Without this, a guard that never
+      // renders the sentence at all would pass the test above for free.
+      await renderReady(
+        inputs({
+          sources: [
+            sourceList({
+              status: "approved",
+              is_latest_for_service: true,
+              excluded_attribution: "complete",
+              excluded_rows_named: 0,
+              source_rows_total: 10,
+            }),
+            sourceList({
+              status: "discarded",
+              is_latest_for_service: null,
+              sent_count: 0,
+              not_sent_count: 1,
+              excluded_attribution: "retired",
+              excluded_rows_named: 0,
+              source_rows_total: 40,
+            }),
+          ],
+          totals: totals({
+            sent: 0,
+            not_sent: 1,
+            withheld_list_discarded: 1,
+            excluded_rows_named: 0,
+          }),
+        }),
+      );
+      expect(
+        screen.queryByText(/Every source row is accounted for/),
+      ).toBeNull();
+    });
+
+    it("counts only attributable lists in the unknown-exclusions denominator", async () => {
+      // The numerator (`lists_with_unknown_exclusions`) is a backend total that
+      // a retired list can never enter -- the route sends no rows for one. So
+      // counting retired lists in the DENOMINATOR reports "1 of 2" where only
+      // one list was ever in the numerator's population, which reads as though
+      // a list had been checked and cleared when it was never asked.
+      //
+      // This test exists because the fix survived its mutation: reverting the
+      // denominator to `sources.length` left all 25 tests green.
+      await renderReady(
+        inputs({
+          sources: [
+            sourceList({
+              status: "approved",
+              is_latest_for_service: true,
+              excluded_attribution: "unknown",
+              excluded_rows_named: 0,
+              source_rows_total: 10,
+            }),
+            sourceList({
+              status: "discarded",
+              is_latest_for_service: null,
+              sent_count: 0,
+              not_sent_count: 1,
+              excluded_attribution: "retired",
+              excluded_rows_named: 0,
+              source_rows_total: 40,
+            }),
+          ],
+          totals: totals({
+            not_sent: 1,
+            withheld_list_discarded: 1,
+            excluded_rows_named: 0,
+            lists_with_unknown_exclusions: 1,
+          }),
+        }),
+      );
+      const unknown = screen.getByTestId("attack-ai-inputs-excluded-unknown");
+      // textContent, not innerText: innerText returns CSS-TRANSFORMED text, so
+      // asserting on it pins the styling rather than the copy.
+      expect(unknown.textContent).toMatch(/1 of the 1 list cannot say/);
+      expect(unknown.textContent).not.toMatch(/of the 2 lists/);
+    });
+
+    it("does claim every row is accounted for when nothing is retired or unknown", async () => {
+      // And the negative control, so the two tests above cannot both pass by
+      // the sentence being unreachable. This is the only state in which the
+      // assurance is TRUE, and it must still render.
+      await renderReady(
+        inputs({
+          sources: [
+            sourceList({
+              status: "approved",
+              is_latest_for_service: true,
+              excluded_attribution: "complete",
+              excluded_rows_named: 0,
+              source_rows_total: 10,
+            }),
+          ],
+          totals: totals({ excluded_rows_named: 0 }),
+        }),
+      );
+      expect(
+        screen.getByText(/Every source row is accounted for/),
+      ).toBeTruthy();
     });
   });
 

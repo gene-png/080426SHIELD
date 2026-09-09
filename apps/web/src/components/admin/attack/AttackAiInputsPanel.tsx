@@ -313,6 +313,24 @@ export function AttackAiInputsPanel({
   const retiredLists = sources.filter(
     (s) => s.is_latest_for_service === null,
   ).length;
+  // DERIVED, not enumerated -- and that is the fix rather than a style choice.
+  // The positive assurance below used to be gated on the two attributions that
+  // happened to be members when it was written. `retired` was added later and
+  // fell straight into the reassuring branch, because a retired list scores 0
+  // on BOTH of those operands BY DESIGN: the route sends `rows = [] if
+  // retired`, so it contributes no named rows and is not `not_recorded`. The
+  // panel then printed "Every source row is accounted for" over a list whose
+  // extraction record it was deliberately declining to report. Any future
+  // member would have done the same. So the question is asked the other way
+  // round: nothing is accounted for unless EVERY source says `complete`.
+  const notFullyAccounted = sources.filter(
+    (s) => s.excluded_attribution !== "complete",
+  ).length;
+  // The denominator for the unknown-exclusions sentence. `sources.length`
+  // over-counts it: a retired list is excluded from the NUMERATOR by design,
+  // so counting it below the line reports "1 of 3" where only 2 lists could
+  // ever have been in the numerator's population.
+  const attributableLists = sources.length - retiredLists;
 
   return (
     <div
@@ -398,8 +416,8 @@ export function AttackAiInputsPanel({
               data-testid="attack-ai-inputs-excluded-unknown"
             >
               {" "}
-              {totals.lists_with_unknown_exclusions} of the {sources.length}{" "}
-              {plural(sources.length, "list", "lists")} cannot say what{" "}
+              {totals.lists_with_unknown_exclusions} of the {attributableLists}{" "}
+              {plural(attributableLists, "list", "lists")} cannot say what{" "}
               {plural(totals.lists_with_unknown_exclusions, "it", "they")}{" "}
               dropped: the extraction record does not distinguish &ldquo;nothing
               was excluded&rdquo; from &ldquo;we could not tell&rdquo;, so the
@@ -420,7 +438,7 @@ export function AttackAiInputsPanel({
             </span>
           ) : null}
           {totals.lists_with_unknown_exclusions === 0 &&
-          notRecordedLists === 0 ? (
+          notFullyAccounted === 0 ? (
             <span> Every source row is accounted for.</span>
           ) : null}
         </p>

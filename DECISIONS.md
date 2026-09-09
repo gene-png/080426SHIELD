@@ -3987,11 +3987,22 @@ Every one was found by adversarial review, none by a passing suite, and every on
 was in code written _while applying_ a rule that would have caught it.
 
 1. **A remedy naming a control the product does not have.** The panel told a
-   consultant to "un-discard the list — re-approving will not help". Re-approving
-   is the _only_ thing that works (#231), and there is no un-discard control at
-   all. Written into the column a reader consults to decide what to do next, in
-   the same file where a two-branch ternary had just been replaced for producing
-   that class of error.
+   consultant to "un-discard the list — re-approving will not help", and both
+   halves were wrong: there is no un-discard control at all, and re-approving is
+   not useless. Written into the column a reader consults to decide what to do
+   next, in the same file where a two-branch ternary had just been replaced for
+   producing that class of error.
+
+   **What the shipped remedy is, stated here because an earlier draft of this
+   entry got it wrong in the other direction.** That draft said "re-approving is
+   the _only_ thing that works", which is false and worse than the defect it was
+   describing: **uploading a replacement list works**, it is what the four
+   corrected sites now say, and it is the path `s4-techdebt` already drives.
+   Re-approving restores _that particular list_ — but only through #231, which
+   is an open defect, so it is not a remedy to point a consultant at. A reader
+   consulting this entry to understand the `list_discarded` copy would have
+   reverted a consultant-facing string to name a filed bug.
+
 2. **One boolean producing three false statements**, in the exact state the
    author's own test seeds. `is_latest_for_service` collapsed latest /
    superseded / retired into a bool; every renderer reads
