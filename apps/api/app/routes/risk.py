@@ -632,11 +632,25 @@ def export(
     # one publishes it.
     #
     # `models/risk_register.py` records no provenance: no source assessment ids,
-    # no excluded inputs. A draft-sourced register is therefore not merely
-    # unguarded, it is INDISTINGUISHABLE from an approved-sourced one after the
-    # fact, in any database. Measured on the dev database 2026-09-09: 6
-    # registers, 5 finalized, and the table has no column that could answer
-    # which of them were draft-sourced.
+    # no excluded inputs. So NO SINGLE COLUMN answers "was this draft-sourced".
+    #
+    # That is not the same as unanswerable, and an earlier draft of this note
+    # said "INDISTINGUISHABLE ... in any database", which ended the check
+    # `CLAUDE.md` requires instead of performing it. A reconstruction bounds it:
+    # join each register's `created_at` against the assessment `_latest` would
+    # have picked (highest non-discarded version) and ask whether that row's
+    # `approved_at` was null or later. Measured on the dev database 2026-09-09:
+    # **6 of 6 registers were built from an ATT&CK assessment unapproved at
+    # build time, 6 of 6 from an unapproved ZT one, and 5 of the 6 are
+    # finalized** -- so on this database the radius is every register, and
+    # finalizing published five of them.
+    #
+    # The reconstruction is APPROXIMATE and its error direction is stated: it
+    # reads today's discard state and today's version ordering, so a row
+    # discarded or re-versioned since would change which assessment `_latest`
+    # picked. It bounds the radius; it does not settle any individual row.
+    # Persisting provenance at generate is what makes the question answerable
+    # exactly, and that is #240.
     #
     # Guarding export on TODAY's statuses would be wrong for a different reason
     # -- D-053: it would re-read statuses that have moved since the register was

@@ -154,6 +154,15 @@ export function RiskRegisterDashboard(): JSX.Element {
   const [clientName, setClientName] = React.useState("Client");
   const [gate, setGate] = React.useState<RiskGate | null>(null);
   const [register, setRegister] = React.useState<RiskRegister | null>(null);
+  // HELD SEPARATELY FROM `register`, and that separation is the fix rather than
+  // a style choice. `export` returns `_serialize(db, reg)` with no
+  // `excluded_inputs`, which the schema defaults to `[]` -- so
+  // `setRegister(await exportRiskRegister(cid))` overwrote the disclosure with
+  // an empty list and the banner unmounted at the exact moment the consultant
+  // did the thing it warns about. The withheld set is a property of what the
+  // register was BUILT from; no later response can revise it, so no later
+  // response gets to clear it either.
+  const [excludedInputs, setExcludedInputs] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState<"generate" | "export" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -178,6 +187,10 @@ export function RiskRegisterDashboard(): JSX.Element {
         setClientName(name);
         setGate(g);
         setRegister(reg);
+        // `latest` always returns `[]` here (nothing is persisted -- #240), so
+        // this seeds empty on a reload and the banner is generate-scoped. That
+        // is the stated limitation, not an accident.
+        setExcludedInputs(reg?.excluded_inputs ?? []);
       } catch (err) {
         if (active) setError(describeRiskError(err));
       } finally {
@@ -194,7 +207,10 @@ export function RiskRegisterDashboard(): JSX.Element {
     setBusy("generate");
     setError(null);
     try {
-      setRegister(await generateRiskRegister(cid));
+      const reg = await generateRiskRegister(cid);
+      setRegister(reg);
+      // The ONLY producer of a non-empty withheld set.
+      setExcludedInputs(reg.excluded_inputs);
     } catch (err) {
       setError(describeRiskError(err));
     } finally {
@@ -207,6 +223,9 @@ export function RiskRegisterDashboard(): JSX.Element {
     setBusy("export");
     setError(null);
     try {
+      // Deliberately does NOT touch `excludedInputs`. See the state
+      // declaration: the export response cannot carry it, so assigning from
+      // here would erase it.
       setRegister(await exportRiskRegister(cid));
     } catch (err) {
       setError(describeRiskError(err));
@@ -271,7 +290,6 @@ export function RiskRegisterDashboard(): JSX.Element {
   // the moment a consultant generates is the moment the omission is actionable,
   // and for one review round this field reached no surface at all, which made
   // "the register says so" true of nobody.
-  const excludedInputs = register?.excluded_inputs ?? [];
 
   if (gate && !gate.unlocked) {
     return (

@@ -186,7 +186,10 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> AttackAssessment |
     # and the difference is not pedantic -- an earlier draft said "the exporting
     # caller", quantifying over a set whose evidence covered only the routes
     # named finalize. `csf.py::export_playbook` is an exporting caller that is
-    # NOT a finalize: it resolves through this helper, refuses only on "No
+    # NOT a finalize: it resolves through THE CSF COPY of this helper (the
+    # sentence is deictic and this block is byte-identical in five files --
+    # `export_playbook` does not call attack.py's, zt.py's, tech_debt.py's or
+    # intake.py's), refuses only on "No
     # assessment yet." and "Seed the Working Profile before exporting.", and
     # then writes client-named artifacts through `deliverable_filename`. So a
     # DRAFT CSF assessment can be exported under a client's name today. Tracked

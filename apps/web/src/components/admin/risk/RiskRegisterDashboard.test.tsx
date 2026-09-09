@@ -1,6 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as riskClient from "@/lib/risk/client";
@@ -18,19 +24,40 @@ vi.mock("@/lib/risk/client", () => ({
   getClientName: vi.fn(),
 }));
 
+// The Generate control sits behind the offline-AI confirmation. Passing the
+// child its own `onProceed` keeps these tests about the disclosure rather than
+// about the guard, which has its own coverage.
+vi.mock("@/components/admin/RunAiGuard", () => ({
+  RunAiGuard: ({
+    children,
+    onProceed,
+  }: {
+    children: (p: { onClick: () => void }) => React.ReactNode;
+    onProceed: () => void;
+  }) => children({ onClick: onProceed }),
+}));
+
 const fetchRiskGate = vi.mocked(riskClient.fetchRiskGate);
 const fetchRiskRegisterLatest = vi.mocked(riskClient.fetchRiskRegisterLatest);
+const generateRiskRegister = vi.mocked(riskClient.generateRiskRegister);
+const exportRiskRegister = vi.mocked(riskClient.exportRiskRegister);
 const getActiveClientId = vi.mocked(riskClient.getActiveClientId);
 const getClientName = vi.mocked(riskClient.getClientName);
 
+/** No casts. If the wire type gains a field, these stop compiling — which is
+ *  the point: the previous version cast the fixture and could therefore
+ *  describe a payload the API never sends. */
 function gate(over: Partial<RiskGate> = {}): RiskGate {
   return {
     unlocked: true,
+    has_attack: true,
+    has_csf: true,
+    has_zt: true,
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],
     ...over,
-  } as RiskGate;
+  };
 }
 
 function register(over: Partial<RiskRegister> = {}): RiskRegister {
@@ -51,11 +78,14 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     entries: [],
     tier_counts: {},
     axis_counts: {},
+    action_counts: {},
     ...over,
-  } as unknown as RiskRegister;
+  };
 }
 
-async function renderReady(): Promise<void> {
+const BANNER = "risk-register-excluded-inputs";
+
+async function loaded(): Promise<void> {
   render(<RiskRegisterDashboard />);
   await waitFor(() =>
     expect(
@@ -65,19 +95,16 @@ async function renderReady(): Promise<void> {
 }
 
 /**
- * #237 review: `excluded_inputs` reached NO rendered surface.
+ * #237 review round 2: `excluded_inputs` reached no surface. Round 3: the
+ * banner that fixed it was erased by the export it warns about.
  *
- * The provenance refusal was narrowed so an unapproved input that is not
- * required stops blocking — and the stated justification for narrowing it was
- * that the withheld set is disclosed. It was disclosed to nobody: five
- * occurrences in the tree, no consumer, not declared in the web type. A
- * consultant generated a register missing a whole service's findings and saw a
- * complete-looking page.
- *
- * These pin the banner. They do NOT claim it is durable: nothing about the
- * exclusion is persisted, so `latest` returns `[]` and the banner dies on
- * reload. That is #240 and the third test says so rather than leaving it to be
- * discovered.
+ * **These tests drive `generateRiskRegister`, which is the ONLY producer of a
+ * non-empty withheld set.** The first version drove `fetchRiskRegisterLatest`,
+ * which this PR's own type doc says "always returns `[]`" — so every test
+ * exercised the one path that can never carry the field, and the export defect
+ * was invisible to a green suite. A fixture describing a response the API
+ * cannot emit is the defect this branch exists to end, committed in the tests
+ * for it.
  */
 describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
   beforeEach(() => {
@@ -85,41 +112,75 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     getActiveClientId.mockResolvedValue("c1");
     getClientName.mockResolvedValue("Atlas");
     fetchRiskGate.mockResolvedValue(gate());
+    fetchRiskRegisterLatest.mockResolvedValue(null);
   });
 
   it("names the inputs a register was generated without", async () => {
-    fetchRiskRegisterLatest.mockResolvedValue(
+    generateRiskRegister.mockResolvedValue(
       register({ excluded_inputs: ["the CSF assessment"] }),
     );
-    await renderReady();
-    const banner = screen.getByTestId("risk-register-excluded-inputs");
+    await loaded();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    });
+
+    const banner = await screen.findByTestId(BANNER);
     // textContent, not innerText: innerText returns CSS-transformed text, so
-    // asserting on it pins the styling rather than the copy.
+    // asserting on it pins styling rather than copy.
     expect(banner.textContent).toMatch(/the CSF assessment/);
     expect(banner.textContent).toMatch(/not approved/);
+    expect(banner.textContent).toMatch(/exported documents do not say so/i);
   });
 
-  it("says the exported documents do NOT carry the disclosure", async () => {
-    // The banner must not imply the export is provenance-checked. It is not,
-    // and that gap is #240.
-    fetchRiskRegisterLatest.mockResolvedValue(
+  it("KEEPS the disclosure after Export — the action it warns about", async () => {
+    // The regression this file exists for. `export` returns the register
+    // WITHOUT `excluded_inputs` (the schema defaults it to `[]`), so assigning
+    // component state from that response erased the banner at exactly the
+    // moment the deliverable was produced. The withheld set describes what the
+    // register was BUILT from; no later response can revise it.
+    generateRiskRegister.mockResolvedValue(
       register({ excluded_inputs: ["the Zero Trust assessment"] }),
     );
-    await renderReady();
-    expect(
-      screen.getByTestId("risk-register-excluded-inputs").textContent,
-    ).toMatch(/exported documents do not say so/i);
+    exportRiskRegister.mockResolvedValue(
+      register({ excluded_inputs: [], finalized_at: "2026-09-09T01:00:00Z" }),
+    );
+    await loaded();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    });
+    await screen.findByTestId(BANNER);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Export XLSX / PDF / Word" }),
+      );
+    });
+    await waitFor(() => expect(exportRiskRegister).toHaveBeenCalled());
+
+    expect(screen.getByTestId(BANNER).textContent).toMatch(
+      /the Zero Trust assessment/,
+    );
   });
 
   it("renders no banner when nothing was excluded", async () => {
-    // The negative control. Without it, a banner that renders unconditionally
-    // would satisfy both tests above.
+    // Negative control. Without it, a banner rendered unconditionally would
+    // satisfy both tests above.
+    generateRiskRegister.mockResolvedValue(register({ excluded_inputs: [] }));
+    await loaded();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    });
+    await waitFor(() => expect(generateRiskRegister).toHaveBeenCalled());
+    expect(screen.queryByTestId(BANNER)).not.toBeInTheDocument();
+  });
+
+  it("shows no banner before anything is generated", async () => {
+    // `latest` returns `[]` for a pre-existing register — the stated #240
+    // limitation. Pinned so the limitation is visible rather than discovered.
     fetchRiskRegisterLatest.mockResolvedValue(
       register({ excluded_inputs: [] }),
     );
-    await renderReady();
-    expect(
-      screen.queryByTestId("risk-register-excluded-inputs"),
-    ).not.toBeInTheDocument();
+    await loaded();
+    expect(screen.queryByTestId(BANNER)).not.toBeInTheDocument();
   });
 });
