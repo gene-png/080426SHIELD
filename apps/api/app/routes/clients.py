@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -270,8 +270,8 @@ def _unresolved_parent(deliv: Deliverable, *, surface: str) -> HTTPException:
 
 
 def _released_parent(db: Session, model, service_id: uuid.UUID, statuses):
-    """The parent row behind a service's RELEASED deliverable — the value-summary
-    half of #114.
+    """The parent row behind a service's RELEASED deliverable, or None when it
+    cannot be resolved — the value-summary half of #114.
 
     The per-service dashboards resolve a deliverable first and pass it in; the
     cross-service cards start from a service id, so they resolve the released
@@ -280,34 +280,42 @@ def _released_parent(db: Session, model, service_id: uuid.UUID, statuses):
     RELEASED deliverable, and these figures reach a client with no version label
     beside them to qualify what they describe.
 
-    Raises on an unresolvable parent. THREE options were available and the other
-    two are named here, because a reader deciding whether this refusal is safe
-    needs the alternatives and the blast radius, not just the rationale.
+    Returns None on an unresolvable parent. THREE options were available; each
+    is stated WITH ITS OWN COST, because an earlier draft put the cost of the
+    chosen option two paragraphs below the list, where a reader deciding whether
+    to overturn it never reached it.
 
       1. **Skip the service inside the loop** (what the old code did). Rejected:
          these four callers SUM over services, so skipping one drops its gaps or
          its savings out of a total the client reads as the whole picture — a
          floor presented as a figure, with nothing on the card saying so.
-      2. **Null the whole slot for that service kind.** NOT dismissed for being
-         unimplementable — it is the file's own idiom, needs no schema or web
-         change, and would leave the other three cards and the page intact.
-         Rejected on two counts, both of which trade one false claim for
-         another: `ValueSummaryResponse` documents a null slot as "pending", so
-         a service that HAS a released report would be reported as not yet
-         having one — the exact falsehood `_unresolved_parent` refuses to write
-         into the dashboard message; and if all four kinds nulled, `has_any_data`
-         goes False and `ValueLoopCard` renders nothing at all, which is a silent
-         disappearance. It is a genuine judgement call rather than a clear loss,
-         so it is written down instead of left as an unstated exemption.
-      3. **Raise**, which is what this does.
+      2. **Report the kind as UNRESOLVED**, which is what this does. Its cost:
+         the client sees one card of four saying the figure cannot be resolved,
+         beside a released report they can still open from `/results`. That is a
+         false NEGATIVE and it is contradicted one click away, so it is the
+         recoverable direction — the standing rule is that the cost of
+         fail-closed is rework a human can clear.
+      3. **Raise.** Rejected, and it is what an earlier version of this function
+         did. Its cost is not confined to this card: it takes the whole
+         `/value-summary` response with it, and `apps/web/src/app/home/page.tsx`
+         fetches that endpoint inside an unguarded `Promise.all` beside the
+         deliverables list, engagements and inbox, with no Next error boundary
+         anywhere under `apps/web/src/app` (confirmed by glob: only
+         `not-found.tsx` exists) — so the client loses the HOME PAGE, not one
+         card. Filed as #236.
 
-    **The raise is not free, and the cost is NOT confined to this card.** It
-    takes the whole `/value-summary` response with it, and
-    `apps/web/src/app/home/page.tsx` fetches that endpoint inside an unguarded
-    `Promise.all` beside the deliverables list, engagements and inbox, with no
-    Next error boundary anywhere under `apps/web/src/app` — so the client loses
-    the home page, not one card. That page is outside this track's territory;
-    filed as #236.
+    **The trigger rates are not comparable, and that is what decided it.** The
+    raise fires when ONE service of ONE kind is unresolvable; option 2 loses a
+    single card in the same case. A whole page lost on one unresolvable service,
+    against one card saying so, is not a trade between two equal false claims.
+
+    **Nulling alone was not enough, and that is the other half of this change.**
+    A bare null already means "pending", so reusing it would tell a client who
+    HAS a released report that they do not — the exact falsehood
+    `_unresolved_parent` refuses to write. The caller therefore reports
+    `unresolved` BESIDE the null and the card says which it is. That is the
+    `not_recorded`-versus-`null` distinction this repo already draws inside a
+    single service, applied one layer out.
 
     **What an earlier draft got wrong, stated precisely so the retraction is not
     itself misread.** It called an unresolvable parent "a broken invariant, not a
@@ -348,7 +356,20 @@ def _released_parent(db: Session, model, service_id: uuid.UUID, statuses):
         )
     row = _deliverable_parent(db, model, deliv, statuses)
     if row is None:
-        raise _unresolved_parent(deliv, surface="value_summary")
+        # Logged, not raised. The refusal still has to be OBSERVABLE from the
+        # server side even though it no longer reaches the client as a 4xx --
+        # otherwise "the figure could not be resolved" becomes a state nobody
+        # can see happening. `_unresolved_parent` still builds the typed detail
+        # for the per-service dashboards, which DO refuse.
+        _log.warning(
+            "client.value_summary.parent_unresolved",
+            service_id=str(service_id),
+            deliverable_id=str(deliv.id),
+            deliverable_version=deliv.version,
+            parent_version=deliv.parent_version,
+            model=model.__name__,
+        )
+        return None
     return row
 
 
@@ -419,21 +440,61 @@ def _zt_client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
     return sr.zt_target_stage if sr is not None else None
 
 
-def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+class _KindTotal(NamedTuple):
+    """A per-kind aggregate, and WHY it is absent when it is absent.
+
+    Three states, because a bare `None` was carrying two facts (#114 review):
+
+      * `value=N,    unresolved=False` — a resolved figure.
+      * `value=None, unresolved=False` — the client has no RELEASED service of
+        this kind. Genuinely PENDING, which is what a null has always meant here.
+      * `value=None, unresolved=True`  — the client HAS one, and the deliverable
+        it is labelled with cannot be resolved to the assessment behind it.
+
+    The third is the one that had nowhere to live. Reporting it as a null would
+    tell a client who has a released report that they do not; raising took the
+    whole home page down. See `_released_parent` for the full trade.
+
+    A kind goes unresolved WHOLESALE rather than per service: these totals SUM,
+    so dropping one service's contribution would publish a floor as a figure.
+    """
+
+    value: float | int | None
+    unresolved: bool
+
+
+class _TechDebtTotal(NamedTuple):
+    """`_KindTotal` plus the savings floor flag. `cost_known` is False when a CUT
+    capability lacked a cost, so the UI can mark the figure as a floor — an
+    existing qualifier, kept distinct from `unresolved`, which is about whether
+    the figure could be computed at all."""
+
+    value: float | None
+    cost_known: bool
+    unresolved: bool
+
+
+def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
     if not service_ids:
-        return None
+        return _KindTotal(None, False)
     total = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # The `found` flag this loop used to carry went with the `continue` that
-        # set it — `_released_parent` raises where that skipped, so a flag whose
-        # False branch is now unreachable would be a guard that cannot fire.
+        # set it. `_released_parent` now returns None where that skipped, and the
+        # kind is reported UNRESOLVED rather than summed over what is left — see
+        # `_KindTotal`. Do not restore the skip: it publishes a floor.
         a = _released_parent(
             db,
             CsfAssessment,
             sid,
             (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED),
         )
+        if a is None:
+            # One unresolvable service makes the whole KIND unresolved. Summing
+            # the rest would publish a floor as a figure — option 1 in
+            # `_released_parent`, rejected there for this reason.
+            return _KindTotal(None, True)
         rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
         answers: dict[str, int | None] = {r.subcategory_code: r.maturity_tier for r in rows}
         # Per-service client tier, same as the dashboard and the exporter (#79).
@@ -443,12 +504,12 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
         total += csf_analyze_gaps(
             answers, **({"target_tier": tier} if tier is not None else {})
         ).total_gap_count
-    return total
+    return _KindTotal(total, False)
 
 
-def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
     if not service_ids:
-        return None
+        return _KindTotal(None, False)
     total = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
@@ -459,6 +520,11 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
             sid,
             (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
         )
+        if a is None:
+            # One unresolvable service makes the whole KIND unresolved. Summing
+            # the rest would publish a floor as a figure — option 1 in
+            # `_released_parent`, rejected there for this reason.
+            return _KindTotal(None, True)
         fw = (
             ZtFrameworkCode.CISA_ZTMM_2_0
             if a.framework == ZtFramework.CISA_ZTMM_2_0
@@ -510,12 +576,12 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
             targets=targets,
             target_stage=resolved_stage,
         ).total_gap_count
-    return total
+    return _KindTotal(total, False)
 
 
-def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
     if not service_ids:
-        return None
+        return _KindTotal(None, False)
     total = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
@@ -526,6 +592,11 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | 
             sid,
             (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
         )
+        if a is None:
+            # One unresolvable service makes the whole KIND unresolved. Summing
+            # the rest would publish a floor as a figure — option 1 in
+            # `_released_parent`, rejected there for this reason.
+            return _KindTotal(None, True)
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
@@ -546,15 +617,15 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | 
         # of what you just changed finds every copy that went through it and
         # misses every other caller sitting beside it.
         total += attack_compute(coverage_map).gap
-    return total
+    return _KindTotal(total, False)
 
 
-def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> tuple[float, bool] | None:
+def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
     """(annual savings, cost_known). Savings = sum of annual cost over CUT
     capabilities; cost_known is False when any CUT item lacked a cost (so the
     figure is a floor). Mirrors routes/tech_debt.py:consolidation_plan_summary."""
     if not service_ids:
-        return None
+        return _TechDebtTotal(None, True, False)
     total = 0.0
     cost_known = True
     for sid in service_ids:
@@ -566,6 +637,10 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> tuple[float
             sid,
             (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
         )
+        if cl is None:
+            # See `_csf_gap_total`: one unresolvable list makes the kind
+            # unresolved rather than publishing a partial savings figure.
+            return _TechDebtTotal(None, True, True)
         items = (
             db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cl.id))
             .scalars()
@@ -577,7 +652,7 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> tuple[float
                     cost_known = False
                 else:
                     total += float(it.annual_cost_usd)
-    return (total, cost_known)
+    return _TechDebtTotal(total, cost_known, False)
 
 
 @router.get(
@@ -604,27 +679,37 @@ def value_summary(
     zt_ids = by_kind.get(ServiceKind.ZERO_TRUST_CISA, []) + by_kind.get(
         ServiceKind.ZERO_TRUST_DOD, []
     )
-    zt_gaps = _zt_gap_total(db, zt_ids)
-    attack_uncovered = _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
-    csf_gaps = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
+    zt = _zt_gap_total(db, zt_ids)
+    attack = _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
+    csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
 
-    savings = td[0] if td is not None else None
-    cost_known = td[1] if td is not None else True
-    has_any = any(v is not None for v in (savings, zt_gaps, attack_uncovered, csf_gaps))
+    has_any = any(v is not None for v in (td.value, zt.value, attack.value, csf.value))
+    # Published as its own field rather than left for the card to derive by
+    # OR-ing four booleans. The card has to render when this is True even though
+    # `has_any_data` is False -- that combination is a client who HAS released
+    # reports and no resolvable figures, and it is exactly the case that used to
+    # make the whole card disappear in silence.
+    has_unresolved = any((td.unresolved, zt.unresolved, attack.unresolved, csf.unresolved))
 
     _log.info(
         "client.value_summary.computed",
         client_id=str(client.id),
         actor_user_id=str(user.id),
         has_any_data=has_any,
+        has_unresolved=has_unresolved,
     )
     return ValueSummaryResponse(
-        tech_debt_savings_usd=savings,
-        tech_debt_savings_cost_known=cost_known,
-        zt_gap_count=zt_gaps,
-        attack_uncovered_count=attack_uncovered,
-        csf_gap_count=csf_gaps,
+        tech_debt_savings_usd=td.value,
+        tech_debt_savings_cost_known=td.cost_known,
+        tech_debt_savings_unresolved=td.unresolved,
+        zt_gap_count=zt.value,
+        zt_gap_unresolved=zt.unresolved,
+        attack_uncovered_count=attack.value,
+        attack_uncovered_unresolved=attack.unresolved,
+        csf_gap_count=csf.value,
+        csf_gap_unresolved=csf.unresolved,
         has_any_data=has_any,
+        has_unresolved=has_unresolved,
     )
 
 

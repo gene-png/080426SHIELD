@@ -4066,6 +4066,24 @@ never in this sweep, and it is looser than the rule deleted here:
 with no finalized filter and no deliverable link, so a DRAFT re-assessment can
 be synthesized into a register that is then exported and served. Filed as #237.
 
+**There are TWO residuals in Risk, not one, and the second is in the file this
+sweep DID cover.** The paragraph above names `routes/risk.py::_latest` and stops,
+which sends a reader asking "what was left in Risk?" one issue short:
+
+- `routes/risk.py::_latest` — which assessments feed synthesis. Tracked in
+  #237.
+- `routes/clients.py::risk_dashboard` — WHICH REGISTER the dashboard shows. It
+  selects the highest-`version` register and then refuses if that one is not
+  finalized, so generating v2 hides a finalized v1 the client has been
+  reading. Tracked in #123, open and `mvp-blocking`, and it is the next thing
+  this track ships.
+
+The sentence "it has no pairing to break" is true of the READ and is positioned
+exactly where someone would go to check the SELECTION. Naming only the residual
+in the other file is what made this narrower than it reads — the same shape the
+paragraph below records, one level out, and caught by the reviewer a second
+time.
+
 The first draft of this record said only "It was checked, not skipped", which is
 true of the read and reads as clearance for the service. That is this file's own
 narrower-than-the-reader-assumes shape, produced in the paragraph disclosing

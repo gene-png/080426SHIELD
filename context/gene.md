@@ -70,6 +70,13 @@ Every "without" figure was served under `deliverable_version: 1`.
   re-assessment can be synthesized into a register that is exported and served.
   **Filed as #237, `mvp-blocking`.** This is the fifth service, and
   `DELIVERY_PLAN.md` predicted it.
+- **And a SECOND Risk residual, in `routes/clients.py` rather than
+  `routes/risk.py`.** `risk_dashboard` selects the highest-`version` register and
+  refuses if it is not finalized, so a consultant generating v2 hides the
+  finalized v1 the client has been reading. That is #123 — already open,
+  `mvp-blocking`, item 8's `clients.py` half, queued directly behind this PR. I
+  wrote the residual as if there were one; naming only `routes/risk.py` sends the
+  next reader one issue short.
 - **The refusal's log names two of three possible causes.** A row present at
   `parent_version` with a non-finalized status reads as "no row at that
   version". Unreachable until a reopen path lands; **#238**, and the trigger is

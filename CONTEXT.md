@@ -111,7 +111,10 @@ the same `RiskRegister` row, so it has no pairing to break. The register's
 SOURCE selection is a different question and was not in this sweep:
 `routes/risk.py::_latest` picks the newest assessment excluding only DISCARDED,
 so a DRAFT can be synthesized into a register that is exported to the client.
-Filed as #237.
+Filed as #237. **A SECOND residual sits in `routes/clients.py` itself** —
+`risk_dashboard` takes the highest-`version` register with no finalized filter,
+so generating v2 hides a finalized v1 the client already has. Tracked in #123,
+which queues behind this PR on the same file.
 
 Two consequences of the refusal are filed rather than fixed, both outside this
 track's territory: the dashboard pages key their error copy on HTTP status
