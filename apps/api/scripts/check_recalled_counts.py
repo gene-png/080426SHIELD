@@ -121,7 +121,7 @@ _PATTERN = re.compile(
 
 # The provenance marker, in the shape this repo already uses for exemptions
 # (`# test-integrity:`, `# separator-class:`). An empty marker is not a marker.
-def _bound(checked: int, targets: list[str]) -> str:
+def _bound(checked: int, targets: list[str], root: Path) -> str:
     """What this gate ACTUALLY looked at, printed on every clean result.
 
     A clean line is a claim, and this one was reading as much broader than it
@@ -167,15 +167,32 @@ def _bound(checked: int, targets: list[str]) -> str:
 
     Deliberately NOT a fix for the underlying limit. Widening the pattern makes
     it fire on everything -- the finding already recorded for TI001 and for the
-    prose-total gate -- so the bound is stated instead of stretched, the way
-    `check-control-chars` prints its file count and `immediate-reads` prints
-    how many files it scanned.
+    prose-total gate -- so the bound is stated instead of stretched.
+
+    The precedent is `check_test_integrity` (`test-integrity: clean {root}`)
+    and `check_issue_references` (`issue-close guard: clean (N declared close:
+    ...)`), both of which name the SET rather than a tally. `check_no_control_chars`
+    prints `clean (N files)`, a bare count, which is the weaker form this
+    docstring argues against -- cited as the thing not to copy.
+
+    ## What the bound does NOT certify, said here so it is not assumed
+
+    `root` identifies the working TREE, not the revision. Two branches checked
+    out at the same path produce a byte-identical clean line, so this line is
+    not evidence about which commit was scanned. That is the same gap as a
+    collected-count carrying its command but no ref; naming the tree narrows it
+    and does not close it. If a run's revision matters, record it beside the
+    output rather than reading it out of this line.
+
+    The `--porcelain` path returns BEFORE this function and prints no bound at
+    all. That is deliberate: stdout there is a machine stream consumed by CI's
+    baseline diff, so the bound goes to stderr instead. See `main`.
     """
     cardinals = len(_CARDINALS.split("|"))
     nouns = len(_VOLATILE.split("|"))
     names = ", ".join(targets)
     return (
-        f"{checked} documents ({names}); "
+        f"{checked} documents in {root} ({names}); "
         f"spelled cardinals only [{cardinals} recognised] "
         f"beside one of {nouns} volatile nouns; "
         f"every other file and every digit is OUT of scope"
@@ -340,6 +357,16 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 2
 
     if "--porcelain" in flags:
+        # The bound goes to STDERR here, not stdout. stdout on this path is a
+        # machine stream: CI runs `--advisory --porcelain > /tmp/live.txt` and
+        # diffs it against a baseline, so a human-readable line there would
+        # corrupt the comparison. Without this the advisory path -- the one
+        # covering `context/gene.md`, where the "(20)" heading that motivated
+        # this gate lived -- would carry no scope statement at all, and the
+        # only description of its coverage would be a hardcoded copy of
+        # ADVISORY_TARGETS typed into `ci.yml`. That copy is free to drift, and
+        # `ci.yml` forbids exactly that for the ENFORCED set two steps above.
+        print(f"check-recalled-counts: {_bound(checked, targets, root)}", file=sys.stderr)
         # file<TAB>phrase<TAB>line-text. Keyed on the TEXT, never the line
         # number: a baseline keyed on line numbers reports a whole file as new
         # the first time someone inserts a paragraph above it, which is the
@@ -349,7 +376,7 @@ def main(argv: list[str], root: Path | None = None) -> int:
         return 0
 
     if not all_findings:
-        print(f"check-recalled-counts: clean ({_bound(checked, targets)})")
+        print(f"check-recalled-counts: clean ({_bound(checked, targets, root)})")
         return 0
 
     print("check-recalled-counts: spelled counts of things that change")

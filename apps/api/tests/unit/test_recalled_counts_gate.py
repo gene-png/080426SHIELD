@@ -200,8 +200,9 @@ def test_the_clean_message_states_all_three_bounds(tmp_path: Path, capsys) -> No
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("constant", ["_VOLATILE", "_CARDINALS"])
 def test_the_printed_bound_is_derived_from_the_constants_not_typed(
-    tmp_path: Path, capsys, monkeypatch
+    tmp_path: Path, capsys, monkeypatch, constant: str
 ) -> None:
     """The one thing the bound line can get wrong, and it CAN fail.
 
@@ -219,6 +220,13 @@ def test_the_printed_bound_is_derived_from_the_constants_not_typed(
     shape -- test and code reading one constant, agreeing by construction. So
     this MUTATES the constant instead and requires the printed figure to move.
     A hardcoded number survives an equality assertion and cannot survive this.
+
+    **Parametrised over BOTH constants, because one was not enough and the gap
+    was measured rather than imagined.** The first version mutated `_VOLATILE`
+    only. Hardcoding `cardinals = 28` then passed the entire file, exit 0 --
+    under a docstring calling this "the one thing the bound line can get
+    wrong". The bound prints two derived figures and a test covering one of
+    them certifies neither.
     """
     (tmp_path / "a.md").write_text("nothing to see\n", encoding="utf-8")
 
@@ -227,15 +235,15 @@ def test_the_printed_bound_is_derived_from_the_constants_not_typed(
 
     monkeypatch.setattr(
         check_recalled_counts,
-        "_VOLATILE",
-        check_recalled_counts._VOLATILE + "|widgets?",
+        constant,
+        getattr(check_recalled_counts, constant) + "|widgets?",
     )
     assert main(["prog", "a.md"], root=tmp_path) == 0
     after = capsys.readouterr().out
 
     assert before != after, (
-        "the printed noun census did not move when _VOLATILE gained an entry, "
-        "so it is a typed number rather than a derived one"
+        f"the printed bound did not move when {constant} gained an entry, "
+        "so that figure is typed rather than derived"
     )
 
 

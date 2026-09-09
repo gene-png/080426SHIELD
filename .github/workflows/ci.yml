@@ -346,8 +346,11 @@ jobs:
           {
             echo "### New recalled counts in personal status files"
             echo
-            echo "Advisory: personal status files. \`dave.md\` is owner-write-only;"
-            echo "\`gene.md\` is agent-maintained but rewritten most sessions."
+            echo "Advisory set: printed by the gate itself on stderr, in the"
+            echo "step log above -- NOT restated here. The prose that used to"
+            echo "sit on this line named the two files from memory,"
+            echo "a second copy of ADVISORY_TARGETS free to drift from it, which"
+            echo "is what the enforced set two steps above already refuses."
             echo "Only findings NOT in \`.github/recalled-counts-advisory-baseline.txt\` are listed."
             echo
             echo '~~~'

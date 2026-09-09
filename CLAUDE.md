@@ -1874,7 +1874,11 @@ Rules of the road:
      sources into one, establish which one the machine actually reads.**
 
   **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
-  `ci.yml`: blocking on the shared documents, report-only on `context/*.md`
+  `ci.yml`: blocking on the documents named in `ENFORCED_TARGETS`, report-only
+  on `context/*.md`. **NOT "the shared documents" — `DECISIONS.md` is in
+  neither list**, and the gate now prints the set it actually read on every
+  clean result, so the covered documents are a measurement rather than a
+  claim in this file
   (`dave.md` is owner-write-only, so a blocking gate there would hold Gene's PR
   red on a line Gene may not edit; `gene.md` is agent-maintained since D-063 and
   is advisory for the different reason that its churn is hourly). It matches SPELLED cardinals and
