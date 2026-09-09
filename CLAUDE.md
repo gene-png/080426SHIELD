@@ -1332,6 +1332,32 @@ Rules of the road:
   is worse: "which tree is mounted right now" becomes invisible state deciding
   whether any gate result means anything. **Agents take turns in one tree.**
 
+  **For the WEB toolchain they no longer have to, and the remedy is a script
+  rather than a paragraph:** `scripts/verify-in-worktree.sh`. It runs tsc,
+  vitest or eslint against the worktree you are standing in, in a `--rm`
+  container that touches no running service, so any number of worktrees can
+  verify concurrently.
+
+  It needs no `pnpm install`: `/app/node_modules` and `/app/apps/web/node_modules`
+  are named volumes and are mounted as the stack mounts them. The one thing that
+  is NOT in a volume is `packages/*/node_modules` — it lives in the host tree,
+  written through the bind mount, and is gitignored, so it is missing from every
+  fresh worktree. The script mounts it read-only from the primary tree, and that
+  single line is what makes the whole thing work.
+
+  **`--self-test` is the part that matters.** It appends a deliberate type error,
+  proves the write landed with `grep` before reading any result, requires the
+  run to go RED, and removes it. A harness that cannot fail is the defect it
+  exists to prevent, and a green from the wrong mount is indistinguishable from
+  a green from your own work — which is not hypothetical: on 2026-09-09 a
+  typecheck for `fix/transport-silent-success` returned 0 while the container
+  was mounted from a tree containing none of that branch. Run `--self-test`
+  before trusting a clean result from a worktree you have not verified from
+  before.
+
+  **The shared stack is still required for e2e**, which binds `:3000` and drives
+  the real services. That is the residual, and it is the only one.
+
   **The rule is bounded by its REASON, not by the word "worktree".** Everything
   above is about the shared Docker stack, so: **a worktree that starts no
   containers, runs no gates and writes nothing is outside this rule.** Stated
