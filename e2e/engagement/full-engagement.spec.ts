@@ -3,13 +3,7 @@ import path from "node:path";
 
 import { test, type Locator, type Page } from "@playwright/test";
 
-import {
-  ADMIN_EMAIL,
-  ADMIN_PASSWORD,
-  register,
-  signIn,
-  signOut,
-} from "../helpers/auth";
+import { ADMIN_EMAIL, ADMIN_PASSWORD, register, signIn } from "../helpers/auth";
 import { acknowledgeOfflineAi } from "../helpers/ai";
 
 /**
@@ -58,17 +52,39 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  * loaded intake queue and wrote "publishing silently fails to open workspaces"
  * about a product that does nothing of the kind.
  *
- * The sites are not enumerated here, because an enumeration goes stale the next
- * time one is added or fixed. The shape is greppable instead, and a hit is a
- * defect unless it is waiting first:
+ * **THE RULE IS A SHAPE, NOT A LIST OF METHODS — and the first version of this
+ * paragraph got that wrong, in the header of the fix for getting it wrong.**
  *
- *     grep -nE "isVisible\(\)|\.count\(\)|isDisabled\(\)|networkidle\"\)\.catch" \
- *       e2e/engagement/full-engagement.spec.ts
+ * It read "never a bare `isVisible()`/`count()`", naming two methods. Playwright
+ * has many non-waiting reads, and the ones the sentence omitted are what broke
+ * the first real run: `isChecked()` on the intake checkboxes, read twice without
+ * waiting, reported "would not stay checked after two clicks" about a box that
+ * had in fact been selected — and that single racy read cascaded into three
+ * services never opened, no deliverable, no Risk Register, and eleven downstream
+ * rows. Enumerating methods instead of stating the shape is the same
+ * enumerate-versus-derive defect this file records everywhere else.
+ *
+ * The shape: **any read that returns immediately, whose result decides a
+ * recorded outcome, is a defect unless something waits first.** Not a method
+ * list — a property of the call.
+ *
+ * DERIVE the set from the file rather than trusting any list, including this
+ * one, and read every hit:
+ *
+ *     grep -oE "\.(isChecked|isDisabled|isEnabled|isVisible|isEditable|count|textContent|innerText|inputValue|getAttribute)\(" \
+ *       e2e/engagement/full-engagement.spec.ts | sort | uniq -c
+ *
+ * That command is itself an enumeration and so is a floor, not a census. The
+ * durable question for any hit is the shape above, not membership of the
+ * pattern: `textContent()` on a node that has not rendered is as much a
+ * non-waiting read as `isChecked()` is.
  *
  * So, when editing this file: anything that decides a step's outcome waits
- * first — `affordance()` or `settled()`, never a bare `isVisible()`/`count()` —
- * and where it cannot, it records `Indeterminate` rather than `ok` and rather
- * than a specific cause invented to explain a symptom. `visit()` does not treat
+ * first — `affordance()`, `settled()`, or a poll that reports what it could not
+ * establish — and where it cannot, it records `Indeterminate` rather than `ok`
+ * and rather than a specific cause invented to explain a symptom. Prefer a
+ * driver that WAITS FOR THE TARGET STATE (`driveCheckboxOn`) over one that acts
+ * and re-reads. `visit()` does not treat
  * "some heading exists" as arrival, because the error card is a heading — and
  * on the five CLIENT DASHBOARDS the gated and failed states each render an
  * `<h1>` of their own, so even "an `<h1>` exists" is not arrival there.
@@ -654,6 +670,79 @@ async function pageState(page: Page): Promise<PageState> {
 }
 
 /**
+ * Sign out, and confirm it by the PRIMARY NAV's "Sign in" link specifically.
+ *
+ * `helpers/auth.signOut` waits on a bare `getByRole("link", { name: "Sign in" })`,
+ * which is ambiguous on the signed-out home page: `site/PublicHeader.tsx`
+ * renders one inside `<nav aria-label="Primary">` and `marketing/Hero.tsx`
+ * renders a second as its CTA. Both are real and both are correct — this run
+ * lands on `/` after signing out, so it meets both, and all three sign-outs
+ * failed on the first real run with a strict-mode violation.
+ *
+ * Scoped to the nav landmark rather than `.first()`, for the reason `.first()`
+ * is refused everywhere else in this file: it would have picked one of the two
+ * arbitrarily and recorded `ok`, and the ambiguity is exactly what the strict
+ * locator surfaced. The nav link is the one that means "the session ended".
+ *
+ * ## Why the shared helper is left alone, deliberately
+ *
+ * `helpers/auth.ts` carries the same latent ambiguity, and fixing it there
+ * would be the better fix for the repo — but that helper is used by the whole
+ * smoke suite, so changing it puts ~40 CI-gating specs at risk to serve one
+ * opt-in instrument. Those specs sign out from pages with no marketing Hero,
+ * which is why the ambiguity has stayed latent for them. Worth filing; not
+ * worth this branch changing under them. Stated here so the duplication reads
+ * as a choice rather than as someone not noticing the helper existed.
+ */
+async function signOutViaNav(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await affordance(
+    page
+      .getByRole("navigation", { name: "Primary" })
+      .getByRole("link", { name: "Sign in" }),
+    "the primary nav's Sign in link (proof the session ended)",
+    20_000,
+  );
+}
+
+/**
+ * Poll a checkbox until it reads CHECKED, or give up and say so.
+ *
+ * `isChecked()` returns immediately. That is what broke the first real run:
+ * the box was read, clicked, re-read while React was still re-rendering, read
+ * false, clicked AGAIN — toggling it back off — and reported "would not stay
+ * checked after two clicks". The click had worked; the reading had not.
+ *
+ * So: click at most once per attempt, then WAIT for the state to arrive rather
+ * than re-reading straight away. A second attempt covers the case where the
+ * very first read was itself pre-hydration and the click therefore turned an
+ * already-on box off.
+ *
+ * Returns "checked", or a description of what could not be established — never
+ * a claim about the product. The caller records `indeterminate`.
+ */
+async function driveCheckboxOn(box: Locator): Promise<string> {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    if (await box.isChecked().catch(() => false)) return "checked";
+    await box.click();
+    // The wait is the fix. 10s is generous for a local React re-render and
+    // costs nothing on the happy path, which resolves on the first poll.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      if (await box.isChecked().catch(() => false)) return "checked";
+      if (Date.now() >= deadline) break;
+      await box.page().waitForTimeout(200);
+    }
+    if (attempt === 1) {
+      // The click may have turned an already-checked box OFF (a pre-hydration
+      // first read). Loop once more; the next click puts it back on.
+      continue;
+    }
+  }
+  return "never read as checked within 10s of either of two clicks";
+}
+
+/**
  * Did we actually land on the page we asked for, as the identity we assumed?
  *
  * `visit()` used to capture the `goto` status into a variable that appeared
@@ -1209,26 +1298,45 @@ test("full engagement: intake -> five services -> release -> client view -> back
         "intake step 1 heading",
         60_000,
       );
+      // Settle ONCE before the first read. The whole failure below was a
+      // hydration race, and this is the cheap half of the fix: an unhydrated
+      // checkbox reports its server-rendered value.
+      const hydrated = await settled(page, 10_000);
+
+      // Attempt EVERY service, then report. The first version threw inside the
+      // loop, so one bad checkbox meant the three services after it were never
+      // clicked at all — on the first real run that turned a single racy read
+      // into three missing engagements, a missing deliverable, a missing Risk
+      // Register, and eleven downstream rows. A step that gives up on the
+      // first element of a list is a step that hides the rest of the list.
+      const failures: string[] = [];
       for (const svc of SERVICES) {
         // click(), never check(): the wizard auto-saves on change, and
         // check()/uncheck() are recorded in CLAUDE.md as failing on exactly
         // that shape.
         const box = page.getByRole("checkbox", { name: svc.intakeLabel });
-        await affordance(box, `intake checkbox ${svc.intakeLabel}`);
-        // Verify the RESULT, do not assume the click landed. A pre-hydration
-        // `isChecked()` reads the DOM default, so a box that was already on
-        // could be toggled OFF here — silently dropping a service from the
-        // engagement, which then reads downstream as "publish never opened it".
-        // Cheap to check, and the failure mode is the expensive kind.
-        if (!(await box.isChecked())) await box.click();
-        if (!(await box.isChecked())) {
-          await box.click();
-          if (!(await box.isChecked())) {
-            throw new Unreachable(
-              `intake: ${svc.intakeLabel} would not stay checked after two clicks`,
-            );
-          }
+        try {
+          await affordance(box, `intake checkbox ${svc.intakeLabel}`);
+        } catch {
+          failures.push(`${svc.intakeLabel}: checkbox never appeared`);
+          continue;
         }
+        const outcome = await driveCheckboxOn(box);
+        if (outcome !== "checked") {
+          failures.push(`${svc.intakeLabel}: ${outcome}`);
+        }
+      }
+
+      if (failures.length > 0) {
+        // `Indeterminate`, not `Unreachable`. The old message — "would not stay
+        // checked after two clicks" — asserted a fact about the PRODUCT that
+        // this run had not established: the box was read twice without waiting,
+        // and on the first real run NIST CSF ended up genuinely selected (its
+        // service was opened) while the log said it would not stay checked.
+        // The failure was the reading, not the checkbox.
+        throw new Indeterminate(
+          `intake service selection could not be established${hydrated ? "" : " (the step never went quiet, so reads here are unreliable)"}: ${failures.join("; ")}`,
+        );
       }
     });
 
@@ -1359,7 +1467,9 @@ test("full engagement: intake -> five services -> release -> client view -> back
       }
     });
 
-    await rec.step("intake", "client signs out", "ui", () => signOut(page));
+    await rec.step("intake", "client signs out", "ui", () =>
+      signOutViaNav(page),
+    );
 
     // === Phase 2: the admin publishes the requests into workspaces =========
 
@@ -1956,7 +2066,9 @@ test("full engagement: intake -> five services -> release -> client view -> back
     // the trace, so a cookie or active-tenant defect at the crossing is
     // visible. Two separate contexts would skip exactly that.
 
-    await rec.step("client-view", "admin signs out", "ui", () => signOut(page));
+    await rec.step("client-view", "admin signs out", "ui", () =>
+      signOutViaNav(page),
+    );
     await rec.step("client-view", "the client signs in", "ui", () =>
       signIn(page, clientEmail, clientPassword),
     );
@@ -2050,7 +2162,9 @@ test("full engagement: intake -> five services -> release -> client view -> back
 
     // === Phase 6: back to admin, and walk the workspace ====================
 
-    await rec.step("admin-walk", "client signs out", "ui", () => signOut(page));
+    await rec.step("admin-walk", "client signs out", "ui", () =>
+      signOutViaNav(page),
+    );
     await rec.step("admin-walk", "admin signs back in", "ui", () =>
       signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD),
     );
