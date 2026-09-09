@@ -350,6 +350,11 @@ class Recorder {
   }> = [];
   private seq = 0;
 
+  /** The most recently recorded row, for a caller pairing two observations. */
+  lastStep(): StepRecord | undefined {
+    return this.steps[this.steps.length - 1];
+  }
+
   /** Next row number. Called at PUSH time so `#` always equals row position. */
   private nextSeq(): number {
     this.seq += 1;
@@ -993,11 +998,18 @@ async function visit(
       if (state.reason === "gated") {
         // `unreachable`, not `failed`: the page worked, the content is not
         // there. Deliberately NOT judged here — whether that is correct
-        // depends on what the run released, and `visit` does not know. The
-        // Risk Register in particular has no release concept at all in
-        // `routes/risk.py`, so this state may be entirely legitimate for
-        // `/dashboards/risk`. Recording it distinctly is the job; deciding
-        // what it means is Gene's.
+        // depends on what this run released or finalized, and `visit()` is
+        // generic and does not know. Recording the state distinctly is the
+        // job; deciding what it means is Gene's.
+        //
+        // Careful about the scope of that: it is a statement about what
+        // `visit()` can see, NOT a claim that a gated dashboard is fine. For
+        // Risk in particular the RUN does know more — it exported, and export
+        // is what sets `finalized_at` (Risk has no release concept; the client
+        // gate is `clients.py`'s `reg.finalized_at is None`), so a gated risk
+        // dashboard in THIS run would be suspicious. That pairing is surfaced
+        // as a note at the `/dashboards/risk` visit in Phase 5, by the caller
+        // that holds both facts, rather than by widening this function.
         throw new Unreachable(
           `${where} — content GATED, not released/finalized to this client: ${state.detail}`,
         );
@@ -1162,6 +1174,8 @@ test("full engagement: intake -> five services -> release -> client view -> back
   // `unreachable` rather than throwing the run away.
   const serviceIds = new Map<string, string>();
   let clientId: string | null = null;
+  /** Set by Phase 4's export step; read by Phase 5's risk-dashboard visit. */
+  let riskExported: boolean | undefined;
 
   // Publish the state the afterEach hook logs from. `serviceIds` is shared by
   // REFERENCE, so entries added below are visible without a further assignment;
@@ -1888,7 +1902,12 @@ test("full engagement: intake -> five services -> release -> client view -> back
         },
       );
 
-      await rec.step(
+      // Captured so Phase 5 can pair it with what the CLIENT then sees. Risk
+      // has no release concept — export is what sets `finalized_at`, which is
+      // the field the client gate reads (`clients.py`: `reg.finalized_at is
+      // None`). So a successful export here is the run's own evidence that a
+      // gated risk dashboard later would be surprising.
+      riskExported = await rec.step(
         "Risk-Register",
         "export XLSX / PDF / Word",
         "ui",
@@ -1906,6 +1925,7 @@ test("full engagement: intake -> five services -> release -> client view -> back
           await exportBtn.click();
           const res = await done;
           rec.note(`risk register export -> ${res.status()}`);
+          return res.ok();
         },
       );
 
@@ -1966,6 +1986,27 @@ test("full engagement: intake -> five services -> release -> client view -> back
       );
     }
     await visit(page, rec, "client-view", "/dashboards/risk");
+
+    // ADJACENCY, not a verdict. `visit()` cannot know what this run released or
+    // finalized, which is why it refuses to call a gated dashboard a failure —
+    // but the RUN knows it exported, and export is what sets `finalized_at`,
+    // the field the client gate reads. Pairing the two facts here gives the
+    // reader what neither step had alone, without either step deciding.
+    //
+    // Same shape as threading `publishOk`: the step that knows tells the step
+    // that does not.
+    const riskVisit = rec.lastStep();
+    if (
+      riskExported === true &&
+      riskVisit?.outcome === "unreachable" &&
+      /GATED/.test(riskVisit.detail)
+    ) {
+      rec.note(
+        "WORTH A LOOK: this run exported the Risk Register successfully (which is what sets finalized_at), " +
+          "and the client's /dashboards/risk still reads as not-yet-finalized. Those two should not both be true. " +
+          "Stated as an adjacency for a human to judge, not as a verdict — see the export row and the visit row above.",
+      );
+    }
 
     // The client's own download links — the second half of "the document and
     // the dashboard agree": these are fetched under the CLIENT's session, not
