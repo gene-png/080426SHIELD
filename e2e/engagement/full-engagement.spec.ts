@@ -565,6 +565,37 @@ function describe(err: unknown): string {
  * buttons and record `ok` — it hides exactly the defect this instrument exists
  * to surface. They stay strict, and a duplicate now reports itself accurately.
  */
+/**
+ * The needle a failed search was looking for, in the message about the failure.
+ *
+ * A MISS is the one outcome whose message could not previously be acted on. It
+ * said "affordance never appeared", which reads as a statement about the PAGE
+ * and is indistinguishable from the product failing to render the control --
+ * so a locator naming something the product does not call it produced a
+ * confident, specific, wrong sentence, and the instrument's own defect and the
+ * product's defect rendered identically. That cost four runs.
+ *
+ * The strict-mode branch above already gets this right for free: Playwright
+ * reports "resolved to 2 elements" and quotes both, which is why an ambiguous
+ * locator has always been diagnosable here in one read while a miss was not.
+ * `Locator.toString()` is the same evidence for the other direction -- it
+ * yields the resolved selector (`internal:role=button[name=/^(Finalize)$/]`),
+ * which is the needle, not the human label the caller happened to choose.
+ *
+ * Wrapped because `toString` is not part of the documented Locator surface and
+ * a future Playwright could change or drop it. Losing the needle must not turn
+ * a real MISS into a crash, so a throw here degrades to the old message rather
+ * than propagating -- the ONE place in this file where swallowing is correct,
+ * because the thing being swallowed is the diagnostic and not the result.
+ */
+function needle(loc: Locator): string {
+  try {
+    return String(loc).replace(/\s+/g, " ").slice(0, 200);
+  } catch {
+    return "<locator would not describe itself>";
+  }
+}
+
 async function affordance(
   loc: Locator,
   label: string,
@@ -577,12 +608,12 @@ async function affordance(
     const name = err instanceof Error ? err.name : "";
     if (/has been closed|Target crashed/i.test(message)) {
       throw new Indeterminate(
-        `could not look for ${label}: ${message.split("\n")[0]}`,
+        `could not look for ${label} (${needle(loc)}): ${message.split("\n")[0]}`,
       );
     }
     if (name === "TimeoutError") {
       throw new Unreachable(
-        `affordance never appeared within ${timeout}ms: ${label}`,
+        `affordance never appeared within ${timeout}ms: ${label} — searched for ${needle(loc)}`,
       );
     }
     throw err;
@@ -2168,8 +2199,25 @@ test("full engagement: intake -> five services -> release -> client view -> back
       // --- finalize and release, in the browser --------------------------
       await rec.step(svc.slug, "finalize the deliverable", "ui", async () => {
         await page.reload();
+        // FOUR services, TWO vocabularies for one action. ATT&CK and Tech
+        // Debt (the generic `DeliverableCard`) say "Finalize"/"Re-finalize";
+        // CSF and ZT say "Send for evaluation"/"Re-run evaluation". This
+        // locator carried only the first pair, so for CSF and ZT it named a
+        // control the product does not have and the step could never have
+        // concluded anything about them -- it was UNMEASURED, and it reported
+        // as "affordance never appeared", which reads as a product failure.
+        //
+        // Derived, not recalled: the pairs are every match of
+        //   git grep -nE '"(Finalize|Re-finalize|Send for evaluation|Re-run evaluation)"' -- apps/web/src
+        // which returns exactly these four components and no others.
+        //
+        // The instrument accepts both because its job is to REACH the step.
+        // That two surfaces name one action differently is a product finding,
+        // and it is filed rather than fixed here -- this branch is e2e/ only.
         const finalize = page
-          .getByRole("button", { name: /^(Finalize|Re-finalize)$/ })
+          .getByRole("button", {
+            name: /^(Finalize|Re-finalize|Send for evaluation|Re-run evaluation)$/,
+          })
           .first();
         await affordance(
           finalize,
