@@ -564,3 +564,34 @@ def test_approving_the_same_inputs_lets_synthesis_through(app_client) -> None:
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
     assert r.status_code == 201, r.text
     assert r.json()["entries"], "the register must actually carry entries"
+
+
+@pytest.mark.unit
+def test_a_draft_sourced_register_is_never_generated(app_client) -> None:
+    """No 201 from unapproved inputs, whatever the reason for the refusal.
+
+    This exists to make the two merge directions DISCRIMINABLE, and that gap was
+    real: with only the two tests above, direction B's red set was a strict
+    SUBSET of direction A's. `synthesis_path` died under both — under A because
+    the gate reports the assessments as absent, which is a side effect of the
+    gate change rather than an independent signal — so nothing failed under B
+    alone. A shared red set cannot tell you which of two merges happened, which
+    is the collapse #213 is about, one level up in the evidence rather than in
+    the code.
+
+    This one is deliberately indifferent to WHICH refusal fires. Merge the
+    helpers so the gate filters on finalized and the register is refused as
+    locked: this still passes. Merge them so synthesis stops filtering and a
+    draft-sourced register generates: this is the only test that fails.
+    """
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _seed_drafts_only(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code != 201, (
+        "a register was generated from unapproved assessments -- its contents "
+        "are exported under the client's name"
+    )
+    assert r.status_code == 409

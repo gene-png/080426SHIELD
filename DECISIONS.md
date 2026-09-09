@@ -3974,3 +3974,59 @@ synchronization, applied to evidence rather than to values.
 Not built. Recorded here because it is the fix that removes the class rather than
 another field that documents it, and because the same argument applies to every
 measured claim this repo writes into prose.
+
+## D-075 — A suite that must change for a defect to be fixed is evidence the defect was SPECIFIED
+
+**Date:** 2026-09-08. **From #237.** Distinct from D-072 and recorded separately
+on purpose: D-072 is about checks whose inputs cannot distinguish pass from fail.
+This is about a suite that is not merely blind to a defect but **depends on it**.
+
+### What happened
+
+`risk.py` synthesized Risk Registers from the latest non-discarded assessment,
+with no provenance filter, so DRAFT work could be exported under a client's name.
+Adding the filter turned **ten existing tests red** — across two files and three
+separate seed helpers, every one of which built DRAFT assessments and then
+generated a register from them.
+
+The suite did not fail to catch the defect. **It encoded the defect as expected
+behaviour**, and fixing it required editing ten tests.
+
+### Why this is its own shape
+
+A check that cannot fail is cheap to fix: nobody defends it, and the repair is
+additive. A suite that has to change is different in kind:
+
+- **It raises the price of the fix.** Ten red tests read, to whoever opens the PR,
+  as "this change breaks things" rather than "this change reveals things". That is
+  a structural disincentive to ever fixing it, and it compounds with time as more
+  tests are written against the same seed.
+- **It supplies a ready-made argument for not fixing it.** "The suite disagrees"
+  is available to anyone who wants the change to go away, and it is superficially
+  the same sentence as a real regression.
+- **It is invisible while green.** Nothing about ten passing tests says they are
+  passing _because_ of a defect.
+
+### The tell, and it is cheap
+
+**When a fix turns existing tests red, ask which of two things happened before
+touching them:** the change broke something that was correct, or the tests were
+asserting the defect. Those look identical in a diff — a red suite and an edit to
+make it green — and they are opposite facts.
+
+The distinguishing question is per-test and is about the SCENARIO: does the
+amended test now model something a user would actually do, or has it been amended
+until it passes? Here the answer was that a consultant approves an assessment
+before it feeds a client deliverable, so the seeds gained an approval step and
+each carries the reason at the call site.
+
+### The countermeasure
+
+**Write the reason at the seed, not in the PR body.** A seed that approves because
+that is what the workflow does is a decision; a seed that approves because
+approving made the assertion green is the defect moving into the fixture, and the
+two are indistinguishable in a diff six months later.
+
+Then have the adversarial reviewer attack those reasons specifically rather than
+accept them — "change the seed until it passes" is the cheapest wrong way to land
+a fix of this shape, and it looks identical to the right way.
