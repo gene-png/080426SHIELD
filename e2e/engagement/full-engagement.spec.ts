@@ -68,16 +68,27 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  * recorded outcome, is a defect unless something waits first.** Not a method
  * list — a property of the call.
  *
- * DERIVE the set from the file rather than trusting any list, including this
- * one, and read every hit:
+ * **The set is PLAYWRIGHT'S, not ours to curate.** Its API is already split in
+ * two along exactly this line: auto-waiting ASSERTIONS poll until they pass
+ * (`expect(locator).toBeChecked()`), and IMMEDIATE GETTERS read one instant and
+ * never wait (`isChecked`, `isDisabled`, `isVisible`, `isEnabled`, `isEditable`,
+ * `isHidden`, `count`, `textContent`, `innerText`, `inputValue`,
+ * `getAttribute`). Deriving from that boundary is why the set is closed;
+ * listing the ones someone thought of is what failed.
  *
- *     grep -oE "\.(isChecked|isDisabled|isEnabled|isVisible|isEditable|count|textContent|innerText|inputValue|getAttribute)\(" \
- *       e2e/engagement/full-engagement.spec.ts | sort | uniq -c
+ * **And it is GATED rather than worded**, because a rule in prose gets followed
+ * on the line you are thinking about and skipped on the line next to it — which
+ * is measured here, not asserted: the wording above named two methods and the
+ * two it omitted broke the first real run.
  *
- * That command is itself an enumeration and so is a floor, not a census. The
- * durable question for any hit is the shape above, not membership of the
- * pattern: `textContent()` on a node that has not rendered is as much a
- * non-waiting read as `isChecked()` is.
+ *     node e2e/scripts/check-immediate-reads.mjs e2e/engagement
+ *
+ * Report-only. It never fails a run — a blocking gate whose cheapest route to
+ * green is deleting the check steers the author into the defect. Legitimate
+ * immediate reads carry `// immediate-read: <reason>`; every one in this file
+ * does, and each reason says why WAITING would be wrong there. Run it AFTER
+ * prettier: waiver association is adjacency, so it is not stable under
+ * reformatting, and that has already bitten once.
  *
  * So, when editing this file: anything that decides a step's outcome waits
  * first — `affordance()`, `settled()`, or a poll that reports what it could not
@@ -236,6 +247,25 @@ test.use({ video: "on", trace: "on" });
 // One continuous walk of the whole product. Generous, and deliberately not
 // `test.slow()` (which only triples the 90s project timeout).
 const RUN_BUDGET_MS = 45 * 60_000;
+
+/**
+ * How long to wait for a CONTROL on a page that has already loaded.
+ *
+ * Measured on the first real run: five absent controls waited 60s each and
+ * accounted for 310 of the run's 672 seconds — 46% of the wall clock spent
+ * confirming that buttons which were never going to appear had not appeared. A
+ * control on a settled page is present in milliseconds or it is absent.
+ *
+ * **Do not read the saving as headroom.** Most of the gap to `RUN_BUDGET_MS` on
+ * that run was work that did not happen: eleven steps were skipped downstream of
+ * one racy read. When those do real work the run grows, and it grows in the slow
+ * places — Run-AI, finalize, release, the register.
+ *
+ * PAGE LANDMARKS after a fresh navigation keep their longer waits: `next dev`
+ * compiles a route on first hit, and CLAUDE.md records cold-compile timeouts as
+ * a known flake. This constant is for controls, not for arrival.
+ */
+const CONTROL_WAIT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Output folder. The dated subfolder needs no new ignore entry and no
@@ -497,7 +527,7 @@ function describe(err: unknown): string {
 async function affordance(
   loc: Locator,
   label: string,
-  timeout = 30_000,
+  timeout = CONTROL_WAIT_MS,
 ): Promise<Locator> {
   try {
     await loc.waitFor({ state: "visible", timeout });
@@ -614,9 +644,17 @@ type PageState =
 async function pageState(page: Page): Promise<PageState> {
   // Idiom 1: the admin/intake error card.
   const card = page.getByRole("heading", { name: /Couldn.t load/i }).first();
+  // immediate-read: point-in-time probe. Waiting would INVERT its meaning — a
+  // wait on an error card sits for the full timeout on every healthy page. A
+  // null result is never treated as proof of health; the caller establishes
+  // arrival positively afterwards.
   if (await card.isVisible().catch(() => false)) {
     return {
       kind: "load-error",
+      // immediate-read: point-in-time probe. Waiting would INVERT its meaning
+      // — a wait on an error card sits for the full timeout on every healthy
+      // page. A null result is never treated as proof of health; the caller
+      // establishes arrival positively afterwards.
       text: (await card.textContent().catch(() => null)) ?? "Couldn't load (…)",
     };
   }
@@ -627,19 +665,29 @@ async function pageState(page: Page): Promise<PageState> {
   const gate = page
     .getByRole("heading", { name: /not available yet\s*$/i })
     .first();
+  // immediate-read: point-in-time probe. Waiting would INVERT its meaning — a
+  // wait on an error card sits for the full timeout on every healthy page. A
+  // null result is never treated as proof of health; the caller establishes
+  // arrival positively afterwards.
   if (await gate.isVisible().catch(() => false)) {
-    const heading = (
-      (await gate.textContent().catch(() => null)) ?? "not available yet"
-    ).trim();
+    // immediate-read: point-in-time probe. Waiting would INVERT its meaning —
+    // a wait on an error card sits for the full timeout on every healthy page.
+    // A null result is never treated as proof of health; the caller
+    // establishes arrival positively afterwards.
+    const rawHeading = await gate.textContent().catch(() => null);
+    const heading = (rawHeading ?? "not available yet").trim();
     // The discriminating sentence is in a sibling <p>, so read the region
     // rather than the heading. Reading the heading alone is what made these
     // two states indistinguishable.
-    const body =
-      (await page
-        .locator("main")
-        .first()
-        .textContent()
-        .catch(() => null)) ?? "";
+    // immediate-read: point-in-time probe; the gate above already established
+    // the region is rendered, and waiting on its text would sit for the full
+    // timeout on every page that has no error to report.
+    const main = page.locator("main").first();
+    // immediate-read: point-in-time probe. Waiting would INVERT its meaning —
+    // a wait on an error card sits for the full timeout on every healthy
+    // page. A null result is never treated as proof of health; the caller
+    // establishes arrival positively afterwards.
+    const body = (await main.textContent().catch(() => null)) ?? "";
     const reason = /hasn.t been (released|finalized)/i.test(body)
       ? "gated"
       : /We couldn.t load/i.test(body)
@@ -658,10 +706,18 @@ async function pageState(page: Page): Promise<PageState> {
     .getByRole("alert")
     .filter({ hasText: /(Failed|Unable) to load|Couldn.t load/i })
     .first();
+  // immediate-read: point-in-time probe. Waiting would INVERT its meaning — a
+  // wait on an error card sits for the full timeout on every healthy page. A
+  // null result is never treated as proof of health; the caller establishes
+  // arrival positively afterwards.
   if (await alert.isVisible().catch(() => false)) {
     return {
       kind: "load-error",
       text:
+        // immediate-read: point-in-time probe. Waiting would INVERT its
+        // meaning — a wait on an error card sits for the full timeout on
+        // every healthy page. A null result is never treated as proof of
+        // health; the caller establishes arrival positively afterwards.
         (await alert.textContent().catch(() => null)) ?? "[load-failure alert]",
     };
   }
@@ -723,12 +779,18 @@ async function signOutViaNav(page: Page): Promise<void> {
  */
 async function driveCheckboxOn(box: Locator): Promise<string> {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    // immediate-read: this IS the poll. The read must be instantaneous by
+    // construction; the waiting is the surrounding loop, which reports what
+    // it could not establish rather than claiming a state.
     if (await box.isChecked().catch(() => false)) return "checked";
     await box.click();
     // The wait is the fix. 10s is generous for a local React re-render and
     // costs nothing on the happy path, which resolves on the first poll.
     const deadline = Date.now() + 10_000;
     for (;;) {
+      // immediate-read: this IS the poll. The read must be instantaneous by
+      // construction; the waiting is the surrounding loop, which reports what
+      // it could not establish rather than claiming a state.
       if (await box.isChecked().catch(() => false)) return "checked";
       if (Date.now() >= deadline) break;
       await box.page().waitForTimeout(200);
@@ -1063,6 +1125,10 @@ async function visit(
     const earlyH1 = await page
       .locator("h1")
       .first()
+      // immediate-read: preceded by settled(), and the timeout argument waits
+      // for the element to attach. Recorded as an observation; the landing
+      // verdict comes from the HTTP status and the pathname, not from this
+      // text alone.
       .textContent({ timeout: 5_000 })
       .catch(() => null);
     const landing = landingProblem(page, url, status, earlyH1);
@@ -1111,6 +1177,10 @@ async function visit(
     // `textContent`, not `innerText`: a CSS-uppercased heading reads back
     // uppercased and would pin the styling instead of the copy.
     const h1 = page.locator("h1").first();
+    // immediate-read: preceded by settled(), and the timeout argument waits
+    // for the element to attach. Recorded as an observation; the landing
+    // verdict comes from the HTTP status and the pathname, not from this text
+    // alone.
     const title = await h1.textContent({ timeout: 5_000 }).catch(() => null);
 
     if (title === null && !quiet) {
@@ -1427,7 +1497,7 @@ test("full engagement: intake -> five services -> release -> client view -> back
       const submit = page.getByRole("button", {
         name: /^(Submit|Re-submit) intake$/,
       });
-      await affordance(submit, "Submit intake button", 60_000);
+      await affordance(submit, "Submit intake button", CONTROL_WAIT_MS);
 
       // Submit is disabled while `picks.length === 0 || !legalName ||
       // targetsIncomplete` (Step6Review). The first draft read a disabled
@@ -1444,6 +1514,10 @@ test("full engagement: intake -> five services -> release -> client view -> back
       // the re-read below describes nothing, and reporting `unreachable` off it
       // claims "I looked and it was not there" on the strength of a look that
       // did not happen.
+      // immediate-read: settle-then-recheck. The first read is a fast path;
+      // between the two the run establishes that the page went quiet, and
+      // reports indeterminate when it could not. A disabled reading is never
+      // turned into a cause.
       if (await submit.isDisabled()) {
         if (!(await settled(page, 10_000))) {
           throw new Indeterminate(
@@ -1451,6 +1525,10 @@ test("full engagement: intake -> five services -> release -> client view -> back
           );
         }
       }
+      // immediate-read: settle-then-recheck. The first read is a fast path;
+      // between the two the run establishes that the page went quiet, and
+      // reports indeterminate when it could not. A disabled reading is never
+      // turned into a cause.
       if (await submit.isDisabled()) {
         throw new Unreachable(
           `Submit intake is still disabled. Cause not established. Targets this run set: [${
@@ -1533,6 +1611,8 @@ test("full engagement: intake -> five services -> release -> client view -> back
             page,
             "/admin/queue",
             null,
+            // immediate-read: affordance() already waited for this element to
+            // be visible, so the text is present by the time it is read.
             await queueH1.textContent().catch(() => null),
           );
           if (queueLanding) {
@@ -1572,6 +1652,9 @@ test("full engagement: intake -> five services -> release -> client view -> back
           }
           const left = await page
             .getByRole("button", { name: "Publish for processing" })
+            // immediate-read: the settled() guard immediately above throws
+            // indeterminate when the page never went quiet, so this count is
+            // only taken off a page that finished rendering.
             .count();
           rec.note(
             `published ${published} service request(s); unpublished remaining: ${left}`,
@@ -1660,7 +1743,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
               { timeout: 180_000 },
             );
             const file = page.locator('input[type="file"]').first();
-            await affordance(file, "tech-debt inventory file input", 60_000);
+            await affordance(
+              file,
+              "tech-debt inventory file input",
+              CONTROL_WAIT_MS,
+            );
             await file.setInputFiles({
               name: "inventory.csv",
               mimeType: "text/csv",
@@ -1786,11 +1873,15 @@ test("full engagement: intake -> five services -> release -> client view -> back
           // literal so a copy change degrades to `unreachable` instead of a
           // silent miss.
           const runAi = page.getByRole("button", { name: /^Run AI\b/ }).first();
-          await affordance(runAi, `${svc.slug} Run AI button`, 60_000);
+          await affordance(runAi, `${svc.slug} Run AI button`, CONTROL_WAIT_MS);
           // Settle before believing a disabled read: a visible-but-unhydrated
           // button reports disabled, and "React had not attached yet" must not
           // be logged as a product state. The cause is NOT asserted — the first
           // draft blamed "this assessment status" with nothing to support it.
+          // immediate-read: settle-then-recheck. The first read is a fast
+          // path; between the two the run establishes that the page went
+          // quiet, and reports indeterminate when it could not. A disabled
+          // reading is never turned into a cause.
           if (await runAi.isDisabled()) {
             if (!(await settled(page, 10_000))) {
               throw new Indeterminate(
@@ -1798,6 +1889,10 @@ test("full engagement: intake -> five services -> release -> client view -> back
               );
             }
           }
+          // immediate-read: settle-then-recheck. The first read is a fast
+          // path; between the two the run establishes that the page went
+          // quiet, and reports indeterminate when it could not. A disabled
+          // reading is never turned into a cause.
           if (await runAi.isDisabled()) {
             throw new Unreachable(
               `${svc.slug}: Run AI is present but disabled; cause not established`,
@@ -1837,11 +1932,19 @@ test("full engagement: intake -> five services -> release -> client view -> back
           const approve = page
             .getByRole("button", { name: /^Approve( client inputs)?$/ })
             .first();
-          await affordance(approve, `${svc.slug} Approve control`, 60_000);
+          await affordance(
+            approve,
+            `${svc.slug} Approve control`,
+            CONTROL_WAIT_MS,
+          );
 
           // A visible button can still be pre-hydration. Give it a beat before
           // calling it disabled, so "React had not attached yet" is not
           // recorded as "the product disabled this control".
+          // immediate-read: settle-then-recheck. The first read is a fast
+          // path; between the two the run establishes that the page went
+          // quiet, and reports indeterminate when it could not. A disabled
+          // reading is never turned into a cause.
           if (await approve.isDisabled()) {
             if (!(await settled(page, 10_000))) {
               throw new Indeterminate(
@@ -1849,6 +1952,10 @@ test("full engagement: intake -> five services -> release -> client view -> back
               );
             }
           }
+          // immediate-read: settle-then-recheck. The first read is a fast
+          // path; between the two the run establishes that the page went
+          // quiet, and reports indeterminate when it could not. A disabled
+          // reading is never turned into a cause.
           if (await approve.isDisabled()) {
             throw new Unreachable(
               `${svc.slug}: Approve is present but disabled; cause not established`,
@@ -1911,11 +2018,19 @@ test("full engagement: intake -> five services -> release -> client view -> back
         const finalize = page
           .getByRole("button", { name: /^(Finalize|Re-finalize)$/ })
           .first();
-        await affordance(finalize, `${svc.slug} Finalize button`, 60_000);
+        await affordance(
+          finalize,
+          `${svc.slug} Finalize button`,
+          CONTROL_WAIT_MS,
+        );
         // Same settle-then-recheck as Run AI and Approve. The cause is not
         // asserted: `canFinalize` gates on the assessment being approved OR
         // released, but a disabled read here may equally be a pre-hydration
         // one, and this run cannot tell the two apart from the button alone.
+        // immediate-read: settle-then-recheck. The first read is a fast path;
+        // between the two the run establishes that the page went quiet, and
+        // reports indeterminate when it could not. A disabled reading is
+        // never turned into a cause.
         if (await finalize.isDisabled()) {
           if (!(await settled(page, 10_000))) {
             throw new Indeterminate(
@@ -1923,6 +2038,10 @@ test("full engagement: intake -> five services -> release -> client view -> back
             );
           }
         }
+        // immediate-read: settle-then-recheck. The first read is a fast path;
+        // between the two the run establishes that the page went quiet, and
+        // reports indeterminate when it could not. A disabled reading is
+        // never turned into a cause.
         if (await finalize.isDisabled()) {
           throw new Unreachable(
             `${svc.slug}: Finalize is present but disabled; cause not established (it gates on the assessment being approved or released)`,
@@ -1941,7 +2060,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
 
       await rec.step(svc.slug, "release to the client", "ui", async () => {
         const release = page.getByRole("button", { name: "Release to client" });
-        await affordance(release, `${svc.slug} Release control`, 60_000);
+        await affordance(
+          release,
+          `${svc.slug} Release control`,
+          CONTROL_WAIT_MS,
+        );
         await release.click();
         const confirm = page.getByRole("button", { name: "Yes, release" });
         await affordance(confirm, `${svc.slug} release confirm`);
@@ -1998,7 +2121,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
           const gen = page.getByRole("button", {
             name: /^(Generate|Regenerate)$/,
           });
-          await affordance(gen, "Risk Register generate control", 60_000);
+          await affordance(
+            gen,
+            "Risk Register generate control",
+            CONTROL_WAIT_MS,
+          );
           const done = page.waitForResponse(
             (r) =>
               r.url().includes("/register/generate") &&
@@ -2025,7 +2152,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
           const exportBtn = page.getByRole("button", {
             name: "Export XLSX / PDF / Word",
           });
-          await affordance(exportBtn, "Risk Register export control", 60_000);
+          await affordance(
+            exportBtn,
+            "Risk Register export control",
+            CONTROL_WAIT_MS,
+          );
           const done = page.waitForResponse(
             (r) =>
               r.url().includes("/register/export") &&
@@ -2155,6 +2286,9 @@ test("full engagement: intake -> five services -> release -> client view -> back
         const links = page.getByRole("link", {
           name: /PDF|XLSX|Word|Download/i,
         });
+        // immediate-read: the settled() guard immediately above throws
+        // indeterminate when the page never went quiet, so this count is only
+        // taken off a page that finished rendering.
         const n = await links.count();
         rec.note(`client /results exposes ${n} download link(s)`);
       },
@@ -2304,6 +2438,35 @@ function writeLog(
   lines.push(`- failed — looked, it went wrong: ${failed}`);
   lines.push(`- unreachable — looked, it was not there: ${missed}`);
   lines.push(`- indeterminate — COULD NOT LOOK, no claim made: ${unknown}`);
+  lines.push("");
+  // MEASURED vs NOT MEASURED, stated before anyone reads the counts as a score.
+  //
+  // `ok` and `failed` are results: something was exercised and it worked or it
+  // did not. `unreachable` and `indeterminate` are NOT results — they are work
+  // the run did not get to do. Listing all four together invites reading a high
+  // `ok` count as broad coverage, and on the first real run that reading would
+  // have been badly wrong: 38 ok looked reassuring while 11 unreachable rows
+  // meant three services, the whole deliverable path and the Risk Register were
+  // never exercised at all. D-051's distinction, applied to the summary rather
+  // than to a single step.
+  const measured = ok + failed;
+  const notMeasured = missed + unknown;
+  lines.push(
+    `**${measured} of ${rec.steps.length} steps actually MEASURED the product** (ok + failed).`,
+  );
+  if (notMeasured > 0) {
+    lines.push("");
+    lines.push(
+      `The other ${notMeasured} did not: they are steps the run could not reach or could not`,
+    );
+    lines.push(
+      "read, so they are UNMEASURED rather than clean. A high `ok` count does not",
+    );
+    lines.push(
+      "mean broad coverage while these are outstanding — read them as the list of",
+    );
+    lines.push("things this run says nothing about.");
+  }
   lines.push("");
   lines.push(
     "Read `indeterminate` as a statement about this run, not about the product.",
