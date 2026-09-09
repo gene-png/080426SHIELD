@@ -24,6 +24,11 @@ class RiskGateStatus(BaseModel):
     # register that will be exported under the client's name (#237). Remedy:
     # approve it.
     #
+    # **REPORTING, NOT BLOCKING.** An entry here does not necessarily stop
+    # generation — `synthesizable_missing` decides that, and it mirrors the
+    # unlock rule. A draft ZT beside an approved CSF appears here, does not
+    # block, and is disclosed on the register as an excluded input.
+    #
     # A SEPARATE FIELD, deliberately, though both feed one sentence. "There is no
     # ATT&CK mapping" and "the ATT&CK mapping is a draft" are different facts
     # with different remedies, and putting the second into a field named
@@ -33,6 +38,16 @@ class RiskGateStatus(BaseModel):
     #
     # Defaulted, so an older client parses a newer response (the C0 pattern).
     not_finalized: list[str] = []
+    # What actually BLOCKS generation, and it mirrors `missing`'s rule over
+    # FINALIZED inputs: an approved ATT&CK mapping, and an approved CSF or ZT.
+    #
+    # Distinct from `not_finalized`, which REPORTS. An earlier version refused on
+    # any entry in that list, which exceeded the unlock rule -- CSF and ZT are
+    # alternatives, so a draft ZT beside an approved CSF blocked a register the
+    # gate said was available. Two fields because they answer two questions:
+    # "what is unapproved" and "what stops you". Merging them is what produced
+    # the defect.
+    synthesizable_missing: list[str] = []
 
 
 class RiskEntryResponse(BaseModel):
@@ -66,6 +81,17 @@ class RiskRegisterResponse(BaseModel):
     generated_by: uuid.UUID | None
     finalized_at: datetime | None
     created_at: datetime
+    # Assessments that EXIST for this client and contributed nothing, because
+    # they are not approved (#237). Empty for a fully-approved client.
+    #
+    # Required rather than optional-in-spirit: once the provenance refusal was
+    # narrowed to mirror the unlock rule, an unapproved OPTIONAL input stopped
+    # blocking and started being silently omitted. A register built over a
+    # withheld population is not self-describing -- `CLAUDE.md`'s coverage-
+    # percentage rule -- so the withheld set is rendered beside it. Without this
+    # the fix would have traded a hard block for a quiet partial, which is the
+    # worse of the two.
+    excluded_inputs: list[str] = []
     xlsx_artifact_id: uuid.UUID | None = None
     pdf_artifact_id: uuid.UUID | None = None
     docx_artifact_id: uuid.UUID | None = None

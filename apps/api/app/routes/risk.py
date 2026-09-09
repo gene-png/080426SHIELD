@@ -173,10 +173,19 @@ def _latest_register(db: Session, client_id: uuid.UUID) -> RiskRegister | None:
 
 
 def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
-    """Whether the Risk Register can be generated, in TWO dimensions (#237).
+    """Whether the Risk Register can be generated, in THREE dimensions (#237).
 
-    Unlock stays on EXISTENCE. What changed is that the gate now also reports
-    which existing inputs cannot be synthesized because they are not finalized.
+    `missing` — ABSENT. `not_finalized` — EXISTS, unapproved, REPORTED.
+    `synthesizable_missing` — what actually BLOCKS, and it mirrors the unlock
+    rule over finalized inputs rather than exceeding it.
+
+    The third field exists because the second was briefly used as the refusal,
+    which blocked a register the unlock rule already permitted: CSF and ZT are
+    alternatives, so a draft ZT beside an approved CSF produced a 409 whose only
+    remedies were to approve unfinished work or discard it.
+
+    Unlock stays on EXISTENCE. What changed is that the gate also reports which
+    existing inputs cannot be synthesized because they are not finalized.
 
     `missing` and `not_finalized` are separate fields and are NOT merged, though
     both feed one sentence. "There is no ATT&CK mapping" and "the ATT&CK mapping
@@ -197,18 +206,41 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     if not (has_csf or has_zt):
         missing.append("a CSF or Zero Trust assessment")
 
-    # EXISTS but cannot be synthesized. Named individually so the refusal is
-    # visible on the gate rather than discovered by hitting it: if unlock says
-    # yes and synthesis says no, the consultant walks into a wall the UI told
-    # them was not there, which is worse than a locked gate.
+    # EXISTS but cannot be synthesized. Named individually so the state is
+    # visible on the gate rather than discovered by hitting it.
+    #
+    # **REPORTING, NOT BLOCKING, and the distinction is load-bearing.** An
+    # earlier version refused generation on ANY entry here, which exceeded the
+    # unlock rule: CSF and ZT are ALTERNATIVES, so ATT&CK + CSF both approved
+    # with a ZT draft in progress produced a 409 over two assessments that
+    # satisfied unlock. The only remedies were to approve unfinished work --
+    # what this change exists to prevent -- or discard it. And it was the normal
+    # path, not an edge: `_FINALIZED` excludes `submitted`, which is where a CSF
+    # or ZT engagement sits while a consultant reviews it, so a client answering
+    # their questionnaire blocked the Risk Register.
+    #
+    # What BLOCKS is `synthesizable_missing` below, which mirrors unlock exactly.
+    # What is merely listed here is disclosed on the register instead.
     not_finalized: list[str] = []
-    for label, model, present in (
-        ("the MITRE ATT&CK coverage mapping", AttackAssessment, has_attack),
-        ("the CSF assessment", CsfAssessment, has_csf),
-        ("the Zero Trust assessment", ZtAssessment, has_zt),
+    finalized_attack = _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
+    finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
+    finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
+    for label, present, finalized in (
+        ("the MITRE ATT&CK coverage mapping", has_attack, finalized_attack),
+        ("the CSF assessment", has_csf, finalized_csf),
+        ("the Zero Trust assessment", has_zt, finalized_zt),
     ):
-        if present and _finalized_for_synthesis(db, model, client_id) is None:
+        if present and not finalized:
             not_finalized.append(label)
+
+    # The unlock rule restated over FINALIZED inputs. Same shape as `missing`
+    # above and deliberately so: if these two predicates ever diverge again, the
+    # gate promises something synthesis will refuse.
+    synthesizable_missing: list[str] = []
+    if not finalized_attack:
+        synthesizable_missing.append("an approved MITRE ATT&CK coverage mapping")
+    if not (finalized_csf or finalized_zt):
+        synthesizable_missing.append("an approved CSF or Zero Trust assessment")
 
     return RiskGateStatus(
         unlocked=unlocked,
@@ -217,6 +249,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
         has_zt=has_zt,
         missing=missing,
         not_finalized=not_finalized,
+        synthesizable_missing=synthesizable_missing,
     )
 
 
@@ -451,12 +484,12 @@ def generate(
     # with no entries, generated successfully, which reads as "no risks found".
     # That is a WORSE failure than the one being fixed: it replaces unreviewed
     # content with a confident absence, and both go out under the client's name.
-    if g.not_finalized:
+    if g.synthesizable_missing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "Risk Register cannot be generated from unapproved work. "
-                "Approve first: " + "; ".join(g.not_finalized) + "."
+                "Approve first: " + "; ".join(g.synthesizable_missing) + "."
             ),
         )
 
@@ -533,7 +566,16 @@ def generate(
         },
     )
     db.commit()
-    return _serialize(db, register, batches_total=batches_total, batches_failed=batches_failed)
+    # `g.not_finalized` is the full present-but-unapproved set; the refusal
+    # above already cleared the ones that block. Whatever remains contributed
+    # nothing to this register, and the register says so.
+    return _serialize(
+        db,
+        register,
+        excluded_inputs=g.not_finalized,
+        batches_total=batches_total,
+        batches_failed=batches_failed,
+    )
 
 
 def _write_artifact(
@@ -672,6 +714,7 @@ def _serialize(
     db: Session,
     register: RiskRegister,
     *,
+    excluded_inputs: list[str] | None = None,
     batches_total: int = 0,
     batches_failed: int = 0,
 ) -> RiskRegisterResponse:
@@ -697,6 +740,7 @@ def _serialize(
         return art.title if art else None
 
     return RiskRegisterResponse(
+        excluded_inputs=excluded_inputs or [],
         id=register.id,
         client_id=register.client_id,
         version=register.version,

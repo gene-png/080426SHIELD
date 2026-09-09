@@ -595,3 +595,65 @@ def test_a_draft_sourced_register_is_never_generated(app_client) -> None:
         "are exported under the client's name"
     )
     assert r.status_code == 409
+
+
+@pytest.mark.unit
+def test_an_unapproved_OPTIONAL_input_does_not_block_generation(app_client) -> None:
+    """The refusal must mirror the UNLOCK, not exceed it.
+
+    Unlock is `has_attack and (has_csf or has_zt)` — CSF and ZT are
+    ALTERNATIVES. The first version of the provenance refusal blocked on any
+    present-but-unapproved input regardless of whether it was needed, so:
+
+        ATT&CK approved + CSF approved + ZT draft  ->  409
+
+    Two assessments that fully satisfy the unlock rule produced nothing, and the
+    only remedies were to approve unfinished work — the exact thing this change
+    exists to prevent — or discard it.
+
+    Live rather than exotic: `_FINALIZED` deliberately excludes `submitted`, and
+    submitted is the routine transient state of a CSF or ZT engagement sitting
+    in a consultant's review queue. A client answering their questionnaire would
+    have blocked the Risk Register.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, capability = _seed_attack_and_zt(c, bearer, cid)  # both approved
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    # A THIRD assessment, started and not approved. CSF here, so ATT&CK+ZT
+    # already satisfy the unlock rule without it.
+    csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h)
+
+    g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    assert g["unlocked"] is True
+    assert (
+        "the CSF assessment" in g["not_finalized"]
+    ), "an unapproved input must still be REPORTED even when it does not block"
+
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(
+            '{"entries": [{"title": "Credential theft exposure",'
+            ' "description": "EDR gap", "axis": "detection",'
+            ' "source": "coverage_finding", "source_id": "' + technique + '",'
+            ' "linked_techniques": ["' + technique + '"],'
+            ' "linked_controls": ["' + capability + '"],'
+            ' "likelihood": "high", "impact": "catastrophic",'
+            ' "recommended_action": "remediate", "rationale": "..."}]}'
+        ),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, (
+        "an unapproved OPTIONAL input must not block a register the unlock rule "
+        f"already permits -- got {r.status_code}: {r.text}"
+    )
+    # ...and the exclusion is DISCLOSED rather than silent. Without this the
+    # register is a figure over a withheld population, which is the trade this
+    # fix must not make: a hard block replaced by a quiet partial.
+    assert "the CSF assessment" in r.json()["excluded_inputs"], (
+        "a present-but-unapproved assessment contributed nothing and the "
+        "register does not say so"
+    )

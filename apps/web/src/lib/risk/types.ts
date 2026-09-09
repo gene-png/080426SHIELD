@@ -15,6 +15,16 @@ export interface RiskGate {
    * response.
    */
   not_finalized?: string[];
+  /**
+   * What actually BLOCKS generation — the unlock rule restated over APPROVED
+   * inputs. Distinct from `not_finalized`, which reports.
+   *
+   * A renderer must gate the "approve first" screen on THIS, not on
+   * `not_finalized`: an unapproved input that is not required does not block,
+   * and telling a consultant to approve it would send them to approve
+   * unfinished work.
+   */
+  synthesizable_missing?: string[];
 }
 
 export interface RiskEntry {

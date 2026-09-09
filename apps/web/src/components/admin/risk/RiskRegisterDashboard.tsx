@@ -241,12 +241,16 @@ export function RiskRegisterDashboard(): JSX.Element {
   // this one has to exist at all so the refusal is visible before it is hit. A
   // consultant who unlocks the gate, clicks generate and meets a 409 has walked
   // into a wall the UI told them was not there, which is worse than a lock.
-  const notFinalized = gate?.not_finalized ?? [];
-  if (gate && gate.unlocked && notFinalized.length > 0) {
+  // Gated on `synthesizable_missing`, NOT `not_finalized`. The latter reports
+  // every unapproved input; only some of them block. Gating this screen on the
+  // reporting field would tell a consultant to approve an assessment that is
+  // not required and is still being worked on.
+  const blocking = gate?.synthesizable_missing ?? [];
+  if (gate && gate.unlocked && blocking.length > 0) {
     return (
       <EmptyState
         title="Approve the source assessments first"
-        description={`These exist but are not approved, so they cannot be synthesised into a register for ${clientName}: ${notFinalized.join("; ")}.`}
+        description={`These exist but are not approved, so they cannot be synthesised into a register for ${clientName}: ${blocking.join("; ")}.`}
       />
     );
   }
