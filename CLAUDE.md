@@ -1666,10 +1666,34 @@ Rules of the road:
     beside the point. The failure mode that matters is not motion, it is
     SILENCE.
 
-  Rank the forms by how they fail. A SHA stops resolving or its content
-  visibly differs — **loud**. A phrase quoted in prose just stops being there —
-  **silent**. A phrase quoted in an ASSERTION is worse than silent: it keeps
-  reporting success, which is the #72 shape reached from the citation rule.
+  Rank the forms by how they fail. A phrase quoted in prose just stops being
+  there — **silent**. A phrase quoted in an ASSERTION is worse than silent: it
+  keeps reporting success, which is the #72 shape reached from the citation
+  rule.
+
+  **A SHA is the loud form, and NOT for the reason a first draft of this bullet
+  gave.** It said a SHA "stops resolving". It does not. A rebase ORPHANS a
+  commit without deleting it, so the object answers `git cat-file -t` with
+  `commit` until garbage collection — which can be a fortnight. A citation
+  check asking "does this resolve?" therefore PASSES on a SHA that is no longer
+  on the branch, and pointing a reader at that check is worse than pointing
+  them at nothing.
+
+  **What fails loudly is ANCESTRY, and only if someone asks:**
+
+      git merge-base --is-ancestor <sha> HEAD
+
+  Measured 2026-09-09 on `fix/ai-inputs-discarded-list` after it was rebased
+  from `a3137d5` onto `e3163f9`: `db85e79`, `e3ca777`, `e16eadc` and `f41c0c4`
+  all answered `cat-file -t` with `commit`, and none was an ancestor of the
+  rebased tip. Two CI certificates and a review-coverage claim in that PR's body
+  were pinned to one of them.
+
+  This correction is itself the third time in one evening a rule here was
+  falsified by its own author within hours of writing it, by applying it. The
+  first two produced gates. **The gate this one wants: every SHA cited in
+  changed prose gets `--is-ancestor` checked, so an orphaned citation fails the
+  gate rather than the reader.** Not built.
 
   **A number carrying its command must also name its REF, and this is where the
   rule pays for itself.** Re-deriving means choosing a tree, and the tree a
