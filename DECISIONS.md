@@ -3975,13 +3975,55 @@ Not built. Recorded here because it is the fix that removes the class rather tha
 another field that documents it, and because the same argument applies to every
 measured claim this repo writes into prose.
 
-## D-072 — #213's shape reached product code: four of five defects in one PR were checks that could not fail
+## D-072 — #213's shape reached product code: checks that could not fail, in a PR about checks that could not fail
 
 **Date:** 2026-09-08. **Context:** #178 / PR #234, the ATT&CK ai-inputs
 discarded-list disclosure. **Extends D-071** (a claim whose scope exceeds its
 evidence) and is where **#213** stops being about tooling.
 
-### The five defects, all introduced by the author of the fix
+### A sixth, and it is a variant this repo has not recorded: the defect was introduced by a CORRECT change somewhere else
+
+**Added 2026-09-09, from round four.** Every instance below was introduced by
+the author of the fix, in the fix. This one was not introduced by anybody.
+
+`AttackAiInputsPanel.test.tsx` asserted
+`expect(screen.queryByText(/predates the extraction record/i)).toBeNull()` — a
+retired list must not be described with the `not_recorded` copy. That was
+discriminating when written. Round four then corrected the `not_recorded`
+paragraph, because it named a cause the stored bytes cannot support, and after
+that correction the phrase survives **only in a `title` attribute**, which
+`queryByText` cannot match at all. So the assertion became unfalsifiable: it
+would have gone on passing forever while pinning nothing, and nothing anywhere
+would have gone red to say so.
+
+**The shape, stated so it can be looked for:** a test whose PASS state and whose
+COULD-NOT-LOOK state became identical as a side effect of a correct change
+elsewhere. The other five here are a fix that could not fail. This is a fix that
+_stopped_ being able to fail, later, without being touched — and the change that
+did it was right, was reviewed, and had no reason to look at that test.
+
+**Why the existing rules do not catch it.** Red-on-revert proves a test can fail
+_at the moment it is written_; this one passed that. `check_test_integrity` is a
+static pass over the test, and the test did not change. The mutation sweep
+mutates the code under test, and the copy that broke this assertion is in a
+different file from the code the test exercises. Nothing in the harness watches
+for an assertion's needle disappearing from the rendered output.
+
+**The cheap check, and it is the one from the copy rule:** when you change any
+user-facing string, grep the exact old phrase across `e2e/` and `apps/web`
+before moving on — `CLAUDE.md` already says this, and this is the case where it
+has to include ABSENCE assertions, not just the positive matches everyone
+remembers to look for. A `queryByText(...).toBeNull()` on a string you just
+deleted is the failure, and it looks like a passing test.
+
+Re-pointed at the copy that renders, and proved discriminating again by
+mutation: count a retired list as `not_recorded` and exactly that test goes red.
+
+### The original five, all introduced by the author of the fix
+
+_Four of these five were checks that could not fail. The count is of the round
+recorded on 2026-09-08 and does not grow; the variant above was added later and
+is deliberately not folded into it, because the two have different causes._
 
 Every one was found by adversarial review, none by a passing suite, and every one
 was in code written _while applying_ a rule that would have caught it.
