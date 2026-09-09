@@ -559,6 +559,27 @@ function describe(err: unknown): string {
  *  - page/context/browser closed -> the run cannot look at all: `indeterminate`.
  *  - anything else             -> propagate unchanged rather than guess.
  *
+ * ## `visible` is a CHOICE, and it was the wrong one once
+ *
+ * The wait state is a parameter rather than a constant because "visible" is
+ * not always the right question, and asking it of a control that can never be
+ * visible produces a check that cannot pass -- reported, like every miss here
+ * used to be, in the vocabulary of a product failure.
+ *
+ * `Dropzone`'s `<input type="file">` carries Tailwind `hidden`
+ * (`display: none`) by design; the drop target is the visible affordance and
+ * `setInputFiles` drives the input regardless. Waiting for `visible` cost
+ * three runs of Tech Debt, and everything downstream of its upload with it.
+ *
+ * Swept rather than assumed: `className="hidden"` appears once in
+ * `apps/web/src/components`, in `Dropzone`. Every other structurally-hidden
+ * control there is `sr-only`, which keeps a bounding box and which Playwright
+ * therefore treats as visible. Of the five `affordance` call sites in this
+ * file, that file input is the only one whose target is `display: none`.
+ *
+ * The message names the state it waited for, so a future miss says which
+ * question was asked and not merely that the answer was no.
+ *
  * Deliberately NOT fixed by adding `.first()` to the ambiguous call sites
  * (`Release to client`, `Yes, release`, `Export XLSX / PDF / Word`,
  * `/^(Generate|Regenerate)$/`). `.first()` would silently pick one of two
@@ -600,9 +621,10 @@ async function affordance(
   loc: Locator,
   label: string,
   timeout = CONTROL_WAIT_MS,
+  state: "visible" | "attached" = "visible",
 ): Promise<Locator> {
   try {
-    await loc.waitFor({ state: "visible", timeout });
+    await loc.waitFor({ state, timeout });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const name = err instanceof Error ? err.name : "";
@@ -613,7 +635,7 @@ async function affordance(
     }
     if (name === "TimeoutError") {
       throw new Unreachable(
-        `affordance never appeared within ${timeout}ms: ${label} — searched for ${needle(loc)}`,
+        `affordance never became ${state} within ${timeout}ms: ${label} — searched for ${needle(loc)}`,
       );
     }
     throw err;
@@ -1926,11 +1948,27 @@ test("full engagement: intake -> five services -> release -> client view -> back
                 r.request().method() === "POST",
               { timeout: 180_000 },
             );
+            // `attached`, NOT `visible`, and this is the whole step.
+            //
+            // `Dropzone` renders `<input type="file" className="hidden">` --
+            // Tailwind `hidden` is `display: none` -- because the visible
+            // affordance is the drop target and the label wrapping it. So the
+            // input is present, is what `setInputFiles` drives, and can never
+            // become visible. Waiting for `visible` was a check that could not
+            // pass, and it reported "affordance never appeared", which is a
+            // sentence about the PRODUCT. Three runs recorded Tech Debt's
+            // upload as an unreachable affordance on that basis, and the whole
+            // service's finalize and release rows are downstream of it.
+            //
+            // Playwright drives hidden file inputs deliberately -- setInputFiles
+            // does not require visibility -- so `attached` is the honest
+            // precondition here and `visible` was never the right question.
             const file = page.locator('input[type="file"]').first();
             await affordance(
               file,
               "tech-debt inventory file input",
               CONTROL_WAIT_MS,
+              "attached",
             );
             await file.setInputFiles({
               name: "inventory.csv",
