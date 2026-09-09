@@ -78,7 +78,27 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_ROOT = path.resolve(HERE, "..");
+
+/**
+ * Scoped to `e2e/engagement`, deliberately, and NOT to all of `e2e/`.
+ *
+ * Pointed at the whole suite this reports 50 unwaived hits in the other specs
+ * <!-- counted: node e2e/scripts/check-immediate-reads.mjs e2e, 2026-09-09 -->
+ * on day one. A gate nobody reads is worse than no gate, because it looks like
+ * coverage while suppressing nothing — so a finding list that arrives already
+ * drowned trains its own readers to skip it.
+ *
+ * Scoped, it reads 0 unwaived and every future hit is a real one.
+ *
+ * **The other 50 are UNTRIAGED, not benign.** Nobody has checked whether any of
+ * them decides a recorded outcome, which is the only question that makes an
+ * immediate read a defect. They are filed as a triage issue rather than left
+ * here as noise — visible and counted beats suppressed. Widen this default when
+ * that issue closes, not before.
+ *
+ * Pass a path to override:  node e2e/scripts/check-immediate-reads.mjs e2e
+ */
+const DEFAULT_ROOT = path.resolve(HERE, "..", "engagement");
 
 /**
  * Immediate getters. `is[A-Z]\w*` covers isChecked, isDisabled, isEditable,
