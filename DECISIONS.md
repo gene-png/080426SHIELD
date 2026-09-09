@@ -4670,6 +4670,8 @@ as a standalone proposition and ask what would falsify it. If a counterexample
 exists in the very set you are describing, the reason is wrong even though the
 answer is right — and the answer being right is what stops anyone looking.
 ## D-078 — The full-engagement instrument exits 0 with failures on record, by design
+## D-NEXT — The full-engagement instrument exits 0 with failures on record, by design
+## D-NEXT — The full-engagement instrument exits 0 with failures on record, by design
 
 **Date:** 2026-09-09. Records a design choice for
 `e2e/engagement/full-engagement.spec.ts`, and the condition under which that
