@@ -4602,3 +4602,57 @@ a fourth accidental close, and the check produced none.
 It does not require every message to offer a remedy. "We cannot show this
 figure" with no instruction is honest and fine. The rule binds only strings that
 tell a user to DO something — an imperative is a promise that the thing exists.
+
+## D-077 — When a finding is right, check its GENERAL FORM separately; that is the half that is usually wrong
+
+**Date:** 2026-09-09. **From the third occurrence in one week.** Extends
+**D-071**, which is the same shape at the level of a single claim.
+
+### The rule
+
+A correct finding arrives with a reason attached, and the reason is a
+generalisation the finding does not establish. **The finding gets checked; the
+generalisation gets reused.** So check them separately, and check the
+generalisation the way you would check any claim — by trying to falsify it, not
+by noticing it explains the case in front of you.
+
+### The measurement that produced it
+
+Four PR branches all appended to `DECISIONS.md` and all conflicted pairwise. Two
+of them also touched `routes/attack.py` and merged clean there, and the reason
+given was: _"a hunk that removes nothing cannot conflict with anything
+downstream regardless of distance."_ The conclusion was right. The rule is
+false, and the counterexample was **inside the set being described**: all four
+`DECISIONS.md` deltas are pure insertions (56/0, 193/0, 238/0, 87/0) at the same
+point, the end of the file, and every pairing conflicts. The rule predicts they
+cannot — i.e. it predicts no rebase is ever needed, which is the whole reason
+the rebase protocol exists.
+
+Measured directly, three points, same two pure insertions each time:
+
+| insertions | apart          | `git merge`  |
+| ---------- | -------------- | ------------ |
+| both 1/0   | **same point** | **CONFLICT** |
+| both 1/0   | 3 lines        | clean        |
+| both 1/0   | 420 lines      | clean        |
+
+**Zero-removal contributes nothing.** What decides it is whether the hunks'
+context windows overlap — and "distance" is itself a loose way to say that,
+since three lines was already enough here. The correct statement about
+`attack.py` is the narrow one: `-164,0` and `-584,0` do not overlap.
+
+### Why it keeps happening in exactly this position
+
+The generalisation is written in the same breath as the finding, by someone who
+has just done the work and is explaining why the answer is safe. It is a
+_justification_, and justifications are not read as claims — the reader checks
+the conclusion, agrees, and carries the sentence away. This one was stated
+inside a message correcting an unmeasured claim, which is D-071's shape
+reproduced in the act of applying it.
+
+### The check
+
+When you write "X, because Y" about a merge, a guard, a sweep or a gate: state Y
+as a standalone proposition and ask what would falsify it. If a counterexample
+exists in the very set you are describing, the reason is wrong even though the
+answer is right — and the answer being right is what stops anyone looking.
