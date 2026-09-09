@@ -4515,3 +4515,64 @@ two are indistinguishable in a diff six months later.
 Then have the adversarial reviewer attack those reasons specifically rather than
 accept them — "change the seed until it passes" is the cheapest wrong way to land
 a fix of this shape, and it looks identical to the right way.
+
+## D-076 — A user-facing string that names an action must name a control that exists and works TODAY
+
+**Date:** 2026-09-09. **From two independent occurrences on two separately
+reviewed PRs, the same day.**
+
+### The rule
+
+**A string a user reads, which tells them what to do, must name a control that
+exists in the product and works — verified by reading the path, not by knowing
+the domain.** Not "a control that should exist", not "the obvious next step",
+not "what the docs say repairs it".
+
+This is D-071's lesson — a claim is checked by executing it, not by reasoning
+about it — moved from shell commands to product copy. It is **more** dangerous
+here, for a reason that has nothing to do with how likely the author is to be
+wrong: a developer who acts on a false docstring loses an hour and discovers the
+truth. A client who acts on false copy does not discover anything. They do the
+thing, nothing happens, and the product has spent trust it cannot see it spent.
+
+### The two occurrences
+
+Neither author knew about the other; the PRs were reviewed independently and the
+defects surfaced within hours.
+
+- **`ValueLoopCard`, "Ask your analyst to confirm it."** The analyst's only
+  in-product move is to re-release. `deliverable_release.py` and migration 0041
+  both state that a re-release repairs a NULL `parent_version`. **It does not** —
+  `_release_parent` returns at the NULL check, which is #59's central finding.
+  So the copy routed a client to an analyst, to perform an action two files in
+  the tree describe as working and one file records as a no-op.
+- **`AttackAiInputsPanel`, "Un-discard the list — re-approving will not help."**
+  There is no un-discard control at all, and re-approving is the only thing that
+  restores that list — through #231, which is an open defect. Both halves wrong,
+  in opposite directions, in the column a consultant reads to decide what to do.
+
+### Why the domain knowledge is the trap rather than the defence
+
+Both strings were written by someone who understood the system well. That is
+what produced them: "re-release repairs it" and "un-discard" are both what the
+model of the product says should happen, and both were written without opening
+the function. **Knowing the domain is what lets you write a plausible remedy
+without checking it.** The check is not "is this the right advice" — it is
+"open the handler for the control I just named and confirm it does this".
+
+### The check
+
+Before shipping any user-facing string containing an imperative:
+
+1. Name the control it points at. If you cannot, the string is not actionable
+   and should not pretend to be.
+2. Open that control's handler and confirm the path does what the string claims.
+3. If the control's behaviour is itself a filed defect, the string may not point
+   at it — a remedy that works only through an open bug ages badly the day the
+   bug is fixed, and is a lie until then.
+
+### What this does NOT say
+
+It does not require every message to offer a remedy. "We cannot show this
+figure" with no instruction is honest and fine. The rule binds only strings that
+tell a user to DO something — an imperative is a promise that the thing exists.

@@ -555,6 +555,15 @@ a real exit code and a real date, and was the minority outcome (D-071).
   function you just changed, and when you deliberately leave a twin alone, say
   so in the code — an unstated exemption reads as an oversight to everyone who
   finds it later, including you.
+
+  **FIX FROM THE SHAPE, NOT FROM THE LIST YOU WERE HANDED — a reviewer's site
+  list is evidence that twins exist, never the set of them.** One branch produced
+  three consecutive half-fixes, each round correcting every twin it was shown and
+  none it was not. Nobody was careless: each round worked from the previous
+  review's list, which is a sample. Take the list as proof the shape exists,
+  derive the set yourself, and say in the PR what you derived it from. Expect the
+  last twin to be the one a USER reads — a hover title gets corrected while the
+  paragraph beside it does not, because the reviewer quoted the hover. (D-076.)
 - **These gates check whether a test can fail at all (#72, D-051).**
   `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
   is a two-second static pass and **runs in CI before pytest** — it flags a test
@@ -583,7 +592,18 @@ a real exit code and a real date, and was the minority outcome (D-071).
 - **Before reporting a sweep complete, name the SHAPE you searched for and one
   place it could hide that shares no vocabulary with the original.** Keyword
   sweeps keep coming back clean over live defects because the second instance
-  was written by someone using different words. `risk.py` re-derived a
+  was written by someone using different words.
+
+  **This binds PROSE sweeps identically, and prose is where it is skipped.** A
+  correction to a decision, a status or a claim gets applied to the sites
+  someone handed you, and the sentence that says the same thing in different
+  words survives. Measured: a commit titled "record the overturn where the
+  decision is looked up" corrected the three documents named in the finding and
+  left two present-tense claims standing elsewhere, because the author never
+  asked what ELSE asserted the same thing. Write the shape for prose the way you
+  would for code — "any sentence stating what happens when X fails, in the
+  present tense, or quantifying over surfaces whose behaviour now differs" — and
+  grep the bare nouns rather than the phrasing you were shown. `risk.py` re-derived a
   gap comparison instead of calling `analyze_gaps` (#84); it also reimplements
   the ATT&CK citation drop as a two-line list comprehension with no counter
   (#132), found only because the sweep asked "where else does a model's string
@@ -906,6 +926,15 @@ a real exit code and a real date, and was the minority outcome (D-071).
   have and write beside each one what the input looked like. Any entry whose
   answer is "I don't know" or "there was nothing there" is the bug, and it is
   cheaper to find on that list than in review.
+- **A USER-FACING string naming an action must name a control that exists and
+  works TODAY — verified by opening the handler, not by knowing the domain.**
+  Knowing the domain is what lets you write a plausible remedy without checking
+  it: both recorded instances were written by people who understood the system.
+  A message with no remedy is fine; an imperative is a promise the thing exists.
+  Worse than a false docstring, because a developer who acts on one learns the
+  truth in an hour and a client who acts on false copy learns nothing. **D-076**
+  carries the recorded instances and the three-step check.
+
 - **A comment or message stating a rule NARROWER than the reader will assume,
   positioned exactly where they would go to check, is worse than no comment.**
   It is true, so nothing flags it; it is where you look, so it ends the search;
