@@ -5,21 +5,29 @@ jobs return DRAFT SUGGESTIONS only; the deterministic math lives in the
 per-domain pure functions and is never asked of the model.
 
 The prompt bodies here are the engine-level skeletons. The service phases
-(D2/D3/D4/E) refine the exact suggestion schema each job emits; the parser is
-`parse_json_object_with_list(<key>)` for all four suggestion jobs, so a response
-whose top level is not an object (issue #41) — or whose list key is not a list —
-is refused rather than silently discarded. `tech_debt_extract` keeps its own
-parser but calls the same guards (#77), so the invariant now holds for every
-registered job.
+(D2/D3/D4/E) refine the exact suggestion schema each job emits; each of the four
+suggestion jobs declares `top_level_key=<key>` and `AIJob` DERIVES its parser
+from that declaration, so a response whose top level is not an object
+(issue #41), whose list key is not a list, or which omits that key entirely
+(#46) is refused rather than silently discarded.
+
+The key is declared once rather than passed twice on purpose: a job that named
+its key AND its parser could have the two disagree, which is #46 one level up.
+
+`tech_debt_extract` keeps its own parser but calls the same guards (#77), so
+the invariant now holds for every registered job.
 """
 
 from __future__ import annotations
 
 from app.ai.engine import (
     AIJob,
-    # `parse_json_object` is deliberately NOT imported any more: every job now
-    # carries a top-level shape guard, so reaching for the unguarded parser here
-    # would be a step backwards rather than a default.
+    # No parser is imported here any more. The four suggestion jobs declare
+    # `top_level_key` and `AIJob` builds the parser from it, so there is nothing
+    # to reach for -- neither the unguarded `parse_json_object` nor the guarded
+    # `parse_json_object_with_list`. A job that cannot state its key has to
+    # supply its own parser explicitly, and `tech_debt_extract` is the one that
+    # does.
     #
     # This note previously carved out `tech_debt_extract` as the one exception.
     # #77 closed that: it keeps its own parser, because the per-item coercion
@@ -28,7 +36,6 @@ from app.ai.engine import (
     # rather than reimplementing the fallbacks they exist to replace. Sharing
     # the check instead of the whole parse is what made the invariant true
     # without removing tolerance a working provider depends on.
-    parse_json_object_with_list,
     register_job,
 )
 
@@ -91,7 +98,7 @@ register_job(
     AIJob(
         name="csf_score",
         prompt=_CSF_SCORE_PROMPT,
-        parser=parse_json_object_with_list("scores"),
+        top_level_key="scores",
     )
 )
 
@@ -130,7 +137,7 @@ register_job(
     AIJob(
         name="zt_score",
         prompt=_ZT_SCORE_PROMPT,
-        parser=parse_json_object_with_list("capabilities"),
+        top_level_key="capabilities",
     )
 )
 
@@ -181,7 +188,7 @@ register_job(
     AIJob(
         name="mitre_map",
         prompt=_MITRE_MAP_PROMPT,
-        parser=parse_json_object_with_list("techniques"),
+        top_level_key="techniques",
     )
 )
 
@@ -222,6 +229,6 @@ register_job(
     AIJob(
         name="risk_synthesize",
         prompt=_RISK_SYNTHESIZE_PROMPT,
-        parser=parse_json_object_with_list("entries"),
+        top_level_key="entries",
     )
 )
