@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -116,6 +116,12 @@ def _artifact_title(db: Session, artifact_id: uuid.UUID | None) -> str | None:
     response_model=ClientDeliverableListResponse,
     summary="Released deliverables for the client (client + admin)",
 )
+# SEE `_released_service_ids_by_kind` ABOVE: this endpoint's result set is
+# asserted by a client-facing sentence on the home page ("still available under
+# Results"). Narrowing what this returns -- hiding superseded rows, a visibility
+# flag, a soft-delete, filtering by kind -- makes that sentence false without
+# touching it. Nothing here enforces the agreement; it is stated so the next
+# editor knows the dependency exists.
 def list_client_deliverables(
     client_id: uuid.UUID,
     user: Annotated[User, Depends(current_user)],
@@ -184,21 +190,217 @@ def list_client_deliverables(
 # ---------------------------------------------------------------------------
 
 
-def _latest_finalized(db: Session, model, service_id: uuid.UUID, statuses):
-    """The highest-version FINALIZED (status in `statuses`) row of `model` for a
-    service.
+def _deliverable_parent(db: Session, model, deliv: Deliverable, statuses):
+    """The parent row `deliv` was BUILT from, resolved from the deliverable
+    itself rather than from whatever is newest (#114).
 
-    Only finalized (approved/released) assessments feed the client-visible value
-    summary. A released deliverable's assessment is APPROVED/RELEASED; a
-    re-assessment opened AFTER release is a new higher-version DRAFT. Filtering to
-    finalized statuses keeps the summary pinned to released work so a post-release
-    draft can never leak its in-progress numbers to the client (§12)."""
+    `parent_version` is stamped at finalize, which is where the content freezes
+    against a specific parent (migration 0041). Resolving through it is the only
+    rule under which a dashboard's numbers and the `deliverable_version` beside
+    them describe the SAME record.
+
+    What this replaced, and why the replacement is not a refinement: the old
+    `_latest_finalized` took the highest-version row whose status was APPROVED or
+    RELEASED, and its docstring claimed that "keeps the summary pinned to released
+    work so a post-release draft can never leak its in-progress numbers to the
+    client (§12)". It did — until a consultant clicked Approve on v2. Approving is
+    a PREREQUISITE for finalizing v2, not an unusual act, so the guard's stated
+    guarantee expired at the first ordinary step of the next engagement round and
+    the client's dashboard switched to v2's numbers under a header still naming
+    v1 and the PDF they already held.
+
+    Returns None when the link cannot be established. That is two different
+    worlds, and neither may fall back to "latest":
+
+      * `parent_version` is NULL — finalized before migration 0041. Nothing ever
+        fills it in for a multi-version service (#59 is open on exactly that), and
+        guessing is the thing the column exists to prevent.
+      * no row at that version holds a finalized status.
+
+    Falling back to "latest finalized" for those rows would reinstate #114 for
+    precisely the services most likely to HAVE several versions, so every caller
+    refuses instead. `(service_id, version)` is unique in all four parent tables,
+    so `scalar_one_or_none` raising on a second row is the wanted behaviour.
+    """
+    if deliv.parent_version is None:
+        return None
     return db.execute(
-        select(model)
-        .where(model.service_id == service_id, model.status.in_(statuses))
-        .order_by(model.version.desc())
-        .limit(1)
+        select(model).where(
+            model.service_id == deliv.service_id,
+            model.version == deliv.parent_version,
+            model.status.in_(statuses),
+        )
     ).scalar_one_or_none()
+
+
+def _unresolved_parent(deliv: Deliverable, *, surface: str) -> HTTPException:
+    """The refusal both halves of #114 raise when a deliverable's parent cannot
+    be resolved. Logged with the cause, because the two ways to get here are not
+    the same fault and a single message would send the reader the wrong way.
+
+    404 rather than a 5xx keeps the transport identical to every other refusal on
+    these routes (tenant parity: 404, never 403). The MESSAGE does not reuse
+    "no released report yet", which would be false — there is one; what is
+    missing is the link saying which assessment it was built from.
+    """
+    _log.warning(
+        "client.dashboard_parent_unresolved",
+        surface=surface,
+        deliverable_id=str(deliv.id),
+        service_id=str(deliv.service_id),
+        deliverable_version=deliv.version,
+        parent_version=deliv.parent_version,
+        # Two causes named, three possible: a row PRESENT at that version with a
+        # status outside `statuses` is indistinguishable here from no row at all,
+        # and the two have different repairs. Left as-is because case three is
+        # unreachable today (finalize requires APPROVED, and no path moves a
+        # parent backwards), and it goes live the day a reopen path lands.
+        # Tracked in #238.
+        cause=(
+            "parent_version is NULL (finalized before migration 0041; see #59)"
+            if deliv.parent_version is None
+            else "no finalized parent row at that version"
+        ),
+    )
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={
+            "reason": "dashboard_version_unresolved",
+            "message": (
+                "This report cannot be shown yet: we cannot establish which "
+                "assessment version it was built from. Please contact your "
+                "consultant."
+            ),
+        },
+    )
+
+
+def _released_parent(db: Session, model, service_id: uuid.UUID, statuses):
+    """The parent row behind a service's RELEASED deliverable, or None when it
+    cannot be resolved — the value-summary half of #114.
+
+    The per-service dashboards resolve a deliverable first and pass it in; the
+    cross-service cards start from a service id, so they resolve the released
+    deliverable here. Released only, never the admin-preview `finalized`
+    fallback: §12 says a service feeds the client-visible summary once it has a
+    RELEASED deliverable, and these figures reach a client with no version label
+    beside them to qualify what they describe.
+
+    Returns None on an unresolvable parent. THREE options were available; each
+    is stated WITH ITS OWN COST, because an earlier draft put the cost of the
+    chosen option two paragraphs below the list, where a reader deciding whether
+    to overturn it never reached it.
+
+      1. **Skip the service inside the loop** (what the old code did). Rejected:
+         these four callers SUM over services, so skipping one drops its gaps or
+         its savings out of a total the client reads as the whole picture — a
+         floor presented as a figure, with nothing on the card saying so.
+      2. **Report the kind as UNRESOLVED**, which is what this does. Its cost:
+         the client sees one card of four saying the figure cannot be resolved,
+         beside a released report they can still open from `/results`. That is a
+         false NEGATIVE and it is contradicted one click away, so it is the
+         recoverable direction — the standing rule is that the cost of
+         fail-closed is rework a human can clear.
+      3. **Raise.** Rejected, and it is what an earlier version of this function
+         did. Its cost is not confined to this card: it takes the whole
+         `/value-summary` response with it, and `apps/web/src/app/home/page.tsx`
+         fetches that endpoint inside an unguarded `Promise.all` beside the
+         deliverables list, engagements and inbox, with no Next error boundary
+         anywhere under `apps/web/src/app` (confirmed by glob: only
+         `not-found.tsx` exists) — so the client loses the HOME PAGE, not one
+         card. Filed as #236.
+
+    **The trigger rates are not comparable, and that is what decided it.** The
+    raise fires when ONE service of ONE kind is unresolvable; option 2 loses a
+    single card in the same case. A whole page lost on one unresolvable service,
+    against one card saying so, is not a trade between two equal false claims.
+
+    **Nulling alone was not enough, and that is the other half of this change.**
+    A bare null already means "pending", so reusing it would tell a client who
+    HAS a released report that they do not — the exact falsehood
+    `_unresolved_parent` refuses to write. The caller therefore reports
+    `unresolved` BESIDE the null and the card says which it is. That is the
+    `not_recorded`-versus-`null` distinction this repo already draws inside a
+    single service, applied one layer out.
+
+    **What an earlier draft got wrong, stated precisely so the retraction is not
+    itself misread.** It called an unresolvable parent "a broken invariant, not a
+    state the product can reach today". The SECOND clause stands and is
+    re-asserted below. The FIRST is withdrawn: migration 0041 creates the NULL
+    deliberately for multi-version services, and `deliverable_release.py`
+    tolerates it — loudly and non-fatally, logged at WARNING precisely so it
+    cannot be mistaken for the healthy path — so it is an anticipated legacy
+    state, not a violated invariant.
+
+    **Unreachable today, for two DIFFERENT reasons, one per cause.** A NULL
+    `parent_version` cannot be produced because every `Deliverable` the product
+    builds stamps it (four finalize routes; `seed_demo.py` too), so only a
+    database carrying pre-0041 rows can hold one. A row present at that version
+    with a non-finalized status cannot be produced for an unrelated reason —
+    finalize requires APPROVED and nothing moves a parent backwards; see
+    `_unresolved_parent`. One conclusion, two arguments; neither establishes the
+    other.
+
+    **Note for whoever repairs a NULL:** `deliverable_release.py` and migration
+    0041 both say a re-release repairs it. It does not — `_release_parent`
+    returns at the NULL check — and #59 is open on exactly that, including
+    correcting those two comments. They are not corrected here: both files are
+    outside this track's territory.
+    """
+    deliv = _latest_released_deliverable(db, service_id)
+    if deliv is None:  # pragma: no cover - callers pass only released services
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_version_unresolved",
+                "message": (
+                    "This summary cannot be shown yet: a service reported as "
+                    "released has no released report. Please contact your "
+                    "consultant."
+                ),
+            },
+        )
+    row = _deliverable_parent(db, model, deliv, statuses)
+    if row is None:
+        # Logged, not raised. The refusal still has to be OBSERVABLE from the
+        # server side even though it no longer reaches the client as a 4xx --
+        # otherwise "the figure could not be resolved" becomes a state nobody
+        # can see happening. `_unresolved_parent` still builds the typed detail
+        # for the per-service dashboards, which DO refuse.
+        _log.warning(
+            "client.value_summary.parent_unresolved",
+            service_id=str(service_id),
+            deliverable_id=str(deliv.id),
+            deliverable_version=deliv.version,
+            parent_version=deliv.parent_version,
+            model=model.__name__,
+        )
+        return None
+    return row
+
+    # SYNCHRONIZED WITH `list_client_deliverables`, NOT DERIVED FROM IT, AND A
+    # CLIENT-FACING SENTENCE DEPENDS ON THE TWO AGREEING.
+    #
+    # Both select on `Service.client_id == client.id` and
+    # `Deliverable.released_at.is_not(None)`. `ValueLoopCard`'s unresolved copy
+    # tells the client their reports are "still available under Results", which
+    # is true only while this predicate and that one describe the same set.
+    # Nothing ties them and no update closes the window, because it is not a
+    # race -- it is two independently maintained predicates that happen to be
+    # identical today.
+    #
+    # The WIDENING direction is guarded by a stated rule (`_released_parent`:
+    # "Released only, never the admin-preview `finalized` fallback"). The
+    # NARROWING direction has no guard at all: if the Results list ever hides
+    # superseded rows -- it already computes `superseded` and today still lists
+    # them -- or gains a per-artifact visibility flag, a soft-delete, or filters
+    # by kind, then a client whose only report of a kind is filtered out reads
+    # "still available under Results" over a list that does not contain it.
+    #
+    # The person making that change is editing a list endpoint and has no way to
+    # know a string on the home page asserts its result set. That is what this
+    # comment buys. Deriving both from one helper is the real fix and is a
+    # refactor across two routes; filed rather than done here.
 
 
 def _released_service_ids_by_kind(
@@ -268,21 +470,61 @@ def _zt_client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
     return sr.zt_target_stage if sr is not None else None
 
 
-def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+class _KindTotal(NamedTuple):
+    """A per-kind aggregate, and WHY it is absent when it is absent.
+
+    Three states, because a bare `None` was carrying two facts (#114 review):
+
+      * `value=N,    unresolved=False` — a resolved figure.
+      * `value=None, unresolved=False` — the client has no RELEASED service of
+        this kind. Genuinely PENDING, which is what a null has always meant here.
+      * `value=None, unresolved=True`  — the client HAS one, and the deliverable
+        it is labelled with cannot be resolved to the assessment behind it.
+
+    The third is the one that had nowhere to live. Reporting it as a null would
+    tell a client who has a released report that they do not; raising took the
+    whole home page down. See `_released_parent` for the full trade.
+
+    A kind goes unresolved WHOLESALE rather than per service: these totals SUM,
+    so dropping one service's contribution would publish a floor as a figure.
+    """
+
+    value: float | int | None
+    unresolved: bool
+
+
+class _TechDebtTotal(NamedTuple):
+    """`_KindTotal` plus the savings floor flag. `cost_known` is False when a CUT
+    capability lacked a cost, so the UI can mark the figure as a floor — an
+    existing qualifier, kept distinct from `unresolved`, which is about whether
+    the figure could be computed at all."""
+
+    value: float | None
+    cost_known: bool
+    unresolved: bool
+
+
+def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
     if not service_ids:
-        return None
+        return _KindTotal(None, False)
     total = 0
-    found = False
     for sid in service_ids:
-        a = _latest_finalized(
+        # #114: the released deliverable's parent, not the latest APPROVED row.
+        # The `found` flag this loop used to carry went with the `continue` that
+        # set it. `_released_parent` now returns None where that skipped, and the
+        # kind is reported UNRESOLVED rather than summed over what is left — see
+        # `_KindTotal`. Do not restore the skip: it publishes a floor.
+        a = _released_parent(
             db,
             CsfAssessment,
             sid,
             (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED),
         )
         if a is None:
-            continue
-        found = True
+            # One unresolvable service makes the whole KIND unresolved. Summing
+            # the rest would publish a floor as a figure — option 1 in
+            # `_released_parent`, rejected there for this reason.
+            return _KindTotal(None, True)
         rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
         answers: dict[str, int | None] = {r.subcategory_code: r.maturity_tier for r in rows}
         # Per-service client tier, same as the dashboard and the exporter (#79).
@@ -292,24 +534,27 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
         total += csf_analyze_gaps(
             answers, **({"target_tier": tier} if tier is not None else {})
         ).total_gap_count
-    return total if found else None
+    return _KindTotal(total, False)
 
 
-def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
     if not service_ids:
-        return None
+        return _KindTotal(None, False)
     total = 0
-    found = False
     for sid in service_ids:
-        a = _latest_finalized(
+        # #114: the released deliverable's parent, not the latest APPROVED row.
+        # See `_csf_gap_total` above for why the `found` flag went with it.
+        a = _released_parent(
             db,
             ZtAssessment,
             sid,
             (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
         )
         if a is None:
-            continue
-        found = True
+            # One unresolvable service makes the whole KIND unresolved. Summing
+            # the rest would publish a floor as a figure — option 1 in
+            # `_released_parent`, rejected there for this reason.
+            return _KindTotal(None, True)
         fw = (
             ZtFrameworkCode.CISA_ZTMM_2_0
             if a.framework == ZtFramework.CISA_ZTMM_2_0
@@ -361,24 +606,27 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
             targets=targets,
             target_stage=resolved_stage,
         ).total_gap_count
-    return total if found else None
+    return _KindTotal(total, False)
 
 
-def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | None:
+def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
     if not service_ids:
-        return None
+        return _KindTotal(None, False)
     total = 0
-    found = False
     for sid in service_ids:
-        a = _latest_finalized(
+        # #114: the released deliverable's parent, not the latest APPROVED row.
+        # See `_csf_gap_total` above for why the `found` flag went with it.
+        a = _released_parent(
             db,
             AttackAssessment,
             sid,
             (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
         )
         if a is None:
-            continue
-        found = True
+            # One unresolvable service makes the whole KIND unresolved. Summing
+            # the rest would publish a floor as a figure — option 1 in
+            # `_released_parent`, rejected there for this reason.
+            return _KindTotal(None, True)
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
@@ -399,28 +647,30 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> int | 
         # of what you just changed finds every copy that went through it and
         # misses every other caller sitting beside it.
         total += attack_compute(coverage_map).gap
-    return total if found else None
+    return _KindTotal(total, False)
 
 
-def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> tuple[float, bool] | None:
+def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
     """(annual savings, cost_known). Savings = sum of annual cost over CUT
     capabilities; cost_known is False when any CUT item lacked a cost (so the
     figure is a floor). Mirrors routes/tech_debt.py:consolidation_plan_summary."""
     if not service_ids:
-        return None
+        return _TechDebtTotal(None, True, False)
     total = 0.0
     cost_known = True
-    found = False
     for sid in service_ids:
-        cl = _latest_finalized(
+        # #114: the released deliverable's parent, not the latest APPROVED list.
+        # See `_csf_gap_total` above for why the `found` flag went with it.
+        cl = _released_parent(
             db,
             CapabilityList,
             sid,
             (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
         )
         if cl is None:
-            continue
-        found = True
+            # See `_csf_gap_total`: one unresolvable list makes the kind
+            # unresolved rather than publishing a partial savings figure.
+            return _TechDebtTotal(None, True, True)
         items = (
             db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cl.id))
             .scalars()
@@ -432,9 +682,7 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> tuple[float
                     cost_known = False
                 else:
                     total += float(it.annual_cost_usd)
-    if not found:
-        return None
-    return (total, cost_known)
+    return _TechDebtTotal(total, cost_known, False)
 
 
 @router.get(
@@ -461,27 +709,37 @@ def value_summary(
     zt_ids = by_kind.get(ServiceKind.ZERO_TRUST_CISA, []) + by_kind.get(
         ServiceKind.ZERO_TRUST_DOD, []
     )
-    zt_gaps = _zt_gap_total(db, zt_ids)
-    attack_uncovered = _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
-    csf_gaps = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
+    zt = _zt_gap_total(db, zt_ids)
+    attack = _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
+    csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
 
-    savings = td[0] if td is not None else None
-    cost_known = td[1] if td is not None else True
-    has_any = any(v is not None for v in (savings, zt_gaps, attack_uncovered, csf_gaps))
+    has_any = any(v is not None for v in (td.value, zt.value, attack.value, csf.value))
+    # Published as its own field rather than left for the card to derive by
+    # OR-ing four booleans. The card has to render when this is True even though
+    # `has_any_data` is False -- that combination is a client who HAS released
+    # reports and no resolvable figures, and it is exactly the case that used to
+    # make the whole card disappear in silence.
+    has_unresolved = any((td.unresolved, zt.unresolved, attack.unresolved, csf.unresolved))
 
     _log.info(
         "client.value_summary.computed",
         client_id=str(client.id),
         actor_user_id=str(user.id),
         has_any_data=has_any,
+        has_unresolved=has_unresolved,
     )
     return ValueSummaryResponse(
-        tech_debt_savings_usd=savings,
-        tech_debt_savings_cost_known=cost_known,
-        zt_gap_count=zt_gaps,
-        attack_uncovered_count=attack_uncovered,
-        csf_gap_count=csf_gaps,
+        tech_debt_savings_usd=td.value,
+        tech_debt_savings_cost_known=td.cost_known,
+        tech_debt_savings_unresolved=td.unresolved,
+        zt_gap_count=zt.value,
+        zt_gap_unresolved=zt.unresolved,
+        attack_uncovered_count=attack.value,
+        attack_uncovered_unresolved=attack.unresolved,
+        csf_gap_count=csf.value,
+        csf_gap_unresolved=csf.unresolved,
         has_any_data=has_any,
+        has_unresolved=has_unresolved,
     )
 
 
@@ -608,15 +866,9 @@ def attack_dashboard(
     deliv, is_released = resolved
 
     svc = db.get(Service, service_id)
-    assessment = _latest_finalized(
-        db,
-        AttackAssessment,
-        service_id,
-        (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
-    )
-    if svc is None or assessment is None:
-        # A finalized deliverable implies a finalized assessment; if that
-        # invariant is broken, fail loudly rather than serve an empty dashboard.
+    if svc is None:
+        # A finalized deliverable implies a service; if that invariant is
+        # broken, fail loudly rather than serve an empty dashboard.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -624,6 +876,16 @@ def attack_dashboard(
                 "message": "No released ATT&CK coverage report for this service yet.",
             },
         )
+    # #114: the numbers below and `deliverable_version` in the response must
+    # name the same record, so the assessment is resolved FROM `deliv`.
+    assessment = _deliverable_parent(
+        db,
+        AttackAssessment,
+        deliv,
+        (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
+    )
+    if assessment is None:
+        raise _unresolved_parent(deliv, surface="attack_dashboard")
 
     valid = attack_all_codes()
     rows = (
@@ -754,13 +1016,7 @@ def zt_dashboard(
     deliv, is_released = resolved
 
     svc = db.get(Service, service_id)
-    assessment = _latest_finalized(
-        db,
-        ZtAssessment,
-        service_id,
-        (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
-    )
-    if svc is None or assessment is None:
+    if svc is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -768,6 +1024,15 @@ def zt_dashboard(
                 "message": "No released Zero Trust report for this service yet.",
             },
         )
+    # #114, as in `attack_dashboard` above: resolved FROM `deliv`.
+    assessment = _deliverable_parent(
+        db,
+        ZtAssessment,
+        deliv,
+        (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
+    )
+    if assessment is None:
+        raise _unresolved_parent(deliv, surface="zt_dashboard")
 
     fw = (
         ZtFrameworkCode.CISA_ZTMM_2_0
@@ -923,13 +1188,7 @@ def tech_debt_dashboard(
     deliv, is_released = resolved
 
     svc = db.get(Service, service_id)
-    cl = _latest_finalized(
-        db,
-        CapabilityList,
-        service_id,
-        (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
-    )
-    if svc is None or cl is None:
+    if svc is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -937,6 +1196,17 @@ def tech_debt_dashboard(
                 "message": "No released Tech Debt report for this service yet.",
             },
         )
+    # #114, as in `attack_dashboard` above: resolved FROM `deliv`. Tech Debt's
+    # parent is a CapabilityList rather than an assessment; `parent_version` is
+    # stamped from `cap_list.version` at finalize, so the key is the same one.
+    cl = _deliverable_parent(
+        db,
+        CapabilityList,
+        deliv,
+        (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
+    )
+    if cl is None:
+        raise _unresolved_parent(deliv, surface="tech_debt_dashboard")
 
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cl.id))
@@ -1218,14 +1488,17 @@ def csf_dashboard(
     deliv, is_released = resolved
 
     svc = db.get(Service, service_id)
-    assessment = _latest_finalized(
+    if svc is None:
+        raise not_released
+    # #114, as in `attack_dashboard` above: resolved FROM `deliv`.
+    assessment = _deliverable_parent(
         db,
         CsfAssessment,
-        service_id,
+        deliv,
         (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED),
     )
-    if svc is None or assessment is None:
-        raise not_released
+    if assessment is None:
+        raise _unresolved_parent(deliv, surface="csf_dashboard")
 
     rows = (
         db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == assessment.id))

@@ -342,3 +342,46 @@ def test_csf_dashboard_names_an_unassessed_function_rather_than_ranking_it(
     assert govern["gap_count"] == 0
     # And the headline does NOT call it the largest gap, because it has none.
     assert body["largest_gap_function"] != govern["name"]
+
+
+@pytest.mark.unit
+def test_csf_dashboard_numbers_come_from_the_version_the_header_claims(app_client) -> None:
+    """#114, CSF's half. Released v1 at tier 2; v2 approved at tier 4, unfinalized.
+
+    The dashboard must keep reporting v1's 50% under its "v1, released" header.
+    Before the fix the assessment was resolved as "latest APPROVED" while the
+    version label came from the released deliverable, so approving v2 — a
+    prerequisite for finalizing it — swapped the client's numbers underneath a
+    label that still named the report they had downloaded.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+    h = {"Authorization": f"Bearer {bearer_admin}"}
+
+    svc_id = _seed_release(c, bearer_admin, score_tier=2)
+
+    v2 = c.post(f"/csf/services/{svc_id}/assessments", headers=h)
+    assert v2.status_code == 201, v2.text
+    v2 = v2.json()
+    assert v2["version"] == 2, "the preamble did not actually cut a second version"
+    for ans in v2["answers"]:
+        c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 4})
+    assert c.post(f"/csf/assessments/{v2['id']}/approve", headers=h).status_code == 200
+
+    c.headers["X-Client-Id"] = client_id
+    r = c.get(
+        f"/clients/{client_id}/csf/{svc_id}/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["deliverable_version"] == 1, "the header stopped naming the released report"
+    assert body["current_pct"] == 50.0, (
+        "the dashboard served v2's tier-4 score (100%) under a header naming the "
+        "released v1 report, whose PDF says 50%"
+    )
+    assert body["largest_gap_pct"] == 25.0, "the gap figure came from the wrong version too"

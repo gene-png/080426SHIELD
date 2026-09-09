@@ -3975,6 +3975,210 @@ Not built. Recorded here because it is the fix that removes the class rather tha
 another field that documents it, and because the same argument applies to every
 measured claim this repo writes into prose.
 
+## D-073 — A dashboard resolves its numbers FROM the record it names, not from whatever is newest
+
+**Date:** 2026-09-08. **Closes #114.** **Extends D-053** (a guarantee that needs
+to know what the state WAS, not what it has become) and applies its shape to a
+second subsystem. **Does not supersede anything.**
+
+### The instruction, which is all most readers need
+
+When a response carries both a VALUE and a LABEL identifying where the value came
+from, resolve the value from the labelled record. Never resolve the two
+independently and render them together. `routes/clients.py` did the latter for
+the life of the client dashboards, and the two rules agreed for exactly as long
+as nobody started a second round of work.
+
+### What was wrong
+
+Four client dashboards and four value-loop cards resolved their assessment with
+`_latest_finalized` — highest-version row whose status is APPROVED or RELEASED —
+while the same response reported `deliverable_version` and `released_at` from the
+released **deliverable**. Two records, one label.
+
+The helper's docstring claimed the filter "keeps the summary pinned to released
+work so a post-release draft can never leak its in-progress numbers to the client
+(§12)". That is true of a DRAFT and false of the next status along. Approving v2
+is the mandatory step before v2 can be finalized at all, so the stated guarantee
+expired at the first ordinary action of the next engagement round, and the client
+saw v2's numbers under a header naming the v1 report they had downloaded.
+
+**The guard was keyed on the wrong thing, not merely set too loosely.** No
+tightening of a status filter fixes it, because the question "which assessment is
+this report" is not answerable from the assessment table at all. `parent_version`
+— stamped at finalize, which is where content freezes — is the only record of it,
+and `deliverable_release.py` was already using it.
+
+### What the tests could never have caught, and why
+
+`test_value_summary_ignores_post_release_draft` existed for the whole life of the
+defect and asserts the §12 guarantee by name. It cuts v2 as a **DRAFT**, and the
+old status filter did exclude drafts. So it exercised the half that worked and
+was structurally blind to the half that did not — a passing test named for the
+guarantee that broke.
+
+That is this repo's recorded shape (a test that cannot fail) reached by a route
+not previously written down: not a test deriving its expectation from the code,
+but a test whose **scenario** sits on the safe side of the boundary it claims to
+police. The tell is available without running anything: the test's setup uses one
+value of an enum, and the predicate under test discriminates several.
+
+`test_value_summary.py`'s fixtures made it worse. They built deliverables by
+direct SQL with `parent_version` left NULL — a row only a pre-migration-0041
+database can hold, since all four finalize routes and `seed_demo.py` stamp it. So
+every assertion in that file was exercising the legacy path rather than the
+shipped one, and nothing said so. A fixture that omits a field the product always
+writes does not merely under-test; it silently tests a different program.
+
+### The refusal, and why it is not a fallback
+
+Where `parent_version` is NULL, or no finalized row carries that version, the
+**four per-service dashboard routes** refuse: a typed 404
+`dashboard_version_unresolved`, plus a WARNING naming which of the two causes
+fired. **The four value-summary callers no longer do** — that raise was
+overturned 2026-09-09 and they report the kind unresolved beside a null instead;
+see the OVERTURNED paragraph below. Naming the surface rather than "the routes"
+because the behaviour now differs by surface, and an unqualified plural is what
+sends a reader to build for a refusal that half of them no longer make. `DELIVERY_PLAN.md` decided this before the
+work started, and the implementation matched the decision without needing it
+relaxed.
+
+Falling back to "latest finalized" for those rows would reinstate the defect for
+precisely the services most likely to hold several versions — a fallback whose
+failure mode is concentrated exactly where the population it serves lives.
+
+The blast radius was measured rather than assumed, and re-measured on the branch:
+`Deliverable(` is constructed in **four** places in `apps/api/app`, all four
+finalize routes, all four stamping `parent_version`; `seed_demo.py` stamps it
+too. Nothing the product or the seed can build reaches the refusal.
+
+<!-- counted: grep -rn "Deliverable(" apps/api/app --include=*.py, 2026-09-08 -->
+
+**That number carried its command because it licensed a live decision** — "the
+refusal is unreachable, so #236 can stay filed rather than fixed". **That is no
+longer the decision it licenses**: after the 2026-09-09 overturn, #236's
+disposition turns on the value-summary raise being gone rather than on the
+refusal being unreachable, and #236 stays open for the other three fetches on
+that page. The command stays because the count still describes the per-service
+dashboards, and it
+expires silently the day a fifth construction site lands without a stamp, which
+is the precise event that would reintroduce this defect. A certifying sentence
+with no command beside it is what this repo records as ending the check rather
+than inviting it.
+
+### What is deliberately left, so it is not read as an oversight
+
+**`risk_dashboard`'s READ is correct, and that is a narrower verdict than "Risk
+was checked".** It reads `version` and `entries` from the SAME `RiskRegister`
+row, so it has no pairing to break. But the register's own SOURCE selection was
+never in this sweep, and it is looser than the rule deleted here:
+`routes/risk.py::_latest` picked the newest assessment excluding only
+DISCARDED, with no finalized filter and no deliverable link, so a DRAFT
+re-assessment could be synthesized into a register that is then exported and
+served. Filed as #237.
+
+**True as at 2026-09-08, and no longer true.** #237 shipped in PR #242 the
+following day (D-075, `main` at `851348b`); `_latest` no longer exists, split
+into `_exists_for_gate`, `_finalized_for_synthesis` and `_latest_register`. Written in the past tense
+rather than deleted, because what this record is FOR is the reasoning that found
+the residual, and that reasoning is unaffected by the fix. Qualified here rather
+than left standing because the sentence named a live `mvp-blocking` defect in a
+client-facing export, which is a claim someone would act on.
+
+**There are TWO residuals in Risk, not one, and the second is in the file this
+sweep DID cover.** The paragraph above names `routes/risk.py::_latest` and stops,
+which sends a reader asking "what was left in Risk?" one issue short:
+
+- `routes/risk.py::_latest` — which assessments feed synthesis. Was tracked in
+  #237; shipped in PR #242, D-075. Synthesis now reads through
+  `_finalized_for_synthesis`; the gate is `_exists_for_gate` and still admits a
+  DRAFT, deliberately.
+- `routes/clients.py::risk_dashboard` — WHICH REGISTER the dashboard shows. It
+  selects the highest-`version` register and then refuses if that one is not
+  finalized, so generating v2 hides a finalized v1 the client has been
+  reading. Tracked in #123, open and `mvp-blocking`, and it is the next thing
+  this track ships.
+
+The sentence "it has no pairing to break" is true of the READ and is positioned
+exactly where someone would go to check the SELECTION. Naming only the residual
+in the other file is what made this narrower than it reads — the same shape the
+paragraph below records, one level out, and caught by the reviewer a second
+time.
+
+The first draft of this record said only "It was checked, not skipped", which is
+true of the read and reads as clearance for the service. That is this file's own
+narrower-than-the-reader-assumes shape, produced in the paragraph disclosing
+exemptions — and it was caught by the reviewer, not by the author.
+
+**Two refusal consequences, and the first draft disclosed one of them.** The
+dashboard half was stated; its value-summary twin was omitted, which is the
+half-fix shape recorded against #79.
+
+- **Dashboards.** The web layer keys its error copy on the HTTP **status**, not
+  on `reason`, so the new refusal renders under "hasn't been released to your
+  organization yet" — false for that branch, since the report has been released.
+  Pre-existing (the same copy already covers a wrong-tenant 404), widened by one
+  case here.
+- **Value summary, and it WAS the worse half — this is the reason it was
+  overturned on 2026-09-09, and the bullet is kept in the past tense rather than
+  deleted.** The refusal took the whole `/value-summary` response with it, and
+  `apps/web/src/app/home/page.tsx` fetches that endpoint inside an unguarded
+  `Promise.all` beside the deliverables list, engagements and inbox, with no
+  Next error boundary anywhere under `apps/web/src/app`. So the client lost the
+  home page, not one card. **`/value-summary` no longer raises**: the kind is
+  reported unresolved beside its null and the card renders a third state, so
+  #236 is not reachable from this endpoint — though #236 itself stays open,
+  because the other three fetches on that page are unchanged and there is still
+  no boundary. See the OVERTURNED paragraph below.
+
+Neither is fixed: `apps/web/src/app/**` is outside this track's territory, and
+both branches are unreachable through the product. The refusal's log also names
+two of its three possible causes — a row present at that version with a
+non-finalized status reads as no row at all — which is unreachable until a
+reopen path lands; #238.
+
+**OVERTURNED 2026-09-09, and the paragraph below is kept as the record of what
+was decided first.** The raise is gone: `_released_parent` returns None, the
+kind is reported UNRESOLVED beside its null, and `ValueLoopCard` renders a third
+state. `#236` is no longer reachable from this endpoint. Anyone reading the next
+paragraph as current would either build an error boundary for a failure that
+cannot occur, or reinstate the raise citing a rejection that has since been
+reversed.
+
+Two facts inverted the weighing, and neither was available when it was made.
+**The trigger rates are not comparable**: the raise fires when ONE of four kinds
+is unresolvable, while nulling loses the card only when ALL FOUR are — so
+raising was the common case argued as though it were the edge case. And **there
+is no `error*.tsx` anywhere under `apps/web/src/app`** (glob: only
+`not-found.tsx`), so with `/home` fetching `/value-summary` in an unguarded
+`Promise.all` it was never one card failing, it was the entire client home page
+with no boundary and no partial render. The client's report also stays reachable
+from `/results`, so a missing figure is contradicted one click away — the
+recoverable direction.
+
+The defect the original reasoning correctly identified — that a bare null means
+"pending" — was real, and is why nulling ALONE was not the answer. The reason is
+now carried beside the null.
+
+_What follows is the superseded decision, left in place rather than rewritten._
+
+**The option that was NOT taken is named in `_released_parent`'s docstring, not
+here.** Nulling the whole slot for an unresolvable service kind is implementable
+in `routes/clients.py` alone and would have kept the home page alive; it was
+rejected because a null slot already means "pending", which would tell a client
+who HAS a released report that they do not — trading one false claim for
+another. It is a judgement call rather than a clear loss, which is exactly why it
+is written at the raise instead of left as an unstated exemption.
+
+**And the correction this record makes is contradicted twice elsewhere in the
+tree, deliberately left.** `deliverable_release.py` and migration 0041 both state
+that re-releasing repairs a NULL `parent_version`. It does not — `_release_parent`
+returns at the NULL check — which is #59's central finding, and #59's own
+suggested resolution already names "correct the two comments". Both files are
+outside this track's territory, so the pointer is recorded rather than the fix
+applied. Noted because a correct claim that is the MINORITY statement in the tree
+will lose to the two older ones.
+
 ## D-075 — A suite that must change for a defect to be fixed is evidence the defect was SPECIFIED
 
 **Date:** 2026-09-08. **From #237.** Distinct from D-072 and recorded separately

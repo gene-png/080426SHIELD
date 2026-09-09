@@ -28,6 +28,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -120,6 +121,15 @@ def _attack_codes(n: int) -> list[str]:
     return [t.id for t in parent_techniques()][:n]
 
 
+def _service_ids(db: Session, client_id) -> list:
+    """Every service id belonging to a client, in insertion order."""
+    from app.models.service import Service
+
+    return list(
+        db.execute(select(Service.id).where(Service.client_id == client_id)).scalars().all()
+    )
+
+
 def _add_service(db: Session, client_id, opened_by, kind):
     from app.models.service import Service
 
@@ -129,7 +139,16 @@ def _add_service(db: Session, client_id, opened_by, kind):
     return svc
 
 
-def _release(db: Session, service_id, releaser) -> None:
+def _release(db: Session, service_id, releaser, *, parent_version: int = 1) -> None:
+    """Seed a released deliverable the way FINALIZE builds one.
+
+    `parent_version` is stamped here because all four finalize routes stamp it
+    (`attack.py`, `csf.py`, `zt.py`, `tech_debt.py`, each `parent_version=<parent>.version`)
+    and `seed_demo.py` stamps it too — a deliverable without it is a row only a
+    pre-migration-0041 database can hold. This fixture left it NULL, so it
+    described a world the product cannot produce, and every assertion built on it
+    was silently exercising the legacy path rather than the shipped one (#114).
+    """
     from app.models.deliverable import Deliverable
 
     db.add(
@@ -137,6 +156,7 @@ def _release(db: Session, service_id, releaser) -> None:
             service_id=service_id,
             title="report",
             version=1,
+            parent_version=parent_version,
             finalized_at=_NOW,
             finalized_by=releaser,
             released_at=_NOW,
@@ -205,7 +225,15 @@ def _make_released_zt(db, client_id, opened_by, *, gap_codes, released=True) -> 
     else:
         from app.models.deliverable import Deliverable
 
-        db.add(Deliverable(service_id=svc.id, title="draft", version=1, finalized_at=_NOW))
+        db.add(
+            Deliverable(
+                service_id=svc.id,
+                title="draft",
+                version=1,
+                parent_version=1,
+                finalized_at=_NOW,
+            )
+        )
         db.flush()
 
 
@@ -525,3 +553,273 @@ def test_value_summary_admin_via_header(app_client) -> None:
     )
     assert r.status_code == 200, r.text
     assert r.json()["csf_gap_count"] == 2
+
+
+@pytest.mark.unit
+def test_value_summary_ignores_a_post_release_APPROVED_reassessment(app_client) -> None:
+    """#114, the value-summary half — the case its §12 twin above cannot reach.
+
+    `test_value_summary_ignores_post_release_draft` cuts v2 as a DRAFT, and the
+    old "latest APPROVED or RELEASED" rule already excluded drafts. So that test
+    passed for the life of the defect while proving nothing about it: the status
+    filter it exercised was never the half that broke. The state that breaks is
+    v2 APPROVED — which is not an edge case but the mandatory step before v2 can
+    be finalized at all.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    admin_id = admin["user"]["id"]
+
+    from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
+
+    db = _session(c)
+    # Released v1 with 5 gaps.
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    svc_id = db.execute(select(CsfAssessment.service_id)).scalar_one()
+    # A v2 re-assessment with 9 gaps, APPROVED and NOT finalized: nothing has
+    # been delivered, and the client still holds only the v1 report.
+    v2 = CsfAssessment(
+        service_id=svc_id,
+        client_id=_uuid.UUID(cid),
+        version=2,
+        status=CsfAssessmentStatus.APPROVED,
+    )
+    db.add(v2)
+    db.flush()
+    for code in _csf_codes(9):
+        db.add(
+            CsfAnswer(
+                assessment_id=v2.id,
+                client_id=_uuid.UUID(cid),
+                subcategory_code=code,
+                maturity_tier=1,
+            )
+        )
+    db.commit()
+    db.close()
+
+    r = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["csf_gap_count"] == 5, (
+        "the executive card reported v2's 9 gaps from an assessment the client "
+        "has never been given, with no version label beside the number to say so"
+    )
+
+
+def _break_parent_link(db: Session, service_id) -> None:
+    """Point a released deliverable at a parent version that does not exist.
+
+    This constructs the LEGACY state deliberately. It is not reachable through
+    the product -- every finalize route stamps a real `parent_version` and
+    nothing moves a parent backwards -- so a pre-migration-0041 database is the
+    only place it occurs naturally, and a direct write is the only way to build
+    it in a test.
+
+    **What this is NOT.** It is not a test supplying its own precondition from
+    the thing under test (#72). The claim under test is what `/value-summary`
+    DOES when a parent cannot be resolved; the claim that releasing establishes
+    the link is a different one, is not asserted here, and is #59's. The setup
+    builds the world; the assertion is entirely about the response.
+    """
+    from app.models.deliverable import Deliverable
+
+    db.execute(
+        sa_update(Deliverable).where(Deliverable.service_id == service_id).values(parent_version=99)
+    )
+    db.flush()
+
+
+@pytest.mark.unit
+def test_value_summary_flags_are_false_when_everything_resolves(app_client) -> None:
+    """The FALSE side of every flag, through every flag's SUCCESS return.
+
+    Three tests assert the flags go True. None asserted they stay False, so an
+    implementation setting `unresolved=True` unconditionally would satisfy all
+    of them — the flag would be a constant wearing a predicate's name.
+
+    **All four kinds are seeded, and that is the point rather than thoroughness.**
+    The first version of this test seeded CSF alone, so `attack_uncovered_unresolved`
+    and `tech_debt_savings_unresolved` read False through
+    `if not service_ids: return _KindTotal(None, False)` — the empty-list early
+    return — and never through the success return the assertion is about. The
+    docstring claimed "every flag" while pinning two, which is the defect this
+    test exists to prevent, one level down. Flipping
+    `_attack_uncovered_total`'s final `_KindTotal(total, False)` to `True` left
+    the whole suite green while a client would see a real technique count
+    captioned "we're not showing a number".
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    admin_id = admin["user"]["id"]
+
+    db = _session(c)
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _make_released_attack(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_attack_codes(3))
+    _make_released_tech_debt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), cut_costs=[1000])
+    db.commit()
+    db.close()
+
+    body = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    ).json()
+
+    # Preconditions: every kind reached its SUCCESS return. Without these the
+    # flag assertions below pass through the empty-list branch and say nothing.
+    assert body["csf_gap_count"] == 5
+    assert body["zt_gap_count"] == 4
+    assert body["attack_uncovered_count"] == 3
+    assert body["tech_debt_savings_usd"] == 1000.0
+    assert body["has_unresolved"] is False
+    for flag in (
+        "csf_gap_unresolved",
+        "zt_gap_unresolved",
+        "attack_uncovered_unresolved",
+        "tech_debt_savings_unresolved",
+    ):
+        assert body[flag] is False, flag
+
+
+@pytest.mark.unit
+def test_value_summary_reports_an_unresolvable_kind_instead_of_refusing(app_client) -> None:
+    """One unresolvable kind nulls ITS slot and flags it. The others still compute.
+
+    The refusal this replaces raised out of the endpoint, and
+    `apps/web/src/app/home/page.tsx` fetches it in an unguarded `Promise.all`
+    with no Next error boundary anywhere under `apps/web/src/app` -- so one
+    unresolvable service cost the client the whole home page. Trigger rates
+    decided it: the raise fired on ONE unresolvable kind.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    admin_id = admin["user"]["id"]
+
+    db = _session(c)
+    csf_svc_before = set(_service_ids(db, _uuid.UUID(cid)))
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    csf_sid = next(iter(set(_service_ids(db, _uuid.UUID(cid))) - csf_svc_before))
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _break_parent_link(db, csf_sid)
+    db.commit()
+    db.close()
+
+    r = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, (
+        "an unresolvable parent must not refuse the whole response -- that took "
+        f"the client's home page down with it. Got {r.status_code}: {r.text}"
+    )
+    body = r.json()
+    assert body["csf_gap_count"] is None, "an unresolvable kind must not publish a figure"
+    assert body["csf_gap_unresolved"] is True, (
+        "the null must say WHY. Without this flag it reads as 'pending', which "
+        "tells a client who HAS a released report that they do not"
+    )
+    assert body["zt_gap_count"] == 4, "one unresolvable kind must not affect another"
+    assert body["zt_gap_unresolved"] is False
+    assert body["has_unresolved"] is True
+    assert body["has_any_data"] is True
+
+
+@pytest.mark.unit
+def test_value_summary_unresolved_and_pending_are_distinguishable(app_client) -> None:
+    """The discriminating test: two null slots, two different causes, told apart.
+
+    `csf_gap_count` and `zt_gap_count` are both null here. One is null because
+    the client has no released ZT service at all -- genuinely pending. The other
+    is null because the deliverable cannot be resolved to its assessment. Before
+    this change both rendered as "pending" and nothing could separate them.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    admin_id = admin["user"]["id"]
+
+    db = _session(c)
+    before = set(_service_ids(db, _uuid.UUID(cid)))
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    csf_sid = next(iter(set(_service_ids(db, _uuid.UUID(cid))) - before))
+    _break_parent_link(db, csf_sid)
+    db.commit()
+    db.close()
+
+    body = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    ).json()
+
+    assert (
+        body["csf_gap_count"] is None and body["zt_gap_count"] is None
+    ), "precondition: both slots null, so the flag is the ONLY thing separating them"
+    assert body["csf_gap_unresolved"] is True, "unresolvable -> flagged"
+    assert body["zt_gap_unresolved"] is False, "never released -> pending, NOT flagged"
+
+
+@pytest.mark.unit
+def test_value_summary_with_every_kind_unresolvable_still_renders(app_client) -> None:
+    """All four unresolvable: 200, no data, and `has_unresolved` True.
+
+    This is the case that used to disappear in silence. `ValueLoopCard` returns
+    null on `!has_any_data`, so a response with no figures and no flag renders
+    NOTHING -- no card, no message, no gap. `has_unresolved` is what keeps the
+    card on the page to say the figures could not be resolved.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_client = client["tokens"]["access_token"]
+    cid = client["user"]["client_id"]
+    admin_id = admin["user"]["id"]
+
+    db = _session(c)
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _make_released_attack(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_attack_codes(3))
+    _make_released_tech_debt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), cut_costs=[1000])
+    for sid in _service_ids(db, _uuid.UUID(cid)):
+        _break_parent_link(db, sid)
+    db.commit()
+    db.close()
+
+    r = c.get(
+        f"/clients/{cid}/value-summary",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["has_any_data"] is False
+    assert body["has_unresolved"] is True, (
+        "without this the card renders nothing at all and the client is told "
+        "nothing -- the silent disappearance this change exists to prevent"
+    )
+    for slot in (
+        "csf_gap_count",
+        "zt_gap_count",
+        "attack_uncovered_count",
+        "tech_debt_savings_usd",
+    ):
+        assert body[slot] is None, slot
+    for flag in (
+        "csf_gap_unresolved",
+        "zt_gap_unresolved",
+        "attack_uncovered_unresolved",
+        "tech_debt_savings_unresolved",
+    ):
+        assert body[flag] is True, flag
