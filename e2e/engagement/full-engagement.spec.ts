@@ -34,9 +34,13 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  * grep rather than taken on trust. Waiting is done with `locator.waitFor` via
  * the `affordance()` helper, which converts a TIMEOUT into a recorded
  * `unreachable` observation instead of a failure — so a screen that never
- * rendered is logged and the run CONTINUES to the next service. `helpers/auth`
- * and `helpers/ai` do assert internally; a throw from either surfaces as a
- * recorded `failed` step, never as an aborted run.
+ * rendered is logged and the run CONTINUES to the next service.
+ *
+ * Of the two helpers this file calls, only `helpers/auth` asserts internally;
+ * `helpers/ai` contains no assertion at all and returns silently when the
+ * offline dialog is absent. Either way a throw from either surfaces as a
+ * recorded `failed` step rather than an aborted run, because both are only ever
+ * called inside a `rec.step` body.
  *
  * ## The rule this file kept breaking, stated once
  *
@@ -118,6 +122,18 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  * which also means the offline Run-AI guard dialog appears and is acknowledged
  * (helpers/ai.ts).
  *
+ * **AFTERWARDS: `seed_demo.py` becomes a silent no-op, and this run is the
+ * reason.** The seed's guard is "does ANY `Service` row exist, for ANY tenant".
+ * This spec mints a tenant and four `Service` rows, so a later
+ * `docker compose exec -T api python scripts/seed_demo.py` prints "Services
+ * already present; skipping seeding." and exits **0** — a success message over
+ * a seed that did nothing. The only recovery is `docker compose down -v`.
+ *
+ * That is not this spec's defect (it is #65, and every spec minting a service
+ * does it), but this one is the most likely to be run just before a demo, which
+ * is exactly when someone re-seeds for a clean stack and is told it worked. The
+ * list above is not exhaustive; this is the item most likely to bite next.
+ *
  * ## Why it is opt-in, and why that is not the "spec that self-skips" defect
  *
  * `playwright.config.ts` sets `testDir: "."` with no `testIgnore`, and CI's E2E
@@ -193,9 +209,16 @@ test.use({ video: "on", trace: "on" });
 const RUN_BUDGET_MS = 45 * 60_000;
 
 // ---------------------------------------------------------------------------
-// Output folder. `e2e/artifacts/` is already gitignored (.gitignore:58,
-// confirmed with `git check-ignore -v` rather than by reading the file), so the
-// dated subfolder underneath it needs no new entry and no negation.
+// Output folder. The dated subfolder needs no new ignore entry and no
+// negation: `.gitignore` already carries the entry `e2e/artifacts/`, which
+// covers everything beneath it.
+//
+// Confirmed by RUNNING `git check-ignore -v e2e/artifacts/engagement-x/f.pdf`
+// rather than by reading the file — and cited by the quoted entry rather than
+// by a line number, because a line number is a property of a tree and not of a
+// document. An earlier version of this comment said ".gitignore:58"; the fact
+// was verified correctly and the citation was still written the one way
+// CLAUDE.md rules out.
 // ---------------------------------------------------------------------------
 
 const RUN_STAMP = new Date()
@@ -282,6 +305,12 @@ class Recorder {
   readonly notes: string[] = [];
   private seq = 0;
 
+  /** Next row number. Called at PUSH time so `#` always equals row position. */
+  private nextSeq(): number {
+    this.seq += 1;
+    return this.seq;
+  }
+
   /** A free-text observation that is not itself a step. */
   note(text: string): void {
     this.notes.push(text);
@@ -306,11 +335,18 @@ class Recorder {
     body: () => Promise<T>,
   ): Promise<T | undefined> {
     const started = Date.now();
-    this.seq += 1;
-    const seq = this.seq;
+    // The sequence number is assigned when the record is PUSHED, not on entry.
+    //
+    // Steps nest — the per-artifact downloads run inside "read the released
+    // deliverable" — and a nested step finishes first, so it is pushed first.
+    // Numbering on entry made the `#` column read 21, 22, 23, 20 down the page,
+    // and a column headed `#` reads as order. Numbering at push keeps `#`
+    // identical to the row's position, so it can never disagree with what the
+    // reader sees. The ordering is COMPLETION order, which the log says.
     try {
       const value = await body();
       const ms = Date.now() - started;
+      const seq = this.nextSeq();
       this.steps.push({ seq, phase, name, outcome: "ok", via, ms, detail: "" });
       // eslint-disable-next-line no-console
       console.log(`  ok    [${phase}] ${name} (${via}, ${ms}ms)`);
@@ -324,6 +360,7 @@ class Recorder {
             ? "indeterminate"
             : "failed";
       const detail = describe(err);
+      const seq = this.nextSeq();
       this.steps.push({ seq, phase, name, outcome, via, ms, detail });
       const marker = {
         unreachable: "MISS ",
@@ -602,6 +639,19 @@ async function saveArtifact(
         throw new Error(`download -> ${res.status()}`);
       }
       const body = await res.body();
+      // RAISE, do not note. A 200 carrying nothing is a real product defect —
+      // a truncated or missing MinIO object served as a success — and it must
+      // be loud rather than a byte count someone has to go and read.
+      //
+      // Writing it would be worse than losing it: the FOLDER is what gets
+      // opened first, and a 0-byte file with a confident
+      // `<Client>__<Service>__<name>.pdf` name is indistinguishable from a real
+      // deliverable until it opens to nothing. Never create that file.
+      if (body.length === 0) {
+        throw new Error(
+          `download -> 200 with an EMPTY body (${kind}, artifact ${artifactId}); nothing written`,
+        );
+      }
       const served = filename ?? `${serviceSlug}.${kind}`;
       const out = path.join(
         RUN_DIR,
@@ -713,6 +763,72 @@ async function visit(
 }
 
 // ---------------------------------------------------------------------------
+// Run state, hoisted so the log survives a TIMEOUT
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything `writeLog` needs, held at module scope and populated as the run
+ * proceeds.
+ *
+ * ## Why this is not a local inside a `try/finally`
+ *
+ * It was, and the `finally`'s own comment claimed it meant "a hard failure
+ * anywhere above still leaves a legible record". That is very likely FALSE for
+ * the most probable hard failure this run has.
+ *
+ * Playwright does not unwind a test body when the test times out — it abandons
+ * the pending `await` and tears the fixtures down, so a `finally` in the body
+ * never executes. `afterEach` hooks DO run after a timeout. With a 45-minute
+ * budget across roughly forty steps, several of which wait up to 240s on Run-AI
+ * and 300s on the register, a timeout is the single most likely way this run
+ * ends badly — and it is exactly the run whose partial record is worth most.
+ *
+ * **This is REASONED FROM PLAYWRIGHT'S DOCUMENTED SEMANTICS, NOT MEASURED.**
+ * Nobody has executed this file in any shell. To settle it, set
+ * `RUN_BUDGET_MS` to 30 seconds and run the spec: if `step-log.md` appears in
+ * the run folder, the `afterEach` path works; if it does not, the per-step
+ * `console.log` below is the only surviving record and this comment is wrong.
+ *
+ * The per-step `console.log` in `Recorder.step` is kept regardless. It is the
+ * mitigation that already works, because it writes as the run goes rather than
+ * at the end, and it needs no hook to fire.
+ */
+interface RunState {
+  rec: Recorder;
+  legalName: string;
+  clientEmail: string;
+  clientId: string | null;
+  serviceIds: Map<string, string>;
+  /** Captured early: after a timeout the page may be gone, the handle is not. */
+  video: ReturnType<Page["video"]>;
+  /** True only if the walk ran to the end — distinguishes a partial log. */
+  completed: boolean;
+  logged: boolean;
+}
+
+let runState: RunState | null = null;
+
+test.afterEach(async () => {
+  if (runState === null || runState.logged) return;
+  runState.logged = true;
+  let videoPath: string | null = null;
+  try {
+    videoPath = (await runState.video?.path()) ?? null;
+  } catch {
+    videoPath = null; // page torn down; the path is a convenience, not the record
+  }
+  writeLog(runState.rec, {
+    legalName: runState.legalName,
+    clientEmail: runState.clientEmail,
+    clientId: runState.clientId,
+    serviceIds: runState.serviceIds,
+    videoPath,
+    outputDir: test.info().outputDir,
+    completed: runState.completed,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The run
 // ---------------------------------------------------------------------------
 
@@ -742,6 +858,22 @@ test("full engagement: intake -> five services -> release -> client view -> back
   // `unreachable` rather than throwing the run away.
   const serviceIds = new Map<string, string>();
   let clientId: string | null = null;
+
+  // Publish the state the afterEach hook logs from. `serviceIds` is shared by
+  // REFERENCE, so entries added below are visible without a further assignment;
+  // `clientId` is a primitive and must be copied across when it is resolved.
+  // Assigned here, before the first step, so a timeout in the very first phase
+  // still produces a log rather than nothing.
+  runState = {
+    rec,
+    legalName,
+    clientEmail,
+    clientId: null,
+    serviceIds,
+    video: page.video(),
+    completed: false,
+    logged: false,
+  };
 
   try {
     // === Phase 1: the client registers and completes intake ================
@@ -918,6 +1050,8 @@ test("full engagement: intake -> five services -> release -> client view -> back
         await setActiveClient(page, mine.id);
         return mine.id;
       })) ?? null;
+    // Copy across: a primitive, so the hook cannot see the local's later value.
+    if (runState) runState.clientId = clientId;
 
     if (clientId) {
       await visit(page, rec, "admin", `/admin/queue/${clientId}`);
@@ -1545,19 +1679,23 @@ test("full engagement: intake -> five services -> release -> client view -> back
         `/admin/services/${serviceId}/${svc.workspaceSegment}`,
       );
     }
-  } finally {
-    // Written in `finally` so a hard failure anywhere above still leaves a
-    // legible record. An instrument whose log only survives a clean run tells
-    // you least exactly when you need it most.
-    const video = await page.video()?.path();
-    writeLog(rec, {
-      legalName,
-      clientEmail,
-      clientId,
-      serviceIds,
-      videoPath: video ?? null,
-      outputDir: test.info().outputDir,
-    });
+
+    // Reached only if the walk ran to the end. The log reports this, so a
+    // reader can tell a COMPLETE record from a PARTIAL one — the same
+    // ok/indeterminate discipline applied to the log itself. A truncated log
+    // that does not say it is truncated invites conclusions from absence.
+    if (runState) runState.completed = true;
+  } catch (err) {
+    // `writeLog` used to live in a `finally` here. It has moved to the
+    // `afterEach` hook above, which runs after a TIMEOUT — this block does not.
+    //
+    // What is left is still worth having: every step in this run is wrapped in
+    // `rec.step`, which catches, so nothing should reach here. If something
+    // does, it escaped the recorder and would otherwise appear in the log only
+    // as an unexplained early stop. Note it, then rethrow so the test still
+    // reports as failed.
+    rec.note(`run ABORTED outside any recorded step: ${describe(err)}`);
+    throw err;
   }
 });
 
@@ -1574,6 +1712,7 @@ function writeLog(
     serviceIds: Map<string, string>;
     videoPath: string | null;
     outputDir: string;
+    completed: boolean;
   },
 ): void {
   const ok = rec.steps.filter((s) => s.outcome === "ok").length;
@@ -1584,6 +1723,23 @@ function writeLog(
   const lines: string[] = [];
   lines.push(`# Full-engagement observation run — ${RUN_STAMP}`);
   lines.push("");
+  if (!ctx.completed) {
+    // First line in the file, before anything a reader might reason from. A
+    // truncated log that does not say it is truncated invites conclusions
+    // drawn from absence — "ATT&CK is missing" reads as a finding when it only
+    // means the run stopped before ATT&CK.
+    lines.push(
+      "> **PARTIAL RECORD — this run did NOT reach the end of the walk.**",
+    );
+    lines.push(
+      "> It timed out, threw, or was interrupted. Anything absent below is absent",
+    );
+    lines.push(
+      "> because the run stopped, NOT because the product lacks it. Draw no",
+    );
+    lines.push("> conclusions from what is missing.");
+    lines.push("");
+  }
   lines.push(
     "This run asserts nothing about content. Every line below is an OBSERVATION.",
   );
@@ -1645,6 +1801,16 @@ function writeLog(
   lines.push("");
   lines.push("## Steps");
   lines.push("");
+  lines.push(
+    "Rows are in COMPLETION order, and `#` is the row's position. A step that",
+  );
+  lines.push(
+    "contains others therefore appears AFTER them — the per-artifact downloads",
+  );
+  lines.push(
+    'are nested inside "read the released deliverable", so they are listed first.',
+  );
+  lines.push("");
   lines.push("| # | phase | step | outcome | via | ms | detail |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- |");
   for (const s of rec.steps) {
@@ -1681,6 +1847,10 @@ function writeLog(
         },
         videoPath: ctx.videoPath,
         outputDir: ctx.outputDir,
+        // False means the walk stopped early: absence below is the run's, not
+        // the product's. Machine-readable twin of the banner in the Markdown.
+        completed: ctx.completed,
+        stepOrder: "completion",
         steps: rec.steps,
         notes: rec.notes,
       },
