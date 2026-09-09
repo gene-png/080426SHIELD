@@ -4044,8 +4044,12 @@ was in code written _while applying_ a rule that would have caught it.
    rather than a number or a marker --
    `rg -n "[Uu]pload a replacement" apps/web/src apps/api/app`. The marker that
    stood here said `historical` over a present-tense claim about current code,
-   which can grow; and it certified "four" where that command returns six
-   across four files, so which four was not even determinate.)
+   which can grow; and it certified a COUNT that the command beside it does not
+   return -- so the sentence arguing "write the command rather than a number"
+   wrote a number its own command refutes. The count is deleted rather than
+   corrected, per rule 1: run the command. Measured at `db85e79`, it returns 5
+   hits across 3 files, which is neither the figure that stood here nor the file
+   count, so no correction would have been a reconciliation between them.)
    Re-approving restores _that particular list_ — but only through #231, which
    is an open defect, so it is not a remedy to point a consultant at. A reader
    consulting this entry to understand the `list_discarded` copy would have
@@ -4089,14 +4093,29 @@ where it always mattered.**
 
 ### The sharpest instance, added later: a count whose input could not produce the interesting value
 
-Asked how many clients are in the legacy-only state — the population that decides
-whether #114's value-summary slot may raise — the obvious query, run against the
-dev database, returns:
+Asked how many clients are in the legacy-only state — the population that decided,
+at the time, whether #114's value-summary slot might raise (it does not: the raise
+was overturned and the slot now nulls with a stated reason, D-073) — the obvious query, run against the
+dev database on 2026-09-08, returned:
 
     clients_with_any_released 13 | clients_legacy_only 0 | released_rows_unresolvable 0
 
-**A clean zero, from a real query, over real rows.** Read at face value it says the
-population is empty and raising is a safe stopgap.
+**A clean zero, from a real query, over real rows — as at 2026-09-08.** Read at
+face value it says the population is empty and raising is a safe stopgap.
+
+**Pinned rather than re-measured, and the reason is not caution.** This record
+names "the obvious query" and shows three lines of output; it does not contain
+the SQL. So the figure cannot be re-derived from what is written here — only
+reconstructed from a label and then published under this sentence's
+certificate, which would be a different measurement wearing the first one's
+clothes. The dev database is also re-rolled by every demo run, so a fresh
+number would go stale the same afternoon: updating it resets a clock instead of
+stopping it.
+
+None of that weakens the argument, because the load-bearing claim below is not
+the digits. It is that the dev database contains no row that could be in the
+interesting state, which is established structurally — and a teardown-and-reseed
+makes that MORE true, not less.
 
 It is worthless, and nothing in the output says so. All four `Deliverable(...)`
 construction sites stamp `parent_version` at finalize, `seed_demo.py` sets it
@@ -4137,9 +4156,33 @@ narrower and harder, and it came from the #114 track rather than this one.
 An agent reported **"risk_dashboard was checked and is correct."** It was true.
 The dashboard's read genuinely is correct — it gates on `finalized_at` and refuses
 an unfinalized register. Its reviewer caught that the sentence had been _received_
-as clearance for the Risk service, and it is not: `routes/risk.py::_latest` has no
-finalized filter at all, so DRAFT assessments unlock the gate and feed synthesis
-(#237).
+as clearance for the Risk service, and it is not: as of 2026-09-08
+`routes/risk.py::_latest` had no finalized filter at all, so DRAFT assessments
+both unlocked the gate and fed synthesis (#237).
+
+**That sentence has since split in half, and the half that survived is the one
+that hides the other. Four facts, stated separately because stating three
+reconstructs the fourth by omission** — verified at `e3163f9`, not carried
+forward:
+
+1. **`_latest` no longer exists.** #242 replaced it, so the symbol above will
+   not resolve.
+2. **Synthesis filters now.** `_finalized_for_synthesis` selects on
+   `_FINALIZED = ("approved", "released")`, so "feed synthesis" is FALSE.
+   Recorded as D-075.
+3. **The gate still admits a DRAFT.** `_exists_for_gate` returns true for one,
+   so "unlock the gate" is STILL TRUE.
+4. **That is deliberate, and a named test pins it.** Its docstring: "A DRAFT
+   counts: mapping ATT&CK before the tech-debt list is approved is a normal
+   order of work." `test_the_gate_path_must_not_filter_on_finalized` in
+   `test_risk_register.py` fails if anyone tightens it.
+
+**Clause 4 is the one that gets dropped, and it is the only one that stops the
+inference.** Write "#237 shipped and `_latest` is gone" and a reader concludes
+the gate tightened too — which would make the fix look like a workflow
+restriction nobody asked for, and would send someone to "repair" a behaviour
+that a test exists to protect. That omission was made twice on this branch's
+sibling before it was made correctly here.
 
 **Nothing in the sentence was wrong.** It was a claim about a READ that was read as
 a claim about a SERVICE, and the gap is invisible precisely because checking the
