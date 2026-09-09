@@ -4571,6 +4571,32 @@ Before shipping any user-facing string containing an imperative:
    at it — a remedy that works only through an open bug ages badly the day the
    bug is fixed, and is a lie until then.
 
+### The gate caught the author of the rule, in the act of writing the rule
+
+Recorded because it is the strongest evidence in this entry for why the class
+needs a machine rather than a resolution.
+
+Writing this record, the `CLAUDE.md` pointer beside it said "carries the two
+instances". `prettier` then reflowed the paragraph, joining "two" to "instances"
+across what had been a line break, and `check_recalled_counts` — which matches a
+spelled cardinal adjacent to a plural noun, and only ever sees what the current
+formatting puts on one line — went red.
+
+The count was wrong for the exact reason this entry exists: **the population is
+DEFINED as one that grows.** A class with two members today has three the next
+time someone writes an imperative without opening the handler. Deleted rather
+than cited, per rule 1.
+
+Two things follow, and the second is the reason this is in the record rather
+than a footnote. The gate is formatting-dependent, so a clean run before the
+formatter says nothing about the tree after it — already documented, and this is
+an instance. And the author of a rule about unchecked claims produced an
+unchecked claim inside the paragraph introducing it, and did not notice; a
+pattern-match over text did. That is the argument for mechanising a rule rather
+than writing it more forcefully, and this repo has the counter-example on record
+too — three rounds of better-worded prose about accidental issue closes produced
+a fourth accidental close, and the check produced none.
+
 ### What this does NOT say
 
 It does not require every message to offer a remedy. "We cannot show this
