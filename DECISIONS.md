@@ -3996,9 +3996,14 @@ was in code written _while applying_ a rule that would have caught it.
    **What the shipped remedy is, stated here because an earlier draft of this
    entry got it wrong in the other direction.** That draft said "re-approving is
    the _only_ thing that works", which is false and worse than the defect it was
-   describing: **uploading a replacement list works**, it is what the four
-   corrected sites now say <!-- counted: historical -->, and it is the path
-   `s4-techdebt` already drives.
+   describing: **uploading a replacement list works**, it is what the corrected
+   sites now say, and it is the path `s4-techdebt` already drives. (No count:
+   the sites live outside this document, so the rule is to write the command
+   rather than a number or a marker --
+   `rg -n "[Uu]pload a replacement" apps/web/src apps/api/app`. The marker that
+   stood here said `historical` over a present-tense claim about current code,
+   which can grow; and it certified "four" where that command returns six
+   across four files, so which four was not even determinate.)
    Re-approving restores _that particular list_ — but only through #231, which
    is an open defect, so it is not a remedy to point a consultant at. A reader
    consulting this entry to understand the `list_discarded` copy would have
@@ -4342,8 +4347,8 @@ Before fixing a defect that could have siblings:
 
 ### Why it is an expectation rather than advice
 
-Three for three this week, and in every case the finding was the SCOPE rather
-than the fix**:
+Three for three this week, and the finding was the SCOPE rather than the fix --
+on #237, the target itself:
 
 |          | Issue's suspicion                      | Shape sweep found                                                                      | What the sweep changed                                                                                                                     |
 | -------- | -------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |

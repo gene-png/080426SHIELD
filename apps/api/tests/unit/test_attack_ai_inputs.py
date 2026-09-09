@@ -368,9 +368,13 @@ def _list_with_extraction_record(
 ) -> None:
     """A Tech Debt list carrying a specific EXTRACTION record.
 
-    The three `excluded_attribution` states are decided entirely by these two
-    stored columns, so they are set here directly rather than by driving an
-    extraction -- the point is to pin what the READER does with each stored
+    The three states this PRODUCER can return -- `complete`, `unknown`,
+    `not_recorded` -- are decided entirely by these two stored columns, so they
+    are set here directly rather than by driving an extraction. (The wire field
+    has FOUR members: `retired` is applied by the caller at `sources.append(`,
+    not by `_excluded_attribution`, which is why this helper cannot produce it
+    and why the two other "tri-state" mentions in this file are correctly
+    scoped and must not be widened.) -- the point is to pin what the READER does with each stored
     shape, including the shape a clean run and a failed attribution both produce.
     """
     with TestSession() as db:

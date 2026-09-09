@@ -441,10 +441,21 @@ export function AttackAiInputsPanel({
           {notRecordedLists > 0 ? (
             <span data-testid="attack-ai-inputs-excluded-not-recorded">
               {" "}
+              {/* DOES NOT NAME THE CAUSE, and the tooltip for this same member
+                  and `_excluded_attribution` in `routes/attack.py` both already
+                  refused to. This paragraph said the lists "predate the
+                  extraction record" — a cause the stored bytes cannot support:
+                  `seed_demo.py` builds lists with neither column, so every
+                  seeded and e2e list would be described as predating a record
+                  it was created minutes after. The route says it outright:
+                  "The condition observes ABSENCE; it cannot see WHY." One copy
+                  was made honest and its twin was not, and the twin is the
+                  paragraph rather than the hover. */}
               {notRecordedLists}{" "}
-              {plural(notRecordedLists, "list predates", "lists predate")} the
-              extraction record and {plural(notRecordedLists, "makes", "make")}{" "}
-              no claim either way.
+              {plural(notRecordedLists, "list has", "lists have")} no extraction
+              record stored, so{" "}
+              {plural(notRecordedLists, "it makes", "they make")} no claim
+              either way. Hover a row for what that does and does not tell you.
             </span>
           ) : null}
           {totals.lists_with_unknown_exclusions === 0 &&

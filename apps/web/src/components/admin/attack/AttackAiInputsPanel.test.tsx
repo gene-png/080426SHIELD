@@ -88,7 +88,11 @@ describe("AttackAiInputsPanel", () => {
     vi.clearAllMocks();
   });
 
-  describe("the excluded_attribution tri-state", () => {
+  // Three of the field's FOUR members. `retired` has its own block below --
+  // named here because a three-member block titled "tri-state" is what lets a
+  // reader auditing member coverage conclude it is complete, which is the
+  // reasoning the panel header now warns about.
+  describe("excluded_attribution: complete, unknown, not_recorded", () => {
     // The reason this endpoint exists. `Reconciliation.attribution_complete` is
     // not persisted, so an empty `excluded_rows` is the stored form of BOTH
     // "nothing was excluded" and "attribution failed". Rendering the second as a
@@ -410,7 +414,14 @@ describe("AttackAiInputsPanel", () => {
       // The defect this fixture now makes visible: reusing `not_recorded` for a
       // retired list made the panel state, flatly, that a list uploaded today
       // predates the extraction record.
-      expect(screen.queryByText(/predates the extraction record/i)).toBeNull();
+      // Re-pointed at the copy that RENDERS. This used to assert the absence of
+      // "predates the extraction record", which was the not_recorded paragraph
+      // until that paragraph stopped naming a cause it cannot observe. The
+      // phrase now survives only in a `title` attribute, which `queryByText`
+      // cannot match — so the old assertion passed for a new reason and pinned
+      // nothing. The subject was never the wording: it is that a RETIRED list
+      // must not be described with the not_recorded copy.
+      expect(screen.queryByText(/no extraction record stored/i)).toBeNull();
       expect(screen.getByText("Not reported")).toBeTruthy();
       expect(screen.getByTestId("attack-ai-inputs-retired")).toHaveTextContent(
         /discarded and contributes nothing/,
