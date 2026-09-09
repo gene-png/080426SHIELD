@@ -48,6 +48,18 @@ export interface RiskEntry {
 }
 
 export interface RiskRegister {
+  /**
+   * Inputs that EXISTED and were not approved, so they contributed nothing to
+   * this register. Present and populated on the POST /generate response only.
+   *
+   * **`GET .../register/latest` always returns `[]`, and that is a limit rather
+   * than a bug in this type.** Nothing about the exclusion is persisted, so a
+   * read path cannot reconstruct it without a schema change -- tracked in #240.
+   * The consequence is that the banner below survives until the page is
+   * reloaded and no further, which the renderer says out loud rather than
+   * implying durability it does not have.
+   */
+  excluded_inputs: string[];
   id: string;
   client_id: string;
   version: number;

@@ -260,6 +260,18 @@ export function RiskRegisterDashboard(): JSX.Element {
   // on it fails as a timeout rather than as an assertion.
   const blocking = gate?.synthesizable_missing ?? [];
   const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
+  // Inputs that existed, were not approved, did not BLOCK (the unlock rule was
+  // satisfied without them) and therefore contributed nothing. The `??` guards
+  // `register` being null before anything is generated -- not an absent field,
+  // which the API always sends.
+  //
+  // **This banner survives until the page is reloaded and no further**, because
+  // nothing about the exclusion is persisted: `GET .../register/latest` returns
+  // `[]`. That is #240, which needs a migration. It is worth rendering anyway --
+  // the moment a consultant generates is the moment the omission is actionable,
+  // and for one review round this field reached no surface at all, which made
+  // "the register says so" true of nobody.
+  const excludedInputs = register?.excluded_inputs ?? [];
 
   if (gate && !gate.unlocked) {
     return (
@@ -275,6 +287,18 @@ export function RiskRegisterDashboard(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-6">
+      {excludedInputs.length > 0 ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-excluded-inputs"
+        >
+          Generated without {excludedInputs.join("; ")}. Those assessments exist
+          but are not approved, so nothing from them is in this register. The
+          exported documents do not say so — re-generate after approving them if
+          they should be included.
+        </p>
+      ) : null}
+
       {blockedFromGenerating ? (
         <p
           className="text-sm font-medium text-status-warning-fg"

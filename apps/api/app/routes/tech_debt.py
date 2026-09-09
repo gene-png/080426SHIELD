@@ -140,17 +140,29 @@ def _latest_list_or_none(db: Session, service_id: uuid.UUID) -> CapabilityList |
     #
     # THE TRUE REASONS, both of which have to hold:
     #
-    #  * where this DOES feed a client-named deliverable, the exporting caller
-    #    enforces provenance ITSELF -- each finalize checks the assessment is
-    #    APPROVED or RELEASED before rendering. The guard is at the export, not
-    #    in this resolver, which is why "latest non-discarded" is safe here.
+    #  * where this feeds a FINALIZE route, that route enforces provenance
+    #    ITSELF -- all four finalizes check the assessment is APPROVED or
+    #    RELEASED before rendering. The guard is at the export, not in this
+    #    resolver, which is why "latest non-discarded" is safe for them.
     #  * where the caller is NOT admin-only, it is the client reading their own
     #    input -- their questionnaire answers, their engagement list -- rather
     #    than consultant analysis being published back to them.
     #
+    # THE FIRST CLAUSE IS ABOUT FINALIZE ROUTES, NOT ABOUT EXPORTING CALLERS,
+    # and the difference is not pedantic -- an earlier draft said "the exporting
+    # caller", quantifying over a set whose evidence covered only the routes
+    # named finalize. `csf.py::export_playbook` is an exporting caller that is
+    # NOT a finalize: it resolves through this helper, refuses only on "No
+    # assessment yet." and "Seed the Working Profile before exporting.", and
+    # then writes client-named artifacts through `deliverable_filename`. So a
+    # DRAFT CSF assessment can be exported under a client's name today. Tracked
+    # in #243; it is pre-existing and is not fixed here.
+    #
     # It would come into scope if either stopped holding: a new caller that
     # exports without its own APPROVED/RELEASED check, or one that renders
-    # consultant analysis to a client. The test is NOT "is the caller admin".
+    # consultant analysis to a client. The test is NOT "is the caller admin" --
+    # and it is NOT "is the caller named finalize" either, which is the
+    # substitution that made the first draft of this paragraph false.
     return db.execute(
         select(CapabilityList)
         .where(

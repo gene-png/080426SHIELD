@@ -91,6 +91,18 @@ class RiskRegisterResponse(BaseModel):
     # percentage rule -- so the withheld set is rendered beside it. Without this
     # the fix would have traded a hard block for a quiet partial, which is the
     # worse of the two.
+    #
+    # WHERE IT IS RENDERED, and where it is not. The sentence above was written
+    # in the present tense before any surface read the field, and for one review
+    # round nothing did: five occurrences in the tree, none of them a consumer.
+    # Today the admin Risk Register page renders it as a banner on the POST
+    # /generate response. It is NOT persisted, so `GET .../register/latest`
+    # returns `[]` and the banner does not survive a reload; it does not reach
+    # the exported XLSX/PDF/Word, and it does not reach the client dashboard.
+    # Those three surfaces need a migration and are #240.
+    #
+    # Do not read "is rendered beside it" as covering the export. That reading
+    # is what this note exists to close.
     excluded_inputs: list[str] = []
     xlsx_artifact_id: uuid.UUID | None = None
     pdf_artifact_id: uuid.UUID | None = None

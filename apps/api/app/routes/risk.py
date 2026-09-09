@@ -620,6 +620,28 @@ def export(
     storage: Annotated[StorageBackend, Depends(_storage_dep)],
 ) -> RiskRegisterResponse:
     client = _require_client(db, cid)
+    # #237 GUARDS GENERATE, NOT EXPORT, AND THE BLAST RADIUS IS STATED RATHER
+    # THAN ASSUMED. `CLAUDE.md` requires checking it, and the 0044 precedent
+    # worked because the radius was countable ("zero RELEASED assessments").
+    #
+    # Here it is NOT countable, and that is the finding rather than an excuse.
+    # Every register created before this change was synthesized under the old
+    # `_latest`, which read DRAFT assessments. Those rows stay exportable, and
+    # `export` sets `finalized_at` -- the single condition
+    # `clients.py::risk_dashboard` gates the CLIENT dashboard on -- so exporting
+    # one publishes it.
+    #
+    # `models/risk_register.py` records no provenance: no source assessment ids,
+    # no excluded inputs. A draft-sourced register is therefore not merely
+    # unguarded, it is INDISTINGUISHABLE from an approved-sourced one after the
+    # fact, in any database. Measured on the dev database 2026-09-09: 6
+    # registers, 5 finalized, and the table has no column that could answer
+    # which of them were draft-sourced.
+    #
+    # Guarding export on TODAY's statuses would be wrong for a different reason
+    # -- D-053: it would re-read statuses that have moved since the register was
+    # built. The fix is to record provenance AT GENERATE and check that, which
+    # needs a migration and is #240.
     reg = _latest_register(db, cid)
     if reg is None:
         raise HTTPException(
