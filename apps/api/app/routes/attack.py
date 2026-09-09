@@ -2257,9 +2257,13 @@ def ai_inputs(
         #    as "N of the M lists cannot say what they dropped". True of the
         #    row and useless as advice.
         #
-        #  * `is_latest_for_service` — set to None, not False, three lines
-        #    below with its own reasoning. Listed here because this block is the
-        #    checklist and it is the field the change is about; a reader
+        #  * `is_latest_for_service` — set to None, not False, at the
+        #    `sources.append(` below, with its own reasoning there. (This said
+        #    "three lines below"; the target is thirty-seven lines away. A
+        #    distance is a claim that expires the next time anyone edits
+        #    between here and there, which is why the rule is to cite the
+        #    symbol rather than the offset.) Listed here because this block is
+        #    the checklist and it is the field the change is about; a reader
         #    auditing "was every aggregate decided?" must not find it missing.
         #
         # DELIBERATELY NOT GATED, and why:

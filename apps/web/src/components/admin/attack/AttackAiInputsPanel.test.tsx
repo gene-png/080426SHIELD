@@ -439,6 +439,11 @@ describe("AttackAiInputsPanel", () => {
         inputs({
           sources: [
             sourceList({
+              // Distinct ids. Both sources inherited the helper's "list-1"
+              // when this was written, so the fixture described two lists
+              // sharing one primary key -- impossible for the endpoint, and it
+              // duplicates the React key and the attribution `data-testid`.
+              capability_list_id: "list-complete",
               status: "approved",
               is_latest_for_service: true,
               excluded_attribution: "complete",
@@ -446,6 +451,7 @@ describe("AttackAiInputsPanel", () => {
               source_rows_total: 10,
             }),
             sourceList({
+              capability_list_id: "list-retired",
               status: "discarded",
               is_latest_for_service: null,
               sent_count: 0,
@@ -481,6 +487,7 @@ describe("AttackAiInputsPanel", () => {
         inputs({
           sources: [
             sourceList({
+              capability_list_id: "list-unknown-attr",
               status: "approved",
               is_latest_for_service: true,
               excluded_attribution: "unknown",
@@ -488,6 +495,7 @@ describe("AttackAiInputsPanel", () => {
               source_rows_total: 10,
             }),
             sourceList({
+              capability_list_id: "list-retired-2",
               status: "discarded",
               is_latest_for_service: null,
               sent_count: 0,

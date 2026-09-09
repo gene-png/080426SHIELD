@@ -41,7 +41,7 @@ import type { JSX } from "react";
  * guard.
  *
  * THE ONE THING THIS COMPONENT MUST NOT DO is render an unknowable count as a
- * number. `excluded_attribution` is a tri-state because
+ * number. `excluded_attribution` has FOUR members because
  * `Reconciliation.attribution_complete` is not persisted, so an empty
  * `excluded_rows` is the stored form of BOTH "nothing was excluded" and
  * "attribution failed". A "0 rows dropped" over the second is the persuasive
@@ -55,10 +55,19 @@ import type { JSX } from "react";
  * genuinely means zero, and `AttackHeatmapCard.test.tsx:53` rightly asserts
  * that absence means nothing was withheld.
  *
- * Here the field is a TRI-STATE, and two of its three values mean the
- * opposite of zero: `not_recorded` and `unknown` both mean WE CANNOT KNOW.
- * Only `complete` licenses a digit. So `?? 0` is right there and wrong here,
- * and the difference is in the field's shape rather than in house style.
+ * Here the field has FOUR members, and only ONE of them licenses a digit:
+ * `complete`. `not_recorded` and `unknown` both mean WE CANNOT KNOW, and
+ * `retired` means the panel is deliberately not speaking for that list at all.
+ * So `?? 0` is right there and wrong here, and the difference is in the field's
+ * shape rather than in house style.
+ *
+ * It was a tri-state until `retired` joined it, and this paragraph said so for
+ * one commit after that stopped being true. That mattered: the positive
+ * assurance below was gated on the two members that predated `retired`, and a
+ * reader auditing "which members may print a digit" from a three-value
+ * enumeration concludes `retired` licenses one. It does not -- the route sends
+ * no rows for a discarded list, so `excluded_rows_named` is 0 by construction,
+ * and printing it would be the false zero this component must not produce.
  *
  * Written down because the inconsistency is the kind someone reconciles
  * later -- and reconciling it in this direction puts the silent under-report
@@ -163,7 +172,7 @@ const REASON_COPY: Record<string, string> = {
 /**
  * What a source list may honestly say about rows dropped at extraction.
  *
- * Three returns for three states, and none of them is a bare zero. `unknown`
+ * Four returns for four states, and none of them is a bare zero. `unknown`
  * deliberately produces no digit at all: there is no number to round, hedge or
  * caveat, because the stored bytes do not contain one.
  */
@@ -213,7 +222,8 @@ function describeAttribution(list: AttackAiInputSourceList): {
  * A capability whose snapshot entry outlived its live row keeps its name and
  * vendor and loses everything descriptive. Rendering those cells as "—" would
  * say "uncategorised" where the truth is "we cannot look" — the same
- * conflation, one row down, that the tri-state above exists to refuse.
+ * conflation, one row down, that the attribution enumeration above exists to
+ * refuse.
  */
 function describeCell(
   capability: AttackAiInputCapability,
@@ -370,7 +380,7 @@ export function AttackAiInputsPanel({
       {/* Rendered whenever there are lists, including when nothing was
           withheld. A line that only appears on a bad run is one whose absence
           reads as zero — and "zero withheld" is a claim the panel is entitled
-          to make, unlike the extraction tri-state below. */}
+          to make, unlike the extraction attribution below. */}
       {sources.length > 0 ? (
         <p
           className="text-sm text-ink-secondary"
@@ -398,8 +408,8 @@ export function AttackAiInputsPanel({
         </p>
       ) : null}
 
-      {/* The tri-state, in prose. No branch here prints a zero for `unknown`,
-          and none may ever be added. */}
+      {/* The attribution enumeration, in prose. No branch here prints a zero
+          for `unknown` or for `retired`, and none may ever be added. */}
       {sources.length > 0 ? (
         <p
           className="text-sm text-ink-secondary"

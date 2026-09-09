@@ -3997,7 +3997,8 @@ was in code written _while applying_ a rule that would have caught it.
    entry got it wrong in the other direction.** That draft said "re-approving is
    the _only_ thing that works", which is false and worse than the defect it was
    describing: **uploading a replacement list works**, it is what the four
-   corrected sites now say, and it is the path `s4-techdebt` already drives.
+   corrected sites now say <!-- counted: historical -->, and it is the path
+   `s4-techdebt` already drives.
    Re-approving restores _that particular list_ — but only through #231, which
    is an open defect, so it is not a remedy to point a consultant at. A reader
    consulting this entry to understand the `list_discarded` copy would have
@@ -4341,8 +4342,8 @@ Before fixing a defect that could have siblings:
 
 ### Why it is an expectation rather than advice
 
-Three for three this week, and **both times the finding was the SCOPE rather than
-the fix**:
+Three for three this week, and in every case the finding was the SCOPE rather
+than the fix**:
 
 |          | Issue's suspicion                      | Shape sweep found                                                                      | What the sweep changed                                                                                                                     |
 | -------- | -------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
