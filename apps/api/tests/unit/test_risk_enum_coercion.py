@@ -87,17 +87,33 @@ def test_anything_else_is_refused_AND_reported(supplied) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("supplied", [None, "", "   "])
-def test_absence_is_not_a_rejection(supplied) -> None:
+def test_absence_is_not_a_rejection() -> None:
     """A field the model never sent has nothing to report.
 
     Counting these would make the rejection counter non-zero on every sparse
     but entirely valid response, which is the fastest way to get a real signal
     ignored.
     """
-    member, rejected = _coerce_enum(Likelihood, supplied)
+    member, rejected = _coerce_enum(Likelihood, None)
     assert member is None
     assert rejected is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("supplied", ["", "   ", "	"])
+def test_supplied_and_EMPTY_is_not_absence(supplied) -> None:
+    """A model that sent the field and sent it blank is not one that never sent it.
+
+    An earlier version of this file parametrised `[None, "", "   "]` through
+    ONE test, so the test agreed with the classification by construction and
+    could never have flagged the conflation — #72's shape, in the file arguing
+    against it. They are separate events and are now separate tests.
+    """
+    member, rejected = _coerce_enum(Likelihood, supplied)
+    assert member is None
+    assert rejected == "(empty string)", (
+        "an empty value was SUPPLIED, so it is reportable; only a missing key " "is absence"
+    )
 
 
 @pytest.mark.unit

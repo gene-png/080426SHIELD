@@ -370,10 +370,15 @@ def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
     non-zero on every sparse but valid response.
     """
     if value is None:
+        # ABSENT. Nothing was supplied, so there is nothing to report.
         return None, None
     raw = str(value).strip()
     if not raw:
-        return None, None
+        # SUPPLIED AND EMPTY, which is not the same event. A model that sent
+        # the field and sent it blank made a claim it could not fill in; a
+        # model that never sent it did not. Folding them together would hide
+        # the first behind the carve-out written for the second.
+        return None, "(empty string)"
     try:
         return enum_cls(raw), None
     except (ValueError, KeyError):
@@ -566,6 +571,21 @@ def generate(
     # tier returned HTTP 201 with every counter at zero. `field -> [tokens]`,
     # deduped, so the audit row names WHAT to fix rather than only how many.
     rejected_enum_values: dict[str, list[str]] = {}
+    # The OUTCOME, not a cause.
+    #
+    # `rejected_enum_values` names what to fix, and it can only see values that
+    # were SUPPLIED and unresolvable. An entry whose `likelihood` key is simply
+    # ABSENT produces the identical client-visible result -- no likelihood, no
+    # impact, no tier, em dashes down the register and a matrix that drops it --
+    # while the rejection map stays `{}` and the audit row reads as clean.
+    #
+    # That is the defect #121 is about, reachable by a second route, under a
+    # record asserting nothing went wrong. So the count below is keyed on what
+    # the CLIENT sees rather than on any enumeration of how it happened: it is
+    # non-zero exactly when an entry renders without a tier. Causes are a list
+    # and lists go stale; an outcome cannot.
+    entries_total = 0
+    entries_without_tier = 0
 
     def _record(field: str, rejected: str | None) -> None:
         if rejected is None:
@@ -583,6 +603,9 @@ def generate(
         _record("impact", im_bad)
         # Tier is ALWAYS code-derived, never AI-set.
         tier = tier_for(lk, im).value if (lk is not None and im is not None) else None
+        entries_total += 1
+        if tier is None:
+            entries_without_tier += 1
         techs = [t for t in (raw.get("linked_techniques") or []) if t in valid_techniques]
         controls = [c for c in (raw.get("linked_controls") or []) if c in valid_controls]
         axis, axis_bad = _coerce_enum(RiskAxis, raw.get("axis"))
@@ -623,9 +646,18 @@ def generate(
             "findings": len(findings),
             "batches_total": batches_total,
             "batches_failed": batches_failed,
-            # Empty dict on a clean run. Present rather than omitted so a
-            # reader can tell "nothing was rejected" from "nobody looked".
+            # Both present rather than omitted, so a reader can tell
+            # "nothing went wrong" from "nobody looked".
+            #
+            # They answer different questions and neither implies the other.
+            # `rejected_enum_values` names WHAT to fix and sees only supplied
+            # values. `entries_without_tier` is the OUTCOME and is non-zero
+            # whenever an entry reaches the client with no tier, whatever the
+            # cause -- including a key the model simply omitted, which the
+            # rejection map cannot see.
             "rejected_enum_values": rejected_enum_values,
+            "entries_total": entries_total,
+            "entries_without_tier": entries_without_tier,
         },
     )
     db.commit()
