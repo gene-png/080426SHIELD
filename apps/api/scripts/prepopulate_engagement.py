@@ -31,6 +31,33 @@ pre-population step.
     platform fills for you, and that contrast is worth demonstrating rather
     than erasing.
 
+## PRE-POPULATING ZERO TRUST DISABLES THE ON-CAMERA ZT `Run AI`
+
+Read this before scripting a take around it. `app/ai/provenance.py::protected_keys`
+protects, during a FIXTURE run, every row that is answered and whose
+`answer_source` is not `ai`. This script writes `maturity_stage` and
+deliberately does NOT stamp `answer_source`, so every row it fills is
+"answered by someone who is not the AI" -- which is true, and which makes it
+PROTECTED. A fixture `Run AI` over a pre-populated ZT assessment therefore
+drops all 37 (or 50) suggestions as `protected` and applies nothing.
+
+That protection is correct and must not be worked around. It exists because of
+a real 2026-08-07 incident in which a fixture Run-AI overwrote three of a
+client's five hand-entered answers and re-stamped all five `ai`,
+unrecoverably. Stamping `answer_source = "ai"` here to dodge it would reinstate
+exactly that defect AND assert something false about who authored the values.
+
+**So the two are mutually exclusive in fixture mode, and it is a scripting
+choice rather than a bug:**
+
+  * To DEMONSTRATE ZT `Run AI` filling an empty assessment on camera, pass
+    `--skip zt-cisa` (and/or `--skip zt-dod`) and let the demo run fill it.
+  * To demonstrate a consultant REVIEWING an already-scored ZT assessment,
+    pre-populate it and do not press Run AI.
+
+CSF does not have this problem for the field that matters: `csf_score` never
+writes `maturity_tier` at all, so pre-populating tiers cannot collide with it.
+
 ## Why it writes to the database rather than through the API
 
 Same reason `seed_demo.py` does: this is off-camera setup, not a
@@ -56,6 +83,20 @@ floor.
 
     # See what would change without writing:
     ... --client-name 'X' --dry-run
+
+**For a client created by `e2e/engagement/full-engagement.spec.ts`, the DoD
+framework does not exist** -- that spec opens four workspaces and its own
+docstring says the DoD ZTRA variant "is a fifth workspace this run does NOT
+open". A missing service is an ERROR here, by design, and one failure rolls
+back ALL of them. So that client needs:
+
+    ... --client-name 'Engagement Demo <stamp>' --skip zt-dod
+
+Omitting it produces four lines of apparent progress and then writes nothing.
+That is the intended fail-closed behaviour -- a service silently contributing
+zero rows is the defect this refuses to have -- but it is only survivable if
+you know the flag, which is why the invocation is written here rather than
+left to be discovered.
 
 This script NEVER creates a client, a service or an assessment. It fills in
 what already exists and fails loudly when something it expects is absent,
@@ -97,6 +138,7 @@ from app.models.capability import (  # noqa: E402
 )
 from app.models.client import Client  # noqa: E402
 from app.models.csf_assessment import CsfAnswer, CsfAssessment  # noqa: E402
+from app.models.service import Service  # noqa: E402
 from app.models.zt_assessment import (  # noqa: E402
     ZtAnswer,
     ZtAssessment,
@@ -105,6 +147,19 @@ from app.models.zt_assessment import (  # noqa: E402
 from app.zt.catalog import capabilities as zt_capabilities  # noqa: E402
 
 LOG = "prepopulate:"
+
+
+def _verb(dry_run: bool) -> str:
+    """ "would set" vs "set", so a per-service line cannot claim a write.
+
+    These lines are printed BEFORE `db.commit()` -- they have to be, since the
+    commit is one transaction across every service. So each one says what it
+    WILL do, and the only line that claims something happened is the "committed."
+    at the very end, below the commit that makes it true. An earlier draft
+    printed "set" identically under `--dry-run`, where nothing is set.
+    """
+    return "would set" if dry_run else "to set"
+
 
 # ---------------------------------------------------------------------------
 # The posture profile
@@ -299,7 +354,19 @@ def _latest_assessment(rows: list, label: str):
 
 def prepopulate_csf(db: Session, client: Client, dry_run: bool) -> dict[str, int]:
     """Write a maturity tier to every CSF subcategory answer."""
+    # Scoped to the client, and `_latest_assessment` picks the highest version.
+    # NOTE: the uniqueness constraint is (service_id, version), so a client with
+    # TWO CSF services would hold two v1 rows and the pick between them is
+    # arbitrary. Not reachable today -- one CSF service per client in every seed
+    # and in the engagement spec -- and stated rather than left as a silent
+    # assumption, because the ZT half is separated by `framework` and CSF has no
+    # equivalent discriminator.
     rows = list(db.scalars(select(CsfAssessment).where(CsfAssessment.client_id == client.id)).all())
+    if len({r.service_id for r in rows}) > 1:
+        raise PrepopulateError(
+            "CSF: this client has more than one CSF service, so 'the latest "
+            "assessment' is ambiguous. Refusing rather than picking one."
+        )
     assessment = _latest_assessment(rows, "CSF")
 
     answers = list(
@@ -347,7 +414,7 @@ def prepopulate_csf(db: Session, client: Client, dry_run: bool) -> dict[str, int
     # scored below tier 3, and fixture mode turns each into a register entry.
     print(
         f"{LOG} CSF v{assessment.version} ({assessment.status}): "
-        f"{written} tier(s) set, {skipped_locked} locked row(s) left alone, "
+        f"{written} tier(s) {_verb(dry_run)}, {skipped_locked} locked row(s) left alone, "
         f"{len(answers)} answer row(s) total; "
         f"{below_tier_3} below tier 3 -> {below_tier_3} risk finding(s)"
     )
@@ -389,6 +456,7 @@ def prepopulate_zt(
     seen: dict[str, int] = {}
     gaps: dict[str, int] = {}
     written = 0
+    skipped_locked = 0
 
     for cap in zt_capabilities(framework.value):
         cycle = cycles.get(cap.pillar_code)
@@ -402,6 +470,15 @@ def prepopulate_zt(
             raise PrepopulateError(f"{label} v{assessment.version}: no answer row for {cap.code}.")
         i = seen.get(cap.pillar_code, 0)
         seen[cap.pillar_code] = i + 1
+
+        # Honour `locked`, exactly as the CSF and Tech Debt halves do. An
+        # earlier draft omitted it HERE ONLY -- the twin-defect shape: fixed in
+        # two of three copies. `ZtAnswer.locked` carries "Work Order C2: a
+        # locked row is never changed by a Run-AI rerun", so a script that
+        # overwrites it is less careful than the product's own AI path.
+        if answer.locked:
+            skipped_locked += 1
+            continue
 
         current = _check_range(cycle[i % len(cycle)], 1, max_stage, f"{label} {cap.code}")
         planned = targets.get(cap.pillar_code)
@@ -426,10 +503,16 @@ def prepopulate_zt(
     by_pillar = " ".join(f"{p}={n}" for p, n in sorted(gaps.items()))
     print(
         f"{LOG} {label} v{assessment.version} ({assessment.status}): "
-        f"{written} answer(s) set, {len(answers)} row(s) total; "
+        f"{written} answer(s) {_verb(dry_run)}, {skipped_locked} locked row(s) left alone, "
+        f"{len(answers)} row(s) total; "
         f"{total_gaps} gap(s) -> {total_gaps} risk finding(s) [{by_pillar}]"
     )
-    return {"written": written, "total": len(answers), "gaps": total_gaps}
+    return {
+        "written": written,
+        "locked": skipped_locked,
+        "total": len(answers),
+        "gaps": total_gaps,
+    }
 
 
 def prepopulate_tech_debt(db: Session, client: Client, dry_run: bool) -> dict[str, int]:
@@ -440,7 +523,16 @@ def prepopulate_tech_debt(db: Session, client: Client, dry_run: bool) -> dict[st
     lacked a cost" caption.
     """
     lists = list(
-        db.scalars(select(CapabilityList).where(CapabilityList.client_id == client.id)).all()
+        # `CapabilityList` has NO `client_id` -- it hangs off the SERVICE, and
+        # reaching it needs the join the product's own routes use (`attack.py`
+        # does exactly this). An earlier draft wrote `CapabilityList.client_id`,
+        # which raises AttributeError PAST this function's error handling, so
+        # the script could never commit anything under any invocation.
+        db.scalars(
+            select(CapabilityList)
+            .join(Service, CapabilityList.service_id == Service.id)
+            .where(Service.client_id == client.id)
+        ).all()
     )
     if not lists:
         raise PrepopulateError(
@@ -451,12 +543,19 @@ def prepopulate_tech_debt(db: Session, client: Client, dry_run: bool) -> dict[st
     live = [lst for lst in lists if str(lst.status) != "discarded"]
     if not live:
         raise PrepopulateError("Tech Debt: every capability list is discarded.")
-    lst = max(live, key=lambda x: getattr(x, "version", 0) or 0)
-    if str(lst.status) not in {"draft"}:
+    lst = max(live, key=lambda x: x.version)
+    # Match the PRODUCT's rule, which refuses only RELEASED (and DISCARDED,
+    # already filtered above). An APPROVED list stays editable ON PURPOSE --
+    # D-053, the security-classification confirm queue and excluded-row
+    # recovery both depend on it. An earlier draft refused anything but
+    # `draft` and blamed a release that had not happened, which is CLAUDE.md's
+    # "correct constraint, false citation": a reader checks the reason, finds
+    # it false, and may discard a constraint that was right.
+    if str(lst.status) == "released":
         raise PrepopulateError(
-            f"Tech Debt: list is {lst.status}; only a draft accepts edits "
+            f"Tech Debt: list v{lst.version} is released and is locked "
             '(the API returns 409 "This capability list has been released '
-            'and is locked.").'
+            'and is locked."). Re-extract to a new draft, or --skip tech-debt.'
         )
 
     items = list(
@@ -508,7 +607,7 @@ def prepopulate_tech_debt(db: Session, client: Client, dry_run: bool) -> dict[st
 
     print(
         f"{LOG} Tech Debt list {lst.id} ({lst.status}): {len(items)} row(s); "
-        f"filled category={filled_category} cost={filled_cost} "
+        f"{_verb(dry_run)} category={filled_category} cost={filled_cost} "
         f"licences={filled_licences} disposition={filled_disposition}"
     )
     return {
