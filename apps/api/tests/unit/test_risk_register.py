@@ -262,6 +262,41 @@ def test_an_ABSENT_enum_key_still_moves_a_counter(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_coercion_works_THROUGH_generate_not_only_in_isolation(app_client) -> None:
+    """The Title-Case form, end to end.
+
+    An adversarial pass found that every existing `register_static` payload in
+    this file uses exact snake_case, so `_coerce_enum`'s normalisation branch
+    was proven only in isolation and never through the route. Concretely: at
+    that point `_record` could have had a no-op body and every test still
+    passed.
+
+    This is the literal #121 scenario -- a model obeying the OLD prompt -- and
+    it must now produce a real tier rather than an em dash.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(_one_entry(technique, likelihood="Very High", impact="Catastrophic")),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, r.text
+    e = r.json()["entries"][0]
+    assert e["likelihood"] == "very_high"
+    assert e["impact"] == "catastrophic"
+    # Very High x Catastrophic -> critical, by rule 1 of `tier_for`.
+    assert e["tier"] == "critical"
+
+    details = _generated_audit(c, bearer)
+    assert details["rejected_enum_values"] == {}, "a coerced value is not a rejection"
+    assert details["entries_without_tier"] == 0, details
+
+
+@pytest.mark.unit
 def test_a_clean_run_records_zero_rather_than_nothing(app_client) -> None:
     """Absence of a finding must be a stated zero, not a missing key.
 

@@ -40,13 +40,31 @@ each one through the enum the ROUTE actually validates with. A token the prompt
 instructs and the parser rejects is the defect, stated as the empirical table
 in #121. Nothing is asserted about tokens the prompt does not mention.
 
-## The second half is the one that was actually missing
+## Which assertion pins which case — measured, because I got it backwards
 
-Requiring every OFFERED token to parse is not enough on its own: a prompt that
-offers no tokens at all passes it vacuously, and that is precisely what
-`likelihood` and `impact` did — `"likelihood": "..."` in the JSON example, with
-only a Title-Case prose range to go on. So a field must also OFFER something. A
-model cannot copy a token it was never shown.
+**`test_every_token_the_prompt_offers_is_accepted_by_the_parser` is the #121
+assertion.** On the pre-fix prompt it goes red on all four tokens: `Very Low`,
+`Very High`, `Negligible`, `Catastrophic`.
+
+**`test_prompt_offers_at_least_one_token_for_every_enum_field` PASSES on the
+pre-fix prompt** and never could have caught #121. An earlier version of this
+docstring claimed the opposite. The reason it passes is the `..` branch in
+`_tokens_offered`: `likelihood (Very Low..Very High)` yields the two endpoints,
+which is non-empty, so the offers-something check is satisfied by the very
+prose that caused the defect.
+
+Worth correcting rather than rewording, because this file is the record of
+which assertion holds which case. A future reader judging the `..` branch to be
+noise and deleting it would make the REAL assertion vacuous for range-form
+fields, while this docstring told them the other one had it covered.
+
+So test 1 guards a DIFFERENT case: a field whose prompt names no token at all.
+`recommended_action` is one deleted prose parenthetical away from that today,
+since its JSON example is still `"recommended_action": "..."`.
+
+It also stands as evidence the two assertions were not verified red-on-revert
+INDIVIDUALLY when written: the red-first run named only test 2, and the
+docstring was written from intent rather than from that output.
 """
 
 from __future__ import annotations
@@ -145,10 +163,14 @@ def test_prompt_offers_at_least_one_token_for_every_enum_field(
 ) -> None:
     """A model cannot copy a token it was never shown.
 
-    This is the half that `likelihood` and `impact` failed: the JSON example
-    gave them `"..."` and the prose gave a Title-Case range, so the prompt
-    named no token the parser would accept — and a per-token check alone would
-    have passed vacuously over it.
+    NOT the #121 assertion — see the module docstring. This passed on the
+    pre-fix prompt, because `(Very Low..Very High)` offers two tokens and this
+    check only asks whether anything was offered at all.
+
+    What it guards is a field whose prompt names NO token.
+    `recommended_action` is one prose parenthetical away from that today: its
+    JSON example is `"recommended_action": "..."`, so deleting the prose list
+    would leave a model nothing to copy, and only this assertion would say so.
     """
     prompt = get_job(job_name).prompt
     offered = _tokens_offered(prompt, field)
@@ -165,10 +187,11 @@ def test_prompt_offers_at_least_one_token_for_every_enum_field(
 def test_every_token_the_prompt_offers_is_accepted_by_the_parser(
     job_name: str, field: str, enum_cls: type
 ) -> None:
-    """The #121 table, as an assertion.
+    """**This is the #121 assertion.** The table in the issue, executable.
 
-    `likelihood 'Very High' -> None` was the shipped behaviour. A token the
-    prompt instructs and the parser drops is a silent zero, not an error.
+    A token the prompt instructs and the parser drops is a silent zero, not an
+    error. Verified red on the pre-fix prompt for all four tokens, which is
+    what makes this the assertion holding the case rather than its neighbour.
     """
     prompt = get_job(job_name).prompt
     offered = _tokens_offered(prompt, field)
@@ -192,9 +215,12 @@ def test_the_field_list_still_matches_the_route() -> None:
 
     It is a list, and this repo has a standing rule against those: a list is a
     sample, and the fields it omits are exactly the ones that drift unnoticed.
-    Deriving the set from source is not available here without importing the
-    route module's internals, so the next best thing is to fail loudly when the
-    number of `_enum_or_none` call sites stops matching what is covered.
+    An earlier version said deriving the set from source was "not available
+    here" — inside a function that opens `risk.py` and reads it. The read
+    a derivation needs is the read this test already performs, so the claim
+    was false on its own line. What is true is narrower: the ENUM a field is
+    validated against cannot be recovered from a call-site count, so the
+    mapping stays hand-written and the COUNT is what gets checked.
 
     Read as a SHAPE rather than a symbol: it counts the call sites in the file
     rather than naming them, so renaming a variable does not break it and
