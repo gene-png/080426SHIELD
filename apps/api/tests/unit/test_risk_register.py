@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
@@ -60,6 +61,22 @@ def app_client(tmp_path) -> Iterator[tuple[TestClient, FixtureProvider]]:
     app.dependency_overrides[_storage_dep] = lambda: storage
     with TestClient(app) as c:
         yield c, provider
+
+
+def _session():
+    """A read/write session on the SAME database the TestClient is using.
+
+    `app_client` sets `DATABASE_URL` and overrides `get_db` with its own
+    factory, so a test that needs to inspect or mutate a row has no handle. It
+    opens a second session on that URL rather than re-plumbing the fixture --
+    SQLite over a file, so both see the same data.
+    """
+    import os
+
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    return sessionmaker(bind=engine, future=True)()
 
 
 def _admin(c: TestClient) -> tuple[str, str]:
@@ -315,6 +332,119 @@ def test_a_clean_run_records_zero_rather_than_nothing(app_client) -> None:
     assert details["rejected_enum_values"] == {}
     assert details["entries_without_tier"] == 0
     assert details["entries_total"] == 1
+
+
+@pytest.mark.unit
+def test_generate_records_what_it_was_built_from(app_client) -> None:
+    """#240. The register now says what it was synthesized from.
+
+    Nothing on `risk_registers` recorded which assessments, versions or
+    statuses fed it, so `export` could not have checked provenance even if it
+    had wanted to -- which is why #242 could close the generate half of #237
+    and not the export half named in its own title.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    reg = (
+        _session()
+        .execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    assert reg is not None
+    prov = reg.provenance
+    assert prov is not None, "a generated register must record its inputs"
+    kinds = {i["kind"] for i in prov["inputs"]}
+    assert "attack" in kinds, prov
+    for i in prov["inputs"]:
+        assert i["status"] in ("approved", "released"), i
+        assert isinstance(i["version"], int)
+        assert i["assessment_id"]
+
+
+@pytest.mark.unit
+def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> None:
+    """The export half of #237, closed against the SNAPSHOT.
+
+    The status is read from what was recorded at generate, never recomputed --
+    recomputing would read TODAY's statuses, so an assessment approved after
+    generation would certify a register that never saw it (D-053).
+
+    So this test mutates the stored provenance rather than the assessment: that
+    is the only way to express "the register was built from a draft" once the
+    generate path refuses to build one, and it is the state a pre-#242 register
+    is actually in.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    prov = dict(reg.provenance)
+    prov["inputs"] = [{**i, "status": "draft"} for i in prov["inputs"]]
+    reg.provenance = prov
+    db.add(reg)
+    db.commit()
+
+    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert r.status_code == 409, r.text
+    msg = r.json()["error"]["message"]
+    assert "not approved" in msg, msg
+    assert "attack" in msg, "the refusal must NAME which input, not just refuse"
+
+    # And nothing was published.
+    db.refresh(reg)
+    assert reg.finalized_at is None
+
+
+@pytest.mark.unit
+def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(app_client) -> None:
+    """NULL provenance is 'not recorded', not 'nothing was excluded'.
+
+    A register whose inputs were never captured cannot be certified either way,
+    so it is refused -- missing data defaults to UNCONFIRMED. The carve-out for
+    an ALREADY-finalized register is covered by the next test: blocking a
+    re-export protects nobody and breaks a working path.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = None  # a pre-0047 row
+    db.add(reg)
+    db.commit()
+
+    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert r.status_code == 409, r.text
+    assert "predates provenance recording" in r.json()["error"]["message"]
 
 
 @pytest.mark.unit
