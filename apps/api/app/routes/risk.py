@@ -872,6 +872,8 @@ def _serialize(
 
     return RiskRegisterResponse(
         excluded_inputs=excluded_inputs or [],
+        entries_total=len(entries),
+        entries_without_tier=sum(1 for e in entries if e.tier is None),
         id=register.id,
         client_id=register.client_id,
         version=register.version,

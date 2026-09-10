@@ -60,6 +60,22 @@ export interface RiskRegister {
    * implying durability it does not have.
    */
   excluded_inputs: string[];
+  /**
+   * #121's outcome counters.
+   *
+   * An entry stored with no tier renders as em dashes, is dropped from the 5x5
+   * matrix, and is still counted by `total_entries` -- so a register can report
+   * forty open risks whose matrix sums to fewer than forty with nothing saying
+   * why. Two causes reach that state: a value the model supplied that would not
+   * resolve, and a key it simply omitted. These count the OUTCOME, so they are
+   * non-zero under either.
+   *
+   * Unlike `excluded_inputs` above, these are DERIVED server-side from the
+   * stored entries rather than being a property of the generate call, so they
+   * are correct on `GET .../register/latest` too and survive a reload.
+   */
+  entries_total: number;
+  entries_without_tier: number;
   id: string;
   client_id: string;
   version: number;
