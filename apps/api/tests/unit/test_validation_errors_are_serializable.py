@@ -119,7 +119,10 @@ async def test_an_ordinary_error_passes_through_unchanged() -> None:
     assert detail["type"] == original[0]["type"]
     assert detail["loc"] == list(original[0]["loc"])
     assert detail["msg"] == original[0]["msg"]
-    assert detail["ctx"] == {"le": "4"}, (
-        "an ordinary range refusal's ctx must survive intact. If this became "
-        "empty, the handler is deleting ctx rather than making it serialisable."
+    assert detail["ctx"] == {"le": 4}, (
+        "an ordinary range refusal's ctx must survive intact, and `le` must "
+        "stay an INT. A previous hand-rolled coercion stringified every ctx "
+        "value, so this went out as {'le': '4'} -- a wire-format change for "
+        "every client, to fix a case that only ever involved ctx['error']. "
+        "This assertion pinned that regression until review caught it."
     )
