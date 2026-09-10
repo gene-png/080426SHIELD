@@ -509,3 +509,93 @@ def test_every_value_in_removed_counts_is_a_count_of_removals() -> None:
     assert all(
         isinstance(v, int) and 0 < v <= 50 for v in counts.values()
     ), f"a value is not a plausible removal count: {counts}"
+
+
+# ---------------------------------------------------------------------------
+# #152 and #153: the leaks item 10 filed rather than fixed.
+#
+# Both were found by adversarial review, verified by running, and held open
+# deliberately. Both are `client-data-egress` on a FedRAMP target, so a miss
+# here reaches a third-party provider with the client's identifiers in it.
+# ---------------------------------------------------------------------------
+
+_PHONE_LEAKS = [
+    ("uk national written bare", "02079460958"),
+    ("e164 with the plus coerced off", "442079460958"),
+    ("us international dialling prefix", "011 44 20 7946 0958"),
+    ("itu standard idd prefix", "00 44 20 7946 0958"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("shape, text", _PHONE_LEAKS, ids=[s for s, _ in _PHONE_LEAKS])
+def test_the_three_phone_formats_that_leaked_are_cut(shape: str, text: str) -> None:
+    """#153, verified by running before the fix and after.
+
+    The old bare-run rule was `digits == 10 or (digits == 11 and starts with
+    1)` -- NANP-shaped, derived from a NANP-heavy corpus. The replacement is
+    derived from ITU-T E.164 (15-digit cap, assigned country codes) and E.123
+    (`0` trunk prefix, `00`/`011` international access), so it is checkable
+    against a standard rather than against recall.
+    """
+    out, counts = redact_for_ai(text, mode="strict")
+    assert "[PHONE]" in out, f"{shape}: leaked verbatim"
+    assert counts.get("phone"), f"{shape}: cut but not counted"
+
+
+@pytest.mark.unit
+def test_the_port_list_the_four_group_cap_protects_still_survives() -> None:
+    """The cost the widened pattern must not re-incur.
+
+    `{1,3}` was chosen to stop the rule eating this line, which is five groups
+    of exactly 15 digits WITH a three-digit group -- so neither the count test
+    nor the three-digit test excludes it. The fifth group is now allowed only
+    behind an international access prefix, and `22` is not one.
+
+    Without this assertion the #153 fix silently trades one leak class for a
+    LEAVE-class regression, which is how the cap came to exist in the first
+    place.
+    """
+    out, counts = redact_for_ai("Ports 22 80 443 3389 8080", mode="strict")
+    assert "[PHONE]" not in out
+    assert not counts.get("phone")
+
+
+_SIGNATURE_LEAKS = [
+    ("signatory line ends in punctuation", "Dana Whitfield, CISO."),
+    ("name with suffix, as the LAST line", "John Smith Jr."),
+    ("rank and initials, five tokens", "Lt. Col. Dana M. Whitfield"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("shape, tail", _SIGNATURE_LEAKS, ids=[s for s, _ in _SIGNATURE_LEAKS])
+def test_the_signature_blocks_that_leaked_are_cut(shape: str, tail: str) -> None:
+    """#152, and the fixture is built so it CANNOT pass on another branch.
+
+    That is the whole point. `SIGNATURE_REDACT` already has a row named
+    "name with suffix" containing `John Smith Jr.` -- and it passes because a
+    LATER line is a clean signatory and the final line fires the ZIP branch of
+    `_RE_CONTACT_HINT`. The named line's classification is irrelevant to the
+    assertion, so the row proves nothing about the thing it is named for.
+
+    `CLAUDE.md` records that exact defect for this same file: the fixture
+    written to prove the phone branch contained `Arlington VA 22209` and passed
+    on the ZIP branch.
+
+    So the text here carries NO other signal -- no second signatory, no ZIP, no
+    phone, no email -- and the assertions below verify that rather than assume
+    it. If any of them starts firing, this test stops testing what it is named
+    for and says so.
+    """
+    text = "Findings follow.\nBest,\n" + tail
+    out, counts = redact_for_ai(text, mode="strict")
+
+    # The branches that must NOT be carrying this fixture.
+    assert not counts.get("phone"), f"{shape}: a phone signal is doing the work"
+    assert not counts.get("email"), f"{shape}: an email signal is doing the work"
+    assert not counts.get("address"), f"{shape}: an address/ZIP signal is doing the work"
+
+    assert counts.get("signature_block"), f"{shape}: the sign-off was not cut"
+    surname = tail.replace(",", " ").split()[-1].rstrip(".")
+    assert surname not in out, f"{shape}: {surname!r} egressed"
