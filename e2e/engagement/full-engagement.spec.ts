@@ -5,6 +5,7 @@ import { test, type Locator, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, register, signIn } from "../helpers/auth";
 import { acknowledgeOfflineAi } from "../helpers/ai";
+import { assertAiMode, intendedAiMode } from "../helpers/aiModeGate";
 
 /**
  * FULL-ENGAGEMENT DEMO RUN — an OBSERVATION INSTRUMENT, not a gate.
@@ -1545,6 +1546,45 @@ interface RunState {
 }
 
 let runState: RunState | null = null;
+
+/**
+ * REFUSE TO START IN THE WRONG AI MODE.
+ *
+ * Failed-item 2.2: a `docker compose down -v` or a deleted credential row
+ * reverts the stack to fixture with no announcement, and the worst outcome
+ * available is recording a whole take in fixture believing it is live. That
+ * remedy used to be "a human checks the badge first". This is the gate.
+ *
+ * Symmetric on purpose -- see `helpers/aiModeGate.ts`. A rehearsal declares
+ * `fixture` (the default) and refuses if the stack is live; a take declares
+ * `live` and refuses if the stack is fixture.
+ *
+ * A SEPARATE CONTEXT, deliberately. `test.use` above puts video on the test's
+ * own context, and this sign-in is scaffolding rather than demonstration --
+ * routing it through the recorded page would put a throwaway login at the
+ * front of the take. It costs one extra sign-in, which is the right price for
+ * the one failure mode that cannot be repaired in post.
+ */
+test.beforeAll(async ({ browser }) => {
+  // The hook needs its OWN timeout. `test.setTimeout(RUN_BUDGET_MS)` is called
+  // inside the test body and does not cover a `beforeAll`, so this hook would
+  // otherwise inherit the config's 90s -- and MEASURED 2026-09-10, a cold
+  // sign-in plus a first compile of the `/api/proxy/admin/ai-status` route took
+  // 78s on one attempt and 14s on the next. A gate that times out on a cold
+  // stack fails the whole run before it starts, which makes the guard itself
+  // the thing that breaks the take.
+  test.setTimeout(5 * 60_000);
+
+  const intended = intendedAiMode();
+  const ctx = await browser.newContext();
+  try {
+    const probe = await ctx.newPage();
+    await signIn(probe, ADMIN_EMAIL, ADMIN_PASSWORD);
+    await assertAiMode(probe, intended);
+  } finally {
+    await ctx.close();
+  }
+});
 
 test.afterEach(async () => {
   if (runState === null || runState.logged) return;
