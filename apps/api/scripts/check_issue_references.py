@@ -191,7 +191,16 @@ def main(argv: list[str] | None = None) -> int:
         "issue later.\n\n"
         "Quotes, code fences and HTML comments are NOT exempt; the second "
         "accidental close in this repo was a quoted sentence, and the third was "
-        "a sentence warning about the second.",
+        "a sentence warning about the second.\n\n"
+        "TO QUOTE EVIDENCE WITHOUT TRIPPING THIS: cite by SHA and paraphrase the "
+        "keyword. Writing that a commit body pairs a closing verb with 115, twice, "
+        "keeps the evidence and breaks the adjacency. Rewriting the quote to use a "
+        "digitless placeholder destroys it, and this repo documents by quoting.\n\n"
+        "AND IT IS NOT ONLY SENTENCES. A keyword ending a HEADING and a number "
+        "opening the next block read as adjacent across the newline, while "
+        "rendering as two separate elements -- so no care about sentences catches "
+        "it. Never end a heading with close/fix/resolve, and never begin a block "
+        "with a bare number reference.",
         file=sys.stderr,
     )
     return 1

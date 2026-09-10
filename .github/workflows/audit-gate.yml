@@ -99,7 +99,23 @@ jobs:
         run: |
           printf '%s' "$PR_TITLE" > /tmp/pr_title.txt
           printf '%s' "$PR_BODY"  > /tmp/pr_body.txt
-          git log --format=%B "origin/${{ github.base_ref }}...HEAD" > /tmp/pr_commits.txt
+          # TWO dots, and the difference is the whole bug.
+          #
+          # For `git diff`, `A...B` means "changes since the merge base". For
+          # `git log` it means the SYMMETRIC DIFFERENCE -- every commit on A
+          # that B lacks, as well as B's own. Same spelling, opposite meaning,
+          # which is why this read as correct for as long as it did.
+          #
+          # So this collected the BASE's commits whenever the branch was behind,
+          # and the guard then judged a PR on prose nobody on it had written.
+          # It stayed silent only because no message on `main` had ever carried
+          # a closing keyword beside a number -- until #269's squash, whose
+          # subject ends `(#115)` and whose body says "The guard written to
+          # close #115 reproduced #115 on that input". Every open PR three
+          # commits behind then failed on someone else's sentence.
+          #
+          # `A..HEAD` is the branch's own commits and nothing else.
+          git log --format=%B "origin/${{ github.base_ref }}..HEAD" > /tmp/pr_commits.txt
           echo "commit messages collected:"; wc -l < /tmp/pr_commits.txt
 
       - name: The PR template must not satisfy the audit gate by itself
