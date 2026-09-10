@@ -210,9 +210,7 @@ def test_the_client_document_says_the_stored_target_was_not_used() -> None:
     from app.zt.exporters import _gap_plan_caption
 
     code = _first_code(CISA)
-    disclosed = _gap_plan_caption(
-        analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 7})
-    )
+    disclosed = _gap_plan_caption(analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 7}))
     assert code in disclosed, f"the caption does not name the row: {disclosed!r}"
     assert "not a valid stage" in disclosed, disclosed
 
@@ -228,8 +226,6 @@ def test_an_ordinary_engagement_carries_no_disclosure() -> None:
     from app.zt.exporters import _gap_plan_caption
 
     code = _first_code(CISA)
-    clean = _gap_plan_caption(
-        analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 4})
-    )
+    clean = _gap_plan_caption(analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 4}))
     assert "not a valid stage" not in clean, clean
     assert "Engagement target S3" in clean, "the existing caption must survive"
