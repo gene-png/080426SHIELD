@@ -229,6 +229,36 @@ test("warm every demonstration route and measure the saving", async ({
     await warm(page, r, "admin");
   }
 
+  // The AI-status PROXY route, warmed by fetching it rather than visiting it.
+  //
+  // Not a page, so `warm()`'s `page.goto` is the wrong instrument -- but it is
+  // compiled on demand exactly like one, and the full-engagement spec's
+  // `beforeAll` mode gate is its FIRST caller. Measured 2026-09-10: cold, that
+  // gate took 78s and blew a 90s hook timeout; warm, 14s. A guard that fails
+  // the run before it starts is worse than no guard, so this route is warmed
+  // with everything else.
+  {
+    const route = "/api/proxy/admin/ai-status";
+    const samples: Array<number | null> = [];
+    let note = "";
+    for (let visit = 0; visit < VISITS; visit++) {
+      const t0 = Date.now();
+      const res = await page.request.get(route);
+      samples.push(Date.now() - t0);
+      // Record a bad STATUS: a 401 or 500 warms the route just as well as a
+      // 200, so timing alone would report a successful warm-up of an endpoint
+      // the gate cannot actually read.
+      if (!res.ok()) note = `HTTP ${res.status()}`;
+    }
+    const cold = samples[0];
+    const steady = samples[samples.length - 1];
+    timings.push({ route, group: "admin", samples, cold, warm: steady, note });
+    // eslint-disable-next-line no-console
+    console.log(
+      `warm: ${route.padEnd(46)} ${samples.map((s) => String(s).padStart(6)).join(" ")} ms ${note}`,
+    );
+  }
+
   for (const [kind, segment] of wanted) {
     const id = idFor[kind];
     if (!id) {
