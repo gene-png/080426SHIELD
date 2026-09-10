@@ -197,13 +197,58 @@ _RE_PHONE = re.compile(
     + r"(?:"
     + _PHONE_SEP
     + _PHONE_GROUP
-    + r"){1,3}"
+    # #153: `{1,3}` (four groups) missed `011 44 20 7946 0958`, the US
+    # international dialling form, which is FIVE groups. Widened to allow a
+    # fifth -- and `_phone_shape_ok` is what keeps the port list out, by
+    # requiring a five-group run to open with an international access prefix.
+    # The count test cannot do it: `22 80 443 3389 8080` is exactly 15 digits.
+    + r"){1,4}"
     + r")"
     # ...and must not END in the middle of one, for the same reason as above.
     + r"(?![\d\-/])"
     + r"(?!" + _PHONE_SEP + r"\d)"
 )
 # fmt: on
+
+
+# ITU-T E.164 country calling codes, by leading digit. One entry per assigned
+# code, which is what makes this a STANDARD rather than a list of the ones
+# somebody thought of -- the same distinction Pub 28 draws for the address
+# designators.
+#
+# Zone 1 (`1`) and zone 7 (`7`) are single-digit; the rest are two or three.
+# Only the PREFIXES are needed here: this answers "could this bare run be an
+# E.164 number", not "which country is it".
+# Held as space-separated text and split at import, rather than as list
+# literals: this table is meant to be checked against the ITU-T assignment
+# by eye, and 190 quoted short strings is neither readable nor diffable.
+_ITU_CC_2_RAW = (
+    "20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49 51 52 53 54 55 56 "
+    "57 58 60 61 62 63 64 65 66 81 82 84 86 90 91 92 93 94 95 98"
+)
+_ITU_CC_2 = frozenset(_ITU_CC_2_RAW.split())
+_ITU_CC_3_RAW = (
+    "211 212 213 216 218 220 221 222 223 224 225 226 227 228 229 230 231 232 "
+    "233 234 235 236 237 238 239 240 241 242 243 244 245 246 248 249 250 251 "
+    "252 253 254 255 256 257 258 260 261 262 263 264 265 266 267 268 269 290 "
+    "291 297 298 299 350 351 352 353 354 355 356 357 358 359 370 371 372 373 "
+    "374 375 376 377 378 380 381 382 383 385 386 387 389 420 421 423 500 501 "
+    "502 503 504 505 506 507 508 509 590 591 592 593 594 595 596 597 598 599 "
+    "670 672 673 674 675 676 677 678 679 680 681 682 683 685 686 687 688 689 "
+    "690 691 692 850 852 853 855 856 880 886 960 961 962 963 964 965 966 967 "
+    "968 970 971 972 973 974 975 976 977 992 993 994 995 996 998"
+)
+_ITU_CC_3 = frozenset(_ITU_CC_3_RAW.split())
+
+
+def _itu_country_code(bare: str) -> bool:
+    """Does this bare digit run open with an ASSIGNED E.164 country code?
+
+    Longest match first: `1` and `7` are single-digit zones, so checking them
+    before the two- and three-digit codes would claim every run starting with a
+    1 or a 7 -- which is most of them.
+    """
+    return bare[:3] in _ITU_CC_3 or bare[:2] in _ITU_CC_2 or bare[:1] in ("1", "7")
 
 
 def _phone_digit_count_ok(match: str) -> bool:
@@ -255,8 +300,48 @@ def _phone_shape_ok(match: str) -> bool:
         return True
     groups = [g for g in re.split(r"[^\d]+", match) if g]
     if len(groups) <= 1:
-        # No separators: a bare run. NANP is 10, or 11 with the trunk prefix.
-        return digits == 10 or (digits == 11 and match.lstrip()[:1] == "1")
+        # No separators: a bare run.
+        #
+        # #153. This was `digits == 10 or (digits == 11 and starts with 1)`,
+        # which is NANP-shaped -- derived from a REDACT corpus that is
+        # NANP-heavy, so it encoded an unstated assumption that a bare run is a
+        # US number. `02079460958` (UK national, 11 led by 0) and
+        # `442079460958` (E.164 with the `+` coerced off by a spreadsheet)
+        # both egressed verbatim.
+        #
+        # Extending it with `or (digits == 11 and starts with 0)` would fix the
+        # first row and repeat the mistake -- one more case somebody thought
+        # of. The published enumeration exists, so the question is answerable
+        # against a standard rather than against recall: ITU-T E.164 caps a
+        # number at 15 digits and assigns the country codes, and E.123
+        # documents `0` as the trunk prefix outside NANP.
+        #
+        # Same move as Pub 28 for the address designators and the shipped
+        # catalogs for the identifier corpus.
+        bare = "".join(ch for ch in match if ch.isdigit())
+        if digits == 10 or (digits == 11 and bare[:1] == "1"):
+            return True  # NANP, bare or trunk-prefixed
+        if 10 <= digits <= 12 and bare[:1] == "0":
+            return True  # a national number written with its trunk prefix
+        # Kept as a parallel branch rather than collapsed into the return, so
+        # the three accepted forms read as three named cases. `# noqa: SIM103`
+        # for exactly that: a bare `return cond` here would hide which standard
+        # each line comes from.
+        if 11 <= digits <= 15 and _itu_country_code(bare):  # noqa: SIM103
+            return True  # E.164 with the leading `+` stripped
+        return False
+    if len(groups) >= 5:
+        # #153. A fifth group is allowed ONLY behind an international access
+        # prefix. ITU-T E.123 documents `00` as the standard IDD prefix and
+        # NANP uses `011`; nothing else in the REDACT table needs five groups,
+        # and `1-800-555-0199` remains the longest domestic form at four.
+        #
+        # This is what stops the widened pattern re-opening the case the cap
+        # was added for: `Ports 22 80 443 3389 8080` is five groups of exactly
+        # 15 digits WITH a three-digit group, so neither the count test nor the
+        # three-digit test excludes it. Its first group is `22`, which is not
+        # an access prefix, and that is the whole discriminator.
+        return groups[0] in ("011", "00")
     return any(len(g) == 3 for g in groups)
 
 
@@ -377,11 +462,61 @@ _RE_CONTACT_HINT = re.compile(
 _SIGNATURE_LOOKAHEAD_LINES = 5
 
 
+def _is_abbreviation(token: str) -> bool:
+    """An honorific, rank or initial: a short token ending in a full stop.
+
+    `Lt.`, `Col.`, `M.`, `Jr.`, `Dr.` -- the tokens that make a signatory line
+    longer without making it less of a name. Bounded by LENGTH rather than by a
+    list of titles, because a list of titles is a list of the ones somebody
+    thought of, and the next rank is always the one that is missing.
+
+    The full stop is what carries the meaning; without it `Lieutenant` is an
+    ordinary word and counts.
+    """
+    return len(token) <= 4 and token.endswith(".")
+
+
 def _looks_like_a_signatory(line: str) -> bool:
     stripped = line.strip()
     if not stripped or len(stripped) > _MAX_SIGNATORY_CHARS:
         return False
-    if stripped[-1] in ".!?":
+    # #152. This rejected ANY line ending in `.!?`, so `Dana Whitfield, CISO.`
+    # and `John Smith Jr.` were not signatories and their whole sign-off
+    # egressed.
+    #
+    # The correct discriminator was already in this file, one function down:
+    # `_looks_like_prose`'s own docstring names `John Smith Jr.` as a signatory
+    # that ends with a period, and separates prose by ALSO starting lowercase
+    # or with a digit, or running longer than a name. Two functions in one file
+    # making opposite calls about the same input class -- and the cruder one
+    # won because it ran first.
+    #
+    # So call it rather than keep a second copy. `CLAUDE.md`: a claim that one
+    # path agrees with another is enforced by CALLING it, never by
+    # reimplementing it.
+    if _looks_like_prose(stripped):
+        return False
+    # ...and a line ending in a full stop must additionally be NAME-SHAPED.
+    #
+    # Substituting `_looks_like_prose` for the old blanket `endswith(".!?")`
+    # over-matched, and the corpus caught it rather than review:
+    # `Finding 1.` / `Best` / `Finding 2 is critical.` began recording a
+    # signature cut. `Finding 2 is critical.` is four words starting upper, so
+    # `_looks_like_prose` does not claim it -- and the crude punctuation rule
+    # had been the only thing keeping it out.
+    #
+    # That is `CLAUDE.md`'s own warning about removing an over-match: check
+    # what it was accidentally catching. It was catching this.
+    #
+    # A name ending in a stop has every substantive token capitalised --
+    # `Dana Whitfield, CISO.`, `John Smith Jr.` -- while a sentence has
+    # lowercase words in it. Initials and honorifics are abbreviations and are
+    # exempt, which is the same test the word cap uses.
+    if stripped[-1] in ".!?" and not all(
+        w[0].isupper() or _is_abbreviation(w)
+        for w in stripped.replace(",", " ").split()
+        if w and w[0].isalpha()
+    ):
         return False
     # A person's name never contains a colon; a wrapped HEADING routinely does,
     # and security documents are full of them. Without this, "Best" wrapped above
@@ -391,8 +526,18 @@ def _looks_like_a_signatory(line: str) -> bool:
     # rather than a rule -- four of five test headings were cut.
     if ":" in stripped:
         return False
+    # #152. `Lt. Col. Dana M. Whitfield` is five tokens against a cap of four,
+    # so a ranked signatory egressed whole.
+    #
+    # Raising the cap to five would be another case somebody thought of, and
+    # the next rank or a second initial would walk past it. What actually
+    # distinguishes a long NAME from a long HEADING is that the extra tokens
+    # are ABBREVIATIONS -- an honorific, a rank, an initial -- so they are not
+    # counted toward the cap. A heading of seven ordinary words still exceeds
+    # it, which is the case the cap was added for.
     words = stripped.split()
-    if not 1 <= len(words) <= _MAX_SIGNATORY_WORDS:
+    substantive = [w for w in words if not _is_abbreviation(w)]
+    if not 1 <= len(substantive) <= _MAX_SIGNATORY_WORDS:
         return False
     return stripped[0].isupper()
 
