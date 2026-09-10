@@ -606,7 +606,9 @@ a real exit code and a real date, and was the minority outcome (D-071).
   asked what ELSE asserted the same thing. Write the shape for prose the way you
   would for code — "any sentence stating what happens when X fails, in the
   present tense, or quantifying over surfaces whose behaviour now differs" — and
-  grep the bare nouns rather than the phrasing you were shown. `risk.py` re-derived a
+  grep the bare nouns rather than the phrasing you were shown.
+
+  `risk.py` re-derived a
   gap comparison instead of calling `analyze_gaps` (#84); it also reimplements
   the ATT&CK citation drop as a two-line list comprehension with no counter
   (#132), found only because the sweep asked "where else does a model's string
@@ -932,7 +934,7 @@ a real exit code and a real date, and was the minority outcome (D-071).
 - **A USER-FACING string naming an action must name a control that exists and
   works TODAY — verified by opening the handler, not by knowing the domain.**
   Knowing the domain is what lets you write a plausible remedy without checking
-  it: both recorded instances were written by people who understood the system.
+  it: the recorded instances were written by people who understood the system.
   A message with no remedy is fine; an imperative is a promise the thing exists.
   Worse than a false docstring, because a developer who acts on one learns the
   truth in an hour and a client who acts on false copy learns nothing. **D-076**
