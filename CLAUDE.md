@@ -563,7 +563,10 @@ a real exit code and a real date, and was the minority outcome (D-071).
   review's list, which is a sample. Take the list as proof the shape exists,
   derive the set yourself, and say in the PR what you derived it from. Expect the
   last twin to be the one a USER reads — a hover title gets corrected while the
-  paragraph beside it does not, because the reviewer quoted the hover. (D-076.)
+  paragraph beside it does not, because the reviewer quoted the hover.
+  (**D-074** carries the sweep-by-shape record, and its Placement section
+  asked for exactly this pointer; **D-072** carries the hover instance,
+  where the phrase survived only in a `title` attribute.)
 - **These gates check whether a test can fail at all (#72, D-051).**
   `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
   is a two-second static pass and **runs in CI before pytest** — it flags a test

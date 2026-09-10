@@ -4637,8 +4637,8 @@ Rule 1 applies: the structural claim is what the argument rests on and it
 cannot go stale -- all four ARE pure insertions at end-of-file, and that is
 what makes every pairing conflict. The digits added nothing the claim needed
 and had a second place to be wrong. Re-deriving them each rebase would reset
-a clock rather than stop it. The rule predicts they
-cannot — i.e. it predicts no rebase is ever needed, which is the whole reason
+a clock rather than stop it. The rule predicts those pairings cannot
+conflict — i.e. it predicts no rebase is ever needed, which is the whole reason
 the rebase protocol exists.
 
 Measured directly, three points, same two pure insertions each time:
