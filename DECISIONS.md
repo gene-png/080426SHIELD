@@ -4623,8 +4623,21 @@ of them also touched `routes/attack.py` and merged clean there, and the reason
 given was: _"a hunk that removes nothing cannot conflict with anything
 downstream regardless of distance."_ The conclusion was right. The rule is
 false, and the counterexample was **inside the set being described**: all four
-`DECISIONS.md` deltas are pure insertions (56/0, 193/0, 238/0, 87/0) at the same
-point, the end of the file, and every pairing conflicts. The rule predicts they
+`DECISIONS.md` deltas are pure insertions at the same point, the end of the
+file, and every pairing conflicts.
+
+**The four figures that stood here are deleted rather than corrected, and the
+deletion is itself an instance of this record's subject.** One of them was
+THIS branch's own delta, measured after D-076 was complete and before D-077
+existed -- so writing D-077 changed it. A worked example about a rule
+falsified by the set it describes, carrying a number falsified by the act of
+writing it.
+
+Rule 1 applies: the structural claim is what the argument rests on and it
+cannot go stale -- all four ARE pure insertions at end-of-file, and that is
+what makes every pairing conflict. The digits added nothing the claim needed
+and had a second place to be wrong. Re-deriving them each rebase would reset
+a clock rather than stop it. The rule predicts they
 cannot — i.e. it predicts no rebase is ever needed, which is the whole reason
 the rebase protocol exists.
 
