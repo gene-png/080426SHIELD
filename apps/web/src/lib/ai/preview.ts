@@ -36,11 +36,20 @@ export async function fetchAiPreview(serviceId: string): Promise<AiPreview> {
     body: JSON.stringify({ service_id: serviceId }),
   });
   if (!res.ok) {
+    // Read the body ONCE, then parse it. `res.json()` consumes the stream even
+    // when it throws, so a following `res.text()` raises
+    // "body stream already read" and THAT TypeError propagates instead of the
+    // typed error this block exists to build -- destroying the status and the
+    // correlation id at exactly the moment they are needed. Reproduced on an
+    // empty body and on an HTML error page, both of which a crashed dev server
+    // returns. Same form as `lib/zt/client.ts`, which fixed this on 2026-08-04;
+    // that pass swept `lib/*/client.ts` by name and missed five files by shape.
+    const raw = await res.text();
     let payload: unknown;
     try {
-      payload = await res.json();
+      payload = JSON.parse(raw);
     } catch {
-      payload = await res.text();
+      payload = raw;
     }
     throw new AiPreviewError(res.status, payload);
   }
