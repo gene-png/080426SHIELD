@@ -54,6 +54,24 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
         f"Engagement target S{gap.target_stage}; each row shows the target "
         f"applied to that capability."
     )
+    # #188: a stored per-capability target that could not be used was replaced
+    # by the engagement target, and until now nothing said so. The sentence
+    # above is TRUE of such a row and misleading in the way `CLAUDE.md` warns
+    # about -- accurate, sited exactly where a reader checks, and it ends the
+    # search. The row does show the target applied; it just is not the one
+    # anybody chose. So the discriminator goes in the same caption rather than
+    # in a footnote the reader reaches later, or never.
+    #
+    # No count: the codes are listed here, so the list IS the count and cannot
+    # go stale (`CLAUDE.md` rule 1). Not truncated either -- this is a fault
+    # disclosure, and abbreviating one is what #75/#79 were filed about.
+    if gap.unusable_target_codes:
+        listed = ", ".join(gap.unusable_target_codes)
+        target += (
+            f" A per-capability target was recorded for {listed} but is not a "
+            f"valid stage for this framework, so the engagement target was "
+            f"applied to those rows instead."
+        )
     if shown >= total:
         return f"All {total} gap{'' if total == 1 else 's'} listed. {target}"
     return (

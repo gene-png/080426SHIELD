@@ -105,6 +105,12 @@ class GapAnalysis:
     unscored_codes: tuple[str, ...]
     total_gap_count: int
     gap_count_by_pillar: dict[str, int]
+    # Capabilities whose stored per-capability target could not be used, so the
+    # ENGAGEMENT target was applied instead (#188). Empty on an ordinary
+    # engagement; a capability with no stored target is NOT in here, because
+    # absent and discarded are different events. Defaulted so every existing
+    # construction site keeps working -- the C0 additive pattern.
+    unusable_target_codes: tuple[str, ...] = ()
 
 
 def _coverage_pct(answered: int, total: int) -> float:
@@ -422,9 +428,62 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
     If a third writer appears, this exemption expires with it.
     """
     max_stage = level_count(framework)
+    # `bool` first: it subclasses `int`, so without this line a stored `True`
+    # is returned AS A BOOL and used as a stage. Measured 2026-09-10 -- the
+    # capability then compares equal to its own current stage and leaves the
+    # gap list entirely, which is worse than the fallback this function
+    # documents. Not reachable through the database (`target_stage` is a
+    # `SmallInteger`, so `True` round-trips as 1), but this is a pure function
+    # with its own contract and #189 settled that a bool is not a number.
+    if isinstance(stored, bool):
+        return None
     if isinstance(stored, int) and 1 <= stored <= max_stage:
         return stored
     return None
+
+
+def discarded_capability_targets(
+    framework: ZtFrameworkCode,
+    targets: Mapping[str, int | None] | None,
+) -> tuple[str, ...]:
+    """Capabilities whose stored target EXISTS and cannot be used (#188).
+
+    The distinction is the whole point, and it is the one `CLAUDE.md` states as
+    a standing rule: "a rule that withholds a claim must separate 'the evidence
+    failed' from 'no evidence was offered'."
+
+      ABSENT    -- no per-row target. The ordinary case: a consultant-scored
+                   assessment overrides nothing, so the engagement stage
+                   decides every capability. Reporting it would fire the
+                   disclosure on every engagement and be ignored by the second
+                   reader.
+      UNUSABLE  -- a value was chosen, recorded, and then silently replaced by
+                   the engagement target. That is what #188 is about.
+
+    Returns CODES rather than a count so the disclosure can name them, and the
+    count stays derivable -- `CLAUDE.md` rule 1: let the list be the count.
+
+    ## Shared, not copied
+
+    `analyze_gaps` and `routes/clients.py::zt_dashboard` both resolve targets
+    through `effective_target_stages`. This reads the same predicate, so the
+    deliverable and the dashboard cannot disagree about which stored targets
+    were discarded. A second derivation for the exporter alone would be #84's
+    shape -- a reimplementation that shares the symptom and never the symbol.
+
+    ## The live path is not only malformed legacy data
+
+    Stage 4 is a legitimate CISA target and does not exist in DoD ZTRA, which
+    has three levels. The same stored integer is usable or not depending on
+    which framework is asking, with no edit to the row in between.
+    """
+    targets = targets or {}
+    return tuple(
+        cap.code
+        for cap in capabilities(framework)
+        if (stored := targets.get(cap.code)) is not None
+        and capability_target_override(framework, stored) is None
+    )
 
 
 def _resolve_one(framework: ZtFrameworkCode, stored: object, target_stage: int) -> int:
@@ -519,6 +578,7 @@ def analyze_gaps(
         unscored_codes=tuple(unscored),
         total_gap_count=len(rows),
         gap_count_by_pillar=by_pillar,
+        unusable_target_codes=discarded_capability_targets(framework, targets),
     )
 
 
@@ -573,6 +633,7 @@ __all__ = [
     "analyze_gaps",
     "build_roadmap",
     "capability_target_override",
+    "discarded_capability_targets",
     "compute",
     "effective_target_stages",
     "engagement_target_capability_count",
