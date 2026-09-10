@@ -4515,7 +4515,7 @@ two are indistinguishable in a diff six months later.
 Then have the adversarial reviewer attack those reasons specifically rather than
 accept them — "change the seed until it passes" is the cheapest wrong way to land
 a fix of this shape, and it looks identical to the right way.
-## D-NEXT — The full-engagement instrument exits 0 with failures on record, by design
+
 ## D-NEXT — The full-engagement instrument exits 0 with failures on record, by design
 
 **Date:** 2026-09-09. Records a design choice for
