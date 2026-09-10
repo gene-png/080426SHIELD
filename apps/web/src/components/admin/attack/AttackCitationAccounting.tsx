@@ -79,6 +79,22 @@ export function AttackCitationAccounting({
   // above and forty pieces of work here.
   const pendingRows = result.pending_review_rows ?? 0;
 
+  // #115. `mitre_map` runs as concurrent batches; a batch that raises is
+  // counted and the run CONTINUES, and only a total failure raises. So a
+  // partial run returns HTTP 200 and every count below is accumulated over the
+  // batches that came back -- while the copy said "checked against the
+  // client's capability list", full stop.
+  //
+  // `undefined` is not zero: a payload from before batching measured nothing
+  // about it, and rendering "0 of 0 failed" over one would assert a clean run
+  // that was never established.
+  const batchesTotal = result.batches_total;
+  const batchesFailed = result.batches_failed;
+  const runIncomplete =
+    batchesTotal !== undefined &&
+    batchesFailed !== undefined &&
+    batchesFailed > 0;
+
   return (
     <div
       className="flex flex-col gap-1 text-sm"
@@ -87,14 +103,33 @@ export function AttackCitationAccounting({
     >
       <p className="text-ink-secondary">
         {total === 1 ? "1 tool citation" : `${total} tool citations`} checked
-        against the client&rsquo;s capability list:{" "}
-        <span className="font-semibold text-ink-primary">{confirmed}</span>{" "}
+        {runIncomplete
+          ? " across the completed batches only"
+          : " against the client’s capability list"}
+        : <span className="font-semibold text-ink-primary">{confirmed}</span>{" "}
         confirmed,{" "}
         <span className="font-semibold text-ink-primary">{needsReview}</span>{" "}
         need review,{" "}
         <span className="font-semibold text-ink-primary">{rejected}</span>{" "}
         rejected.
       </p>
+
+      {runIncomplete ? (
+        <p
+          className="text-status-danger-fg"
+          role="alert"
+          data-testid="attack-run-incomplete"
+        >
+          <span className="font-semibold">
+            {batchesFailed} of {batchesTotal} batches failed
+          </span>
+          , so the techniques in them were never sent and nothing below covers
+          them. Re-run before relying on this draft. On a re-run over an
+          assessment that was already scored, the techniques a failed batch
+          missed keep the statuses they had, so the matrix will look complete
+          either way &mdash; this line is the only place that says otherwise.
+        </p>
+      ) : null}
 
       {pendingRows > 0 ? (
         <p
