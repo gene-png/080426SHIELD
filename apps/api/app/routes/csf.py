@@ -2077,6 +2077,27 @@ def export_playbook(
     xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     pdf_mime = "application/pdf"
 
+    # #243, #237's twin. This route resolves `_latest_assessment` -- latest
+    # non-discarded, DRAFTS INCLUDED -- and refuses only "No assessment yet."
+    # and "Seed the Working Profile before exporting.". So it put the CLIENT'S
+    # NAME on a document built from work nobody had reviewed, and the exposure
+    # is a consultant handing that file over out of band.
+    #
+    # NOT fixed by gating the export, and the departure from #243's suggested
+    # resolution is deliberate. The Export button is offered whenever profiles
+    # are seeded, which is most of an engagement, and a consultant reads their
+    # own working profile in order to decide whether to approve it. A 409 here
+    # would remove a legitimate mid-engagement feature to solve a naming
+    # problem.
+    #
+    # `CLAUDE.md`'s #32 shape: ask whether the guarantee needs the state FROZEN
+    # or only needs to SAY WHAT IT IS. `deliverable_filename` already carries
+    # `working=True` for precisely this -- "for admin-only intermediates" --
+    # and prefixes `WORKING_`. Once the assessment is APPROVED the prefix drops
+    # and the artifact is deliverable-grade, so the label keeps meaning
+    # something rather than becoming furniture that gets read past.
+    _approved = a.status in (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED)
+
     def _pb_name(extension: str, variant: str | None = None) -> str:
         # §15.5: {Company}_CSF_Playbook{MMDDYY}[_v{n}][_variant].ext
         return deliverable_filename(
@@ -2086,6 +2107,7 @@ def export_playbook(
             day=today,
             version=a.version,
             variant=variant,
+            working=not _approved,
         )
 
     specs = [
