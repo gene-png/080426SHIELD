@@ -667,6 +667,78 @@ async function affordance(
 }
 
 /**
+ * Wait for an admin workspace to MOUNT its workflow, and name what is blocking
+ * it when it does not.
+ *
+ * ## Why this exists
+ *
+ * The 2026-09-09 18:11 run reported ATT&CK's Run AI as
+ * `affordance never became visible within 10000ms`. That was accurate and
+ * useless: the button was not hidden, not disabled, and not late — **it was
+ * not mounted**.
+ *
+ * `AttackWorkspace` renders a three-way ternary inside its single JSX return:
+ *
+ *     !catalog   ? "Loading ATT&CK matrix…"
+ *   : !assessment ? <EmptyState "No coverage assessment yet" />
+ *   :               <WorkflowStep 1..4>   // Run AI lives in here
+ *
+ * so WorkflowStep 1 through 4 do not exist in the DOM until BOTH `catalog` and
+ * `assessment` state resolve — from two **sequential** fetches fired on mount,
+ * followed by the heatmap. The step reloads the page immediately before
+ * looking, so it pays that whole chain every time, and 10s did not cover it
+ * while the API was still busy.
+ *
+ * There is no early `return` to grep for, which is why reading the file for
+ * one found nothing. The gate is a conditional expression, not a statement.
+ *
+ * ## Why it reports the blocker rather than just waiting longer
+ *
+ * A longer timeout would have made the run pass and taught nobody anything.
+ * The two placeholders are the two halves of the mount, and which one is on
+ * screen says which fetch has not come back — so a MISS here names the gate
+ * instead of naming the button. "Still fetching the catalog" and "no
+ * assessment resolved" send you to different places; "button not visible"
+ * sends you to the button, which was never the problem.
+ *
+ * CSF is included because its mount has a second gate of its own: `Run AI
+ * (csf_score)` does not exist until Working Profiles are seeded, so a mounted
+ * CSF workspace shows `Seed Working Profiles` and no Run AI at all. Treating
+ * that as "mounted" is correct — the workflow IS up; the run just has a step
+ * to perform before the button exists.
+ */
+const MOUNT_WAIT_MS = 90_000;
+
+async function workspaceMounted(page: Page, slug: string): Promise<void> {
+  const runAi = page.getByRole("button", { name: /^Run AI\b/ });
+  const seedProfiles = page.getByRole("button", {
+    name: "Seed Working Profiles",
+  });
+  const loadingMatrix = page.getByText(/Loading ATT&CK matrix/i);
+  const noAssessment = page.getByText(/No coverage assessment yet/i);
+
+  const deadline = Date.now() + MOUNT_WAIT_MS;
+  let blocker = "nothing on screen named a cause";
+  while (Date.now() < deadline) {
+    // Either control means the workflow mounted. Count, not visibility: this
+    // asks whether the node EXISTS, which is the thing the ternary decides.
+    if ((await runAi.count()) > 0 || (await seedProfiles.count()) > 0) return;
+    if (await loadingMatrix.isVisible().catch(() => false)) {
+      blocker =
+        'still fetching the catalog — "Loading ATT&CK matrix…" is on screen';
+    } else if (await noAssessment.isVisible().catch(() => false)) {
+      blocker =
+        'no assessment resolved — "No coverage assessment yet" is on screen';
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Unreachable(
+    `${slug}: the workspace never mounted its workflow within ${MOUNT_WAIT_MS}ms — ${blocker}. ` +
+      `Neither a Run AI control nor "Seed Working Profiles" ever entered the DOM, so the step could not begin.`,
+  );
+}
+
+/**
  * Compile-time exhaustiveness.
  *
  * `value: never` only type-checks when every member of a union has already
@@ -2196,6 +2268,11 @@ test("full engagement: intake -> five services -> release -> client view -> back
         // --- Run AI, in the browser, on camera ---------------------------
         await rec.step(svc.slug, "Run AI", "ui", async () => {
           await page.reload();
+          // The reload costs the workspace its whole mount chain again, and on
+          // ATT&CK the Run AI control does not EXIST until that chain finishes.
+          // Wait for the workflow to mount before looking for a button inside
+          // it, so a slow mount is reported as a slow mount.
+          await workspaceMounted(page, svc.slug);
           // CSF's control is labelled "Run AI (csf_score)"; ATT&CK and ZT use a
           // bare "Run AI". Matched by regex rather than by a per-service
           // literal so a copy change degrades to `unreachable` instead of a
