@@ -763,6 +763,35 @@ a real exit code and a real date, and was the minority outcome (D-071).
   `risk.py:177` on the first try, and `grep -rnE "is not None else [0-9]"`
   returns `risk.py:193`. Neither appears in any list of `analyze_gaps` callers.
   A reimplementation shares the symptom, never the symbol.
+- **A CHANGE THAT REMOVES OR REPLACES A GUARD NEEDS AT LEAST ONE ASSERTION
+  THAT GOES RED WHEN THE GUARD IS DELETED, EXERCISED THROUGH THE SURFACE THE
+  CLIENT ACTUALLY REACHES.** A resolver and a pure function are not that
+  surface. Neither is a schema.
+
+  From one branch family on 2026-09-10, each found by red-on-revert and none
+  by review:
+
+  - The #195 schema tests stayed GREEN with the route pointed back at the wide
+    admin schema. They pinned the shape of two Pydantic models; the defect was
+    which model the handler names.
+  - The 422-handler test stayed GREEN with the handler's call site reverted,
+    because it called the coercion helper directly. It proved the helper
+    worked, not that anything used it.
+  - #184's tests covered `resolve_target_tier` and `analyze`. The reachable
+    defect was a query parameter, and deleting its guard would have left the
+    whole suite green while turning a 200 into an untyped 500 — strictly worse
+    than the clamp being removed.
+
+  The tell is that the test imports the thing it is defending rather than
+  calling the endpoint that reaches it. That reads as more focused and is
+  strictly weaker: the wiring is where the guard is selected, and the wiring is
+  what a refactor changes.
+
+  **The check is mechanical and is the one this file already prescribes** —
+  delete the guard, run the suite, and require a specific named test to go red.
+  If the only red is in a file that imports the guard directly, the surface is
+  not covered.
+
 - **Verify each assertion red-on-revert, one fix at a time.** A suite that goes
   green after a change proves the change did not break anything; it says nothing
   about whether the new tests can fail. Revert each fix individually and confirm
@@ -1558,6 +1587,33 @@ Rules of the road:
   code under test that day.** That is not an argument for more checking
   machinery. Every fix went toward a more primitive signal, not a cleverer one.
 
+- **"READY" IS TWO CLAIMS. GREEN AND MERGEABLE ARE DIFFERENT, AND A CI
+  CERTIFICATE IS ABOUT A HEAD, NOT A BRANCH.** Before reporting a PR ready,
+  run the merge and report both:
+
+      git -C <main-tree> worktree add --detach ../mergecheck origin/<branch>
+      cd ../mergecheck
+      git merge --no-commit --no-ff origin/main    # 0 = mergeable
+      git merge --abort
+
+  `gh pr view <n> --json mergeable,mergeStateStatus,headRefOid` gives the same
+  verdict in one call and also gives you the head the checks ran against.
+  **Compare that head to the branch tip and to `main`** — a green certificate
+  is evidence about the commit that was tested, and it survives, unchanged and
+  reassuring, after `main` has moved underneath it.
+
+  Measured 2026-09-10: three PRs were reported "green on all 7 — ready" on
+  certificates older than `main`. Twice that was a formality. The third time
+  the PR was `CONFLICTING`, and the conflict was in the one file carrying a
+  warning that a live bool guard is load-bearing — so the thing the stale
+  green concealed was a hand-merge decision about a guard, not a whitespace
+  hunk. GitHub knew the whole time and nobody asked it.
+
+  This is the status-word rule above, pointed at a claim that HAS no output
+  unless you go and generate one. "Green" carries its check list; "ready"
+  carried nothing, because merge state is not printed by anything you were
+  already running.
+
 - **A STATUS WORD CARRIES ITS OUTPUT, OR IT DOES NOT GO IN THE REPORT.**
   "Merged" carries the `git log --oneline -1 origin/main` line. "Pushed" carries
   the ref. "Dispatched" carries the tool result. "Green" carries the exit code.
@@ -1640,6 +1696,29 @@ Rules of the road:
   **cannot** be out of sync. Where a derivation is genuinely unavailable, name
   the closing update and the width of the gap in a comment — an unstated window
   is the one nobody tests.
+
+- **`Query(ge=..., le=...)` OPTS A ROUTE OUT OF THE TYPED-ERROR CONVENTION
+  WHILE LOOKING LIKE MORE VALIDATION.** Recorded as a decision rather than a
+  correction, because it will read as an improvement to whoever adds the next
+  query parameter.
+
+  FastAPI's own rejection of a bound parameter goes through
+  `_handle_validation_error`, which emits `"Request validation failed."` with a
+  `details` array and **no `reason` key**. The web layer's D-016 mapping keys
+  on `reason`, and core principle 2 names a raw validation dump as what a
+  user-facing error must not be. So adding the bound makes the route stricter
+  and its error less usable, in one edit, invisibly.
+
+  `routes/zt.py` decided this first and wrote down why; `routes/csf.py`
+  reached for the bound and had to be corrected to match. **Where a route
+  already refuses something with a typed `{reason, message}` detail, refuse the
+  new thing the same way.** A declarative bound is right where nothing typed
+  exists to be consistent with — a new endpoint, a parameter no client maps to
+  copy — and its OpenAPI visibility is a real benefit there.
+
+  The general form: a framework's built-in validation and this repo's error
+  envelope are two different contracts, and moving a check from the second to
+  the first is a silent downgrade for every consumer that reads `reason`.
 
 - **A guard's message must name the CAUSE, not the CHECK.** One line covering
   three branches tells a reader that a check failed. Three lines tell them what
