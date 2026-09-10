@@ -257,7 +257,23 @@ test.skip(
   "Full-engagement demo run — opt-in observation instrument; set SHIELD_FULL_ENGAGEMENT=1 (see the file header). Excluded from CI's bare `npx playwright test`.",
 );
 
-test.use({ video: "on", trace: "on" });
+test.use({
+  video: { mode: "on", size: { width: 1920, height: 1080 } },
+  trace: "on",
+  // 1920x1080, set HERE rather than in `e2e/playwright.config.ts`.
+  //
+  // The config's chromium project spreads `devices["Desktop Chrome"]`, whose
+  // viewport is 1280x720 -- so without this the recording is 720p and the
+  // demonstration is shot at the wrong size. Raising it in the config instead
+  // would re-lay-out all 43 smoke specs, several of which assert rendered
+  // geometry, and change CI's E2E job. Same reasoning the video/trace lines
+  // already carry.
+  //
+  // `video.size` is set explicitly too: it defaults to a scaled-down fit of
+  // the viewport rather than matching it, so a 1920x1080 viewport alone does
+  // not produce a 1920x1080 file.
+  viewport: { width: 1920, height: 1080 },
+});
 
 // One continuous walk of the whole product. Generous, and deliberately not
 // `test.slow()` (which only triples the 90s project timeout).
@@ -1456,9 +1472,39 @@ test.afterEach(async () => {
   runState.logged = true;
   let videoPath: string | null = null;
   try {
-    videoPath = (await runState.video?.path()) ?? null;
+    // SAVE it, do not merely record where it is.
+    //
+    // Playwright writes video and trace under `test-results/` and CLEARS that
+    // directory at the START of every run. This hook used to capture the path
+    // and write it into the log, which is a pointer at a file the next spec
+    // deletes -- and that is exactly what happened: the 2026-09-09 18:11 run's
+    // fifteen downloaded documents survive in `RUN_DIR` and its video and trace
+    // are gone, destroyed by an unrelated spec run an hour later. The first
+    // successful release chain has no recording.
+    //
+    // `saveAs` waits for the context to finish writing, so it is safe here even
+    // though the file is not final until the context closes.
+    const saved = path.join(RUN_DIR, "engagement.webm");
+    await runState.video?.saveAs(saved);
+    videoPath = fs.existsSync(saved)
+      ? saved
+      : ((await runState.video?.path()) ?? null);
   } catch {
     videoPath = null; // page torn down; the path is a convenience, not the record
+  }
+  // The trace lives in the run's outputDir and is wiped on the same schedule.
+  try {
+    const outDir = test.info().outputDir;
+    for (const name of fs.existsSync(outDir) ? fs.readdirSync(outDir) : []) {
+      if (name.endsWith(".zip")) {
+        fs.copyFileSync(path.join(outDir, name), path.join(RUN_DIR, name));
+      }
+    }
+  } catch {
+    // A missing trace is a lost convenience, never a lost result -- the step
+    // log and the downloaded artifacts are the record and they are already in
+    // RUN_DIR. Swallowed deliberately, and this is the one place in this file
+    // where that is correct.
   }
   const ctx = {
     legalName: runState.legalName,
