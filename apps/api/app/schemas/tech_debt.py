@@ -13,6 +13,7 @@ from app.models.capability import (
     SecurityFunction,
 )
 from app.models.service import ServiceKind, ServiceStatus
+from app.schemas._numeric import IntNotBool
 
 
 class ServiceCreateRequest(BaseModel):
@@ -96,7 +97,7 @@ class IncludeExcludedRowRequest(BaseModel):
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
     annual_cost_usd: float | None = None
-    license_count: int | None = None
+    license_count: IntNotBool | None = None
     notes: str | None = None
 
 
@@ -173,7 +174,7 @@ class CapabilityItemPatch(BaseModel):
     category: str | None = Field(default=None, max_length=128)
     function: str | None = Field(default=None, max_length=255)
     annual_cost_usd: float | None = None
-    license_count: int | None = None
+    license_count: IntNotBool | None = None
     notes: str | None = None
     disposition: CapabilityDisposition | None = None
     disposition_rationale: str | None = Field(default=None, max_length=4000)

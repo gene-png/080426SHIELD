@@ -396,14 +396,28 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
         `if not 1 <= n <= max_stage` check `continue`s to a dropped-suggestion
         record, so an out-of-range suggestion is never written.
 
-    Both bound the RANGE. Neither refuses a bool at the schema, so
-    `patch_answer` writes Stage 1 for `true` -- tracked in #189, and out of
-    scope here because an in-range 1 never reaches this fallback. Note
-    `isinstance(True, int)` is True, so such a value would be taken as its int
-    value rather than falling back; that is #189's blast radius and is
-    deliberately UNCHANGED, because this extraction must not move a single gap
-    count and the predicate is carried over as it stood rather than improved in
-    passing.
+    Both bound the RANGE. **Only ONE of them now refuses a bool at the schema**
+    -- `patch_answer`, through the `IntNotBool` annotation on `ZtAnswerPatch`
+    (#189). The AI-apply path takes no request body, so no schema annotation
+    can reach it: its bool guard is `_as_number`'s own `isinstance(raw, bool)`
+    check, and that check is LOAD-BEARING. Do not delete it on the strength of
+    #189 being closed.
+
+    A draft of this paragraph said "both now also refuse a bool at the schema",
+    which would have invited exactly that deletion -- and a model returning
+    `"target_stage": true` would then write Stage 1 to a client's row, #189
+    reinstated on the one surface this comment had just called safe.
+
+    The predicate below is carried over exactly as it stood: `isinstance(True,
+    int)` is True, so a stored `True` would be read as Stage 1 rather than
+    falling back, which is why refusing belongs at the writers and not here.
+
+    A THIRD route accepts a `target_stage` field in its body without writing
+    it: `patch_self_assessment_answer`. It is not a writer and never was -- it
+    discarded the value behind a 200, which is #195. That is now a typed 422
+    from `ZtSelfAssessmentAnswerPatch`, REFUSED rather than honoured precisely
+    so this exemption keeps holding; honouring it would have created the third
+    writer that expires it.
 
     If a third writer appears, this exemption expires with it.
     """

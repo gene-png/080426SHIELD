@@ -21,7 +21,7 @@ import {
 import type {
   CatalogPillar,
   ZtAnswer,
-  ZtAnswerPatch,
+  ZtSelfAssessmentAnswerPatch,
   ZtAssessment,
   ZtCatalog,
   ZtFramework,
@@ -101,7 +101,7 @@ export function ZtSelfAssessment({
 
   async function onAnswerUpdate(
     answerId: string,
-    patch: ZtAnswerPatch,
+    patch: ZtSelfAssessmentAnswerPatch,
   ): Promise<void> {
     setAssessment((curr) =>
       curr

@@ -9,6 +9,7 @@ operator can join them.
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
@@ -56,6 +57,53 @@ async def _handle_http_exception(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
+def _jsonable_validation_errors(exc: RequestValidationError) -> list[dict[str, object]]:
+    """Pydantic hands us live Python objects. `JSONResponse` cannot render them.
+
+    Two ways an error entry arrives unserialisable, and they are NOT the same
+    surface -- an earlier version of this function treated only the first and
+    asserted in its own docstring that the second could not happen:
+
+    **`ctx["error"]` holds the raised exception itself.** Raising `ValueError`
+    is how Pydantic v2 wants a custom validator to reject a value, so the entry
+    carries the live instance rather than its text.
+
+    **`input` holds whatever was submitted, which is not always JSON.** This
+    handler is registered globally, so it also serves routes taking
+    `File(...)` / `Form(...)` -- `upload_artifact` is one -- where a failing
+    field's `input` is an `UploadFile`, and routes posted with a non-JSON
+    content type, where it is raw `bytes`. Both measured unserialisable
+    2026-09-10.
+
+    Either way `json.dumps` raises `TypeError` INSIDE the 422 handler, the
+    unexpected-exception handler catches it, and the caller gets a **500** with
+    a correlation id -- from the one handler whose whole job is to say what was
+    wrong. Core principle 2 failing in the code written to uphold it.
+
+    Latent until 2026-09-10 for the `ctx` half: every validator in
+    `app/schemas/` normalised rather than raised, so nothing had ever produced
+    a `ctx.error`. `_numeric.IntNotBool` and the two self-assessment patch
+    schemas are the first that do. The `input` half is older and still live.
+
+    ## Why `jsonable_encoder` rather than a local coercion
+
+    It is what FastAPI's own default validation handler uses, and `CLAUDE.md`
+    is explicit that agreeing with another implementation is a claim to enforce
+    by CALLING it, never by reimplementing it. A hand-rolled version was
+    written first and was worse in a way that proves the point: it stringified
+    every value in `ctx`, so an ordinary range refusal's `{"le": 4}` went out
+    as `{"le": "4"}` -- a wire-format change for every client, to fix a case
+    that only ever involved one key. `jsonable_encoder` leaves it an int.
+    Measured 2026-09-10 across all three inputs: a raised `ValueError`, an
+    `UploadFile`, and raw `bytes`.
+
+    Found by an HTTP-level test. Every schema-level assertion passed, because
+    Pydantic is perfectly happy to raise -- the defect lives entirely in the
+    serialisation of the response.
+    """
+    return jsonable_encoder(exc.errors())
+
+
 async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(
         status_code=422,
@@ -63,7 +111,7 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
             "error": {
                 "code": 422,
                 "message": "Request validation failed.",
-                "details": exc.errors(),
+                "details": _jsonable_validation_errors(exc),
                 "correlation_id": _correlation_id_from(request),
             }
         },

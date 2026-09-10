@@ -73,6 +73,7 @@ from app.schemas.zt import (
     ZtQuestionnaireResponse,
     ZtRunAiResponse,
     ZtScoreSummary,
+    ZtSelfAssessmentAnswerPatch,
     ZtSelfAssessmentSubmit,
     ZtServiceCreateRequest,
     ZtServiceResponse,
@@ -1145,7 +1146,7 @@ def get_self_assessment(
 )
 def patch_self_assessment_answer(
     answer_id: uuid.UUID,
-    body: ZtAnswerPatch,
+    body: ZtSelfAssessmentAnswerPatch,
     user: Annotated[User, Depends(current_user)],
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],

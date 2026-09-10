@@ -334,3 +334,67 @@ def test_client_fills_and_submits_zt(app_client: TestClient) -> None:
         f"/zt/self-assessment/answers/{answer_id}", headers=h, json={"maturity_stage": 3}
     )
     assert r.status_code == 409
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "service, service_type, applied, refused",
+    [
+        ("zt", "zero_trust_cisa", {"maturity_stage": 2}, "target_stage"),
+        ("zt", "zero_trust_cisa", {"maturity_stage": 2}, "locked"),
+        ("csf", "nist_csf", {"maturity_tier": 2}, "locked"),
+    ],
+)
+def test_client_answer_patch_refuses_a_field_it_will_not_apply(
+    app_client: TestClient,
+    service: str,
+    service_type: str,
+    applied: dict,
+    refused: str,
+) -> None:
+    """#195: a 422 naming the field, not a 200 that discards it.
+
+    This is the HTTP-level half. `test_self_assessment_patch_refuses_what_it_drops.py`
+    pins the SCHEMAS; on its own that proves nothing about the route, because
+    pointing the handler back at the wide admin schema would leave every
+    schema-shape assertion green. This asserts what a client actually gets, so
+    the route and the schema are pinned together.
+
+    Read as the primitive signal: the status code and the stored row, not an
+    introspection of which class the signature names.
+    """
+    bearer, state = _client_submit_intake(app_client)
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _service_id(state, service_type)
+
+    a = app_client.get(f"/{service}/services/{svc_id}/self-assessment", headers=h).json()
+    answer_id = a["answers"][0]["id"]
+
+    # POSITIVE CONTROL FIRST -- if this 422s, the assertion below would pass
+    # for the wrong reason and the route would simply be broken.
+    r = app_client.patch(f"/{service}/self-assessment/answers/{answer_id}", headers=h, json=applied)
+    assert r.status_code == 200, r.text
+    field, value = next(iter(applied.items()))
+    assert r.json()[field] == value
+
+    r = app_client.patch(
+        f"/{service}/self-assessment/answers/{answer_id}",
+        headers=h,
+        json={**applied, refused: 3 if refused != "locked" else True},
+    )
+    assert r.status_code == 422, (
+        f"{service} accepted `{refused}` on the client answer route. Before "
+        f"#195 this returned 200 and discarded it, which core principle 2 "
+        f"forbids: never a lie that something succeeded. Body: {r.text}"
+    )
+    assert refused in r.text, (
+        f"the 422 does not name `{refused}`, so a client cannot tell which "
+        f"field to remove. Body: {r.text}"
+    )
+
+    # The row is untouched by the refused request -- a 422 that had already
+    # written half the payload would be worse than the silent drop.
+    a = app_client.get(f"/{service}/services/{svc_id}/self-assessment", headers=h).json()
+    row = next(x for x in a["answers"] if x["id"] == answer_id)
+    assert row[field] == value
+    assert row["locked"] is False

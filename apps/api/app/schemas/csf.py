@@ -6,10 +6,11 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.csf_assessment import CsfAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
+from app.schemas._numeric import IntNotBool
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -149,11 +150,57 @@ class CsfAnswerPatch(BaseModel):
     "unscored" for the unanswered-count math).
     """
 
-    maturity_tier: int | None = Field(default=None, ge=1, le=4)
+    maturity_tier: IntNotBool | None = Field(default=None, ge=1, le=4)
     notes: str | None = Field(default=None, max_length=8000)
     evidence_artifact_id: uuid.UUID | None = None
     # Work Order C2: lock/unlock this row against AI reruns (admin only).
     locked: bool | None = None
+
+
+class CsfSelfAssessmentAnswerPatch(BaseModel):
+    """What a CLIENT may change on their own draft answer (#195's CSF twin).
+
+    Not filed as its own issue -- found by applying #195's question to the
+    sibling service, which `CLAUDE.md` requires: "a defect found in one service
+    exists in its twins until you have checked."
+
+    `patch_self_assessment_answer` took the ADMIN `CsfAnswerPatch` and honoured
+    two of its four fields, discarding `evidence_artifact_id` and `locked`
+    behind a 200. The `locked` case is the one with teeth, and `CsfAnswerPatch`
+    already says so: its comment reads "Work Order C2: lock/unlock this row
+    against AI reruns (admin only)". The rule was written down beside the
+    field; the route never enforced it, so a client could ask for a lock, be
+    told it worked, and have the next AI run overwrite the row.
+
+    ZT had the same shape plus `target_stage` -- see
+    `ZtSelfAssessmentAnswerPatch`, which carries the reasoning for refusing
+    rather than honouring, and the #188 constraint that decides it. CSF has no
+    per-capability target, so this is the same fix with one field fewer.
+
+    `extra="forbid"` makes the refusal set derived: a fifth field on
+    `CsfAnswerPatch` cannot quietly start being dropped here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    maturity_tier: IntNotBool | None = Field(default=None, ge=1, le=4)
+    notes: str | None = Field(default=None, max_length=8000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _name_the_fields_this_route_will_not_apply(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        unknown = sorted(set(data) - set(cls.model_fields))
+        if unknown:
+            raise ValueError(
+                f"This endpoint applies only {sorted(cls.model_fields)}. It "
+                f"does not apply {unknown}, and returning 200 while dropping "
+                f"them would report a change that never happened. Locking a "
+                f"row against AI reruns is an admin action, through "
+                f"PATCH /csf/answers/{{answer_id}}."
+            )
+        return data
 
 
 class CsfSelfAssessmentSubmit(BaseModel):
@@ -163,7 +210,7 @@ class CsfSelfAssessmentSubmit(BaseModel):
     engine measures against; persisted on the source request.
     """
 
-    target_tier: int | None = Field(default=None, ge=1, le=4)
+    target_tier: IntNotBool | None = Field(default=None, ge=1, le=4)
 
 
 # ---------------------------------------------------------------------------
@@ -254,16 +301,16 @@ class CsfProfileResponse(BaseModel):
 
 
 class CsfDimensionScorePatch(BaseModel):
-    governance: int | None = Field(default=None, ge=0, le=2)
-    policy: int | None = Field(default=None, ge=0, le=2)
-    implementation: int | None = Field(default=None, ge=0, le=2)
-    monitoring: int | None = Field(default=None, ge=0, le=2)
-    improvement: int | None = Field(default=None, ge=0, le=2)
+    governance: IntNotBool | None = Field(default=None, ge=0, le=2)
+    policy: IntNotBool | None = Field(default=None, ge=0, le=2)
+    implementation: IntNotBool | None = Field(default=None, ge=0, le=2)
+    monitoring: IntNotBool | None = Field(default=None, ge=0, le=2)
+    improvement: IntNotBool | None = Field(default=None, ge=0, le=2)
     in_scope: bool | None = None
     rationale: str | None = Field(default=None, max_length=8000)
     what_we_found: str | None = Field(default=None, max_length=8000)
     has_evidence: bool | None = None
-    target_level: int | None = Field(default=None, ge=1, le=5)
+    target_level: IntNotBool | None = Field(default=None, ge=1, le=5)
     locked: bool | None = None
 
 

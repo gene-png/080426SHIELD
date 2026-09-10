@@ -64,6 +64,25 @@ export interface CsfAssessment {
   client_profile: string | null;
 }
 
+/**
+ * Body for `PATCH /csf/answers/{id}` (admin).
+ *
+ * The API also has a narrower `CsfSelfAssessmentAnswerPatch` for the CLIENT
+ * route, which now refuses `evidence_artifact_id` and `locked` with a typed
+ * 422 instead of dropping them behind a 200 (#195's CSF twin).
+ *
+ * NO matching narrow type is declared here, deliberately, and the reason is
+ * structural rather than an oversight: `CsfSelfAssessment` renders the ADMIN
+ * `CsfQuestionnaire` component, whose `onAnswerUpdate` prop is typed to this
+ * interface. Narrowing the client path's type would not compile until that
+ * shared component is split -- a refactor with real regression surface, and
+ * wider than the defect. The ZT side has its own JSX and no shared component,
+ * so `ZtSelfAssessmentAnswerPatch` exists there.
+ *
+ * Safe as it stands: `CsfQuestionnaire` only ever sends `maturity_tier` and
+ * `notes`, both of which the client route applies. The API is the enforcing
+ * layer either way.
+ */
 export interface CsfAnswerPatch {
   maturity_tier?: number | null;
   notes?: string;
