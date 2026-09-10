@@ -275,6 +275,39 @@ def gate(
     return _gate(db, cid)
 
 
+def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str]) -> dict:
+    """What this register is being built FROM, as it stands right now (#240).
+
+    Captured at GENERATE and never revised. Recomputing it at export would read
+    TODAY's statuses, so a ZT assessment approved after generation would let the
+    export certify coverage over a register that never saw it -- D-053's
+    snapshot-versus-live lesson, one table over.
+
+    Reads through `_finalized_for_synthesis`, the SAME resolver `_gather_findings`
+    uses, rather than re-querying. A second query answering the same question is
+    a second place for the answer to differ, and this one exists to be evidence.
+    """
+    inputs: list[dict] = []
+    for kind, model in (
+        ("attack", AttackAssessment),
+        ("csf", CsfAssessment),
+        ("zt", ZtAssessment),
+    ):
+        a = _finalized_for_synthesis(db, model, client_id)
+        if a is None:
+            continue
+        inputs.append(
+            {
+                "kind": kind,
+                "assessment_id": str(a.id),
+                "version": a.version,
+                # The status AS IT STOOD. Never re-read.
+                "status": str(getattr(a.status, "value", a.status)),
+            }
+        )
+    return {"inputs": inputs, "excluded": list(excluded)}
+
+
 def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set[str], set[str]]:
     """Findings (one per gap) + the valid technique/control link universes.
 
@@ -559,7 +592,17 @@ def generate(
     # New version; supersede the prior current one.
     prior = _latest_register(db, cid)
     next_version = (prior.version + 1) if prior is not None else 1
-    register = RiskRegister(client_id=cid, version=next_version, generated_by=admin.id)
+    register = RiskRegister(
+        client_id=cid,
+        version=next_version,
+        generated_by=admin.id,
+        # #240. Captured HERE and never revised -- see `_provenance_snapshot`.
+        # `g.not_finalized` is the present-but-unapproved set; the refusal above
+        # already cleared the ones that block, so whatever remains contributed
+        # nothing and the register now records that permanently rather than only
+        # in the response.
+        provenance=_provenance_snapshot(db, cid, g.not_finalized),
+    )
     db.add(register)
     db.flush()
     if prior is not None:
@@ -747,16 +790,79 @@ def export(
     # Persisting provenance at generate is what makes the question answerable
     # exactly, and that is #240.
     #
-    # Guarding export on TODAY's statuses would be wrong for a different reason
-    # -- D-053: it would re-read statuses that have moved since the register was
-    # built. The fix is to record provenance AT GENERATE and check that, which
-    # needs a migration and is #240.
+    # #240, and the reason it is checked HERE against a SNAPSHOT rather than
+    # recomputed: guarding export on TODAY's statuses would re-read statuses
+    # that have moved since the register was built, so an assessment approved
+    # after generation would certify a register that never saw it. D-053.
     reg = _latest_register(db, cid)
     if reg is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Generate a Risk Register before exporting.",
         )
+
+    # #240. Refuse to publish a register built from work nobody approved.
+    #
+    # Read from the SNAPSHOT written at generate, never recomputed. The three
+    # states are deliberately distinct and only one of them is silence:
+    #
+    #   * provenance records inputs, all approved   -> export;
+    #   * provenance records an unapproved input    -> refuse, name it;
+    #   * provenance is NULL (pre-0047)             -> not recorded. Cannot be
+    #     certified either way, so it is refused UNLESS the register was already
+    #     finalized -- an already-delivered register was published under the old
+    #     rules, and blocking its re-export protects nobody while breaking a
+    #     working path. That carve-out is stated rather than implicit, and it is
+    #     bounded: 0 of 1 registers in the dev database were unfinalized when
+    #     this was written, so nothing is mid-flight through the hole.
+    _prov = reg.provenance
+    if _prov is None:
+        if reg.finalized_at is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This register predates provenance recording, so what it was "
+                    "synthesized from is unknown and cannot be certified. "
+                    "Regenerate it before exporting."
+                ),
+            )
+    else:
+        # A RATCHET, and unreachable today. Say so rather than let a reader
+        # believe this is what catches the hazard.
+        #
+        # `_provenance_snapshot` records only what `_finalized_for_synthesis`
+        # returns, and that resolver filters `status.in_(_FINALIZED)` where
+        # `_FINALIZED = ("approved", "released")`. So every status the snapshot
+        # CAN hold is already approved or released, and this list is empty by
+        # construction for every register generated on or after 0047. The only
+        # way in is mutating stored provenance, which is exactly how the test
+        # for it reaches this branch.
+        #
+        # It is kept because the thing making it unreachable is one resolver's
+        # WHERE clause, and that is a thing a future change can loosen without
+        # noticing what depended on it. `test_the_synthesis_path_must_filter_on_finalized`
+        # is what holds that clause in place; if that test is ever removed or
+        # weakened, this branch stops being decorative and starts being the
+        # last thing between unapproved work and a client's name.
+        #
+        # The pre-0047 DRAFT-input register -- the hazard #240 opens with -- is
+        # NOT caught here. It has NULL provenance and is caught by the branch
+        # above. Two different registers; two different branches.
+        unapproved = [
+            f"{i.get('kind')} v{i.get('version')} ({i.get('status')})"
+            for i in (_prov.get("inputs") or [])
+            if str(i.get("status", "")).lower() not in ("approved", "released")
+        ]
+        if unapproved:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This register was synthesized from work that was not "
+                    "approved: " + "; ".join(unapproved) + ". Exporting would "
+                    "put it under the client's name. Regenerate it now that the "
+                    "inputs are approved."
+                ),
+            )
     entries = (
         db.execute(
             select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)

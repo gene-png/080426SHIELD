@@ -38,6 +38,23 @@ class RiskRegister(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("risk_registers.id", ondelete="SET NULL")
     )
 
+    # What this register was synthesized FROM, captured at generate time (#240).
+    #
+    # Shape:
+    #   {"inputs": [{"kind": "attack"|"csf"|"zt",
+    #                "assessment_id": str, "version": int, "status": str}],
+    #    "excluded": [str]}
+    #
+    # Written at GENERATE and never revised, because the guarantee is about what
+    # the inputs WERE. Recomputing it at export would read today's statuses, so
+    # an assessment approved after generation would certify a register that
+    # never saw it -- D-053's snapshot-versus-live lesson, one table over.
+    #
+    # NULL means NOT RECORDED, not "nothing was excluded". Pre-0047 rows carry
+    # it and the export route branches on the distinction rather than assuming
+    # either answer: missing data defaults to UNCONFIRMED.
+    provenance: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Exported artifacts (XLSX + PDF + Word), set on export.
     xlsx_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artifacts.id", ondelete="SET NULL")
