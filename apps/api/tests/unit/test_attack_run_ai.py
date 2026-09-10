@@ -294,10 +294,11 @@ def test_run_ai_non_list_techniques_is_an_error_not_a_silent_empty_run(app_clien
     Note what this does NOT do. mitre_map is BATCHED, and `run_ai` counts a
     failed batch and continues, raising only when every batch failed. So one
     malformed batch of 26 still returns 200 with `batches_failed=1`, and that
-    field is rendered nowhere in the web app (plan finding F7) — the consultant
-    sees a clean coverage page with 25 techniques quietly missing. This test
-    covers the all-batches-fail path only; the partial case remains silent and
-    is not this change's to fix.
+    field is now rendered in the web app by `AttackCitationAccounting`
+    (#115): a partial run raises a role=alert naming the failed-batch
+    count. It was rendered nowhere when this docstring was written, and
+    F7 recorded that gap; this test still covers the all-batches-fail
+    path only, which is a different case from the partial one.
     """
     c, TestSession, provider = app_client
     bearer, cid = _admin(c)
