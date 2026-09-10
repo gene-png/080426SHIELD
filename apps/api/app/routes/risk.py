@@ -10,6 +10,7 @@ the client id is named in the path (like /admin/services/{id}); no X-Client-Id.
 
 from __future__ import annotations
 
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
@@ -339,11 +340,52 @@ def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set
     return findings, valid_techniques, valid_controls
 
 
-def _enum_or_none(enum_cls, value):
+def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
+    """Resolve a model-supplied token, and REPORT what it could not resolve.
+
+    Returns `(member, rejected_raw)`. `rejected_raw` is non-None only when a
+    non-empty value was supplied and could not be resolved at all.
+
+    #121. This was `_enum_or_none`, a bare `enum_cls(value)` returning None on
+    failure. Two things were wrong with it and they are separate.
+
+    **It was case- and separator-exact against a prompt that instructed
+    neither.** The prompt said `likelihood (Very Low..Very High)`, the enum
+    wants `very_low`, so a model that OBEYED the prompt produced None for every
+    likelihood and impact -- and because tier derives from the pair, None for
+    tier too. The prompt now names the accepted tokens (`jobs.py`), which fixes
+    the cause. The normalisation below fixes the class: a real model will not
+    reliably emit snake_case however it is asked, and refusing a value it
+    plainly meant is the same defect facing the other way -- what `CLAUDE.md`
+    records for `int()`, where accepting `"2"` and `2.0` is right and coercing
+    `1.9` to 1 is not. `Very High` and `very-high` mean `very_high`; nothing
+    here invents a value the model did not send.
+
+    **It was SILENT.** That is the half the client paid for: an unresolvable
+    value became None, the entry was stored anyway, the aggregates filtered it
+    out while `total_entries` counted it, and no counter anywhere went
+    non-zero. So the rejected token is returned rather than dropped, and the
+    caller records it. Absence is NOT a rejection -- a field the model never
+    sent has nothing to report, and conflating the two would make the counter
+    non-zero on every sparse but valid response.
+    """
+    if value is None:
+        return None, None
+    raw = str(value).strip()
+    if not raw:
+        return None, None
     try:
-        return enum_cls(value)
+        return enum_cls(raw), None
     except (ValueError, KeyError):
-        return None
+        pass
+    # Case and separator ONLY. Not a fuzzy match: "very high", "Very-High" and
+    # "VERY_HIGH" are one token typed three ways, while "severe" is a different
+    # claim and must still be refused.
+    normalised = re.sub(r"[\s\-]+", "_", raw.lower())
+    try:
+        return enum_cls(normalised), None
+    except (ValueError, KeyError):
+        return None, raw
 
 
 def _run_risk_synthesize_batched(
@@ -518,17 +560,35 @@ def generate(
     if prior is not None:
         prior.superseded_by = register.id
 
+    # Values the model supplied for an enum field that could not be resolved
+    # even after case/separator normalisation. #121: these became None in
+    # silence, and a register of forty entries with no likelihood, impact or
+    # tier returned HTTP 201 with every counter at zero. `field -> [tokens]`,
+    # deduped, so the audit row names WHAT to fix rather than only how many.
+    rejected_enum_values: dict[str, list[str]] = {}
+
+    def _record(field: str, rejected: str | None) -> None:
+        if rejected is None:
+            return
+        seen = rejected_enum_values.setdefault(field, [])
+        if rejected not in seen:
+            seen.append(rejected)
+
     for raw in data.get("entries", []):
         if not isinstance(raw, dict) or not raw.get("title"):
             continue
-        lk = _enum_or_none(Likelihood, raw.get("likelihood"))
-        im = _enum_or_none(Impact, raw.get("impact"))
+        lk, lk_bad = _coerce_enum(Likelihood, raw.get("likelihood"))
+        _record("likelihood", lk_bad)
+        im, im_bad = _coerce_enum(Impact, raw.get("impact"))
+        _record("impact", im_bad)
         # Tier is ALWAYS code-derived, never AI-set.
         tier = tier_for(lk, im).value if (lk is not None and im is not None) else None
         techs = [t for t in (raw.get("linked_techniques") or []) if t in valid_techniques]
         controls = [c for c in (raw.get("linked_controls") or []) if c in valid_controls]
-        axis = _enum_or_none(RiskAxis, raw.get("axis"))
-        action = _enum_or_none(RecommendedAction, raw.get("recommended_action"))
+        axis, axis_bad = _coerce_enum(RiskAxis, raw.get("axis"))
+        _record("axis", axis_bad)
+        action, action_bad = _coerce_enum(RecommendedAction, raw.get("recommended_action"))
+        _record("recommended_action", action_bad)
         db.add(
             RiskEntry(
                 register_id=register.id,
@@ -563,6 +623,9 @@ def generate(
             "findings": len(findings),
             "batches_total": batches_total,
             "batches_failed": batches_failed,
+            # Empty dict on a clean run. Present rather than omitted so a
+            # reader can tell "nothing was rejected" from "nobody looked".
+            "rejected_enum_values": rejected_enum_values,
         },
     )
     db.commit()

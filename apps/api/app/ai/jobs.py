@@ -201,14 +201,17 @@ Register by synthesizing gaps and findings from a client's completed assessments
 For each finding draft one candidate entry: weakness title + description; SHIELD
 axis (detection, prevention, or response); the linked ATT&CK techniques and
 control references (you may ONLY cite techniques/controls that appear in the
-supplied assessments); likelihood (Very Low..Very High); impact
-(Negligible..Catastrophic); compensating controls; residual risk; and a
+supplied assessments); likelihood (very_low, low, medium, high, very_high);
+impact (negligible, minor, moderate, major, catastrophic);
+compensating controls; residual risk; and a
 recommended action (remediate, mitigate, accept, transfer, avoid) with rationale.
 Do NOT set the risk tier — code derives it from likelihood and impact. Return
 strictly JSON:
 {"entries": [{"title": "...", "description": "...", "axis": "detection|prevention|response",
-"linked_techniques": [...], "linked_controls": [...], "likelihood": "...",
-"impact": "...", "compensating_controls": "...", "residual_risk": "...",
+"linked_techniques": [...], "linked_controls": [...],
+"likelihood": "very_low|low|medium|high|very_high",
+"impact": "negligible|minor|moderate|major|catastrophic",
+"compensating_controls": "...", "residual_risk": "...",
 "recommended_action": "...", "rationale": "...",
 "source": "coverage_finding|questionnaire_response", "source_id": "..."}]}
 """
