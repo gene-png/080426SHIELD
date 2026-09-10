@@ -389,12 +389,25 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
     the rule below has THREE consumers to consider, and the third does not
     import this module.
 
-    DELIBERATE EXEMPTION, stated so it does not read as an oversight. An
-    out-of-range PER-CAPABILITY target falls back to the engagement stage
-    SILENTLY, the same shape #125 fixes one level up. It is left alone because
-    naming that fault needs a counter on `GapAnalysis`, and that change is
-    constrained not to alter the shape `zt/exporters.py` reads. Tracked in
-    #188, which carries the expiry condition stated below.
+    THE EXEMPTION THIS PARAGRAPH RECORDED IS DISCHARGED. It read: an
+    out-of-range PER-CAPABILITY target "falls back to the engagement stage
+    SILENTLY ... left alone because naming that fault needs a counter on
+    `GapAnalysis`, and that change is constrained not to alter the shape
+    `zt/exporters.py` reads. Tracked in #188."
+
+    Every clause of that is now false. `GapAnalysis` carries
+    `unusable_target_codes`, `zt/exporters.py` reads it in `_gap_plan_caption`,
+    the constraint on altering that shape expired with the branch it belonged
+    to, and #188 closes with this change. The fallback still HAPPENS -- it is
+    the right behaviour, since a remediation row against the engagement target
+    beats no row at all -- but it is no longer silent, on any of the three
+    surfaces that render a `GapAnalysis`.
+
+    Rewritten rather than deleted, because a reader who followed the old text
+    would open a closed #188 and conclude the disclosure does not exist. That
+    is the shape #288 records: a deferral citing an issue the fix itself
+    closed, in a file the fix itself touched. A one-pass sweep cannot catch it,
+    because the fix is what creates the violation.
 
     Not currently reachable, and the two writers are named rather than
     summarised, because an earlier draft of this comment said "no other code
