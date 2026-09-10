@@ -27,6 +27,118 @@ function result(over: Partial<AttackRunAiResponse> = {}): AttackRunAiResponse {
 }
 
 describe("AttackCitationAccounting", () => {
+  /**
+   * #115. `mitre_map` runs as concurrent batches. A batch that raises is
+   * counted and the run CONTINUES; only a total failure raises. The response
+   * carries `batches_total` and `batches_failed`, and before this those two
+   * declarations in `lib/attack/types.ts` were their ONLY occurrences in
+   * `apps/web/src` — nothing rendered them.
+   *
+   * Meanwhile this component asserted completeness over the survivors: the
+   * headline counts citations accumulated from the batches that came back, and
+   * said they were "checked against the client's capability list" full stop.
+   *
+   * 633 techniques, 26 batches, a provider rate-limits, 6 batches fail. HTTP
+   * 200. The panel reads "312 tool citations checked...". 150 techniques were
+   * never sent. On a RE-RUN over an already-scored assessment those 150 keep
+   * their previous statuses, so `scored_count / total` shows no anomaly either.
+   * The consultant approves, finalizes, releases.
+   */
+  it("says so when batches failed, instead of asserting a complete run", () => {
+    render(
+      <AttackCitationAccounting
+        result={result({
+          citations_confirmed: 312,
+          batches_total: 26,
+          batches_failed: 6,
+        })}
+      />,
+    );
+    const partial = screen.getByTestId("attack-run-incomplete");
+    // The numbers a consultant needs to act: how much of the run is missing.
+    expect(partial).toHaveTextContent(/6 of 26/);
+    // The consequence, which is the part no other surface states.
+    expect(partial).toHaveTextContent(/were not mapped/i);
+    // And it must NOT claim they were never sent. A batch that fails the #46
+    // shape guard was sent, was answered and was billed -- `run_job` parses
+    // `response.content`, so the refusal happens after the call. Telling a
+    // consultant it never happened costs them twice: they do not reconcile
+    // the spend, and they diagnose rate limits instead of prompt drift.
+    expect(partial).not.toHaveTextContent(/never sent/i);
+    expect(partial).toHaveTextContent(/check the AI spend/i);
+    // It must be an alert. This is the one thing on the panel that invalidates
+    // everything else on it.
+    expect(partial).toHaveAttribute("role", "alert");
+  });
+
+  it("scopes the headline to what actually completed", () => {
+    render(
+      <AttackCitationAccounting
+        result={result({
+          citations_confirmed: 312,
+          batches_total: 26,
+          batches_failed: 6,
+        })}
+      />,
+    );
+    const panel = screen.getByTestId("attack-citation-accounting");
+    // The defect was the unqualified claim. On a partial run the headline must
+    // not read as a statement about the whole capability list.
+    expect(panel).not.toHaveTextContent(
+      /312 tool citations checked against the client/,
+    );
+    expect(panel).toHaveTextContent(/completed batches/i);
+  });
+
+  it("still warns when the failure count arrives without a total", () => {
+    // The guard must FAIL CLOSED. A first version required both fields, so
+    // this input suppressed the alert AND reverted the headline to its
+    // unqualified form -- the guard written to close #115 reproducing #115.
+    render(
+      <AttackCitationAccounting
+        result={result({ citations_confirmed: 312, batches_failed: 6 })}
+      />,
+    );
+    const partial = screen.getByTestId("attack-run-incomplete");
+    expect(partial).toHaveTextContent(/6 batches failed/);
+    // Degrades the sentence, not the decision: no "of N" when N is unknown,
+    // and specifically not "of undefined".
+    expect(partial).not.toHaveTextContent(/undefined/);
+    expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
+      /completed batches/i,
+    );
+  });
+
+  it("stays quiet when every batch completed", () => {
+    render(
+      <AttackCitationAccounting
+        result={result({
+          citations_confirmed: 7,
+          batches_total: 26,
+          batches_failed: 0,
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("attack-run-incomplete")).toBeNull();
+    // And the unqualified headline is correct here, so it comes back.
+    expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
+      /7 tool citations checked against/,
+    );
+  });
+
+  it("says nothing about batches when the payload predates them", () => {
+    // A response with no batch fields measured nothing about batching, and
+    // rendering "0 of 0 failed" over it would assert a clean run that was
+    // never established — the absence/zero conflation this repo keeps hitting.
+    render(
+      <AttackCitationAccounting result={result({ citations_confirmed: 7 })} />,
+    );
+    expect(screen.queryByTestId("attack-run-incomplete")).toBeNull();
+    expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
+      /7 tool citations checked against/,
+    );
+  });
+
   it("states the split on a clean run, so its absence never reads as zero", () => {
     render(
       <AttackCitationAccounting result={result({ citations_confirmed: 7 })} />,

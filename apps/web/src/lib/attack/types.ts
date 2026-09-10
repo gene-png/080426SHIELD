@@ -112,7 +112,8 @@ export interface AttackRunAiResponse {
   changed: CoverageChange[];
   coverage: AttackCoverageRow[];
   // mitre_map runs as concurrent batches. Returned by the API since D-048 and
-  // still rendered nowhere — a known gap recorded there, not this change's
+  // RENDERED since #115 by `AttackCitationAccounting`, which raises a
+  // role=alert on a partial run. Was a known gap when this was written.
   // business, but declared so the next reader sees it exists.
   batches_total?: number;
   batches_failed?: number;

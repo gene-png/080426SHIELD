@@ -181,9 +181,11 @@ Return strictly JSON:
 # mitre_map is BATCHED, and `attack.py` counts a failed batch and continues,
 # raising only when EVERY batch failed. So this guard turns a silently-empty
 # batch into a counted one — it does not fail the run. One bad batch of 26 still
-# returns 200 with `batches_failed=1`, and that field is not rendered anywhere
-# in the web app (plan finding F7). The guard improves the ledger, not yet what
-# the consultant sees.
+# returns 200 with `batches_failed=1`. That field is now RENDERED (#115):
+# `AttackCitationAccounting` raises a role=alert naming how many batches
+# failed, that their techniques were not mapped, and the re-run trap. It
+# was rendered nowhere when this comment was first written, which is why
+# the guard below improved the ledger before anything showed it.
 register_job(
     AIJob(
         name="mitre_map",
