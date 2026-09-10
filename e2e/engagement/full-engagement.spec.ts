@@ -135,20 +135,27 @@ import { acknowledgeOfflineAi } from "../helpers/ai";
  *
  * ## Three outputs
  *
- * 1. **Video** (`test.use({ video: "on" })`) — the whole flow, one continuous
- *    recording, because the whole flow is ONE test sharing ONE browser context.
- * 2. **Trace** (`test.use({ trace: "on" })`) — a DOM snapshot per action plus
- *    the network calls behind each screen, so when a number looks wrong you can
- *    tell whether the API or the renderer produced it.
+ * 1. **Video** at 1920x1080 — the whole flow, one continuous recording,
+ *    because the whole flow is ONE test sharing ONE browser context. Saved
+ *    into the run folder by `afterAll`; `recording.md` there says whether the
+ *    save worked.
+ * 2. **Trace** — a DOM snapshot per action plus the network calls behind each
+ *    screen, so when a number looks wrong you can tell whether the API or the
+ *    renderer produced it. Playwright writes it after every hook in this file
+ *    has run, so `e2e/scripts/run-engagement.sh` preserves it once the runner
+ *    exits. **Launch through that script**, or the trace stays in
+ *    `test-results/` and the next run deletes it.
  * 3. **Every generated artifact**, downloaded into a dated folder under
  *    `e2e/artifacts/`, named by SERVICE and CLIENT. A video shows the click that
  *    produced a deliverable; it does not show what is inside it.
  *
- * Video and trace are set HERE at the spec level, never in
- * `e2e/playwright.config.ts`. Verified against that file: it sets
- * `trace: "on-first-retry"` and no video at all, so turning either on globally
- * would slow every existing spec and change CI's E2E job. `test.use` overrides
- * the project `use` block for this file only.
+ * Video, trace and the 1920x1080 viewport are set HERE at the spec level, never
+ * in `e2e/playwright.config.ts`. Verified against that file: it sets
+ * `trace: "on-first-retry"`, no video at all, and a chromium project that
+ * spreads `devices["Desktop Chrome"]` (1280x720) — so raising any of the three
+ * globally would slow every existing spec, re-lay-out the ones that assert
+ * rendered geometry, and change CI's E2E job. `test.use` overrides the project
+ * `use` block for this file only.
  *
  * ## Why the admin -> client -> admin crossings are in ONE test
  *
@@ -1470,48 +1477,40 @@ let runState: RunState | null = null;
 test.afterEach(async () => {
   if (runState === null || runState.logged) return;
   runState.logged = true;
-  let videoPath: string | null = null;
-  try {
-    // SAVE it, do not merely record where it is.
-    //
-    // Playwright writes video and trace under `test-results/` and CLEARS that
-    // directory at the START of every run. This hook used to capture the path
-    // and write it into the log, which is a pointer at a file the next spec
-    // deletes -- and that is exactly what happened: the 2026-09-09 18:11 run's
-    // fifteen downloaded documents survive in `RUN_DIR` and its video and trace
-    // are gone, destroyed by an unrelated spec run an hour later. The first
-    // successful release chain has no recording.
-    //
-    // `saveAs` waits for the context to finish writing, so it is safe here even
-    // though the file is not final until the context closes.
-    const saved = path.join(RUN_DIR, "engagement.webm");
-    await runState.video?.saveAs(saved);
-    videoPath = fs.existsSync(saved)
-      ? saved
-      : ((await runState.video?.path()) ?? null);
-  } catch {
-    videoPath = null; // page torn down; the path is a convenience, not the record
-  }
-  // The trace lives in the run's outputDir and is wiped on the same schedule.
-  try {
-    const outDir = test.info().outputDir;
-    for (const name of fs.existsSync(outDir) ? fs.readdirSync(outDir) : []) {
-      if (name.endsWith(".zip")) {
-        fs.copyFileSync(path.join(outDir, name), path.join(RUN_DIR, name));
-      }
-    }
-  } catch {
-    // A missing trace is a lost convenience, never a lost result -- the step
-    // log and the downloaded artifacts are the record and they are already in
-    // RUN_DIR. Swallowed deliberately, and this is the one place in this file
-    // where that is correct.
-  }
+  // NOTHING TOUCHES THE VIDEO HERE. The save happens in `afterAll` below, and
+  // the reason is measured rather than reasoned: `video.saveAs()` called from
+  // `afterEach` NEVER RESOLVES.
+  //
+  // `saveAs` waits for the page to close, and Playwright closes the page AFTER
+  // this hook returns -- so the hook waits for the page and the page waits for
+  // the hook. Measured 2026-09-09 with a throwaway spec: the run died on
+  // `Test timeout of 90000ms exceeded while running "afterEach" hook`, and the
+  // video was not saved. The same spec's `afterAll` saved it in 2ms.
+  //
+  // That matters more than a tidier hook. A draft of this file did call
+  // `saveAs` here, under a comment asserting it was "safe here even though the
+  // file is not final until the context closes". That sentence was false, and
+  // had it shipped, every rehearsal run would have hung in teardown and lost
+  // BOTH the recording and the step log this hook exists to write.
+  //
+  // The trace is not copied here either, for a related reason: Playwright
+  // writes `trace.zip` during fixture teardown, after this hook AND after
+  // `afterAll`. Measured in the same probe -- the outputDir held no `.zip` at
+  // either point. Stopping tracing by hand does produce the file, and it also
+  // fails the test (`Must start tracing before stopping`), because it collides
+  // with Playwright's own trace fixture. An instrument must not go red over
+  // its own evidence handling, so the trace is copied out AFTER the runner
+  // exits, by `e2e/scripts/run-engagement.sh`.
   const ctx = {
     legalName: runState.legalName,
     clientEmail: runState.clientEmail,
     clientId: runState.clientId,
     serviceIds: runState.serviceIds,
-    videoPath,
+    // Deliberately null: the video does not exist yet at this point in the
+    // lifecycle, and a log line naming a file that has not been written is the
+    // success-record-before-the-success defect. `afterAll` writes the real
+    // outcome to `recording.md` in the same folder.
+    videoPath: null,
     outputDir: test.info().outputDir,
     completed: runState.completed,
   };
@@ -1537,6 +1536,67 @@ test.afterEach(async () => {
         2,
       ),
     );
+  }
+});
+
+/**
+ * Save the recording, and record whether the save worked.
+ *
+ * This runs AFTER the page and its context are torn down, which is the whole
+ * point: `video.saveAs()` resolves only once the page has closed. In
+ * `afterEach` it deadlocks (see the comment there); here it returned in 2ms in
+ * the 2026-09-09 probe.
+ *
+ * `recording.md` is written from inside the branch that succeeded, never above
+ * it, so the folder cannot claim a recording it does not contain. A failed
+ * save writes the failure instead of writing nothing -- silence would be
+ * indistinguishable from a run that never got this far.
+ */
+test.afterAll(async () => {
+  if (runState === null) return;
+  const dest = path.join(RUN_DIR, "engagement.webm");
+  const lines: string[] = [`# Recording`, ``];
+  try {
+    fs.mkdirSync(RUN_DIR, { recursive: true });
+    await runState.video?.saveAs(dest);
+    if (fs.existsSync(dest)) {
+      const bytes = fs.statSync(dest).size;
+      lines.push(`- saved: engagement.webm`, `- bytes: ${bytes}`);
+      // eslint-disable-next-line no-console
+      console.log(`full-engagement: video saved (${bytes} bytes) -> ${dest}`);
+    } else {
+      lines.push(
+        `- NOT SAVED: saveAs returned without error and no file exists at ${dest}.`,
+        `- This run has no recording. Do not treat the step log as covering it.`,
+      );
+      // eslint-disable-next-line no-console
+      console.log(`full-engagement: VIDEO MISSING after saveAs -> ${dest}`);
+    }
+  } catch (err) {
+    lines.push(
+      `- NOT SAVED: ${describe(err)}`,
+      `- This run has no recording. Do not treat the step log as covering it.`,
+    );
+    // eslint-disable-next-line no-console
+    console.log(`full-engagement: VIDEO SAVE FAILED -- ${describe(err)}`);
+  }
+  lines.push(
+    ``,
+    `The trace is NOT here yet. Playwright writes trace.zip during fixture`,
+    `teardown, after this hook. \`e2e/scripts/run-engagement.sh\` copies it in`,
+    `once the runner exits; if you launched the spec by hand, the trace is`,
+    `under \`e2e/test-results/\` and the NEXT run will delete it.`,
+    ``,
+  );
+  try {
+    fs.writeFileSync(
+      path.join(RUN_DIR, "recording.md"),
+      lines.join("\n"),
+      "utf8",
+    );
+  } catch {
+    // The console lines above already carry the outcome; a missing recording.md
+    // loses a convenience, not the fact.
   }
 });
 
@@ -2884,7 +2944,9 @@ function writeLog(
   lines.push("");
   lines.push(`    ${ctx.outputDir}`);
   lines.push("");
-  lines.push(`- video: ${ctx.videoPath ?? "(path not available)"}`);
+  lines.push(
+    `- video: see recording.md in this folder (written after the run's page closes)`,
+  );
   lines.push(
     "- trace: `trace.zip` in that folder — open with `npx playwright show-trace <path>`",
   );
