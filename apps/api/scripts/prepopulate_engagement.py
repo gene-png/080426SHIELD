@@ -256,19 +256,39 @@ ZT_DOD_STAGE_CYCLES: dict[str, tuple[int, ...]] = {
 # two rows share a vendor, because the Overlap dashboard reads "No categories
 # with more than one item." / "No vendor repeats." on an estate that has none,
 # and a real estate has both.
+# Keyed on the names the extractor ACTUALLY produces from
+# `Demo Folder/artifacts/meridian-shoal-capability-inventory.csv`, read back out
+# of the database after a real extract -- not from a list of tools someone
+# imagined a client might own.
+#
+# The first version of this map was imagined, and 11 of 16 rows fell through to
+# the fallback: it carried `vault`, `snyk`, `veeam`, `proofpoint` and
+# `cloudflare`, none of which appear in the inventory, while every AWS and
+# Microsoft row had no entry at all. That is CLAUDE.md's "a corpus drawn from
+# your own assumptions cannot falsify them", pointed at a lookup table.
+#
+# The DELIBERATE OVERLAPS are the point, not an accident: two cloud scanners
+# (Tenable, Wiz), two log/telemetry stores (CloudWatch, Datadog) and two device
+# managers (Jamf, Intune). The Overlap dashboard reads "No categories with more
+# than one item." on an estate with none, and a real estate has all three --
+# they are also the consolidation story the Tech Debt chapter is built on.
 TECH_DEBT_DEFAULTS: tuple[tuple[str, str, float, int], ...] = (
-    ("crowdstrike", "Endpoint Detection & Response", 148_000.00, 1_200),
-    ("falcon", "Endpoint Detection & Response", 148_000.00, 1_200),
-    ("splunk", "SIEM & Log Management", 265_000.00, 400),
-    ("okta", "Identity & Access Management", 96_000.00, 1_150),
-    ("tenable", "Cloud Security Posture", 74_000.00, 500),
-    ("wiz", "Cloud Security Posture", 88_000.00, 500),
-    ("qualys", "Cloud Security Posture", 61_000.00, 350),
-    ("vault", "Secrets Management", 42_000.00, 250),
-    ("snyk", "Application Security Testing", 55_000.00, 300),
-    ("veeam", "Backup & Recovery", 38_000.00, 120),
-    ("proofpoint", "Email Security", 71_000.00, 1_150),
-    ("cloudflare", "Network & Edge Security", 45_000.00, 1),
+    ("crowdstrike", "Endpoint Detection & Response", 118_000.00, 240),
+    ("splunk", "SIEM & Log Management", 204_000.00, 400),
+    ("okta", "Identity & Access Management", 186_000.00, 240),
+    ("tenable", "Cloud Security Posture", 74_000.00, 50),
+    ("wiz", "Cloud Security Posture", 88_000.00, 50),
+    ("aws backup", "Backup & Recovery", 31_000.00, 1),
+    ("secrets manager", "Secrets Management", 12_000.00, 1),
+    ("waf", "Network & Edge Security", 28_000.00, 1),
+    ("cloudwatch", "Observability & Logging", 96_000.00, 1),
+    ("datadog", "Observability & Logging", 142_000.00, 220),
+    ("confluence", "Collaboration & Documentation", 44_000.00, 260),
+    ("github advanced security", "Application Security Testing", 63_000.00, 90),
+    ("jamf", "Device Management", 39_000.00, 240),
+    ("intune", "Device Management", 52_000.00, 240),
+    ("defender for office", "Email Security", 71_000.00, 260),
+    ("salesforce", "Business Application", 168_000.00, 120),
 )
 TECH_DEBT_FALLBACK = ("Uncategorized Tooling", 25_000.00, 100)
 
@@ -543,6 +563,16 @@ def prepopulate_tech_debt(db: Session, client: Client, dry_run: bool) -> dict[st
     live = [lst for lst in lists if str(lst.status) != "discarded"]
     if not live:
         raise PrepopulateError("Tech Debt: every capability list is discarded.")
+    # Same ambiguity the CSF half guards: `lists` spans every Tech Debt SERVICE
+    # this client has, and version is unique per service -- so two services
+    # both at v1 make `max(..., key=version)` an arbitrary pick between two
+    # different estates. Refuse rather than choose.
+    if len({lst.service_id for lst in live}) > 1:
+        raise PrepopulateError(
+            "Tech Debt: this client has more than one Tech Debt service, so "
+            "'the latest capability list' is ambiguous. Refusing rather than "
+            "picking one."
+        )
     lst = max(live, key=lambda x: x.version)
     # Match the PRODUCT's rule, which refuses only RELEASED (and DISCARDED,
     # already filtered above). An APPROVED list stays editable ON PURPOSE --
@@ -569,16 +599,26 @@ def prepopulate_tech_debt(db: Session, client: Client, dry_run: bool) -> dict[st
         )
 
     filled_category = filled_cost = filled_licences = filled_disposition = 0
+    unmatched: list[str] = []
 
     for idx, item in enumerate(items):
         if item.locked:
             continue
         name = (item.name or "").lower()
         category, cost, licences = TECH_DEBT_FALLBACK
+        matched = False
         for needle, cat, c, lic in TECH_DEBT_DEFAULTS:
             if needle in name:
                 category, cost, licences = cat, c, lic
+                matched = True
                 break
+        # A fallback row is INFORMATION, not a default to absorb quietly. The
+        # first version of this map matched 5 of 16 and the other 11 landed on
+        # "Uncategorized Tooling" -- which the Overlap dashboard renders as one
+        # enormous category, and nothing said so. Naming them makes an
+        # inventory the map does not cover visible on the run that fills it.
+        if not matched:
+            unmatched.append(item.name or "<unnamed>")
 
         if item.category is None:
             if not dry_run:
@@ -610,12 +650,23 @@ def prepopulate_tech_debt(db: Session, client: Client, dry_run: bool) -> dict[st
         f"{_verb(dry_run)} category={filled_category} cost={filled_cost} "
         f"licences={filled_licences} disposition={filled_disposition}"
     )
+    if unmatched:
+        # Loud, and on its own line. Fallback rows all land in ONE bucket that
+        # the Overlap dashboard renders as a single enormous category -- which
+        # reads as a finding about the client and is really a gap in this
+        # script's map. Naming them is the difference between the two.
+        print(
+            f"{LOG} Tech Debt: {len(unmatched)} of {len(items)} row(s) matched "
+            f"no entry in TECH_DEBT_DEFAULTS and fell back to "
+            f"{TECH_DEBT_FALLBACK[0]!r}: {', '.join(sorted(unmatched))}"
+        )
     return {
         "rows": len(items),
         "category": filled_category,
         "cost": filled_cost,
         "licences": filled_licences,
         "disposition": filled_disposition,
+        "unmatched": len(unmatched),
     }
 
 
