@@ -33,15 +33,30 @@ would pin the bounds and not the rule. Keying on the marker separates "refused
 for being a bool" from "refused because 0 is out of range", which is the only
 version of this test that fails for the right reason.
 
-## Fail-closed
+## Fail-closed, and against PARTIAL loss rather than only total loss
 
 The derivation walks FastAPI internals (`original_router`, `body_field`) that
-are not a public contract and moved in the 0.14x line already. If a version
-bump makes the walk return nothing, this file must go RED rather than report a
-clean sweep over zero fields -- "I could not look" must not share an exit with
-"nothing to complain about". `test_the_derivation_still_finds_request_bodies`
-is that check; without it the parametrised tests below would collect zero cases
-and pytest would call that success.
+are not a public contract and moved in the 0.14x line already. If the walk
+stops working, this file must go RED rather than report a clean sweep -- "I
+could not look" must not share an exit with "nothing to complain about".
+
+**`original_router` is load-bearing, not defensive.** Measured 2026-09-10 on
+this app: 16 of 19 top-level routes are lazy `_IncludedRouter` wrappers, and
+WITHOUT the recursion `body_field` is non-None on **zero** routes. Flattening
+yields 136 routes and 39 request bodies. A review pass suspected the branch was
+inert and asked for exactly this measurement; it is the opposite of inert, so
+the numbers are recorded here rather than the suspicion.
+
+**A non-emptiness assertion only catches TOTAL loss, and every realistic
+degradation is partial.** A `TypeAliasType` annotation (`type Stage = ...`,
+available on this repo's 3.12 target) yields `get_args() == ()`, so the field
+drops out of the derived set silently while every other field keeps the sweep
+green. So does a dataclass or `TypedDict` body, which `_walk` skips at its
+first line. `test_the_derivation_still_reaches_every_schema_module` is the
+guard: named witnesses in each schema module that contributes fields, so losing
+a whole module is visible even though the PROTECTED set stays derived. The
+witnesses are not the set being checked -- they are proof the walk still
+arrives.
 """
 
 from __future__ import annotations
@@ -144,6 +159,39 @@ def test_the_derivation_still_finds_request_bodies() -> None:
         "request bodies were found but none carries an int field. That is "
         "possible in principle and false today, so treat it as the walk being "
         "broken until you have checked by hand."
+    )
+
+
+#: One witness per schema module the walk must still reach. NOT the set under
+#: test -- that stays derived from the route table. These exist so that losing
+#: an entire module, or one annotation shape, cannot hide behind the other
+#: modules' fields still being found.
+_WITNESSES = [
+    ("zt", "ZtAnswerPatch", "maturity_stage"),
+    ("csf", "CsfDimensionScorePatch", "governance"),
+    ("intake", "ServiceRequestInput", "zt_target_stage"),
+    ("tech_debt", "CapabilityItemPatch", "license_count"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("module, model_name, field", _WITNESSES)
+def test_the_derivation_still_reaches_every_schema_module(
+    module: str, model_name: str, field: str
+) -> None:
+    """Partial loss must be as loud as total loss.
+
+    The check above passes as long as the walk finds SOMETHING. These fail if
+    it stops reaching one module, or stops recognising one annotation shape --
+    the degradations a version bump actually produces.
+    """
+    found = {(m.__name__, name) for m, name, _ in _INT_FIELDS}
+    assert (model_name, field) in found, (
+        f"the derivation no longer reaches {module}.{model_name}.{field}. "
+        f"Either that field was renamed or removed -- in which case update this "
+        f"witness -- or the walk has stopped seeing a whole module or "
+        f"annotation shape, and every field it stopped seeing is now "
+        f"unprotected while this file still reports clean."
     )
 
 

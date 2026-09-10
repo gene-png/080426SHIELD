@@ -396,12 +396,21 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
         `if not 1 <= n <= max_stage` check `continue`s to a dropped-suggestion
         record, so an out-of-range suggestion is never written.
 
-    Both bound the RANGE. Both now also refuse a bool AT THE SCHEMA, through
-    the `IntNotBool` annotation on `ZtAnswerPatch` -- closing #189, which this
-    comment previously described as live and out of scope here. The predicate
-    below is still carried over exactly as it stood: `isinstance(True, int)` is
-    True, so a stored `True` would be read as Stage 1 rather than falling back,
-    which is why the schema is the right place to refuse it and this is not.
+    Both bound the RANGE. **Only ONE of them now refuses a bool at the schema**
+    -- `patch_answer`, through the `IntNotBool` annotation on `ZtAnswerPatch`
+    (#189). The AI-apply path takes no request body, so no schema annotation
+    can reach it: its bool guard is `_as_number`'s own `isinstance(raw, bool)`
+    check, and that check is LOAD-BEARING. Do not delete it on the strength of
+    #189 being closed.
+
+    A draft of this paragraph said "both now also refuse a bool at the schema",
+    which would have invited exactly that deletion -- and a model returning
+    `"target_stage": true` would then write Stage 1 to a client's row, #189
+    reinstated on the one surface this comment had just called safe.
+
+    The predicate below is carried over exactly as it stood: `isinstance(True,
+    int)` is True, so a stored `True` would be read as Stage 1 rather than
+    falling back, which is why refusing belongs at the writers and not here.
 
     A THIRD route accepts a `target_stage` field in its body without writing
     it: `patch_self_assessment_answer`. It is not a writer and never was -- it

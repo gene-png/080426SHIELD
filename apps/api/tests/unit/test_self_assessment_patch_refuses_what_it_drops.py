@@ -32,8 +32,8 @@ schema tomorrow joins the refusal set with nobody editing this file.
 ## Refused, not honoured -- a product decision with a stated reason
 
 See `ZtSelfAssessmentAnswerPatch`. Honouring `target_stage` would create a
-third writer of `ZtAnswer.target_stage`, and `zt/scoring.py` carries an
-exemption that expires on exactly that event (#188).
+third writer of `ZtAnswer.target_stage`, and `zt/scoring.py::capability_target_override` carries an exemption that
+expires on exactly that event (#188).
 `test_refusing_holds_the_zt_writer_count_at_two` pins the consequence, so a
 future author who prefers honouring has to confront #188 rather than discover
 it afterwards.
@@ -118,22 +118,34 @@ def test_a_field_this_route_will_not_apply_is_refused_not_dropped(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("service, admin, client, applied", _SERVICES)
+@pytest.mark.parametrize("service, admin, client, applied, field", _REFUSAL_CASES)
 def test_the_refusal_points_at_the_route_that_does_apply_it(
-    service: str, admin: type[BaseModel], client: type[BaseModel], applied: dict
+    service: str,
+    admin: type[BaseModel],
+    client: type[BaseModel],
+    applied: dict,
+    field: str,
 ) -> None:
     """A refusal leaving the caller nowhere to go is half a fix.
 
     These fields are settable -- just not here. The message says where, so a
     reader does not conclude the feature is missing.
+
+    Parametrised over EVERY refused field, not the first one sorted. An earlier
+    version took `_refused(...)[0]` and asserted a route string that the
+    message contains unconditionally -- so it held for any input and could not
+    notice a field whose refusal named the wrong remedy. Caught in review.
     """
-    field = _refused(admin, client)[0]
     with pytest.raises(ValidationError) as caught:
         client(**{field: 3})
     message = str(caught.value)
     assert f"/{service}/answers/" in message, (
-        f"{service}: the refusal does not name the admin route that does apply "
-        f"these fields. Message was: {message!r}"
+        f"{service}.{field}: the refusal does not name the admin route that "
+        f"does apply this field. Message was: {message!r}"
+    )
+    assert field in message, (
+        f"{service}: the refusal names a remedy but not {field}, so a caller "
+        f"cannot tell which field the remedy is for. Message was: {message!r}"
     )
 
 
@@ -151,8 +163,8 @@ def test_refusing_holds_the_zt_writer_count_at_two() -> None:
         "the client self-assessment schema grew a `target_stage` field. If it "
         "is now written, this route is a THIRD writer of "
         "`ZtAnswer.target_stage` and the deliberate exemption in "
-        "`zt/scoring.py::resolve_target_stage` has expired -- #188 must be "
-        "fixed in the same change, not left latent."
+        "`zt/scoring.py::capability_target_override` has expired -- #188 must "
+        "be fixed in the same change, not left latent."
     )
 
 

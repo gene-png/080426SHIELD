@@ -132,8 +132,8 @@ class ZtSelfAssessmentAnswerPatch(BaseModel):
 
     #195 leaves the choice open -- honour `target_stage` here, or refuse it.
     Honouring would make this a THIRD writer of `ZtAnswer.target_stage`, and
-    `zt/scoring.py::resolve_target_stage` carries a deliberate exemption whose
-    stated expiry condition is "if a third writer appears, this exemption
+    `zt/scoring.py::capability_target_override` carries a deliberate exemption
+    whose stated expiry condition is "if a third writer appears, this exemption
     expires with it". Honouring would therefore activate a latent
     silent-fallback defect (#188) as a side effect of fixing a reporting one.
     Refusing holds the writer count at two and leaves that exemption intact.
