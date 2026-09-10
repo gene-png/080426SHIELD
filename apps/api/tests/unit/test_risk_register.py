@@ -377,10 +377,26 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
     recomputing would read TODAY's statuses, so an assessment approved after
     generation would certify a register that never saw it (D-053).
 
-    So this test mutates the stored provenance rather than the assessment: that
-    is the only way to express "the register was built from a draft" once the
-    generate path refuses to build one, and it is the state a pre-#242 register
-    is actually in.
+    So this test mutates the stored provenance rather than the assessment.
+
+    **And that is not a testing convenience -- it is the finding.** The guard
+    is UNREACHABLE by construction today: `_provenance_snapshot` records only
+    what `_finalized_for_synthesis` returns, and that resolver filters
+    `status.in_(_FINALIZED)` where `_FINALIZED = ("approved", "released")`. No
+    register generated on or after 0047 can carry an unapproved input, so
+    mutating the stored row is the only way in.
+
+    The guard is kept as a RATCHET. What makes it unreachable is one WHERE
+    clause, and `test_the_synthesis_path_must_filter_on_finalized` is what
+    holds that clause in place. If that test is ever removed or weakened, this
+    branch stops being decorative.
+
+    Note what this test does NOT cover: the pre-0047 register built from a
+    DRAFT ATT&CK mapping -- the hazard #240 opens with -- has NULL provenance
+    and is caught by the other branch, in
+    `test_export_refuses_a_pre_provenance_register_that_was_never_delivered`.
+    Two different registers, two different branches, and conflating them was
+    the error this docstring now exists to prevent.
     """
     c, provider = app_client
     bearer, cid = _admin(c)

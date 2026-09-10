@@ -827,6 +827,27 @@ def export(
                 ),
             )
     else:
+        # A RATCHET, and unreachable today. Say so rather than let a reader
+        # believe this is what catches the hazard.
+        #
+        # `_provenance_snapshot` records only what `_finalized_for_synthesis`
+        # returns, and that resolver filters `status.in_(_FINALIZED)` where
+        # `_FINALIZED = ("approved", "released")`. So every status the snapshot
+        # CAN hold is already approved or released, and this list is empty by
+        # construction for every register generated on or after 0047. The only
+        # way in is mutating stored provenance, which is exactly how the test
+        # for it reaches this branch.
+        #
+        # It is kept because the thing making it unreachable is one resolver's
+        # WHERE clause, and that is a thing a future change can loosen without
+        # noticing what depended on it. `test_the_synthesis_path_must_filter_on_finalized`
+        # is what holds that clause in place; if that test is ever removed or
+        # weakened, this branch stops being decorative and starts being the
+        # last thing between unapproved work and a client's name.
+        #
+        # The pre-0047 DRAFT-input register -- the hazard #240 opens with -- is
+        # NOT caught here. It has NULL provenance and is caught by the branch
+        # above. Two different registers; two different branches.
         unapproved = [
             f"{i.get('kind')} v{i.get('version')} ({i.get('status')})"
             for i in (_prov.get("inputs") or [])
