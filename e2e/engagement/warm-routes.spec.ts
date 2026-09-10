@@ -296,12 +296,27 @@ test("warm every demonstration route and measure the saving", async ({
 
   if (stillSlow.length > 0) {
     lines.push(
-      `## Still slow when warm — these need a different answer`,
+      `## Slow on their ONE warm sample — CANDIDATES, not findings`,
       ``,
-      `Warming did not fix these, so the cause is not compilation. Each one is a`,
-      `visible pause on camera unless the chapter script works around it.`,
+      `**Each figure below is a single draw, and a single timing is not a`,
+      `property.** This spec visits routes back to back, so a route sampled`,
+      `while a neighbour's compile is still finishing inherits that load —`,
+      `a fact about WHEN it was measured, not about the route.`,
       ``,
-      ...stillSlow.map((t) => `- \`${t.route}\` — ${t.warm}ms warm. ${t.note}`),
+      `Not hypothetical: the 2026-09-10T01:50 run flagged`,
+      `\`zero-trust-cisa\` here at 8,233ms. Re-measured five times against two`,
+      `control routes (\`engagement/zt-load-probe.spec.ts\`), its median was`,
+      `**870ms**, against controls at 886ms and 876ms. The finding was an`,
+      `artifact of this spec's own sampling, and it had already been written`,
+      `into a demonstration plan before it was re-measured.`,
+      ``,
+      `**Re-measure with a distribution AND a control before acting on any row`,
+      `below.** The control is what separates "this route is slow" from "the`,
+      `machine was busy"; without one those are the same observation.`,
+      ``,
+      ...stillSlow.map(
+        (t) => `- \`${t.route}\` — ${t.warm}ms on one sample. ${t.note}`,
+      ),
       ``,
     );
   }
