@@ -60,27 +60,37 @@ def test_capability_target_override_bounds_by_framework(framework, stored, expec
 
 
 @pytest.mark.unit
-def test_capability_target_override_takes_a_bool_at_its_int_value() -> None:
-    """PINS A KNOWN EXEMPTION so a change to THIS PREDICATE cannot be silent.
+def test_capability_target_override_refuses_a_bool() -> None:
+    """THE PINNED EXEMPTION WAS DELIBERATELY REMOVED. This is its inverse.
 
-    `isinstance(True, int)` is True, so a bool reaching here is taken as 1
-    rather than rejected. Asserted rather than fixed because #124 was
-    constrained to move no gap count.
+    This test previously asserted `capability_target_override(CISA, True) == 1`
+    and existed as a tripwire so the predicate could not change silently. It
+    fired, exactly as designed, on the branch that closed #188 -- and it is
+    being inverted rather than deleted, because the tripwire worked and the
+    record of what it was guarding is worth keeping.
 
-    WHAT WOULD MAKE IT RED, stated precisely, because an earlier draft claimed
-    it fails "when someone fixes #189" and that is FALSE. #189 lives at the
-    SCHEMA -- `PATCH /zt/answers` accepts `true` as Stage 1 -- so the fix is a
-    validator on `ZtAnswerPatch.target_stage`, which does not change what this
-    function returns for a bool. This test would stay green through it, and
-    a tripwire that cannot fire is worse than none because it is recorded as
-    protection. It goes red only if a bool rejection is added HERE.
+    `CLAUDE.md` core principle 3 requires saying so explicitly rather than
+    quietly editing a test to green, so: **the old assertion pinned real
+    behaviour and that behaviour is now considered wrong.** The reason it was
+    left alone -- "#124 was constrained to move no gap count" -- expired with
+    that constraint, and #189 settled the general question that a bool is not
+    a number.
 
-    Also not reachable in production today: `ZtAnswer.target_stage` is a
-    `SmallInteger`, so a Python bool never comes back from the database. This
-    pins the predicate's contract, not a live path.
+    **It does move a gap count, in the case it applies to.** A capability at
+    current stage 2 with a stored `True` previously got target `True` (== 1),
+    2 >= 1, and produced NO gap row. It now falls back to the engagement stage
+    and produces one. That is the intended correction -- a capability the
+    client set something on was silently absent from their remediation plan --
+    and it is stated here because the old docstring's "must not move a single
+    gap count" is the sentence this change invalidates.
+
+    Still not reachable in production: `ZtAnswer.target_stage` is a
+    `SmallInteger`, so a Python bool never comes back from the database, and
+    both writers call `int()` before assignment. This pins the predicate's
+    contract, not a live path.
     """
-    assert capability_target_override(CISA, True) == 1
-    assert capability_target_override(CISA, False) is None  # 0 is out of range
+    assert capability_target_override(CISA, True) is None
+    assert capability_target_override(CISA, False) is None
 
 
 # --- the map ---------------------------------------------------------------

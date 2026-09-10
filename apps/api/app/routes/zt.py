@@ -1539,6 +1539,8 @@ def gap_analysis(
         target_label=analysis.target_label,
         total_gap_count=analysis.total_gap_count,
         unscored_count=len(analysis.unscored_codes),
+        # Off the same GapAnalysis the deliverable and the dashboard read.
+        unusable_target_codes=list(analysis.unusable_target_codes),
         gap_count_by_pillar=analysis.gap_count_by_pillar,
         gaps=[
             GapItem(

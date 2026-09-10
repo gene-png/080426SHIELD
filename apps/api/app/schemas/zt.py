@@ -377,6 +377,12 @@ class GapAnalysisResponse(BaseModel):
     target_label: str
     total_gap_count: int
     unscored_count: int
+    # Capabilities whose stored per-capability target could not be used, so the
+    # engagement target was applied instead (#188). The consultant workspace
+    # reads this endpoint, and a fault disclosed in the client's PDF and the
+    # client's dashboard but hidden from the person who can FIX it would be the
+    # worst of the three places to leave silent.
+    unusable_target_codes: list[str] = []
     gap_count_by_pillar: dict[str, int]
     gaps: list[GapItem]
     roadmap: list[RoadmapEntry] = []

@@ -294,6 +294,23 @@ class ZtDashboardResponse(BaseModel):
     # number beside it — which is #124's own defect facing the other way.
     engagement_target_capability_count: int
 
+    # Capabilities whose stored per-capability target could NOT be used, so the
+    # engagement stage was applied instead (#188). Sibling of
+    # `target_stage_source`, one level down: that field distinguishes "the
+    # client chose nothing" from "the client's choice could not be used" for
+    # the ENGAGEMENT target, and this is the same distinction per capability.
+    #
+    # It is here because the deliverable discloses it in `_gap_plan_caption`,
+    # and a fact stated in the client's PDF and withheld from the client's
+    # SCREEN is a disagreement between two surfaces reading the same
+    # assessment. `engagement_target_capability_count` above counts these
+    # capabilities as taking the engagement target, which is true and does not
+    # say a choice was discarded to get there.
+    #
+    # Empty on an ordinary engagement. Codes rather than a count, so the UI can
+    # name the rows and the count stays derivable.
+    unusable_target_codes: list[str] = []
+
     # The real total: every gap the engine found, not a rendered subset. The ZT
     # dashboard shows no truncated gap list today, and this is in the payload
     # before one is added rather than after — #75 was exactly that omission in

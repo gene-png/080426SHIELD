@@ -21,12 +21,20 @@ choice was made, recorded, and then silently replaced. `CLAUDE.md` states this
 as a standing rule -- "a rule that withholds a claim must separate 'the
 evidence failed' from 'no evidence was offered'".
 
-## The sharpest live path is a framework whose ceiling is lower
+## WHICH ROWS CAN REACH THIS -- the first draft of this section was wrong
 
-Stage 4 is a legitimate CISA target and does not exist in DoD ZTRA, which has
-three. The same stored integer is therefore usable or not depending on which
-framework is asking, with no edit to the row in between -- so this is not only
-about malformed legacy data.
+It claimed a live path: the same stored integer usable under CISA and not under
+DoD, "with no edit to the row in between". There is no such path. Capability
+codes are framework-namespaced (`CISA.ID.01` vs `DOD.USR.01`), every `ZtAnswer`
+is created from its own assessment's catalog, and both read paths take the
+framework from the assessment -- so a DoD analysis can never look up a
+CISA-keyed row. The test written to prove it used two DIFFERENT codes, which
+should have been the tell.
+
+The real population is rows written before the per-framework range guards, or
+written outside the API. No current writer can produce one. The
+framework-ceiling test below is kept because it pins the PREDICATE's dependence
+on `level_count`, which is real; it is not evidence of a reachable defect.
 
 ## Why the disclosure lands in the gap caption
 
@@ -175,27 +183,34 @@ def test_the_discarded_row_still_appears_against_the_fallback_target() -> None:
 
 
 @pytest.mark.unit
-def test_the_dashboard_and_the_deliverable_cannot_disagree() -> None:
-    """One rule, two consumers -- the argument `effective_target_stages` makes.
+def test_every_surface_that_reads_a_gap_analysis_exposes_the_discard() -> None:
+    """The three consumers, checked as SCHEMA CONTRACTS rather than as one call.
 
-    `zt_dashboard` and `analyze_gaps` both resolve targets through the same
-    function. If the discard set were derived separately for the deliverable,
-    the dashboard could show a target percentage built on a substitution its
-    own page never mentions. Same defect as #84, one surface over.
+    This replaces `test_the_dashboard_and_the_deliverable_cannot_disagree`,
+    which asserted `analyze_gaps(...).unusable_target_codes ==
+    discarded_capability_targets(...)`. `analyze_gaps` populates that field BY
+    CALLING that function, so the assertion could not fail while the line
+    existed -- its expected value came from the thing under test, and it was
+    named for a claim about the dashboard while touching no dashboard code.
+
+    Three surfaces read a ZT `GapAnalysis`: the exporter caption, the client
+    dashboard, and the consultant gap-analysis endpoint. A fault disclosed in
+    the PDF and hidden on the screen is two surfaces stating different things
+    about one assessment -- and hiding it from the consultant is worse, since
+    they are the one who can fix the row.
+
+    Asserted on the response MODELS, so this fails if a field is dropped from
+    a contract, which is the failure that would actually reintroduce the gap.
     """
-    code = _first_code(CISA)
-    targets = {code: 9}
+    from app.schemas.clients import ZtDashboardResponse
+    from app.schemas.zt import GapAnalysisResponse
 
-    applied = effective_target_stages(CISA, targets, 3)
-    discarded = discarded_capability_targets(CISA, targets)
-    result = analyze_gaps(CISA, {code: 1}, target_stage=3, targets=targets)
-
-    assert applied[code] == 3
-    assert discarded == (code,)
-    assert result.unusable_target_codes == discarded, (
-        "the gap engine and the shared rule disagree about which stored "
-        "targets were discarded. They must read the same function."
-    )
+    for model in (ZtDashboardResponse, GapAnalysisResponse):
+        assert "unusable_target_codes" in model.model_fields, (
+            f"{model.__name__} no longer carries the discard set. The "
+            f"deliverable still discloses it, so this surface would state "
+            f"something different about the same assessment."
+        )
 
 
 @pytest.mark.unit
@@ -212,7 +227,7 @@ def test_the_client_document_says_the_stored_target_was_not_used() -> None:
     code = _first_code(CISA)
     disclosed = _gap_plan_caption(analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 7}))
     assert code in disclosed, f"the caption does not name the row: {disclosed!r}"
-    assert "not a valid stage" in disclosed, disclosed
+    assert "could not be used" in disclosed, disclosed
 
 
 @pytest.mark.unit
@@ -227,5 +242,5 @@ def test_an_ordinary_engagement_carries_no_disclosure() -> None:
 
     code = _first_code(CISA)
     clean = _gap_plan_caption(analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 4}))
-    assert "not a valid stage" not in clean, clean
+    assert "could not be used" not in clean, clean
     assert "Engagement target S3" in clean, "the existing caption must survive"

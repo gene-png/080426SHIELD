@@ -68,9 +68,9 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
     if gap.unusable_target_codes:
         listed = ", ".join(gap.unusable_target_codes)
         target += (
-            f" A per-capability target was recorded for {listed} but is not a "
-            f"valid stage for this framework, so the engagement target was "
-            f"applied to those rows instead."
+            f" A per-capability target was recorded for {listed} but could not "
+            f"be used, so the engagement target was applied to those rows "
+            f"instead."
         )
     if shown >= total:
         return f"All {total} gap{'' if total == 1 else 's'} listed. {target}"

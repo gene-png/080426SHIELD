@@ -108,9 +108,15 @@ class GapAnalysis:
     # Capabilities whose stored per-capability target could not be used, so the
     # ENGAGEMENT target was applied instead (#188). Empty on an ordinary
     # engagement; a capability with no stored target is NOT in here, because
-    # absent and discarded are different events. Defaulted so every existing
-    # construction site keeps working -- the C0 additive pattern.
-    unusable_target_codes: tuple[str, ...] = ()
+    # absent and discarded are different events.
+    #
+    # NO DEFAULT, on purpose. A draft defaulted it to `()` and cited the C0
+    # additive pattern, which is about PERSISTED fields parsing older rows --
+    # this dataclass is in-memory and never stored, and it has exactly one
+    # construction site, so nothing needed the default. What it would have
+    # bought is a future second constructor silently reporting "nothing
+    # discarded" over a discard. Required, so that constructor fails loudly.
+    unusable_target_codes: tuple[str, ...]
 
 
 def _coverage_pct(answered: int, total: int) -> float:
@@ -402,7 +408,7 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
         `if not 1 <= n <= max_stage` check `continue`s to a dropped-suggestion
         record, so an out-of-range suggestion is never written.
 
-    Both bound the RANGE. **Only ONE of them now refuses a bool at the schema**
+    Both bound the RANGE. **Only ONE of them refuses a bool AT THE SCHEMA**
     -- `patch_answer`, through the `IntNotBool` annotation on `ZtAnswerPatch`
     (#189). The AI-apply path takes no request body, so no schema annotation
     can reach it: its bool guard is `_as_number`'s own `isinstance(raw, bool)`
@@ -414,9 +420,18 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
     `"target_stage": true` would then write Stage 1 to a client's row, #189
     reinstated on the one surface this comment had just called safe.
 
-    The predicate below is carried over exactly as it stood: `isinstance(True,
-    int)` is True, so a stored `True` would be read as Stage 1 rather than
-    falling back, which is why refusing belongs at the writers and not here.
+    **This function now refuses a bool as well** -- see the guard below. That
+    reverses what this paragraph used to say: "deliberately UNCHANGED, because
+    this extraction must not move a single gap count", true of #124's
+    constraint and expired with it. The change DOES move a gap count in the
+    case it applies to -- a capability at current stage 2 with a stored `True`
+    had target `True` (== 1), so 2 >= 1 and it produced no gap row at all. It
+    now falls back to the engagement stage and produces one: a remediation item
+    the client had silently lost.
+
+    The two facts are separate and both hold. The SCHEMA half is about what can
+    be written and is still one writer short; this half is about what this
+    predicate does with what is already stored.
 
     A THIRD route accepts a `target_stage` field in its body without writing
     it: `patch_self_assessment_answer`. It is not a writer and never was -- it
@@ -463,19 +478,43 @@ def discarded_capability_targets(
     Returns CODES rather than a count so the disclosure can name them, and the
     count stays derivable -- `CLAUDE.md` rule 1: let the list be the count.
 
-    ## Shared, not copied
+    ## Shared, not copied -- and the first draft of this paragraph was false
 
-    `analyze_gaps` and `routes/clients.py::zt_dashboard` both resolve targets
-    through `effective_target_stages`. This reads the same predicate, so the
-    deliverable and the dashboard cannot disagree about which stored targets
-    were discarded. A second derivation for the exporter alone would be #84's
-    shape -- a reimplementation that shares the symptom and never the symbol.
+    It claimed the deliverable and `routes/clients.py::zt_dashboard` "cannot
+    disagree" because both resolve targets through `effective_target_stages`.
+    That is true of WHICH TARGET WAS APPLIED and was silently doing duty for a
+    wider claim: the dashboard did not call this function at all, so a discard
+    disclosed in the client's PDF was absent from the client's screen. A
+    sentence that is accurate about a narrower thing than the reader will take
+    it for is the shape `CLAUDE.md` records as worse than no comment.
 
-    ## The live path is not only malformed legacy data
+    It is true now because it was MADE true rather than reworded: `zt_dashboard`
+    reads `unusable_target_codes` off the same `GapAnalysis` the exporter
+    renders, so the two surfaces cannot state different sets. A second
+    derivation would be #84's shape -- a reimplementation sharing the symptom
+    and never the symbol.
 
-    Stage 4 is a legitimate CISA target and does not exist in DoD ZTRA, which
-    has three levels. The same stored integer is usable or not depending on
-    which framework is asking, with no edit to the row in between.
+    ## WHICH ROWS CAN ACTUALLY REACH THIS, stated because the first draft was wrong
+
+    That draft claimed a live path: "Stage 4 is a legitimate CISA target and
+    does not exist in DoD ZTRA, so the same stored integer is usable or not
+    depending on which framework is asking, with no edit to the row in
+    between." **There is no such path.** Capability codes are
+    framework-namespaced (`CISA.ID.01` vs `DOD.USR.01`, built in
+    `zt/catalog.py`), every `ZtAnswer` is created from the catalog of its own
+    assessment's framework, and both read paths derive the framework from the
+    assessment. A DoD analysis can never look up a CISA-keyed row. The test
+    offered as proof used two DIFFERENT codes, which should have been the tell.
+
+    The real population is rows written before the per-framework range guards
+    existed, or written outside the API. **No current writer can produce one:**
+    `patch_answer` 422s outside `1..level_count()` for the answer's own
+    framework, and the AI-apply path range-checks and drops. Whether any such
+    legacy row exists has not been measured against a real database.
+
+    So this is a disclosure that should normally never fire, and that is the
+    point of it -- but do not read it as covering a defect anyone can trigger
+    today.
     """
     targets = targets or {}
     return tuple(
