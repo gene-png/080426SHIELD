@@ -165,6 +165,158 @@ def test_generate_derives_tier_in_code_and_validates_links(app_client) -> None:
     assert body["axis_counts"]["detection"] == 1
 
 
+def _generated_audit(c, bearer: str) -> dict:
+    """The `risk_register.generated` row, read through the surface a consultant reaches.
+
+    Deliberately via `/admin/audit-entries` rather than by querying the table:
+    the claim this fix makes is that an unresolvable value is REPORTED
+    somewhere a person can see, and a test that reads the database proves the
+    write and not the claim.
+    """
+    r = c.get("/admin/audit-entries?limit=50", headers={"Authorization": f"Bearer {bearer}"})
+    assert r.status_code == 200, r.text
+    rows = r.json()
+    rows = rows["entries"] if isinstance(rows, dict) else rows
+    generated = [x for x in rows if x.get("action") == "risk_register.generated"]
+    assert generated, f"no risk_register.generated row among {[x.get('action') for x in rows]}"
+    return generated[0]["details"]
+
+
+def _one_entry(technique: str, **over: str) -> str:
+    fields = {
+        "title": "Credential theft exposure",
+        "description": "EDR gap",
+        "axis": "detection",
+        "source": "coverage_finding",
+        "source_id": technique,
+        "likelihood": "high",
+        "impact": "catastrophic",
+        "recommended_action": "remediate",
+        "rationale": "...",
+    }
+    fields.update(over)
+    body = ", ".join(f'"{k}": "{v}"' for k, v in fields.items() if v is not None)
+    return '{"entries": [{' + body + "}]}"
+
+
+@pytest.mark.unit
+def test_an_unresolvable_enum_value_is_reported_not_dropped(app_client) -> None:
+    """#121's reporting half, which nothing exercised.
+
+    The prompt/parser drift is fixed by the prompt and the coercion. This is
+    the part that makes a FUTURE drift visible instead of silent.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(_one_entry(technique, likelihood="severe")),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, r.text
+
+    details = _generated_audit(c, bearer)
+    assert details["rejected_enum_values"] == {"likelihood": ["severe"]}, details
+    # And the outcome, which is what the client would see.
+    assert details["entries_without_tier"] == 1, details
+    assert details["entries_total"] == 1, details
+
+
+@pytest.mark.unit
+def test_an_ABSENT_enum_key_still_moves_a_counter(app_client) -> None:
+    """The second route to the identical silent zero.
+
+    An adversarial pass found this: the rejection map can only see values that
+    were SUPPLIED, so a model that simply omits `likelihood` produces the same
+    tier-less entry, the same em dashes and the same dropped matrix cell --
+    with `rejected_enum_values` empty and the audit row reading clean.
+
+    `entries_without_tier` is keyed on the OUTCOME for exactly this reason. If
+    it ever reads zero while a client sees em dashes, this assertion is where
+    that shows up.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    provider.register_static(
+        "risk_synthesize",
+        # `likelihood` omitted entirely -- not empty, absent.
+        LLMResponse(_one_entry(technique, likelihood=None)),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["entries"][0]["tier"] is None
+    assert body["entries"][0]["likelihood"] is None
+
+    details = _generated_audit(c, bearer)
+    # Nothing was REJECTED -- nothing was supplied to reject.
+    assert details["rejected_enum_values"] == {}, details
+    # But the run is not clean, and the record must say so.
+    assert details["entries_without_tier"] == 1, details
+
+
+@pytest.mark.unit
+def test_coercion_works_THROUGH_generate_not_only_in_isolation(app_client) -> None:
+    """The Title-Case form, end to end.
+
+    An adversarial pass found that every existing `register_static` payload in
+    this file uses exact snake_case, so `_coerce_enum`'s normalisation branch
+    was proven only in isolation and never through the route. Concretely: at
+    that point `_record` could have had a no-op body and every test still
+    passed.
+
+    This is the literal #121 scenario -- a model obeying the OLD prompt -- and
+    it must now produce a real tier rather than an em dash.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    provider.register_static(
+        "risk_synthesize",
+        LLMResponse(_one_entry(technique, likelihood="Very High", impact="Catastrophic")),
+    )
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 201, r.text
+    e = r.json()["entries"][0]
+    assert e["likelihood"] == "very_high"
+    assert e["impact"] == "catastrophic"
+    # Very High x Catastrophic -> critical, by rule 1 of `tier_for`.
+    assert e["tier"] == "critical"
+
+    details = _generated_audit(c, bearer)
+    assert details["rejected_enum_values"] == {}, "a coerced value is not a rejection"
+    assert details["entries_without_tier"] == 0, details
+
+
+@pytest.mark.unit
+def test_a_clean_run_records_zero_rather_than_nothing(app_client) -> None:
+    """Absence of a finding must be a stated zero, not a missing key.
+
+    A reader has to be able to tell "nothing went wrong" from "nobody looked",
+    and an omitted field cannot carry that distinction.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    details = _generated_audit(c, bearer)
+    assert details["rejected_enum_values"] == {}
+    assert details["entries_without_tier"] == 0
+    assert details["entries_total"] == 1
+
+
 @pytest.mark.unit
 def test_export_renders_and_stores_three_files(app_client) -> None:
     c, provider = app_client
