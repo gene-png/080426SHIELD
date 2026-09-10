@@ -24,8 +24,8 @@ from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
 from app.attack.pending import pending_codes as attack_pending_codes
-from app.csf.gap import DEFAULT_TARGET_TIER as CSF_DEFAULT_TARGET_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
+from app.csf.gap import resolve_target_tier as csf_resolve_target_tier
 from app.csf.scoring import _label_from_average as csf_label_from_average
 from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
@@ -531,9 +531,11 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
         # This card sits one click from the dashboard; reporting a different
         # number for the same assessment is what made the inconsistency visible.
         tier = _csf_client_target_tier(db, sid)
-        total += csf_analyze_gaps(
-            answers, **({"target_tier": tier} if tier is not None else {})
-        ).total_gap_count
+        # #184: resolve rather than branch on `is not None`. An unusable stored
+        # tier used to reach the engine and be clamped, so this card could count
+        # gaps against a target the dashboard beside it reported differently.
+        resolved_tier, _source = csf_resolve_target_tier(tier)
+        total += csf_analyze_gaps(answers, target_tier=resolved_tier).total_gap_count
     return _KindTotal(total, False)
 
 
@@ -1541,8 +1543,11 @@ def csf_dashboard(
     # `target_tier_source` says which one was used so a fallback is never
     # mistaken for a decision.
     chosen = _csf_client_target_tier(db, service_id)
-    target_tier = chosen if chosen is not None else CSF_DEFAULT_TARGET_TIER
-    target_tier_source = "client" if chosen is not None else "default"
+    # #184: one resolver, four sources. This was
+    # `"client" if chosen is not None else "default"` -- keyed on whether a
+    # value was OFFERED, never on whether it SURVIVED -- so a stored tier the
+    # engine then discarded was reported to the client as their own choice.
+    target_tier, target_tier_source = csf_resolve_target_tier(chosen)
 
     score = csf_compute(answers)
     gap = csf_analyze_gaps(answers, target_tier=target_tier)
