@@ -703,10 +703,10 @@ a real exit code and a real date, and was the minority outcome (D-071).
 
   The procedure, and it is three lines: state the population the change
   actually protects; say plainly that no current writer can produce one, where
-  that is true; and say what would make it reachable again. The bool row in
-  `discarded_capability_targets` and the blast-radius note in migration 0047
-  are the worked examples — each carries its own reachability verdict rather
-  than inheriting the file's.
+  that is true; and say what would make it reachable again. Migration 0047's
+  `## Blast radius, measured before choosing` and the ratchet note in
+  `routes/risk.py` are the worked examples — each carries its own reachability
+  verdict rather than inheriting the file's.
 
   **Where the justification came from matters more than that it was wrong.**
   Both were written from a plausible mechanism nobody executed. The check is
@@ -2399,16 +2399,25 @@ Rules of the road:
   in the ordering. Either way it is invisible to the only view used to decide
   what to work on — not a slow record, an unreachable one.
 
-  Every new issue therefore carries, at creation: `mvp-blocking` + a tier, OR
-  `unowned-with-reason` with the reason written in the body. "Untriaged" is not
-  a third option, because nothing ever comes back to triage it.
+  Every new issue therefore carries, at creation: `mvp-blocking` + one of
+  `tier-1` / `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason
+  written in the body. "Untriaged" is not a third option, because nothing ever
+  comes back to triage it. `gh label list` is the authority for what exists.
+
+  The tiers are a judgement about client-facing consequence, not effort:
+  **tier-1** is live, unmitigated wrongness a client can reach — a number they
+  never asked for, presented as one they did; **tier-2** is client-facing with
+  a mitigation shipped, or no wrong number delivered; **tier-3** is correctness
+  no client reads. Label to the SHIPPED state rather than the threat model, and
+  say on the issue which you did, so the call can be overturned instead of
+  inherited.
 
   **Measured 2026-09-10, and the cost was a duplicate.** A CSF silent-clamp
   defect was found, searched for on the board, not found, and filed. It had
   been filed eight days earlier by someone else — and that issue carried no
   labels, so it appeared in no query. #184 and #286 are the same defect, and
-  the older, better-written one was the invisible one. Four unlabelled issues accumulated
-  in under an hour that same evening.
+  the older, better-written one was the invisible one. More unlabelled issues
+  accumulated across that same evening.
 
   So the search-before-filing step is real and is not sufficient on its own:
   it can only find what previous filers labelled. The two halves are one rule.

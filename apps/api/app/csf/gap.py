@@ -39,6 +39,11 @@ from app.csf.maturity import MaturityTier, tier_label
 _FUNCTION_NAME_BY_CODE: dict[FunctionCode, str] = {f.code: f.name for f in FUNCTIONS}
 
 DEFAULT_TARGET_TIER = int(MaturityTier.REPEATABLE)
+
+#: CSF 2.0 tiers run 1..4. ZT's equivalent ceiling depends on the framework
+#: (CISA 4, DoD 3); CSF's is a constant, which is why `resolve_target_tier`
+#: takes no framework argument where `resolve_target_stage` does.
+MAX_TIER = 4
 DEFAULT_TOP_N = 20
 
 # Function criticality weights. Tunable - the order matters more than
@@ -87,7 +92,7 @@ def _function_name(fn: FunctionCode) -> str:
 def _validated(tier: int | None) -> int | None:
     if tier is None:
         return None
-    if 1 <= int(tier) <= 4:
+    if 1 <= int(tier) <= MAX_TIER:
         return int(tier)
     return None
 
@@ -109,12 +114,6 @@ def _row_for(sc: Subcategory, current: int, target: int, notes: str | None) -> G
         priority_score=priority,
         notes=notes,
     )
-
-
-#: CSF 2.0 tiers run 1..4. ZT's equivalent ceiling depends on the framework
-#: (CISA 4, DoD 3); CSF's is a constant, which is why `resolve_target_tier`
-#: takes no framework argument where `resolve_target_stage` does.
-MAX_TIER = 4
 
 
 def resolve_target_tier(chosen: object) -> tuple[int, str]:
@@ -231,7 +230,9 @@ __all__ = [
     "DEFAULT_TARGET_TIER",
     "DEFAULT_TOP_N",
     "FUNCTION_WEIGHTS",
+    "MAX_TIER",
     "Gap",
     "GapAnalysis",
     "analyze",
+    "resolve_target_tier",
 ]

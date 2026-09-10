@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   functionsByGap,
   hiddenGapCount,
+  targetFaultNote,
   targetIsAssumed,
   type CsfDashboardData,
   type CsfFunction,
@@ -115,6 +116,35 @@ describe("csf dashboard transforms", () => {
     // the client's decision.
     expect(targetIsAssumed(data({ target_tier_source: "something_new" }))).toBe(
       true,
+    );
+  });
+
+  it("targetFaultNote: never tells a client they chose nothing when they chose", () => {
+    // #184 gave this field four values. A boolean cannot tell "you chose
+    // nothing" from "your choice could not be used", and printing the first
+    // over the second is a lie in the client's own words — they DID choose.
+    expect(targetFaultNote("client")).toBeNull();
+    expect(targetFaultNote("default")).toBe("no tier chosen at intake");
+    expect(targetFaultNote("client_out_of_range")).toBe(
+      "the tier on file is not one CSF has",
+    );
+    expect(targetFaultNote("client_unparseable")).toBe(
+      "the tier on file could not be read",
+    );
+
+    // The discriminating assertion: the two FAILURE sources must not collapse
+    // onto the "chose nothing" copy. Without this, returning that string for
+    // everything non-client would satisfy every line above except the first.
+    for (const src of ["client_out_of_range", "client_unparseable"]) {
+      expect(targetFaultNote(src)).not.toBe("no tier chosen at intake");
+    }
+  });
+
+  it("targetFaultNote: an unrecognised source still says something true", () => {
+    // The API is the source of this string, so a value this build does not
+    // know must not fall through to the "chose nothing" copy.
+    expect(targetFaultNote("something_new")).toBe(
+      "the tier on file was not usable",
     );
   });
 });

@@ -24,7 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -903,13 +903,33 @@ def gap_analysis(
     user: Annotated[User, _admin_required],
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
-    # Bounded at the edge (#184). This was a bare `int = 3`, so
-    # `?target_tier=99` reached the engine, was silently clamped, and came
-    # back 200 reporting the clamp as the value asked for. FastAPI now
-    # refuses it as a 422 naming the parameter.
-    target_tier: Annotated[int, Query(ge=1, le=CSF_MAX_TIER)] = 3,
+    target_tier: int = 3,
     top_n: int = 20,
 ) -> GapAnalysisResponse:
+    # A query parameter is a REQUEST, and the honest answer to an out-of-range
+    # request is to refuse it (#184). This used to reach `analyze`, which
+    # silently clamped it and returned 200 reporting the clamp as the value
+    # asked for -- a caller answered a different question in the same units.
+    #
+    # TYPED, mirroring `routes/zt.py`'s twin rather than diverging from it. A
+    # bare `Query(ge=1, le=4)` bound would also refuse, earlier and in OpenAPI,
+    # but FastAPI's own rejection goes through `_handle_validation_error` and
+    # emits "Request validation failed." with a `details` array and NO `reason`
+    # key -- a raw validation dump, which core principle 2 forbids for a
+    # user-facing error and which the web layer's D-016 mapping keys on. The
+    # twin already decided this and wrote down why; a second answer here would
+    # be an unstated divergence between two copies of one endpoint.
+    if not 1 <= target_tier <= CSF_MAX_TIER:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "target_tier_out_of_range",
+                "message": (
+                    f"CSF 2.0 has tiers 1-{CSF_MAX_TIER}; "
+                    f"target_tier={target_tier} is not one of them."
+                ),
+            },
+        )
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
     a = _latest_assessment(db, svc.id)
     if a is None:

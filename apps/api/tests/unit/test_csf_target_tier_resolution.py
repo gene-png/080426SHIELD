@@ -138,7 +138,12 @@ def test_the_engine_refuses_an_unresolved_tier_instead_of_clamping(target_tier) 
     """
     with pytest.raises(ValueError) as caught:
         analyze({}, target_tier=target_tier)
-    assert str(target_tier) in str(caught.value), (
+    # ANCHORED. `str(target_tier) in ...` carries no literal text, so it could
+    # be satisfied by an unrelated coincidence in the haystack -- and this
+    # haystack contains "(valid 1-4)", so the bare form would pass for the
+    # wrong reason the moment 1 or 4 joined the parametrisation. Caught by
+    # `check_test_integrity` (TI002) before pytest ran.
+    assert f"target_tier {target_tier} " in str(caught.value), (
         f"the refusal does not name the value that was refused, so a caller "
         f"cannot tell what was wrong. Message: {str(caught.value)!r}"
     )
