@@ -66,9 +66,34 @@ const OUT_DIR = path.resolve(
 /** Generous: a cold compile of a heavy dashboard route can genuinely take this long. */
 const ROUTE_TIMEOUT_MS = 120_000;
 
+/**
+ * Three visits, not two.
+ *
+ * Two was not enough, and the evidence is two independent runs. Every route
+ * but two reaches ~1s by its SECOND visit. The two Zero Trust ADMIN
+ * workspaces do not:
+ *
+ *     run 1, visit 2:  zt-cisa 8233ms   zt-dod 5476ms
+ *     run 2, visit 2:  zt-cisa 6726ms   zt-dod 5912ms
+ *
+ * Measured separately with five interleaved samples against two control
+ * routes (`engagement/zt-load-probe.spec.ts`), once those routes had been
+ * visited more times, both sit at ~870-910ms -- indistinguishable from the
+ * controls. So they DO reach parity; they just take more than two visits to
+ * get there, and a warm-up that stops at two hands the third visit to the
+ * camera.
+ *
+ * The cause is not established and is deliberately not guessed at here. What
+ * is established is the remedy: visit three times, and record all three, so
+ * the shape of the curve is visible rather than inferred from two points.
+ */
+const VISITS = 3;
+
 interface Timing {
   route: string;
   group: string;
+  /** Every visit, in order. `cold` is samples[0]; the last is the steady state. */
+  samples: Array<number | null>;
   cold: number | null;
   warm: number | null;
   note: string;
@@ -86,34 +111,34 @@ const timings: Timing[] = [];
  * failure this file exists to prevent. The note column carries what happened.
  */
 async function warm(page: Page, route: string, group: string): Promise<void> {
-  let cold: number | null = null;
-  let warm_: number | null = null;
+  const samples: Array<number | null> = [];
   let note = "";
-  for (const pass of [0, 1]) {
+  for (let visit = 0; visit < VISITS; visit++) {
     const t0 = Date.now();
     try {
       const res = await page.goto(route, {
         timeout: ROUTE_TIMEOUT_MS,
         waitUntil: "domcontentloaded",
       });
-      const ms = Date.now() - t0;
-      if (pass === 0) cold = ms;
-      else warm_ = ms;
+      samples.push(Date.now() - t0);
       const status = res?.status();
       if (status !== undefined && status >= 400 && note === "") {
         note = `HTTP ${status}`;
       }
     } catch (err) {
-      const ms = Date.now() - t0;
-      if (pass === 0) cold = ms;
-      else warm_ = ms;
+      samples.push(Date.now() - t0);
       note = `FAILED: ${String(err).split("\n")[0].slice(0, 120)}`;
     }
   }
-  timings.push({ route, group, cold, warm: warm_, note });
+  // `warm` is the LAST visit, not the second: the second is where the two ZT
+  // admin routes were still mid-climb, and calling that "warm" is what turned
+  // a curve into a false finding once already.
+  const cold = samples[0] ?? null;
+  const steady = samples[samples.length - 1] ?? null;
+  timings.push({ route, group, samples, cold, warm: steady, note });
   // eslint-disable-next-line no-console
   console.log(
-    `warm: ${route.padEnd(46)} cold=${String(cold).padStart(6)}ms warm=${String(warm_).padStart(6)}ms ${note}`,
+    `warm: ${route.padEnd(46)} ${samples.map((s) => String(s).padStart(6)).join(" ")} ms ${note}`,
   );
 }
 
@@ -278,12 +303,14 @@ test("warm every demonstration route and measure the saving", async ({
     ``,
     `Routes measured: ${measured.length}. Not warmed: ${unwarmed.length}.`,
     ``,
-    `| route | group | cold (ms) | warm (ms) | saved (ms) | note |`,
-    `| --- | --- | ---: | ---: | ---: | --- |`,
+    `| route | group | visits (ms, in order) | steady (ms) | saved (ms) | note |`,
+    `| --- | --- | --- | ---: | ---: | --- |`,
     ...timings.map((t) => {
       const saved =
         t.cold !== null && t.warm !== null ? String(t.cold - t.warm) : "—";
-      return `| \`${t.route}\` | ${t.group} | ${t.cold ?? "—"} | ${t.warm ?? "—"} | ${saved} | ${t.note} |`;
+      const seq =
+        t.samples.length > 0 ? t.samples.map((s) => s ?? "—").join(" → ") : "—";
+      return `| \`${t.route}\` | ${t.group} | ${seq} | ${t.warm ?? "—"} | ${saved} | ${t.note} |`;
     }),
     ``,
     `## Totals`,
@@ -296,23 +323,27 @@ test("warm every demonstration route and measure the saving", async ({
 
   if (stillSlow.length > 0) {
     lines.push(
-      `## Slow on their ONE warm sample — CANDIDATES, not findings`,
+      `## Still slow on the LAST visit — candidates, not findings`,
       ``,
-      `**Each figure below is a single draw, and a single timing is not a`,
-      `property.** This spec visits routes back to back, so a route sampled`,
-      `while a neighbour's compile is still finishing inherits that load —`,
-      `a fact about WHEN it was measured, not about the route.`,
+      `**Confirm any row here with a distribution AND a control before acting`,
+      `on it.** A control is what separates "this route is slow" from "the`,
+      `machine was busy"; without one those are the same observation, and this`,
+      `spec visits routes back to back so a sample can inherit a neighbour's`,
+      `load. \`engagement/zt-load-probe.spec.ts\` is the pattern to copy.`,
       ``,
-      `Not hypothetical: the 2026-09-10T01:50 run flagged`,
-      `\`zero-trust-cisa\` here at 8,233ms. Re-measured five times against two`,
-      `control routes (\`engagement/zt-load-probe.spec.ts\`), its median was`,
-      `**870ms**, against controls at 886ms and 876ms. The finding was an`,
-      `artifact of this spec's own sampling, and it had already been written`,
-      `into a demonstration plan before it was re-measured.`,
+      `The two Zero Trust admin routes have already been through that cycle,`,
+      `and the outcome is worth knowing before reading this list:`,
       ``,
-      `**Re-measure with a distribution AND a control before acting on any row`,
-      `below.** The control is what separates "this route is slow" from "the`,
-      `machine was busy"; without one those are the same observation.`,
+      `  * At visit 2 they were genuinely slow, reproducibly, in two`,
+      `    independent runs — 8,233 / 6,726ms (cisa) and 5,476 / 5,912ms (dod)`,
+      `    while every other route was already under 2.3s.`,
+      `  * By visits 3-7, sampled five times against two controls, both sat at`,
+      `    ~870-910ms — indistinguishable from the controls.`,
+      ``,
+      `Both measurements were true; they measured different things. That is why`,
+      `this spec now takes three visits and reports the whole sequence: a curve`,
+      `read from two points produced first a false alarm and then an`,
+      `over-correction that retracted a real effect.`,
       ``,
       ...stillSlow.map(
         (t) => `- \`${t.route}\` — ${t.warm}ms on one sample. ${t.note}`,
