@@ -110,12 +110,29 @@ export function actualAiMode(status: AiStatus): AiMode {
   if (typeof status.ready !== "boolean") {
     throw new AiModeRefusal(
       `ai-mode-gate: /admin/ai-status has no boolean "ready" field ` +
-        `(got ${JSON.stringify(status.ready)}). That field is the only ` +
-        `truthful signal of whether a real provider call will be made, so ` +
-        `refusing to start rather than inferring from "mode".`,
+        `(got ${JSON.stringify(status.ready)}). That field is the primary ` +
+        `signal of whether a real provider call will be made, so refusing to ` +
+        `start rather than inferring from "mode" alone.`,
     );
   }
-  return status.ready ? "live" : "fixture";
+  // EITHER signal means live. `ready` alone is not sufficient, and the gap is
+  // real rather than theoretical:
+  //
+  //   `_ai_readiness` derives everything from `keystore.key_source`, whose
+  //   `_ENV_KEY_ATTR` map has entries for anthropic, openai and gemini ONLY.
+  //   Under `SHIELD_LLM_PROVIDER=vertex` (ADC-based, no API key -- D-029)
+  //   with `SHIELD_LLM_MODE=live`, `key_source` returns "none", so `ready` is
+  //   FALSE and the detail string reads "No API key is loaded — AI steps will
+  //   generate offline (fixture) responses." Meanwhile `_build_provider`
+  //   returns a real `VertexProvider` and egresses client data.
+  //
+  // `ready === true` implies live (verified: `_build_provider` checks
+  // `runtime_key` BEFORE the fixture branch, so a database key forces live
+  // with SHIELD_LLM_MODE still reading fixture). The converse does NOT hold,
+  // so a `mode` of "live" is honoured too. That only ever makes this gate more
+  // conservative, and it closes the direction Phase 1 depends on: a rehearsal
+  // declaring `fixture` would otherwise START on a live vertex stack.
+  return status.ready === true || status.mode === "live" ? "live" : "fixture";
 }
 
 /** A one-line description for logs and failure messages. */

@@ -233,22 +233,35 @@ test("warm every demonstration route and measure the saving", async ({
   //
   // Not a page, so `warm()`'s `page.goto` is the wrong instrument -- but it is
   // compiled on demand exactly like one, and the full-engagement spec's
-  // `beforeAll` mode gate is its FIRST caller. Measured 2026-09-10: cold, that
-  // gate took 78s and blew a 90s hook timeout; warm, 14s. A guard that fails
-  // the run before it starts is worse than no guard, so this route is warmed
-  // with everything else.
+  // `beforeAll` mode gate is its FIRST caller. Measured 2026-09-10: a cold
+  // sign-in plus a first compile of this route took 78s wall-clock on one
+  // attempt and 14s on the next. (The 78s attempt failed on `signIn`'s own
+  // 15s `waitForURL`, NOT on a hook timeout -- an earlier version of this
+  // comment said it "blew a 90s hook timeout", which cannot be true of a 78s
+  // measurement. The cold cost is real; the failure it caused was a different
+  // one.) A guard that is slow to start is worth warming with everything else.
   {
     const route = "/api/proxy/admin/ai-status";
     const samples: Array<number | null> = [];
     let note = "";
     for (let visit = 0; visit < VISITS; visit++) {
       const t0 = Date.now();
-      const res = await page.request.get(route);
-      samples.push(Date.now() - t0);
-      // Record a bad STATUS: a 401 or 500 warms the route just as well as a
-      // 200, so timing alone would report a successful warm-up of an endpoint
-      // the gate cannot actually read.
-      if (!res.ok()) note = `HTTP ${res.status()}`;
+      // Caught, for the reason `warm()` gives four lines above its own catch:
+      // "a warm-up that aborts halfway leaves the remaining routes cold and
+      // that is the failure this file exists to prevent". `page.request` does
+      // not throw on 4xx/5xx, but it does on a network-level failure, and an
+      // uncaught one here would abort before any client route below is warmed.
+      try {
+        const res = await page.request.get(route);
+        samples.push(Date.now() - t0);
+        // Record a bad STATUS too: a 401 or 500 warms the route just as well
+        // as a 200, so timing alone would report a successful warm-up of an
+        // endpoint the mode gate cannot actually read.
+        if (!res.ok()) note = `HTTP ${res.status()}`;
+      } catch (err) {
+        samples.push(null);
+        note = `FAILED — ${String(err).split("\n")[0].slice(0, 80)}`;
+      }
     }
     const cold = samples[0];
     const steady = samples[samples.length - 1];
@@ -265,6 +278,11 @@ test("warm every demonstration route and measure the saving", async ({
       timings.push({
         route: `/admin/services/[id]/${segment}`,
         group: "admin-service",
+        // `samples` is REQUIRED by `Timing`, and omitting it here made the
+        // report builder throw `t.samples.length of undefined` -- destroying
+        // warm-routes.md entirely in the one case its "NOT WARMED" section
+        // exists to report. Latent until a service id fails to resolve.
+        samples: [],
         cold: null,
         warm: null,
         note: `NOT WARMED — no service id for ${kind}`,
@@ -308,6 +326,7 @@ test("warm every demonstration route and measure the saving", async ({
       timings.push({
         route: `/dashboards/${segment}/[serviceId]`,
         group: "client-dashboard",
+        samples: [],
         cold: null,
         warm: null,
         note: `NOT WARMED — no service id for ${kind}`,

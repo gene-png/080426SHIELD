@@ -306,6 +306,28 @@ const RUN_BUDGET_MS = 45 * 60_000;
  */
 const CONTROL_WAIT_MS = 10_000;
 
+/**
+ * For a control looked for immediately after `page.reload()`.
+ *
+ * `CONTROL_WAIT_MS` is for a control on a SETTLED page -- its own comment says
+ * so, and four lines later carves out "PAGE LANDMARKS after a fresh navigation
+ * keep their longer waits". A control looked for straight after a reload is on
+ * the wrong side of that line: it is an ARRIVAL wait, and giving it the
+ * settled-page budget reports absent controls that are merely late.
+ *
+ * MEASURED 2026-09-10 against the CSF service whose finalize step MISSED on the
+ * 12:46 run. Time from reload to "Send for evaluation" becoming visible, three
+ * samples: **15808 / 10142 / 5526 ms**. Two of three exceed 10s. The control
+ * was present and ENABLED every time.
+ *
+ * 45s, not `MOUNT_WAIT_MS`'s 90s: 3x the worst observed sample is ample, and
+ * this budget is also what a GENUINELY absent control costs before it is
+ * reported. The file already records five absent controls at 60s each eating
+ * 46% of one run's wall clock, so the number is a trade, not a ceiling to
+ * reach for.
+ */
+const AFTER_RELOAD_WAIT_MS = 45_000;
+
 // ---------------------------------------------------------------------------
 // Output folder. The dated subfolder needs no new ignore entry and no
 // negation: `.gitignore` already carries the entry `e2e/artifacts/`, which
@@ -2377,10 +2399,16 @@ test("full engagement: intake -> five services -> release -> client view -> back
           const approve = page
             .getByRole("button", { name: /^Approve( client inputs)?$/ })
             .first();
+          // The TWIN of the finalize site below: this step is also reached
+          // straight after a `page.reload()`, so it gets the arrival budget
+          // too. `settled()` runs above, but its failure branch only notes and
+          // proceeds -- so on a page that never goes quiet this was a 10s
+          // budget on a still-fetching page, and the sibling control measured
+          // 15808 / 10142 / 5526 ms in that state.
           await affordance(
             approve,
             `${svc.slug} Approve control`,
-            CONTROL_WAIT_MS,
+            AFTER_RELOAD_WAIT_MS,
           );
 
           // A visible button can still be pre-hydration. Give it a beat before
@@ -2500,7 +2528,7 @@ test("full engagement: intake -> five services -> release -> client view -> back
         await affordance(
           finalize,
           `${svc.slug} Finalize button`,
-          MOUNT_WAIT_MS,
+          AFTER_RELOAD_WAIT_MS,
         );
         // Same settle-then-recheck as Run AI and Approve. The cause is not
         // asserted: `canFinalize` gates on the assessment being approved OR

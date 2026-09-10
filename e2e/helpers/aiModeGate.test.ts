@@ -88,12 +88,36 @@ test.describe("AI mode gate", () => {
     ).toThrow(AiModeRefusal);
   });
 
-  test("keys on `ready`, not on `mode`", () => {
-    // The whole point, pinned directly: a payload whose `mode` says fixture
-    // and whose `ready` says true is LIVE. If this ever reads "fixture" the
-    // gate has started trusting the env var and 2.2 is reopened.
+  test("keys on `ready`, not on `mode` alone", () => {
+    // Half the point, pinned directly: a payload whose `mode` says fixture and
+    // whose `ready` says true is LIVE. If this ever reads "fixture" the gate
+    // has started trusting the env var and 2.2 is reopened.
     expect(actualAiMode(LIVE_STATUS_VIA_DB_KEY)).toBe("live");
     expect(LIVE_STATUS_VIA_DB_KEY.mode).toBe("fixture");
+  });
+
+  test("treats a live-mode vertex stack as LIVE even though `ready` is false", () => {
+    // The OTHER half, and not contrived. `keystore._ENV_KEY_ATTR` covers
+    // anthropic/openai/gemini only, so under SHIELD_LLM_PROVIDER=vertex (ADC,
+    // no API key) `key_source` is "none" and `_ai_readiness` reports
+    // ready=false with a detail that literally says "AI steps will generate
+    // offline (fixture) responses" -- while `_build_provider` returns a real
+    // VertexProvider and egresses client data.
+    //
+    // A gate keyed on `ready` ALONE would let a Phase 1 rehearsal start here.
+    const vertexLive = {
+      ready: false,
+      mode: "live",
+      provider: "vertex",
+      model: "claude-opus-5",
+      key_source: "none",
+      detail:
+        "No API key is loaded — AI steps will generate offline (fixture) responses.",
+    };
+    expect(actualAiMode(vertexLive)).toBe("live");
+    expect(() => assertAiModeMatches("fixture", vertexLive)).toThrow(
+      AiModeRefusal,
+    );
   });
 
   test("refuses an unreadable status rather than calling it fixture", () => {
