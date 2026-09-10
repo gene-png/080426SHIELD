@@ -57,12 +57,31 @@ export interface ZtAssessment {
   client_target_stage: number | null;
 }
 
+/** What an ADMIN may change on a ZT answer, via `PATCH /zt/answers/{id}`. */
 export interface ZtAnswerPatch {
   maturity_stage?: number | null;
   target_stage?: number | null;
   locked?: boolean;
   notes?: string;
   evidence_artifact_id?: string | null;
+}
+
+/**
+ * What a CLIENT may change on their own draft answer, via
+ * `PATCH /zt/self-assessment/answers/{id}`.
+ *
+ * Deliberately narrower than `ZtAnswerPatch`, mirroring the API's
+ * `ZtSelfAssessmentAnswerPatch`, which refuses anything else with a typed
+ * 422. That route used to accept the wide admin body and silently discard
+ * `target_stage`, `evidence_artifact_id` and `locked` behind a 200 (#195).
+ *
+ * Written out rather than aliased to a `Pick<>` so the compiler names the
+ * field a caller should not be sending, instead of reporting that two
+ * structural types differ.
+ */
+export interface ZtSelfAssessmentAnswerPatch {
+  maturity_stage?: number | null;
+  notes?: string;
 }
 
 export interface ZtCapabilityChange {

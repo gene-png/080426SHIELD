@@ -56,6 +56,37 @@ async def _handle_http_exception(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
+def _jsonable_validation_errors(exc: RequestValidationError) -> list[dict[str, object]]:
+    """Pydantic puts the raised EXCEPTION OBJECT in `ctx["error"]`. JSON cannot.
+
+    A validator that raises `ValueError` — which is how Pydantic v2 wants a
+    custom rule to reject a value — produces an error entry whose `ctx` holds
+    the live `ValueError` instance, not its text. Handing that straight to
+    `JSONResponse` raises `TypeError: Object of type ValueError is not JSON
+    serializable` INSIDE the 422 handler, so the client gets a **500** and the
+    typed refusal the validator carefully wrote is destroyed on the way out.
+
+    Latent until 2026-09-10: every validator in `app/schemas/` normalised
+    rather than raised, so nothing had ever produced a `ctx.error`. The first
+    one to do so (`_numeric.IntNotBool`, and the two self-assessment patch
+    schemas) turned a clean 422 into an unhandled 500, and it was the
+    HTTP-level test that found it — the schema-level tests all passed, because
+    Pydantic itself is perfectly happy.
+
+    `msg` already carries the full text, so stringifying `ctx` loses nothing a
+    client reads. Only `ctx` is treated: `loc`, `type` and `input` come from
+    the parsed JSON body and are serializable by construction.
+    """
+    safe: list[dict[str, object]] = []
+    for error in exc.errors():
+        item = dict(error)
+        ctx = item.get("ctx")
+        if isinstance(ctx, dict):
+            item["ctx"] = {key: str(value) for key, value in ctx.items()}
+        safe.append(item)
+    return safe
+
+
 async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(
         status_code=422,
@@ -63,7 +94,7 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
             "error": {
                 "code": 422,
                 "message": "Request validation failed.",
-                "details": exc.errors(),
+                "details": _jsonable_validation_errors(exc),
                 "correlation_id": _correlation_id_from(request),
             }
         },

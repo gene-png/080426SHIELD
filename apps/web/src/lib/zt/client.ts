@@ -4,6 +4,7 @@ import type {
   GapAnalysis,
   ZtAnswer,
   ZtAnswerPatch,
+  ZtSelfAssessmentAnswerPatch,
   ZtAssessment,
   ZtCatalog,
   ZtDeliverable,
@@ -116,7 +117,7 @@ export async function fetchSelfAssessment(
 
 export async function patchSelfAssessmentAnswer(
   answerId: string,
-  patch: ZtAnswerPatch,
+  patch: ZtSelfAssessmentAnswerPatch,
 ): Promise<ZtAnswer> {
   return jsonRequest<ZtAnswer>(
     `/api/proxy/zt/self-assessment/answers/${answerId}`,

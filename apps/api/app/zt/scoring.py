@@ -396,14 +396,19 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
         `if not 1 <= n <= max_stage` check `continue`s to a dropped-suggestion
         record, so an out-of-range suggestion is never written.
 
-    Both bound the RANGE. Neither refuses a bool at the schema, so
-    `patch_answer` writes Stage 1 for `true` -- tracked in #189, and out of
-    scope here because an in-range 1 never reaches this fallback. Note
-    `isinstance(True, int)` is True, so such a value would be taken as its int
-    value rather than falling back; that is #189's blast radius and is
-    deliberately UNCHANGED, because this extraction must not move a single gap
-    count and the predicate is carried over as it stood rather than improved in
-    passing.
+    Both bound the RANGE. Both now also refuse a bool AT THE SCHEMA, through
+    the `IntNotBool` annotation on `ZtAnswerPatch` -- closing #189, which this
+    comment previously described as live and out of scope here. The predicate
+    below is still carried over exactly as it stood: `isinstance(True, int)` is
+    True, so a stored `True` would be read as Stage 1 rather than falling back,
+    which is why the schema is the right place to refuse it and this is not.
+
+    A THIRD route accepts a `target_stage` field in its body without writing
+    it: `patch_self_assessment_answer`. It is not a writer and never was -- it
+    discarded the value behind a 200, which is #195. That is now a typed 422
+    from `ZtSelfAssessmentAnswerPatch`, REFUSED rather than honoured precisely
+    so this exemption keeps holding; honouring it would have created the third
+    writer that expires it.
 
     If a third writer appears, this exemption expires with it.
     """

@@ -104,6 +104,7 @@ from app.schemas.csf import (
     CsfQuestionnaireResponse,
     CsfRunAiResponse,
     CsfScoreSummary,
+    CsfSelfAssessmentAnswerPatch,
     CsfSelfAssessmentSubmit,
     CsfServiceCreateRequest,
     CsfServiceResponse,
@@ -628,7 +629,7 @@ def get_self_assessment(
 )
 def patch_self_assessment_answer(
     answer_id: uuid.UUID,
-    body: CsfAnswerPatch,
+    body: CsfSelfAssessmentAnswerPatch,
     user: Annotated[User, Depends(current_user)],
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],

@@ -6,10 +6,11 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.service import ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessmentStatus, ZtFramework
+from app.schemas._numeric import IntNotBool
 
 # ---------------------------------------------------------------------------
 # Catalog
@@ -101,13 +102,78 @@ class ZtAssessmentResponse(BaseModel):
 class ZtAnswerPatch(BaseModel):
     # Lower bound is 0 to admit the DoD "Pre Zero Trust" baseline; the route
     # gates stage 0 to DoD assessments (CISA stays 1-4).
-    maturity_stage: int | None = Field(default=None, ge=0, le=4)
+    maturity_stage: IntNotBool | None = Field(default=None, ge=0, le=4)
     # Work Order D3: per-capability target stage.
-    target_stage: int | None = Field(default=None, ge=1, le=4)
+    target_stage: IntNotBool | None = Field(default=None, ge=1, le=4)
     notes: str | None = Field(default=None, max_length=8000)
     evidence_artifact_id: uuid.UUID | None = None
     # Work Order C2: lock/unlock this row against AI reruns.
     locked: bool | None = None
+
+
+class ZtSelfAssessmentAnswerPatch(BaseModel):
+    """What a CLIENT may change on their own draft answer (#195).
+
+    Deliberately not `ZtAnswerPatch`. That schema is the ADMIN one, and
+    `patch_self_assessment_answer` honoured only two of its five fields --
+    writing `maturity_stage` and `notes`, discarding the rest behind a 200.
+    #195 reports `target_stage`; the other two came out of listing what the
+    handler actually reads:
+
+        evidence_artifact_id -- a client attaches evidence, gets 200, and no
+            evidence is attached.
+        locked -- a client locks a row against AI reruns, gets 200, and the
+            row is not locked.
+
+    Core principle 2 forbids exactly this: "never a lie that something
+    succeeded."
+
+    ## Refused rather than honoured, and #188 is the reason
+
+    #195 leaves the choice open -- honour `target_stage` here, or refuse it.
+    Honouring would make this a THIRD writer of `ZtAnswer.target_stage`, and
+    `zt/scoring.py::resolve_target_stage` carries a deliberate exemption whose
+    stated expiry condition is "if a third writer appears, this exemption
+    expires with it". Honouring would therefore activate a latent
+    silent-fallback defect (#188) as a side effect of fixing a reporting one.
+    Refusing holds the writer count at two and leaves that exemption intact.
+
+    The per-capability target keeps its working writer in `patch_answer`, the
+    admin route where setting it belongs.
+
+    ## The refusal set is derived, not listed
+
+    `extra="forbid"` means this class states what it ACCEPTS and everything
+    else is refused by construction -- so a sixth field added to
+    `ZtAnswerPatch` tomorrow cannot quietly start being dropped here. A
+    hand-written deny list would have to be remembered; this cannot go stale.
+
+    The validator sits alongside it only to name the CAUSE. Pydantic's own
+    message for a forbidden extra is "Extra inputs are not permitted", which
+    tells an integrator that a check failed but not why this route declines
+    the field. Both derive from `model_fields`, so the two cannot disagree.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    maturity_stage: IntNotBool | None = Field(default=None, ge=0, le=4)
+    notes: str | None = Field(default=None, max_length=8000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _name_the_fields_this_route_will_not_apply(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        unknown = sorted(set(data) - set(cls.model_fields))
+        if unknown:
+            raise ValueError(
+                f"This endpoint applies only {sorted(cls.model_fields)}. It "
+                f"does not apply {unknown}, and returning 200 while dropping "
+                f"them would report a change that never happened. A "
+                f"per-capability target_stage is set through the admin route "
+                f"PATCH /zt/answers/{{answer_id}}."
+            )
+        return data
 
 
 class ZtSelfAssessmentSubmit(BaseModel):
@@ -117,7 +183,7 @@ class ZtSelfAssessmentSubmit(BaseModel):
     engine measures against; persisted on the source request.
     """
 
-    target_stage: int | None = Field(default=None, ge=1, le=4)
+    target_stage: IntNotBool | None = Field(default=None, ge=1, le=4)
 
 
 # ---------------------------------------------------------------------------
