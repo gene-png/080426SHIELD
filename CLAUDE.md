@@ -1153,6 +1153,28 @@ Rules of the road:
   literal number and thereby became a fifth instance, caught by the check rather
   than by a merge.)
 
+  **THE NEGATION IS INVISIBLE TO THE MATCHER, so an HONEST SCOPE STATEMENT is
+  the sentence most likely to close an issue by accident.** `does not fix #N`,
+  `will not close #N`, `this doesn't resolve #N` and `not fixed by this PR: #N`
+  all match. The parser reads `fix` and `#N`; it does not read the word in
+  front of them.
+
+  That is worse than it sounds, because the sentence is one a careful author
+  writes ON PURPOSE. A PR that fixes a symptom and says so
+  — "the underlying
+  mount defect is untouched, it does not fix #N" — is being scrupulous about
+  scope, and is one merge away from closing the very issue it just disclaimed.
+  The more honest the write-up, the likelier the trip.
+
+  **The fix is to phrase it without a closing verb beside the number**, not to
+  authorise it: `#N stays open`, `see #N, which is untouched`, `tracked in #N`.
+  **Do NOT reach for `Auto-close-approved:`** here. That line approves the
+  close, so using it to get past this particular red approves exactly the
+  outcome the sentence exists to prevent.
+
+  Recorded from PR #270, whose only red was one true sentence about what it
+  deliberately did not do.
+
   The mechanism is `apps/api/scripts/check_issue_references.py`, wired as the
   required check **"No accidental issue closes"**. If a close is intended, say so
   in the PR description — bare numbers, no `#`, because a marker containing the

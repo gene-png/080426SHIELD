@@ -63,6 +63,8 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
 function register(over: Partial<RiskRegister> = {}): RiskRegister {
   return {
     excluded_inputs: [],
+    entries_total: 0,
+    entries_without_tier: 0,
     id: "r1",
     client_id: "c1",
     version: 1,
@@ -106,6 +108,43 @@ async function loaded(): Promise<void> {
  * cannot emit is the defect this branch exists to end, committed in the tests
  * for it.
  */
+describe("RiskRegisterDashboard tier-less entries disclosure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getActiveClientId.mockResolvedValue("c1");
+    getClientName.mockResolvedValue("Atlas");
+    fetchRiskGate.mockResolvedValue(gate());
+  });
+
+  it("says so when entries reached the register with no tier", async () => {
+    // #121. Such an entry renders as em dashes, is dropped from the 5x5
+    // matrix, and is STILL counted by "Entries" -- so that card can read 40
+    // while the matrix sums to fewer, with nothing explaining the gap.
+    //
+    // Derived server-side from the stored entries, so unlike the
+    // excluded-inputs banner this arrives on a plain LOAD, not only after a
+    // Generate. That is what this test asserts by mocking `latest`.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ entries_total: 40, entries_without_tier: 12 }),
+    );
+    await loaded();
+
+    const alert = await screen.findByTestId("risk-entries-without-tier");
+    expect(alert.textContent).toMatch(/12 of 40/);
+    expect(alert).toHaveAttribute("role", "alert");
+    // Names the remedy, not just the count.
+    expect(alert.textContent).toMatch(/Regenerate before exporting/i);
+  });
+
+  it("stays quiet when every entry has a tier", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ entries_total: 40, entries_without_tier: 0 }),
+    );
+    await loaded();
+    expect(screen.queryByTestId("risk-entries-without-tier")).toBeNull();
+  });
+});
+
 describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
   beforeEach(() => {
     vi.clearAllMocks();

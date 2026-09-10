@@ -123,3 +123,20 @@ class RiskRegisterResponse(BaseModel):
     # the register itself.
     batches_total: int = 0
     batches_failed: int = 0
+
+    # #121's outcome counter, reaching the CALLER and not only the audit blob.
+    #
+    # An entry stored with no tier renders as em dashes in the register, is
+    # dropped from the 5x5 matrix, and is counted by `total_entries` -- so a
+    # register can report forty open risks whose matrix sums to fewer than
+    # forty, with nothing saying why. That is the #121 client outcome, and it
+    # has two causes: a value the model supplied that would not resolve, and a
+    # key it simply omitted. This counts the OUTCOME, so it is non-zero under
+    # either.
+    #
+    # DERIVED from the stored entries rather than passed in from the generate
+    # run, deliberately. `batches_*` describe a run and are 0 on a read-back;
+    # these describe the REGISTER, so they are correct whenever it is read.
+    # A derived value cannot be out of sync; a passed one merely is not, yet.
+    entries_total: int = 0
+    entries_without_tier: int = 0

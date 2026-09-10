@@ -397,6 +397,35 @@ export function RiskRegisterDashboard(): JSX.Element {
         </Card>
       ) : (
         <>
+          {/* #121. An entry with no tier renders as em dashes, is dropped from
+              the 5x5 matrix, and is STILL counted by "Entries" -- so the card
+              above can read 40 while the matrix sums to fewer, with nothing
+              saying why.
+
+              Two causes reach that state: a value the model supplied that
+              would not resolve, and a key it simply omitted. The counter is
+              keyed on the OUTCOME so it is non-zero under either, and it is
+              derived server-side from the stored entries, so unlike the
+              withheld-inputs banner below it survives a reload. */}
+          {register.entries_without_tier > 0 ? (
+            <div
+              className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
+              role="alert"
+              data-testid="risk-entries-without-tier"
+            >
+              <span className="font-semibold">
+                {register.entries_without_tier} of {register.entries_total}{" "}
+                entries have no likelihood, impact or tier
+              </span>
+              , so they are missing from the matrix and the tier counts while
+              still counting toward Entries. The model either sent a value that
+              is not one of the accepted tokens, or sent none at all. The
+              rejected values, if any, are on the{" "}
+              <code>risk_register.generated</code> audit row. Regenerate before
+              exporting: a client reading this register sees those rows as
+              dashes.
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <NumberCard label="Entries" value={register.entries.length} />
             <NumberCard
