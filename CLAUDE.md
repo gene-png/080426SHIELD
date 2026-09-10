@@ -669,6 +669,51 @@ a real exit code and a real date, and was the minority outcome (D-071).
   inputs — including the MODE and any optional arguments, because a parity claim
   covers those too.
 
+- **A CORRECT CHANGE WHOSE STATED MOTIVATION DOES NOT SURVIVE CONTACT WITH THE
+  CODE. The change stays; the justification gets rewritten.** Recorded as a
+  named shape because it has now happened twice with the same resolution, so
+  the next instance is a category rather than a surprise.
+
+  The tell: a fix is right on its own terms — it closes a real hole, its tests
+  discriminate, red-on-revert holds — and the sentence explaining WHY it
+  matters turns out to describe a path nothing can reach. The instinct is to
+  withdraw the change. That is usually wrong, and the instances below say
+  why.
+
+  - **#240's export guard.** Written to catch a DRAFT-ATT&CK-sourced register
+    reaching export. Every input the snapshot can record is already approved
+    or released, so the guard cannot fail; the register the narrative described
+    is a pre-#242 one with NULL provenance, caught by a different branch
+    entirely. Kept as a RATCHET against a future loosening of the resolver,
+    and the code now says so.
+  - **#188's per-capability target disclosure.** Justified by "Stage 4 is a
+    legitimate CISA target and does not exist in DoD ZTRA, so the same stored
+    integer is usable or not depending on which framework asks." Capability
+    codes are framework-namespaced, every answer is created from its own
+    assessment's catalog, and both read paths take the framework from the
+    assessment — so no row can ever be read under a different framework. The
+    test written to prove it used two DIFFERENT codes, which was the tell and
+    was not read as one.
+
+  **Both resolved to "a disclosure that should normally never fire", and that
+  is a legitimate thing to build.** What is not legitimate is leaving the
+  original motivation standing, because a reader then takes the defect as
+  triggerable today and sizes everything downstream against a hazard that does
+  not exist.
+
+  The procedure, and it is three lines: state the population the change
+  actually protects; say plainly that no current writer can produce one, where
+  that is true; and say what would make it reachable again. The bool row in
+  `discarded_capability_targets` and the blast-radius note in migration 0047
+  are the worked examples — each carries its own reachability verdict rather
+  than inheriting the file's.
+
+  **Where the justification came from matters more than that it was wrong.**
+  Both were written from a plausible mechanism nobody executed. The check is
+  the one this file opens with: the claim "these two things can meet" is a
+  measurement, not a deduction — run it before it becomes the reason a change
+  exists.
+
 - **An over-match can be the ONLY thing covering a legitimate case. Before fixing
   one, check what it was accidentally catching.** `suite_pat`'s `\bFl` ate the
   `oor` in "Floor", and that bug was the sole reason `2nd Floor` got any
@@ -2347,6 +2392,27 @@ Rules of the road:
   and it owns #123, a **client dashboard** defect. Fixing #123 changes what the
   client's Risk dashboard shows, which is condition 6's third clause. The
   example contradicted the #131 reasoning directly above it.
+- **AN ISSUE IS FILED WITH ITS LABELS OR IT IS NOT FILED. Search first, and the
+  search only works because everything else was labelled.** The board is
+  `is:issue is:open label:mvp-blocking` ordered by tier. An issue without
+  `mvp-blocking` is not on it; one with `mvp-blocking` and no tier has no place
+  in the ordering. Either way it is invisible to the only view used to decide
+  what to work on — not a slow record, an unreachable one.
+
+  Every new issue therefore carries, at creation: `mvp-blocking` + a tier, OR
+  `unowned-with-reason` with the reason written in the body. "Untriaged" is not
+  a third option, because nothing ever comes back to triage it.
+
+  **Measured 2026-09-10, and the cost was a duplicate.** A CSF silent-clamp
+  defect was found, searched for on the board, not found, and filed. It had
+  been filed eight days earlier by someone else — and that issue carried no
+  labels, so it appeared in no query. #184 and #286 are the same defect, and
+  the older, better-written one was the invisible one. Four unlabelled issues accumulated
+  in under an hour that same evening.
+
+  So the search-before-filing step is real and is not sufficient on its own:
+  it can only find what previous filers labelled. The two halves are one rule.
+
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
   `gh pr view` — a good body saves them reading your whole diff.

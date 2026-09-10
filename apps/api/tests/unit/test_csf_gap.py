@@ -19,6 +19,7 @@ from app.csf.gap import (
     DEFAULT_TOP_N,
     FUNCTION_WEIGHTS,
     analyze,
+    resolve_target_tier,
 )
 
 # ---------------------------------------------------------------------------
@@ -106,11 +107,32 @@ def test_top_n_caps_response() -> None:
 
 
 @pytest.mark.unit
-def test_target_tier_clamped_to_valid_range() -> None:
+def test_target_tier_out_of_range_is_refused_not_clamped() -> None:
+    """THE CLAMP THIS PINNED WAS THE DEFECT. Inverted, not deleted (#184).
+
+    This asserted `analyze(answers, target_tier=99).target_tier ==
+    DEFAULT_TARGET_TIER` under the comment "Out-of-range falls back to the
+    default" — describing the behaviour accurately and treating it as intended.
+
+    It was not intended. `GET /csf/services/{id}/gap-analysis?target_tier=99`
+    returned 200 with `target_tier: 3` in the body and the gap set computed
+    against 3, so a caller asked one question and was answered a different one
+    in the same units. That is the defect #125 fixed in ZT, whose engine now
+    raises for the reason its comment gives: "A silent clamp is a default-value
+    fallback on error, which core principle 2 forbids."
+
+    Stated explicitly rather than edited quietly to green, per core principle
+    3: **this test pinned real behaviour, and that behaviour is now considered
+    wrong.** A client-supplied tier is resolved through `resolve_target_tier`
+    before it reaches the engine; reaching the engine out of range is a caller
+    bug.
+    """
     answers = {SUBCATEGORIES[0].code: 1}
-    result = analyze(answers, target_tier=99)
-    # Out-of-range falls back to the default.
-    assert result.target_tier == DEFAULT_TARGET_TIER
+    with pytest.raises(ValueError, match="out of range"):
+        analyze(answers, target_tier=99)
+
+    # The resolver is where a client-supplied value goes, and it REPORTS.
+    assert resolve_target_tier(99) == (DEFAULT_TARGET_TIER, "client_out_of_range")
 
 
 @pytest.mark.unit
