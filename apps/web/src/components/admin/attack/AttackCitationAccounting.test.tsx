@@ -57,8 +57,15 @@ describe("AttackCitationAccounting", () => {
     const partial = screen.getByTestId("attack-run-incomplete");
     // The numbers a consultant needs to act: how much of the run is missing.
     expect(partial).toHaveTextContent(/6 of 26/);
-    // And the consequence, which is the part no other surface states.
-    expect(partial).toHaveTextContent(/never sent/i);
+    // The consequence, which is the part no other surface states.
+    expect(partial).toHaveTextContent(/were not mapped/i);
+    // And it must NOT claim they were never sent. A batch that fails the #46
+    // shape guard was sent, was answered and was billed -- `run_job` parses
+    // `response.content`, so the refusal happens after the call. Telling a
+    // consultant it never happened costs them twice: they do not reconcile
+    // the spend, and they diagnose rate limits instead of prompt drift.
+    expect(partial).not.toHaveTextContent(/never sent/i);
+    expect(partial).toHaveTextContent(/check the AI spend/i);
     // It must be an alert. This is the one thing on the panel that invalidates
     // everything else on it.
     expect(partial).toHaveAttribute("role", "alert");
@@ -81,6 +88,25 @@ describe("AttackCitationAccounting", () => {
       /312 tool citations checked against the client/,
     );
     expect(panel).toHaveTextContent(/completed batches/i);
+  });
+
+  it("still warns when the failure count arrives without a total", () => {
+    // The guard must FAIL CLOSED. A first version required both fields, so
+    // this input suppressed the alert AND reverted the headline to its
+    // unqualified form -- the guard written to close #115 reproducing #115.
+    render(
+      <AttackCitationAccounting
+        result={result({ citations_confirmed: 312, batches_failed: 6 })}
+      />,
+    );
+    const partial = screen.getByTestId("attack-run-incomplete");
+    expect(partial).toHaveTextContent(/6 batches failed/);
+    // Degrades the sentence, not the decision: no "of N" when N is unknown,
+    // and specifically not "of undefined".
+    expect(partial).not.toHaveTextContent(/undefined/);
+    expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
+      /completed batches/i,
+    );
   });
 
   it("stays quiet when every batch completed", () => {

@@ -90,10 +90,18 @@ export function AttackCitationAccounting({
   // that was never established.
   const batchesTotal = result.batches_total;
   const batchesFailed = result.batches_failed;
-  const runIncomplete =
-    batchesTotal !== undefined &&
-    batchesFailed !== undefined &&
-    batchesFailed > 0;
+  // FAIL CLOSED on mixed presence.
+  //
+  // A first version required BOTH fields, so `batches_failed: 6` arriving
+  // without `batches_total` suppressed the alert AND reverted the headline to
+  // its unqualified form -- the guard written to close #115 reproducing #115
+  // on that input. Absence must not resolve to "clean run": missing data
+  // defaults to UNCONFIRMED, never to confirmed.
+  //
+  // So the trigger is the failure counter alone. `batches_total` is only used
+  // to say "6 of 26" rather than "6", and its absence degrades the sentence
+  // rather than the decision.
+  const runIncomplete = (batchesFailed ?? 0) > 0;
 
   return (
     <div
@@ -121,13 +129,18 @@ export function AttackCitationAccounting({
           data-testid="attack-run-incomplete"
         >
           <span className="font-semibold">
-            {batchesFailed} of {batchesTotal} batches failed
+            {batchesTotal === undefined
+              ? `${batchesFailed} batches failed`
+              : `${batchesFailed} of ${batchesTotal} batches failed`}
           </span>
-          , so the techniques in them were never sent and nothing below covers
-          them. Re-run before relying on this draft. On a re-run over an
-          assessment that was already scored, the techniques a failed batch
-          missed keep the statuses they had, so the matrix will look complete
-          either way &mdash; this line is the only place that says otherwise.
+          , so their techniques were not mapped and nothing below covers them. A
+          batch can fail after the model answered &mdash; a malformed response
+          is refused on arrival &mdash; so check the AI spend for this run
+          rather than assuming nothing was sent. Re-run before relying on this
+          draft. On a re-run over an assessment that was already scored, the
+          techniques a failed batch missed keep the statuses they had, so the
+          matrix will look complete either way &mdash; this line is the only
+          place that says otherwise.
         </p>
       ) : null}
 
