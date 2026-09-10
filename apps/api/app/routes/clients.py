@@ -1373,13 +1373,37 @@ def risk_dashboard(
     if client_id != client.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
 
+    # The latest FINALIZED register, not the latest register (#123).
+    #
+    # This took the highest version and then 404'd if that one was unfinalized.
+    # `generate` always mints the next version and only `export` sets
+    # `finalized_at` -- so the moment a consultant clicked Generate to refresh
+    # a delivered register, the client's dashboard 404'd with "No finalized
+    # Risk Register for your organization yet". One existed, and they had been
+    # reading it a minute earlier. It also removed the Risk link from Results,
+    # which probes this endpoint to decide whether to show it, and it stayed
+    # gone for however long the review took, with nothing telling anyone.
+    #
+    # Same root cause as #114: resolve the record being LABELLED, never
+    # whatever row happens to be newest. Filtering in the QUERY rather than
+    # checking after the fact is what makes generating a new version unable to
+    # retract a delivered one -- the post-hoc check could only ever turn a
+    # delivered register into a 404.
+    #
+    # The admin's `_latest_register` in `routes/risk.py` deliberately does NOT
+    # filter this way and is not a twin: a consultant refreshing a register
+    # needs to see the draft they just generated. Stated rather than left
+    # implicit, because an unstated exemption reads as an oversight.
     reg = db.execute(
         select(RiskRegister)
-        .where(RiskRegister.client_id == client.id)
+        .where(
+            RiskRegister.client_id == client.id,
+            RiskRegister.finalized_at.is_not(None),
+        )
         .order_by(RiskRegister.version.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if reg is None or reg.finalized_at is None:
+    if reg is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={

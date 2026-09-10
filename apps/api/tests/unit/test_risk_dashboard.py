@@ -137,6 +137,92 @@ def test_risk_dashboard_finalized_returns_matrix(app_client) -> None:
 
 
 @pytest.mark.unit
+def test_generating_a_new_version_does_not_retract_the_delivered_one(app_client) -> None:
+    """#123. Clicking Generate must not take the client's dashboard away.
+
+    The resolver took the HIGHEST-version register and then 404'd if that one
+    was unfinalized. `generate` always mints the next version and only `export`
+    sets `finalized_at` -- so the moment a consultant clicked Generate to
+    refresh a delivered register, the client's dashboard 404'd with
+    "No finalized Risk Register for your organization yet". One existed. They
+    had been reading it a minute earlier.
+
+    It also removed the Risk link from Results, because `results/page.tsx`
+    probes this endpoint to set `hasRiskDashboard`. And nothing told anyone: it
+    stayed gone for as long as the review took.
+
+    Same root cause as #114 -- the numbers must come from the record being
+    LABELLED, not from whatever row is newest.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+    ch = {"Authorization": f"Bearer {bearer_client}"}
+    ah = {"Authorization": f"Bearer {bearer_admin}", "X-Client-Id": client_id}
+
+    c.headers["X-Client-Id"] = client_id
+    _generate_and_finalize(c, bearer_admin, client_id)
+
+    delivered = c.get(f"/clients/{client_id}/risk/dashboard", headers=ch)
+    assert delivered.status_code == 200, delivered.text
+    delivered_version = delivered.json()["version"]
+    delivered_total = delivered.json()["total_entries"]
+
+    # The consultant refreshes the register. v2 exists and is NOT exported.
+    g = c.post(f"/risk/clients/{client_id}/register/generate", headers=ah)
+    assert g.status_code == 201, g.text
+    assert g.json()["version"] == delivered_version + 1
+
+    # The client must still see the version they were delivered.
+    still = c.get(f"/clients/{client_id}/risk/dashboard", headers=ch)
+    assert still.status_code == 200, (
+        "generating a new version retracted the delivered one: " + still.text
+    )
+    assert still.json()["version"] == delivered_version
+    assert still.json()["total_entries"] == delivered_total
+
+    # And exporting v2 hands it over.
+    ex = c.post(f"/risk/clients/{client_id}/register/export", headers=ah)
+    assert ex.status_code in (200, 201), ex.text
+    now = c.get(f"/clients/{client_id}/risk/dashboard", headers=ch)
+    assert now.status_code == 200, now.text
+    assert now.json()["version"] == delivered_version + 1
+
+
+@pytest.mark.unit
+def test_an_unfinalized_v2_does_not_leak_before_export(app_client) -> None:
+    """The other direction, so the fix cannot overshoot.
+
+    Serving the latest FINALIZED register must not become serving the latest
+    register: an in-progress v2 has not been handed over and must not reach the
+    client until export. The assertion is on the VERSION rather than on the
+    status code -- a 200 alone would pass whichever version were served, which
+    is exactly the confusion #123 is about.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+    ah = {"Authorization": f"Bearer {bearer_admin}", "X-Client-Id": client_id}
+
+    c.headers["X-Client-Id"] = client_id
+    _generate_and_finalize(c, bearer_admin, client_id)
+    assert c.post(f"/risk/clients/{client_id}/register/generate", headers=ah).status_code == 201
+
+    r = c.get(
+        f"/clients/{client_id}/risk/dashboard",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["version"] == 1, "an unexported v2 must not be served"
+
+
+@pytest.mark.unit
 def test_risk_dashboard_unfinalized_is_404(app_client) -> None:
     c = app_client
     admin = _register(c, "admin@example.com")
