@@ -2480,10 +2480,27 @@ test("full engagement: intake -> five services -> release -> client view -> back
             name: /^(Finalize|Re-finalize|Send for evaluation|Re-run evaluation)$/,
           })
           .first();
+        // MOUNT_WAIT_MS, not CONTROL_WAIT_MS: this step RELOADS immediately
+        // above, so it is waiting for ARRIVAL, not for a control on a settled
+        // page -- the distinction CONTROL_WAIT_MS's own comment draws and this
+        // site was on the wrong side of.
+        //
+        // MEASURED 2026-09-10 against the CSF service whose finalize MISSED on
+        // the 12:46 run: "Send for evaluation" appeared at 15808 / 10142 /
+        // 5526 ms over three samples. TWO OF THREE exceed 10s, so the step
+        // reported `affordance never became visible` about a control that was
+        // present and ENABLED -- a product defect invented by a timeout.
+        //
+        // `workspaceMounted` is deliberately NOT used here even though the
+        // Run-AI step above uses it after its own reload: it waits for a
+        // `Run AI` or `Seed Working Profiles` node, and TECH DEBT HAS NEITHER
+        // (it is upload-and-extract). Calling it here would hang that service
+        // for 90s and fail a step that currently works -- fixing one twin by
+        // breaking another.
         await affordance(
           finalize,
           `${svc.slug} Finalize button`,
-          CONTROL_WAIT_MS,
+          MOUNT_WAIT_MS,
         );
         // Same settle-then-recheck as Run AI and Approve. The cause is not
         // asserted: `canFinalize` gates on the assessment being approved OR
