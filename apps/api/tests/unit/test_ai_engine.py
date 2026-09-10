@@ -68,10 +68,20 @@ def test_parse_json_tolerates_code_fences() -> None:
 @pytest.mark.unit
 def test_run_job_csf_score_returns_suggestions_and_logs_call(db_session) -> None:
     provider = FixtureProvider()
+    # The contract shape, taken from `_CSF_SCORE_PROMPT`'s own example --
+    # `{"scores": [{"tier": ..., "subcategory_code": ...}]}`.
+    #
+    # This test used to feed `{"subcategories": [{"code": ...}]}`, which is the
+    # EXACT drifted key from the Sprint 3 T0 incident, and then assert
+    # `result.data["subcategories"][0]["code"]` -- reading back the key the
+    # parser never consumes. It proved the response passed through untouched,
+    # not that a suggestion was produced, and it would have passed identically
+    # if `csf_score` consumed nothing at all. #46 turned that into an error and
+    # is how it was found.
     canned = LLMResponse(
-        '{"subcategories": [{"code": "GV.OC-01", "governance": 1, "policy": 1,'
-        ' "implementation": 0, "monitoring": 0, "improvement": 0,'
-        ' "what_we_found": "partial"}], "executive_summary": "draft"}',
+        '{"scores": [{"subcategory_code": "GV.OC-01", "tier": "partial",'
+        ' "governance": 1, "policy": 1, "implementation": 0, "monitoring": 0,'
+        ' "improvement": 0}], "executive_summary": "draft"}',
         input_tokens=100,
         output_tokens=40,
     )
@@ -84,7 +94,7 @@ def test_run_job_csf_score_returns_suggestions_and_logs_call(db_session) -> None
         inputs={"answers": ["..."]},
         requested_by=uuid.uuid4(),
     )
-    assert result.data["subcategories"][0]["code"] == "GV.OC-01"
+    assert result.data["scores"][0]["subcategory_code"] == "GV.OC-01"
     # The call was logged with token counts.
     row = db_session.execute(select(LLMCall)).scalars().one()
     assert row.purpose == "csf_score"
@@ -96,8 +106,20 @@ def test_run_job_csf_score_returns_suggestions_and_logs_call(db_session) -> None
 @pytest.mark.unit
 def test_run_job_each_suggestion_job_in_fixture_mode(db_session) -> None:
     provider = FixtureProvider()
-    for purpose in ("zt_score", "mitre_map", "risk_synthesize"):
-        provider.register_static(purpose, LLMResponse("{}"))
+    # Each job's own empty-but-valid answer, not a bare `{}`. The prompts
+    # instruct `{"capabilities": []}` / `{"techniques": []}` / `{"entries": []}`
+    # and #46 made the key required, so `{}` is now refused -- correctly: it was
+    # indistinguishable from a real empty result and that is the defect.
+    #
+    # The subject of this test is that three jobs run and log three calls. The
+    # `{}` was scaffolding, so replacing it preserves the subject exactly.
+    empty_for = {
+        "zt_score": '{"capabilities": []}',
+        "mitre_map": '{"techniques": []}',
+        "risk_synthesize": '{"entries": []}',
+    }
+    for purpose, body in empty_for.items():
+        provider.register_static(purpose, LLMResponse(body))
     for purpose in ("zt_score", "mitre_map", "risk_synthesize"):
         result = run_job(
             db_session,
@@ -106,7 +128,7 @@ def test_run_job_each_suggestion_job_in_fixture_mode(db_session) -> None:
             inputs={"x": 1},
             requested_by=uuid.uuid4(),
         )
-        assert result.data == {}
+        assert result.data == json.loads(empty_for[purpose])
     # Three calls logged.
     rows = db_session.execute(select(LLMCall)).scalars().all()
     assert {r.purpose for r in rows} == {"zt_score", "mitre_map", "risk_synthesize"}

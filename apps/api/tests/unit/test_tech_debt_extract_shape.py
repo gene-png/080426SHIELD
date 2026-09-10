@@ -79,13 +79,26 @@ def test_a_scalar_top_level_raises() -> None:
 
 
 @pytest.mark.unit
-def test_a_missing_items_key_still_yields_no_items() -> None:
-    """Deliberately unchanged — that is #46, filed and explicitly out of scope.
+def test_a_missing_items_key_is_REFUSED() -> None:
+    """Inverted by #46, which this test anticipated.
 
-    Guarding the CONTAINER is this issue; guarding the KEY NAME is a different
-    one, and conflating them here would quietly widen the change.
+    It used to assert `_parse_response({"capabilities": [...]}) == []` under a
+    docstring saying the key guard was "filed and explicitly out of scope" for
+    the issue that added the CONTAINER guard. #46 is that filed issue, and this
+    is the change it was waiting for.
+
+    The behaviour it pinned was the defect: a wrong top-level key yielded zero
+    capabilities, indistinguishable from an inventory holding nothing the model
+    recognised. On THIS path that is the worst instance of the family -- it
+    feeds the ATT&CK allow-list, where an empty capability list once produced
+    607 fabricated `gap` rows.
+
+    The prose-retry tolerance the parser deliberately keeps is unaffected:
+    `_decode_wrapped_in_prose` runs during DECODE, before the key is examined
+    at all.
     """
-    assert _parse_response(json.dumps({"capabilities": [_ITEM]})) == []
+    with pytest.raises(AIResponseShapeError):
+        _parse_response(json.dumps({"capabilities": [_ITEM]}))
 
 
 @pytest.mark.unit

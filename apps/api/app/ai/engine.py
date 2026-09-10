@@ -30,11 +30,26 @@ class AIJob:
 
     name: str
     prompt: str
-    parser: Callable[[str], Any]
+    # The top-level JSON key this job's response must carry, and the SINGLE
+    # source for it. `parser` is derived from this below rather than passed
+    # alongside it, because a job that declared both could have them disagree
+    # -- which is the defect (#46), one level up. A job with no list-shaped
+    # response leaves it None and supplies its own `parser`.
+    top_level_key: str | None = None
+    parser: Callable[[str], Any] | None = None
     prompt_version: str = "v1"
     # The `llm_calls.purpose` + fixture key. Defaults to `name`; tech_debt keeps
     # its historical "extract.capabilities" purpose for fixture compatibility.
     purpose: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.parser is None:
+            if self.top_level_key is None:
+                raise ValueError(
+                    f"AIJob {self.name!r} declares neither `top_level_key` nor "
+                    "`parser`, so nothing decides how its response is read."
+                )
+            object.__setattr__(self, "parser", parse_json_object_with_list(self.top_level_key))
 
     @property
     def call_purpose(self) -> str:
@@ -168,8 +183,23 @@ def require_json_object(data: Any) -> dict:
 
 
 def require_list_at(data: dict, key: str) -> dict:
-    """The list guard, on already-decoded data. See `require_json_object`."""
-    value = data.get(key, [])
+    """The list guard, on already-decoded data. See `require_json_object`.
+
+    The key must be PRESENT. It used to default to `[]` when missing, so
+    `{"wrong_key": [...]}` passed this guard, every consumer then read its own
+    key, and the run applied nothing while reporting success -- #46, the other
+    half of the Sprint 3 T0 drift, which shipped once already.
+
+    Requiring presence costs no legitimate answer: "no suggestions" is
+    expressible WITH the key, as `{"scores": []}`, and that is the form all
+    four prompts instruct. Only an off-contract response is refused.
+    """
+    if key not in data:
+        raise AIResponseShapeError(
+            f'The AI response has no "{key}" key, so nothing could be read '
+            f"from it. Keys present: {sorted(data)}. Nothing was applied."
+        )
+    value = data[key]
     if not isinstance(value, list):
         raise AIResponseShapeError(
             f'The AI response\'s "{key}" must be a JSON array, but it was a '
