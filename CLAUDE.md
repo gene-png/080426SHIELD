@@ -1518,6 +1518,18 @@ Rules of the road:
   | pytest's printed summary line | the exit code |
   | `od -c` output grepped for `\r` | `d.count(b'\r')` |
   | a detached run's marker EXISTS | the marker's AGE |
+  | a suite's exit code | which TREE, at which REVISION, it ran against |
+
+  **The tree row is another instance of a green describing the wrong state, and
+  one of the few where the wrong state was one the reader had just created.**
+  (No tally here on purpose: it would be a count from outside this document
+  that nothing can re-derive, and the ordinal form slips the gate because it
+  matches cardinals.) A backgrounded suite returned exit 0 while the fix it was meant to
+  cover had been reverted seconds earlier by a careless `git checkout -- <file>`
+  — which restores from the INDEX, so unstaged work goes with the mutation being
+  undone. The remedy is one line: have the run print the revision and cleanliness
+  of the tree it is testing (`tree under test: <sha>, clean=yes`), so the answer
+  carries its own subject. Commit before mutating, for the same reason.
 
   The last was a success record from a run **a week earlier**, read as the
   current one: `test -f /tmp/x.exit` tests existence, not freshness. **The
