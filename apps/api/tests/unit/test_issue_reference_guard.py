@@ -106,6 +106,55 @@ def test_quotes_code_fences_and_html_comments_are_NOT_exempt() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "text",
+    [
+        "## The half that a prior PR leaves open, does not close\n\n#242 refuses generation.",
+        "## Why this does not fix\n\n#123 is unrelated.",
+        "### Resolves\n\n#99 stays open.",
+    ],
+)
+def test_a_keyword_ending_a_block_matches_a_number_opening_the_next(text: str) -> None:
+    """The fourth variant, and the first that is STRUCTURAL.
+
+    Three earlier incidents were failures of care inside one sentence: a
+    negated sentence, a quoted sentence, and a sentence warning about the
+    quoted one. This one is not. A keyword ends a heading and a number opens
+    the next block; across the newline the parser reads them as adjacent, while
+    the rendered document shows two separate elements. No amount of care about
+    sentences catches it.
+
+    Found on the PR that landed migration 0047: its heading ended with a
+    closing verb and the paragraph under it opened with a bare reference.
+    Described that way on purpose -- quoting the heading here would reproduce
+    the adjacency inside the file that tests for it, which is the same trap one
+    level down, and comments are not exempt.
+
+    Pinned as a parser case rather than left in the remedy text, because
+    `CLAUDE.md` records that a rule living only in prose gets followed on the
+    item you are thinking about and skipped on the item next to it.
+
+    **The parser already handled this** -- these pass unchanged, which is why
+    the gate caught that PR correctly. What was missing was a test saying so
+    and a line of remedy text naming the shape, so the next author is not left
+    to rediscover it from a red build.
+
+    One case was written and then DELETED rather than made to pass: a markdown
+    LIST boundary, `- ...does not close` / `- #500 is next`. A `-` is a
+    non-whitespace character between the keyword and the number, so GitHub does
+    not link them either, and widening `\s*` to cross a list marker would
+    over-report on every bulleted list in every PR body. An over-reporting gate
+    is one that gets read past, which is the failure this file exists to
+    prevent -- so the correct answer was to drop the case, not to widen the
+    pattern.
+    """
+    assert find_closing_references(text), (
+        "a closing keyword at the end of a block and a number at the start of "
+        "the next are adjacent to GitHub's parser, and must be caught"
+    )
+
+
+@pytest.mark.unit
 def test_the_safe_phrasings_this_repo_asks_for_are_not_flagged() -> None:
     """`filed as`, `see`, `tracked in` — CLAUDE.md's prescribed alternatives.
 
