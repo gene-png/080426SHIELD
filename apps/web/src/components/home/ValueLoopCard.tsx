@@ -57,9 +57,14 @@ interface Metric {
   /** What the figure is computed OVER, plural, in the client's words.
    *
    *  Load-bearing for the unresolved copy rather than decoration. The state is
-   *  per KIND and wholesale — `_KindTotal`'s docstring says "A kind goes
-   *  unresolved WHOLESALE rather than per service", and each `_*_total` returns
-   *  on the FIRST unresolvable service — so a sentence saying "this service"
+   *  per KIND and wholesale — "A kind goes unresolved WHOLESALE rather than per
+   *  service", and each `_*_total` returns on the FIRST unresolvable service.
+   *
+   *  The quoted sentence is `_KindTotal`'s, which since #207 governs ATT&CK
+   *  only: ZT and CSF return `_TargetedKindTotal` and tech debt
+   *  `_TechDebtTotal`. The PROPERTY still holds of all four -- every one of them
+   *  returns on the first unresolvable service -- so the citation is narrower
+   *  than the claim it is invoked for rather than wrong — so a sentence saying "this service"
    *  is false whenever the client has more than one. Zero Trust is the sharp
    *  case: `zt_ids` concatenates ZERO_TRUST_CISA and ZERO_TRUST_DOD, so one
    *  slot can span two frameworks and any number of engagements. */
@@ -199,7 +204,7 @@ export function ValueLoopCard({
                     carrying BOTH a value and the flag rendered the number while
                     the hint below — which switches on `m.unresolved` alone —
                     said we were not showing one. No backend path produces that
-                    pair today (every unresolved `_KindTotal` carries `None`),
+                    pair today (every unresolved total carries `None`),
                     but "unreachable because the server is well-behaved" is a
                     guarantee held in another file, and this ordering makes the
                     renderer honest without depending on it. */}

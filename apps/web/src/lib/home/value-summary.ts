@@ -107,10 +107,21 @@ export function assumedTargetNote(p: TargetProvenance): string | null {
     faults.push(`the ${p.unit} on file could not be used`);
 
   const why = faults.join("; ");
+  // "the DEFAULT stage", matching `lib/dashboards/zt.ts::targetNote` and
+  // `CsfDashboard.tsx`, which both say "Default target" for this same fact.
+  //
+  // The first draft said "the standard stage", and that is a loaded word in
+  // this product's own domain: CISA ZTMM 2.0 DEFINES Stage 1-4, so "the
+  // standard stage" reads as "the framework's benchmark" -- reassurance that an
+  // authoritative target was applied, which inverts a sentence whose whole job
+  // is to disclose that we assumed one. A client clicking through to the ZT
+  // dashboard for the same engagement would then read "Default target" for what
+  // the card called standard: two words, one fact, and only one of them says
+  // "we picked this".
   const scope =
     assumed === p.services
-      ? `Counted against the standard ${p.unit}`
-      : `${assumed} of ${p.services} ${p.noun} counted against the standard ${p.unit}`;
+      ? `Counted against the default ${p.unit}`
+      : `${assumed} of ${p.services} ${p.noun} counted against the default ${p.unit}`;
   return `${scope} — ${why}.`;
 }
 

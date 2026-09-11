@@ -80,7 +80,7 @@ describe("gapHint", () => {
     );
   });
 
-  it("keeps the possessive when the counts are unknown", () => {
+  it("DROPS the possessive when the counts are unknown", () => {
     // `targetIsWhollyTheClients` is `=== 0`, so null is not 0 and the
     // possessive would be dropped. Pinned because the alternative spelling
     // (`!== 0`, or a truthiness test) flips this silently and the null case is
@@ -115,16 +115,16 @@ describe("assumedTargetNote", () => {
     // "3 of 3" is noise; the client has no report on their own target at all
     // and the sentence should say so without arithmetic.
     expect(assumedTargetNote(zt({ services: 3, defaulted: 3 }))).toBe(
-      "Counted against the standard stage — no stage chosen at intake.",
+      "Counted against the default stage — no stage chosen at intake.",
     );
   });
 
   it("carries the denominator when only some were", () => {
-    // Without it, "2 reports use the standard stage" does not say whether that
+    // Without it, "2 reports use the default stage" does not say whether that
     // is 2 of 2 or 2 of 9, which is the difference between a figure that is
     // mostly theirs and one that is not theirs at all.
     expect(assumedTargetNote(zt({ services: 9, defaulted: 2 }))).toBe(
-      "2 of 9 Zero Trust reports counted against the standard stage — no stage chosen at intake.",
+      "2 of 9 Zero Trust reports counted against the default stage — no stage chosen at intake.",
     );
   });
 
@@ -138,7 +138,7 @@ describe("assumedTargetNote", () => {
       zt({ services: 4, defaulted: 0, unusable: 2 }),
     );
     expect(note).toBe(
-      "2 of 4 Zero Trust reports counted against the standard stage — the stage on file could not be used.",
+      "2 of 4 Zero Trust reports counted against the default stage — the stage on file could not be used.",
     );
     expect(note).not.toMatch(/no stage chosen/);
   });
@@ -149,7 +149,7 @@ describe("assumedTargetNote", () => {
     expect(
       assumedTargetNote(zt({ services: 6, defaulted: 1, unusable: 2 })),
     ).toBe(
-      "3 of 6 Zero Trust reports counted against the standard stage — no stage chosen at intake; the stage on file could not be used.",
+      "3 of 6 Zero Trust reports counted against the default stage — no stage chosen at intake; the stage on file could not be used.",
     );
   });
 
@@ -162,7 +162,7 @@ describe("assumedTargetNote", () => {
         unit: "tier",
         noun: "NIST CSF reports",
       }),
-    ).toBe("Counted against the standard tier — no tier chosen at intake.");
+    ).toBe("Counted against the default tier — no tier chosen at intake.");
   });
 
   it("names no action, because the card has none to offer", () => {

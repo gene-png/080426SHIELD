@@ -94,7 +94,13 @@ describe("ValueLoopCard", () => {
         summary={summary({
           csf_gap_unresolved: true,
           has_unresolved: true,
-          zt_gap_count: 4,
+          // `...ztChosen(4)` rather than a bare count: setting the figure
+          // without its companion fields leaves `zt_services: 0` beside a
+          // RESOLVED number and both target counts null -- the one pairing
+          // `_TargetedKindTotal` guarantees the server never sends. Latent,
+          // because nothing here reads the ZT hint; the next person to add a
+          // hint assertion would pin a string the API cannot produce.
+          ...ztChosen(4),
           has_any_data: true,
         })}
       />,
@@ -206,7 +212,7 @@ describe("ValueLoopCard", () => {
       screen.queryByText("Capabilities below your target maturity stage."),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("value-target-note")).toHaveTextContent(
-      "2 of 3 Zero Trust reports counted against the standard stage — no stage chosen at intake.",
+      "2 of 3 Zero Trust reports counted against the default stage — no stage chosen at intake.",
     );
   });
 
@@ -260,7 +266,7 @@ describe("ValueLoopCard", () => {
     const notes = screen.getAllByTestId("value-target-note");
     expect(notes).toHaveLength(1);
     expect(notes[0]).toHaveTextContent(
-      "Counted against the standard tier — the tier on file could not be used.",
+      "Counted against the default tier — the tier on file could not be used.",
     );
     expect(
       screen.getByText("Capabilities below your target maturity stage."),

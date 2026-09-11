@@ -494,12 +494,23 @@ class _KindTotal(NamedTuple):
     unresolved: bool
 
 
-#: A target source that is NOT the client's own choice. Derived from the
-#: resolvers rather than listed: both `zt.scoring.resolve_target_stage` and
-#: `csf.gap.resolve_target_tier` return "client" for a stored value that was
-#: usable and one of three other strings otherwise, so "the client chose this"
-#: is the single value to test against and the rest need no enumeration here.
-#: A fourth source added to either resolver is covered the day it exists.
+#: A target source that is NOT the client's own choice. Both
+#: `zt.scoring.resolve_target_stage` and `csf.gap.resolve_target_tier` return
+#: "client" for a stored value that was usable, so this is the single value to
+#: test against and a NEW source is caught by that test the day it exists.
+#:
+#: BUT THE TALLY BELOW DOES ENUMERATE, and an earlier version of this comment
+#: said "the rest need no enumeration here" -- true of the `!=` and false of the
+#: `if source == "default"` two functions down, sited exactly where a reader
+#: would check. A fifth source that is neither a client choice nor a default --
+#: a contract- or policy-set target, say -- would be caught by the `!=` and then
+#: filed under `unusable`, so the client's card would say "the stage on file
+#: could not be used" about a stage that was never theirs and never failed.
+#:
+#: The direction is deliberate and is the conservative one:
+#: `lib/dashboards/zt.ts::isChoiceFailure` makes the same call and argues it --
+#: "a value this build does not recognise is not evidence that the client chose
+#: nothing". Recorded here because the API was making it silently.
 CLIENT_CHOSE_IT = "client"
 
 
