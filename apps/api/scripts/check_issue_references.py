@@ -121,6 +121,23 @@ def approved_numbers(body: str) -> set[int]:
     return out
 
 
+def linked_numbers(text: str) -> set[int]:
+    """The issues GitHub says this PR will close, from `--linked` (#182).
+
+    Parsed permissively on purpose: the workflow writes whatever
+    `gh pr view --json closingIssuesReferences` produced, and the useful
+    reading of that file is "which issue numbers are in it". A strict JSON
+    parse would turn a `gh` version bump, an empty file, or a `--jq` change
+    into a crash rather than a verdict -- and `main` treats an unreadable input
+    as exit 2, which is the right answer for "I could not look" and the wrong
+    one for "GitHub linked nothing", a state this guard must be able to report.
+
+    The two are distinguished by the FILE, not by its contents: a missing file
+    is exit 2, an empty one is an empty set.
+    """
+    return {int(m) for m in re.findall(r"\d+", text)}
+
+
 def _read(path: str, label: str) -> str:
     p = Path(path)
     if not p.exists():
@@ -133,6 +150,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--title", required=True, help="file containing the PR title")
     ap.add_argument("--body", required=True, help="file containing the PR description")
     ap.add_argument("--commits", required=True, help="file containing every commit message")
+    ap.add_argument(
+        "--linked",
+        help=(
+            "file containing `gh pr view --json closingIssuesReferences` output. "
+            "When given, the guard asserts that what GitHub will actually close "
+            "matches what the body declared, in BOTH directions (#182)."
+        ),
+    )
     args = ap.parse_args(argv)
 
     try:
@@ -159,15 +184,85 @@ def main(argv: list[str] | None = None) -> int:
             snippet = " ".join(text[start : m.end() + 20].split())
             hits.append((where, number, snippet))
 
+    # #182. The verdict above was over the INTENDED set, not the ACHIEVED one.
+    #
+    # Measured on PR #180's first open: the body carried `Auto-close-approved:
+    # 108` and a commit body read "Closes the second half of #108". The
+    # intervening words break `_CLOSING`'s adjacency -- and GitHub's parser
+    # agrees -- so `hits` was empty, `approved` was `{108}`, and this printed
+    # "clean (1 declared close: 108)" and exited 0. GitHub linked NOTHING. The
+    # PR would have merged, #108 would have stayed open, and the body would
+    # have asserted it was closed. The gate actively pointed away from the
+    # problem.
+    #
+    # That is `check_recalled_counts` printing "clean (6 documents)" over
+    # documents it never read, one day later, in the guard whose entire subject
+    # is the gap between what a body says and what GitHub does.
+    #
+    # NOT a second implementation of the adjacency rule. A restatement agrees
+    # with GitHub only until GitHub changes it, and the standing rule is that a
+    # parity claim is enforced by CALLING the other thing. So: ask GitHub.
+    if args.linked is not None:
+        try:
+            linked = linked_numbers(_read(args.linked, "linked"))
+        except FileNotFoundError as exc:
+            print(f"issue-close guard: {exc}", file=sys.stderr)
+            print(
+                "The --linked file is how this guard checks its verdict against "
+                "reality. Missing, it can only re-read the prose it was given, "
+                "which is the state #182 is about.",
+                file=sys.stderr,
+            )
+            return 2
+
+        declared_not_linked = sorted(approved - linked)
+        linked_not_declared = sorted(linked - approved)
+        if declared_not_linked or linked_not_declared:
+            print(
+                "issue-close guard: what GitHub will close does not match what "
+                "this PR declared.\n",
+                file=sys.stderr,
+            )
+            for number in declared_not_linked:
+                print(
+                    f"  declared but NOT linked: {number}\n"
+                    f"    The body says this closes #{number} and GitHub will not. "
+                    f"Merging leaves it open under a description asserting it is "
+                    f"fixed -- a live defect marked done.\n"
+                    f"    Usually an adjacency break: `Closes the second half of "
+                    f"#{number}` does not match, and neither does a keyword on one "
+                    f"line with the number on the next. Write `Fixes #{number}` "
+                    f"and re-check with `gh pr view <n> --json "
+                    f"closingIssuesReferences`.\n",
+                    file=sys.stderr,
+                )
+            for number in linked_not_declared:
+                print(
+                    f"  linked but NOT declared: {number}\n"
+                    f"    GitHub will close #{number} on merge and nothing in the "
+                    f"body approves it. Either add it to `Auto-close-approved:` or "
+                    f"rephrase so it does not close.\n",
+                    file=sys.stderr,
+                )
+            return 1
+
     if not hits:
         if approved:
+            verified = (
+                " (verified against GitHub)"
+                if args.linked is not None
+                else (" -- NOT verified against GitHub; run in CI for that")
+            )
             print(
                 "issue-close guard: clean "
                 f"({len(approved)} declared close{'s' if len(approved) != 1 else ''}: "
-                f"{', '.join(str(n) for n in sorted(approved))})."
+                f"{', '.join(str(n) for n in sorted(approved))}){verified}."
             )
         else:
-            print("issue-close guard: clean — no closing references.")
+            print(
+                "issue-close guard: clean — no closing references"
+                + (" (verified against GitHub)." if args.linked is not None else ".")
+            )
         return 0
 
     print(
