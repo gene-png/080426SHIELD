@@ -68,6 +68,12 @@ _ROWS = [
         rollup_rule=6,
         target_level=4,
         gap=True,
+        # `1`, not `"P1"` as `test_playbook_export_content.py` uses. The
+        # renderers fall through on both (`_PRIORITY_ORDER.get(1, 3)` and
+        # `r.priority == "P1"`), so the exec PDF prints "No gaps were
+        # identified" over this row -- harmless for the approval assertions
+        # here, and stated because the comment above says these fields were
+        # taken from that file and this one field was not.
         priority=1,
     ),
 ]
@@ -169,6 +175,17 @@ def test_an_unapproved_playbook_says_so_on_the_page(name, extract, extra) -> Non
         f"A filename does not survive being opened, printed or pasted into a "
         f"deck, which is the handoff #243 is actually about."
     )
+    # THE FOURTH CELL OF THE MATRIX, and the only one whose failure hands a
+    # client a false assurance. The first draft asserted three of four:
+    # (unapproved -> WORKING present), (approved -> WORKING absent),
+    # (approved -> APPROVED present). Nothing said a DRAFT must not ALSO claim
+    # approval -- so rewriting `_approval_notice` to append rather than choose,
+    # or adding an unconditional banner, would have shipped a document reading
+    # "Approved by Kentro." and the warning together, with every test green.
+    assert playbook_export.APPROVED_NOTICE not in text, (
+        f"{name} prints the APPROVED notice on an unapproved playbook. A "
+        f"client reads the reassuring sentence, not the second one."
+    )
 
 
 @pytest.mark.unit
@@ -221,3 +238,48 @@ def test_the_notice_is_not_the_methods_own_vocabulary() -> None:
         "the unapproved notice is built out of the method's own artifact name, "
         "so it cannot be told apart from ordinary CSF vocabulary"
     )
+
+
+@pytest.mark.unit
+def test_the_notice_lands_on_the_FIRST_sheet_of_the_workbook() -> None:
+    """`_xlsx_text` reads every sheet, so it cannot see tab order.
+
+    `routes/csf.py` claims the status is stamped on "the cover and the first
+    sheet". The property holds today because `wb.create_sheet("About", 0)`
+    passes an explicit index -- drop that `0` and the notice moves to the last
+    tab, the client opens onto `Enterprise Profile`, and every other test here
+    stays green because the string is still somewhere in the package.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(
+        io.BytesIO(_render("render_xlsx", approved=False, extra={"tier_profiles": {}}))
+    )
+    assert wb.sheetnames[0] == "About", (
+        f"the notice sheet is no longer first: {wb.sheetnames}. A client opens "
+        f"on whatever is, and the approval status is not on it."
+    )
+    cells = [str(c.value) for row in wb["About"].iter_rows() for c in row if c.value is not None]
+    assert any(
+        playbook_export.WORKING_NOTICE in c for c in cells
+    ), "the About sheet is first but does not carry the notice"
+
+
+@pytest.mark.unit
+def test_the_notice_wording_is_pinned_literally() -> None:
+    """Every other test reads the constant from the module under test.
+
+    So shortening the notice to "Draft" would ship green -- the assertions
+    would compare the module's string to itself. `check_test_integrity`'s TI001
+    cannot see it either: it visits `ImportFrom` of UPPER_SNAKE names, and
+    these are attribute reads off an imported module.
+
+    This is the one place the client-facing WORDS are written out, so a change
+    to them is a deliberate act with a red test attached rather than a silent
+    edit to copy a client reads.
+    """
+    assert playbook_export.WORKING_NOTICE == (
+        "NOT APPROVED - working draft. This playbook has not been approved by "
+        "Kentro and its content may change."
+    )
+    assert playbook_export.APPROVED_NOTICE == "Approved by Kentro."

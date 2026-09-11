@@ -240,9 +240,10 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> CsfAssessment | No
     # says what it is; the export is not forbidden.
     #
     # FOUR IDENTICAL COPIES OF THE OLD SENTENCE REMAIN in attack.py, intake.py,
-    # tech_debt.py and zt.py -- the block is byte-identical across five files,
-    # so one expiry falsifies five comments. Tracked in #288, and only this
-    # copy is corrected here because only this file is in this change.
+    # tech_debt.py and zt.py. The block WAS byte-identical across five files --
+    # this commit is what made that false -- which is why one expiry falsified
+    # five comments at once. Tracked in #288; only this copy is corrected here,
+    # because only this file is in this change.
     #
     # It would come into scope if either stopped holding: a new caller that
     # exports without its own APPROVED/RELEASED check, or one that renders

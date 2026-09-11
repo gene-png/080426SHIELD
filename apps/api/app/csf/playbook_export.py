@@ -30,7 +30,17 @@ def _autofit(ws: Any) -> None:
         ws.column_dimensions[col[0].column_letter].width = min(60, max(10, width + 2))
 
 
-#: What an UNAPPROVED playbook says on every page a client can read (#277).
+#: What an UNAPPROVED playbook says on its COVER, and on the first sheet of
+#: the workbook (#277).
+#:
+#: NOT on every page, and the distinction is the whole threat model. This
+#: change argues that a filename fails because it "does not survive being
+#: opened, printed, re-saved, or pasted into a deck" -- and a cover-only stamp
+#: does not survive the last of those either: the page anyone pastes is the
+#: scorecard or the roadmap table, not page 1 of ~25. A draft of this comment
+#: said "every page", which would have told the next reader the per-page
+#: problem was solved. Per-page stamping is a reportlab `onPage=` callback and
+#: a docx header, and is filed separately.
 #:
 #: Deliberately not built from "Working profile", which is CSF 2.0's own name
 #: for a normal artifact of the method and appears on an APPROVED playbook too.
