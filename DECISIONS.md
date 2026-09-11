@@ -4051,9 +4051,14 @@ was in code written _while applying_ a rule that would have caught it.
    hits across 3 files, which is neither the figure that stood here nor the file
    count, so no correction would have been a reconciliation between them.)
    Re-approving restores _that particular list_ — but only through #231, which
-   is an open defect, so it is not a remedy to point a consultant at. A reader
-   consulting this entry to understand the `list_discarded` copy would have
-   reverted a consultant-facing string to name a filed bug.
+   was an open defect when this was written, so it is not a remedy to point a
+   consultant at. A reader consulting this entry to understand the
+   `list_discarded` copy would have reverted a consultant-facing string to name
+   a filed bug. (Date-qualified, not rewritten: **#231 is now closed** —
+   approve refuses a DISCARDED list with a typed 409, so re-approving restores
+   nothing and the entry's conclusion holds for a second reason. The clause
+   mattered because this entry names itself as the place to look for the
+   `list_discarded` copy.)
 
 2. **One boolean producing three false statements**, in the exact state the
    author's own test seeds. `is_latest_for_service` collapsed latest /
@@ -4547,9 +4552,12 @@ defects surfaced within hours.
   So the copy routed a client to an analyst, to perform an action two files in
   the tree describe as working and one file records as a no-op.
 - **`AttackAiInputsPanel`, "Un-discard the list — re-approving will not help."**
-  There is no un-discard control at all, and re-approving is the only thing that
-  restores that list — through #231, which is an open defect. Both halves wrong,
-  in opposite directions, in the column a consultant reads to decide what to do.
+  There is no un-discard control at all, and re-approving was the only thing that
+  restored that list — through #231, an open defect when this was written. Both
+  halves wrong, in opposite directions, in the column a consultant reads to
+  decide what to do. (Date-qualified: **#231 is now closed**, so the second half
+  is no longer even accidentally true — re-approving a discarded list is refused
+  with a typed 409. The finding stands; only its tense moved.)
 
 ### Why the domain knowledge is the trap rather than the defence
 

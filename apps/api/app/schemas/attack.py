@@ -356,9 +356,17 @@ class AttackAiInputWithheld(BaseModel):
       distinction the endpoint could not previously draw at all, since a
       discarded list was indistinguishable from no list (#178).
 
-      Deliberately does NOT say "un-discard it". There is no un-discard control:
-      approving a discarded list silently resurrects it, which is #231, and copy
-      that points a consultant at a bug ages badly the day the bug is fixed.
+      Deliberately does NOT say "un-discard it", and as of #231 there is no
+      un-discard EFFECT either. This used to read "there is no un-discard
+      control: approving a discarded list silently resurrects it, which is
+      #231" -- true when written. Approve now refuses a DISCARDED list with a
+      typed 409, so a replacement list is the only remedy and this copy became
+      MORE accurate rather than stale.
+
+      The choice was refusal over a restore endpoint because refusal is
+      reversible: an explicit restore with its own audit action can be added
+      later, while an accidental un-discard that has already run cannot be
+      taken back. #231 records both options.
     """
 
     name: str

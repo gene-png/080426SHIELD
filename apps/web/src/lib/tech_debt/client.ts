@@ -60,6 +60,24 @@ export class TechDebtProxyError extends Error {
   }
 }
 
+/**
+ * The server's own message, or `fallback`.
+ *
+ * `TechDebtProxyError.message` is only `"Tech-debt proxy <status>"` — the
+ * reason the API took care to write is on `.payload`, in one of the two shapes
+ * the API emits: the D-016 `{error: {reason, message}}` envelope and a bare
+ * `{detail: "..."}`. A handler reading `err.message` shows the consultant a
+ * status code where a remedy was available.
+ */
+export function proxyMessage(err: unknown, fallback: string): string {
+  if (err instanceof TechDebtProxyError) {
+    const payload = err.payload as
+      { error?: { message?: string }; detail?: string } | undefined;
+    return payload?.error?.message ?? payload?.detail ?? fallback;
+  }
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 export async function createService(title: string): Promise<ServiceResponse> {
   return jsonRequest<ServiceResponse>("/api/proxy/tech-debt/services", {
     method: "POST",

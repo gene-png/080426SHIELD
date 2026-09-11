@@ -865,6 +865,38 @@ def build_approved_membership(db: Session, capability_list_id: uuid.UUID) -> lis
     ]
 
 
+def _refuse_approval(current: CapabilityListStatus) -> HTTPException:
+    """The refusal for a list whose status forbids approval.
+
+    ONE definition, because it is raised from two places that must agree: the
+    guard that reads the status, and the branch that discovers the conditional
+    UPDATE matched nothing because the status changed underneath. Two copies of
+    a user-facing string are two statements of one rule, and they agree only
+    until somebody edits one of them.
+    """
+    if current == CapabilityListStatus.DISCARDED:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "capability_list_discarded",
+                "message": (
+                    "This capability list was discarded and cannot be approved. "
+                    "Upload a replacement list instead."
+                ),
+            },
+        )
+    # RELEASED. Deliberately left as a bare string rather than converted to the
+    # D-016 `{reason, message}` shape in this PR: that is a change to an error
+    # payload no test pins, on a path #231 is not about, and folding it in here
+    # would put an unrelated contract change inside a concurrency fix. Filed as
+    # #298 so the inconsistency is a decision on record rather than an oversight
+    # a later reader has to reconstruct.
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="This capability list has been released and is locked.",
+    )
+
+
 @router.post(
     "/capability-lists/{list_id}/approve",
     response_model=CapabilityListResponse,
@@ -889,13 +921,67 @@ def approve_capability_list(
             detail="Capability list not found.",
         )
     if cap_list.status == CapabilityListStatus.RELEASED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This capability list has been released and is locked.",
+        raise _refuse_approval(cap_list.status)
+    # DISCARDED too (#231). This guard refused only RELEASED, so approve was the
+    # product's only un-discard -- 200, status flipped, `approved_membership`
+    # rebuilt, and no record anywhere that a consultant's decision to throw the
+    # list away had been reversed.
+    #
+    # `discard_capability_list`'s own docstring already stated the rule the state
+    # machine did not enforce: "Only a DRAFT is discardable ... approved/released
+    # -> typed 409". The graph was one-way by intent and two-way in fact.
+    #
+    # The egress consequence is why this is more than tidiness: a discarded list
+    # contributes nothing to `_client_capability_membership`, so resurrecting it
+    # makes every in-scope row citable again -- precisely the behaviour the
+    # consultant discarded the list to prevent.
+    #
+    # REFUSED rather than turned into a restore endpoint, deliberately. This
+    # matches what the code already claims (D-031), and it is the reversible
+    # choice: an explicit restore with its own audit action can be added on top
+    # of a refusal if consultants turn out to need one. An accidental un-discard
+    # that has already run cannot be taken back. #231 records both options.
+    if cap_list.status == CapabilityListStatus.DISCARDED:
+        raise _refuse_approval(cap_list.status)
+    # The guards above are a READ. The write below is CONDITIONAL on the status
+    # they observed, because otherwise they are advisory: `db.get` loads the row,
+    # a concurrent `/discard` commits between the two, and an unconditional
+    # attribute set lands on top of it. Final state APPROVED, snapshot rebuilt,
+    # a discard audit row and an approve audit row -- #231's exact outcome, with
+    # the guard above having fired on nobody.
+    #
+    # This is the D-031 concurrency contract that `discard_capability_list`
+    # already states in its own docstring ("two racing transactions cannot both
+    # observe DRAFT and proceed") and that this route did not honour. The
+    # asymmetry was invisible because the two routes read alike; only the SQL
+    # differs. `CapabilityList` declares no `version_id_col`, so there is no
+    # optimistic lock to fall back on either.
+    #
+    # DRAFT or APPROVED, because re-approval of an APPROVED list is a real
+    # workflow (see the membership note below). RELEASED and DISCARDED are the
+    # two the guards above refuse, and the `rowcount != 1` branch re-reads the
+    # row and raises the same typed errors, so a racing transition is refused
+    # with the message the sequential case would have produced.
+    membership = build_approved_membership(db, cap_list.id)
+    previous = cap_list.approved_membership
+    result = db.execute(
+        update(CapabilityList)
+        .where(
+            CapabilityList.id == cap_list.id,
+            CapabilityList.status.in_((CapabilityListStatus.DRAFT, CapabilityListStatus.APPROVED)),
         )
-    cap_list.status = CapabilityListStatus.APPROVED
-    cap_list.approved_at = utcnow()
-    cap_list.approved_by = user.id
+        .values(
+            status=CapabilityListStatus.APPROVED,
+            approved_at=utcnow(),
+            approved_by=user.id,
+            approved_membership=membership,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.refresh(cap_list)
+        raise _refuse_approval(cap_list.status)
+    db.refresh(cap_list)
     # W3: record WHAT was approved, not merely that approval happened.
     #
     # An APPROVED list stays editable until release — `_editable_list_or_404`
@@ -909,9 +995,6 @@ def approve_capability_list(
     # Re-approval overwrites deliberately: editing an approved list is a real
     # workflow, and the fix is to make the change explicit and audited rather
     # than to forbid it.
-    membership = build_approved_membership(db, cap_list.id)
-    previous = cap_list.approved_membership
-    cap_list.approved_membership = membership
     audit(
         db,
         action="capability_list.approved",

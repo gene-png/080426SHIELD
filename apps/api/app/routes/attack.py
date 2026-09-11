@@ -908,9 +908,21 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
           the two-writer shape where a predicate is applied to one branch and
           forgotten in the other — the half-fix this repo records for #75, #79
           and #84;
-        * the state is one line from reachable, and the same file proves the
-          line gets missed: `approve_capability_list` fails to refuse DISCARDED
-          (#231) while two other guards in it list DISCARDED explicitly;
+        * the state IS one line from reachable, and the line is not the one an
+          earlier draft of this bullet named. `approved_membership` is written
+          only where APPROVED is written, and `discard_capability_list` accepts
+          only a DRAFT, so producing DISCARDED-with-a-snapshot needs an APPROVED
+          row returned to DRAFT -- the step nothing implements. The single
+          predicate holding the state shut is therefore discard's
+          `status == DRAFT`, which #231 did not touch and which a restore
+          endpoint would be one edit from opening.
+
+          `approve_capability_list` refusing only RELEASED, while two other
+          guards in the same file listed DISCARDED explicitly, is the EVIDENCE
+          that such a line gets missed -- not the constraint. Approving a
+          discarded list produced APPROVED, never DISCARDED, so that path could
+          not reach this state before #231 and closing it changed nothing about
+          this guard's reachability;
         * the asymmetry. An unfiring guard costs one branch. Its absence costs
           discarded tooling reaching a hard allow-list and a client
           deliverable.
@@ -1000,8 +1012,13 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
                 # REASON: an absent live row renders identically to a row with
                 # no document. `CapabilityProvenance` has `live_row_missing` for
                 # exactly that distinction and `WithheldCapability` does not.
-                # Latent -- reachable only in the state #231 is one line from
-                # creating. Tracked as #233.
+                # Latent, and the constraint keeping it latent is
+                # `discard_capability_list` accepting only a DRAFT -- not
+                # approve's guard, which #231 added and which produces APPROVED
+                # rather than DISCARDED either way. Still tracked as #233: the
+                # distinction it is about, an absent live row rendering
+                # identically to a row with no document, does not depend on any
+                # of that.
                 snapshot_item.source_artifact_id if snapshot_item is not None else None,
                 from_snapshot=True,
             )
@@ -2274,8 +2291,11 @@ def ai_inputs(
         #  * `membership_stale` — computed only when `from_snapshot`, which a
         #    discarded list cannot be today (`test_capability_list_status_graph`
         #    pins that). Left live so it stays correct if the state graph
-        #    changes; its "re-approve" warning would need revisiting then, which
-        #    is noted on #231.
+        #    changes. Its "re-approve" warning no longer needs revisiting on
+        #    #231's account: that issue closed by REFUSING approve on a
+        #    discarded list, so re-approval is not a route back. It would need
+        #    revisiting if an explicit restore endpoint is ever added, which
+        #    #231 records as the option not taken.
         #  * `status` — a passthrough of the column. Listed for completeness,
         #    not as a decision: nothing about it was ever in question.
         retired = cap_list.status == CapabilityListStatus.DISCARDED
