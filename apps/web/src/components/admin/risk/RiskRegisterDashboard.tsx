@@ -122,7 +122,27 @@ const COLUMNS: DataTableColumn<RiskEntry>[] = [
   {
     key: "source",
     header: "Source",
-    cell: (r) => r.source_id ?? "—",
+    // #132 review. `r.source_id ?? "—"` made a DROPPED source identical to an
+    // absent one -- this issue's own harm, in the field the same PR newly
+    // started validating. The unlinked banner deliberately excludes source_id
+    // (a dropped source changes no linkage the consultant sees on the row), so
+    // without this the drop reached no surface at all.
+    cell: (r) => {
+      const dropped = r.dropped_links?.source_id ?? [];
+      if (r.source_id) return r.source_id;
+      if (dropped.length > 0) {
+        return (
+          <span
+            className="text-status-warning-fg"
+            title={`The model sent ${dropped.map((d) => `"${d}"`).join(", ")}, which names no finding in this client's assessments, so it was not stored.`}
+            data-testid="risk-source-dropped"
+          >
+            not recognised
+          </span>
+        );
+      }
+      return "—";
+    },
   },
 ];
 
@@ -424,6 +444,84 @@ export function RiskRegisterDashboard(): JSX.Element {
               <code>risk_register.generated</code> audit row. Regenerate before
               exporting: a client reading this register sees those rows as
               dashes.
+            </div>
+          ) : null}
+          {/* #132. An entry that proposed ATT&CK or control links and kept
+              none is persisted with empty link arrays -- byte-identical to an
+              entry the model linked nothing for. The consultant reads "the AI
+              found no relevance" over "the AI proposed five things and all
+              five were misspelled".
+
+              Keyed on the OUTCOME for the same reason the banner above is:
+              `entries_with_dropped_links` counts entries with a spelling
+              problem, which includes ones that kept a link and show linkage
+              fine. This counts the ones with nothing left to show.
+
+              Derived server-side from the stored entries, so it survives a
+              reload -- which is what migration 0048 bought and the reason a
+              counter on the generate response was not enough. */}
+          {register.entries_unlinked_after_drops > 0 ? (
+            <div
+              className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+              role="alert"
+              data-testid="risk-entries-unlinked-after-drops"
+            >
+              <span className="font-semibold">
+                {register.entries_unlinked_after_drops} of{" "}
+                {register.entries_total} entries proposed ATT&amp;CK or control
+                links and kept none
+              </span>
+              , so they show no linkage at all — the same as an entry nobody
+              linked. Every value the model sent named something that is not in
+              this client&apos;s assessments. A dropped source shows as{" "}
+              <em>not recognised</em> in the Source column; the full values are
+              on the <code>risk_register.generated</code> audit row. Regenerate
+              before exporting: a client reading this register sees those rows
+              as unlinked.
+            </div>
+          ) : null}
+          {/* #132 review. Three counters exist because there are three
+              states; one was rendered. These are the other two.
+
+              `entries_with_dropped_links` is the spelling problem -- entries
+              that lost a value and still show linkage. Lower severity than the
+              banner above and not nothing: it is what a consultant fixes to
+              stop the next run losing more.
+
+              `entries_links_not_recorded` is pre-0048 rows, where "nothing was
+              dropped" and "nobody was counting" are different facts. NOT
+              hypothetical: `seed_demo.py` builds every RiskEntry without
+              `dropped_links`, so the whole demo register is in this state, and
+              without this it renders identically to a clean one. */}
+          {register.entries_with_dropped_links >
+          register.entries_unlinked_after_drops ? (
+            <div
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-entries-with-dropped-links"
+            >
+              <span className="font-semibold">
+                {register.entries_with_dropped_links} of{" "}
+                {register.entries_total} entries lost at least one value the
+                model sent
+              </span>{" "}
+              — the rest of each still resolved, so they show linkage. The
+              values are on each entry and on the{" "}
+              <code>risk_register.generated</code> audit row. Worth a look
+              before the next run: they are what the model keeps getting wrong.
+            </div>
+          ) : null}
+          {register.entries_links_not_recorded > 0 ? (
+            <div
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-entries-links-not-recorded"
+            >
+              <span className="font-semibold">
+                {register.entries_links_not_recorded} of{" "}
+                {register.entries_total} entries predate link recording
+              </span>
+              , so nothing on file says whether the model proposed linkage for
+              them. That is not the same as nothing having been dropped.
+              Regenerate to find out.
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">

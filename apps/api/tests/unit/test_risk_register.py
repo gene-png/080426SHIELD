@@ -982,3 +982,312 @@ def test_an_unapproved_OPTIONAL_input_does_not_block_generation(app_client) -> N
         "a present-but-unapproved assessment contributed nothing and the "
         "register does not say so"
     )
+
+
+# ---------------------------------------------------------------------------
+# #132 -- a risk entry that LOST its links must be distinguishable from one
+# that had none.
+#
+# `routes/risk.py` filtered the model's proposed links with a bare
+# comprehension:
+#
+#     techs = [t for t in (raw.get("linked_techniques") or []) if t in valid_techniques]
+#
+# Every non-matching value was discarded with no counter, no reason and no
+# example. That is `_validate_tools` as it looked before the ATT&CK work
+# rewrote it, surviving in a REIMPLEMENTATION -- `risk.py` never calls the
+# ATT&CK resolver, so a complete call-site sweep reported clean over it.
+#
+# The harm is not bookkeeping. An entry whose every technique link was dropped
+# is persisted with `linked_techniques = []`, byte-identical to an entry the
+# model linked nothing for. Risk is the synthesized service the client reads
+# last, so a silently unlinked register reads as "the AI found no ATT&CK
+# relevance" when the truth may be "the AI proposed five techniques and all
+# five were misspelled".
+#
+# These tests read the RESPONSE and the AUDIT ROW, not the database: the claim
+# is that a drop is reported somewhere a person can see, and a test that
+# queries the table proves the write and not the claim. They live in this file
+# rather than their own because `app_client` and `_seed_attack_and_zt` are
+# local to it -- a second copy of the seed is a second world for the two files
+# to disagree about, and #242 is on record for what a divergent seed costs.
+# ---------------------------------------------------------------------------
+
+
+def _entries_payload(*entries: str) -> str:
+    return '{"entries": [' + ", ".join(entries) + "]}"
+
+
+def _entry(title: str, **fields: str) -> str:
+    base = {
+        "title": title,
+        "description": "d",
+        "axis": "detection",
+        "source": "coverage_finding",
+        "likelihood": "high",
+        "impact": "catastrophic",
+        "recommended_action": "remediate",
+        "rationale": "r",
+    }
+    base.update({k: v for k, v in fields.items() if v is not None})
+    scalars = ", ".join(f'"{k}": "{v}"' for k, v in base.items())
+    return "{" + scalars + "}"
+
+
+def _generate(c, provider, bearer, cid, payload: str) -> dict:
+    provider.register_static("risk_synthesize", LLMResponse(payload))
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _by_title(body: dict) -> dict:
+    return {e["title"]: e for e in body["entries"]}
+
+
+@pytest.mark.unit
+def test_the_two_states_that_used_to_be_the_same_bytes(app_client) -> None:
+    """THE HEADLINE. Two entries, identical `linked_techniques`, different facts.
+
+    "Lost every link it proposed" and "proposed none" both render as an empty
+    list. This asserts the register can now tell them apart -- and asserts the
+    thing they still have in COMMON, so a fix that merely started keeping the
+    bogus links would fail here rather than pass.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, capability = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Lost them all", source_id=technique)[:-1]
+        + ', "linked_techniques": ["T9999"], "linked_controls": ["BOGUS.XX.01"]}',
+        _entry("Offered none", source_id=technique)[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}',
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    entries = _by_title(body)
+
+    lost, none_offered = entries["Lost them all"], entries["Offered none"]
+    # What they still share -- the bogus links are NOT kept.
+    assert lost["linked_techniques"] == [] and lost["linked_controls"] == []
+    assert none_offered["linked_techniques"] == []
+    # And what now separates them.
+    assert lost["dropped_links"] == {
+        "linked_techniques": ["T9999"],
+        "linked_controls": ["BOGUS.XX.01"],
+    }
+    assert none_offered["dropped_links"] == {}, (
+        "an entry that proposed nothing must record the POSITIVE claim that "
+        "nothing was dropped -- `None` is reserved for pre-0048 rows and means "
+        "nobody was counting"
+    )
+    assert body["entries_with_dropped_links"] == 1
+    assert body["entries_unlinked_after_drops"] == 1
+    assert body["entries_links_not_recorded"] == 0
+    assert technique and capability  # the seed is real, not a stub
+
+
+@pytest.mark.unit
+def test_an_entry_that_kept_one_link_is_not_counted_as_unlinked(app_client) -> None:
+    """The discriminator for the OUTCOME counter.
+
+    `entries_with_dropped_links` and `entries_unlinked_after_drops` answer
+    different questions, and a single counter would collapse them: an entry that
+    proposed four techniques and kept one has a spelling problem worth seeing
+    and NO client-visible absence. Counting it in the outcome would inflate the
+    number a consultant acts on.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Kept one", source_id=technique)[:-1]
+        + f', "linked_techniques": ["{technique}", "T9999"], "linked_controls": []}}'
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    entry = body["entries"][0]
+
+    assert entry["linked_techniques"] == [technique]
+    assert entry["dropped_links"] == {"linked_techniques": ["T9999"]}
+    assert body["entries_with_dropped_links"] == 1
+    assert body["entries_unlinked_after_drops"] == 0
+
+
+@pytest.mark.unit
+def test_one_long_value_repeated_is_recorded_once(app_client) -> None:
+    """Dedup on the TRUNCATED form, not the original (#132 review).
+
+    The first version tested membership of the untruncated value against a list
+    of truncated ones, so a repeated value longer than 64 characters -- a model
+    citing a technique by its full descriptive name -- was appended twice and
+    inflated the number a consultant acts on.
+
+    Truncation stays AFTER the universe test: truncating first would let a
+    64-character member of the allow-list start matching longer non-members,
+    which turns a reporting bug into a wrong link.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    long_value = "T" + "x" * 80
+
+    payload = _entries_payload(
+        _entry("Repeats itself", source_id=technique)[:-1]
+        + f', "linked_techniques": ["{long_value}", "{long_value}"], '
+        + '"linked_controls": []}'
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    dropped = body["entries"][0]["dropped_links"]["linked_techniques"]
+
+    assert len(dropped) == 1, dropped
+    assert len(dropped[0]) == 64, "and it is stored truncated"
+
+
+@pytest.mark.unit
+def test_the_audit_row_names_what_to_fix_and_what_was_seen(app_client) -> None:
+    """The map names the values; the counters name the outcome.
+
+    Both, for the reason the `rejected_enum_values` / `entries_without_tier`
+    pair one block up records: a map of supplied values cannot see an outcome,
+    and a count cannot tell anyone what to correct.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("A", source_id=technique)[:-1]
+        + ', "linked_techniques": ["T9999", "T8888"], "linked_controls": []}',
+        _entry("B", source_id=technique)[:-1]
+        + ', "linked_techniques": ["T9999"], "linked_controls": ["NOPE.01"]}',
+    )
+    _generate(c, provider, bearer, cid, payload)
+    details = _generated_audit(c, bearer)
+
+    assert details["dropped_link_values"]["linked_techniques"] == ["T9999", "T8888"], (
+        "deduped ACROSS entries and in first-seen order -- T9999 appears in both "
+        "entries and must be listed once"
+    )
+    assert details["dropped_link_values"]["linked_controls"] == ["NOPE.01"]
+    assert details["entries_offered_links"] == 2
+    assert details["entries_unlinked_after_drops"] == 2
+
+
+@pytest.mark.unit
+def test_an_unknown_source_id_is_dropped_and_recorded(app_client) -> None:
+    """`source_id` was stored with no validation at all.
+
+    An entry could claim provenance from a finding that does not exist, and the
+    register carried a dangling reference as if it were traceability. Dropping
+    it silently would be this issue's own defect committed while fixing it, so
+    it is dropped AND recorded.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Invented provenance", source_id="NOT-A-FINDING")[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}'
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    entry = body["entries"][0]
+
+    assert entry["source_id"] is None
+    assert entry["dropped_links"] == {"source_id": ["NOT-A-FINDING"]}
+    # NOT counted as an unlinked entry: a dropped source_id does not change what
+    # linkage the consultant sees on the row.
+    assert body["entries_unlinked_after_drops"] == 0
+    assert body["entries_with_dropped_links"] == 1
+
+
+@pytest.mark.unit
+def test_a_real_source_id_survives(app_client) -> None:
+    """The passing state for the new validation.
+
+    Without it the test above proves only that SOMETHING was rejected, which a
+    validator that rejects everything also satisfies.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Real provenance", source_id=technique)[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}'
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    entry = body["entries"][0]
+
+    assert entry["source_id"] == technique
+    assert entry["dropped_links"] == {}
+
+
+@pytest.mark.unit
+def test_a_scalar_where_a_list_belongs_is_not_reported_as_nothing_offered(
+    app_client,
+) -> None:
+    """A payload shape the prompt did not ask for is a FINDING, not an absence.
+
+    `raw.get("linked_techniques") or []` turned a bare string into an empty
+    list, so a model answering `"T1078"` instead of `["T1078"]` looked exactly
+    like a model that proposed nothing -- the same collapse one level up, in the
+    line that was supposed to be reading the payload.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Scalar links", source_id=technique)[:-1]
+        + f', "linked_techniques": "{technique}", "linked_controls": []}}'
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    entry = body["entries"][0]
+
+    assert entry["linked_techniques"] == []
+    assert entry["dropped_links"] == {"linked_techniques": [technique]}, (
+        "the value must be REPORTED even though it names a real technique -- "
+        "the shape is wrong, and silently unwrapping it would be a second "
+        "undeclared transformation"
+    )
+
+
+@pytest.mark.unit
+def test_the_counters_still_read_true_when_the_register_is_fetched_later(
+    app_client,
+) -> None:
+    """What the migration bought, and the reason a counter alone was not enough.
+
+    `batches_total` and `batches_failed` describe a RUN and are 0 on a read-back
+    -- the schema says so. The drop is not like that: the consultant opens the
+    register a week later and the question "was linkage proposed and lost?" is
+    exactly as live as it was at generate time. Because the drop is PERSISTED,
+    these counters are derived from the stored entries and survive the fetch.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    payload = _entries_payload(
+        _entry("Lost them all", source_id=technique)[:-1]
+        + ', "linked_techniques": ["T9999"], "linked_controls": []}'
+    )
+    generated = _generate(c, provider, bearer, cid, payload)
+
+    later = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert later.status_code == 200, later.text
+    body = later.json()
+
+    assert body["entries_with_dropped_links"] == generated["entries_with_dropped_links"] == 1
+    assert body["entries_unlinked_after_drops"] == generated["entries_unlinked_after_drops"] == 1
+    assert body["entries"][0]["dropped_links"] == {"linked_techniques": ["T9999"]}
+    # And the run-scoped pair is 0 here, which is what makes the contrast real
+    # rather than asserted: these two behave differently on a read-back ON
+    # PURPOSE, and the difference is the point of migration 0048.
+    assert body["batches_total"] == 0
