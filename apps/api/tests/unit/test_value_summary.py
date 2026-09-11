@@ -309,6 +309,44 @@ def _make_released_tech_debt(db, client_id, opened_by, *, cut_costs, unknown_cos
     _release(db, svc.id, opened_by)
 
 
+def _choose_target(db, client_id, requested_by, service_id, *, zt=None, csf=None) -> None:
+    """Attach an intake request carrying the client's chosen target.
+
+    The seeds above create a Service with NO `source_request_id`, so every
+    target in this file resolves to "default" -- the client chose nothing. That
+    is a legitimate state and it is also the state that hid #207: with nothing
+    but defaults in the fixtures, a card saying "your target" was wrong in every
+    test and no assertion could see it.
+    """
+    from app.models.service import Service
+    from app.models.service_request import ServiceRequest, ServiceType
+
+    sr = ServiceRequest(
+        service_type=ServiceType.ZERO_TRUST_CISA if zt is not None else ServiceType.NIST_CSF,
+        client_id=client_id,
+        requested_by=requested_by,
+        zt_target_stage=zt,
+        csf_target_tier=csf,
+    )
+    db.add(sr)
+    db.flush()
+    svc = db.get(Service, service_id)
+    svc.source_request_id = sr.id
+    db.flush()
+
+
+def _latest_service(db, client_id, kind):
+    """The most recently added service of a kind, for attaching a request to."""
+    from app.models.service import Service
+
+    rows = (
+        db.execute(select(Service.id).where(Service.client_id == client_id, Service.kind == kind))
+        .scalars()
+        .all()
+    )
+    return rows[-1]
+
+
 # --- Tests -------------------------------------------------------------------
 
 
@@ -823,3 +861,231 @@ def test_value_summary_with_every_kind_unresolvable_still_renders(app_client) ->
         "tech_debt_savings_unresolved",
     ):
         assert body[flag] is True, flag
+
+
+# ---------------------------------------------------------------------------
+# #207 -- the target the gap figures were counted against.
+#
+# `_zt_gap_total` and `_csf_gap_total` each sum across every released service of
+# their kind, and each summand is counted against a target RESOLVED per service.
+# Both computed the source and bound it to `_source`, so the card said "your
+# target maturity stage" over a figure that may have been counted against the
+# engine default for every one of them.
+#
+# There is no honest single SOURCE for a mixed set, which is why the response
+# carries COUNTS. These tests pin the counts; `lib/home/value-summary.test.ts`
+# pins the sentence they turn into.
+# ---------------------------------------------------------------------------
+
+
+def _summary(c, cid, bearer):
+    r = c.get(f"/clients/{cid}/value-summary", headers={"Authorization": f"Bearer {bearer}"})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.unit
+def test_a_client_chosen_target_is_reported_as_chosen(app_client) -> None:
+    """The PASSING state. Without it the counts are only observed non-zero."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    cid, admin_id = client["user"]["client_id"], admin["user"]["id"]
+
+    db = _session(c)
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    from app.models.service import ServiceKind
+
+    _choose_target(
+        db,
+        _uuid.UUID(cid),
+        _uuid.UUID(admin_id),
+        _latest_service(db, _uuid.UUID(cid), ServiceKind.ZERO_TRUST_CISA),
+        zt=3,
+    )
+    _choose_target(
+        db,
+        _uuid.UUID(cid),
+        _uuid.UUID(admin_id),
+        _latest_service(db, _uuid.UUID(cid), ServiceKind.NIST_CSF),
+        csf=2,
+    )
+    db.commit()
+    db.close()
+
+    body = _summary(c, cid, client["tokens"]["access_token"])
+    assert body["zt_services"] == 1
+    assert body["zt_targets_defaulted"] == 0
+    assert body["zt_targets_unusable"] == 0
+    assert body["csf_services"] == 1
+    assert body["csf_targets_defaulted"] == 0
+    assert body["csf_targets_unusable"] == 0
+
+
+@pytest.mark.unit
+def test_an_absent_choice_is_reported_as_defaulted(app_client) -> None:
+    """The state every other fixture in this file is in, and nothing said so."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    cid, admin_id = client["user"]["client_id"], admin["user"]["id"]
+
+    db = _session(c)
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    db.commit()
+    db.close()
+
+    body = _summary(c, cid, client["tokens"]["access_token"])
+    assert body["zt_gap_count"] == 4, "the figure itself must be unchanged"
+    assert body["zt_targets_defaulted"] == 1
+    assert body["zt_targets_unusable"] == 0
+    assert body["csf_targets_defaulted"] == 1
+    assert body["csf_targets_unusable"] == 0
+
+
+@pytest.mark.unit
+def test_an_unusable_choice_is_not_reported_as_an_absent_one(app_client) -> None:
+    """The distinction both resolvers carry the whole way, kept at the last step.
+
+    "The client chose nothing" and "the client's choice could not be used"
+    resolve to the same NUMBER and are different facts, and only the second is
+    answerable by re-asking them. An aggregate that flattens them throws away the
+    actionable half after the resolvers went to some trouble to keep it.
+
+    9 is out of range on every ladder either service has, so this does not
+    depend on which stage count a framework happens to publish.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    cid, admin_id = client["user"]["client_id"], admin["user"]["id"]
+
+    db = _session(c)
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    from app.models.service import ServiceKind
+
+    _choose_target(
+        db,
+        _uuid.UUID(cid),
+        _uuid.UUID(admin_id),
+        _latest_service(db, _uuid.UUID(cid), ServiceKind.ZERO_TRUST_CISA),
+        zt=9,
+    )
+    _choose_target(
+        db,
+        _uuid.UUID(cid),
+        _uuid.UUID(admin_id),
+        _latest_service(db, _uuid.UUID(cid), ServiceKind.NIST_CSF),
+        csf=9,
+    )
+    db.commit()
+    db.close()
+
+    body = _summary(c, cid, client["tokens"]["access_token"])
+    assert body["zt_targets_unusable"] == 1
+    assert body["zt_targets_defaulted"] == 0, (
+        "an out-of-range stored stage was reported as 'chose nothing', which "
+        "tells the client they made no choice when they made one that was "
+        "discarded"
+    )
+    assert body["csf_targets_unusable"] == 1
+    assert body["csf_targets_defaulted"] == 0
+
+
+@pytest.mark.unit
+def test_a_mixed_set_reports_a_fraction_rather_than_a_label(app_client) -> None:
+    """The case that made a single source impossible, and the reason for counts.
+
+    One engagement on the client's own stage and another on the default is
+    neither "client" nor "default". Two of three here, so a test that reported
+    the FIRST service's source, or the LAST, gets a different answer than one
+    that counts -- and a boolean cannot express this state at all.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    cid, admin_id = client["user"]["client_id"], admin["user"]["id"]
+    from app.models.service import ServiceKind
+
+    db = _session(c)
+    for _ in range(3):
+        _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(2))
+    chosen = _latest_service(db, _uuid.UUID(cid), ServiceKind.ZERO_TRUST_CISA)
+    _choose_target(db, _uuid.UUID(cid), _uuid.UUID(admin_id), chosen, zt=3)
+    db.commit()
+    db.close()
+
+    body = _summary(c, cid, client["tokens"]["access_token"])
+    assert body["zt_services"] == 3
+    assert body["zt_targets_defaulted"] == 2
+    assert body["zt_targets_unusable"] == 0
+    assert body["zt_gap_count"] == 6, "three services of two gaps each, still summed"
+
+
+@pytest.mark.unit
+def test_an_unresolvable_kind_reports_null_counts_and_not_zero(app_client) -> None:
+    """`0` would read as "nothing was assumed" over something nobody measured.
+
+    A kind goes unresolved WHOLESALE and returns on the FIRST unresolvable
+    service, so any tally reached by then describes a prefix of a sum that was
+    never published. The invariant is asserted rather than described:
+    `(targets_defaulted is None) == (gap_count is None)`.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    cid, admin_id = client["user"]["client_id"], admin["user"]["id"]
+    from app.models.service import ServiceKind
+
+    db = _session(c)
+    _make_released_zt(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_zt_cisa_codes(4))
+    _break_parent_link(db, _latest_service(db, _uuid.UUID(cid), ServiceKind.ZERO_TRUST_CISA))
+    db.commit()
+    db.close()
+
+    body = _summary(c, cid, client["tokens"]["access_token"])
+    assert body["zt_gap_unresolved"] is True
+    assert body["zt_gap_count"] is None
+    assert body["zt_targets_defaulted"] is None
+    assert body["zt_targets_unusable"] is None
+    assert body["zt_services"] == 1, (
+        "the DENOMINATOR is still known -- the client has one released ZT "
+        "report whether or not its figure resolved"
+    )
+
+
+@pytest.mark.unit
+def test_the_null_invariant_holds_across_every_state_this_file_produces(app_client) -> None:
+    """One assertion over the whole response, not per field.
+
+    A per-field check passes as soon as each field is individually plausible.
+    What matters is the PAIRING: a count beside a figure that does not exist is
+    a number about nothing, and a null count beside a real figure withholds a
+    fact that was measured.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    cid, admin_id = client["user"]["client_id"], admin["user"]["id"]
+
+    db = _session(c)
+    _make_released_csf(db, _uuid.UUID(cid), _uuid.UUID(admin_id), gap_codes=_csf_codes(5))
+    db.commit()
+    db.close()
+
+    body = _summary(c, cid, client["tokens"]["access_token"])
+    for kind in ("zt", "csf"):
+        figure_absent = body[f"{kind}_gap_count"] is None
+        for field in ("targets_defaulted", "targets_unusable"):
+            assert (body[f"{kind}_{field}"] is None) == figure_absent, (
+                f"{kind}_{field} and {kind}_gap_count disagree about whether "
+                f"there is anything to describe"
+            )
+    # And the two halves of the pairing are BOTH exercised here rather than one:
+    # CSF has a released report and ZT has none.
+    assert body["csf_gap_count"] == 5 and body["csf_targets_defaulted"] == 1
+    assert body["zt_gap_count"] is None and body["zt_targets_defaulted"] is None
+    assert body["zt_services"] == 0
