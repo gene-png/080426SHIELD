@@ -191,9 +191,30 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> AttackAssessment |
     # `export_playbook` does not call attack.py's, zt.py's, tech_debt.py's or
     # intake.py's), refuses only on "No
     # assessment yet." and "Seed the Working Profile before exporting.", and
-    # then writes client-named artifacts through `deliverable_filename`. So a
-    # DRAFT CSF assessment can be exported under a client's name today. Tracked
-    # in #243; it is pre-existing and is not fixed here.
+    # then writes client-named artifacts through `deliverable_filename`.
+    #
+    # This used to end "So a DRAFT CSF assessment can be exported under a
+    # client's name today. Tracked in #243" -- true when written, and false
+    # since #274 landed. `export_playbook` now passes `working=not _approved`,
+    # and `deliverable_filename` prefixes `WORKING_`, so a draft export is
+    # labelled rather than indistinguishable.
+    #
+    # The residual is NARROWER, and it has MOVED TWICE since this paragraph
+    # was written -- which is the same failure one turn later, so it is dated
+    # rather than restated: #277 (PR #293) put the status on the cover of every
+    # rendered document, so a printed or re-saved playbook does now say what it
+    # is; #294 carries it to every PAGE, because the page that gets pasted into
+    # a deck is the scorecard and not page 1. #294 is OPEN as this is written.
+    #
+    # Kept rather than deleted, because the FAILURE is the transferable part: a
+    # reader who checked the old sentence against the code found the prefix,
+    # concluded the comment was stale, and stopped reading a block that is
+    # otherwise still correct. A false clause does not merely fail to inform --
+    # it discredits the true ones around it.
+    #
+    # The full history lives in `routes/csf.py`, beside the code it describes.
+    # This copy carries the conclusion; a fifth copy of the derivation is what
+    # let one expiry falsify five comments at once.
     #
     # It would come into scope if either stopped holding: a new caller that
     # exports without its own APPROVED/RELEASED check, or one that renders

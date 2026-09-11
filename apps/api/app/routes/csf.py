@@ -224,26 +224,38 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> CsfAssessment | No
     #
     # That used to end "So a DRAFT CSF assessment can be exported under a
     # client's name today. Tracked in #243; it is pre-existing and is not fixed
-    # here." Both halves have since been discharged and the sentence is kept in
-    # quotation rather than deleted, so a reader who remembers it can see what
-    # replaced it:
+    # here." Every half of it has since been discharged, and the sentence is
+    # kept in quotation rather than deleted so a reader who remembers it can
+    # see what replaced it:
     #
-    #   * #243 (PR #274) prefixes `WORKING_` on the filename of a playbook
+    #   * #243 (PR #274) prefixes `WORKING_` on the FILENAME of a playbook
     #     exported from an unapproved assessment.
-    #   * #277 -- this change -- stamps the status on the DOCUMENT: every
-    #     renderer now takes `approved` and prints it on the cover and the
-    #     first sheet, because a filename does not survive being opened,
-    #     printed, re-saved or pasted into a deck.
+    #   * #277 (PR #293) stamps the status on the DOCUMENT -- every renderer
+    #     takes `approved` and prints it on the cover -- because a filename
+    #     does not survive being opened, printed, re-saved or pasted into a
+    #     deck.
+    #   * #294 carries it to every PAGE, because a cover does not survive the
+    #     last of those either: the page that gets pasted is the scorecard,
+    #     not page 1. OPEN as this is written; the two above have landed.
+    #
+    # WHY THE STALE SENTENCE COST SOMETHING, which is the half worth keeping:
+    # a reader who checked it against the code found the `WORKING_` prefix,
+    # concluded the comment was stale, and stopped reading a block that is
+    # otherwise still correct. A false clause does not merely fail to inform --
+    # it discredits the true ones around it, and those are the ones a reader
+    # needs.
     #
     # The export is still NOT gated, deliberately: a consultant reads their own
     # working profile in order to decide whether to approve it. The artifact
     # says what it is; the export is not forbidden.
     #
-    # FOUR IDENTICAL COPIES OF THE OLD SENTENCE REMAIN in attack.py, intake.py,
-    # tech_debt.py and zt.py. The block WAS byte-identical across five files --
-    # this commit is what made that false -- which is why one expiry falsified
-    # five comments at once. Tracked in #288; only this copy is corrected here,
-    # because only this file is in this change.
+    # THE BLOCK IS NO LONGER BYTE-IDENTICAL ACROSS THE FIVE FILES, and that is
+    # deliberate rather than drift. #277 corrected this copy alone, which is
+    # what made the other four wrong at a stroke -- one deictic sentence copied
+    # five times means one expiry falsifies five comments at once. #288 -- this
+    # change -- repoints all four at the same facts in one commit. This copy
+    # carries the history in full because the code it describes is in this
+    # file; the siblings carry the conclusion.
     #
     # It would come into scope if either stopped holding: a new caller that
     # exports without its own APPROVED/RELEASED check, or one that renders
