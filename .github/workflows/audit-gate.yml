@@ -42,14 +42,14 @@ jobs:
     name: Adversarial audit recorded
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Needed for `origin/<base>` to exist so the three-dot diff resolves.
           # If it is ever shallow, `git diff` exits non-zero and `bash -e` fails
           # the step — red, not a false green.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -78,14 +78,14 @@ jobs:
     name: No accidental issue closes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # `origin/<base>` must exist for the three-dot range below to resolve.
           # A shallow clone makes `git log` fail, and `bash -e` turns that into a
           # red step rather than an empty commit list that would read as clean.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
