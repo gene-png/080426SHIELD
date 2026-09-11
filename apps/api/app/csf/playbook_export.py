@@ -24,23 +24,39 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-def _autofit(ws: Any) -> None:
+def _autofit(ws: Any, *, from_row: int = 1) -> None:
+    """`from_row` skips the banner (#294).
+
+    The approval banner is ~110 characters in one cell, and sizing column A to
+    it pushes every data column off the first screen -- so the stamp meant to
+    be seen would be the reason nothing else is. Widths are measured from the
+    header row down instead. `default=0` because a sheet can hold nothing but
+    the banner, and `max()` over an empty sequence raises.
+    """
     for col in ws.columns:
-        width = max((len(str(c.value)) if c.value is not None else 0) for c in col)
+        width = max(
+            (len(str(c.value)) if c.value is not None else 0 for c in col if c.row >= from_row),
+            default=0,
+        )
         ws.column_dimensions[col[0].column_letter].width = min(60, max(10, width + 2))
 
 
-#: What an UNAPPROVED playbook says on its COVER, and on the first sheet of
-#: the workbook (#277).
+#: What an UNAPPROVED playbook says on EVERY page of the PDF and DOCX, in a
+#: frozen banner row on every workbook sheet, and on the cover (#277, #294).
 #:
-#: NOT on every page, and the distinction is the whole threat model. This
-#: change argues that a filename fails because it "does not survive being
-#: opened, printed, re-saved, or pasted into a deck" -- and a cover-only stamp
-#: does not survive the last of those either: the page anyone pastes is the
-#: scorecard or the roadmap table, not page 1 of ~25. A draft of this comment
-#: said "every page", which would have told the next reader the per-page
-#: problem was solved. Per-page stamping is a reportlab `onPage=` callback and
-#: a docx header, and is filed separately.
+#: The scope moved, so the reason it moved is kept rather than the claim it
+#: replaced. #277 stamped the COVER, and argued from a filename failing
+#: because it "does not survive being opened, printed, re-saved, or pasted
+#: into a deck". A cover-only stamp does not survive the last of those either
+#: -- the page anyone pastes is the scorecard or the roadmap table, not page 1
+#: of ~25 -- so #294 carried it to the page. Three mechanisms, because there is
+#: no shared one: a reportlab `onPage=` canvas callback, a docx section footer,
+#: and a frozen worksheet row (NOT `oddHeader`, which is print-only and
+#: invisible to someone reading the file on screen).
+#:
+#: The cover paragraph is deliberately kept alongside the per-page stamp. It is
+#: the prominent one, and a footer a reader has stopped seeing by page three is
+#: not a reason to remove the statement they read first.
 #:
 #: Deliberately not built from "Working profile", which is CSF 2.0's own name
 #: for a normal artifact of the method and appears on an APPROVED playbook too.
@@ -63,6 +79,38 @@ APPROVED_NOTICE = "Approved by Kentro."
 
 def _approval_notice(approved: bool) -> str:
     return APPROVED_NOTICE if approved else WORKING_NOTICE
+
+
+#: Warning red for the draft state, muted grey for the approved one. Colour is
+#: an ADDITION to the words, never the carrier: printed in monochrome, or read
+#: by anyone who does not distinguish the two, the sentence still says which
+#: state it is. That is why `_approval_notice` decides the text and this only
+#: decides how it looks.
+_NOTICE_RGB = {False: (0.70, 0.11, 0.11), True: (0.36, 0.40, 0.45)}
+_NOTICE_ARGB = {False: "FFB31C1C", True: "FF5C666F"}
+_NOTICE_DOCX_RGB = {False: (0xB3, 0x1C, 0x1C), True: (0x5C, 0x66, 0x6F)}
+_BANNER_FILL = {False: "FFFDEBEB", True: "FFEEF2F7"}
+
+
+def _banner(ws: Any, approved: bool) -> None:
+    """Row 1 of a data sheet, frozen by `_header` (#294).
+
+    A workbook has no page, so "on every page" becomes "on screen wherever the
+    reader has scrolled to". `ws.oddHeader` is the format's own answer and is
+    the wrong one here: it renders only when the sheet is PRINTED, so the
+    reader who opens the file -- which is what happens to a workbook pasted
+    into a deck or mailed on -- sees nothing at all.
+    """
+    from openpyxl.styles import Font, PatternFill
+
+    ws.append([_approval_notice(approved)])
+    cell = ws.cell(row=1, column=1)
+    cell.font = Font(bold=True, color=_NOTICE_ARGB[approved])
+    cell.fill = PatternFill(
+        start_color=_BANNER_FILL[approved],
+        end_color=_BANNER_FILL[approved],
+        fill_type="solid",
+    )
 
 
 def render_xlsx(
@@ -88,14 +136,35 @@ def render_xlsx(
     head_fill = PatternFill(start_color="FFEEF2F7", end_color="FFEEF2F7", fill_type="solid")
 
     def _header(ws: Any, cols: list[str]) -> None:
+        # #294: the header is no longer row 1 -- `_banner` is. Read back the
+        # row `append` actually wrote rather than assuming an index, so the
+        # styling cannot land on the banner and the freeze cannot hide a row of
+        # data. A hardcoded `1` here would have bolded the notice and left the
+        # column headings plain, which looks like a styling slip and is
+        # actually the banner being overwritten.
         ws.append(cols)
+        row = ws.max_row
         for i in range(1, len(cols) + 1):
-            cell = ws.cell(row=1, column=i)
+            cell = ws.cell(row=row, column=i)
             cell.font = Font(bold=True)
             cell.fill = head_fill
+        # Freeze the banner AND the header together, so the approval status
+        # stays on screen at every scroll position. Freezing only the header
+        # would scroll the notice away, which is this issue's own defect.
+        #
+        # A STRING coordinate, not `ws.cell(row=row + 1, column=1)`. Asking
+        # openpyxl for a cell CREATES it, which moved the sheet's insertion
+        # point past it -- so the first draft of this line left an empty row
+        # between the headings and the data on every sheet, and the freeze
+        # then pointed at that blank row rather than at the first record.
+        # Nothing about the banner or the notice was wrong; the defect was a
+        # read that is also a write. Caught by `test_playbook_export_content`,
+        # which reads the Action Plan by row.
+        ws.freeze_panes = f"A{row + 1}"
 
     ws = wb.active
     ws.title = "Enterprise Profile"
+    _banner(ws, approved)
     _header(
         ws,
         [
@@ -129,13 +198,15 @@ def render_xlsx(
                 r.priority or "",
             ]
         )
-    _autofit(ws)
+    # from_row=2: the banner is row 1 (#294).
+    _autofit(ws, from_row=2)
 
     for tier in ("high", "moderate", "low"):
         rows = tier_profiles.get(tier)
         if not rows:
             continue
         ts = wb.create_sheet(tier.title())
+        _banner(ts, approved)
         _header(
             ts,
             [
@@ -168,13 +239,14 @@ def render_xlsx(
                     f"L{row.target_level}" if row.target_level else "",
                 ]
             )
-        _autofit(ts)
+        _autofit(ts, from_row=2)
 
     # Action Plan (POA&M) sheet — one row per enterprise gap with its
     # remediation annotation. Priority defaults to the code-computed roll-up
     # priority; a stored override wins (Sprint 5 T5, spec step 10).
     actions = gap_actions or {}
     aps = wb.create_sheet("Action Plan")
+    _banner(aps, approved)
     _header(
         aps,
         [
@@ -211,7 +283,7 @@ def render_xlsx(
                 getattr(act, "poam_ref", "") or "" if act else "",
             ]
         )
-    _autofit(aps)
+    _autofit(aps, from_row=2)
 
     cover = wb.create_sheet("About", 0)
     cover.append(["SHIELD by Kentro — CSF 2.0 Full Playbook"])
@@ -531,6 +603,37 @@ def _new_pdf(out: io.BytesIO, title: str, client_name: str) -> Any:
     )
 
 
+def _build_pdf(doc: Any, story: list[Any], approved: bool) -> None:
+    """Build with the approval status drawn onto every page (#294).
+
+    ONE build site for both PDF renderers, deliberately. The stamp cannot be
+    appended to the story the way the cover paragraph is -- a footer has to be
+    painted onto the canvas per page -- so it is passed to `build`, and a
+    second call site is a second place to forget it. The renderer sweep in
+    `test_csf_playbook_states_its_approval.py` would catch the omission, but a
+    test that catches it and a structure that cannot produce it are different
+    guarantees.
+    """
+    from reportlab.lib.units import inch
+
+    notice = _approval_notice(approved)
+    red, green, blue = _NOTICE_RGB[approved]
+
+    def _stamp(canvas: Any, page: Any) -> None:
+        canvas.saveState()
+        canvas.setFont("Helvetica-Bold", 7)
+        canvas.setFillColorRGB(red, green, blue)
+        # Centred in the bottom margin (0.7in), clear of the frame. Measured
+        # rather than assumed: ~110 characters of 7pt Helvetica-Bold is about
+        # 5.4in against 7.1in of text width, so it does not wrap -- and
+        # `drawCentredString` would silently overrun the margins if it did,
+        # rather than wrapping, which is why the width matters here.
+        canvas.drawCentredString(page.pagesize[0] / 2.0, 0.35 * inch, notice)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_stamp, onLaterPages=_stamp)
+
+
 def render_exec_pdf(
     *,
     approved: bool,
@@ -565,7 +668,7 @@ def render_exec_pdf(
     story.append(Paragraph("Recommended next steps", styles["h2"]))
     for step in _next_steps(enterprise_rows):
         story.append(Paragraph(f"• {step}", styles["body"]))
-    doc.build(story)
+    _build_pdf(doc, story, approved)
     return out.getvalue()
 
 
@@ -702,7 +805,7 @@ def render_full_pdf(
             ],
         )
     )
-    doc.build(story)
+    _build_pdf(doc, story, approved)
     return out.getvalue()
 
 
@@ -728,7 +831,14 @@ def _docx_cover(
     generated_on: str | None,
     approved: bool,
 ) -> None:
-    from app.docx_export import add_paragraphs, add_title
+    from app.docx_export import add_paragraphs, add_title, set_footer
+
+    # #294: the per-page stamp, set HERE rather than in the two renderers,
+    # because this is the one function both of them reach with `approved` in
+    # hand. A section footer is not part of the cover in any visual sense; it
+    # is here so there is exactly one site, the same reason `_build_pdf` exists
+    # on the PDF side.
+    set_footer(doc, _approval_notice(approved), rgb=_NOTICE_DOCX_RGB[approved])
 
     add_title(doc, "NIST CSF 2.0", subtitle)
     meta = [

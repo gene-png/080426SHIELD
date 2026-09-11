@@ -230,10 +230,13 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> CsfAssessment | No
     #
     #   * #243 (PR #274) prefixes `WORKING_` on the filename of a playbook
     #     exported from an unapproved assessment.
-    #   * #277 -- this change -- stamps the status on the DOCUMENT: every
-    #     renderer now takes `approved` and prints it on the cover and the
-    #     first sheet, because a filename does not survive being opened,
-    #     printed, re-saved or pasted into a deck.
+    #   * #277 stamped the status on the DOCUMENT: every renderer takes
+    #     `approved` and prints it on the cover, because a filename does not
+    #     survive being opened, printed, re-saved or pasted into a deck.
+    #   * #294 carried it to the PAGE, because a cover does not survive the
+    #     last of those either -- the page that gets pasted is the scorecard,
+    #     not page 1 of ~25. Every PDF page, every DOCX page (a section
+    #     footer), and a frozen banner row on every workbook sheet.
     #
     # The export is still NOT gated, deliberately: a consultant reads their own
     # working profile in order to decide whether to approve it. The artifact
