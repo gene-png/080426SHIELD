@@ -312,6 +312,7 @@ def test_xlsx_gains_action_plan_sheet() -> None:
         client_name="Acme",
         version=1,
         enterprise_rows=rows,
+        approved=False,
         tier_profiles={"high": []},
         gap_actions=gap_actions,
     )

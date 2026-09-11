@@ -220,9 +220,30 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> CsfAssessment | No
     # `export_playbook` does not call attack.py's, zt.py's, tech_debt.py's or
     # intake.py's), refuses only on "No
     # assessment yet." and "Seed the Working Profile before exporting.", and
-    # then writes client-named artifacts through `deliverable_filename`. So a
-    # DRAFT CSF assessment can be exported under a client's name today. Tracked
-    # in #243; it is pre-existing and is not fixed here.
+    # then writes client-named artifacts through `deliverable_filename`.
+    #
+    # That used to end "So a DRAFT CSF assessment can be exported under a
+    # client's name today. Tracked in #243; it is pre-existing and is not fixed
+    # here." Both halves have since been discharged and the sentence is kept in
+    # quotation rather than deleted, so a reader who remembers it can see what
+    # replaced it:
+    #
+    #   * #243 (PR #274) prefixes `WORKING_` on the filename of a playbook
+    #     exported from an unapproved assessment.
+    #   * #277 -- this change -- stamps the status on the DOCUMENT: every
+    #     renderer now takes `approved` and prints it on the cover and the
+    #     first sheet, because a filename does not survive being opened,
+    #     printed, re-saved or pasted into a deck.
+    #
+    # The export is still NOT gated, deliberately: a consultant reads their own
+    # working profile in order to decide whether to approve it. The artifact
+    # says what it is; the export is not forbidden.
+    #
+    # FOUR IDENTICAL COPIES OF THE OLD SENTENCE REMAIN in attack.py, intake.py,
+    # tech_debt.py and zt.py. The block WAS byte-identical across five files --
+    # this commit is what made that false -- which is why one expiry falsified
+    # five comments at once. Tracked in #288; only this copy is corrected here,
+    # because only this file is in this change.
     #
     # It would come into scope if either stopped holding: a new caller that
     # exports without its own APPROVED/RELEASED check, or one that renders
@@ -2149,6 +2170,7 @@ def export_playbook(
                 enterprise_rows=enterprise_rows,
                 tier_profiles=tier_profiles,
                 gap_actions=gap_actions,
+                approved=_approved,
             ),
         ),
         (
@@ -2161,6 +2183,7 @@ def export_playbook(
                 version=a.version,
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
+                approved=_approved,
             ),
         ),
         (
@@ -2173,6 +2196,7 @@ def export_playbook(
                 version=a.version,
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
+                approved=_approved,
             ),
         ),
         (
@@ -2185,6 +2209,7 @@ def export_playbook(
                 version=a.version,
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
+                approved=_approved,
             ),
         ),
         (
@@ -2197,6 +2222,7 @@ def export_playbook(
                 version=a.version,
                 enterprise_rows=enterprise_rows,
                 generated_on=on,
+                approved=_approved,
             ),
         ),
     ]

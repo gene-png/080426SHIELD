@@ -145,6 +145,7 @@ def test_xlsx_action_plan_sheet_has_expected_headers() -> None:
         version=7,
         enterprise_rows=_enterprise_rows(),
         tier_profiles={"high": _tier_rows()},
+        approved=False,
     )
     wb = load_workbook(io.BytesIO(raw))
     assert "Action Plan" in wb.sheetnames
@@ -164,6 +165,7 @@ def test_xlsx_action_plan_only_lists_gaps() -> None:
                 version=7,
                 enterprise_rows=_enterprise_rows(),
                 tier_profiles={"high": _tier_rows()},
+                approved=False,
             )
         )
     )
@@ -186,6 +188,7 @@ def test_xlsx_action_plan_priority_defaults_from_gap_priority() -> None:
                 enterprise_rows=_enterprise_rows(),
                 tier_profiles={"high": _tier_rows()},
                 gap_actions=None,
+                approved=False,
             )
         )
     )
@@ -219,6 +222,7 @@ def test_xlsx_action_plan_priority_override_wins() -> None:
                 enterprise_rows=_enterprise_rows(),
                 tier_profiles={"high": _tier_rows()},
                 gap_actions=actions,
+                approved=False,
             )
         )
     )
@@ -241,7 +245,12 @@ def test_xlsx_action_plan_priority_override_wins() -> None:
 
 @pytest.mark.unit
 def test_exec_pdf_carries_client_title_function_and_gap() -> None:
-    raw = render_exec_pdf(client_name=CLIENT, version=7, enterprise_rows=_enterprise_rows())
+    raw = render_exec_pdf(
+        client_name=CLIENT,
+        version=7,
+        enterprise_rows=_enterprise_rows(),
+        approved=False,
+    )
     assert raw.startswith(b"%PDF-")
     text = _pdf_text(raw)
     assert CLIENT in text  # client name
@@ -254,7 +263,12 @@ def test_exec_pdf_carries_client_title_function_and_gap() -> None:
 
 @pytest.mark.unit
 def test_full_pdf_carries_client_title_function_and_gap() -> None:
-    raw = render_full_pdf(client_name=CLIENT, version=7, enterprise_rows=_enterprise_rows())
+    raw = render_full_pdf(
+        client_name=CLIENT,
+        version=7,
+        enterprise_rows=_enterprise_rows(),
+        approved=False,
+    )
     assert raw.startswith(b"%PDF-")
     text = _pdf_text(raw)
     assert CLIENT in text
@@ -274,7 +288,12 @@ SCORECARD_HEADERS = {"Function", "Subcategories", "Maturity", "Target", "Gaps"}
 
 @pytest.mark.unit
 def test_exec_docx_heading_scorecard_and_maturity_cell() -> None:
-    raw = render_exec_docx(client_name=CLIENT, version=7, enterprise_rows=_enterprise_rows())
+    raw = render_exec_docx(
+        client_name=CLIENT,
+        version=7,
+        enterprise_rows=_enterprise_rows(),
+        approved=False,
+    )
     paras = _docx_paragraphs(raw)
     assert DOC_TITLE in paras
     assert "Executive summary" in paras
@@ -288,7 +307,12 @@ def test_exec_docx_heading_scorecard_and_maturity_cell() -> None:
 
 @pytest.mark.unit
 def test_full_docx_heading_scorecard_and_maturity_cell() -> None:
-    raw = render_full_docx(client_name=CLIENT, version=7, enterprise_rows=_enterprise_rows())
+    raw = render_full_docx(
+        client_name=CLIENT,
+        version=7,
+        enterprise_rows=_enterprise_rows(),
+        approved=False,
+    )
     paras = _docx_paragraphs(raw)
     assert DOC_TITLE in paras
     assert "2. Methodology" in paras
