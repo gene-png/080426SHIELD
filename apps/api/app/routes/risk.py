@@ -329,13 +329,26 @@ def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list
     **No fold, no alias tier, and that is a decision rather than an omission.**
     The ATT&CK resolver has one because the model there is shown REDACTED tool
     names and must be able to cite them back, so a miss is a transformation to
-    reverse. Nothing is transformed here: `valid_techniques` and
-    `valid_controls` go into the prompt VERBATIM (see `_batch_prompt`), so a
-    value that is not in them is the model citing something it was never given.
-    Adding a normalising tier would invent a second key space to be wrong in --
-    and `CLAUDE.md` records what that cost when a derived key collided with a
-    real one and made the only citable string `ambiguous`, strictly worse than
-    the defect being fixed.
+    reverse.
+
+    The allow-lists here are not transformed -- but NOT "by construction", which
+    is what an earlier draft of this docstring claimed while citing a function
+    called `_batch_prompt` that does not exist. They reach the model through
+    `_run_risk_synthesize_batched` -> `run_job` -> `llm.invoke(payload=)` ->
+    `redact_payload`, which walks every string in the payload. They survive it
+    CONTINGENTLY: ATT&CK ids because `_RE_PHONE` carries a lookbehind written
+    for exactly this case (`T1003.001` would otherwise egress as `T[PHONE]`),
+    and `GV.OC-01` / `CISA.<pillar>.<nn>` because two digits sit far under the
+    phone rule's seven-digit floor.
+
+    So what would invalidate this decision is a change to the redactor, not a
+    change here: an id scheme with a longer digit run, or a relaxed phone
+    lookbehind, would start rewriting the allow-list on the way out and a miss
+    WOULD become a transformation to reverse. Until then, a value not in the
+    lists is the model citing something it was never given, and adding a
+    normalising tier would invent a second key space to be wrong in -- which
+    `CLAUDE.md` records costing an `ambiguous` verdict on the only citable
+    string, strictly worse than the defect being fixed.
 
     Order is preserved and duplicates collapse, so a model that repeats a code
     inflates neither list.
@@ -351,9 +364,23 @@ def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list
         return kept, dropped
     for raw in offered:
         value = str(raw)
-        target = kept if value in universe else dropped
-        if value not in target:
-            target.append(value[:64])
+        if value in universe:
+            if value not in kept:
+                kept.append(value)
+            continue
+        # TRUNCATE FIRST, THEN DEDUPE. The first version appended `value[:64]`
+        # while testing membership of the untruncated `value`, so a repeated
+        # value longer than 64 characters -- a model citing a technique by its
+        # full descriptive name, say -- was recorded twice and inflated the
+        # count a consultant reads.
+        #
+        # And the truncation must happen AFTER the universe test, never before:
+        # truncating first would let a 64-character member of the allow-list
+        # start matching longer non-members, which turns a reporting bug into a
+        # wrong link.
+        short = value[:64]
+        if short not in dropped:
+            dropped.append(short)
     return kept, dropped
 
 
@@ -743,9 +770,16 @@ def generate(
             )
             if values
         }
-        _record_drops("linked_techniques", techs_dropped)
-        _record_drops("linked_controls", controls_dropped)
-        _record_drops("source_id", source_dropped)
+        # Driven from the SAME zip as `dropped`, so the audit row and the
+        # persisted record cannot name different fields. Three string literals
+        # stood here, which made `LINK_FIELDS`' claim that they "cannot
+        # disagree" true of the persisted dict and false of the audit row --
+        # add a fourth field, trust the comment, ship an audit row missing its
+        # drops.
+        for field, values in zip(
+            LINK_FIELDS, (techs_dropped, controls_dropped, source_dropped), strict=True
+        ):
+            _record_drops(field, values)
         offered_any = bool(techs_dropped or controls_dropped or techs or controls)
         if offered_any:
             entries_offered_links += 1

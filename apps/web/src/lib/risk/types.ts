@@ -58,6 +58,11 @@ export interface RiskEntry {
    *
    * Without it, `linked_techniques: []` is identical whether the model
    * proposed nothing or proposed five things that all failed to resolve.
+   *
+   * Read by the Source column, which renders `not recognised` rather than the
+   * em dash an absent source gets — without that, a DROPPED source and an
+   * absent one are the same cell, which is this issue's own harm in the field
+   * it newly validates (#132 review).
    */
   dropped_links: Record<string, string[]> | null;
 }

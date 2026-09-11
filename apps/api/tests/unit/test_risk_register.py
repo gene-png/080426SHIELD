@@ -1118,6 +1118,36 @@ def test_an_entry_that_kept_one_link_is_not_counted_as_unlinked(app_client) -> N
 
 
 @pytest.mark.unit
+def test_one_long_value_repeated_is_recorded_once(app_client) -> None:
+    """Dedup on the TRUNCATED form, not the original (#132 review).
+
+    The first version tested membership of the untruncated value against a list
+    of truncated ones, so a repeated value longer than 64 characters -- a model
+    citing a technique by its full descriptive name -- was appended twice and
+    inflated the number a consultant acts on.
+
+    Truncation stays AFTER the universe test: truncating first would let a
+    64-character member of the allow-list start matching longer non-members,
+    which turns a reporting bug into a wrong link.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    long_value = "T" + "x" * 80
+
+    payload = _entries_payload(
+        _entry("Repeats itself", source_id=technique)[:-1]
+        + f', "linked_techniques": ["{long_value}", "{long_value}"], '
+        + '"linked_controls": []}'
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    dropped = body["entries"][0]["dropped_links"]["linked_techniques"]
+
+    assert len(dropped) == 1, dropped
+    assert len(dropped[0]) == 64, "and it is stored truncated"
+
+
+@pytest.mark.unit
 def test_the_audit_row_names_what_to_fix_and_what_was_seen(app_client) -> None:
     """The map names the values; the counters name the outcome.
 
