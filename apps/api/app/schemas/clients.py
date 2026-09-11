@@ -471,6 +471,33 @@ class ValueSummaryResponse(BaseModel):
     show the card only when `has_any_data` is True: a client with released
     reports and no resolvable figures has False there and True here, which is
     precisely the case that used to disappear silently.
+
+    **A gap count is computed against a TARGET, and the card used to call it
+    "your target" unconditionally (#207).** The ZT and CSF figures each sum over
+    every released service of their kind, and each summand is counted against a
+    target resolved from the client's stored choice -- where that choice was
+    usable. Where it was absent, out of range, or unparseable, the engine
+    default applied and nothing said so, so a client who had chosen nothing read
+    "Capabilities below your target maturity stage" over a stage they had never
+    seen.
+
+    `<kind>_targets_defaulted` and `<kind>_targets_unusable` are COUNTS rather
+    than a source label, because there is no honest single source for a mixed
+    set: one engagement on the client's own stage and another on the default is
+    neither. `<kind>_services` is the denominator, without which "2 reports use
+    the standard target" does not say whether that is 2 of 2 or 2 of 9.
+
+    The two counts stay APART on `resolve_target_stage`/`resolve_target_tier`'s
+    own reasoning: "chose nothing" and "chose something unusable" resolve to the
+    same number and are different facts, and only the second is answerable by
+    re-asking the client. Both resolvers carry that distinction the whole way;
+    collapsing it at the last step would discard the more actionable half.
+
+    **Both counts are `None`, never `0`, when the figure is `None`.** A kind
+    goes unresolved wholesale and returns on the first unresolvable service, so
+    any tally reached by then describes a prefix of a sum nobody published --
+    and a `0` would read as "nothing was assumed" over something unmeasured,
+    which is the reassuring direction the rule above forbids.
     """
 
     tech_debt_savings_usd: float | None
@@ -478,10 +505,16 @@ class ValueSummaryResponse(BaseModel):
     tech_debt_savings_unresolved: bool
     zt_gap_count: int | None
     zt_gap_unresolved: bool
+    zt_services: int
+    zt_targets_defaulted: int | None
+    zt_targets_unusable: int | None
     attack_uncovered_count: int | None
     attack_uncovered_unresolved: bool
     csf_gap_count: int | None
     csf_gap_unresolved: bool
+    csf_services: int
+    csf_targets_defaulted: int | None
+    csf_targets_unusable: int | None
     has_any_data: bool
     has_unresolved: bool
 

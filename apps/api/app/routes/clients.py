@@ -494,6 +494,59 @@ class _KindTotal(NamedTuple):
     unresolved: bool
 
 
+#: A target source that is NOT the client's own choice. Derived from the
+#: resolvers rather than listed: both `zt.scoring.resolve_target_stage` and
+#: `csf.gap.resolve_target_tier` return "client" for a stored value that was
+#: usable and one of three other strings otherwise, so "the client chose this"
+#: is the single value to test against and the rest need no enumeration here.
+#: A fourth source added to either resolver is covered the day it exists.
+CLIENT_CHOSE_IT = "client"
+
+
+class _TargetedKindTotal(NamedTuple):
+    """`_KindTotal` for a kind whose figure is computed against a TARGET (#207).
+
+    ZT and CSF gap counts are sums over every released service of their kind,
+    and each summand is computed against a target that was RESOLVED -- the
+    client's stored choice where it was usable, and the engine default where it
+    was absent, out of range, or unparseable. Both helpers computed that
+    attribution and dropped it, so the card said "your target maturity stage"
+    over a figure counted against a stage the client may never have chosen.
+
+    There is no honest single SOURCE for a mixed set -- one engagement on the
+    client's own stage and another on the default is neither "client" nor
+    "default" -- which is why this carries COUNTS instead. A count is
+    self-describing across a mixed set, and it is the same move `CLAUDE.md`
+    already requires for a ratio over a withheld population: render the
+    qualifying count beside the figure rather than choosing a label for it.
+
+    `targets_defaulted` and `targets_unusable` are kept APART on the resolvers'
+    own reasoning: "the client chose nothing" and "the client's choice could not
+    be used" resolve to the same NUMBER and are not the same fact, and the
+    second is the one answerable by re-asking them. Flattening them into a
+    single "assumed" would throw away the more actionable half at the last step,
+    having carried it the whole way.
+
+    **Both counts are `None`, never `0`, when there is no figure.** A kind goes
+    unresolved WHOLESALE and returns on the FIRST unresolvable service, so any
+    tally accumulated by then describes a prefix of a sum that was never
+    published -- and a `0` there would read as "nothing was assumed", which is
+    the reassuring direction over a fact nobody measured. The invariant is
+    `(targets_defaulted is None) == (value is None)`, and it is asserted rather
+    than described.
+
+    `services` is the denominator and is always known: "2 reports use the
+    standard target" is not actionable without knowing whether that is 2 of 2
+    or 2 of 9.
+    """
+
+    value: int | None
+    unresolved: bool
+    services: int
+    targets_defaulted: int | None
+    targets_unusable: int | None
+
+
 class _TechDebtTotal(NamedTuple):
     """`_KindTotal` plus the savings floor flag. `cost_known` is False when a CUT
     capability lacked a cost, so the UI can mark the figure as a floor — an
@@ -505,10 +558,12 @@ class _TechDebtTotal(NamedTuple):
     unresolved: bool
 
 
-def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
+def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTotal:
     if not service_ids:
-        return _KindTotal(None, False)
+        return _TargetedKindTotal(None, False, 0, None, None)
     total = 0
+    defaulted = 0
+    unusable = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # The `found` flag this loop used to carry went with the `continue` that
@@ -524,8 +579,10 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
         if a is None:
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
-            # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True)
+            # `_released_parent`, rejected there for this reason. The target
+            # tallies go with it: a prefix of an unpublished sum is not a count
+            # of anything. See `_TargetedKindTotal`.
+            return _TargetedKindTotal(None, True, len(service_ids), None, None)
         rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
         answers: dict[str, int | None] = {r.subcategory_code: r.maturity_tier for r in rows}
         # Per-service client tier, same as the dashboard and the exporter (#79).
@@ -535,15 +592,26 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
         # #184: resolve rather than branch on `is not None`. An unusable stored
         # tier used to reach the engine and be clamped, so this card could count
         # gaps against a target the dashboard beside it reported differently.
-        resolved_tier, _source = csf_resolve_target_tier(tier)
+        #
+        # #207: and the SOURCE is kept. It used to be bound to `_source` and
+        # dropped, which left the card free to call the result "your target
+        # maturity tier" over a tier the client never chose.
+        resolved_tier, source = csf_resolve_target_tier(tier)
+        if source != CLIENT_CHOSE_IT:
+            if source == "default":
+                defaulted += 1
+            else:
+                unusable += 1
         total += csf_analyze_gaps(answers, target_tier=resolved_tier).total_gap_count
-    return _KindTotal(total, False)
+    return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable)
 
 
-def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
+def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTotal:
     if not service_ids:
-        return _KindTotal(None, False)
+        return _TargetedKindTotal(None, False, 0, None, None)
     total = 0
+    defaulted = 0
+    unusable = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -556,8 +624,10 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
         if a is None:
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
-            # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True)
+            # `_released_parent`, rejected there for this reason. The target
+            # tallies go with it — see `_csf_gap_total` and
+            # `_TargetedKindTotal`.
+            return _TargetedKindTotal(None, True, len(service_ids), None, None)
         fw = (
             ZtFrameworkCode.CISA_ZTMM_2_0
             if a.framework == ZtFramework.CISA_ZTMM_2_0
@@ -575,46 +645,42 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
         stage = _zt_client_target_stage(db, sid)
         # #125: resolve rather than let `zt_analyze_gaps` clamp -- it now
         # raises, and an unresolved stored value would 500 the client's own
-        # dashboard. STATED EXEMPTION: the resolved `source` is discarded here
-        # because this helper returns a bare gap TOTAL and has nowhere to put
-        # it. That is a real disclosure gap -- a client on an out-of-range
-        # target sees a number computed against a stage they did not choose,
-        # with no flag.
+        # dashboard.
         #
-        # #124 FIXED THE DASHBOARD, NOT THIS CARD, and this comment used to say
-        # otherwise -- it claimed #124 "is rewriting this card to carry the
-        # engagement target and its provenance", which would have been left
-        # standing as a false statement about shipped code. The scope is
-        # genuinely different: `zt_dashboard` reports on ONE service, so a
-        # single `target_stage_source` describes it exactly, while this helper
-        # sums across every released ZT service a client has and there is no
-        # honest single source for a mixed set -- one engagement on the client's
-        # own stage and another on the default is not "client" and not
-        # "default". Answering that needs a decision about what the value card
-        # should say, not a wider signature.
+        # #207 CLOSES THE EXEMPTION THAT STOOD HERE. It read: "the resolved
+        # `source` is discarded here because this helper returns a bare gap
+        # TOTAL and has nowhere to put it ... a client on an out-of-range target
+        # sees a number computed against a stage they did not choose, with no
+        # flag." The helper now has somewhere to put it -- see
+        # `_TargetedKindTotal` -- so the exemption is deleted rather than left
+        # to be read as current.
         #
-        # Its CSF twin `_csf_gap_total` above loses the same FACT the same way
-        # NOW, and this comment used to say otherwise. It read "there is no CSF
-        # resolver to un-discard ... Same effect on the card, different repair",
-        # which was true until #184 gave CSF a `resolve_target_tier`. Both twins
-        # now compute a source and drop it into `_source`, so the two halves of
-        # #207 are ONE repair: surface the source on the value card.
+        # The objection that exemption raised was real and is what shaped the
+        # repair: `zt_dashboard` reports on ONE service, so a single
+        # `target_stage_source` describes it exactly, while this helper sums
+        # across every released ZT service and there is no honest single source
+        # for a mixed set. The answer is not to pick one. It is to publish how
+        # many summands were NOT the client's own choice, split by whether they
+        # chose nothing or chose something unusable, with the denominator beside
+        # them.
         #
-        # Corrected here rather than left, because the sentence was sited
-        # exactly where #207's owner would read it and would have sent them to
-        # build a resolver that already shipped.
-        #
-        # Fixing only one would still leave the value card internally
-        # inconsistent -- the half-fix shape that made #79 worse than the defect
-        # it replaced. Both are left, together and on purpose, tracked in #207.
-        resolved_stage, _source = zt_resolve_target_stage(fw, stage)
+        # Both twins together, on purpose. `_csf_gap_total` above had the same
+        # gap by the same mechanism once #184 gave CSF a resolver, and fixing
+        # one would leave the card internally inconsistent -- the half-fix shape
+        # that made #79 worse than the defect it replaced.
+        resolved_stage, source = zt_resolve_target_stage(fw, stage)
+        if source != CLIENT_CHOSE_IT:
+            if source == "default":
+                defaulted += 1
+            else:
+                unusable += 1
         total += zt_analyze_gaps(
             fw,
             answers,
             targets=targets,
             target_stage=resolved_stage,
         ).total_gap_count
-    return _KindTotal(total, False)
+    return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable)
 
 
 def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
@@ -735,6 +801,14 @@ def value_summary(
         actor_user_id=str(user.id),
         has_any_data=has_any,
         has_unresolved=has_unresolved,
+        # Logged per kind and NOT summed, for the same reason the response keeps
+        # them apart: a support conversation that starts "why does this say my
+        # target" is answered differently depending on which of the two it was,
+        # and once the client has closed the page the response is gone.
+        zt_targets_defaulted=zt.targets_defaulted,
+        zt_targets_unusable=zt.targets_unusable,
+        csf_targets_defaulted=csf.targets_defaulted,
+        csf_targets_unusable=csf.targets_unusable,
     )
     return ValueSummaryResponse(
         tech_debt_savings_usd=td.value,
@@ -742,10 +816,16 @@ def value_summary(
         tech_debt_savings_unresolved=td.unresolved,
         zt_gap_count=zt.value,
         zt_gap_unresolved=zt.unresolved,
+        zt_services=zt.services,
+        zt_targets_defaulted=zt.targets_defaulted,
+        zt_targets_unusable=zt.targets_unusable,
         attack_uncovered_count=attack.value,
         attack_uncovered_unresolved=attack.unresolved,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
+        csf_services=csf.services,
+        csf_targets_defaulted=csf.targets_defaulted,
+        csf_targets_unusable=csf.targets_unusable,
         has_any_data=has_any,
         has_unresolved=has_unresolved,
     )

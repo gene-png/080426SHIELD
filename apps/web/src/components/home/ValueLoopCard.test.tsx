@@ -28,13 +28,35 @@ function summary(over: Partial<ValueSummary> = {}): ValueSummary {
     tech_debt_savings_unresolved: false,
     zt_gap_count: null,
     zt_gap_unresolved: false,
+    // No released ZT service, so there is no target to attribute. `null` for
+    // both counts is what the API sends whenever the figure is null — see
+    // `_TargetedKindTotal`. A fixture setting `0` here would assert "nothing
+    // was assumed" about a figure that does not exist, and would put the test
+    // suite in a state the server never produces.
+    zt_services: 0,
+    zt_targets_defaulted: null,
+    zt_targets_unusable: null,
     attack_uncovered_count: null,
     attack_uncovered_unresolved: false,
     csf_gap_count: null,
     csf_gap_unresolved: false,
+    csf_services: 0,
+    csf_targets_defaulted: null,
+    csf_targets_unusable: null,
     has_any_data: false,
     has_unresolved: false,
     ...over,
+  };
+}
+
+/** A resolved ZT figure whose target was entirely the client's own choice. */
+function ztChosen(count: number): Partial<ValueSummary> {
+  return {
+    zt_gap_count: count,
+    zt_services: 1,
+    zt_targets_defaulted: 0,
+    zt_targets_unusable: 0,
+    has_any_data: true,
   };
 }
 
@@ -139,10 +161,112 @@ describe("ValueLoopCard", () => {
   it("still renders a resolved figure with no unresolved noise", () => {
     render(
       <ValueLoopCard
-        summary={summary({ csf_gap_count: 7, has_any_data: true })}
+        summary={summary({
+          csf_gap_count: 7,
+          csf_services: 1,
+          csf_targets_defaulted: 0,
+          csf_targets_unusable: 0,
+          has_any_data: true,
+        })}
       />,
     );
     expect(screen.getByText("7 gaps to close")).toBeInTheDocument();
     expect(screen.queryByText("Not available")).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // #207 — the target the figure was counted against.
+  // -------------------------------------------------------------------------
+
+  it("says YOUR target only when the client chose every one of them", () => {
+    render(<ValueLoopCard summary={summary(ztChosen(4))} />);
+    expect(
+      screen.getByText("Capabilities below your target maturity stage."),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("value-target-note")).not.toBeInTheDocument();
+  });
+
+  it("drops the possessive AND discloses the count when a target was assumed", () => {
+    // Both halves, because either alone is still wrong: the possessive without
+    // the note is the original lie, and the note under "your target maturity
+    // stage" contradicts the sentence above it.
+    render(
+      <ValueLoopCard
+        summary={summary({
+          ...ztChosen(4),
+          zt_services: 3,
+          zt_targets_defaulted: 2,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("Capabilities below the target maturity stage."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Capabilities below your target maturity stage."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("value-target-note")).toHaveTextContent(
+      "2 of 3 Zero Trust reports counted against the standard stage — no stage chosen at intake.",
+    );
+  });
+
+  it("does not tell a client they chose nothing when their choice was discarded", () => {
+    render(
+      <ValueLoopCard
+        summary={summary({
+          ...ztChosen(4),
+          zt_services: 1,
+          zt_targets_unusable: 1,
+        })}
+      />,
+    );
+    const note = screen.getByTestId("value-target-note");
+    expect(note).toHaveTextContent("the stage on file could not be used");
+    expect(note).not.toHaveTextContent(/no stage chosen/);
+  });
+
+  it("puts no target note beside a figure it is not showing", () => {
+    // The unresolved branch renders no number, so a sentence qualifying one
+    // would be attached to nothing. The API sends null counts there, but the
+    // renderer guards it itself rather than relying on that.
+    render(
+      <ValueLoopCard
+        summary={summary({
+          zt_gap_unresolved: true,
+          has_unresolved: true,
+          zt_services: 2,
+          zt_targets_defaulted: 2,
+        })}
+      />,
+    );
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByTestId("value-target-note")).not.toBeInTheDocument();
+  });
+
+  it("qualifies the two gap figures independently", () => {
+    // Both twins are wired, and one is not satisfying the other's assertion.
+    // `getAllByTestId` would pass over a card that rendered the ZT note twice.
+    render(
+      <ValueLoopCard
+        summary={summary({
+          ...ztChosen(4),
+          csf_gap_count: 7,
+          csf_services: 2,
+          csf_targets_defaulted: 0,
+          csf_targets_unusable: 2,
+        })}
+      />,
+    );
+    const notes = screen.getAllByTestId("value-target-note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveTextContent(
+      "Counted against the standard tier — the tier on file could not be used.",
+    );
+    expect(
+      screen.getByText("Capabilities below your target maturity stage."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Subcategories below the target maturity tier."),
+    ).toBeInTheDocument();
   });
 });

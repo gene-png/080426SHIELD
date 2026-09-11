@@ -2,9 +2,20 @@ import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 
 import type { JSX } from "react";
 
+import {
+  assumedTargetNote,
+  gapHint,
+  type TargetProvenance,
+  type ValueSummary,
+} from "@/lib/home/value-summary";
+
+export type { ValueSummary };
+
 /**
  * Wire type for GET /clients/{cid}/value-summary
- * (apps/api/app/schemas/clients.py:ValueSummaryResponse).
+ * (apps/api/app/schemas/clients.py:ValueSummaryResponse) — declared in
+ * `lib/home/value-summary.ts` beside the helpers that read it, and re-exported
+ * here for the callers that already import it from this module.
  *
  * A null slot carries TWO different facts and needs its companion flag to tell
  * them apart (#114 review):
@@ -16,20 +27,12 @@ import type { JSX } from "react";
  *     that as "Pending" tells a client who has a report that they do not.
  *
  * Never a fabricated 0 in either case.
+ *
+ * A gap figure additionally carries `<kind>_services`,
+ * `<kind>_targets_defaulted` and `<kind>_targets_unusable` (#207) — the card
+ * said "your target maturity stage" over a sum whose summands may each have
+ * been counted against the engine default. See `lib/home/value-summary.ts`.
  */
-export interface ValueSummary {
-  tech_debt_savings_usd: number | null;
-  tech_debt_savings_cost_known: boolean;
-  tech_debt_savings_unresolved: boolean;
-  zt_gap_count: number | null;
-  zt_gap_unresolved: boolean;
-  attack_uncovered_count: number | null;
-  attack_uncovered_unresolved: boolean;
-  csf_gap_count: number | null;
-  csf_gap_unresolved: boolean;
-  has_any_data: boolean;
-  has_unresolved: boolean;
-}
 
 const USD = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -46,6 +49,11 @@ interface Metric {
   /** The figure could not be resolved for a report the client HAS. Renders the
    *  third state instead of "Pending" — see `ValueSummary`. */
   unresolved: boolean;
+  /** The assumed-target disclosure, or null when every summand used the
+   *  client's own choice (#207). Separate from `hint` because it is a FACT
+   *  about the figure rather than a description of it, and because it must
+   *  survive an edit to the hint copy beside it. */
+  targetNote?: string | null;
   /** What the figure is computed OVER, plural, in the client's words.
    *
    *  Load-bearing for the unresolved copy rather than decoration. The state is
@@ -56,6 +64,29 @@ interface Metric {
    *  case: `zt_ids` concatenates ZERO_TRUST_CISA and ZERO_TRUST_DOD, so one
    *  slot can span two frameworks and any number of engagements. */
   kindNoun: string;
+}
+
+/** ZT's target provenance, in the shape the copy helpers read. */
+function ztTargets(summary: ValueSummary): TargetProvenance {
+  return {
+    services: summary.zt_services,
+    defaulted: summary.zt_targets_defaulted,
+    unusable: summary.zt_targets_unusable,
+    unit: "stage",
+    noun: "Zero Trust reports",
+  };
+}
+
+/** CSF's, and the two are built the same way on purpose: a second shape for
+ *  one question is how two services come to describe one client differently. */
+function csfTargets(summary: ValueSummary): TargetProvenance {
+  return {
+    services: summary.csf_services,
+    defaulted: summary.csf_targets_defaulted,
+    unusable: summary.csf_targets_unusable,
+    unit: "tier",
+    noun: "NIST CSF reports",
+  };
 }
 
 function pluralGaps(n: number): string {
@@ -85,7 +116,11 @@ function buildMetrics(summary: ValueSummary): Metric[] {
       kindNoun: "Zero Trust reports",
       value:
         summary.zt_gap_count === null ? null : pluralGaps(summary.zt_gap_count),
-      hint: "Capabilities below your target maturity stage.",
+      // #207: "your" survives only when every summand used the client's own
+      // choice. The hint was unconditional, so a client who chose nothing read
+      // a possessive about a stage they had never seen.
+      hint: gapHint(ztTargets(summary), "Capabilities"),
+      targetNote: assumedTargetNote(ztTargets(summary)),
       unresolved: summary.zt_gap_unresolved,
     },
     {
@@ -107,7 +142,11 @@ function buildMetrics(summary: ValueSummary): Metric[] {
         summary.csf_gap_count === null
           ? null
           : pluralGaps(summary.csf_gap_count),
-      hint: "Subcategories below your target maturity tier.",
+      // Both twins together, deliberately. Fixing one would leave the card
+      // internally inconsistent -- the half-fix shape that made #79 worse than
+      // the defect it replaced.
+      hint: gapHint(csfTargets(summary), "Subcategories"),
+      targetNote: assumedTargetNote(csfTargets(summary)),
       unresolved: summary.csf_gap_unresolved,
     },
   ];
@@ -181,6 +220,19 @@ export function ValueLoopCard({
                   ? `We can't match this figure to your ${m.kindNoun}, so we're not showing a number — including for any of them that are fine. They are still available under Results. Your analyst will need to look into it.`
                   : m.hint}
               </p>
+              {/* Only beside a figure. In the unresolved branch there is no
+                  number for this to qualify, and `assumedTargetNote` returns
+                  null there anyway because the API sends null counts -- but the
+                  guard is written rather than inherited, so the rendering does
+                  not depend on a promise held in another file. */}
+              {!m.unresolved && m.targetNote ? (
+                <p
+                  className="mt-1 text-xs text-status-warning-fg"
+                  data-testid="value-target-note"
+                >
+                  {m.targetNote}
+                </p>
+              ) : null}
             </div>
           ))}
         </dl>
