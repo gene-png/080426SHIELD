@@ -1,5 +1,230 @@
 # Gene's Context: 080426SHIELD
 
+## PICK UP HERE — 2026-09-11, second session (post-merge)
+
+**Maintained by the agent since D-063; Gene owns it by review.** Every claim
+about state outside the working tree carries the command that produced it.
+
+**Assume the reader has none of the previous session's context.**
+
+### The single next action
+
+**Review and merge #305, #306, #310, #315, #316 — in that order.** All five are
+`MERGEABLE` against `ee819f2`, verified by a real
+`git merge --no-commit --no-ff` in a scratch worktree, not by GitHub's badge.
+
+Two carry a caveat you should read before clicking:
+
+- **#316 has `Findings: not run`.** The reviewer was not dispatched; the session
+  was ending. It is not ready to merge on this repo's own standard until the
+  adversarial reviewer has run against its head and the audit block carries real
+  findings. Everything else about it is verified and stated in the body.
+- **#315 has `Findings: pending`** with a reviewer dispatched against `162e3e2`
+  and no report retrieved before the session ended. Same treatment.
+
+### Where the MVP stands
+
+    tier-1: (empty)
+    tier-2: 84, 244, 294, 313, 314
+    tier-3: 122, 182, 220, 288, 292, 298, 299, 304, 312
+
+<!-- counted: gh issue list --label mvp-blocking --label tier-N --state open, 2026-09-11 -->
+
+**Four of those five tier-2 issues have an open PR against them**, so the board
+overstates what is left:
+
+| Issue | PR | State |
+| --- | --- | --- |
+| 294 | **#315** | full work, reviewer dispatched, no report |
+| 244 | **#316** | instance 1 only; instance 2 remains, see below |
+| 314 | — | filed this session, not started |
+| 313 | — | filed last session, not started |
+| 84 | — | relabelled last session, not started |
+
+Most of tier-3 is likewise covered: 122 by #306, 182 by #310, 288 by #305.
+What is genuinely unstarted across both tiers: **84, 292, 298, 299, 304, 312,
+313, 314**, plus **220**, which is yours (below).
+
+### What landed while the laptop was on
+
+**Thirteen PRs merged. `main` moved `ae78972` -> `ee819f2`, fifteen commits.**
+That was your doing, not the agent's; recorded here because every claim below is
+relative to `ee819f2`.
+
+### The three conflicts, resolved deliberately
+
+All three conflicted purely from ordering — other merges moved under them. None
+was resolved by taking a side.
+
+**#305 (`docs/expired-deferrals`, 288).** PR #293 landed and rewrote the same
+paragraph in `routes/csf.py`. By the time the two met, **both were wrong**:
+main's said "FOUR IDENTICAL COPIES ... REMAIN ... Tracked in #288" — false the
+moment this change lands, because this change *is* #288; and this branch's said
+"the residual is #277: the label exists only in the FILENAME" — false because
+#277 landed. `csf.py` now carries a merged paragraph with the full three-step
+history (243 filename -> 277 cover -> 294 every page) plus the one thing only
+this branch had: **why the stale sentence cost anything** — a reader checked it,
+found the prefix, concluded the comment was stale, and stopped reading a block
+that was otherwise correct. The four siblings are repointed and say the residual
+has **moved twice**, rather than restating a position that had already expired
+once.
+
+**#306 (`fix/risk-audit-counts-what-was-written`, 122).** Not a content
+conflict. It carried #302's two commits, and #302 merged as a squash, so the
+same content arrived twice. Rebased `--onto origin/main 917296d` to replay only
+its own commit. `pytest tests/unit/test_risk_register.py tests/unit/test_risk_dashboard.py` -> exit 0.
+
+**#310 (`fix/close-guard-asks-github`, 182).** `audit-gate.yml`. **Both sides
+kept** — they were never alternatives. #296 added a separate STEP; #182 adds
+four lines INSIDE the collect step's `run:` block, writing `/tmp/pr_linked.txt`
+that the last step reads. Resolved by ordering. `yaml.safe_load` confirms six
+steps in the right order.
+
+> **One consequence, stated rather than changed:** those two checks now share a
+> job, so a red decision-number step means the close guard's verdict is never
+> produced — not "clean", *absent*. "No accidental issue closes" being green is
+> now conditional on an unrelated check having run. That is #296's deliberate
+> placement and #310 does not relitigate it.
+
+The close guard was then observed in **all five** states, not just the one it
+was written for: agree -> 0 ("verified against GitHub"); declared-but-not-linked
+-> 1; linked-but-not-declared -> 1; `--linked` file missing -> **2**; `--linked`
+absent on a local run -> 0 **and it says it is unverified**. The last two are the
+point.
+
+Also fixed there, because #310 owns the file: `test_issue_reference_guard.py`'s
+docstring quoted `\s*` in a NON-RAW string, so every pytest run on `main`
+printed `SyntaxWarning: invalid escape sequence '\s'`. Verified gone under
+`python -W error::SyntaxWarning`.
+
+### New PRs opened this session
+
+**#315 — 294, the CSF Playbook stamp reaches every page.** Three mechanisms,
+because the formats share none: a reportlab `onPage=` canvas callback, a docx
+section footer, and a frozen worksheet banner row (**not** `ws.oddHeader`, which
+renders only when PRINTED). Both states asserted **per page** — the four-cell
+matrix #277 established at the document level now holds per page, which is a
+different claim: a stamp keyed on the wrong side of the boolean would leave the
+cover correct and every footer lying, with every existing test green.
+
+> **A defect it introduced and the existing tests caught.**
+> `ws.freeze_panes = ws.cell(row + 1, 1)` asks openpyxl for a cell and thereby
+> CREATES it, moving the insertion point past it — so every data sheet gained a
+> blank row between the headings and the records. **A read that is also a
+> write**, and the line reads as a lookup. The per-page tests written for the
+> issue did *not* catch it; five pre-existing tests the change had just broken
+> did. Fixed with a string coordinate and pinned by an assertion about the
+> outcome rather than the spelling.
+
+Those five tests are **re-derived, not renumbered** — a new `xlsx_data_start`
+fixture reads the sheet's own freeze pane. Nine mutations run, each proved to
+land and each restored byte-identical; each killed by the test written for it.
+
+**#316 — 244 instance 1 only.** `excluded_inputs` reached one HTTP response and
+died on reload. **The data was already persisted** — #240's migration 0047 put
+it in `risk_registers.provenance["excluded"]`; only the read-back was missing.
+Two comments still said a migration was needed and pointed at #240 as the
+remedy, which had shipped; both corrected in place. New
+`excluded_inputs_recorded` separates "the server looked and found nothing" from
+"nobody recorded", **defaulted false** because missing data defaults to
+UNCONFIRMED. The web component now DERIVES the banner instead of holding a copy
+— the copy's reason (the export response carried `[]`) has stopped holding.
+
+### 244 is NOT closed by #316, and what is left is partly yours
+
+- **Instance 2 is live.** Four dashboard pages (`zt`, `attack`, `tech-debt`,
+  `csf`) still key not-released copy on `err.status === 404` and print a
+  hardcoded sentence, ignoring the typed `reason` written specifically to avoid
+  saying it. Measured on `ee819f2`:
+  `grep -rn "hasn't been released to your organization yet" apps/web/src` ->
+  those four files.
+- **Instance 3 is already fixed**, by #234. Only test references to the string
+  remain.
+- **The issue's own suggested resolution is a question for you**, unanswered:
+  *"Decide who owns `apps/web/src/app/**` and the dashboard error surfaces."*
+  That is why instance 2 keeps recurring rather than why it exists. #316
+  deliberately does not pre-empt it.
+
+### Decisions only you can make
+
+1. **244's ownership question**, above. Flagged twice now.
+2. **220** — `ecdsa` wants a named acceptance: a human name and a date, which an
+   agent must not supply. Draft records are in the issue's comments, deliberately
+   unsigned. The recommended route is PyJWT rather than a Dockerfile uninstall.
+3. **The Dependabot gate.** `Adversarial audit recorded` structurally cannot pass
+   a bot-authored PR, so #147, #148, #149 and #222 are red by construction. #149
+   has been red since 2026-08-25. Either the gate learns a bot exemption, or a
+   human writes the audit block per PR. **This blocks every dependency update,
+   including security ones.**
+
+### Filed this session, labelled at filing
+
+**314** (`mvp-blocking`, `tier-2`) — *Root-relative paths break the documented
+in-container commands.* Two instances of one shape, and both are worse than they
+look:
+
+- `docker compose exec -T api pytest -m unit -q` — the command `CLAUDE.md` names
+  for the backend suite — **collects nothing** on `main`. A gate test resolves
+  its input with `parents[4]`, correct for the host checkout and an `IndexError`
+  inside the container, and a collection error interrupts the whole session.
+  Introduced by `c7ecacf` (PR #276).
+- The MANDATORY in-container ruff reports **four phantom errors**, because
+  `pyproject.toml` excludes `apps/api/tests/gates` relative to the repo root
+  while the command runs from `/app`, which *is* `apps/api`. Black is unaffected;
+  its exclusion is a regex with a bare alternative, and that is the fix.
+
+Both are true in CI and false in the container, so **CI can see neither**. The
+second is the more corrosive: the honest response to four unexplained
+pre-existing errors is to stop running the mandatory lint.
+
+### Process: what the batch size cost, per your note
+
+Sixteen PRs individually clean produced three conflicts purely from ordering,
+and all three touched a **shared surface** — a route, a workflow, a comment
+block. Recorded as an instruction for next time rather than an observation:
+
+> **When several open PRs touch the same file, say so in the report so they can
+> be ordered first.** As of `ee819f2` the live instance is
+> `apps/api/app/routes/risk.py`, touched by **#306** — and nothing else open.
+> `.github/workflows/audit-gate.yml` is touched by **#310** alone now that #296
+> has landed. No other file is contended across the five open PRs.
+
+### Verification standards held this session
+
+- **Mergeability and CI reported as two separate claims**, always, with the real
+  merge run in a scratch worktree against the `main` that existed at the time.
+- **No full suite was run on this machine.** Every PR states its derived covering
+  set and names CI as the authority for the rest. #315's was 14 files / 208
+  tests, derived by grep rather than chosen.
+- **Exit codes read from a marker file, never through a pipe**, with a per-run
+  marker filename so a stale marker cannot be read as a fresh result.
+- **The fixture boundary re-verified on BOTH signals**:
+  `SHIELD_LLM_MODE=fixture` **and** `select count(*) from llm_credential` -> `0`.
+  Mount confirmed from `SHIELD080306main` by `docker inspect`.
+- **The dev Postgres was NOT migrated.** #306 no longer adds a migration (0048
+  landed with #302), so `alembic upgrade head` against dev is now safe if you
+  want the dev DB current. It was not run.
+
+### The reviewer delivery problem, corrected
+
+**The previous handoff said the adversarial reviewer "did not deliver a report
+for any PR after #297" and that every later PR body said `Findings: not run`.
+Both were false by the time they were written.** Five real reports arrived —
+against #297, #300, #301, #302 and #303 — carrying roughly thirty findings, of
+which about twenty were BLOCKING. Four PR bodies that still said `Findings:
+pending` were rewritten this session to carry the actual findings and
+dispositions.
+
+The remaining symptom is narrower and real: **a dispatched reviewer can finish
+and go idle without its report reaching the caller.** Nine were dispatched this
+session against #295, #296, #305, #306, #307, #308, #309, #310 and #311; all
+nine finished, none delivered, and a follow-up message asking each to send its
+findings had not returned by the end of the session. Those nine PRs have since
+merged **without** those reviews being read. That is worth knowing about
+`ee819f2` and is not a reason to re-open them.
+
+
+---
 ## PICK UP HERE — 2026-09-11, overnight run
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every claim
