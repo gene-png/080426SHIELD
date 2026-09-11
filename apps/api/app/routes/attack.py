@@ -908,9 +908,12 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
           the two-writer shape where a predicate is applied to one branch and
           forgotten in the other — the half-fix this repo records for #75, #79
           and #84;
-        * the state is one line from reachable, and the same file proves the
-          line gets missed: `approve_capability_list` fails to refuse DISCARDED
-          (#231) while two other guards in it list DISCARDED explicitly;
+        * the state WAS one line from reachable, and the same file proved the
+          line gets missed: `approve_capability_list` refused only RELEASED
+          while two other guards in it listed DISCARDED explicitly. Closed by
+          #231 -- approve now refuses a discarded list with a typed 409. The
+          argument for this guard is unchanged and is now about a line that
+          could be missed AGAIN rather than one that was;
         * the asymmetry. An unfiring guard costs one branch. Its absence costs
           discarded tooling reaching a hard allow-list and a client
           deliverable.
@@ -1000,8 +1003,12 @@ def _client_capability_membership(db: Session, client_id: uuid.UUID) -> Capabili
                 # REASON: an absent live row renders identically to a row with
                 # no document. `CapabilityProvenance` has `live_row_missing` for
                 # exactly that distinction and `WithheldCapability` does not.
-                # Latent -- reachable only in the state #231 is one line from
-                # creating. Tracked as #233.
+                # Latent, and further from reachable than it was: the state
+                # needed `approve_capability_list` to accept a DISCARDED list,
+                # which #231 closed with a typed 409. Still tracked as #233 --
+                # the distinction it is about, an absent live row rendering
+                # identically to a row with no document, does not depend on
+                # that path being open.
                 snapshot_item.source_artifact_id if snapshot_item is not None else None,
                 from_snapshot=True,
             )
@@ -2274,8 +2281,11 @@ def ai_inputs(
         #  * `membership_stale` — computed only when `from_snapshot`, which a
         #    discarded list cannot be today (`test_capability_list_status_graph`
         #    pins that). Left live so it stays correct if the state graph
-        #    changes; its "re-approve" warning would need revisiting then, which
-        #    is noted on #231.
+        #    changes. Its "re-approve" warning no longer needs revisiting on
+        #    #231's account: that issue closed by REFUSING approve on a
+        #    discarded list, so re-approval is not a route back. It would need
+        #    revisiting if an explicit restore endpoint is ever added, which
+        #    #231 records as the option not taken.
         #  * `status` — a passthrough of the column. Listed for completeness,
         #    not as a decision: nothing about it was ever in question.
         retired = cap_list.status == CapabilityListStatus.DISCARDED

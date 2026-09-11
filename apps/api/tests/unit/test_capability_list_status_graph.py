@@ -122,29 +122,28 @@ def _assert_no_discarded_row_carries_a_snapshot(TestSession: sessionmaker) -> No
     )
 
 
-def test_approving_a_discarded_list_resurrects_it(app_client) -> None:
-    """CURRENT behaviour, pinned as a DEFECT rather than endorsed.
+def test_approving_a_discarded_list_is_refused(app_client) -> None:
+    """#231 FIXED. This test was written to go red, and it did.
 
-    `discard_capability_list` refuses anything but a DRAFT; `approve_capability_list`
-    refuses only RELEASED. So approve is the product's only un-discard, and it is
-    undocumented. D-031's stated rule is that an approved/released resource returns
-    a typed 409 — this path returns 200 and silently clears the discard, with an
-    approval audit row and no record that anything was resurrected.
+    It previously pinned the defect: `approve_capability_list` refused only
+    RELEASED, so approve was the product's only un-discard -- 200, status
+    flipped, `approved_membership` rebuilt, and nothing anywhere recording that
+    a consultant's decision to throw the list away had been reversed.
 
-    Tracked as #231. When it is fixed this test goes RED, and it should — the
-    behaviour genuinely changed.
+    Its docstring named what had to change with it, and both were changed in
+    the commit that fixed this: the `list_discarded` prose in
+    `schemas/attack.py` and `lib/attack/types.ts`, each of which described the
+    resurrect path as a defect that EXISTS. The remedy copy on the panel --
+    "upload a replacement list" -- needed no change at all, which is exactly why
+    it was written to point there rather than at the bug.
 
-    **Do NOT read that red as "go and edit the list_discarded copy".** An earlier
-    version of this docstring said exactly that, and it was stale the moment the
-    copy was rewritten in the same commit: the panel now says "Upload a
-    replacement list", which does not depend on the resurrect path at all. When
-    #231 is fixed, uploading a replacement becomes the ONLY remedy, so that copy
-    gets MORE accurate, not stale.
+    Inverted rather than deleted, per core principle 3: the behaviour genuinely
+    changed and the record of what it used to be is worth keeping.
 
-    What the red is for: re-read the `list_discarded` prose in
-    `schemas/attack.py` and `lib/attack/types.ts`, both of which describe the
-    resurrect path as a defect that exists. Those go stale; the remedy does
-    not.
+    **The egress consequence is why this matters** rather than state-graph
+    tidiness: a discarded list contributes nothing to
+    `_client_capability_membership`, so resurrecting it made every in-scope row
+    citable again -- exactly what the consultant discarded the list to prevent.
     """
     c, TestSession = app_client
     bearer, cid = _admin(c)
@@ -157,19 +156,23 @@ def test_approving_a_discarded_list_resurrects_it(app_client) -> None:
         assert db.get(CapabilityList, _uuid.UUID(lid)).status == CapabilityListStatus.DISCARDED
 
     resp = c.post(f"/tech-debt/capability-lists/{lid}/approve", headers=h)
+    assert resp.status_code == 409, resp.text
+    body = resp.json()["error"]
+    assert body["reason"] == "capability_list_discarded", body
+    assert "replacement" in body["message"].lower(), (
+        "the refusal must name the remedy that exists -- a replacement list -- "
+        "rather than leaving the consultant at a closed door. CLAUDE.md: a "
+        "user-facing string naming an action must name a control that works."
+    )
+
+    # AND THE ROW MUST NOT HAVE MOVED. Asserting the 409 alone would pass
+    # against a route that refused AFTER writing, which is a half-applied
+    # refusal and worse than either outcome.
     with TestSession() as db:
         after = db.get(CapabilityList, _uuid.UUID(lid))
-        assert (resp.status_code, after.status) == (200, CapabilityListStatus.APPROVED), (
-            "if this now refuses, #231 is fixed. Re-read the list_discarded "
-            "prose in schemas/attack.py and types.ts, which describe the "
-            "resurrect path as live. The panel's REMEDY copy needs no change -- "
-            "it was written not to depend on this path"
-        )
-
-    # The resurrect path is the ONLY sequence that writes a snapshot onto a
-    # formerly-discarded row, so the invariant is checked here rather than only
-    # on the path that 409s.
-    _assert_no_discarded_row_carries_a_snapshot(TestSession)
+        assert after.status == CapabilityListStatus.DISCARDED
+        assert after.approved_at is None
+        assert after.approved_by is None
 
 
 def test_a_list_cannot_be_both_discarded_and_carry_an_approved_snapshot(app_client) -> None:

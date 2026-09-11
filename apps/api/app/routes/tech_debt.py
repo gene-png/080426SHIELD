@@ -893,6 +893,36 @@ def approve_capability_list(
             status_code=status.HTTP_409_CONFLICT,
             detail="This capability list has been released and is locked.",
         )
+    # DISCARDED too (#231). This guard refused only RELEASED, so approve was the
+    # product's only un-discard -- 200, status flipped, `approved_membership`
+    # rebuilt, and no record anywhere that a consultant's decision to throw the
+    # list away had been reversed.
+    #
+    # `discard_capability_list`'s own docstring already stated the rule the state
+    # machine did not enforce: "Only a DRAFT is discardable ... approved/released
+    # -> typed 409". The graph was one-way by intent and two-way in fact.
+    #
+    # The egress consequence is why this is more than tidiness: a discarded list
+    # contributes nothing to `_client_capability_membership`, so resurrecting it
+    # makes every in-scope row citable again -- precisely the behaviour the
+    # consultant discarded the list to prevent.
+    #
+    # REFUSED rather than turned into a restore endpoint, deliberately. This
+    # matches what the code already claims (D-031), and it is the reversible
+    # choice: an explicit restore with its own audit action can be added on top
+    # of a refusal if consultants turn out to need one. An accidental un-discard
+    # that has already run cannot be taken back. #231 records both options.
+    if cap_list.status == CapabilityListStatus.DISCARDED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "capability_list_discarded",
+                "message": (
+                    "This capability list was discarded and cannot be approved. "
+                    "Upload a replacement list instead."
+                ),
+            },
+        )
     cap_list.status = CapabilityListStatus.APPROVED
     cap_list.approved_at = utcnow()
     cap_list.approved_by = user.id
