@@ -269,13 +269,41 @@ services:
       - ./packages:/app/packages
       - ./package.json:/app/package.json
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      # THE LOCKFILE, read-only. It was absent from this container entirely
+      # (measured 2026-09-11: /app held package.json, pnpm-workspace.yaml, apps,
+      # packages, node_modules and no pnpm-lock.yaml), so `pnpm install` here
+      # resolved package.json RANGES while CI runs `--frozen-lockfile` and
+      # installs what the lockfile pins. The two could differ at any time with
+      # nothing saying so, and an install guard keyed on the lockfile is
+      # impossible without it (#226).
+      #
+      # Read-only on purpose: `--frozen-lockfile` never writes it, and a
+      # container that could rewrite the lockfile would be able to make the
+      # drift permanent rather than loud.
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+      # The install guard, as a FILE rather than a line of YAML. A shell command
+      # inside a folded scalar cannot be tested, and this one decides whether a
+      # security patch is applied -- see `tests/gates/web_install_guard.sh`.
+      - ./scripts/web-install-if-stale.sh:/app/web-install-if-stale.sh:ro
       # pnpm hoists the real packages into the workspace-root node_modules/.pnpm
       # store; both this and the per-app dir must persist or symlinks dangle on
       # recreate.
       - node-modules-root:/app/node_modules
       - node-modules-web:/app/apps/web/node_modules
     # First boot installs deps into the volumes; later boots skip the install
-    # (the next binary is already present) and start the dev server directly.
+    # ONLY when the lockfile's hash matches the stamp the last successful
+    # install wrote into the volume (#226).
+    #
+    # It used to skip when `apps/web/node_modules/next/dist/bin/next` merely
+    # EXISTED. `node_modules` is a named volume, so once populated no later
+    # `up`, `--force-recreate` or `restart` installed anything again -- and a
+    # remediation procedure reported success while leaving a vulnerable binary
+    # running. Measured on the branch shipping two unauthenticated RCE fixes:
+    # package.json 15.5.24, lockfile 15.5.24, running container 15.5.23.
+    #
+    # A failed install is now FATAL rather than followed by `exec pnpm dev`.
+    # `restart: unless-stopped` turns that into a visible retry loop instead of
+    # a dev server running against whatever happened to be in the volume.
     command:
       - sh
       - -c
@@ -283,7 +311,7 @@ services:
         corepack enable >/dev/null 2>&1;
         corepack prepare pnpm@9.12.0 --activate >/dev/null 2>&1;
         cd /app;
-        [ -f apps/web/node_modules/next/dist/bin/next ] || pnpm install;
+        sh /app/web-install-if-stale.sh &&
         exec pnpm -F web dev
 
 volumes:
