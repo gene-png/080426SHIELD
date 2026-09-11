@@ -162,11 +162,23 @@ describe("ZtSelfAssessment — a save that fails", () => {
     await editNotes("a note the server will refuse");
 
     await screen.findByRole("alert");
-    // Server truth, re-fetched — NOT the pre-write snapshot the client's
-    // browser happened to be holding.
-    expect(
-      await screen.findByText(/what the server actually has/),
-    ).toBeInTheDocument();
+
+    // SCOPED TO THE FIELD, and that is the whole assertion.
+    //
+    // A first version used `findByText(/what the server actually has/)` and CI
+    // failed it with "Found multiple elements" — the note renders twice, in
+    // the `<summary>` preview AND in the textarea, both legitimately. The
+    // preview renders from state and reverts whether or not the input does, so
+    // a matcher satisfied by either would have gone green over the exact
+    // defect this test exists for: an uncontrolled `defaultValue` textarea
+    // that keeps the refused text on screen.
+    //
+    // `toHaveValue` on the field is what pins the keyed remount.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Notes for CISA.ID.01")).toHaveValue(
+        "what the server actually has",
+      ),
+    );
   });
 
   it("carries the server's own reason through, where there is one", async () => {
