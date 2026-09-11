@@ -72,14 +72,28 @@ export interface RiskRegister {
    * Inputs that EXISTED and were not approved, so they contributed nothing to
    * this register. Present and populated on the POST /generate response only.
    *
-   * **`GET .../register/latest` always returns `[]`, and that is a limit rather
-   * than a bug in this type.** Nothing about the exclusion is persisted, so a
-   * read path cannot reconstruct it without a schema change -- tracked in #240.
-   * The consequence is that the banner below survives until the page is
-   * reloaded and no further, which the renderer says out loud rather than
-   * implying durability it does not have.
+   * **[2026-09-11, #244] This used to say `GET .../register/latest` always
+   * returns `[]`, because nothing was persisted and a read path "cannot
+   * reconstruct it without a schema change -- tracked in #240".** The schema
+   * change landed (migration 0047 stores the set in
+   * `risk_registers.provenance`); only the read-back was missing, and
+   * `_serialize` now does it. Every response carries the same set, so the
+   * banner survives a reload.
+   *
+   * The note is kept rather than deleted because the OLD text is what a reader
+   * would otherwise act on: it reads as a live limitation, and the remedy it
+   * points at had already shipped.
    */
   excluded_inputs: string[];
+  /**
+   * Whether `excluded_inputs` is an answer or a silence.
+   *
+   * `false` means the register predates provenance recording, so nothing on
+   * file says what was left out. An empty `excluded_inputs` cannot express
+   * that, and reading it as "nothing was excluded" would be a false assurance
+   * about the one population nobody can check.
+   */
+  excluded_inputs_recorded: boolean;
   /**
    * #121's outcome counters.
    *

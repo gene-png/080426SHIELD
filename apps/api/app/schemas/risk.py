@@ -100,15 +100,37 @@ class RiskRegisterResponse(BaseModel):
     # WHERE IT IS RENDERED, and where it is not. The sentence above was written
     # in the present tense before any surface read the field, and for one review
     # round nothing did: five occurrences in the tree, none of them a consumer.
-    # Today the admin Risk Register page renders it as a banner on the POST
-    # /generate response. It is NOT persisted, so `GET .../register/latest`
-    # returns `[]` and the banner does not survive a reload; it does not reach
-    # the exported XLSX/PDF/Word, and it does not reach the client dashboard.
-    # Those three surfaces need a migration and are #240.
     #
-    # Do not read "is rendered beside it" as covering the export. That reading
-    # is what this note exists to close.
+    # [2026-09-11, #244] The note that stood here said "It is NOT persisted, so
+    # `GET .../register/latest` returns `[]` ... Those three surfaces need a
+    # migration and are #240." The migration LANDED -- 0047 stores the set in
+    # `risk_registers.provenance["excluded"]` -- and the note kept saying one
+    # was needed, which is a stale deferral sitting exactly where a reader goes
+    # to check. Nothing had to be built; `_serialize` simply never read it back.
+    #
+    # Now: the admin Risk Register page renders it as a banner, and `latest`
+    # returns the persisted set, so the banner survives a reload.
+    #
+    # STILL TRUE, and still the reason not to read "is rendered beside it" as
+    # covering everything: it does NOT reach the exported XLSX/PDF/Word, and it
+    # does NOT reach the client dashboard. Those two remain, and the population
+    # they are about is the one a client actually receives.
     excluded_inputs: list[str] = []
+    #: Whether `excluded_inputs` is an ANSWER or a SILENCE.
+    #:
+    #: `False` means this register predates provenance recording (NULL
+    #: `provenance`, pre-0047), so nothing on file says what was left out --
+    #: which is not the same fact as "nothing was left out", and an empty list
+    #: cannot tell them apart.
+    #:
+    #: DEFAULTED FALSE, and the direction is the point. `_serialize` sets it
+    #: explicitly on every path, so the default is reached only by a payload
+    #: that predates this field -- which is exactly a register whose exclusions
+    #: were never recorded, so `False` is the TRUE answer there as well as the
+    #: safe one. `CLAUDE.md`: missing data defaults to UNCONFIRMED, never to
+    #: confirmed. A `True` default would have let any future writer that
+    #: forgets the field certify a clean input set it never looked at.
+    excluded_inputs_recorded: bool = False
     xlsx_artifact_id: uuid.UUID | None = None
     pdf_artifact_id: uuid.UUID | None = None
     docx_artifact_id: uuid.UUID | None = None
