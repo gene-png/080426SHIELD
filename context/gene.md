@@ -13,13 +13,22 @@ about state outside the working tree carries the command that produced it.
 Nothing is merged. `main` has not moved all night — `git rev-parse --short
 origin/main` → `ae78972`, the same commit it was at when the run started.
 
-The order matters for exactly two pairs; the rest are independent:
+Two pairs share a file and must go in order; the rest are independent:
 
-- **#295 is based on #291's branch**, not on `main`. GitHub retargets it when
-  #291 merges.
-- **#306 is based on #302's branch**, for the same reason — both edit the same
-  loop and the same audit row in `routes/risk.py`, and two branches doing that
+- **#295 carries #291's commits.** It was cut from that branch, and merging #295
+  first would land #283's work under #244's title.
+- **#306 carries #302's commits**, for the same reason — both edit the same loop
+  and the same audit row in `routes/risk.py`, and two branches doing that
   conflict by construction.
+
+Both were briefly based on their parent BRANCH so the stack was explicit. They
+are now based on `main` again, and that is **not** cosmetic: `ci.yml` triggers
+on `pull_request: branches: [main]`, so a PR based on a branch runs **no CI at
+all**. Worse, `audit-gate.yml` carries `types: [... edited]` and `ci.yml` does
+not, so GitHub's automatic retarget-on-parent-merge fires the audit gate and not
+the suite — leaving a PR showing two green checks of seven with nothing saying
+the other five never ran. Measured today on #306; filed as **#312** with the
+workaround (close and reopen the PR). Both PRs now show the full set.
 
 ### What landed as PRs — the whole tier-2 and tier-3 queue
 
@@ -140,6 +149,7 @@ is explicit rather than implied. Recorded as a comment on the PR.
 | **#298** `mvp-blocking` `tier-3` | `approve_capability_list`'s RELEASED refusal is an untyped string beside a typed one |
 | **#299** `mvp-blocking` `tier-3` | Nothing detects that the LEAVE-row oracle has stopped being able to measure |
 | **#304** `mvp-blocking` `tier-3` | Nothing fires when an issue closes to ask which code comments cited it |
+| **#312** `mvp-blocking` `tier-3` | `ci.yml` and `audit-gate.yml` disagree about which PR events matter, so a retargeted PR runs two checks of seven |
 
 **#84 was relabelled** `mvp-blocking` / `tier-2`. It was carrying only `bug`, so
 it was invisible to every board query, and it has a live instance in the
