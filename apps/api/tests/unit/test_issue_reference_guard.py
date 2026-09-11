@@ -115,7 +115,7 @@ def test_quotes_code_fences_and_html_comments_are_NOT_exempt() -> None:
     ],
 )
 def test_a_keyword_ending_a_block_matches_a_number_opening_the_next(text: str) -> None:
-    """The fourth variant, and the first that is STRUCTURAL.
+    r"""The fourth variant, and the first that is STRUCTURAL.
 
     Three earlier incidents were failures of care inside one sentence: a
     negated sentence, a quoted sentence, and a sentence warning about the
@@ -282,3 +282,126 @@ def test_main_refuses_when_an_input_file_is_missing(tmp_path) -> None:
         ]
     )
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# #182 -- the verdict was over the INTENDED set, not the ACHIEVED one.
+#
+# Measured on PR #180's first open: the body carried `Auto-close-approved: 108`
+# and a commit body paired a closing verb with 108 across three intervening
+# words. The adjacency rule does not match that -- and GitHub agrees -- so the
+# guard printed "clean (1 declared close: 108)" and exited 0 while GitHub
+# linked nothing. The PR would have merged, #108 would have stayed open, and
+# the body would have asserted it was closed.
+#
+# `check_recalled_counts` printing "clean (6 documents)" over documents it never
+# read is the same shape, one day earlier -- here in the guard whose entire
+# subject is the gap between what a body says and what GitHub does.
+#
+# The fix ASKS GitHub rather than restating its parser: a second implementation
+# agrees only until GitHub changes it.
+# ---------------------------------------------------------------------------
+
+
+def _files(tmp_path, *, title="t", body="b", commits="c", linked=None):
+    paths = {}
+    for name, text in (("title", title), ("body", body), ("commits", commits)):
+        p = tmp_path / name
+        p.write_text(text, encoding="utf-8")
+        paths[name] = str(p)
+    argv = [
+        "--title",
+        paths["title"],
+        "--body",
+        paths["body"],
+        "--commits",
+        paths["commits"],
+    ]
+    if linked is not None:
+        lp = tmp_path / "linked"
+        lp.write_text(linked, encoding="utf-8")
+        argv += ["--linked", str(lp)]
+    return argv
+
+
+@pytest.mark.unit
+def test_a_declared_close_github_will_not_make_is_caught(tmp_path, capsys) -> None:
+    """PR #180's exact state, which the guard reported as clean."""
+    rc = main(
+        _files(
+            tmp_path,
+            title="fix(attack): the other half",
+            body="Auto-close-approved: 108",
+            commits="Closes the second half of #108",
+            linked="",
+        )
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "declared but NOT linked: 108" in err
+    assert "adjacency" in err, "the message must name the likely cause, not only the fact"
+
+
+@pytest.mark.unit
+def test_a_close_github_will_make_that_nobody_declared_is_caught(tmp_path, capsys) -> None:
+    """The other direction, now verified against reality rather than a regex.
+
+    The prose check can already catch this -- but only for forms its own pattern
+    recognises. This catches it whatever the phrasing, because GitHub is the one
+    being asked.
+    """
+    rc = main(_files(tmp_path, body="nothing declared here", linked="404\n"))
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "linked but NOT declared: 404" in err
+
+
+@pytest.mark.unit
+def test_agreement_passes_and_says_it_checked(tmp_path, capsys) -> None:
+    """THE PASSING STATE, and the message must distinguish the two runs.
+
+    A clean verdict from a local run has NOT been checked against GitHub, and
+    one that read the same either way would be the #182 defect again: a positive
+    message over something nobody verified.
+    """
+    rc = main(_files(tmp_path, body="Auto-close-approved: 12", linked="12\n"))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "verified against GitHub" in out
+
+    rc = main(_files(tmp_path, body="Auto-close-approved: 12"))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "NOT verified against GitHub" in out
+
+
+@pytest.mark.unit
+def test_an_empty_linked_file_is_an_answer_and_a_missing_one_is_not(tmp_path) -> None:
+    """The distinction the whole design turns on.
+
+    `gh` writing nothing means "this PR closes nothing" -- a real answer, and one
+    this guard must be able to act on, because it is exactly the state that
+    produced #182. A MISSING file means the workflow step did not run, which is
+    "I could not look" and must not share an exit with either verdict.
+    """
+    assert main(_files(tmp_path, body="no declarations", linked="")) == 0
+
+    argv = _files(tmp_path, body="no declarations")
+    argv += ["--linked", str(tmp_path / "never-written")]
+    assert main(argv) == 2
+
+
+@pytest.mark.unit
+def test_the_linked_file_is_parsed_permissively(tmp_path) -> None:
+    """Whatever `gh --jq` produced, the useful reading is "which numbers".
+
+    A strict JSON parse would turn a `gh` version bump or a `--jq` change into a
+    crash, and `main` routes an unreadable input to exit 2 -- the right answer
+    for "I could not look" and the wrong one for a format nobody expected.
+    """
+    from scripts.check_issue_references import linked_numbers
+
+    assert linked_numbers("") == set()
+    assert linked_numbers("12\n34\n") == {12, 34}
+    assert linked_numbers('[{"number": 12}, {"number": 34}]') == {12, 34}
+    assert linked_numbers("no numbers here") == set()
