@@ -33,6 +33,38 @@ def add_heading(doc: Any, text: str, level: int = 1) -> None:
     doc.add_heading(text, level=level)
 
 
+def set_footer(doc: Any, text: str, *, rgb: tuple[int, int, int] | None = None) -> None:
+    """Put `text` in the footer of every section, so Word repeats it per page.
+
+    A body paragraph appears once wherever it was added; a section footer is
+    the only thing in the format that reaches every page. This is what #294
+    needs for the CSF Playbook's approval status, and it is written here rather
+    than in `playbook_export` because it is a property of the FORMAT -- every
+    other service's DOCX deliverable has the same page underneath it.
+
+    `is_linked_to_previous = False` is set on EVERY section, not just the
+    first. python-docx links a new section's footer to its predecessor by
+    default, so a document that later grows a second section would silently
+    keep inheriting -- which happens to be right today and is right by accident.
+    Setting it per section makes the guarantee hold for a document shape nobody
+    has written yet.
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
+
+    for section in doc.sections:
+        footer = section.footer
+        footer.is_linked_to_previous = False
+        para = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        para.text = ""
+        run = para.add_run(text)
+        run.font.size = Pt(7)
+        run.bold = True
+        if rgb is not None:
+            run.font.color.rgb = RGBColor(*rgb)
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
 def add_page_break(doc: Any) -> None:
     doc.add_page_break()
 

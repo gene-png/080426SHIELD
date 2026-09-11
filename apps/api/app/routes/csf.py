@@ -238,7 +238,12 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> CsfAssessment | No
     #     deck.
     #   * #294 carries it to every PAGE, because a cover does not survive the
     #     last of those either: the page that gets pasted is the scorecard,
-    #     not page 1. OPEN as this is written; the two above have landed.
+    #     not page 1 of ~25. Every PDF page, every DOCX page (a section
+    #     footer), and on each workbook DATA sheet BOTH a frozen banner row
+    #     (screen) and `print_title_rows` (paper) -- freezing is a screen
+    #     property and nothing else, so for one round the printed workbook
+    #     carried the notice on page 1 only. `About` is the stated exemption:
+    #     one short page, and it carries the notice in its body.
     #
     # WHY THE STALE SENTENCE COST SOMETHING, which is the half worth keeping:
     # a reader who checked it against the code found the `WORKING_` prefix,

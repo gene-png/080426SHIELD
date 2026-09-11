@@ -137,7 +137,7 @@ ACTION_PLAN_HEADERS = [
 
 
 @pytest.mark.unit
-def test_xlsx_action_plan_sheet_has_expected_headers() -> None:
+def test_xlsx_action_plan_sheet_has_expected_headers(xlsx_data_start) -> None:
     from openpyxl import load_workbook
 
     raw = render_xlsx(
@@ -150,12 +150,18 @@ def test_xlsx_action_plan_sheet_has_expected_headers() -> None:
     wb = load_workbook(io.BytesIO(raw))
     assert "Action Plan" in wb.sheetnames
     ws = wb["Action Plan"]
-    header = [ws.cell(row=1, column=c).value for c in range(1, len(ACTION_PLAN_HEADERS) + 1)]
+    # Row 1 is #294's approval banner; the headings sit directly under it.
+    # The row is taken from the freeze pane rather than written as a
+    # constant -- see the `xlsx_data_start` fixture for why.
+    header_row = xlsx_data_start(ws) - 1
+    header = [
+        ws.cell(row=header_row, column=c).value for c in range(1, len(ACTION_PLAN_HEADERS) + 1)
+    ]
     assert header == ACTION_PLAN_HEADERS
 
 
 @pytest.mark.unit
-def test_xlsx_action_plan_only_lists_gaps() -> None:
+def test_xlsx_action_plan_only_lists_gaps(xlsx_data_start) -> None:
     from openpyxl import load_workbook
 
     wb = load_workbook(
@@ -170,13 +176,13 @@ def test_xlsx_action_plan_only_lists_gaps() -> None:
         )
     )
     ws = wb["Action Plan"]
-    codes = [ws.cell(row=r, column=1).value for r in range(2, ws.max_row + 1)]
+    codes = [ws.cell(row=r, column=1).value for r in range(xlsx_data_start(ws), ws.max_row + 1)]
     # Two gaps present; the met subcategory (PR.AA-01) is excluded.
     assert codes == ["GV.OC-01", "ID.AM-02"]
 
 
 @pytest.mark.unit
-def test_xlsx_action_plan_priority_defaults_from_gap_priority() -> None:
+def test_xlsx_action_plan_priority_defaults_from_gap_priority(xlsx_data_start) -> None:
     """No stored override -> the Priority cell is the code-computed default."""
     from openpyxl import load_workbook
 
@@ -193,13 +199,16 @@ def test_xlsx_action_plan_priority_defaults_from_gap_priority() -> None:
         )
     )
     ws = wb["Action Plan"]
-    by_code = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=5).value for r in (2, 3)}
+    first = xlsx_data_start(ws)
+    by_code = {
+        ws.cell(row=r, column=1).value: ws.cell(row=r, column=5).value for r in (first, first + 1)
+    }
     assert by_code["GV.OC-01"] == GOVERN_DEFAULT_PRIORITY == "P1"
     assert by_code["ID.AM-02"] == ASSET_DEFAULT_PRIORITY == "P3"
 
 
 @pytest.mark.unit
-def test_xlsx_action_plan_priority_override_wins() -> None:
+def test_xlsx_action_plan_priority_override_wins(xlsx_data_start) -> None:
     """A stored priority_override beats the code-computed default."""
     from openpyxl import load_workbook
 
@@ -227,7 +236,10 @@ def test_xlsx_action_plan_priority_override_wins() -> None:
         )
     )
     ws = wb["Action Plan"]
-    row = {h: ws.cell(row=3, column=i + 1).value for i, h in enumerate(ACTION_PLAN_HEADERS)}
+    # The SECOND data row -- `ID.AM-02` is the second gap. Offset from the
+    # derived start rather than written as 3, which was the pre-#294 index.
+    second = xlsx_data_start(ws) + 1
+    row = {h: ws.cell(row=second, column=i + 1).value for i, h in enumerate(ACTION_PLAN_HEADERS)}
     assert row["Subcategory"] == "ID.AM-02"
     # Override "P1" wins over the code default "P3".
     assert ASSET_DEFAULT_PRIORITY == "P3"

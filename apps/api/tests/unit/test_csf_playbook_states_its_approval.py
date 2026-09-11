@@ -265,6 +265,242 @@ def test_the_notice_lands_on_the_FIRST_sheet_of_the_workbook() -> None:
     ), "the About sheet is first but does not carry the notice"
 
 
+# ---------------------------------------------------------------------------
+# #294 — on EVERY page, not only the cover.
+# ---------------------------------------------------------------------------
+#
+# The tests above extract the whole document as one string, so a cover-only
+# stamp satisfies every one of them. That is not a weakness in them -- it is
+# exactly the scope #277 claimed -- but it means nothing already written can
+# tell the two states apart, and the per-page assertions have to read a
+# different surface per format rather than the same blob harder.
+#
+# "Page" is not the same object in the three formats, so each extractor returns
+# the list of things a reader can be looking at IN ISOLATION:
+#
+#   PDF   -> one entry per rendered page.
+#   DOCX  -> one entry per section FOOTER, which is what Word repeats per page.
+#            Reading `word/document.xml` here would pass on the cover paragraph
+#            and prove nothing, which is the trap this whole file is about.
+#   XLSX  -> one entry per worksheet. A workbook has no pages on screen, so the
+#            unit a reader can be looking at alone is the sheet.
+
+
+def _pdf_pages(blob: bytes) -> list[str]:
+    from pypdf import PdfReader
+
+    return [page.extract_text() for page in PdfReader(io.BytesIO(blob)).pages]
+
+
+def _docx_footers(blob: bytes) -> list[str]:
+    """Section footers, read through python-docx rather than by unzipping.
+
+    `word/footer1.xml` is only the part python-docx happens to write first; a
+    document with two sections has `footer2.xml` as well, and a name-based read
+    would quietly check one of them. Going through `doc.sections` asks the
+    format which footer applies to what.
+    """
+    from docx import Document
+
+    doc = Document(io.BytesIO(blob))
+    return ["\n".join(p.text for p in s.footer.paragraphs) for s in doc.sections]
+
+
+def _xlsx_sheets(blob: bytes) -> list[str]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(blob))
+    return [
+        "\n".join(str(c.value) for row in ws.iter_rows() for c in row if c.value is not None)
+        for ws in wb.worksheets
+    ]
+
+
+#: Same renderer set as `_RENDERERS`, with the per-page extractor for each. The
+#: two lists are pinned against each other below rather than merged, because
+#: `_RENDERERS` is itself checked against the module: merging would leave one
+#: derivation where there are two independent ones.
+_PER_PAGE = [
+    ("render_xlsx", _xlsx_sheets, {"tier_profiles": {}}),
+    ("render_exec_pdf", _pdf_pages, {}),
+    ("render_full_pdf", _pdf_pages, {}),
+    ("render_exec_docx", _docx_footers, {}),
+    ("render_full_docx", _docx_footers, {}),
+]
+
+
+@pytest.mark.unit
+def test_every_renderer_has_a_per_page_extractor() -> None:
+    """A renderer in one list and not the other is an unstamped document.
+
+    Without this, adding a sixth renderer to `_RENDERERS` alone would leave the
+    per-page sweep silently covering five of six while reporting clean -- the
+    shape `test_every_playbook_renderer_takes_an_approval_status` exists to
+    stop one level up.
+    """
+    assert {n for n, _, _ in _PER_PAGE} == {n for n, _, _ in _RENDERERS}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name, surfaces, extra", _PER_PAGE)
+def test_an_unapproved_playbook_says_so_on_EVERY_page(name, surfaces, extra) -> None:
+    """**The #294 assertion**, and the one the cover-only tests cannot make.
+
+    #277's own argument is that a filename fails because it does not survive
+    being "pasted into a deck". The page that gets pasted is the scorecard or
+    the roadmap table, not page 1 of ~25 -- so a cover-only stamp fails the
+    same test it was justified by.
+    """
+    pages = surfaces(_render(name, approved=False, extra=extra))
+    assert pages, f"{name} produced no readable page at all, so nothing was checked"
+    missing = [i for i, text in enumerate(pages) if playbook_export.WORKING_NOTICE not in text]
+    assert not missing, (
+        f"{name}: {len(missing)} of {len(pages)} pages carry no approval notice "
+        f"(indexes {missing}). A page handed over on its own says nothing about "
+        f"the assessment being unapproved, which is #294."
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name, surfaces, extra", _PER_PAGE)
+def test_no_page_of_an_unapproved_playbook_claims_approval(name, surfaces, extra) -> None:
+    """The fourth matrix cell, per page rather than per document.
+
+    The document-level version of this already exists above. It is repeated
+    here because the two can now disagree: a per-page stamp that prints
+    unconditionally, or one keyed on the wrong side of the boolean, puts
+    "Approved by Kentro." in the footer of a draft while the cover correctly
+    says the opposite -- and the whole-document assertion above would still be
+    green, because it only asks whether the string is somewhere.
+    """
+    for i, text in enumerate(surfaces(_render(name, approved=False, extra=extra))):
+        assert playbook_export.APPROVED_NOTICE not in text, (
+            f"{name} page {i} of an UNAPPROVED playbook claims approval. A "
+            f"reader takes the reassuring sentence, not the other one."
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name, surfaces, extra", _PER_PAGE)
+def test_an_approved_playbook_carries_its_own_status_per_page(name, surfaces, extra) -> None:
+    """Both directions, per page.
+
+    Stamping every page of a DRAFT and nothing on an approved document would
+    pass every assertion above. Then a page extracted from an approved playbook
+    is indistinguishable from a page produced before #294 existed, which is the
+    reason `APPROVED_NOTICE` exists at all.
+    """
+    pages = surfaces(_render(name, approved=True, extra=extra))
+    assert pages
+    for i, text in enumerate(pages):
+        assert playbook_export.APPROVED_NOTICE in text, (
+            f"{name} page {i} of an APPROVED playbook says nothing, so absence "
+            f"is doing the work and absence is not evidence."
+        )
+        assert (
+            playbook_export.WORKING_NOTICE not in text
+        ), f"{name} page {i} of an APPROVED playbook carries the draft warning."
+
+
+@pytest.mark.unit
+def test_the_full_pdf_is_long_enough_for_this_to_mean_something() -> None:
+    """A one-page PDF makes "every page" and "the cover" the same claim.
+
+    The per-page tests above would pass over a single-page document while
+    proving nothing, and the fixture here is one subcategory -- so the length
+    is a property of the fixture, not of the product, and it needs saying out
+    loud rather than assuming ~25 pages because the docstring says so.
+    """
+    pages = _pdf_pages(_render("render_full_pdf", approved=False, extra={}))
+    assert len(pages) > 1, (
+        f"the full playbook rendered {len(pages)} page(s) from this fixture, so "
+        f"the per-page assertions above are indistinguishable from the "
+        f"cover-only ones and #294 is not actually being tested"
+    )
+
+
+@pytest.mark.unit
+def test_every_data_sheet_freezes_its_banner() -> None:
+    """A banner that scrolls away is a cover, one row down.
+
+    `_xlsx_sheets` reads cell values, so it cannot see whether the notice stays
+    on screen -- a sheet with the banner at row 1 and no freeze passes every
+    assertion above and hides the notice the moment the reader scrolls, which
+    is what happens immediately on a 106-row profile.
+
+    `About` is exempt and says so: it carries the notice in its body, it is the
+    first tab a client opens onto, and it is short enough not to scroll.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(
+        io.BytesIO(_render("render_xlsx", approved=False, extra={"tier_profiles": {}}))
+    )
+    for ws in wb.worksheets:
+        if ws.title == "About":
+            continue
+        assert (
+            str(ws["A1"].value or "") == playbook_export.WORKING_NOTICE
+        ), f"sheet {ws.title!r} does not open with the notice: {ws['A1'].value!r}"
+        assert ws.freeze_panes == "A3", (
+            f"sheet {ws.title!r} freezes at {ws.freeze_panes!r}, not A3 — the "
+            f"banner (row 1) and the header (row 2) must both stay on screen."
+        )
+
+
+@pytest.mark.unit
+def test_the_banner_leaves_no_gap_above_the_data() -> None:
+    """The frozen row must be the first DATA row, not a blank one.
+
+    Introduced and caught while building #294: setting the freeze with
+    `ws.freeze_panes = ws.cell(row=row + 1, column=1)` asks openpyxl for a cell
+    and thereby CREATES it, which moves the sheet's insertion point past it. So
+    every data sheet gained an empty row between the headings and the records,
+    and the freeze pointed at the blank.
+
+    A read that is also a write leaves no trace in the diff -- the line looks
+    like it locates a cell. This pins the OUTCOME (the row under the freeze
+    holds a record) rather than the spelling, so any future way of producing
+    the same gap fails here too.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(
+        io.BytesIO(_render("render_xlsx", approved=False, extra={"tier_profiles": {}}))
+    )
+    for ws in wb.worksheets:
+        if ws.title == "About":
+            continue
+        first = int(str(ws.freeze_panes)[1:])
+        assert ws.cell(row=first, column=1).value is not None, (
+            f"sheet {ws.title!r} freezes at row {first}, which is empty — the "
+            f"banner or the header left a gap above the data."
+        )
+
+
+@pytest.mark.unit
+def test_the_banner_does_not_swallow_the_sheet() -> None:
+    """The stamp must not be the reason the data is unreadable.
+
+    `_autofit` sizes a column to its longest cell, and the notice is ~110
+    characters. Sized to it, column A is wider than the screen and every other
+    column is pushed off — so the change that makes the status impossible to
+    miss would make the sheet impossible to read, and nothing else here would
+    notice.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(
+        io.BytesIO(_render("render_xlsx", approved=False, extra={"tier_profiles": {}}))
+    )
+    ws = wb["Enterprise Profile"]
+    width = ws.column_dimensions["A"].width
+    assert width is not None and width <= 30, (
+        f"column A is {width} wide, sized to the banner rather than to the "
+        f"subcategory codes under it"
+    )
+
+
 @pytest.mark.unit
 def test_the_notice_wording_is_pinned_literally() -> None:
     """Every other test reads the constant from the module under test.
