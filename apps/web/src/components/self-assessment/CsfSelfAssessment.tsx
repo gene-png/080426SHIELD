@@ -17,6 +17,7 @@ import {
   patchSelfAssessmentAnswer,
   submitSelfAssessment,
 } from "@/lib/csf/client";
+import { describeSaveError } from "@/lib/describe-save-error";
 import type {
   CatalogSubcategory,
   CsfAnswer,
@@ -66,19 +67,6 @@ function filterCatalogByProfile(
   return { ...catalog, functions, total_subcategories: total };
 }
 
-/**
- * What to tell a client whose answer did not save (#283).
- *
- * The API returns the house envelope `{error: {reason, message}}` for a typed
- * refusal and a Pydantic `details` array for a schema-level one, so the
- * wrapper may or may not have a useful message. Falling back to a generic
- * sentence is fine; falling back to SILENCE is what this fixes.
- */
-function describeSaveError(err: unknown): string {
-  const detail = err instanceof Error && err.message ? ` ${err.message}` : "";
-  return `That change was not saved.${detail} Your previous answer has been restored — try again, and if it keeps failing tell your consultant.`;
-}
-
 export function CsfSelfAssessment({
   serviceId,
 }: {
@@ -98,6 +86,10 @@ export function CsfSelfAssessment({
   // succeeded — and the API half of that was fixed in #195/#282 while this
   // layer kept telling the client it had worked.
   const [saveError, setSaveError] = React.useState<string | null>(null);
+  // Guards the failure re-fetch below: a later save's truth must not be
+  // overwritten by an earlier one's recovery. Same mechanism, and the same
+  // reason, as `assessmentSeq` in the admin workspaces.
+  const saveSeq = React.useRef(0);
   const [submitted, setSubmitted] = React.useState(false);
 
   React.useEffect(() => {
@@ -138,10 +130,12 @@ export function CsfSelfAssessment({
     answerId: string,
     patch: CsfAnswerPatch,
   ): Promise<void> {
-    // The row as the server last confirmed it. Captured BEFORE the
-    // optimistic write so a failure has something true to restore.
-    const previous = assessment?.answers.find((a) => a.id === answerId);
-    setSaveError(null);
+    // Name the row. The alert renders once, at the bottom of a page that
+    // can carry 106 subcategories, so "that change" leaves the client
+    // unable to tell which answer was lost.
+    const subject =
+      assessment?.answers.find((a) => a.id === answerId)?.subcategory_code ??
+      "That change";
     setAssessment((curr) =>
       curr
         ? {
@@ -154,6 +148,11 @@ export function CsfSelfAssessment({
     );
     try {
       const updated = await patchSelfAssessmentAnswer(answerId, patch);
+      // Cleared HERE, on a confirmed success, and not at the top of this
+      // function. A first draft cleared it before the request, so a client
+      // whose answer to one row was refused lost the message the instant
+      // they touched another -- while that answer was still gone.
+      setSaveError(null);
       setAssessment((curr) =>
         curr
           ? {
@@ -165,20 +164,26 @@ export function CsfSelfAssessment({
           : curr,
       );
     } catch (err) {
-      // REVERT, then SAY SO. Reverting alone would still leave the client
-      // wondering whether they mis-clicked; reporting alone would leave the
-      // screen showing a value the server rejected.
-      setAssessment((curr) =>
-        curr
-          ? {
-              ...curr,
-              answers: curr.answers.map((a) =>
-                a.id === answerId && previous ? previous : a,
-              ),
-            }
-          : curr,
-      );
-      setSaveError(describeSaveError(err));
+      // RE-FETCH, do not restore a snapshot. A first draft captured the
+      // row before the optimistic write and put it back on failure. That
+      // reads as safe and is not: both fields auto-save, so a second edit
+      // to the same row captures the OPTIMISTIC value, and its revert then
+      // discards a change the server had already confirmed.
+      //
+      // The three admin workspaces already solve this with a sequence-
+      // guarded re-fetch, which is a DERIVATION of server truth rather
+      // than a synchronisation with a stale copy. Using theirs rather
+      // than inventing a weaker one three files away.
+      setSaveError(describeSaveError(err, subject));
+      const seq = ++saveSeq.current;
+      try {
+        const truth = await fetchSelfAssessment(serviceId);
+        if (seq === saveSeq.current) setAssessment(truth);
+      } catch {
+        // The re-fetch failed too. The message above still stands and is
+        // the honest one: we cannot show what the server has. Silence
+        // here would put us back where #283 started.
+      }
     }
   }
 

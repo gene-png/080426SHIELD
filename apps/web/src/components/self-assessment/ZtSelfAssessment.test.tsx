@@ -18,18 +18,43 @@ import { ZtSelfAssessment } from "./ZtSelfAssessment";
  * refused and a later reload silently lost it.
  *
  * Core principle 2 — never a lie that something succeeded — which #195/#282
- * fixed on the API while this layer kept reporting success. Those changes made
- * it MORE reachable, not less: the routes now return a typed 422 for fields
- * they previously accepted at 200.
+ * fixed on the API while this layer kept reporting success.
+ *
+ * A draft of this docstring said those changes made it "MORE reachable ... the
+ * routes now return a typed 422 for fields they previously accepted at 200".
+ * **That is false for these two components.** They only ever send
+ * `{maturity_stage}` / `{maturity_tier}` and `{notes}` — exactly the fields
+ * both narrowed schemas accept — so `extra="forbid"` cannot fire from this UI.
+ *
+ * The failures this surface CAN produce, which is what the cases below model:
+ * a 409 (the consultant approved the assessment while the client was typing,
+ * and the likeliest of these by far), `notes` over `max_length=8000`, an
+ * expired session, and network loss.
  *
  * ## Driven through the component, not the helper
  *
- * `describeSaveError` is a pure function and testing it would prove nothing
- * about whether anything calls it. Three times in this branch family a test
- * pinned the unit and not the wiring, so this renders the real component,
- * makes a real edit, rejects the real client call, and asserts on what the
- * client would see. Deleting the revert or the report turns it red.
+ * `describe-save-error.test.ts` owns the message CONTENT and can be run
+ * locally. This file owns the WIRING, which that one cannot see: whether
+ * anything calls the helper, and whether the revert reaches the screen. Three
+ * times in this branch family a test pinned the unit and not the wiring, so
+ * this renders the real component, makes a real edit, rejects with the error
+ * shape the real client throws, and asserts on what a client would see.
+ *
+ * Deleting the report turns it red; so, now, does deleting the revert — the
+ * first draft asserted only on alert text and would have stayed green with the
+ * entire recovery removed.
  */
+/**
+ * The error shape the real client throws — a `payload` and a `status`, NOT a
+ * plain `Error`. A draft of this file rejected with `new Error("...")`, which
+ * production cannot produce: `ZtProxyError`'s constructor is
+ * `super(`ZT proxy ${status}`)` and the reason lives on `.payload`. The test
+ * passed against a double and would have been 100% wrong live.
+ */
+function proxyError(status: number, payload: unknown): Error {
+  return Object.assign(new Error(`ZT proxy ${status}`), { status, payload });
+}
+
 vi.mock("@/lib/zt/client", () => ({
   ZtProxyError: class extends Error {},
   fetchCatalog: vi.fn(),
@@ -108,29 +133,57 @@ describe("ZtSelfAssessment — a save that fails", () => {
 
   it("tells the client, rather than showing the change as saved", async () => {
     vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
-      new Error("This endpoint applies only ['maturity_stage', 'notes']."),
+      proxyError(409, {
+        detail: "Your self-assessment is no longer editable.",
+      }),
     );
 
     await editNotes("a note the server will refuse");
 
-    // The discriminating assertion. Before #283 this was silence: no alert, and
-    // the rejected value left on screen as though it had been accepted.
+    // Before #283 this was silence: no alert, and the rejected value left on
+    // screen as though it had been accepted.
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("That change was not saved.");
-    expect(alert).toHaveTextContent("previous answer has been restored");
+    expect(alert).toHaveTextContent("CISA.ID.01");
+    expect(alert).toHaveTextContent("no longer editable");
+  });
+
+  it("puts the SERVER'S value back on screen, not a remembered one", async () => {
+    // THE ASSERTION THE FIRST DRAFT LACKED. It checked only the alert text, so
+    // deleting the entire revert left every test green — the #72 shape in the
+    // file written to prevent it. The `<summary>` preview renders from state,
+    // so it is observable in jsdom and goes red if the re-fetch is removed.
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
+      proxyError(409, { detail: "locked" }),
+    );
+    vi.mocked(ztClient.fetchSelfAssessment)
+      .mockResolvedValueOnce(assessment("original"))
+      .mockResolvedValueOnce(assessment("what the server actually has"));
+
+    await editNotes("a note the server will refuse");
+
+    await screen.findByRole("alert");
+    // Server truth, re-fetched — NOT the pre-write snapshot the client's
+    // browser happened to be holding.
+    expect(
+      await screen.findByText(/what the server actually has/),
+    ).toBeInTheDocument();
   });
 
   it("carries the server's own reason through, where there is one", async () => {
     // A generic sentence is an acceptable fallback; DISCARDING a typed reason
     // the API went to the trouble of returning is not.
     vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
-      new Error("target_stage is not settable here"),
+      proxyError(422, {
+        detail: [{ msg: "String should have at most 8000 characters" }],
+      }),
     );
 
     await editNotes("another note");
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("target_stage is not settable here");
+    expect(alert).toHaveTextContent("at most 8000 characters");
+    // And never the internal string the proxy class puts in `.message`.
+    expect(alert).not.toHaveTextContent("ZT proxy");
   });
 
   it("says nothing when the save succeeds", async () => {
