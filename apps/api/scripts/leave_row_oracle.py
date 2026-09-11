@@ -116,19 +116,37 @@ revisit when a guard is found that the list did not model.
 
 WHAT IS GATED AND WHAT IS NOT. This script is a REQUIRED STEP, not a gate:
 verifying rows needs judgement about what each row was for, and a tool that
-scored rows pass/fail would be asserting more than it knows. Exactly one
-property here can fail honestly on input nobody configured, and that one IS
-gated -- `--check-registry` fails when a LEAVE table has no registered guards.
-Without it, adding a table nobody wired up would report clean, which is "I could
-not look" and "nothing to complain about" sharing an exit code: the shape this
-repo has now produced three times in its own tooling, and this would have been
-the fourth, inside the tool built to catch it.
+scored rows pass/fail would be asserting more than it knows.
 
-EXIT CODES, per this repo's fail-closed convention (D-051):
-  0 - ran, or (with --check-registry) every LEAVE table has guards registered
-  1 - --check-registry: a LEAVE table has no registered guards
-  2 - could not run: baseline not green, a mutation would not compile, or the
-      source could not be restored (an unreadable input is NOT a pass)
+What CAN be gated is whatever fails on input nobody configured, and there is
+MORE THAN ONE such property. This paragraph said "exactly one" until #221, which
+was true when written and then became the sentence that stopped anyone looking
+for a second -- the narrower-rule-where-the-reader-is-standing shape, in the
+file a reader opens to find out what is checked. Both are behind
+`--check-registry`:
+
+  * a LEAVE table with no registered guards. Without it, adding a table nobody
+    wired up reports clean -- "I could not look" and "nothing to complain
+    about" sharing an exit code, the shape this repo has produced repeatedly in
+    its own tooling, and this would have been another instance inside the tool
+    built to catch it.
+  * a table DECLARED not-LEAVE whose rows the redactor leaves untouched (#221).
+    `NOT_LEAVE_TABLES` was a set of LABELS and nothing checked them, so a
+    mislabelled table was invisible twice over: its rows never scored, and the
+    registry reporting COMPLETE because the name was accounted for.
+
+EXIT CODES, per this repo's fail-closed convention (D-051). Note that
+`--check-registry` runs BOTH checks and returns the worse code, so a 1 or a 2
+from it can come from either:
+  0 - ran; or, with --check-registry, every LEAVE table has guards registered
+      AND every not-LEAVE label is true
+  1 - --check-registry: a LEAVE table has no registered guards, OR a table
+      declared not-LEAVE holds rows the redactor leaves alone
+  2 - could not look. Either the oracle could not run (baseline not green, a
+      mutation would not compile, the source could not be restored), or the
+      label check could not classify a table (an undeclared unreadable table, a
+      stale UNREADABLE_NOT_LEAVE declaration, or a declaration pointing at a
+      table that no longer exists). An unreadable input is NOT a pass.
 """
 
 from __future__ import annotations
@@ -174,7 +192,7 @@ TABLE_GUARDS: dict[str, list[str]] = {
         "phone/trailing-guard",
         "phone/digit-count-7-to-15",
         "phone/group-size-max-4",
-        "phone/at-most-four-groups",
+        "phone/at-most-five-groups",
         "phone/shape-validator",
         "phone/maximal-match-start",
         "phone/maximal-match-end",
@@ -406,14 +424,30 @@ def build_mutations(source: str):
         lambda s: s.replace("{1,4}", "{1,6}").replace("{0,4}", "{0,6}"),
     )
     swap(
-        "phone/at-most-four-groups",
-        # Re-anchored 2026-09-11. redact.py reads `+ r"+){1,3}"`; the anchor
-        # here read `+ r"){1,3}"` and matched nothing, so the ENTIRE oracle
-        # exited 2 -- its mutation half has been un-runnable on main for some
-        # time and nothing noticed, because the only automated property is
-        # `--check-registry`, which does not build mutations. Tracked as #299.
-        '+ r"+){1,3}"',
-        lambda s: s.replace("){1,3}", "){1,5}"),
+        # RENAMED with the re-anchor: `redact.py` has allowed FIVE groups since
+        # #153 (`+ r"){1,4}"` is four REPEATS after the first group). A guard
+        # named for a cap it no longer has is a false statement in the one
+        # place a reader looks to find out what was measured.
+        "phone/at-most-five-groups",
+        # Re-anchored 2026-09-11, and the FIRST re-anchor was wrong in the
+        # worst available way. The old anchor `+ r"){1,3}"` matched nothing, so
+        # the whole oracle exited 2 -- loud, and correct. Replacing it with
+        # `+ r"+){1,3}"` made it run again, and that line is the CITY-token
+        # repetition inside `_CITY_STATE_ZIP`, not the phone rule at all. The
+        # tool then printed a confident row for a phone guard while measuring
+        # the address rule, and left the real phone cap unmodelled in every
+        # variant INCLUDING all-guards-off -- so a PHONE_LEAVE row protected
+        # only by that cap would have been classified `negative-control`, the
+        # exact opposite of the truth, and removed from the risk-class
+        # denominator that produces the headline percentage.
+        #
+        # Every honest failure branch was bypassed: the uniqueness guard passed
+        # (the line is unique), the transform was not a no-op, and the mutated
+        # regex compiled. RUNNING THE ORACLE WOULD NOT HAVE CAUGHT IT -- a
+        # `flips 0` line beside an unexercised guard reads as normal, which is
+        # why `main()` now says so out loud.
+        '+ r"){1,4}"',
+        lambda s: s.replace("){1,4}", "){1,6}"),
     )
     swap(
         "phone/shape-validator",
@@ -588,9 +622,22 @@ def _module_context(module) -> dict:
     contradicts -- a row pinning nothing, which is the disease this whole file
     was built to measure.
 
-    Adding an org name or a hint can only redact MORE, never less, so requiring
-    survival under BOTH the bare call and the informed one is the conservative
-    direction: it can lose a finding, never invent one. The check is a floor.
+    Requiring survival under BOTH calls can lose a finding and never invent one.
+
+    NOT because more context redacts more -- that is false, and the first draft
+    of this docstring said it. `_redact_names` runs BEFORE `_redact_addresses`,
+    so `name_hints=("Reston",)` turns `Reston VA 20190` into `[NAME] VA 20190`,
+    and `_CITY_STATE_ZIP` then finds no city token before the state code and
+    does not fire: the state and the ZIP SURVIVE a call that was given more
+    information. Found by the #221 reviewer, which is the point of pointing one
+    at a justification rather than only at code.
+
+    The real reason is byte-identity. `survives` requires `out == text` under
+    both calls, and the informed call differs from the bare one only at the two
+    substitution passes -- so if the informed output is identical to the input,
+    neither pass fired, and the two runs were the same run. The second call
+    therefore does exactly one thing: it excludes rows where an org or hint
+    match occurs. That is a floor, and it does not depend on monotonicity.
     """
     org = getattr(module, "_ORG", None)
     hints = getattr(module, "_HINTS", None)
@@ -667,7 +714,24 @@ def not_leave_row_findings():
             for row in table
             if isinstance(row, (list, tuple)) and len(row) > 1 and isinstance(row[1], str)
         ]
-        if not rows:
+        # PARTIAL is "could not look", not "nothing to complain about" (#221
+        # review). Reporting a table as readable when some of its rows were
+        # dropped lets the clean message claim it was classified row by row over
+        # rows nothing read -- the same collapse this check exists to end, one
+        # level down, at row granularity instead of table granularity.
+        #
+        # Latent today: every NOT_LEAVE table is homogeneous, and
+        # PUB28_DESIGNATORS is uniformly unreadable and declared. It stops being
+        # latent the first time anyone adds a differently-shaped row to a REDACT
+        # table -- a regression marker, a decision row -- which is exactly the
+        # kind of edit nobody would think to re-check this against.
+        # BOTH conditions. `len(rows) != len(table)` does not cover an EMPTY
+        # table: 0 == 0, so an emptied REDACT table would fall through to a
+        # loop that runs zero times and report clean having classified nothing.
+        # `discover_tables` cannot save us here -- it skips empty tables, and
+        # this function iterates NOT_LEAVE_TABLES directly. Collapsing these
+        # two into one reopened that hole for the length of one edit.
+        if not rows or len(rows) != len(table):
             unreadable.append(name)
             continue
         context = _module_context(module)
@@ -694,8 +758,9 @@ def check_labels() -> int:
             print(f"  {t}: declared in NOT_LEAVE_TABLES and present in neither")
             print("     matrix module. The declaration points at nothing.")
         for t in undeclared:
-            print(f"  {t}: no row carries text at index 1, so no row can be")
-            print("     classified. Declare it in UNREADABLE_NOT_LEAVE with the")
+            print(f"  {t}: not every row carries text at index 1, so the table")
+            print("     cannot be classified in full. A PARTIAL read is not a")
+            print("     clean one. Declare it in UNREADABLE_NOT_LEAVE with the")
             print("     reason, or give the collector a shape it can read.")
         for t in stale:
             print(f"  {t}: declared UNREADABLE, but its rows ARE readable now.")
@@ -808,6 +873,14 @@ def main(argv: list[str]) -> int:
     print(f"baseline clean: {len(rows)} LEAVE rows across {len(TABLE_GUARDS)} tables")
     print(f"guards modelled: {len(muts)}")
     print()
+    print("A guard marked `unexercised` flipped no row. That has TWO causes and")
+    print("the tool cannot tell them apart: no LEAVE row depends on it, or the")
+    print("mutation is anchored on the wrong line. The second produced a")
+    print("confident, wrong report once already -- an anchor moved to a line")
+    print("belonging to a different rule entirely, which the uniqueness check,")
+    print("the no-op check and the compile check all passed. Check the anchor")
+    print("before reading a zero as coverage information.")
+    print()
 
     killed_by: dict = {}
     protected_alone: set = set()
@@ -825,7 +898,7 @@ def main(argv: list[str]) -> int:
                 # a guard from the measurement and inflates `unrelated`.
                 print(f"  !! {name} did not compile: {type(exc).__name__}: {str(exc)[:70]}")
                 return 2
-            print(f"  {name:48} flips {len(failing):3}")
+            print(f"  {name:48} flips {len(failing):3}{'   <- unexercised' if not failing else ''}")
             for key in failing:
                 killed_by.setdefault(key, []).append(name)
 

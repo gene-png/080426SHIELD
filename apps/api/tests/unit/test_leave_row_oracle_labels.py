@@ -140,6 +140,60 @@ def test_an_undeclared_unreadable_table_is_cannot_look(monkeypatch) -> None:
 
 
 @pytest.mark.unit
+def test_a_PARTIALLY_readable_table_is_cannot_look_too(monkeypatch) -> None:
+    """A table where only SOME rows carry text (#221 review).
+
+    The first version reported a table unreadable only when EVERY row failed the
+    shape test, so a mixed table was classified on the readable subset and the
+    clean message still claimed it had been classified row by row. That is this
+    check's own collapse one level down -- at row granularity instead of table
+    granularity -- and the whole argument for `UNREADABLE_NOT_LEAVE` being
+    two-directional is that partial visibility must be DECLARED.
+
+    Latent on the tree as it stands: every NOT_LEAVE table is homogeneous. It
+    stops being latent the first time anyone adds a differently-shaped row to a
+    REDACT table, which is not an edit anyone would think to re-check here.
+    """
+    module, _ = _matrix_modules()
+    monkeypatch.setattr(
+        module,
+        "A_MIXED_TABLE",
+        [("readable", INERT_PROSE), ("shapeless", True, "why")],
+        raising=False,
+    )
+    monkeypatch.setitem(NOT_LEAVE_TABLES, "A_MIXED_TABLE", "fixture for #221")
+
+    findings, unreadable, _missing = not_leave_row_findings()
+    assert (
+        "A_MIXED_TABLE" in unreadable
+    ), "a table read in part must report as unreadable, not as classified"
+    assert [f for f in findings if f[0] == "A_MIXED_TABLE"] == [], (
+        "and it must not ALSO report findings from the half it could read -- "
+        "a partial verdict beside a cannot-look is two answers to one question"
+    )
+    assert check_labels() == 2
+
+
+@pytest.mark.unit
+def test_an_EMPTY_table_is_cannot_look_rather_than_clean(monkeypatch) -> None:
+    """`len(rows) != len(table)` alone does not catch this: 0 == 0.
+
+    An emptied REDACT table would fall through to a loop that runs zero times
+    and report clean having classified nothing. `discover_tables` cannot help --
+    it skips empty tables, and `not_leave_row_findings` iterates
+    `NOT_LEAVE_TABLES` directly. Pinned because collapsing the two conditions
+    into one reopened exactly this for the length of one edit.
+    """
+    module, _ = _matrix_modules()
+    monkeypatch.setattr(module, "AN_EMPTY_TABLE", [], raising=False)
+    monkeypatch.setitem(NOT_LEAVE_TABLES, "AN_EMPTY_TABLE", "fixture for #221")
+
+    _findings, unreadable, _missing = not_leave_row_findings()
+    assert "AN_EMPTY_TABLE" in unreadable
+    assert check_labels() == 2
+
+
+@pytest.mark.unit
 def test_a_stale_unreadable_declaration_is_also_cannot_look(monkeypatch) -> None:
     """The OTHER direction, and it is the half that would have rotted.
 
