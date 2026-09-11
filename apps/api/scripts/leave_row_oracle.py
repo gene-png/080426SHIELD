@@ -193,6 +193,29 @@ TABLE_GUARDS: dict[str, list[str]] = {
         "sig/signatory-word-cap",
         "sig/prose-stops-the-scan",
     ],
+    # Found by the LABEL CHECK, not remembered. Three rows inside
+    # IDEMPOTENCE_CASES that the redactor leaves byte-identical -- LEAVE rows in
+    # substance, sitting in a table whose NAME says it is about something else,
+    # which is why nobody classified them.
+    #
+    # MEASURED, on 2026-09-11, by running the oracle over these three rows and
+    # reading which mutations flip them. A first draft of this list was written
+    # from plausibility and named `addr/letter-prefix-capped-at-3`, which flips
+    # nothing at all in the whole corpus. The value here is advisory -- the
+    # gate checks the KEY -- but an advisory value read off a guess is a false
+    # sentence in a file people read for orientation.
+    #
+    #   `Suite [ADDRESS]`                       pinned by the guard below
+    #   `Flowmon and Unitrends are deployed.`   defended IN DEPTH -- in the risk
+    #                                           class, and no SINGLE guard flips
+    #                                           it, so no guard belongs here
+    #   `[CLIENT] SOC Platform`                 negative control by design; it
+    #                                           survives the all-guards-off
+    #                                           variant, so no guard was ever
+    #                                           its reason
+    "IDEMPOTENCE_NOOP": [
+        "addr/no-sep-branch-requires-digit",
+    ],
 }
 
 
@@ -217,6 +240,30 @@ NOT_LEAVE_TABLES: dict[str, str] = {
     # table names. Registered as LEAVE below via `pub28_excluded_rows()`.
     "PUB28_DESIGNATORS": "decision table; its LEAVE half is collected separately, see below",
 }
+
+
+# Tables declared not-LEAVE whose rows carry no candidate text at index 1, so
+# the LABEL CHECK cannot classify them at all. Declared with the reason, and
+# gated in BOTH DIRECTIONS: a name here whose table turns out to be readable
+# fails exactly as an unreadable table missing from here does.
+#
+# One direction would rot silently. A declaration that only ever suppresses a
+# report is a permanent exemption wearing a reason -- it keeps saying "cannot
+# look" long after the shape changed and the check could have looked. The
+# two-directional form makes this a measurement rather than a list.
+UNREADABLE_NOT_LEAVE: dict[str, str] = {
+    "PUB28_DESIGNATORS": (
+        "rows are (designator, covered?, why) -- index 1 is a bool, not text, so "
+        "there is nothing for the classifier to run on. Its LEAVE half is "
+        "collected by `pub28_excluded_rows()` and measured as PUB28_EXCLUDED."
+    ),
+}
+
+
+#: The prefix `IDEMPOTENCE_CASES` uses for a row the redactor leaves alone.
+#: Read as a CLAIM BY THE AUTHOR, never as a measurement -- see
+#: `idempotence_noop_rows()` for why that distinction is load-bearing.
+NOOP_LABEL = "no-op:"
 
 
 class CannotMeasure(Exception):
@@ -360,7 +407,12 @@ def build_mutations(source: str):
     )
     swap(
         "phone/at-most-four-groups",
-        '+ r"){1,3}"',
+        # Re-anchored 2026-09-11. redact.py reads `+ r"+){1,3}"`; the anchor
+        # here read `+ r"){1,3}"` and matched nothing, so the ENTIRE oracle
+        # exited 2 -- its mutation half has been un-runnable on main for some
+        # time and nothing noticed, because the only automated property is
+        # `--check-registry`, which does not build mutations. Tracked as #299.
+        '+ r"+){1,3}"',
         lambda s: s.replace("){1,3}", "){1,5}"),
     )
     swap(
@@ -405,7 +457,8 @@ def build_mutations(source: str):
     )
     swap(
         "sig/signatory-word-cap",
-        "1 <= len(words) <= _MAX_SIGNATORY_WORDS",
+        # Re-anchored 2026-09-11: `words` was renamed `substantive`. See #299.
+        "1 <= len(substantive) <= _MAX_SIGNATORY_WORDS",
         lambda s: s.replace("_MAX_SIGNATORY_WORDS", "99"),
     )
     # B1's fix: the scan stops at the first SENTENCE instead of reaching
@@ -419,6 +472,22 @@ def build_mutations(source: str):
     return out
 
 
+def _matrix_modules():
+    """The two truth-table modules, imported once.
+
+    Four copies of this sys.path dance existed before the label check needed a
+    fifth. `CLAUDE.md`: prefer a derivation over a synchronisation -- and four
+    copies of an import path are four places for it to drift.
+    """
+    for path in (str(REPO_APP), str(TESTS)):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    import test_redact_address_matrix as M
+    import test_redact_rules_matrix as N
+
+    return (M, N)
+
+
 def discover_tables() -> dict[str, int]:
     """Every module-level table in the two matrix modules, by introspection.
 
@@ -427,14 +496,8 @@ def discover_tables() -> dict[str, int]:
     the property a hand-written universe cannot have, and the reason the gate
     was reporting on 11 of 13 tables while claiming completeness.
     """
-    for path in (str(REPO_APP), str(TESTS)):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-    import test_redact_address_matrix as M
-    import test_redact_rules_matrix as N
-
     found: dict[str, int] = {}
-    for module in (M, N):
+    for module in _matrix_modules():
         for name in dir(module):
             if not name.isupper() or name.startswith("_"):
                 continue
@@ -452,22 +515,37 @@ def pub28_excluded_rows():
     substance; they were invisible to the oracle because the table they live in
     has a different shape and a name nobody had listed.
     """
-    for path in (str(REPO_APP), str(TESTS)):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-    import test_redact_address_matrix as M
-
+    M, _ = _matrix_modules()
     return [(d, f"{d} 3") for d, covered, _why in M.PUB28_DESIGNATORS if not covered]
+
+
+def idempotence_noop_rows():
+    """The LEAVE half of IDEMPOTENCE_CASES, as (id, text) pairs.
+
+    Selected by the AUTHOR'S LABEL, never by running the redactor. That is the
+    whole design: deriving these from what survives would make the label check
+    below unable to fail on this table, because the collector and the check
+    would share a criterion and agree by construction -- #72's shape, in the
+    tool built to find it.
+
+    So the label is one claim and the redactor is the other. A row labelled
+    `no-op:` that actually redacts, and a row not so labelled that survives,
+    both become findings.
+
+    These rows were invisible to the oracle for the same reason PUB28's were:
+    they sit in a table whose NAME says it is about idempotence, so nobody
+    classified them as LEAVE rows. They are: `Suite [ADDRESS]`,
+    `Flowmon and Unitrends are deployed.`, and `[CLIENT] SOC Platform` --
+    ordinary prose asserted to survive the redactor, which is exactly what a
+    LEAVE row is.
+    """
+    M, _ = _matrix_modules()
+    return [(rid, text) for rid, text in M.IDEMPOTENCE_CASES if rid.startswith(NOOP_LABEL)]
 
 
 def leave_rows():
     """Every LEAVE row in both truth tables, as (table, id, text)."""
-    for p in (str(REPO_APP), str(TESTS)):
-        if p not in sys.path:
-            sys.path.insert(0, p)
-    import test_redact_address_matrix as M
-    import test_redact_rules_matrix as N
-
+    M, N = _matrix_modules()
     tables = (
         ("SUFFIX_SHAPE_PROSE", [(c[0], c[1]) for c in M.SUFFIX_SHAPE_PROSE]),
         ("POSITION_LEAVE", [(c[0], c[1]) for c in M.POSITION_LEAVE]),
@@ -481,6 +559,7 @@ def leave_rows():
         ("CONTRACT_LEAVE", [(c[0], c[1]) for c in N.CONTRACT_LEAVE]),
         ("SIGNATURE_LEAVE", [(c[0], c[1]) for c in N.SIGNATURE_LEAVE]),
         ("PUB28_EXCLUDED", pub28_excluded_rows()),
+        ("IDEMPOTENCE_NOOP", idempotence_noop_rows()),
     )
     return [(table, rid, text) for table, pairs in tables for rid, text in pairs]
 
@@ -496,6 +575,162 @@ def _evaluate(rows):
         if out != text:
             failing.add((table, rid))
     return failing
+
+
+def _module_context(module) -> dict:
+    """The redaction context a matrix module's own tests supply.
+
+    `IDEMPOTENCE_CASES` is driven through a helper that passes
+    `client_org_name` and `name_hints`; the oracle's default call passes
+    neither, so `Northwind runs the SOC.` survives the oracle and does NOT
+    survive the table's own call. Classifying it as a LEAVE row would be false,
+    and collecting it as one would assert survival the idempotence test
+    contradicts -- a row pinning nothing, which is the disease this whole file
+    was built to measure.
+
+    Adding an org name or a hint can only redact MORE, never less, so requiring
+    survival under BOTH the bare call and the informed one is the conservative
+    direction: it can lose a finding, never invent one. The check is a floor.
+    """
+    org = getattr(module, "_ORG", None)
+    hints = getattr(module, "_HINTS", None)
+    context: dict = {}
+    if isinstance(org, str) and org:
+        context["client_org_name"] = org
+    if isinstance(hints, (list, tuple)) and hints:
+        context["name_hints"] = tuple(hints)
+    return context
+
+
+def survives(text: str, context: dict) -> bool:
+    """True when the redactor leaves `text` byte-identical under every call.
+
+    This is `_evaluate`'s question asked of one row: a LEAVE row is exactly a
+    row the redactor does not touch. Running the SAME classifier over the
+    excluded tables is the point -- a second implementation would be a second
+    statement of one rule.
+    """
+    import app.ai.redact as R
+
+    out, _ = R.redact_for_ai(text, mode="strict")
+    if out != text:
+        return False
+    if not context:
+        return True
+    informed, _ = R.redact_for_ai(text, mode="strict", **context)
+    return informed == text
+
+
+def not_leave_row_findings():
+    """Rows a NOT_LEAVE table declares that are LEAVE rows nothing measures.
+
+    Returns `(findings, unreadable, missing)`.
+
+    `NOT_LEAVE_TABLES` is a set of LABELS and nothing checked them. A table
+    mislabelled not-LEAVE is invisible to the oracle twice over: its rows are
+    never scored, and `--check-registry` reports the registry complete because
+    the name IS accounted for. The gate confirmed what somebody wrote down.
+
+    A row is a finding when BOTH hold:
+
+      * the redactor leaves it byte-identical -- it is a LEAVE row in
+        substance, whatever the table is called; and
+      * no LEAVE table collects that text -- so nothing measures it.
+
+    The second clause is what makes the remedy the right one. A finding is
+    cleared by COLLECTING the row as a LEAVE row (which puts it in front of
+    every mutation the oracle applies), not by exempting it. `PUB28_EXCLUDED`
+    and `IDEMPOTENCE_NOOP` are both that remedy already applied.
+
+    **The residual, stated so it is examined rather than assumed.** A row whose
+    LEAVE-ness is not visible to this classifier -- one that redacts under the
+    default call but is asserted to survive under some other call, or one whose
+    text is built at test time rather than written in the table -- stays
+    invisible. The check is a FLOOR, not a census, with a known error
+    direction: it can only under-report.
+    """
+    modules = _matrix_modules()
+    collected = {text for _table, _rid, text in leave_rows()}
+
+    findings: list[tuple[str, str, str]] = []
+    unreadable: list[str] = []
+    missing: list[str] = []
+
+    for name in sorted(NOT_LEAVE_TABLES):
+        module = next((m for m in modules if hasattr(m, name)), None)
+        if module is None:
+            missing.append(name)
+            continue
+        table = getattr(module, name)
+        rows = [
+            (row[0], row[1])
+            for row in table
+            if isinstance(row, (list, tuple)) and len(row) > 1 and isinstance(row[1], str)
+        ]
+        if not rows:
+            unreadable.append(name)
+            continue
+        context = _module_context(module)
+        for rid, text in rows:
+            if text in collected:
+                continue
+            if survives(text, context):
+                findings.append((name, rid, text))
+
+    return findings, unreadable, missing
+
+
+def check_labels() -> int:
+    """Verify the NOT_LEAVE labels rather than trusting them (#221)."""
+    findings, unreadable, missing = not_leave_row_findings()
+
+    undeclared = [t for t in unreadable if t not in UNREADABLE_NOT_LEAVE]
+    stale = [t for t in sorted(UNREADABLE_NOT_LEAVE) if t not in unreadable]
+
+    if missing or undeclared or stale:
+        print("leave-row-oracle: the label check could not look")
+        print()
+        for t in missing:
+            print(f"  {t}: declared in NOT_LEAVE_TABLES and present in neither")
+            print("     matrix module. The declaration points at nothing.")
+        for t in undeclared:
+            print(f"  {t}: no row carries text at index 1, so no row can be")
+            print("     classified. Declare it in UNREADABLE_NOT_LEAVE with the")
+            print("     reason, or give the collector a shape it can read.")
+        for t in stale:
+            print(f"  {t}: declared UNREADABLE, but its rows ARE readable now.")
+            print("     A declaration that outlives its reason is an exemption.")
+        print()
+        print('"I could not look" is not "nothing to complain about", so this')
+        print("is exit 2 rather than a clean report or a violation.")
+        return 2
+
+    if findings:
+        print("leave-row-oracle: rows declared NOT_LEAVE that the redactor leaves alone")
+        print()
+        for table, rid, text in findings:
+            print(f"  {table} / {rid}")
+            print(f"     {text!r}")
+        print()
+        print("Each of these survives `redact_for_ai(..., mode='strict')` byte for")
+        print("byte, which is what a LEAVE row is -- and no LEAVE table collects it,")
+        print("so no mutation this oracle applies is ever scored against it.")
+        print()
+        print("The remedy is to COLLECT them, not to exempt them: add a derived")
+        print("collector beside `pub28_excluded_rows()` / `idempotence_noop_rows()`")
+        print("and register it in TABLE_GUARDS, so the rows join the measurement.")
+        print("If a row is genuinely not asserted to survive, the table is what")
+        print("needs fixing.")
+        return 1
+
+    checked = sum(1 for name in NOT_LEAVE_TABLES if name not in UNREADABLE_NOT_LEAVE)
+    print(
+        f"leave-row-oracle: labels clean ({checked} of {len(NOT_LEAVE_TABLES)} "
+        f"not-LEAVE tables classified row by row; "
+        f"{len(UNREADABLE_NOT_LEAVE)} declared unclassifiable). Floor, not a "
+        f"census -- see `not_leave_row_findings`."
+    )
+    return 0
 
 
 def check_registry(rows) -> int:
@@ -540,7 +775,17 @@ def check_registry(rows) -> int:
 def main(argv: list[str]) -> int:
     rows = leave_rows()
     if "--check-registry" in argv:
-        return check_registry(rows)
+        # Both, always, and the WORSE code wins. The registry asks whether every
+        # table is classified; the labels ask whether the classification is
+        # true. A complete registry over a wrong label is the failure #221
+        # records, so reporting only the first would keep producing it.
+        #
+        # 2 beats 1 deliberately: "I could not look" is the more urgent of the
+        # two, because a violation is a fact about the code and a 2 is a fact
+        # about the instrument.
+        registry = check_registry(rows)
+        labels = check_labels()
+        return max(registry, labels)
 
     original = _original()
     REDACT.write_text(original, encoding="utf-8")
