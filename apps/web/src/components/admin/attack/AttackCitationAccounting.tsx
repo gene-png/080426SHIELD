@@ -203,6 +203,32 @@ export function AttackCitationAccounting({
         </p>
       ) : null}
 
+      {/* #109. A run can DECLINE to write a row's citation record: when the
+          column is NULL and a field this run did not resolve still holds tools,
+          the write is skipped so the row stays withheld. That is fail-closed on
+          score and was completely silent -- the consultant saw a row the run had
+          just touched, unchanged, with nothing saying the run had looked at it
+          and stopped. Every other count in this component reaches a surface;
+          this one shipped reaching none, which reads as an oversight rather
+          than a decision. */}
+      {(result.rows_left_unresolved ?? 0) > 0 ? (
+        <p
+          className="text-ink-secondary"
+          data-testid="attack-rows-left-unresolved"
+        >
+          {result.rows_left_unresolved === 1
+            ? "1 technique was left unresolved"
+            : `${result.rows_left_unresolved} techniques were left unresolved`}{" "}
+          because a field this run did not answer still holds tools nothing has
+          checked
+          {(result.unresolved_fields ?? []).length > 0
+            ? ` (${(result.unresolved_fields ?? []).join(", ")})`
+            : ""}
+          . They stay held out of the coverage score. Re-run so the model
+          answers those fields, or set their tools yourself.
+        </p>
+      ) : null}
+
       {unusable > 0 ? (
         <p
           className="text-ink-secondary"

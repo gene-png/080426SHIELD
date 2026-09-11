@@ -138,6 +138,19 @@ export interface AttackRunAiResponse {
   // #102. TECHNIQUES this run left unbacked, not citations: one flagged tool
   // cited by forty techniques is one citation and forty pieces of review work.
   pending_review_rows?: number;
+  /**
+   * #109. Rows this run LOOKED AT and deliberately did not write a citation
+   * record for, because the column was NULL and a field the run did not resolve
+   * still held tools nothing had accounted for. Fail-closed on score -- the row
+   * stays pending -- and previously invisible, so a consultant saw a row a run
+   * had just touched sitting unchanged with no statement that anything had
+   * happened to it.
+   *
+   * `unresolved_fields` is the union across rows, not per row: it answers "what
+   * shape does the next prompt need to send", and the per-row answer is the row.
+   */
+  rows_left_unresolved?: number;
+  unresolved_fields?: string[];
 }
 
 export interface TacticHeatmapEntry {

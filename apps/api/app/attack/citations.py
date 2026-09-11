@@ -398,6 +398,21 @@ class CitationOutcome:
     #: tool name would cancel out a real one.
     inferred: list[dict] = field(default_factory=list)
     rejected_details: list[dict] = field(default_factory=list)
+    #: The THIRD outcome that resolves to no tool name, and the one that had a
+    #: counter and no record (#109). `pending.py` named it as a known gap.
+    #:
+    #: Same shape and same reason as `rejected_details`: without it, "the model
+    #: sent a malformed detection citation and we dropped it" stores as `[]`
+    #: over an empty tool list -- byte-identical to a field nobody cited
+    #: anything for. The row's SCORE is unaffected, because a row left with no
+    #: tools at all still gets a `no_citation` entry; what was lost is the
+    #: disclosure on a row that also carries a usable tool from another field.
+    #:
+    #: `cited` carries the offending string when there WAS one (a bare string
+    #: where a list belongs) and is None otherwise -- a null, an empty name, a
+    #: number. Recording `str(None)` would put the word "None" in a consultant's
+    #: queue as though the model had written it.
+    unusable_details: list[dict] = field(default_factory=list)
 
 
 def _retract_inference(out: CitationOutcome, name: str) -> None:
@@ -432,6 +447,18 @@ def resolve_citations(names: object, resolver: CitationResolver) -> CitationOutc
         # tools get overwritten with nothing either way. Count it rather than
         # returning an empty outcome that reads as "the model cited nothing".
         out.unusable = 1
+        # The whole FIELD was unusable, not one entry in it. Distinguished by
+        # reason rather than collapsed, because the two are different things to
+        # fix: `unusable_field` means the model sent the wrong SHAPE for the
+        # field, `unusable_entry` means one item inside a correct list was not a
+        # name. A consultant reading "the model sent a bare string where a list
+        # belongs" knows what to look at; "something was unusable" does not.
+        out.unusable_details.append(
+            {
+                "cited": names if isinstance(names, str) and names.strip() else None,
+                "reason": "unusable_field",
+            }
+        )
         return out
     seen: set[str] = set()
     for cited in names:
@@ -441,6 +468,11 @@ def resolve_citations(names: object, resolver: CitationResolver) -> CitationOutc
         # is a silent discard, which is the defect this module exists to end.
         if not isinstance(cited, str) or not cited.strip():
             out.unusable += 1
+            # `cited` is None by construction here: this branch is reached only
+            # for a non-string or a blank one, and neither is a name a
+            # consultant can act on. The RECORD still has to exist -- a count
+            # with no record is what #109 is.
+            out.unusable_details.append({"cited": None, "reason": "unusable_entry"})
             continue
         res = resolver.resolve(cited)
         if res.name is None:

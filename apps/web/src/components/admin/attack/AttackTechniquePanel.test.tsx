@@ -48,6 +48,25 @@ const REJECTED: UnconfirmedCitation = {
   cleared_at: null,
 };
 
+// #109. Carries `tool: null` exactly like REJECTED, which is why the copy has
+// to branch on the REASON: the value never reached a lookup, so "not on the
+// approved list" is a verdict nothing produced.
+const UNUSABLE_FIELD: UnconfirmedCitation = {
+  tool: null,
+  cited: "CrowdStrike Falcon",
+  reason: "unusable_field",
+  field: "detection_tools",
+  cleared_at: null,
+};
+
+const UNUSABLE_ENTRY: UnconfirmedCitation = {
+  tool: null,
+  cited: null,
+  reason: "unusable_entry",
+  field: "detection_tools",
+  cleared_at: null,
+};
+
 function panel(coverage: AttackCoverageRow, onConfirm = vi.fn()) {
   return render(
     <AttackTechniquePanel
@@ -174,6 +193,51 @@ describe("AttackTechniquePanel — a pending row with NO stored entries", () => 
     expect(
       screen.queryByRole("button", { name: /confirm this evidence/i }),
     ).toBeNull();
+  });
+
+  it("does not tell a consultant a wrongly-shaped citation was off the list", () => {
+    // #109, and it is a copy defect rather than a rendering one. The entry has
+    // `tool: null` like a rejection, so the rejection sentence claimed the
+    // model named something "not on the approved list". The resolver never
+    // looked it up -- the value arrived in the wrong SHAPE -- so the model may
+    // well have named a tool that IS on the list, which is exactly what the
+    // consultant needs to know to fix the run.
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({
+          pending_review: true,
+          unconfirmed_citations: [UNUSABLE_FIELD],
+        })}
+        coverageDefinitions={[]}
+        onPatch={vi.fn()}
+        onConfirmCitations={vi.fn()}
+      />,
+    );
+    const queue = screen.getByTestId("attack-citation-queue");
+    expect(queue).toHaveTextContent(/where a list of tool names belongs/i);
+    expect(queue).toHaveTextContent(/CrowdStrike Falcon/);
+    expect(queue).not.toHaveTextContent(/not on the approved list/i);
+  });
+
+  it("says a nameless entry was skipped rather than quoting an em dash", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({
+          pending_review: true,
+          unconfirmed_citations: [UNUSABLE_ENTRY],
+        })}
+        coverageDefinitions={[]}
+        onPatch={vi.fn()}
+        onConfirmCitations={vi.fn()}
+      />,
+    );
+    const queue = screen.getByTestId("attack-citation-queue");
+    expect(queue).toHaveTextContent(/was empty or was not text/i);
+    // The old path rendered `Cited "—"`, which quotes a character the model
+    // never sent back at the person trying to work out what it sent.
+    expect(queue).not.toHaveTextContent(/Cited "—"/);
   });
 
   it("stays silent for a row that is neither pending nor flagged", () => {

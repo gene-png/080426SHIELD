@@ -69,6 +69,35 @@ function citationLine(c: UnconfirmedCitation): string {
   if (c.reason === "no_citation") {
     return "The model claimed this status and cited no tool at all.";
   }
+  // #109. These arrive with `tool: null` like a rejection, and the rejection
+  // sentence below would be FALSE about them: "not on the approved list" is a
+  // verdict the resolver never reached, because the value never got as far as
+  // being looked up. The model may well have named a tool that IS on the list
+  // and sent it in the wrong shape -- which is what a consultant needs to know
+  // to fix the run, and the opposite of what the rejection copy tells them.
+  // The tail clause is load-bearing, not politeness. These entries name a
+  // tool the consultant may well recognise and own, and "Confirm this
+  // evidence" below does NOT apply it -- confirming stamps `cleared_at` and
+  // nothing else, so a `covered` row with no tools stops being withheld and
+  // reaches the client's coverage percentage backed by nothing. A consultant
+  // reading "wrong shape, right tool" would click it. Both actions named here
+  // exist and work today: re-run, or set the tools by hand.
+  const NOT_APPLIED_BY_CONFIRMING =
+    " Confirming accepts the status without this tool — re-run, or set the tools yourself, to apply it.";
+  if (c.reason === "unusable_field") {
+    return (
+      (c.cited
+        ? `The model sent "${c.cited}" for this field where a list of tool names belongs, so nothing was applied.`
+        : "The model sent a value for this field that was not a list of tool names, so nothing was applied.") +
+      NOT_APPLIED_BY_CONFIRMING
+    );
+  }
+  if (c.reason === "unusable_entry") {
+    return (
+      "One of the tool names the model sent for this field was empty or was not text, so it was skipped." +
+      NOT_APPLIED_BY_CONFIRMING
+    );
+  }
   if (c.tool === null) {
     return `Cited "${c.cited ?? "\u2014"}" \u2014 not on the approved list, so nothing was applied.`;
   }
@@ -243,11 +272,19 @@ export function AttackTechniquePanel({
                 </li>
               ))}
             </ul>
+            {/* `&mdash;` as an HTML entity, NOT a unicode escape. This is
+                JSX TEXT, where escapes are not processed, so the
+                consultant was reading six literal characters. The file's
+                own convention proves the slip: `&rsquo;` is used in JSX
+                text a few lines up, and the escape form is used
+                correctly inside `citationLine`'s template literals.
+                Pre-existing; fixed here because #109 already edits this
+                component's copy. */}
             {outstanding > 0 ? (
               <p className="text-xs text-ink-tertiary">
                 While anything here is awaiting review and nothing else on this
                 technique is confirmed, the coverage score holds this status
-                back \u2014 it is not counted as covered, and it is not a gap.
+                back &mdash; it is not counted as covered, and it is not a gap.
               </p>
             ) : null}
             {outstanding > 0 && !readOnly && onConfirmCitations ? (

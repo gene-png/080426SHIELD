@@ -67,14 +67,38 @@ model claimed coverage and named nothing" both store as `[]` over empty tool
 lists, which is byte-identical to a consultant's own hand-curated `covered` --
 and that third one must NOT be withheld.
 
-**There is a third such outcome and it is NOT stored yet: `unusable`** -- a bare
-string where a list belongs, a null, an empty name (`resolve_citations` counts
-these and emits no record). Scoring is unaffected, because a row left with no
-tools at all still gets a `no_citation` entry; what is lost is the per-row
-DISCLOSURE when the row also carries a usable tool from another field. Named
-here rather than left for a reader to discover the count and the record
-disagreeing -- an earlier version of this paragraph said "the two outcomes",
-which read as complete. Tracked separately.
+**There is a THIRD such outcome and it is stored too, since #109: `unusable`**
+-- a bare string where a list belongs, a null, an empty name. `resolve_citations`
+counted these and emitted no record, so the count and the record disagreed: a
+row that also carried a usable tool from another field lost the disclosure
+entirely, and the technique panel showed nothing.
+
+It records `tool: null` like the other two, and it is split by reason --
+`unusable_field` when the model sent the wrong SHAPE for the whole field,
+`unusable_entry` when one item inside a correct list was not a name. Those are
+different things to fix and reporting them alike tells a consultant nothing they
+can act on.
+
+**Scoring is deliberately unchanged by it.** `tool` is null, so `uncleared_tools`
+never sees it and `is_pending_review` still returns at case 1 whenever a
+confirmed tool backs the row. That is a property worth stating because the
+obvious reading of "another uncleared entry" is that it withholds, and both
+directions are pinned in `test_attack_unusable_citations.py`.
+
+**What DID change is which entry withholds a row that has no tools at all.**
+`run_ai` writes a `no_citation` marker only when the row's merged entry list is
+empty, so an unusable entry fills that slot and the `no_citation` marker is not
+written. The row is still withheld -- by case 2 over the unusable entry instead
+-- and a reader grepping `no_citation` for "the model claimed this and named
+nothing" will not find it on those rows. Pinned in `test_attack_run_ai.py`.
+
+**And the storage claim has one carve-out.** `run_ai` declines to write the
+citation record at all when the column is NULL and a field it did not resolve
+still holds tools -- see the guard there, which is fail-closed on score. On
+those rows `citations_unusable` is still incremented and no record is stored,
+which is the count-without-a-record divergence #109 is about, surviving inside
+the fix for it. It is reported rather than hidden: the run publishes
+`rows_left_unresolved` and the field names that caused it.
 
 That fidelity is what makes the plan's "related defect" enforceable at all: "a
 technique can currently read `covered` with EMPTY tool lists ... treat it as in

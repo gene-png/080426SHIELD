@@ -217,6 +217,18 @@ class AttackRunAiResponse(BaseModel):
     # row's tools are overwritten either way and a silent discard is the defect
     # this whole change exists to end.
     citations_unusable: int = 0
+    # #109. Rows this run looked at and deliberately did NOT write a citation
+    # record for, because the column was NULL and a field the run did not
+    # resolve still held tools nothing had accounted for. Fail-closed on score
+    # -- the row stays pending -- and previously invisible, so a consultant saw
+    # a row that a run had just touched sitting unchanged with no statement that
+    # anything had happened to it.
+    #
+    # `unresolved_fields` is the union across rows, not per row: it answers
+    # "what shape does the next prompt need to send" rather than "which row",
+    # and the per-row answer is the row itself.
+    rows_left_unresolved: int = 0
+    unresolved_fields: list[str] = Field(default_factory=list)
     # #102. How many rows this run left making a claim their evidence does not
     # back -- inferred-and-uncleared citations, plus the rows whose every
     # citation was rejected and now hold a status over an empty tool list.
