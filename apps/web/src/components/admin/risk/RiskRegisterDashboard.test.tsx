@@ -63,6 +63,12 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
 function register(over: Partial<RiskRegister> = {}): RiskRegister {
   return {
     excluded_inputs: [],
+    // #244. `true` here means "the server looked and there was nothing", which
+    // is what every register generated today reports. The `false` case -- a
+    // pre-0047 register whose exclusions were never recorded -- is a separate
+    // banner and is set explicitly in the test for it, because defaulting it
+    // here would make every other test silently exercise the wrong state.
+    excluded_inputs_recorded: true,
     entries_total: 0,
     entries_without_tier: 0,
     entries_with_dropped_links: 0,
@@ -219,17 +225,67 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     expect(banner.textContent).toMatch(/exported documents do not say so/i);
   });
 
+  it("says an OLD register was never asked, rather than reporting it clean", async () => {
+    // #244. `excluded_inputs: []` carries two facts and only one flag tells
+    // them apart: "the server looked and nothing was excluded", and "this
+    // register predates provenance recording, so nobody looked". Rendering the
+    // second as the first is a false assurance about the one population that
+    // cannot be re-checked -- `CLAUDE.md`'s standing rule that missing data
+    // defaults to UNCONFIRMED.
+    //
+    // Both branches asserted: the not-recorded banner appears, and the
+    // excluded-inputs banner does NOT, because proving one renders says
+    // nothing about whether the other wrongly renders beside it.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ excluded_inputs: [], excluded_inputs_recorded: false }),
+    );
+    await loaded();
+    const banner = await screen.findByTestId(
+      "risk-register-exclusions-not-recorded",
+    );
+    expect(banner.textContent).toMatch(/before SHIELD recorded/i);
+    expect(banner.textContent).toMatch(/not the same as none having been/i);
+    expect(screen.queryByTestId(BANNER)).not.toBeInTheDocument();
+  });
+
+  it("says nothing about exclusions when no register exists at all", async () => {
+    // The guard on `register != null`. A client with nothing generated has no
+    // record to have a gap in, and announcing one would be a warning about a
+    // document that does not exist.
+    fetchRiskRegisterLatest.mockResolvedValue(null);
+    await loaded();
+    expect(
+      screen.queryByTestId("risk-register-exclusions-not-recorded"),
+    ).not.toBeInTheDocument();
+  });
+
   it("KEEPS the disclosure after Export — the action it warns about", async () => {
-    // The regression this file exists for. `export` returns the register
-    // WITHOUT `excluded_inputs` (the schema defaults it to `[]`), so assigning
-    // component state from that response erased the banner at exactly the
-    // moment the deliverable was produced. The withheld set describes what the
-    // register was BUILT from; no later response can revise it.
+    // The regression this file exists for, and the GUARANTEE HAS MOVED (#244).
+    //
+    // `export` used to return the register WITHOUT `excluded_inputs`, the
+    // schema defaulted it to `[]`, and assigning component state from that
+    // response erased the banner at exactly the moment the deliverable was
+    // produced. The fix was to hold the withheld set in separate state that no
+    // later response could clear.
+    //
+    // `_serialize` now reads the set back from the persisted snapshot on every
+    // path, so the export response carries it and the component derives the
+    // banner from whatever register is in hand. The mock is updated to match:
+    // `excluded_inputs: []` on export is a state THE SERVER NO LONGER
+    // PRODUCES, and a fixture asserting against an impossible response pins
+    // nothing about the product.
+    //
+    // The test is kept because the property is the same one -- the disclosure
+    // survives the action it warns about -- and it now fails if `_serialize`
+    // stops reading the snapshot back, which is the way it would break next.
     generateRiskRegister.mockResolvedValue(
       register({ excluded_inputs: ["the Zero Trust assessment"] }),
     );
     exportRiskRegister.mockResolvedValue(
-      register({ excluded_inputs: [], finalized_at: "2026-09-09T01:00:00Z" }),
+      register({
+        excluded_inputs: ["the Zero Trust assessment"],
+        finalized_at: "2026-09-09T01:00:00Z",
+      }),
     );
     await loaded();
     await act(async () => {

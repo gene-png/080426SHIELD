@@ -174,15 +174,21 @@ export function RiskRegisterDashboard(): JSX.Element {
   const [clientName, setClientName] = React.useState("Client");
   const [gate, setGate] = React.useState<RiskGate | null>(null);
   const [register, setRegister] = React.useState<RiskRegister | null>(null);
-  // HELD SEPARATELY FROM `register`, and that separation is the fix rather than
-  // a style choice. `export` returns `_serialize(db, reg)` with no
-  // `excluded_inputs`, which the schema defaults to `[]` -- so
-  // `setRegister(await exportRiskRegister(cid))` overwrote the disclosure with
-  // an empty list and the banner unmounted at the exact moment the consultant
-  // did the thing it warns about. The withheld set is a property of what the
-  // register was BUILT from; no later response can revise it, so no later
-  // response gets to clear it either.
-  const [excludedInputs, setExcludedInputs] = React.useState<string[]>([]);
+  // #244: DERIVED from `register`, not held beside it.
+  //
+  // This was separate state, and the reason was real at the time: `export`
+  // returned `_serialize(db, reg)` with no `excluded_inputs`, the schema
+  // defaulted it to `[]`, and `setRegister(await exportRiskRegister(cid))`
+  // therefore erased the disclosure at the exact moment the consultant did the
+  // thing it warns about. The workaround was to keep a copy no later response
+  // could clear.
+  //
+  // `_serialize` now reads the set back from the persisted snapshot on EVERY
+  // path, so every response carries the same value and there is nothing left
+  // to keep in sync. `CLAUDE.md` prefers a derivation over a synchronization
+  // for exactly this reason: a derived value cannot be out of sync, whereas a
+  // synchronized one merely is not, right now, for reasons that have to keep
+  // holding -- and one of those reasons had already stopped holding.
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState<"generate" | "export" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -207,10 +213,6 @@ export function RiskRegisterDashboard(): JSX.Element {
         setClientName(name);
         setGate(g);
         setRegister(reg);
-        // `latest` always returns `[]` here (nothing is persisted -- #240), so
-        // this seeds empty on a reload and the banner is generate-scoped. That
-        // is the stated limitation, not an accident.
-        setExcludedInputs(reg?.excluded_inputs ?? []);
       } catch (err) {
         if (active) setError(describeRiskError(err));
       } finally {
@@ -229,8 +231,6 @@ export function RiskRegisterDashboard(): JSX.Element {
     try {
       const reg = await generateRiskRegister(cid);
       setRegister(reg);
-      // The ONLY producer of a non-empty withheld set.
-      setExcludedInputs(reg.excluded_inputs);
     } catch (err) {
       setError(describeRiskError(err));
     } finally {
@@ -243,9 +243,9 @@ export function RiskRegisterDashboard(): JSX.Element {
     setBusy("export");
     setError(null);
     try {
-      // Deliberately does NOT touch `excludedInputs`. See the state
-      // declaration: the export response cannot carry it, so assigning from
-      // here would erase it.
+      // Safe to assign wholesale now. The export response carries the same
+      // persisted withheld set as every other path (#244); before that it
+      // carried `[]` and this line was the one that erased the banner.
       setRegister(await exportRiskRegister(cid));
     } catch (err) {
       setError(describeRiskError(err));
@@ -323,6 +323,18 @@ export function RiskRegisterDashboard(): JSX.Element {
   const tc = register?.tier_counts ?? {};
   const ac = register?.axis_counts ?? {};
 
+  // #244. Derived per render from whatever response is in hand, rather than
+  // carried in state. `?? []` covers only the no-register-yet case, where there
+  // is nothing to disclose about.
+  const excludedInputs = register?.excluded_inputs ?? [];
+  // A register that predates provenance recording. `excluded_inputs` is `[]`
+  // for it AND for a register that genuinely excluded nothing, so the flag is
+  // the only thing that separates them -- and only one of the two deserves a
+  // banner. Guarded on `register` so a page with nothing generated yet says
+  // nothing rather than announcing a gap in a record that does not exist.
+  const exclusionsNotRecorded =
+    register != null && !register.excluded_inputs_recorded;
+
   return (
     <div className="flex flex-col gap-6">
       {excludedInputs.length > 0 ? (
@@ -334,6 +346,17 @@ export function RiskRegisterDashboard(): JSX.Element {
           but are not approved, so nothing from them is in this register. The
           exported documents do not say so — re-generate after approving them if
           they should be included.
+        </p>
+      ) : null}
+
+      {exclusionsNotRecorded ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-exclusions-not-recorded"
+        >
+          This register was generated before SHIELD recorded which assessments
+          were left out, so nothing on file says whether any were. That is not
+          the same as none having been — re-generate to find out.
         </p>
       ) : null}
 

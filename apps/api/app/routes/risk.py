@@ -1123,8 +1123,42 @@ def _serialize(
         art = db.get(Artifact, aid)
         return art.title if art else None
 
+    # #244 instance 1. `excluded_inputs` was passed in by ONE call site -- the
+    # POST that generates -- so `latest` and `export` returned `[]` and the
+    # disclosure did not survive a page reload. It is the same argument the
+    # `entries_with_dropped_links` comment below makes, one field up: a
+    # register read back next week must report what the generate run reported.
+    #
+    # The value is persisted. #240's migration 0047 put it in
+    # `register.provenance["excluded"]`, written by `_provenance_snapshot` and
+    # never revised. Nothing needed building; the read-back was simply never
+    # wired, and `excluded_inputs: list[str] = []` could not express the
+    # difference between "nothing was excluded" and "nobody recorded".
+    #
+    # THREE STATES, and the third is why `recorded` exists as its own field:
+    #
+    #   provenance is NULL      -> pre-0047. NOT RECORDED. `recorded=False`.
+    #   provenance["excluded"]  -> [] means nothing was excluded, and a list
+    #                              means these were. `recorded=True` for both.
+    #
+    # Collapsing NULL into `[]` would tell a consultant that a register built
+    # before provenance existed had a clean input set, which is a false
+    # assurance about the one population that cannot be checked.
+    #
+    # An explicit `excluded_inputs=` still wins, for the generate response:
+    # `g.not_finalized` there is the live set the caller just computed, and it
+    # and the snapshot are written in the same transaction.
+    stored = register.provenance
+    if excluded_inputs is not None:
+        resolved_excluded, excluded_recorded = list(excluded_inputs), True
+    elif isinstance(stored, dict) and "excluded" in stored:
+        resolved_excluded, excluded_recorded = list(stored["excluded"] or []), True
+    else:
+        resolved_excluded, excluded_recorded = [], False
+
     return RiskRegisterResponse(
-        excluded_inputs=excluded_inputs or [],
+        excluded_inputs=resolved_excluded,
+        excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),
         entries_without_tier=sum(1 for e in entries if e.tier is None),
         # #132, derived here rather than passed in, so a register read back next
