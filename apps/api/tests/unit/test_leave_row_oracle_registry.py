@@ -2,8 +2,15 @@
 
 Written with the gate, per the CLAUDE.md rule about shipping a checker without
 one -- and this gate exists BECAUSE of that rule's other half: the oracle is a
-tool, not a gate, and exactly one of its properties can fail honestly on input
-nobody configured. That property is what these tests pin.
+tool, not a gate, and SOME of its properties can fail honestly on input nobody
+configured. This file pins the registry one: a LEAVE table with no registered
+guards.
+
+It said "exactly one" until #221 added a second -- the label check, which
+verifies that a table declared not-LEAVE really holds no LEAVE rows. That one is
+pinned in `test_leave_row_oracle_labels.py`, and the count is deliberately not
+restated here: a number in a docstring describing a population that grows is how
+this one went stale.
 
 The oracle itself is deliberately not tested here. Scoring a LEAVE row
 pass/fail needs judgement about what the row was written to exercise, so the

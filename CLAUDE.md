@@ -768,12 +768,35 @@ a real exit code and a real date, and was the minority outcome (D-071).
   **The step, and it is a step rather than a gate**: any LEAVE table written or
   extended after its rule exists gets an oracle run before the PR, and rows that
   pin nothing are rewritten or reclassified. Scoring a row needs judgement about
-  what it was written for, so the tool reports and a human decides. Exactly one
-  property of it can fail on input nobody configured -- a table with no
-  registered guards -- and THAT is gated
-  (`leave_row_oracle.py --check-registry`, CI step "LEAVE-row oracle
-  registry"), because otherwise a new table reports clean and the tool acquires
-  the silent-success shape it was built to find.
+  what it was written for, so the tool reports and a human decides.
+
+  What can be gated is whatever fails on input nobody configured, and there is
+  more than one such property -- an earlier version of this paragraph said
+  "exactly one", which was true when written and became the sentence that
+  stopped anyone looking for a second. Both are behind
+  `leave_row_oracle.py --check-registry` (CI step "LEAVE-row oracle registry
+  and labels"):
+
+  - **a LEAVE table with no registered guards.** Without it a new table reports
+    clean and the tool acquires the silent-success shape it was built to find.
+  - **a table DECLARED not-LEAVE whose rows the redactor leaves untouched**
+    (#221). `NOT_LEAVE_TABLES` was a set of labels and nothing checked them, so
+    a mislabelled table was invisible twice over: its rows never scored, and the
+    registry reporting complete precisely BECAUSE the label existed. The check
+    runs the oracle's own classifier over the excluded rows; its first run found
+    three inside `IDEMPOTENCE_CASES`, two of them in the risk class. The remedy
+    a finding names is to COLLECT the rows, not to exempt them, so clearing it
+    adds coverage rather than removing a report.
+
+  **It is a floor, not a census**, with a stated error direction: a row whose
+  LEAVE-ness is invisible to that classifier -- built at test time, or asserted
+  to survive under a call the oracle does not make -- stays invisible, and the
+  check can only under-report.
+
+  **What is still ungated is whether the tool can RUN.** Two mutation anchors
+  had drifted out of `redact.py` and the whole oracle had been exiting 2 for an
+  unknown length of time; `--check-registry` returns before `build_mutations` is
+  called, so the one automated property could not see it. Tracked as **#299**.
 
   Three classes, and the third is derived rather than listed: a row that
   survives even with EVERY guard removed at once was never in the risk class
