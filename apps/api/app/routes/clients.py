@@ -1124,6 +1124,10 @@ def zt_dashboard(
         target_stage=target_stage,
         target_stage_source=target_stage_source,
         engagement_target_capability_count=engagement_target_capability_count,
+        # #188. `target_stage_source` records a fault in the ENGAGEMENT target;
+        # this records the same class of fault one level down, and it belongs
+        # in the row for the same reason: it is a number the client can dispute.
+        unusable_target_codes=list(gap_analysis.unusable_target_codes),
     )
 
     return ZtDashboardResponse(
@@ -1141,6 +1145,11 @@ def zt_dashboard(
         target_stage=target_stage,
         target_stage_source=target_stage_source,
         engagement_target_capability_count=engagement_target_capability_count,
+        # #188: taken off the SAME GapAnalysis the deliverable renders, not
+        # re-derived here. A second derivation is #84's shape, and this one
+        # would be worse than most -- the screen and the PDF would be stating
+        # different facts about one assessment.
+        unusable_target_codes=list(gap_analysis.unusable_target_codes),
         total_gap_count=gap_analysis.total_gap_count,
         largest_gap_pillar=largest.name if largest else None,
         largest_gap_pct=largest.gap_pct if largest else 0.0,

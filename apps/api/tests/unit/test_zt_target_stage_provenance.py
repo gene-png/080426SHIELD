@@ -264,6 +264,12 @@ def test_every_dataclass_the_zt_exporter_reads_is_shape_pinned() -> None:
         "unscored_codes",
         "total_gap_count",
         "gap_count_by_pillar",
+        # Added by #188, and this test is why the addition is visible rather
+        # than incidental: `exporters.py` now READS this field in
+        # `_gap_plan_caption`, so it belongs in the pinned set exactly like
+        # the others. The gate fired on the branch that added it, which is
+        # the behaviour it was written for.
+        "unusable_target_codes",
     }
     assert {f.name for f in fields(ScoreResult)} == {
         "framework",

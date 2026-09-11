@@ -105,6 +105,18 @@ class GapAnalysis:
     unscored_codes: tuple[str, ...]
     total_gap_count: int
     gap_count_by_pillar: dict[str, int]
+    # Capabilities whose stored per-capability target could not be used, so the
+    # ENGAGEMENT target was applied instead (#188). Empty on an ordinary
+    # engagement; a capability with no stored target is NOT in here, because
+    # absent and discarded are different events.
+    #
+    # NO DEFAULT, on purpose. A draft defaulted it to `()` and cited the C0
+    # additive pattern, which is about PERSISTED fields parsing older rows --
+    # this dataclass is in-memory and never stored, and it has exactly one
+    # construction site, so nothing needed the default. What it would have
+    # bought is a future second constructor silently reporting "nothing
+    # discarded" over a discard. Required, so that constructor fails loudly.
+    unusable_target_codes: tuple[str, ...]
 
 
 def _coverage_pct(answered: int, total: int) -> float:
@@ -377,12 +389,25 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
     the rule below has THREE consumers to consider, and the third does not
     import this module.
 
-    DELIBERATE EXEMPTION, stated so it does not read as an oversight. An
-    out-of-range PER-CAPABILITY target falls back to the engagement stage
-    SILENTLY, the same shape #125 fixes one level up. It is left alone because
-    naming that fault needs a counter on `GapAnalysis`, and that change is
-    constrained not to alter the shape `zt/exporters.py` reads. Tracked in
-    #188, which carries the expiry condition stated below.
+    THE EXEMPTION THIS PARAGRAPH RECORDED IS DISCHARGED. It read: an
+    out-of-range PER-CAPABILITY target "falls back to the engagement stage
+    SILENTLY ... left alone because naming that fault needs a counter on
+    `GapAnalysis`, and that change is constrained not to alter the shape
+    `zt/exporters.py` reads. Tracked in #188."
+
+    Every clause of that is now false. `GapAnalysis` carries
+    `unusable_target_codes`, `zt/exporters.py` reads it in `_gap_plan_caption`,
+    the constraint on altering that shape expired with the branch it belonged
+    to, and #188 closes with this change. The fallback still HAPPENS -- it is
+    the right behaviour, since a remediation row against the engagement target
+    beats no row at all -- but it is no longer silent, on any of the three
+    surfaces that render a `GapAnalysis`.
+
+    Rewritten rather than deleted, because a reader who followed the old text
+    would open a closed #188 and conclude the disclosure does not exist. That
+    is the shape #288 records: a deferral citing an issue the fix itself
+    closed, in a file the fix itself touched. A one-pass sweep cannot catch it,
+    because the fix is what creates the violation.
 
     Not currently reachable, and the two writers are named rather than
     summarised, because an earlier draft of this comment said "no other code
@@ -396,7 +421,7 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
         `if not 1 <= n <= max_stage` check `continue`s to a dropped-suggestion
         record, so an out-of-range suggestion is never written.
 
-    Both bound the RANGE. **Only ONE of them now refuses a bool at the schema**
+    Both bound the RANGE. **Only ONE of them refuses a bool AT THE SCHEMA**
     -- `patch_answer`, through the `IntNotBool` annotation on `ZtAnswerPatch`
     (#189). The AI-apply path takes no request body, so no schema annotation
     can reach it: its bool guard is `_as_number`'s own `isinstance(raw, bool)`
@@ -408,9 +433,18 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
     `"target_stage": true` would then write Stage 1 to a client's row, #189
     reinstated on the one surface this comment had just called safe.
 
-    The predicate below is carried over exactly as it stood: `isinstance(True,
-    int)` is True, so a stored `True` would be read as Stage 1 rather than
-    falling back, which is why refusing belongs at the writers and not here.
+    **This function now refuses a bool as well** -- see the guard below. That
+    reverses what this paragraph used to say: "deliberately UNCHANGED, because
+    this extraction must not move a single gap count", true of #124's
+    constraint and expired with it. The change DOES move a gap count in the
+    case it applies to -- a capability at current stage 2 with a stored `True`
+    had target `True` (== 1), so 2 >= 1 and it produced no gap row at all. It
+    now falls back to the engagement stage and produces one: a remediation item
+    the client had silently lost.
+
+    The two facts are separate and both hold. The SCHEMA half is about what can
+    be written and is still one writer short; this half is about what this
+    predicate does with what is already stored.
 
     A THIRD route accepts a `target_stage` field in its body without writing
     it: `patch_self_assessment_answer`. It is not a writer and never was -- it
@@ -422,9 +456,86 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
     If a third writer appears, this exemption expires with it.
     """
     max_stage = level_count(framework)
+    # `bool` first: it subclasses `int`, so without this line a stored `True`
+    # is returned AS A BOOL and used as a stage. Measured 2026-09-10 -- the
+    # capability then compares equal to its own current stage and leaves the
+    # gap list entirely, which is worse than the fallback this function
+    # documents. Not reachable through the database (`target_stage` is a
+    # `SmallInteger`, so `True` round-trips as 1), but this is a pure function
+    # with its own contract and #189 settled that a bool is not a number.
+    if isinstance(stored, bool):
+        return None
     if isinstance(stored, int) and 1 <= stored <= max_stage:
         return stored
     return None
+
+
+def discarded_capability_targets(
+    framework: ZtFrameworkCode,
+    targets: Mapping[str, int | None] | None,
+) -> tuple[str, ...]:
+    """Capabilities whose stored target EXISTS and cannot be used (#188).
+
+    The distinction is the whole point, and it is the one `CLAUDE.md` states as
+    a standing rule: "a rule that withholds a claim must separate 'the evidence
+    failed' from 'no evidence was offered'."
+
+      ABSENT    -- no per-row target. The ordinary case: a consultant-scored
+                   assessment overrides nothing, so the engagement stage
+                   decides every capability. Reporting it would fire the
+                   disclosure on every engagement and be ignored by the second
+                   reader.
+      UNUSABLE  -- a value was chosen, recorded, and then silently replaced by
+                   the engagement target. That is what #188 is about.
+
+    Returns CODES rather than a count so the disclosure can name them, and the
+    count stays derivable -- `CLAUDE.md` rule 1: let the list be the count.
+
+    ## Shared, not copied -- and the first draft of this paragraph was false
+
+    It claimed the deliverable and `routes/clients.py::zt_dashboard` "cannot
+    disagree" because both resolve targets through `effective_target_stages`.
+    That is true of WHICH TARGET WAS APPLIED and was silently doing duty for a
+    wider claim: the dashboard did not call this function at all, so a discard
+    disclosed in the client's PDF was absent from the client's screen. A
+    sentence that is accurate about a narrower thing than the reader will take
+    it for is the shape `CLAUDE.md` records as worse than no comment.
+
+    It is true now because it was MADE true rather than reworded: `zt_dashboard`
+    reads `unusable_target_codes` off the same `GapAnalysis` the exporter
+    renders, so the two surfaces cannot state different sets. A second
+    derivation would be #84's shape -- a reimplementation sharing the symptom
+    and never the symbol.
+
+    ## WHICH ROWS CAN ACTUALLY REACH THIS, stated because the first draft was wrong
+
+    That draft claimed a live path: "Stage 4 is a legitimate CISA target and
+    does not exist in DoD ZTRA, so the same stored integer is usable or not
+    depending on which framework is asking, with no edit to the row in
+    between." **There is no such path.** Capability codes are
+    framework-namespaced (`CISA.ID.01` vs `DOD.USR.01`, built in
+    `zt/catalog.py`), every `ZtAnswer` is created from the catalog of its own
+    assessment's framework, and both read paths derive the framework from the
+    assessment. A DoD analysis can never look up a CISA-keyed row. The test
+    offered as proof used two DIFFERENT codes, which should have been the tell.
+
+    The real population is rows written before the per-framework range guards
+    existed, or written outside the API. **No current writer can produce one:**
+    `patch_answer` 422s outside `1..level_count()` for the answer's own
+    framework, and the AI-apply path range-checks and drops. Whether any such
+    legacy row exists has not been measured against a real database.
+
+    So this is a disclosure that should normally never fire, and that is the
+    point of it -- but do not read it as covering a defect anyone can trigger
+    today.
+    """
+    targets = targets or {}
+    return tuple(
+        cap.code
+        for cap in capabilities(framework)
+        if (stored := targets.get(cap.code)) is not None
+        and capability_target_override(framework, stored) is None
+    )
 
 
 def _resolve_one(framework: ZtFrameworkCode, stored: object, target_stage: int) -> int:
@@ -519,6 +630,7 @@ def analyze_gaps(
         unscored_codes=tuple(unscored),
         total_gap_count=len(rows),
         gap_count_by_pillar=by_pillar,
+        unusable_target_codes=discarded_capability_targets(framework, targets),
     )
 
 
@@ -573,6 +685,7 @@ __all__ = [
     "analyze_gaps",
     "build_roadmap",
     "capability_target_override",
+    "discarded_capability_targets",
     "compute",
     "effective_target_stages",
     "engagement_target_capability_count",
