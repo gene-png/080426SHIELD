@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.models.csf_assessment import CsfAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
@@ -179,6 +180,15 @@ class CsfSelfAssessmentAnswerPatch(BaseModel):
 
     `extra="forbid"` makes the refusal set derived: a fifth field on
     `CsfAnswerPatch` cannot quietly start being dropped here.
+
+    And it is a D-016 refusal, which it was not when written -- see the twin in
+    `schemas/zt.py` for the reasoning. In short: a schema-level refusal
+    surfaces through FastAPI's validation handler, so the caller got Pydantic's
+    raw list where every neighbouring refusal returns `{reason, message}`.
+    `app/exceptions.py::_handle_validation_error` now synthesises
+    `reason` / `reasons` from the error types, so the refusal set stays derived
+    and the envelope is typed (#285). Both twins, together, because one of them
+    typed and one not is the half-fix that makes an integrator distrust both.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -193,12 +203,21 @@ class CsfSelfAssessmentAnswerPatch(BaseModel):
             return data
         unknown = sorted(set(data) - set(cls.model_fields))
         if unknown:
-            raise ValueError(
+            # `PydanticCustomError` rather than a bare `ValueError`, so the
+            # refusal carries a STABLE CODE rather than Pydantic's generic
+            # `value_error` (#285). Measured: this `mode="before"` validator
+            # runs ahead of `extra="forbid"`, so it -- not the forbidden-extra
+            # rule -- is what a client actually receives, and a reason of
+            # `schema_value_error` would be shared with every other custom
+            # validator in the API. The code is the thing a client maps to
+            # copy; the message is what it shows when it has none.
+            raise PydanticCustomError(
+                "unapplied_fields",
                 f"This endpoint applies only {sorted(cls.model_fields)}. It "
                 f"does not apply {unknown}, and returning 200 while dropping "
                 f"them would report a change that never happened. Locking a "
                 f"row against AI reruns is an admin action, through "
-                f"PATCH /csf/answers/{{answer_id}}."
+                f"PATCH /csf/answers/{{answer_id}}.",
             )
         return data
 

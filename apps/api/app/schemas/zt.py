@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.models.service import ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessmentStatus, ZtFramework
@@ -152,6 +153,20 @@ class ZtSelfAssessmentAnswerPatch(BaseModel):
     message for a forbidden extra is "Extra inputs are not permitted", which
     tells an integrator that a check failed but not why this route declines
     the field. Both derive from `model_fields`, so the two cannot disagree.
+
+    ## And it is a D-016 refusal, which it was not when written
+
+    The derived refusal is schema-level, so it surfaces through FastAPI's
+    validation handler rather than as a hand-written `HTTPException`. When this
+    class was added that meant the caller got Pydantic's raw list where every
+    neighbouring refusal on these routes returns `{reason, message}` -- the one
+    thing core principle 2 names explicitly as what a user-facing error must not
+    be. The trade was real and was made SILENTLY, which is what #285 was about.
+
+    It is no longer a trade: `app/exceptions.py::_handle_validation_error`
+    synthesises `reason` / `reasons` from Pydantic's own error types, so the
+    refusal set stays derived AND the envelope is typed. A client reads
+    `schema_extra_forbidden` rather than matching on message text.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -166,12 +181,21 @@ class ZtSelfAssessmentAnswerPatch(BaseModel):
             return data
         unknown = sorted(set(data) - set(cls.model_fields))
         if unknown:
-            raise ValueError(
+            # `PydanticCustomError` rather than a bare `ValueError`, so the
+            # refusal carries a STABLE CODE rather than Pydantic's generic
+            # `value_error` (#285). Measured: this `mode="before"` validator
+            # runs ahead of `extra="forbid"`, so it -- not the forbidden-extra
+            # rule -- is what a client actually receives, and a reason of
+            # `schema_value_error` would be shared with every other custom
+            # validator in the API. The code is the thing a client maps to
+            # copy; the message is what it shows when it has none.
+            raise PydanticCustomError(
+                "unapplied_fields",
                 f"This endpoint applies only {sorted(cls.model_fields)}. It "
                 f"does not apply {unknown}, and returning 200 while dropping "
                 f"them would report a change that never happened. A "
                 f"per-capability target_stage is set through the admin route "
-                f"PATCH /zt/answers/{{answer_id}}."
+                f"PATCH /zt/answers/{{answer_id}}.",
             )
         return data
 

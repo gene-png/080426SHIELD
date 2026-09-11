@@ -72,25 +72,46 @@ async def _render(exc: RequestValidationError) -> dict:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "model, payload, expected_fragment",
+    "model, payload, expected_fragment, raw_is_unserialisable",
     [
-        # A BeforeValidator raising (#189).
-        (ZtAnswerPatch, {"maturity_stage": True}, "boolean"),
-        # A model_validator raising (#195).
-        (ZtSelfAssessmentAnswerPatch, {"target_stage": 3}, "target_stage"),
+        # A BeforeValidator raising `ValueError` (#189). Pydantic puts the live
+        # exception instance in `ctx["error"]`, so the raw entries do not
+        # serialise -- this is the case the handler exists for.
+        (ZtAnswerPatch, {"maturity_stage": True}, "boolean", True),
+        # A model_validator raising `PydanticCustomError` (#195, then #285).
+        # It carries a code and a rendered message and NO live exception, so the
+        # raw entries serialise on their own.
+        (ZtSelfAssessmentAnswerPatch, {"target_stage": 3}, "target_stage", False),
     ],
+    ids=["value_error_carries_a_live_exception", "custom_error_does_not"],
 )
 async def test_a_validator_raising_still_serializes(
-    model: type, payload: dict, expected_fragment: str
+    model: type, payload: dict, expected_fragment: str, raw_is_unserialisable: bool
 ) -> None:
-    """The response body must render, and must still say what was wrong."""
+    """The response body must render, and must still say what was wrong.
+
+    The `raw_is_unserialisable` axis is the part worth reading. It was a fixed
+    `pytest.raises(TypeError)` over both rows, with a comment saying that if
+    Pydantic ever stopped putting the exception in `ctx` this would fail and the
+    handler could be simplified. #285 is that event, for ONE row only: swapping
+    the derived refusal from `ValueError` to `PydanticCustomError` -- so it
+    carries a stable code a client can map -- also stopped it carrying a live
+    exception.
+
+    So the handler is still needed, by the other row, and the axis records which
+    raise style carries the hazard rather than asserting it of both. Deleting
+    the row instead would have been the cheaper route to green and would have
+    removed the only case that still exercises the defect.
+    """
     exc = _real_validation_error(model, payload)
 
-    # The unfixed form. Asserted so this test documents the defect rather than
-    # merely avoiding it -- if Pydantic ever stops putting the exception in
-    # `ctx`, this fails and the handler can be simplified.
-    with pytest.raises(TypeError):
-        json.dumps(exc.errors())
+    # The unfixed form, asserted in BOTH directions so this documents the defect
+    # rather than merely avoiding it.
+    if raw_is_unserialisable:
+        with pytest.raises(TypeError):
+            json.dumps(exc.errors())
+    else:
+        json.dumps(exc.errors())  # must not raise
 
     body = await _render(exc)
     rendered = json.dumps(body)

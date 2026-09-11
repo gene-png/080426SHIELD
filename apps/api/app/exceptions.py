@@ -104,14 +104,89 @@ def _jsonable_validation_errors(exc: RequestValidationError) -> list[dict[str, o
     return jsonable_encoder(exc.errors())
 
 
+#: Namespace for a reason synthesised from Pydantic's own error `type` (#285).
+#:
+#: The prefix is load-bearing rather than decorative. Hand-written D-016
+#: reasons are chosen strings -- `target_stage_out_of_range`,
+#: `capability_list_discarded` -- and Pydantic's `type` vocabulary is not ours
+#: to control: a future version may add a type that collides with one of them,
+#: and a client mapping `reason` to copy would then render a schema failure as
+#: a domain refusal. The prefix makes collision impossible by construction
+#: instead of by nobody having picked the same word yet.
+SCHEMA_REASON_PREFIX = "schema_"
+
+#: The reason when the errors do NOT agree on one type.
+SCHEMA_REASON_MIXED = "schema_multiple"
+
+
+def schema_reasons(details: list[dict[str, object]]) -> list[str]:
+    """Distinct `schema_<type>` codes, in first-seen order.
+
+    Order is preserved rather than sorted so the first entry corresponds to the
+    first error Pydantic reported, which is the one a form focuses.
+
+    An entry with no usable `type` yields `schema_unknown` rather than being
+    skipped. Skipping it would make the list SHORTER than the details it
+    summarises, so a client checking "did every error get a code" would be told
+    yes over an error that got none -- the silent-discard shape, in the function
+    written to end silent discards.
+    """
+    out: list[str] = []
+    for entry in details:
+        raw = entry.get("type")
+        code = SCHEMA_REASON_PREFIX + (raw if isinstance(raw, str) and raw else "unknown")
+        if code not in out:
+            out.append(code)
+    return out
+
+
 async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """A schema-level refusal carries a typed reason too (#285).
+
+    Core principle 2 says user-facing API errors are typed and "never raw
+    validation dumps", and every hand-written refusal in this API follows the
+    D-016 shape. A refusal DERIVED from a schema -- `extra="forbid"` plus a
+    validator reading `model_fields`, which is what makes it impossible for a
+    newly-added field to start being silently dropped -- arrived as Pydantic's
+    own list instead, so the client had to sniff strings to tell one cause from
+    another.
+
+    The issue offered two repairs and this is the wider one: synthesising the
+    reason HERE improves every schema-level 422 in the API rather than the two
+    that prompted it, and it keeps the derived refusal set. The alternative --
+    moving the refusal into the handler as a typed `HTTPException` -- would have
+    reintroduced the enumeration the schema exists to avoid, and that list goes
+    stale exactly the way the original defect did.
+
+    **Additive, deliberately.** `code`, `message` and `details` are unchanged
+    and in place, so nothing that reads this envelope today breaks. A consumer
+    that wants the typed reason opts in.
+
+    `reason` is the single code when every error agrees, and `schema_multiple`
+    when they do not; `reasons` always carries the full distinct set. A single
+    code for a mixed failure would have to pick one cause and discard the rest,
+    which is how a client comes to render "unknown field" over a request that
+    also had a value out of range.
+    """
+    details = _jsonable_validation_errors(exc)
+    reasons = schema_reasons(details)
     return JSONResponse(
         status_code=422,
         content={
             "error": {
                 "code": 422,
                 "message": "Request validation failed.",
-                "details": _jsonable_validation_errors(exc),
+                # Absent rather than null when there is nothing to report. An
+                # empty error list should not be reachable -- Pydantic does not
+                # raise without one -- and inventing `schema_unknown` for it
+                # would put a code on a state nobody has seen.
+                **(
+                    {"reason": reasons[0] if len(reasons) == 1 else SCHEMA_REASON_MIXED}
+                    if reasons
+                    else {}
+                ),
+                **({"reasons": reasons} if reasons else {}),
+                "details": details,
                 "correlation_id": _correlation_id_from(request),
             }
         },
