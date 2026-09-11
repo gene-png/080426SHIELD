@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { AttackDashboard } from "@/components/dashboards/attack/AttackDashboard";
 import { ApiError, apiFetch } from "@/lib/api";
+import { serverReason } from "@/lib/describe-save-error";
 import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
 import { SkipToContent } from "@/components/site/SkipToContent";
@@ -34,6 +35,8 @@ export default async function AttackDashboardPage({
 
   let data: AttackDashboardData | null = null;
   let notReleased = false;
+  // The server's typed explanation, where it sent one (#244).
+  let reason: string | null = null;
   if (clientId) {
     try {
       data = await apiFetch<AttackDashboardData>(
@@ -45,6 +48,14 @@ export default async function AttackDashboardPage({
       // friendly not-available state rather than a dead end (§12 no-dead-ends).
       if (err instanceof ApiError && err.status === 404) {
         notReleased = true;
+        // #244: keep the server's OWN sentence. A 404 here has more than one
+        // cause and the API already distinguishes them -- `_unresolved_parent`
+        // returns a typed reason written specifically NOT to say "no released
+        // report yet", because there IS one and what is missing is the link
+        // saying which assessment it was built from. Keying the copy on the
+        // STATUS discarded that and printed the very sentence the typed
+        // message was written to avoid.
+        reason = serverReason(err);
       } else {
         throw err;
       }
@@ -64,9 +75,10 @@ export default async function AttackDashboardPage({
           Dashboard not available yet
         </h1>
         <p className="text-sm text-ink-secondary">
-          {notReleased
-            ? "This ATT&CK coverage report hasn't been released to your organization yet. It will appear here once your SHIELD analyst releases it."
-            : "We couldn't load this dashboard."}
+          {reason ??
+            (notReleased
+              ? "This ATT&CK coverage report hasn't been released to your organization yet. It will appear here once your SHIELD analyst releases it."
+              : "We couldn't load this dashboard.")}
         </p>
         <Link
           href="/results"

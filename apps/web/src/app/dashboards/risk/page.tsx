@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { RiskDashboard } from "@/components/dashboards/risk/RiskDashboard";
 import { ACTIVE_CLIENT_COOKIE, ApiError, apiFetch } from "@/lib/api";
+import { serverReason } from "@/lib/describe-save-error";
 import { auth } from "@/lib/auth/options";
 import { SkipToContent } from "@/components/site/SkipToContent";
 import type { RiskDashboardData } from "@/lib/dashboards/risk";
@@ -36,6 +37,8 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
 
   let data: RiskDashboardData | null = null;
   let notReleased = false;
+  // The server's typed explanation, where it sent one (#244).
+  let reason: string | null = null;
   if (clientId) {
     try {
       data = await apiFetch<RiskDashboardData>(
@@ -47,6 +50,14 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         notReleased = true;
+        // #244: keep the server's OWN sentence. A 404 here has more than one
+        // cause and the API already distinguishes them -- `_unresolved_parent`
+        // returns a typed reason written specifically NOT to say "no released
+        // report yet", because there IS one and what is missing is the link
+        // saying which assessment it was built from. Keying the copy on the
+        // STATUS discarded that and printed the very sentence the typed
+        // message was written to avoid.
+        reason = serverReason(err);
       } else {
         throw err;
       }
@@ -66,9 +77,10 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
           Risk Register not available yet
         </h1>
         <p className="text-sm text-ink-secondary">
-          {notReleased
-            ? "Your Risk Register hasn't been finalized yet. It will appear here once your SHIELD analyst generates and finalizes it."
-            : "We couldn't load your Risk Register."}
+          {reason ??
+            (notReleased
+              ? "Your Risk Register hasn't been finalized yet. It will appear here once your SHIELD analyst generates and finalizes it."
+              : "We couldn't load your Risk Register.")}
         </p>
         <Link
           href="/results"
