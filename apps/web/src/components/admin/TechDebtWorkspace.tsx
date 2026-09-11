@@ -27,6 +27,7 @@ import {
   fetchLatestDeliverable,
   fetchLatestList,
   fetchOverlapAnalysis,
+  proxyMessage,
   TechDebtProxyError,
 } from "@/lib/tech_debt/client";
 import type {
@@ -79,6 +80,7 @@ export function TechDebtWorkspace({
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
+  const [approveError, setApproveError] = React.useState<string | null>(null);
   const [approving, setApproving] = React.useState(false);
   const [discarding, setDiscarding] = React.useState(false);
   const [docsReloadKey, setDocsReloadKey] = React.useState(0);
@@ -239,12 +241,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
       await refreshOverlap();
     } catch (err) {
       if (err instanceof TechDebtProxyError) {
-        const payload = err.payload as
-          { error?: { message?: string }; detail?: string } | undefined;
         setExtractError(
-          payload?.error?.message ??
-            payload?.detail ??
-            `Extraction failed (${err.status}).`,
+          proxyMessage(err, `Extraction failed (${err.status}).`),
         );
       } else {
         setExtractError(
@@ -273,10 +271,26 @@ Components carry no cost of their own — this licence keeps its full value.`,
   async function onApprove(): Promise<void> {
     if (!list) return;
     setApproving(true);
+    setApproveError(null);
     listSeq.current += 1;
     try {
       const next = await approveCapabilityList(list.id);
       setList(next);
+    } catch (err) {
+      // The 409 the API raises when the list was discarded carries a typed
+      // `{reason, message}` naming the remedy that exists ("upload a
+      // replacement list"). This handler had no `catch` at all -- the only
+      // mutating handler in the file without one -- so the promise rejected
+      // unhandled, the button went from "Approving..." back to "Approve list",
+      // and the consultant was shown nothing. `TechDebtProxyError.message` is
+      // "Tech-debt proxy 409", so `err.message` would not have surfaced it
+      // either: the message is on the payload.
+      setApproveError(proxyMessage(err, "Approving the list failed."));
+      // And re-read the list rather than keeping the stale one. The button is
+      // enabled on `list.status === "draft"`, which is exactly the value that
+      // has just been proved wrong; without this the consultant can click it
+      // again forever.
+      await refresh();
     } finally {
       setApproving(false);
     }
@@ -660,6 +674,11 @@ Components carry no cost of their own — this licence keeps its full value.`,
                     ? "Approving…"
                     : "Approve list"}
             </button>
+            {approveError ? (
+              <p className="mt-2 text-sm text-status-danger-fg" role="alert">
+                {approveError}
+              </p>
+            ) : null}
           </WorkflowStep>
 
           <WorkflowStep

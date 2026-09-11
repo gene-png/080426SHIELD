@@ -583,9 +583,13 @@ describe("AttackAiInputsPanel", () => {
       expect(row).toHaveTextContent(/list itself was discarded/);
       expect(row).toHaveTextContent(/Upload a replacement list/);
       expect(row).not.toHaveTextContent(/Re-approve the list to include it/);
-      // The remedy must not point at the resurrect path either: approving a
-      // discarded list silently un-discards it, which is a filed defect, and
-      // advice pointing at a bug ages badly the day the bug is fixed.
+      // The remedy must not point at the resurrect path either. When this was
+      // written, approving a discarded list silently un-discarded it -- a filed
+      // defect, and advice pointing at a bug ages badly the day the bug is
+      // fixed. #231 fixed it: approve now refuses a DISCARDED list with a typed
+      // 409, so there is no resurrect path left to point at and the assertion
+      // below holds for a second reason. Kept, because the first reason is the
+      // durable one.
       expect(row).not.toHaveTextContent(/approv/i);
     });
   });
