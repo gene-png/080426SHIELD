@@ -36,6 +36,11 @@ on:
 
 permissions:
   contents: read
+  # #182: `gh pr view --json closingIssuesReferences` needs to read the PR and
+  # the issues it links. READ only, and nothing beyond those two -- this
+  # workflow judges a PR and must never be able to change one.
+  pull-requests: read
+  issues: read
 
 jobs:
   audit-gate:
@@ -96,6 +101,11 @@ jobs:
           # same reasoning the audit-gate job already documents for the body.
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          # For `gh pr view` below (#182). The job's `permissions:` block grants
+          # `pull-requests: read` and `issues: read` and nothing more -- reading
+          # which issues a PR links is the whole requirement, and this workflow
+          # must not be able to write anything.
+          GH_TOKEN: ${{ github.token }}
         run: |
           printf '%s' "$PR_TITLE" > /tmp/pr_title.txt
           printf '%s' "$PR_BODY"  > /tmp/pr_body.txt
@@ -117,6 +127,25 @@ jobs:
           # `A..HEAD` is the branch's own commits and nothing else.
           git log --format=%B "origin/${{ github.base_ref }}..HEAD" > /tmp/pr_commits.txt
           echo "commit messages collected:"; wc -l < /tmp/pr_commits.txt
+
+          # #182. What GitHub will ACTUALLY close, so the guard can check its
+          # verdict against reality instead of re-reading the prose it was
+          # given. It printed "clean (1 declared close: 108)" over a PR GitHub
+          # had linked nothing for.
+          #
+          # NOT a second implementation of GitHub's adjacency rule. A
+          # restatement agrees with GitHub only until GitHub changes it, and a
+          # parity claim is enforced by CALLING the other thing.
+          #
+          # `|| true` covers the COMMAND, not the file. An empty file is a real
+          # answer -- "this PR closes nothing" -- and the script tells it apart
+          # from a MISSING one, which stays exit 2. Without this a `gh` hiccup
+          # would turn every PR red on a fact about the network rather than
+          # about the change.
+          gh pr view "${{ github.event.pull_request.number }}" \
+            --json closingIssuesReferences \
+            --jq '.closingIssuesReferences[].number' > /tmp/pr_linked.txt || true
+          echo "GitHub says this PR closes:"; cat /tmp/pr_linked.txt
 
       - name: A subject must not name a decision the commit does not add
         # Placed here because this job already has the full history and the
@@ -162,4 +191,5 @@ jobs:
           python -m scripts.check_issue_references \
             --title /tmp/pr_title.txt \
             --body /tmp/pr_body.txt \
-            --commits /tmp/pr_commits.txt
+            --commits /tmp/pr_commits.txt \
+            --linked /tmp/pr_linked.txt
