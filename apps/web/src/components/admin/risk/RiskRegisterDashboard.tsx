@@ -426,6 +426,40 @@ export function RiskRegisterDashboard(): JSX.Element {
               dashes.
             </div>
           ) : null}
+          {/* #132. An entry that proposed ATT&CK or control links and kept
+              none is persisted with empty link arrays -- byte-identical to an
+              entry the model linked nothing for. The consultant reads "the AI
+              found no relevance" over "the AI proposed five things and all
+              five were misspelled".
+
+              Keyed on the OUTCOME for the same reason the banner above is:
+              `entries_with_dropped_links` counts entries with a spelling
+              problem, which includes ones that kept a link and show linkage
+              fine. This counts the ones with nothing left to show.
+
+              Derived server-side from the stored entries, so it survives a
+              reload -- which is what migration 0048 bought and the reason a
+              counter on the generate response was not enough. */}
+          {register.entries_unlinked_after_drops > 0 ? (
+            <div
+              className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+              role="alert"
+              data-testid="risk-entries-unlinked-after-drops"
+            >
+              <span className="font-semibold">
+                {register.entries_unlinked_after_drops} of{" "}
+                {register.entries_total} entries proposed ATT&amp;CK or control
+                links and kept none
+              </span>
+              , so they show no linkage at all — the same as an entry nobody
+              linked. Every value the model sent named something that is not in
+              this client&apos;s assessments. The values are on each
+              entry&apos;s <code>dropped_links</code> and on the{" "}
+              <code>risk_register.generated</code> audit row. Regenerate before
+              exporting: a client reading this register sees those rows as
+              unlinked.
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <NumberCard label="Entries" value={register.entries.length} />
             <NumberCard

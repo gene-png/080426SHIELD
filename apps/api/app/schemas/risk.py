@@ -70,6 +70,11 @@ class RiskEntryResponse(BaseModel):
     rationale: str | None
     origin: str
     trust: str | None
+    # #132. What the model proposed for this entry's link fields and lost.
+    # `None` means pre-0048 and NOT "nothing"; `{}` is the positive claim that
+    # nothing was dropped. A renderer that treats the two alike reinstates the
+    # defect the column was added for.
+    dropped_links: dict | None = None
 
 
 class RiskRegisterResponse(BaseModel):
@@ -140,3 +145,31 @@ class RiskRegisterResponse(BaseModel):
     # A derived value cannot be out of sync; a passed one merely is not, yet.
     entries_total: int = 0
     entries_without_tier: int = 0
+
+    # #132, the same instrument pointed at the LINKS.
+    #
+    # `linked_techniques = []` was byte-identical whether the model proposed
+    # nothing or proposed five things that all failed to resolve, so a
+    # consultant read "the AI found no ATT&CK relevance" over "the AI proposed
+    # five techniques and all five were misspelled".
+    #
+    # THREE counters rather than one, because there are three states and a
+    # two-state reading is what the column exists to end:
+    #
+    #   entries_with_dropped_links     the model offered something that did not
+    #                                  resolve -- what to look at.
+    #   entries_unlinked_after_drops   ... and NOTHING survived, so the entry
+    #                                  renders exactly like one nobody linked.
+    #                                  The client-visible outcome.
+    #   entries_links_not_recorded     pre-0048 rows. "Nothing was dropped" and
+    #                                  "nobody was counting" are different
+    #                                  facts and this keeps them apart.
+    #
+    # DERIVED from the stored entries, like `entries_without_tier` and for the
+    # same reason: they describe the REGISTER, so they are correct whenever it
+    # is read, not only on the response to the generate run. That is only
+    # possible because the drop is PERSISTED (migration 0048); a counter alone
+    # would be 0 on every read-back and the harm outlives the run.
+    entries_with_dropped_links: int = 0
+    entries_unlinked_after_drops: int = 0
+    entries_links_not_recorded: int = 0

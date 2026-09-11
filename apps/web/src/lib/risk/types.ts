@@ -45,6 +45,21 @@ export interface RiskEntry {
   rationale: string | null;
   origin: string;
   trust: string | null;
+  /**
+   * What the model proposed for this entry's link fields and LOST (#132).
+   *
+   * THREE states, and treating it as two reinstates the defect the field was
+   * added for:
+   *
+   *   `null` — the entry predates migration 0048. Not recorded; infer nothing.
+   *   `{}`   — recorded, and nothing was dropped. A positive claim.
+   *   `{...}` — `field -> [values]` the model sent that matched nothing in the
+   *             client's own assessments.
+   *
+   * Without it, `linked_techniques: []` is identical whether the model
+   * proposed nothing or proposed five things that all failed to resolve.
+   */
+  dropped_links: Record<string, string[]> | null;
 }
 
 export interface RiskRegister {
@@ -76,6 +91,24 @@ export interface RiskRegister {
    */
   entries_total: number;
   entries_without_tier: number;
+  /**
+   * #132, the same instrument pointed at the LINKS, and three counters because
+   * there are three states.
+   *
+   * `entries_with_dropped_links` is what to look at; `entries_unlinked_after_drops`
+   * is what the consultant SEES, an entry that proposed linkage and kept none
+   * and so renders exactly like one nobody linked; `entries_links_not_recorded`
+   * is the pre-0048 rows, so "nothing was dropped" and "nobody was counting"
+   * stay apart.
+   *
+   * Derived server-side from the stored entries, like the two above, so they
+   * are correct on `GET .../register/latest` and survive a reload. That is only
+   * possible because the drop is persisted — a counter about the generate run
+   * would read 0 here.
+   */
+  entries_with_dropped_links: number;
+  entries_unlinked_after_drops: number;
+  entries_links_not_recorded: number;
   id: string;
   client_id: string;
   version: number;

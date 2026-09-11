@@ -91,6 +91,20 @@ class RiskEntry(UUIDPKMixin, TimestampMixin, Base):
     linked_techniques: Mapped[list | None] = mapped_column(_JSON_LIST)
     linked_controls: Mapped[list | None] = mapped_column(_JSON_LIST)
 
+    # What the model proposed for those two fields, and for `source_id`, and
+    # LOST (#132, migration 0048). Three states, and the third is the whole
+    # reason the column exists:
+    #
+    #   None  -- pre-0048 row. Not recorded; infer nothing.
+    #   {}    -- recorded, and nothing was dropped.
+    #   {...} -- `field -> [values]`, deduped, that matched nothing in the
+    #            client's own assessments.
+    #
+    # Without it, `linked_techniques = []` is byte-identical whether the model
+    # proposed nothing or proposed five things that all failed to resolve, and
+    # the consultant reads the first over the second.
+    dropped_links: Mapped[dict | None] = mapped_column(JSON)
+
     likelihood: Mapped[str | None] = mapped_column(String(16))
     impact: Mapped[str | None] = mapped_column(String(16))
     tier: Mapped[str | None] = mapped_column(String(16))  # code-derived, never AI-set

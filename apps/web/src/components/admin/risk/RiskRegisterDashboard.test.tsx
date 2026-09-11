@@ -65,6 +65,9 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     excluded_inputs: [],
     entries_total: 0,
     entries_without_tier: 0,
+    entries_with_dropped_links: 0,
+    entries_unlinked_after_drops: 0,
+    entries_links_not_recorded: 0,
     id: "r1",
     client_id: "c1",
     version: 1,
@@ -142,6 +145,51 @@ describe("RiskRegisterDashboard tier-less entries disclosure", () => {
     );
     await loaded();
     expect(screen.queryByTestId("risk-entries-without-tier")).toBeNull();
+  });
+
+  it("says so when entries proposed links and kept none", async () => {
+    // #132. Such an entry is persisted with empty link arrays -- identical to
+    // an entry nobody linked -- so the consultant reads "the AI found no
+    // relevance" over "the AI proposed five things and all five were
+    // misspelled". Derived server-side and persisted (migration 0048), so it
+    // arrives on a plain LOAD rather than only on the generate response, which
+    // is what mocking `latest` asserts.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 40,
+        entries_with_dropped_links: 9,
+        entries_unlinked_after_drops: 3,
+      }),
+    );
+    await loaded();
+
+    const alert = await screen.findByTestId(
+      "risk-entries-unlinked-after-drops",
+    );
+    expect(alert.textContent).toMatch(/3 of 40/);
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert.textContent).toMatch(/Regenerate before exporting/i);
+    // The OUTCOME count, not the spelling-problem count. Nine entries have a
+    // dropped value and six of them still show linkage; saying 9 would send
+    // the consultant looking for six absences that are not there.
+    expect(alert.textContent).not.toMatch(/9 of 40/);
+  });
+
+  it("stays quiet when dropped links still left something to show", async () => {
+    // The discriminator between the two counters. Entries lost a value and
+    // kept linkage, so nothing on screen is missing and the banner must not
+    // fire -- a banner keyed on `entries_with_dropped_links` would.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 40,
+        entries_with_dropped_links: 9,
+        entries_unlinked_after_drops: 0,
+      }),
+    );
+    await loaded();
+    expect(
+      screen.queryByTestId("risk-entries-unlinked-after-drops"),
+    ).toBeNull();
   });
 });
 

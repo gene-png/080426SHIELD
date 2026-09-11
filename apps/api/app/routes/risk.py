@@ -308,6 +308,55 @@ def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str])
     return {"inputs": inputs, "excluded": list(excluded)}
 
 
+#: Fields whose model-supplied values are checked against the client's own
+#: assessments. Named here so the audit row, the response counter and the
+#: persisted record cannot disagree about which fields they cover.
+LINK_FIELDS = ("linked_techniques", "linked_controls", "source_id")
+
+
+def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list[str]]:
+    """`(kept, dropped)` for one link field.
+
+    Returning BOTH halves is the entire fix. The previous form was::
+
+        techs = [t for t in (raw.get("linked_techniques") or []) if t in valid_techniques]
+
+    -- a comprehension whose false branch drops the record instead of emitting
+    it under a different reason, which `CLAUDE.md` names exactly: "make the
+    false branch emit something; a zero-value record that names the fault is
+    honest, and silence never is."
+
+    **No fold, no alias tier, and that is a decision rather than an omission.**
+    The ATT&CK resolver has one because the model there is shown REDACTED tool
+    names and must be able to cite them back, so a miss is a transformation to
+    reverse. Nothing is transformed here: `valid_techniques` and
+    `valid_controls` go into the prompt VERBATIM (see `_batch_prompt`), so a
+    value that is not in them is the model citing something it was never given.
+    Adding a normalising tier would invent a second key space to be wrong in --
+    and `CLAUDE.md` records what that cost when a derived key collided with a
+    real one and made the only citable string `ambiguous`, strictly worse than
+    the defect being fixed.
+
+    Order is preserved and duplicates collapse, so a model that repeats a code
+    inflates neither list.
+    """
+    kept: list[str] = []
+    dropped: list[str] = []
+    if not isinstance(offered, list):
+        # A non-list is NOT "no links offered". It is a payload shape the prompt
+        # did not ask for, and reporting it as an empty offer is the silence
+        # this function exists to end. `None` and `""` are genuine absence.
+        if offered is not None and offered != "":
+            dropped.append(str(offered)[:64])
+        return kept, dropped
+    for raw in offered:
+        value = str(raw)
+        target = kept if value in universe else dropped
+        if value not in target:
+            target.append(value[:64])
+    return kept, dropped
+
+
 def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set[str], set[str]]:
     """Findings (one per gap) + the valid technique/control link universes.
 
@@ -627,8 +676,31 @@ def generate(
     # the CLIENT sees rather than on any enumeration of how it happened: it is
     # non-zero exactly when an entry renders without a tier. Causes are a list
     # and lists go stale; an outcome cannot.
+    # DERIVED from the findings rather than returned as a fourth value: the
+    # source ids ARE the findings' ids, and a second channel for one fact is a
+    # second place for it to drift.
+    valid_source_ids = {str(f["source_id"]) for f in findings if f.get("source_id") is not None}
     entries_total = 0
     entries_without_tier = 0
+    # #132. `field -> [values]`, deduped across the whole run, so the audit row
+    # names WHAT to fix -- the same shape `rejected_enum_values` uses one block
+    # up, deliberately, because two vocabularies for "the model said something
+    # we could not use" is how two halves of one register come to disagree.
+    dropped_link_values: dict[str, list[str]] = {}
+    # And the OUTCOME, for the same reason `entries_without_tier` exists beside
+    # `rejected_enum_values`: the map above can only see values that were
+    # SUPPLIED, and it answers "what is wrong with the model's spelling". This
+    # answers "what does the consultant see". An entry that offered links and
+    # kept none renders exactly like an entry that offered none -- no ATT&CK
+    # linkage, no indication any was proposed -- which is #132's whole harm.
+    entries_offered_links = 0
+    entries_unlinked_after_drops = 0
+
+    def _record_drops(field: str, values: list[str]) -> None:
+        seen = dropped_link_values.setdefault(field, [])
+        for value in values:
+            if value not in seen:
+                seen.append(value)
 
     def _record(field: str, rejected: str | None) -> None:
         if rejected is None:
@@ -649,8 +721,36 @@ def generate(
         entries_total += 1
         if tier is None:
             entries_without_tier += 1
-        techs = [t for t in (raw.get("linked_techniques") or []) if t in valid_techniques]
-        controls = [c for c in (raw.get("linked_controls") or []) if c in valid_controls]
+        # #132: resolve, do not filter. Both halves come back, and the lost
+        # half is recorded ON THE ENTRY rather than only counted -- the
+        # consultant reads the register, not the generate response.
+        techs, techs_dropped = _resolve_links(raw.get("linked_techniques"), valid_techniques)
+        controls, controls_dropped = _resolve_links(raw.get("linked_controls"), valid_controls)
+        # `source_id` was stored with no validation at all, so an entry could
+        # claim provenance from a finding that does not exist. An unrecognised
+        # one is dropped rather than persisted: a dangling reference is a claim,
+        # and CLAUDE.md's standing rule is that missing data defaults to
+        # UNCONFIRMED. Dropped AND recorded -- dropping it silently would be
+        # this issue's own defect, committed while fixing it.
+        source_kept, source_dropped = _resolve_links(
+            [raw["source_id"]] if raw.get("source_id") is not None else None,
+            valid_source_ids,
+        )
+        dropped = {
+            field: values
+            for field, values in zip(
+                LINK_FIELDS, (techs_dropped, controls_dropped, source_dropped), strict=True
+            )
+            if values
+        }
+        _record_drops("linked_techniques", techs_dropped)
+        _record_drops("linked_controls", controls_dropped)
+        _record_drops("source_id", source_dropped)
+        offered_any = bool(techs_dropped or controls_dropped or techs or controls)
+        if offered_any:
+            entries_offered_links += 1
+            if not techs and not controls:
+                entries_unlinked_after_drops += 1
         axis, axis_bad = _coerce_enum(RiskAxis, raw.get("axis"))
         _record("axis", axis_bad)
         action, action_bad = _coerce_enum(RecommendedAction, raw.get("recommended_action"))
@@ -663,9 +763,15 @@ def generate(
                 description=raw.get("description"),
                 axis=axis.value if axis else None,
                 source=raw.get("source"),
-                source_id=raw.get("source_id"),
+                source_id=source_kept[0] if source_kept else None,
                 linked_techniques=techs,
                 linked_controls=controls,
+                # `{}` when nothing was dropped, never NULL. NULL is reserved
+                # for pre-0048 rows and means "not recorded" -- see the
+                # migration. Writing `{}` here is what makes a clean entry a
+                # positive claim rather than an absence anyone may read either
+                # way.
+                dropped_links=dropped,
                 likelihood=lk.value if lk else None,
                 impact=im.value if im else None,
                 tier=tier,
@@ -701,6 +807,13 @@ def generate(
             "rejected_enum_values": rejected_enum_values,
             "entries_total": entries_total,
             "entries_without_tier": entries_without_tier,
+            # #132, and the same pairing: the map names what to fix, the count
+            # names what the consultant sees. `entries_offered_links` is the
+            # denominator -- "3 entries lost every link" means something
+            # different at 3 of 4 than at 3 of 40.
+            "dropped_link_values": dropped_link_values,
+            "entries_offered_links": entries_offered_links,
+            "entries_unlinked_after_drops": entries_unlinked_after_drops,
         },
     )
     db.commit()
@@ -980,6 +1093,19 @@ def _serialize(
         excluded_inputs=excluded_inputs or [],
         entries_total=len(entries),
         entries_without_tier=sum(1 for e in entries if e.tier is None),
+        # #132, derived here rather than passed in, so a register read back next
+        # week reports the same thing the generate run did.
+        entries_with_dropped_links=sum(1 for e in entries if e.dropped_links),
+        entries_unlinked_after_drops=sum(
+            1
+            for e in entries
+            if e.dropped_links and not e.linked_techniques and not e.linked_controls
+            # `source_id` is a link field but not a LINKAGE: an entry whose
+            # source_id was dropped still shows its technique links, so counting
+            # it here would report an outcome the consultant does not see.
+            and any(e.dropped_links.get(f) for f in ("linked_techniques", "linked_controls"))
+        ),
+        entries_links_not_recorded=sum(1 for e in entries if e.dropped_links is None),
         id=register.id,
         client_id=register.client_id,
         version=register.version,
