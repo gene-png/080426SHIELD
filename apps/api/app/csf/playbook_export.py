@@ -30,8 +30,34 @@ def _autofit(ws: Any) -> None:
         ws.column_dimensions[col[0].column_letter].width = min(60, max(10, width + 2))
 
 
+#: What an UNAPPROVED playbook says on every page a client can read (#277).
+#:
+#: Deliberately not built from "Working profile", which is CSF 2.0's own name
+#: for a normal artifact of the method and appears on an APPROVED playbook too.
+#: A notice made of the method's vocabulary is invisible exactly where it
+#: matters -- a reader who knows CSF reads it as the name of the thing.
+#:
+#: One constant, read by all five renderers and by the tests, because five
+#: copies of a warning are five places for its wording to drift and the drift
+#: would be invisible: each renderer is reached by a different fixture.
+WORKING_NOTICE = (
+    "NOT APPROVED - working draft. This playbook has not been approved by "
+    "Kentro and its content may change."
+)
+
+#: And the safe state says so too. If only the unapproved case were stamped, a
+#: reader could not tell an approved document from one built before the stamp
+#: existed -- absence of a warning is not evidence of approval.
+APPROVED_NOTICE = "Approved by Kentro."
+
+
+def _approval_notice(approved: bool) -> str:
+    return APPROVED_NOTICE if approved else WORKING_NOTICE
+
+
 def render_xlsx(
     *,
+    approved: bool,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -181,6 +207,8 @@ def render_xlsx(
     cover.append(["SHIELD by Kentro — CSF 2.0 Full Playbook"])
     cover.append([f"Client: {client_name}"])
     cover.append([f"Working profile version: {version}"])
+    # #277: on the SHEET, not only in the filename.
+    cover.append([_approval_notice(approved)])
     cover.append([])
     cover.append(
         [
@@ -386,6 +414,7 @@ def _cover(
     story: list[Any],
     styles: dict[str, Any],
     *,
+    approved: bool,
     subtitle: str,
     client_name: str,
     version: int,
@@ -400,6 +429,9 @@ def _cover(
     story.append(Spacer(1, 0.4 * inch))
     story.append(Paragraph(f"Prepared for: <b>{escape(client_name)}</b>", styles["body"]))
     story.append(Paragraph(f"Working profile version: {version}", styles["body"]))
+    # #277: on the COVER, not only in the filename. A filename does not
+    # survive being opened, printed, re-saved or pasted into a deck.
+    story.append(Paragraph(escape(_approval_notice(approved)), styles["body"]))
     if generated_on:
         story.append(Paragraph(f"Generated: {escape(generated_on)}", styles["body"]))
     story.append(Spacer(1, 0.3 * inch))
@@ -491,6 +523,7 @@ def _new_pdf(out: io.BytesIO, title: str, client_name: str) -> Any:
 
 def render_exec_pdf(
     *,
+    approved: bool,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -509,6 +542,7 @@ def render_exec_pdf(
         client_name=client_name,
         version=version,
         generated_on=generated_on,
+        approved=approved,
     )
     story.append(PageBreak())
 
@@ -527,6 +561,7 @@ def render_exec_pdf(
 
 def render_full_pdf(
     *,
+    approved: bool,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -546,6 +581,7 @@ def render_full_pdf(
         client_name=client_name,
         version=version,
         generated_on=generated_on,
+        approved=approved,
     )
     story.append(PageBreak())
 
@@ -674,12 +710,23 @@ def _shade_col(table: Any, col: int, levels: Sequence[int | None]) -> None:
 
 
 def _docx_cover(
-    doc: Any, *, subtitle: str, client_name: str, version: int, generated_on: str | None
+    doc: Any,
+    *,
+    subtitle: str,
+    client_name: str,
+    version: int,
+    generated_on: str | None,
+    approved: bool,
 ) -> None:
     from app.docx_export import add_paragraphs, add_title
 
     add_title(doc, "NIST CSF 2.0", subtitle)
-    meta = [f"Prepared for: {client_name}", f"Working profile version: {version}"]
+    meta = [
+        f"Prepared for: {client_name}",
+        f"Working profile version: {version}",
+        # #277: on the page, not only in the filename.
+        _approval_notice(approved),
+    ]
     if generated_on:
         meta.append(f"Generated: {generated_on}")
     meta.append("Prepared by SHIELD by Kentro.")
@@ -714,6 +761,7 @@ def _docx_scorecard(doc: Any, rows: Sequence[Any]) -> None:
 
 def render_exec_docx(
     *,
+    approved: bool,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -728,6 +776,7 @@ def render_exec_docx(
         client_name=client_name,
         version=version,
         generated_on=generated_on,
+        approved=approved,
     )
 
     add_heading(doc, "Executive summary")
@@ -762,6 +811,7 @@ def render_exec_docx(
 
 def render_full_docx(
     *,
+    approved: bool,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -783,6 +833,7 @@ def render_full_docx(
         client_name=client_name,
         version=version,
         generated_on=generated_on,
+        approved=approved,
     )
     add_page_break(doc)
 
