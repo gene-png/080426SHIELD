@@ -24,7 +24,7 @@ dependencies = [
     # runtime dependency as of Sprint 6 (D-026); the 2026-07-12 smoke proved the
     # redaction/llm_calls contract against a live claude-sonnet-5 call. The
     # openai/gemini adapters are thin httpx clients and need no SDK.
-    "anthropic>=0.40,<1",
+    "anthropic>=0.40,<2",
     # Google auth for the Vertex AI egress path (app/ai/llm.py VertexProvider,
     # Sprint 7 D-029): Application Default Credentials -> bearer token, NO static
     # API key. Lazy-imported on the live path; the live-mode boot preflight
