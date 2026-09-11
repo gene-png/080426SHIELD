@@ -24,6 +24,7 @@ the list - the gap analysis is for known weaknesses, not unknown ones.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -38,6 +39,11 @@ from app.csf.maturity import MaturityTier, tier_label
 _FUNCTION_NAME_BY_CODE: dict[FunctionCode, str] = {f.code: f.name for f in FUNCTIONS}
 
 DEFAULT_TARGET_TIER = int(MaturityTier.REPEATABLE)
+
+#: CSF 2.0 tiers run 1..4. ZT's equivalent ceiling depends on the framework
+#: (CISA 4, DoD 3); CSF's is a constant, which is why `resolve_target_tier`
+#: takes no framework argument where `resolve_target_stage` does.
+MAX_TIER = 4
 DEFAULT_TOP_N = 20
 
 # Function criticality weights. Tunable - the order matters more than
@@ -86,7 +92,7 @@ def _function_name(fn: FunctionCode) -> str:
 def _validated(tier: int | None) -> int | None:
     if tier is None:
         return None
-    if 1 <= int(tier) <= 4:
+    if 1 <= int(tier) <= MAX_TIER:
         return int(tier)
     return None
 
@@ -110,6 +116,57 @@ def _row_for(sc: Subcategory, current: int, target: int, notes: str | None) -> G
     )
 
 
+def resolve_target_tier(chosen: object) -> tuple[int, str]:
+    """An engagement-level CSF target, plus WHERE IT CAME FROM (#184).
+
+    Returns `(tier, source)` with source one of:
+
+      "client"               the client's stored choice, a real CSF tier
+      "default"              the client chose nothing; the engine default applies
+      "client_out_of_range"  the stored choice is not a tier CSF has
+      "client_unparseable"   the stored value is not a whole number at all
+
+    The last two are the point of this function. "The client chose nothing" and
+    "the client's choice could not be used" are different facts, and the second
+    is answerable by re-asking them -- so flattening the two throws away the
+    more actionable one. Both `routes/clients.py` and `routes/csf.py` computed
+    `"client" if <stored> is not None else "default"`, keyed on whether a value
+    was OFFERED rather than whether it SURVIVED, which is the line #125 was
+    filed against in ZT.
+
+    MIRRORED FROM `zt/scoring.py::resolve_target_stage`, deliberately, down to
+    the exception list. A second design for the same question is how two
+    services come to disagree about one client's target.
+
+    It REPORTS rather than raises: a stored value is data, not a programming
+    error, and refusing to render an existing engagement is not an available
+    response to it. `analyze` raises, because by then the value has been
+    resolved and anything out of range is a caller bug.
+
+    `OverflowError` is not decorative -- `float(10**400)` raises it, and an int
+    wider than a double is ordinary JSON. ZT's resolver records that omitting
+    it is what an absolute claim costs when its test enumerates values someone
+    thought of instead of deriving them; inherited here rather than relearned.
+    """
+    if chosen is None:
+        return (DEFAULT_TARGET_TIER, "default")
+    # `bool` subclasses `int`, so this must precede the numeric parse or a
+    # stored `True` resolves to Tier 1 and gets attributed to the client.
+    if isinstance(chosen, bool):
+        return (DEFAULT_TARGET_TIER, "client_unparseable")
+    try:
+        n = float(chosen)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return (DEFAULT_TARGET_TIER, "client_unparseable")
+    if not math.isfinite(n):
+        return (DEFAULT_TARGET_TIER, "client_unparseable")
+    if not 1 <= n <= MAX_TIER:
+        return (DEFAULT_TARGET_TIER, "client_out_of_range")
+    if n != int(n):
+        return (DEFAULT_TARGET_TIER, "client_unparseable")
+    return (int(n), "client")
+
+
 def analyze(
     answers: Mapping[str, int | None],
     *,
@@ -122,8 +179,23 @@ def analyze(
     `answers` keys not present in the canonical catalog are silently
     ignored (defensive against stale data).
     """
-    if not (1 <= target_tier <= 4):
-        target_tier = DEFAULT_TARGET_TIER
+    if not (1 <= target_tier <= MAX_TIER):
+        # REFUSE, do not clamp (#184, the CSF twin of #125). This clamped to
+        # `DEFAULT_TARGET_TIER` and returned the clamped value, so
+        # `GET /csf/services/{id}/gap-analysis?target_tier=99` answered 200
+        # with `target_tier: 3` and a gap set computed against 3 -- a caller
+        # asked one question and was answered a different one in the same
+        # units. A silent clamp is a default-value fallback on error, which
+        # core principle 2 forbids.
+        #
+        # Callers resolve a CLIENT-SUPPLIED tier through `resolve_target_tier`
+        # first, which names the fault instead of raising. Reaching here means
+        # a caller passed an unresolved value, which is a programming error.
+        raise ValueError(
+            f"target_tier {target_tier} is out of range for CSF 2.0 "
+            f"(valid 1-{MAX_TIER}). Resolve a client-supplied tier through "
+            f"resolve_target_tier() first."
+        )
     notes = notes or {}
 
     rows: list[Gap] = []
@@ -158,7 +230,9 @@ __all__ = [
     "DEFAULT_TARGET_TIER",
     "DEFAULT_TOP_N",
     "FUNCTION_WEIGHTS",
+    "MAX_TIER",
     "Gap",
     "GapAnalysis",
     "analyze",
+    "resolve_target_tier",
 ]

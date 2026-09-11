@@ -11,6 +11,7 @@ import {
 import {
   functionsByGap,
   hiddenGapCount,
+  targetFaultNote,
   targetIsAssumed,
   type CsfDashboardData,
   type CsfFunction,
@@ -139,7 +140,7 @@ export function CsfDashboard({
              like a number they did. */
           sub={
             assumedTarget
-              ? "Default target — no tier chosen at intake"
+              ? `Default target — ${targetFaultNote(data.target_tier_source) ?? "the tier on file was not usable"}`
               : "Your target, chosen at intake"
           }
           accent={C.green}

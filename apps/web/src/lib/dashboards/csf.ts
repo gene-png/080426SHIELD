@@ -50,8 +50,12 @@ export interface CsfDashboardData {
   target_label: string;
   target_pct: number;
   /**
-   * "client" when the target came from the intake choice, "default" when the
-   * client never set one. Rendered, not just carried — see `targetIsAssumed`.
+   * FOUR values, not two (#184): "client", "default", "client_out_of_range",
+   * "client_unparseable". The last two mean the client DID choose and the
+   * choice could not be used — a different fact from choosing nothing, and the
+   * only one a consultant can act on by re-asking them.
+   *
+   * Rendered, not just carried — see `targetIsAssumed` and `targetFaultNote`.
    */
   target_tier_source: string;
 
@@ -98,4 +102,36 @@ export function hiddenGapCount(data: CsfDashboardData): number {
  */
 export function targetIsAssumed(data: CsfDashboardData): boolean {
   return data.target_tier_source !== "client";
+}
+
+/**
+ * WHY the target is assumed, in the client's own terms, or null when it is not.
+ *
+ * `targetIsAssumed` above is a boolean and stays one — it fails safe for any
+ * unknown source. But a boolean cannot distinguish "you chose nothing" from
+ * "your choice could not be used", and collapsing the two prints the first
+ * sentence over the second: the client is told they made no choice when they
+ * made one that was discarded. That is a lie in their own words, and it is the
+ * reason the ZT twin's `targetFault` exists.
+ *
+ * Mirrored from `dashboards/zt.ts::targetFault` rather than worded again, so
+ * two services cannot describe one fault differently.
+ *
+ * The default arm is deliberate and not dead: the API is the source of this
+ * string, so an unrecognised value must still say SOMETHING true rather than
+ * fall through to the "chose nothing" copy.
+ */
+export function targetFaultNote(source: string): string | null {
+  switch (source) {
+    case "client":
+      return null;
+    case "default":
+      return "no tier chosen at intake";
+    case "client_out_of_range":
+      return "the tier on file is not one CSF has";
+    case "client_unparseable":
+      return "the tier on file could not be read";
+    default:
+      return "the tier on file was not usable";
+  }
 }

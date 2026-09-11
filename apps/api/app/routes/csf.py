@@ -51,7 +51,9 @@ from app.csf.exporters import build_context as build_csf_context
 from app.csf.exporters import render_docx as render_csf_docx
 from app.csf.exporters import render_pdf as render_csf_pdf
 from app.csf.exporters import render_xlsx as render_csf_xlsx
+from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as analyze_gaps
+from app.csf.gap import resolve_target_tier
 from app.csf.maturity import TIER_DEFINITIONS
 from app.csf.playbook import (
     DimensionScores,
@@ -904,6 +906,30 @@ def gap_analysis(
     target_tier: int = 3,
     top_n: int = 20,
 ) -> GapAnalysisResponse:
+    # A query parameter is a REQUEST, and the honest answer to an out-of-range
+    # request is to refuse it (#184). This used to reach `analyze`, which
+    # silently clamped it and returned 200 reporting the clamp as the value
+    # asked for -- a caller answered a different question in the same units.
+    #
+    # TYPED, mirroring `routes/zt.py`'s twin rather than diverging from it. A
+    # bare `Query(ge=1, le=4)` bound would also refuse, earlier and in OpenAPI,
+    # but FastAPI's own rejection goes through `_handle_validation_error` and
+    # emits "Request validation failed." with a `details` array and NO `reason`
+    # key -- a raw validation dump, which core principle 2 forbids for a
+    # user-facing error and which the web layer's D-016 mapping keys on. The
+    # twin already decided this and wrote down why; a second answer here would
+    # be an unstated divergence between two copies of one endpoint.
+    if not 1 <= target_tier <= CSF_MAX_TIER:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "target_tier_out_of_range",
+                "message": (
+                    f"CSF 2.0 has tiers 1-{CSF_MAX_TIER}; "
+                    f"target_tier={target_tier} is not one of them."
+                ),
+            },
+        )
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.NIST_CSF)
     a = _latest_assessment(db, svc.id)
     if a is None:
@@ -2320,11 +2346,11 @@ def finalize_csf_deliverable(
     # `/gap-analysis` selector, which finalize never receives. The audit row
     # below records which tier was used and whether the client chose it.
     engagement_tier = _client_target_tier(db, svc.id)
-    gap = analyze_gaps(
-        tier_map,
-        notes=notes_map,
-        **({"target_tier": engagement_tier} if engagement_tier is not None else {}),
-    )
+    # #184: resolve, do not branch on `is not None`. The conditional kwarg let
+    # an unusable stored tier reach the engine, which clamped it; the audit row
+    # below then recorded the clamp as the client's own choice.
+    resolved_tier, target_tier_source = resolve_target_tier(engagement_tier)
+    gap = analyze_gaps(tier_map, notes=notes_map, target_tier=resolved_tier)
 
     client_name = client.legal_name
     if client_name == "(pending intake)":
@@ -2441,7 +2467,10 @@ def finalize_csf_deliverable(
             "gap_count": gap.total_gap_count,
             # See the ZT twin: a gap count without its target is uninterpretable.
             "target_tier": gap.target_tier,
-            "target_tier_source": ("client" if engagement_tier is not None else "default"),
+            # Four values, not two (#184). "the client chose nothing" and "the
+            # client's choice could not be used" are different facts, and only
+            # the second is answerable by re-asking them.
+            "target_tier_source": target_tier_source,
         },
     )
     assessment.documents_stale = False  # Work Order C3

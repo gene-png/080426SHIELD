@@ -19,6 +19,7 @@ from app.csf.gap import (
     DEFAULT_TOP_N,
     FUNCTION_WEIGHTS,
     analyze,
+    resolve_target_tier,
 )
 
 # ---------------------------------------------------------------------------
@@ -106,11 +107,32 @@ def test_top_n_caps_response() -> None:
 
 
 @pytest.mark.unit
-def test_target_tier_clamped_to_valid_range() -> None:
+def test_target_tier_out_of_range_is_refused_not_clamped() -> None:
+    """THE CLAMP THIS PINNED WAS THE DEFECT. Inverted, not deleted (#184).
+
+    This asserted `analyze(answers, target_tier=99).target_tier ==
+    DEFAULT_TARGET_TIER` under the comment "Out-of-range falls back to the
+    default" — describing the behaviour accurately and treating it as intended.
+
+    It was not intended. `GET /csf/services/{id}/gap-analysis?target_tier=99`
+    returned 200 with `target_tier: 3` in the body and the gap set computed
+    against 3, so a caller asked one question and was answered a different one
+    in the same units. That is the defect #125 fixed in ZT, whose engine now
+    raises for the reason its comment gives: "A silent clamp is a default-value
+    fallback on error, which core principle 2 forbids."
+
+    Stated explicitly rather than edited quietly to green, per core principle
+    3: **this test pinned real behaviour, and that behaviour is now considered
+    wrong.** A client-supplied tier is resolved through `resolve_target_tier`
+    before it reaches the engine; reaching the engine out of range is a caller
+    bug.
+    """
     answers = {SUBCATEGORIES[0].code: 1}
-    result = analyze(answers, target_tier=99)
-    # Out-of-range falls back to the default.
-    assert result.target_tier == DEFAULT_TARGET_TIER
+    with pytest.raises(ValueError, match="out of range"):
+        analyze(answers, target_tier=99)
+
+    # The resolver is where a client-supplied value goes, and it REPORTS.
+    assert resolve_target_tier(99) == (DEFAULT_TARGET_TIER, "client_out_of_range")
 
 
 @pytest.mark.unit
@@ -333,3 +355,39 @@ def test_gap_route_404_for_non_csf_service(app_client) -> None:
 def test_default_top_n_constant_matches_route_default() -> None:
     """Lock the contract so changing one without the other trips the test."""
     assert DEFAULT_TOP_N == 20
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("asked", [99, 0, -5, 5])
+def test_gap_route_refuses_an_out_of_range_target_tier(app_client, asked) -> None:
+    """**The LIVE half of #184**, and until this existed nothing pinned it.
+
+    The other new tests cover `resolve_target_tier` and the engine — the latent
+    half. The reachable defect was this route: `?target_tier=99` returned 200
+    with `target_tier: 3` and a gap set computed against 3, and deleting the
+    guard would have left the whole suite green while turning that into an
+    untyped 500 (the engine raises now), which is strictly worse than the clamp
+    this change removed.
+
+    Asserts the typed D-016 body, not just the status, for the reason the ZT
+    twin's test records: 422 is also what FastAPI returns for its own
+    request-validation rejection, so the code alone says nothing about which
+    guard fired — and `CsfWorkspace.tsx` swallows a rejection in a bare
+    `catch {}`, leaving the cards in a permanent loading state.
+    """
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc_id, _answers = _seed_assessment(c, bearer)
+    h = {"Authorization": f"Bearer {bearer}"}
+
+    r = c.get(f"/csf/services/{svc_id}/gap-analysis?target_tier={asked}", headers=h)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["reason"] == "target_tier_out_of_range", r.text
+    assert f"target_tier={asked}" in r.json()["error"]["message"], r.text
+    assert "tiers 1-4" in r.json()["error"]["message"], r.text
+
+    # Positive control in the same test: the guard must not refuse a real tier.
+    ok = c.get(f"/csf/services/{svc_id}/gap-analysis?target_tier=4", headers=h)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["target_tier"] == 4

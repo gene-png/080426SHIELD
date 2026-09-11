@@ -24,8 +24,9 @@ from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
 from app.attack.pending import pending_codes as attack_pending_codes
-from app.csf.gap import DEFAULT_TARGET_TIER as CSF_DEFAULT_TARGET_TIER
+from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
+from app.csf.gap import resolve_target_tier as csf_resolve_target_tier
 from app.csf.scoring import _label_from_average as csf_label_from_average
 from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
@@ -531,9 +532,11 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
         # This card sits one click from the dashboard; reporting a different
         # number for the same assessment is what made the inconsistency visible.
         tier = _csf_client_target_tier(db, sid)
-        total += csf_analyze_gaps(
-            answers, **({"target_tier": tier} if tier is not None else {})
-        ).total_gap_count
+        # #184: resolve rather than branch on `is not None`. An unusable stored
+        # tier used to reach the engine and be clamped, so this card could count
+        # gaps against a target the dashboard beside it reported differently.
+        resolved_tier, _source = csf_resolve_target_tier(tier)
+        total += csf_analyze_gaps(answers, target_tier=resolved_tier).total_gap_count
     return _KindTotal(total, False)
 
 
@@ -590,15 +593,20 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
         # "default". Answering that needs a decision about what the value card
         # should say, not a wider signature.
         #
-        # Its CSF twin `_csf_gap_total` above loses the same FACT by a
-        # different MECHANISM, and the distinction matters to whoever picks
-        # this up: there is no CSF resolver to un-discard. That twin reads
-        # `_csf_client_target_tier` and passes the tier or nothing, so no
-        # source is ever computed, while this one computes a source and drops
-        # it. Same effect on the card, different repair. Fixing only one would
-        # leave the value card internally inconsistent -- the half-fix shape
-        # that made #79 worse than the defect it replaced. Both are left,
-        # together and on purpose, tracked in #207.
+        # Its CSF twin `_csf_gap_total` above loses the same FACT the same way
+        # NOW, and this comment used to say otherwise. It read "there is no CSF
+        # resolver to un-discard ... Same effect on the card, different repair",
+        # which was true until #184 gave CSF a `resolve_target_tier`. Both twins
+        # now compute a source and drop it into `_source`, so the two halves of
+        # #207 are ONE repair: surface the source on the value card.
+        #
+        # Corrected here rather than left, because the sentence was sited
+        # exactly where #207's owner would read it and would have sent them to
+        # build a resolver that already shipped.
+        #
+        # Fixing only one would still leave the value card internally
+        # inconsistent -- the half-fix shape that made #79 worse than the defect
+        # it replaced. Both are left, together and on purpose, tracked in #207.
         resolved_stage, _source = zt_resolve_target_stage(fw, stage)
         total += zt_analyze_gaps(
             fw,
@@ -1541,13 +1549,16 @@ def csf_dashboard(
     # `target_tier_source` says which one was used so a fallback is never
     # mistaken for a decision.
     chosen = _csf_client_target_tier(db, service_id)
-    target_tier = chosen if chosen is not None else CSF_DEFAULT_TARGET_TIER
-    target_tier_source = "client" if chosen is not None else "default"
+    # #184: one resolver, four sources. This was
+    # `"client" if chosen is not None else "default"` -- keyed on whether a
+    # value was OFFERED, never on whether it SURVIVED -- so a stored tier the
+    # engine then discarded was reported to the client as their own choice.
+    target_tier, target_tier_source = csf_resolve_target_tier(chosen)
 
     score = csf_compute(answers)
     gap = csf_analyze_gaps(answers, target_tier=target_tier)
 
-    max_tier = 4  # CSF 2.0 tiers run 1..4
+    max_tier = CSF_MAX_TIER
     target_pct = round(target_tier / max_tier * 100, 1)
 
     functions: list[CsfFunctionDashboard] = []
