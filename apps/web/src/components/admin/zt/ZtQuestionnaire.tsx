@@ -172,6 +172,18 @@ export function ZtQuestionnaire({
                     </summary>
                     <textarea
                       aria-label={`Notes for ${cap.code}`}
+                      // KEYED ON THE CONFIRMED VALUE (#283). `defaultValue`
+                      // makes this uncontrolled, and React does not reset a
+                      // user-dirtied textarea when that prop changes -- so a
+                      // failed save left the REFUSED text on screen while the
+                      // alert said it had been restored.
+                      //
+                      // This component is rendered by the CLIENT
+                      // self-assessment as well as the admin workspace, which
+                      // is why a client-facing fix reaches an admin file. The
+                      // admin path gets the same correction, incidentally and
+                      // correctly -- it reverts by re-fetch too.
+                      key={`${ans.id}:${ans.notes ?? ""}`}
                       defaultValue={ans.notes ?? ""}
                       disabled={readOnly}
                       rows={3}

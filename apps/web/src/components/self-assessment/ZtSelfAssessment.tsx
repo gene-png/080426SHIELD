@@ -18,6 +18,7 @@ import {
   patchSelfAssessmentAnswer,
   submitSelfAssessment,
 } from "@/lib/zt/client";
+import { describeSaveError } from "@/lib/describe-save-error";
 import type {
   CatalogPillar,
   ZtAnswer,
@@ -42,6 +43,16 @@ export function ZtSelfAssessment({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
+  // #283. The optimistic write below used to be reverted by nothing and
+  // reported by nothing: the row showed the new value, the PATCH 422'd, and a
+  // reload silently lost it. Core principle 2 — never a lie that something
+  // succeeded — and the API half of that was fixed in #195/#282 while this
+  // layer kept telling the client it had worked.
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  // Guards the failure re-fetch below: a later save's truth must not be
+  // overwritten by an earlier one's recovery. Same mechanism, and the same
+  // reason, as `assessmentSeq` in the admin workspaces.
+  const saveSeq = React.useRef(0);
   const [submitted, setSubmitted] = React.useState(false);
   const [pillarIdx, setPillarIdx] = React.useState(0);
 
@@ -103,6 +114,12 @@ export function ZtSelfAssessment({
     answerId: string,
     patch: ZtSelfAssessmentAnswerPatch,
   ): Promise<void> {
+    // Name the row. The alert renders once, at the bottom of a page that
+    // can carry 106 subcategories, so "that change" leaves the client
+    // unable to tell which answer was lost.
+    const subject =
+      assessment?.answers.find((a) => a.id === answerId)?.capability_code ??
+      "That change";
     setAssessment((curr) =>
       curr
         ? {
@@ -115,6 +132,11 @@ export function ZtSelfAssessment({
     );
     try {
       const updated = await patchSelfAssessmentAnswer(answerId, patch);
+      // Cleared HERE, on a confirmed success, and not at the top of this
+      // function. A first draft cleared it before the request, so a client
+      // whose answer to one row was refused lost the message the instant
+      // they touched another -- while that answer was still gone.
+      setSaveError(null);
       setAssessment((curr) =>
         curr
           ? {
@@ -125,8 +147,27 @@ export function ZtSelfAssessment({
             }
           : curr,
       );
-    } catch {
-      // Best-effort optimistic save; a reload reconciles if it failed.
+    } catch (err) {
+      // RE-FETCH, do not restore a snapshot. A first draft captured the
+      // row before the optimistic write and put it back on failure. That
+      // reads as safe and is not: both fields auto-save, so a second edit
+      // to the same row captures the OPTIMISTIC value, and its revert then
+      // discards a change the server had already confirmed.
+      //
+      // The three admin workspaces already solve this with a sequence-
+      // guarded re-fetch, which is a DERIVATION of server truth rather
+      // than a synchronisation with a stale copy. Using theirs rather
+      // than inventing a weaker one three files away.
+      setSaveError(describeSaveError(err, subject));
+      const seq = ++saveSeq.current;
+      try {
+        const truth = await fetchSelfAssessment(serviceId);
+        if (seq === saveSeq.current) setAssessment(truth);
+      } catch {
+        // The re-fetch failed too. The message above still stands and is
+        // the honest one: we cannot show what the server has. Silence
+        // here would put us back where #283 started.
+      }
     }
   }
 
@@ -393,6 +434,17 @@ export function ZtSelfAssessment({
                         </summary>
                         <textarea
                           aria-label={`Notes for ${cap.code}`}
+                          // KEYED ON THE CONFIRMED VALUE. `defaultValue` makes
+                          // this an uncontrolled input, and React does not
+                          // reset a user-dirtied textarea when that prop
+                          // changes -- so reverting state left the REFUSED text
+                          // on screen under an alert saying it had been
+                          // restored. #283's own symptom, surviving its fix, on
+                          // the one field most likely to trip `max_length`.
+                          // Changing the key remounts the box, which is what
+                          // actually puts the server's value back in front of
+                          // the client.
+                          key={`${ans.id}:${ans.notes ?? ""}`}
                           defaultValue={ans.notes ?? ""}
                           rows={3}
                           onBlur={(e) => {
@@ -445,6 +497,14 @@ export function ZtSelfAssessment({
         </CardBody>
       </Card>
 
+      {saveError ? (
+        <div
+          role="alert"
+          className="rounded-md border border-status-danger-border bg-status-danger-bg px-4 py-3 text-sm text-status-danger-fg"
+        >
+          {saveError}
+        </div>
+      ) : null}
       {submitError ? (
         <div
           role="alert"
