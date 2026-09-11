@@ -7,6 +7,34 @@ about state outside the working tree carries the command that produced it.
 
 **Assume the reader has none of the previous session's context.**
 
+### THE REVIEWS ARRIVED. Read this before merging anything.
+
+All ten dispatched reviews delivered, **after the handoff above was written** and after six of their PRs had merged. They are substantive — roughly forty findings, over twenty BLOCKING — and several correct the briefs they were given.
+
+**One is live on `main` and client-reaching. It is filed at TIER-1 as #317 and it is the first thing to fix.**
+
+`/sign-up` now renders **"Request validation failed."** under the Email field, to anyone on the internet, for a malformed email or a short password. #307 gave every schema 422 a `reason`; `SignUpForm.tsx` chooses between typed copy and its friendly fallback by testing that field's PRESENCE, so the fallback is unreachable and the internal string renders on the wrong field. I verified it against `ecf438d` before filing — `exceptions.py` sets the key, and the `else if (reason && message)` branch is the one that now takes it.
+
+It re-opens a defect already fixed once: `DELIVERY_PLAN.md` records the original as *"Duplicate-email registration surfaces a raw 'Request validation failed.'"* The comment explaining the old fix is what made the regression invisible. Nothing caught it because `SignUpForm.test.tsx` stubs only the two branches above the fallback, and `s1-signup-errors.spec.ts` forbids that string only inside the duplicate-email test.
+
+**#318 carries the findings from the six PRs that merged unreviewed** — #295, #296, #307, #308, #309, #311. Highlights, each needing re-verification because every reviewer had Read/Grep/Glob and no Bash:
+
+- **#309 and #311 both shipped a gate that runs nowhere.** `tests/gates/web_install_guard.sh` and `tests/gates/prettier_hook.sh` are referenced by no workflow, no CI step, no script. And `check_gate_fixtures.py` discovers gates by globbing `apps/api/scripts/*.py` for the marker `crash != verdict`, so a *shell* gate at *repo root* escapes the registry silently. That file had already written the residual down and left it open; these are its first two realisations.
+- **#311's version derivation takes the LOWEST prettier in the lockfile.** `packages:` is flat and alphabetically sorted and the script uses `head -1`; the anchor comment defends a key shape pnpm 9 never writes. The authoritative entry is in the same file and unread. (The `|| true` I flagged in the brief is genuinely fail-closed — the reviewer corrected me.)
+- **#296's two new gates are invisible to both harnesses that prove a gate can fail**, and the "gates can fail" step is green *because of* the omission. `check_decision_numbers.main()` has no test at all.
+- **#295 changed the copy a client sees in the normal case, not the exceptional one.** Every not-released 404 carries a message, so the typed reason now replaces the client-facing sentence on all five dashboards — losing the next-step line and substituting internal shorthand.
+- **#308's core claim holds** — the test can fail, both assertions discriminate — but the other half of the invariant lives in `lib/api.ts`, which a directory-derived set cannot reach, and `apiFetch` has no test at all.
+
+**The three open PRs have their findings commented on the PRs themselves**, so a merger sees them:
+
+- **#310 has one BLOCKING finding that should be fixed before merge**, and it is mechanical: `... > /tmp/pr_linked.txt || true` creates and truncates the file *before* `gh` runs, so a `gh` failure leaves an empty file that EXISTS — and the script's whole could-not-look path keys on the file being MISSING. A failed query can then print *"clean — no closing references (verified against GitHub)"* and merge. Worth confirming the redirect behaviour in a shell first; it takes ten seconds.
+- **#306** — two BLOCKING: the read-back's justification describes an unconstructible state (keep the ratchet, rewrite the reason), and nothing pins the read-back itself (`entries_written = entries_total` leaves all four tests green).
+- **#305** — three BLOCKING (prose), the sharpest being that a twin of the exact claim it fixes is still live in `routes/zt.py`, a file it edits.
+
+**#315 has one BLOCKING finding against my own work:** a *printed* workbook carries the notice on page 1 only. Freezing is a screen property; `print_title_rows` is set nowhere in the repo. #277's argument names "printed" as one of four survival modes and the XLSX mechanism drops it — under a comment about `oddHeader` that reads as having settled the question. One line fixes it.
+
+**The process finding, which is mine and not the reviewers':** nine agents were dispatched, all nine completed, **not one delivered before its PR merged**, and the reports came back only when I messaged each agent afterwards to ask. The six bodies that said `Findings: not run` were accurate at merge time and insufficient. Worth deciding whether a PR may merge while its dispatched review is outstanding, and what the audit block should say in that state.
+
 ### The single next action
 
 **Review and merge #305, #306, #310, #315, #316 — in that order.** All five are
@@ -215,8 +243,11 @@ which about twenty were BLOCKING. Four PR bodies that still said `Findings:
 pending` were rewritten this session to carry the actual findings and
 dispositions.
 
-The remaining symptom is narrower and real: **a dispatched reviewer can finish
-and go idle without its report reaching the caller.** Nine were dispatched this
+The remaining symptom is narrower and real, and it was confirmed the same
+day: **a dispatched reviewer can finish and go idle without its report reaching
+the caller.** All ten did eventually deliver, when asked directly -- see the
+reviews section at the top of this handoff, which supersedes the paragraph
+below. Nine were dispatched this
 session against #295, #296, #305, #306, #307, #308, #309, #310 and #311; all
 nine finished, none delivered, and a follow-up message asking each to send its
 findings had not returned by the end of the session. Those nine PRs have since
