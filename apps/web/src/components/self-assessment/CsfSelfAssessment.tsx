@@ -66,6 +66,19 @@ function filterCatalogByProfile(
   return { ...catalog, functions, total_subcategories: total };
 }
 
+/**
+ * What to tell a client whose answer did not save (#283).
+ *
+ * The API returns the house envelope `{error: {reason, message}}` for a typed
+ * refusal and a Pydantic `details` array for a schema-level one, so the
+ * wrapper may or may not have a useful message. Falling back to a generic
+ * sentence is fine; falling back to SILENCE is what this fixes.
+ */
+function describeSaveError(err: unknown): string {
+  const detail = err instanceof Error && err.message ? ` ${err.message}` : "";
+  return `That change was not saved.${detail} Your previous answer has been restored — try again, and if it keeps failing tell your consultant.`;
+}
+
 export function CsfSelfAssessment({
   serviceId,
 }: {
@@ -79,6 +92,12 @@ export function CsfSelfAssessment({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
+  // #283. The optimistic write below used to be reverted by nothing and
+  // reported by nothing: the row showed the new value, the PATCH 422'd, and a
+  // reload silently lost it. Core principle 2 — never a lie that something
+  // succeeded — and the API half of that was fixed in #195/#282 while this
+  // layer kept telling the client it had worked.
+  const [saveError, setSaveError] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
 
   React.useEffect(() => {
@@ -119,6 +138,10 @@ export function CsfSelfAssessment({
     answerId: string,
     patch: CsfAnswerPatch,
   ): Promise<void> {
+    // The row as the server last confirmed it. Captured BEFORE the
+    // optimistic write so a failure has something true to restore.
+    const previous = assessment?.answers.find((a) => a.id === answerId);
+    setSaveError(null);
     setAssessment((curr) =>
       curr
         ? {
@@ -141,8 +164,21 @@ export function CsfSelfAssessment({
             }
           : curr,
       );
-    } catch {
-      // Best-effort optimistic save; a reload reconciles if it failed.
+    } catch (err) {
+      // REVERT, then SAY SO. Reverting alone would still leave the client
+      // wondering whether they mis-clicked; reporting alone would leave the
+      // screen showing a value the server rejected.
+      setAssessment((curr) =>
+        curr
+          ? {
+              ...curr,
+              answers: curr.answers.map((a) =>
+                a.id === answerId && previous ? previous : a,
+              ),
+            }
+          : curr,
+      );
+      setSaveError(describeSaveError(err));
     }
   }
 
@@ -267,6 +303,14 @@ export function CsfSelfAssessment({
         </CardBody>
       </Card>
 
+      {saveError ? (
+        <div
+          role="alert"
+          className="rounded-md border border-status-danger-border bg-status-danger-bg px-4 py-3 text-sm text-status-danger-fg"
+        >
+          {saveError}
+        </div>
+      ) : null}
       {submitError ? (
         <div
           role="alert"
