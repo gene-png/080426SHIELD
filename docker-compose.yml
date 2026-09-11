@@ -215,14 +215,23 @@ services:
       # (api-env) points at the ADC file inside this mount. Credentials are NEVER
       # copied into the repo or the image — the mount is the only path in.
       - ${GCLOUD_CONFIG_DIR:-$HOME/.config/gcloud}:/gcloud:ro
-    # Apply pending migrations before serving so a newly-added revision can't
-    # leave the persistent db volume behind the (hot-reloaded) model code.
+    # Check the MOUNT first, then apply pending migrations before serving so a
+    # newly-added revision can't leave the persistent db volume behind the
+    # (hot-reloaded) model code.
+    #
+    # The mount check exists because those two states can disagree in the other
+    # direction: this file binds `./apps/api:/app` under a hardcoded project
+    # name, so the stack runs from whichever tree last ran `up`. Migrate from
+    # one worktree, `up` from a staler one, and `alembic upgrade head` fails
+    # with "Can't locate revision identified by '0047'" and crash-loops -- a
+    # message that sends the reader hunting a file that is not missing.
     # Dev convenience only - in prod, migrations run as a discrete deploy step,
     # not in the app container, to avoid replicas racing each other.
     command:
       - sh
       - -c
       - >
+        python scripts/check_mount_matches_database.py &&
         alembic upgrade head &&
         exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
