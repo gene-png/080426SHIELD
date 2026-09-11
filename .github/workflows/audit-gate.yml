@@ -118,6 +118,23 @@ jobs:
           git log --format=%B "origin/${{ github.base_ref }}..HEAD" > /tmp/pr_commits.txt
           echo "commit messages collected:"; wc -l < /tmp/pr_commits.txt
 
+      - name: A subject must not name a decision the commit does not add
+        # Placed here because this job already has the full history and the
+        # branch's own commit range; no other workflow does.
+        #
+        # A branch shipped `docs(decisions): D-072 -- ...` for a commit adding
+        # D-078. On rebase, every positional conflict in an append-only file
+        # then looked like a D-number collision and had to be opened to find
+        # out it was not one. The subject was the only thing that was wrong.
+        #
+        # This checks CONSISTENCY, not completeness: a subject naming no
+        # decision is fine, because every squash merge on main is a PR title
+        # that names none. Requiring completeness would have failed the whole
+        # history to catch one defect -- measured against the real commits
+        # before the boundary was chosen.
+        run: |
+          python apps/api/scripts/check_decision_numbers.py             --base "origin/${{ github.base_ref }}" --head HEAD
+
       - name: The PR template must not satisfy the audit gate by itself
         # Its text goes into every PR body, so one character decides whether this
         # check means anything. The commented examples use "->" and not ":"
