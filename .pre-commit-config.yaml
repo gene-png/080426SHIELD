@@ -19,15 +19,22 @@ repos:
     hooks:
       - id: gitleaks
 
+  # `rev` matches `apps/api/pyproject.toml`'s `ruff==0.16.3` (#168). It was
+  # v0.6.9 -- the same divergence as prettier's, in a hook that also rewrites,
+  # and recorded in the prettier comment below rather than beside the thing it
+  # was about. Unlike prettier this is a plain `rev` bump: the repo is
+  # maintained and the tag exists.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.16.3
     hooks:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
 
+  # `rev` matches `apps/api/pyproject.toml`'s `black==26.5.1` (#168). Same
+  # shape, same reason, same one-line fix.
   - repo: https://github.com/psf/black
-    rev: 24.8.0
+    rev: 26.5.1
     hooks:
       - id: black
 
@@ -46,28 +53,40 @@ repos:
         files: ^apps/api/app/
         additional_dependencies: ["bandit[toml]"]
 
-  # KNOWN DIVERGENCE — PRETTIER ONLY. It is NOT the only one in this file, and
-  # not the largest: the ruff (`rev: v0.6.9`) and black (`rev: 24.8.0`) hooks
-  # above are the same shape against `apps/api/pyproject.toml`'s `ruff==0.16.3`
-  # / `black==26.5.1`, and they rewrite too. Those are tracked in #168 with this
-  # one. Unlike prettier they are a plain `rev` bump — both repos are actively
-  # maintained and tags `v0.16.3` and `26.5.1` exist. This runs prettier
-  # 3.1.0 while CI checks 3.9.6 (`package.json` requires ^3.9.6), and the
-  # `prettier` hook id defaults to --write — so this REWRITES files into a state
-  # CI then rejects. Measured 2026-08-30:
+  # PRETTIER, AT THE VERSION THE LOCKFILE PINS (#168).
+  #
+  # This was `pre-commit/mirrors-prettier` at `rev: v3.1.0`, whose `prettier`
+  # hook id defaults to `--write`, while CI checks 3.9.6 — eight minors ahead.
+  # So the MANDATORY pre-commit step rewrote every commit into a state CI then
+  # rejected. Measured 2026-08-30:
+  #
   #   npx -y prettier@3.1.0 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
   #   -> Code style issues found in 46 files.  exit=1
-  # Not fixable by bumping `rev`: pre-commit/mirrors-prettier is ARCHIVED
-  # upstream (last push 2024-04-11) and v3.1.0 is its newest stable tag —
-  # everything above it is v4.0.0-alpha.*. Verified via the GitHub API, not
-  # inferred. The fix is a local hook calling the same npx command the docs
-  # specify, which changes what every commit does and needs its own review.
-  # Tracked in #168. Deliberately NOT fixed in the version-sweep PR.
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.1.0
+  #
+  # Not fixable by bumping `rev`: that mirror is ARCHIVED upstream (last push
+  # 2024-04-11), v3.1.0 is its newest stable tag, and everything above it is a
+  # v4 alpha. Verified via the GitHub API, not inferred.
+  #
+  # The version is READ from `pnpm-lock.yaml` rather than written here, because
+  # CI runs `pnpm install --frozen-lockfile` and then `pnpm format:check` — the
+  # lockfile is what the machine actually reads. `package.json` holds a RANGE
+  # (`^3.9.6`) that names no version and admits 3.10.x, and a literal here would
+  # be a third home for one fact, and the one nothing checks. See the script.
+  #
+  # NO REFORMAT LANDS WITH THIS. `main` is already 3.9.6-clean, because CI keeps
+  # it so; the 46 files are what 3.1.0 says about a 3.9.6-formatted tree, not
+  # work this change creates. Confirmed by running 3.9.6 `--check` on the branch.
+  - repo: local
     hooks:
       - id: prettier
+        name: prettier (version read from pnpm-lock.yaml)
+        entry: scripts/prettier-hook.sh
+        language: script
         exclude: ^(reference-docs|pnpm-lock\.yaml)
+        # The same extensions `package.json`'s `format` / `format:check` scripts
+        # glob, so the hook and CI disagree about the VERSION nowhere and about
+        # the FILE SET nowhere either.
+        files: \.(ts|tsx|js|jsx|json|md|yml|yaml)$
 
   - repo: local
     hooks:
