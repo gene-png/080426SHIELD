@@ -1291,3 +1291,127 @@ def test_the_counters_still_read_true_when_the_register_is_fetched_later(
     # rather than asserted: these two behave differently on a read-back ON
     # PURPOSE, and the difference is the point of migration 0048.
     assert body["batches_total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# #122 -- the audit row counted the INPUT and never the output.
+#
+#     details = {"findings": len(findings), "batches_total": ..., ...}
+#
+# A run that received 137 findings and persisted zero entries wrote a row
+# indistinguishable from one that persisted 137. CLAUDE.md: a success record
+# must be written where the success is; this one was written where the input
+# is. It compounds with the enum drift filed alongside it -- when a live run
+# stores entries with no likelihood, impact or tier, the audit row is the record
+# that would have to disagree with reality for anyone to notice, and it could
+# not, because it never measured the output.
+#
+# Read through `/admin/audit-entries` for the reason `_generated_audit` gives:
+# the claim is that a discard is REPORTED somewhere a person reaches, and a test
+# that queries the table proves the write and not the claim.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_the_audit_row_says_what_was_written_not_only_what_arrived(app_client) -> None:
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Kept", source_id=technique)[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}',
+        '{"description": "no title at all", "axis": "detection"}',
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    details = _generated_audit(c, bearer)
+
+    assert details["entries_received"] == 2
+    assert details["entries_written"] == 1
+    assert details["discarded_entries"] == {"no_title": 1}
+    assert len(body["entries"]) == 1
+
+
+@pytest.mark.unit
+def test_a_run_that_persisted_nothing_is_distinguishable_from_one_that_did(
+    app_client,
+) -> None:
+    """THE HEADLINE, and the two halves have to be asserted together.
+
+    `findings` alone cannot separate them: it is the same number either way.
+    What separates them is `entries_written`, and the discard map is what says
+    WHY -- a run that wrote nothing because the model sent nothing and a run
+    that wrote nothing because every entry was malformed are different faults
+    with different fixes.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        '{"description": "one", "axis": "detection"}',
+        '{"description": "two", "axis": "detection"}',
+    )
+    body = _generate(c, provider, bearer, cid, payload)
+    details = _generated_audit(c, bearer)
+
+    assert body["entries"] == []
+    assert details["findings"] > 0, "the INPUT is non-zero, which is the whole point"
+    assert details["entries_received"] == 2
+    assert details["entries_written"] == 0
+    assert details["discarded_entries"] == {"no_title": 2}
+
+
+@pytest.mark.unit
+def test_a_non_object_entry_is_counted_under_its_own_reason(app_client) -> None:
+    """Two causes, kept apart, because they are different things to fix.
+
+    A payload shape the prompt did not ask for is a prompt problem. An entry
+    that is shaped right and has no title is a content problem. Collapsing them
+    into one number tells a consultant neither.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload('"just a string"', '{"description": "no title"}')
+    _generate(c, provider, bearer, cid, payload)
+    details = _generated_audit(c, bearer)
+
+    assert details["discarded_entries"] == {"not_an_object": 1, "no_title": 1}
+    assert details["entries_received"] == 2
+    assert details["entries_written"] == 0
+    # The non-object is dropped at the BATCH MERGE, a layer above the per-entry
+    # loop, which is why `entries_received` is seeded from the merge's tally
+    # rather than counted from the loop alone. Without that seeding this reads
+    # 1 of 1 accounted for, over a run where the model sent two things.
+    assert details["entries_received"] == details["entries_written"] + sum(
+        details["discarded_entries"].values()
+    ), "every entry the model sent must be either written or counted as discarded"
+
+
+@pytest.mark.unit
+def test_a_clean_run_records_no_discards_rather_than_omitting_the_key(
+    app_client,
+) -> None:
+    """THE PASSING STATE. An empty map is a positive claim; a missing key is not.
+
+    Without this the counters are only ever observed non-zero, and a reader
+    cannot tell "nothing was discarded" from "this run predates the counting".
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Clean", source_id=technique)[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}'
+    )
+    _generate(c, provider, bearer, cid, payload)
+    details = _generated_audit(c, bearer)
+
+    assert details["discarded_entries"] == {}
+    assert details["entries_received"] == details["entries_written"] == 1
+    assert details["entries_received"] == details["entries_written"] + sum(
+        details["discarded_entries"].values()
+    ), "the invariant must hold on a clean run too, not only where something was lost"
