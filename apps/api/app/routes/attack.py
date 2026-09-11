@@ -1677,14 +1677,24 @@ def run_ai(
             row_flags.append({**entry, "field": field, "cleared_at": None})
         for entry in out.rejected_details:
             row_flags.append({"tool": None, **entry, "field": field, "cleared_at": None})
+        for entry in out.unusable_details:
+            row_flags.append({"tool": None, **entry, "field": field, "cleared_at": None})
         # #109, and it is a DISCLOSURE change rather than a scoring one. These
         # entries carry `tool: None`, so `uncleared_tools` never sees them and
         # `is_pending_review` still short-circuits at case 1 whenever a
-        # confirmed tool backs the row. A row with no tools at all was already
-        # withheld by its `no_citation` entry. Both directions are pinned in
-        # `test_attack_unusable_citations.py` rather than asserted here.
-        for entry in out.unusable_details:
-            row_flags.append({"tool": None, **entry, "field": field, "cleared_at": None})
+        # confirmed tool backs the row.
+        #
+        # A row with no tools at all stays withheld -- but NOT by the mechanism
+        # an earlier draft of this comment named. The merge block below writes a
+        # `no_citation` entry only when `merged` is empty, and an unusable entry
+        # fills it, so the unusable record DISPLACES the `no_citation` marker on
+        # exactly these rows. Withholding is unchanged; which entry does it is
+        # not. Said out loud because a reader grepping `no_citation` to find
+        # "the model claimed this and named nothing" will not find it on the
+        # rows they are investigating.
+        #
+        # Both directions are pinned in `test_attack_unusable_citations.py`, and
+        # the displacement in `test_attack_run_ai.py`.
         return out.tools
 
     for sugg in (result.data or {}).get("techniques", []):

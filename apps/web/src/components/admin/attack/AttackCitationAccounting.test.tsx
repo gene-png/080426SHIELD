@@ -338,4 +338,48 @@ describe("AttackCitationAccounting", () => {
       /^1 tool citation checked/,
     );
   });
+
+  // #109. A run can DECLINE to write a row's citation record -- NULL column,
+  // plus a field this run did not resolve still holding tools -- so the row
+  // stays withheld and nothing said the run had looked at it and stopped. The
+  // counter shipped reaching no surface at all, which is the exact state #30
+  // records for `attack-citations-rejected` and which this file exists for.
+  it("says when a run left rows unresolved, and names the fields", () => {
+    render(
+      <AttackCitationAccounting
+        result={result({
+          rows_left_unresolved: 3,
+          unresolved_fields: ["response_tools"],
+        })}
+      />,
+    );
+    const note = screen.getByTestId("attack-rows-left-unresolved");
+    expect(note).toHaveTextContent(/3 techniques were left unresolved/);
+    expect(note).toHaveTextContent(/response_tools/);
+    // Names actions that exist: re-run, or set the tools by hand. Both are
+    // controls this workspace has.
+    expect(note).toHaveTextContent(/Re-run|set their tools yourself/);
+  });
+
+  it("singularises one unresolved row and survives a missing field list", () => {
+    // `unresolved_fields` absent is a real payload: an older client, or a run
+    // that recorded the count and not the union. It must degrade the sentence
+    // rather than the disclosure.
+    render(
+      <AttackCitationAccounting result={result({ rows_left_unresolved: 1 })} />,
+    );
+    expect(screen.getByTestId("attack-rows-left-unresolved")).toHaveTextContent(
+      /1 technique was left unresolved/,
+    );
+  });
+
+  it("stays silent when the run wrote every row", () => {
+    // The passing state. Without it the banner is only ever observed firing,
+    // and a component that rendered it unconditionally would pass the two
+    // tests above.
+    render(
+      <AttackCitationAccounting result={result({ citations_confirmed: 1 })} />,
+    );
+    expect(screen.queryByTestId("attack-rows-left-unresolved")).toBeNull();
+  });
 });

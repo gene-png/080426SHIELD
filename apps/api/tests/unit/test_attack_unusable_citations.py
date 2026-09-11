@@ -106,7 +106,7 @@ def test_the_two_unusable_shapes_are_not_collapsed() -> None:
     assert entry_level.unusable == 2
 
 
-def test_an_empty_field_is_not_unusable() -> None:
+def test_an_empty_list_is_not_unusable() -> None:
     """THE PASSING STATE, and the one that would make the record noise.
 
     An empty list is the model saying it cites nothing for this field. Recording
@@ -117,9 +117,20 @@ def test_an_empty_field_is_not_unusable() -> None:
     assert out.unusable == 0
     assert out.unusable_details == []
 
-    # A None field is the same case: the model did not send the key.
+
+def test_an_explicit_null_is_unusable_and_is_NOT_an_omitted_key() -> None:
+    """Split from the case above, which charged them differently and called them
+    "the same case" in a comment directly over the assertion that distinguishes
+    them.
+
+    An OMITTED key never reaches here at all -- `_validate_tools` is called only
+    `if tool_field in sugg` -- so a `None` arriving means the model sent an
+    explicit JSON null, which is a shape the prompt did not ask for. The earlier
+    comment would have sent a maintainer hunting a double-charge for omitted
+    keys that cannot happen.
+    """
     out = resolve_citations(None, _Resolver(set()))
-    assert out.unusable == 1, "a null FIELD is still a shape the prompt did not ask for"
+    assert out.unusable == 1
     assert out.unusable_details == [{"cited": None, "reason": "unusable_field"}]
 
 

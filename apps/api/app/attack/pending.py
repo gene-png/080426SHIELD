@@ -81,10 +81,24 @@ can act on.
 
 **Scoring is deliberately unchanged by it.** `tool` is null, so `uncleared_tools`
 never sees it and `is_pending_review` still returns at case 1 whenever a
-confirmed tool backs the row; a row left with no tools at all was already
-withheld by its `no_citation` entry. That is a property worth stating because
-the obvious reading of "another uncleared entry" is that it withholds, and both
+confirmed tool backs the row. That is a property worth stating because the
+obvious reading of "another uncleared entry" is that it withholds, and both
 directions are pinned in `test_attack_unusable_citations.py`.
+
+**What DID change is which entry withholds a row that has no tools at all.**
+`run_ai` writes a `no_citation` marker only when the row's merged entry list is
+empty, so an unusable entry fills that slot and the `no_citation` marker is not
+written. The row is still withheld -- by case 2 over the unusable entry instead
+-- and a reader grepping `no_citation` for "the model claimed this and named
+nothing" will not find it on those rows. Pinned in `test_attack_run_ai.py`.
+
+**And the storage claim has one carve-out.** `run_ai` declines to write the
+citation record at all when the column is NULL and a field it did not resolve
+still holds tools -- see the guard there, which is fail-closed on score. On
+those rows `citations_unusable` is still incremented and no record is stored,
+which is the count-without-a-record divergence #109 is about, surviving inside
+the fix for it. It is reported rather than hidden: the run publishes
+`rows_left_unresolved` and the field names that caused it.
 
 That fidelity is what makes the plan's "related defect" enforceable at all: "a
 technique can currently read `covered` with EMPTY tool lists ... treat it as in

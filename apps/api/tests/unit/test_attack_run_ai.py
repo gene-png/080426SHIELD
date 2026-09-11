@@ -524,6 +524,34 @@ def test_a_wrong_shaped_tool_list_is_counted_not_silently_dropped(app_client) ->
     body = c.post(f"/attack/services/{svc_id}/run-ai", headers=h).json()
     assert body["citations_unusable"] > 0, "a wrong-shaped tool list vanished uncounted"
 
+    # #109. The COUNTER above was green before the per-row record existed -- it
+    # is what the issue says already worked. This is the half that was missing,
+    # and it is asserted HERE, through the route response, because that is the
+    # surface the panel reads. Every other assertion about `unusable_details`
+    # either calls `resolve_citations` directly or hand-builds the entry, so
+    # deleting the two lines in `_validate_tools` that turn one into the other
+    # left the whole suite green. CLAUDE.md: the assertion has to go red through
+    # the surface the client actually reaches.
+    row = next(r for r in body["coverage"] if r["technique_code"] == code)
+    assert row["unconfirmed_citations"] == [
+        {
+            "tool": None,
+            "cited": "Splunk Enterprise",
+            "reason": "unusable_field",
+            "field": "detection_tools",
+            "cleared_at": None,
+        }
+    ], row["unconfirmed_citations"]
+
+    # AND the marker it DISPLACED. Before #109 this row carried a `no_citation`
+    # entry -- the merge block writes one only when `merged` is empty, and the
+    # unusable entry now fills it. The row is still withheld, by
+    # `has_uncleared_evidence` over the new entry rather than by the mechanism
+    # `pending.py` names. That is a real behaviour change and it is pinned so it
+    # reads as a decision rather than as something nobody noticed.
+    assert not any(e["reason"] == "no_citation" for e in row["unconfirmed_citations"])
+    assert row["pending_review"] is True
+
 
 @pytest.mark.unit
 def test_the_same_tool_spelled_two_ways_across_lists_is_not_made_ambiguous(app_client) -> None:
