@@ -1,5 +1,188 @@
 # Gene's Context: 080426SHIELD
 
+## PICK UP HERE — 2026-09-11, overnight run
+
+**Maintained by the agent since D-063; Gene owns it by review.** Every claim
+about state outside the working tree carries the command that produced it.
+
+**Assume the reader has none of the previous session's context.**
+
+### The single next action
+
+**Review and merge PRs in this order: #291, then #295, then everything else.**
+Nothing is merged. `main` has not moved all night — `git rev-parse --short
+origin/main` → `ae78972`, the same commit it was at when the run started.
+
+The order matters for exactly two pairs; the rest are independent:
+
+- **#295 is based on #291's branch**, not on `main`. GitHub retargets it when
+  #291 merges.
+- **#306 is based on #302's branch**, for the same reason — both edit the same
+  loop and the same audit row in `routes/risk.py`, and two branches doing that
+  conflict by construction.
+
+### What landed as PRs — the whole tier-2 and tier-3 queue
+
+Every open PR below is **`MERGEABLE` against `ae78972`**, verified by
+`git merge --no-commit --no-ff origin/main` in a scratch worktree per PR and not
+by GitHub's badge alone. **Mergeability and CI are two separate claims** and are
+reported separately in every body.
+
+| PR | Issue | What it is |
+| --- | --- | --- |
+| #291 | #283 | A self-assessment save that fails reverts and says so |
+| #295 | #244 | Dashboards render the server's typed reason, not just its status |
+| #293 | #277 | The CSF Playbook approval stamp reaches the page |
+| #296 | — | Gates the mount/migration pair and the D-number/subject pair |
+| #297 | #231 | Approving a DISCARDED capability list is refused, not a silent un-discard |
+| #300 | #221 | The `NOT_LEAVE` labels are verified, not trusted |
+| #301 | #207 | The value card may not call a target "yours" unless it was |
+| #302 | #132 | A risk entry that lost its links is distinguishable from one that had none |
+| #306 | #122 | The risk audit row counts what was written, not only what arrived |
+| #303 | #109 | An unusable ATT&CK citation leaves a per-row record |
+| #305 | #288 | Two deferrals cite constraints that have expired |
+| #307 | #285 | A schema-level refusal carries a typed reason too |
+| #308 | #173 | Pin the proxies against synthesising an empty result |
+| #309 | #226 | The web install keys on the lockfile, not on a binary existing |
+| #310 | #182 | The close guard asks GitHub instead of re-reading the prose |
+| #311 | #168 | Pre-commit runs prettier at the version the lockfile pins |
+
+**Tier 2 is empty. Tier 3 is empty apart from #220**, which is below.
+
+The Dependabot PRs (#147, #148, #149, #222) are red and are not mine — see
+"blocked", below.
+
+### The ones worth reading before the rest
+
+**#297 (#231)** — the reviewer found that the new guard was **advisory**.
+`approve_capability_list` read the status with `db.get` and then wrote
+`status = APPROVED` unconditionally, so a `/discard` committing in between was
+silently overwritten. The sibling route had stated the contract in a docstring
+eight hundred lines away in the same file. The write is now conditional and the
+race is produced through the real route, not simulated.
+
+**#309 (#226)** — while fixing the install guard I found the **lockfile was
+never mounted into the web container at all**:
+
+    $ docker compose exec -T web sh -lc 'test -f /app/pnpm-lock.yaml && echo PRESENT || echo ABSENT'
+    LOCKFILE ABSENT
+
+So the container's `pnpm install` resolved `package.json` **ranges** while CI
+runs `--frozen-lockfile`. That is the root of the RCE-patch incident this issue
+is about, and it is not what the issue says.
+
+**#301 (#207)** — the value card said "Capabilities below **your** target
+maturity stage" unconditionally, over a sum whose summands are each counted
+against a target resolved per service. **Every fixture in
+`test_value_summary.py` was in the wrong state**, because no seeded service
+carries a `source_request_id`, so every target resolved to `default` and the
+possessive was wrong in all of them with nothing able to see it.
+
+**#310 (#182)** — the close guard printed the DECLARED numbers as a clean
+verdict having verified nothing about them. It now asks GitHub rather than
+restating GitHub's parser.
+
+### What is blocked, and on whom
+
+**#220 — `ecdsa` needs a named human acceptance.** A name and a date, which the
+issue itself says an agent must not supply. It is the **only** item in the
+tier-2/tier-3 queue skipped for a decision; a note saying so is on the issue.
+
+**The Dependabot PRs cannot land at all, and that gates more than #220 does.**
+The `Adversarial audit recorded` gate structurally cannot pass a bot-authored
+PR, so #147, #148, #149 and #222 are red by construction. #149 has been red
+since 2026-08-25. **This needs a decision from you**: either the gate learns a
+bot exemption, or a human writes the audit block per PR. Every dependency update
+is stuck behind it.
+
+**The adversarial reviewer did not deliver a report for any PR after #297.**
+Every dispatch after that went idle without returning findings, and messaging
+them to resume produced nothing either. The first one worked, and what it found
+is what reshaped #297, so the agent type is fine and something about the delivery path
+is not. **Every PR body after that says `Findings: not run` rather than
+`Findings: none`** — those are different claims and only one of them is about
+the code. The audit-evidence gate accepts both, which is exactly why the honesty
+has to be a rule rather than a check.
+
+**Do not read that as "reviewed".** Each body says what stands in its place and
+that it is not a substitute: red-on-revert measured per fix, a derived covering
+set with its bound stated, and — in three cases — a real defect found by a
+failing assertion rather than by reading.
+
+### Things that changed under the repo, not just in it
+
+**The api container was OOM-killed once tonight** (exit 137) and was restarted
+with `docker compose start api`, not `up`, so the mount did not move. The
+fixture boundary was re-verified on **both** signals afterwards:
+`SHIELD_LLM_MODE=fixture` **and** `select count(*) from llm_credential` → `0`.
+The stack is mounted from `SHIELD080306main` (`docker inspect`).
+
+**No suite was run to completion on this machine.** One 18-file covering set was
+still running after forty minutes and was stopped rather than left competing for
+memory. Every PR states its covering set, how it was derived, and names CI as
+the authority for the rest.
+
+**The dev Postgres was NOT migrated.** #302 adds migration **0048**. Running
+`alembic upgrade head` against the shared dev database now would stamp it at
+0048 while the stack is mounted from `main`, which has no 0048 — the exact
+mount/migration mismatch that crash-looped the api. **Migrate dev after #302
+merges, not before.** #296 adds the gate that would have caught it.
+
+**Nothing was merged, nothing was force-pushed except one rebase.** #295 was
+rebased onto #291's fixed head (`d183258`) because CI was red there on an
+assertion #291 had already fixed one commit later, and retargeted so the stack
+is explicit rather than implied. Recorded as a comment on the PR.
+
+### Filed tonight, labelled at filing
+
+| Issue | |
+| --- | --- |
+| **#298** `mvp-blocking` `tier-3` | `approve_capability_list`'s RELEASED refusal is an untyped string beside a typed one |
+| **#299** `mvp-blocking` `tier-3` | Nothing detects that the LEAVE-row oracle has stopped being able to measure |
+| **#304** `mvp-blocking` `tier-3` | Nothing fires when an issue closes to ask which code comments cited it |
+
+**#84 was relabelled** `mvp-blocking` / `tier-2`. It was carrying only `bug`, so
+it was invisible to every board query, and it has a live instance in the
+function #302 changes: `_gather_findings` reads
+`tgt = r.target_stage if r.target_stage is not None else 3` — a hardcoded 3
+where `resolve_target_stage` exists. A client on stage 4 has capabilities at
+stage 3 counted as *not* findings, so they never become risk entries at all.
+Left deliberately, with the reason on the issue.
+
+Open `mvp-blocking`: run
+`gh issue list --label mvp-blocking --state open --json number | jq length`
+rather than trusting a number here — that is the rule this file has broken
+before.
+
+### Found by the gates, which is the argument for gates
+
+**#299's discovery**: `leave_row_oracle.py`'s *measuring* half had been exiting
+2 on `main` for an unknown length of time. Two mutation anchors had drifted out
+of `redact.py` <!-- counted: historical -->. It said so loudly and correctly;
+nothing ran it, because
+the CI step is `--check-registry`, which returns before `build_mutations` is
+called. Both anchors are re-anchored in #300 and the detection gap is #299.
+
+**The close guard caught #305's own PR body** — the paragraph where I quoted the
+hazard I had just removed from the code. Quoting a closing keyword beside a
+number is itself an instance. The gate's message says how to write it (cite by
+SHA, paraphrase the keyword), and that is what the body now does.
+
+### For whoever picks up next
+
+The queue is empty. The next work is whatever review turns up, plus:
+
+1. **The Dependabot decision above** — it blocks four PRs and every future one.
+2. **#294** (`client-reaching`, tier-2): the CSF Playbook approval stamp is
+   cover-only, so a page passed around says nothing. Filed from #293's work and
+   not started.
+3. **#292** (tier-3): four admin workspaces present a failed refresh as an
+   ongoing load. Filed from #283's sweep and not started.
+4. **The reviewer delivery problem.** Until it is fixed, every PR ships with
+   `Findings: not run`, which is honest and is not the standard this repo holds.
+
+---
+
 ## PICK UP HERE — 2026-09-08 (Track C, #114)
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every claim
