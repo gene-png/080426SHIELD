@@ -1565,6 +1565,12 @@ def run_ai(
         name_hints=tuple(req.preview.name_hints or ()),
     )
     citations = CitationOutcome()
+    # #109. Rows this run deliberately left NULL because a field it did not
+    # resolve still holds tools nothing on record accounts for. Fail-closed on
+    # score and, until now, invisible: the row simply stayed pending with no
+    # statement anywhere that this run had looked at it and declined to write.
+    rows_left_unresolved = 0
+    unresolved_fields_seen: list[str] = []
     tools = req.preview.inputs["capability_list"]
 
     # An empty allow-list cannot produce an assessment — only a fabricated one.
@@ -1671,6 +1677,14 @@ def run_ai(
             row_flags.append({**entry, "field": field, "cleared_at": None})
         for entry in out.rejected_details:
             row_flags.append({"tool": None, **entry, "field": field, "cleared_at": None})
+        # #109, and it is a DISCLOSURE change rather than a scoring one. These
+        # entries carry `tool: None`, so `uncleared_tools` never sees them and
+        # `is_pending_review` still short-circuits at case 1 whenever a
+        # confirmed tool backs the row. A row with no tools at all was already
+        # withheld by its `no_citation` entry. Both directions are pinned in
+        # `test_attack_unusable_citations.py` rather than asserted here.
+        for entry in out.unusable_details:
+            row_flags.append({"tool": None, **entry, "field": field, "cleared_at": None})
         return out.tools
 
     for sugg in (result.data or {}).get("techniques", []):
@@ -1738,6 +1752,29 @@ def run_ai(
         unaccounted = [
             f for f in _TOOL_FIELDS if f not in resolved_fields and getattr(row, f, None)
         ]
+        # #109's second half. When the column is NULL **and** a field this run
+        # did not resolve still holds tools, the whole write is skipped: the row
+        # stays NULL, which is fail-closed on SCORE, and this run's real
+        # inference and rejection records for the fields it DID resolve go with
+        # it.
+        #
+        # NOT changed here, and the reason is a decision rather than a shrug.
+        # Writing any list flips `is_pending_review`'s NULL branch off, and the
+        # unaccounted field's tools are then unflagged -- so case 1 would
+        # short-circuit and the row would SCORE on evidence nothing checked.
+        # That is
+        # the fail-closed-to-fail-open flip the comment below already names, one
+        # step further out, and it is a client-facing coverage change that needs
+        # its own decision rather than a fold into a disclosure fix.
+        #
+        # What IS fixed is the silence: the run now reports how many rows it
+        # left unresolved and which fields did it, so "why is this row still
+        # pending after a run" has an answer that is not `git blame`.
+        if prior is None and unaccounted:
+            rows_left_unresolved += 1
+            for unresolved_field in unaccounted:
+                if unresolved_field not in unresolved_fields_seen:
+                    unresolved_fields_seen.append(unresolved_field)
         if prior is not None or not unaccounted:
             merged = carried + row_flags
             # A positive claim with nothing cited for it anywhere. Not a rejection
@@ -1822,7 +1859,13 @@ def run_ai(
             "citations_confirmed": citations.confirmed,
             "citations_needs_review": citations.needs_review,
             "citations_rejected": citations.rejected,
+            "citations_unusable": citations.unusable,
             "pending_review_rows": len(pending),
+            # #109. Both, because neither implies the other: the count is how
+            # many rows the run declined to write, the field list is what to fix
+            # so the next run can.
+            "rows_left_unresolved": rows_left_unresolved,
+            "unresolved_fields": unresolved_fields_seen,
         },
     )
     db.commit()
@@ -1846,6 +1889,8 @@ def run_ai(
             k: list(v) for k, v in citations.needs_review_by_reason.items()
         },
         citations_unusable=citations.unusable,
+        rows_left_unresolved=rows_left_unresolved,
+        unresolved_fields=list(unresolved_fields_seen),
         pending_review_rows=len(pending),
     )
 

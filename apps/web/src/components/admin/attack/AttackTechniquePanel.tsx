@@ -69,6 +69,20 @@ function citationLine(c: UnconfirmedCitation): string {
   if (c.reason === "no_citation") {
     return "The model claimed this status and cited no tool at all.";
   }
+  // #109. These arrive with `tool: null` like a rejection, and the rejection
+  // sentence below would be FALSE about them: "not on the approved list" is a
+  // verdict the resolver never reached, because the value never got as far as
+  // being looked up. The model may well have named a tool that IS on the list
+  // and sent it in the wrong shape -- which is what a consultant needs to know
+  // to fix the run, and the opposite of what the rejection copy tells them.
+  if (c.reason === "unusable_field") {
+    return c.cited
+      ? `The model sent "${c.cited}" for this field where a list of tool names belongs, so nothing was applied.`
+      : "The model sent a value for this field that was not a list of tool names, so nothing was applied.";
+  }
+  if (c.reason === "unusable_entry") {
+    return "One of the tool names the model sent for this field was empty or was not text, so it was skipped.";
+  }
   if (c.tool === null) {
     return `Cited "${c.cited ?? "\u2014"}" \u2014 not on the approved list, so nothing was applied.`;
   }

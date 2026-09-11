@@ -67,14 +67,24 @@ model claimed coverage and named nothing" both store as `[]` over empty tool
 lists, which is byte-identical to a consultant's own hand-curated `covered` --
 and that third one must NOT be withheld.
 
-**There is a third such outcome and it is NOT stored yet: `unusable`** -- a bare
-string where a list belongs, a null, an empty name (`resolve_citations` counts
-these and emits no record). Scoring is unaffected, because a row left with no
-tools at all still gets a `no_citation` entry; what is lost is the per-row
-DISCLOSURE when the row also carries a usable tool from another field. Named
-here rather than left for a reader to discover the count and the record
-disagreeing -- an earlier version of this paragraph said "the two outcomes",
-which read as complete. Tracked separately.
+**There is a THIRD such outcome and it is stored too, since #109: `unusable`**
+-- a bare string where a list belongs, a null, an empty name. `resolve_citations`
+counted these and emitted no record, so the count and the record disagreed: a
+row that also carried a usable tool from another field lost the disclosure
+entirely, and the technique panel showed nothing.
+
+It records `tool: null` like the other two, and it is split by reason --
+`unusable_field` when the model sent the wrong SHAPE for the whole field,
+`unusable_entry` when one item inside a correct list was not a name. Those are
+different things to fix and reporting them alike tells a consultant nothing they
+can act on.
+
+**Scoring is deliberately unchanged by it.** `tool` is null, so `uncleared_tools`
+never sees it and `is_pending_review` still returns at case 1 whenever a
+confirmed tool backs the row; a row left with no tools at all was already
+withheld by its `no_citation` entry. That is a property worth stating because
+the obvious reading of "another uncleared entry" is that it withholds, and both
+directions are pinned in `test_attack_unusable_citations.py`.
 
 That fidelity is what makes the plan's "related defect" enforceable at all: "a
 technique can currently read `covered` with EMPTY tool lists ... treat it as in
