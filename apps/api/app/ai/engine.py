@@ -221,10 +221,19 @@ def parse_json_object_with_list(key: str) -> Callable[[str], dict]:
     condition can never coexist with an applied suggestion, it belongs in the
     error path, not in a per-item drop list.
 
-    A MISSING key is deliberately left alone here — that is issue #46 (the other
-    half of the Sprint 3 T0 drift), which is filed and explicitly outside W1's
-    invariant. This guard covers only the case W1's own counting would otherwise
-    misreport.
+    A MISSING key RAISES too, and this paragraph used to say the opposite.
+
+    It read: "A MISSING key is deliberately left alone here — that is issue #46
+    ... which is filed and explicitly outside W1's invariant." Every clause of
+    that is now false. #46 is closed; `require_list_at` raises
+    `AIResponseShapeError` on `key not in data`, which IS #46's fix; and the
+    line below this docstring calls it. A reader checking whether the
+    missing-key case is covered was being told, at the exact place they would
+    look, that it is not.
+
+    The expiry is the general hazard rather than this instance: a deferral that
+    cites the SCOPE of a past change, rather than a property of the code, goes
+    stale the day that change lands and nothing fires. #288 carries the sweep.
     """
 
     def _parse(content: str) -> dict:
