@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.engine import get_job, run_job
@@ -512,8 +512,14 @@ def _run_risk_synthesize_batched(
     requested_by: uuid.UUID,
     client_id: uuid.UUID,
     client_org_name: str | None,
-) -> tuple[list[dict], int, int]:
-    """Run risk_synthesize as concurrent batches. Returns (entries, total, failed).
+) -> tuple[list[dict], int, int, dict[str, int]]:
+    """Run risk_synthesize as concurrent batches.
+
+    Returns `(entries, total, failed, discarded)`. The fourth is #122: the merge
+    below drops any entry that is not an object, and it dropped them with no
+    counter -- so a batch answering with a list of strings contributed nothing
+    and said nothing, and the audit row's `findings` count was as high as if it
+    had contributed everything.
 
     Each batch is a real `run_job` call and therefore writes its own `llm_calls`
     row — N rows per run. That is the honest accounting: N separately-billable
@@ -573,6 +579,7 @@ def _run_risk_synthesize_batched(
     get_job("risk_synthesize")
 
     entries: list[dict] = []
+    discarded: dict[str, int] = {}
     failed = 0
     first_error: Exception | None = None
 
@@ -590,7 +597,18 @@ def _run_risk_synthesize_batched(
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 continue
-            entries.extend(e for e in (data.get("entries") or []) if isinstance(e, dict))
+            for e in data.get("entries") or []:
+                # #122, and it is recorded HERE because this is where the drop
+                # happens. The per-entry loop in `generate` has the same guard,
+                # but by the time a value reaches it this filter has already
+                # removed every non-object -- so a counter there would have sat
+                # at zero forever while the real losses happened one layer up.
+                # CLAUDE.md: find the line that makes it true and put the record
+                # below it.
+                if isinstance(e, dict):
+                    entries.append(e)
+                else:
+                    discarded["not_an_object"] = discarded.get("not_an_object", 0) + 1
 
     _log.info(
         "risk_synthesize_batched",
@@ -599,6 +617,7 @@ def _run_risk_synthesize_batched(
         batches_total=len(batches),
         batches_failed=failed,
         entries=len(entries),
+        discarded_entries=discarded,
     )
 
     if failed == len(batches) and first_error is not None:
@@ -607,7 +626,7 @@ def _run_risk_synthesize_batched(
         with ai_call_boundary(db, llm, purpose="risk_synthesize"):
             raise first_error
 
-    return entries, len(batches), failed
+    return entries, len(batches), failed, discarded
 
 
 @router.post(
@@ -653,15 +672,17 @@ def generate(
     client_org = None if client.legal_name == "(pending intake)" else client.legal_name
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
     # total failure still raises typed, through ai_call_boundary.
-    entries_draft, batches_total, batches_failed = _run_risk_synthesize_batched(
-        db,
-        llm,
-        findings,
-        valid_techniques=sorted(valid_techniques),
-        valid_controls=sorted(valid_controls),
-        requested_by=admin.id,
-        client_id=cid,
-        client_org_name=client_org,
+    entries_draft, batches_total, batches_failed, discarded_in_batches = (
+        _run_risk_synthesize_batched(
+            db,
+            llm,
+            findings,
+            valid_techniques=sorted(valid_techniques),
+            valid_controls=sorted(valid_controls),
+            requested_by=admin.id,
+            client_id=cid,
+            client_org_name=client_org,
+        )
     )
     data = {"entries": entries_draft}
 
@@ -722,6 +743,28 @@ def generate(
     # linkage, no indication any was proposed -- which is #132's whole harm.
     entries_offered_links = 0
     entries_unlinked_after_drops = 0
+    # #122. Entries the model sent that this loop DISCARDED -- keyed by why, so
+    # the audit row names the fault rather than only its size.
+    #
+    # `findings` in the audit row is the INPUT. A run that received 137 findings
+    # and persisted zero entries wrote a row indistinguishable from one that
+    # persisted 137, because nothing ever measured the output. CLAUDE.md: a
+    # success record must be written where the success is; this one was written
+    # where the input is.
+    # Seeded from the BATCH MERGE rather than starting empty: the drops that
+    # happen up there are the same fact as the drops down here, and two separate
+    # maps would let a reader add them up wrong or read one and think it was
+    # the set.
+    discarded_entries: dict[str, int] = dict(discarded_in_batches)
+    # Seeded with what the MERGE already dropped, so this counts what the model
+    # SENT rather than what survived to the loop. Counting only the loop's
+    # iterations would report a smaller input than arrived and hide the merge's
+    # losses inside a number that looks like agreement.
+    #
+    # The invariant this buys, and it is asserted rather than described:
+    #     entries_received == entries_written + sum(discarded_entries.values())
+    # Two sides that can only agree if every entry is accounted for.
+    entries_received = sum(discarded_in_batches.values())
 
     def _record_drops(field: str, values: list[str]) -> None:
         seen = dropped_link_values.setdefault(field, [])
@@ -737,7 +780,26 @@ def generate(
             seen.append(rejected)
 
     for raw in data.get("entries", []):
-        if not isinstance(raw, dict) or not raw.get("title"):
+        # Counted from what the LOOP saw, not from `len(...)`. The two agree
+        # today because a non-list `entries` is already refused upstream with a
+        # 502 -- and counting the iterations keeps them agreeing if that ever
+        # stops being true, rather than reporting a length nothing read.
+        entries_received += 1
+        # #122. The false branch EMITS rather than dropping the record. Two
+        # causes, kept apart because they are different things to fix: a
+        # payload shape the prompt did not ask for, and an entry that is
+        # shaped right and has no title to show.
+        if not isinstance(raw, dict):
+            # NOT REACHABLE through the batched path today -- the merge in
+            # `_run_risk_synthesize_batched` filters non-objects out before they
+            # get here, and counts them. Kept, and kept COUNTING, because an
+            # unfiring guard costs one branch while its absence costs a silent
+            # discard the day anything else feeds this loop. Stated so the
+            # zero it reports reads as a decision rather than as evidence.
+            discarded_entries["not_an_object"] = discarded_entries.get("not_an_object", 0) + 1
+            continue
+        if not raw.get("title"):
+            discarded_entries["no_title"] = discarded_entries.get("no_title", 0) + 1
             continue
         lk, lk_bad = _coerce_enum(Likelihood, raw.get("likelihood"))
         _record("likelihood", lk_bad)
@@ -818,6 +880,16 @@ def generate(
             )
         )
 
+    # Counted from the flushed rows, not from the loop. A tally incremented
+    # beside each `db.add` counts INTENTIONS: it is right until something
+    # between the add and the flush drops one, which is exactly the case an
+    # audit row exists to survive. Reading the table back is a check whose two
+    # sides can only agree if the rows are there.
+    db.flush()
+    entries_written = db.execute(
+        select(func.count()).select_from(RiskEntry).where(RiskEntry.register_id == register.id)
+    ).scalar_one()
+
     audit(
         db,
         action="risk_register.generated",
@@ -848,6 +920,19 @@ def generate(
             "dropped_link_values": dropped_link_values,
             "entries_offered_links": entries_offered_links,
             "entries_unlinked_after_drops": entries_unlinked_after_drops,
+            # #122. What the run RECEIVED and what it WROTE, side by side, plus
+            # why the difference.
+            #
+            # `entries_received` is counted from the payload rather than from
+            # `findings`: the prompt drafts one entry per finding but a batch
+            # can fail, and reporting the finding count as the input would
+            # hide a lost batch inside a discard number. `entries_written` is
+            # read back from the flushed rows -- the count of what is in the
+            # database, not the count of `db.add` calls, which is the same
+            # distinction D-031 draws for the concurrent case.
+            "entries_received": entries_received,
+            "entries_written": entries_written,
+            "discarded_entries": discarded_entries,
         },
     )
     db.commit()
