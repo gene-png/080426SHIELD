@@ -314,31 +314,55 @@ a real exit code and a real date, and was the minority outcome (D-071).
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
-- **A DEPENDENCY change needs a different command, and `--force-recreate` will
-  report success while leaving the OLD package installed.** `node_modules` lives
-  in named volumes (`node-modules-root`, `node-modules-web`) and
-  `docker-compose.yml` guards the install on the binary EXISTING, not on its
-  version:
+- **A LOCKFILE change is picked up by a plain `docker compose restart web`.
+  It did NOT used to be, and the three-line remedy this bullet carried is now
+  wrong in a way that undoes itself.** `node_modules` lives in named volumes
+  (`node-modules-root`, `node-modules-web`), and `docker-compose.yml` once
+  guarded the install on the binary EXISTING rather than on its version:
 
       [ -f apps/web/node_modules/next/dist/bin/next ] || pnpm install;
 
-  So after a `package.json` or lockfile change, a recreate brings the stack up
-  green on the previous version, with the manifest and the lockfile both reading
-  the new one. Measured on the `next` 15.5.24 RCE patch: `package.json` said
-  15.5.24 and the running container said 15.5.23. Use:
+  **That guard is GONE.** #226 / PR #309 replaced it with
+  `scripts/web-install-if-stale.sh`, which the web service runs
+  (`sh /app/web-install-if-stale.sh && exec pnpm -F web dev`) and which
+  compares a hash of `pnpm-lock.yaml` against a stamp in the volume. The quoted
+  line is kept as the SYMPTOM a reader arrives with; deleting it would leave
+  them matching their problem against nothing.
 
-      docker compose exec -T web sh -c "cd /app && pnpm install"
+  **So the current procedure is two lines, not three:**
+
       docker compose restart web
       docker compose exec -T web node -p "require('/app/apps/web/node_modules/next/package.json').version"
+
+  **The `pnpm install` line that used to come first is now actively harmful and
+  is removed rather than reordered.** It has no `--frozen-lockfile`, so it
+  resolves `package.json` RANGES -- the drift the mount exists to end -- and it
+  writes no stamp, so the `restart` on the next line re-runs the guard, finds
+  the hash still mismatched, and reinstalls with `--frozen-lockfile` over the
+  top. The documented step 1 was undone by the documented step 2, and the
+  version you then read back came from the guard rather than from the command
+  you were told was the fix. `pnpm-lock.yaml` is also mounted `:ro`
+  deliberately, so a non-frozen install that needed to rewrite it cannot.
+
+  **It is the LOCKFILE that is watched, not `package.json`.** A `package.json`
+  edit with no `pnpm install` to regenerate the lockfile changes no hash and
+  triggers no reinstall -- correctly, because the lockfile is what CI installs
+  from.
 
   **Three separate lines, no OUTER `&&`, no backslash escaping, and no `-w`.**
   Each of those is fixed by a different thing, and mixing them up is how the
   SECOND version of this block also shipped broken. The measurements are in the
   table under **Real commands**; the incident is D-071.
 
-  **The failure landed on the confirmation step**, which is the one line whose
-  job is to tell you whether you are still unpatched -- and its error reads as a
-  Docker problem rather than as "you are on the old version".
+  **The confirmation read is not optional**, and it is the line whose job is to
+  tell you whether you are still unpatched -- on a security bump "the container
+  started" and "the patch is applied" read identically without it. Its error
+  also reads as a Docker problem rather than as "you are on the old version".
+
+  Historically, before #226: a recreate brought the stack up green on the
+  previous version, with the manifest and the lockfile both reading the new
+  one. Measured on the `next` 15.5.24 RCE patch: `package.json` said 15.5.24
+  and the running container said 15.5.23.
 
   **Run in Git Bash and PowerShell 5.1 on 2026-09-08**, in both before the claim
   was written, and re-run in both since.
@@ -2482,6 +2506,16 @@ Rules of the road:
        * `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both
          drive CI jobs, and seed data being clean is why #130 survived months
          of green.
+       * `docker-compose.yml` and `docker-compose.demo.yml` — this list named
+         `scripts/demo-reset.sh`, a WRAPPER around `docker compose`, and not
+         the file it wraps. CI's E2E and Demo jobs ARE this file: it defines
+         the api bind mounts every containerised gate reads, the web install
+         guard, the api boot chain, and every healthcheck. A compose-only PR
+         that also updated the three documents cleared all six conditions and
+         merged unattended, satisfying condition 1 partly by construction.
+         Found by the review of PR #329, whose own one-file change never
+         qualified (condition 3 was unmet), so this was a gap for the next one
+         rather than a live fail-open.
        * the deterministic surfaces the first draft of this list missed:
          `app/attack/coverage.py`, `app/csf/scoring.py`, `app/zt/maturity.py`,
          `app/tech_debt/security_scope.py`, `app/risk/exporters.py`. Naming

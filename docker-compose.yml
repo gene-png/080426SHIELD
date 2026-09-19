@@ -99,19 +99,45 @@ services:
     # quay.io, NOT Docker Hub. `minio/minio` and `minio/mc` stopped being
     # pullable from Docker Hub -- `pull access denied ... repository does not
     # exist or may require 'docker login'`, measured 2026-09-19 both on a dev
-    # machine and on the GitHub runner. It failed at `Compose up`, so the E2E
-    # and Demo jobs went red on EVERY open PR at once, in 6-14 seconds, on a
-    # fact about a third party rather than about the change.
+    # machine and on the GitHub runner. Both stack jobs died before running
+    # anything -- E2E at its `Compose up` step, Demo at `Demo reset (--demo
+    # overlay)`, which has no step of that name -- so every open PR went red at
+    # once, in 6-14 seconds, on a fact about a third party rather than about
+    # the change.
     #
     # quay.io is MinIO's own registry and carries both images. Verified by
     # pulling each before this edit, rather than by reading that it should
     # work.
     #
-    # The tag stays `:latest`, which is the reason this arrived as a surprise
-    # rather than as a dependabot PR: nothing here names a version, so nothing
-    # could notice one moving. Pinning a digest would fix that and would also
-    # take these images out of every automated update -- a trade worth making
-    # deliberately, not as a side effect of an outage. Not decided here.
+    # The tag stays `:latest`, and an earlier version of this comment gave two
+    # false reasons for caring. Corrected, because the deferred pinning
+    # decision gets made against this paragraph:
+    #
+    # NOT "this would have arrived as a dependabot PR if it were pinned".
+    # `.github/dependabot.yml` declares pip, npm and github-actions and has NO
+    # `docker` ecosystem, so no image in this file is on any automated update
+    # path -- pinning costs zero automated updates here, because there are
+    # zero.
+    #
+    # NOT "the floating tag is why it was a surprise". The failure was
+    # `repository does not exist`: a removed Docker Hub repo fails identically
+    # and just as suddenly for a digest, a pinned release tag or `:latest`.
+    # No form of pinning would have pre-announced it.
+    #
+    # What a pin actually buys is a named version and a reviewable change.
+    # What it costs is real and unstated until now: a digest must be obtained
+    # out-of-band, is unverifiable by anyone reading the diff, and freezes
+    # MinIO's security fixes behind manual work with no updater to nag. The
+    # trade is genuine; it was mis-stated in both directions. Not decided here.
+    #
+    # What `:latest` resolved to when this was written, recorded because the
+    # tag itself describes nothing: RELEASE.2025-09-07T16-13-09Z. Measured
+    # 2026-09-19 against the running container, along with the two surfaces
+    # nothing else checks -- the console answers HTTP 200 on :9001 (six
+    # documents assert it and no spec, gate or healthcheck touches it, so a
+    # console-less release line would have gone quietly wrong) and
+    # /minio/health/live answers 200 on :9000. Both are quay's image, not
+    # Docker Hub's.
     image: quay.io/minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -132,6 +158,8 @@ services:
   # and S3Storage assumes it already exists, so without this the first upload
   # fails with NoSuchBucket -> 500. Idempotent (--ignore-existing); exits 0.
   createbuckets:
+    # quay.io, for the same reason and with the same trade as `minio` above --
+    # see the block on that service; this line had no pointer to it.
     image: quay.io/minio/mc:latest
     depends_on:
       minio:
