@@ -155,6 +155,56 @@ printf 'lockfileVersion: 9.0\nimporters:\n  .:\n    devDependencies:\n      reac
   > "$ROOT/pnpm-lock.yaml"
 expect_refusal "could not read prettier" "a packages-only prettier is not the workspace's"
 
+# --- STATE MUST NOT LEAK ACROSS IMPORTERS. ----------------------------------
+# The case the first version of this gate missed, and the reviewer traced by
+# reading the awk rather than running it: a root importer with dependencies but
+# NO prettier, followed by an importer that has one. `in_deps` and `want` were
+# set inside the root and never cleared on the importer-key line, so the six-
+# space `prettier:` of the NEXT importer set `want` and the hook returned that
+# version -- zero exit, indistinguishable from a correct read, and #168 restored
+# through the fix for #168.
+#
+# The honest answer is the REFUSAL: the root workspace does not install prettier,
+# so there is no version for `npx prettier@X` to be right about.
+#
+# Measured before the fix: returns 2.0.0. After: exit 1.
+printf 'lockfileVersion: 9.0
+importers:
+  .:
+    devDependencies:
+      react:
+        specifier: ^19
+        version: 19.0.0
+  apps/web:
+    devDependencies:
+      prettier:
+        specifier: ^2.0.0
+        version: 2.0.0
+packages:
+  react@19.0.0:
+'   > "$ROOT/pnpm-lock.yaml"
+expect_refusal "could not read prettier" "state does not leak into the NEXT importer"
+
+# --- The root importer LAST still parses. -----------------------------------
+# The inverse, because a reset that is too eager breaks this: an importer named
+# `.` that is not first must still be read normally.
+printf 'lockfileVersion: 9.0
+importers:
+  apps/web:
+    devDependencies:
+      prettier:
+        specifier: ^2.0.0
+        version: 2.0.0
+  .:
+    devDependencies:
+      prettier:
+        specifier: ^3.9.6
+        version: 3.9.6
+packages:
+  prettier@3.9.6:
+'   > "$ROOT/pnpm-lock.yaml"
+expect_ok "3.9.6" "the root importer is read even when it is not first"
+
 # --- Another importer's prettier must not win. ------------------------------
 # `apps/web` can pin its own. The hook runs `npx prettier@X` from the repo root
 # over the whole tree, so the ROOT importer is the one CI agrees with.

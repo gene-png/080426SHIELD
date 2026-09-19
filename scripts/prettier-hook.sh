@@ -71,10 +71,17 @@ fi
 # none today, so that is a ratchet rather than a live case.
 VERSION="$(
   awk '
-    /^importers:/            { in_imp = 1; next }
-    in_imp && /^[^ ]/        { in_imp = 0 }
-    in_imp && /^  [^ ]/      { in_root = ($0 ~ /^  \.:[[:space:]]*$/); next }
-    in_root && /^    [^ ]/   { in_deps = ($0 ~ /^    (dev)?[Dd]ependencies:[[:space:]]*$/); next }
+    # STATE IS CLEARED ON EVERY KEY LINE, not only on the one that sets it.
+    # Without the resets below, `in_deps` and `want` set inside the root
+    # importer survived into the NEXT importer: a root with dependencies but no
+    # prettier, followed by `apps/web` pinning its own, returned the web
+    # version with a zero exit -- indistinguishable from a correct read, and
+    # #168 restored through the fix for #168. Measured before the reset:
+    # returns 2.0.0 where the answer is the refusal.
+    /^importers:/            { in_imp = 1; in_root = 0; in_deps = 0; want = 0; next }
+    in_imp && /^[^ ]/        { in_imp = 0; in_root = 0; in_deps = 0; want = 0 }
+    in_imp && /^  [^ ]/      { in_root = ($0 ~ /^  \.:[[:space:]]*$/); in_deps = 0; want = 0; next }
+    in_root && /^    [^ ]/   { in_deps = ($0 ~ /^    (dev)?[Dd]ependencies:[[:space:]]*$/); want = 0; next }
     in_deps && /^      [^ ]/ { want = ($0 ~ /^      prettier:[[:space:]]*$/); next }
     want && /^        version:/ {
       sub(/^        version:[[:space:]]*/, "")
