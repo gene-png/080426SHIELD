@@ -1,4 +1,174 @@
 # Gene's Context: 080426SHIELD
+## PICK UP HERE — 2026-09-19
+
+**Maintained by the agent since D-063; Gene owns it by review.** Every claim
+about state outside the working tree carries the command that produced it.
+
+**Assume the reader has none of the previous session's context.**
+
+### Two things are blocked on you, and one of them blocks everything
+
+**1. The adversarial reviewer is ERRORING, and nothing merges until it is fixed
+or you waive it.**
+
+Seven reviews were dispatched this session, each against a detached worktree
+pinned to its PR head so it could not drift. All seven agents ran; the completed
+ones report `idle`. **Not one report has been delivered.** Retried by direct
+message twice on the first two, and once more against a freshly-completed one —
+nothing came back. No agent transcript is written under the session's `tasks/`
+directory either, so there is no file to go and read.
+
+This is the same failure your last handoff recorded — nine dispatched, nine
+completed, none delivered — except that last time messaging them afterwards
+retrieved the reports. **That workaround no longer works.**
+
+Per `CLAUDE.md`'s taxonomy this is **erroring**: not absent, and emphatically
+not clean. So every PR body below says `Findings: dispatched — report not yet
+delivered`, and none of them is mergeable on this repo's own standard. **Only
+you can decide to ship without it**, by name, in the PR body. An agent must not,
+and I have not.
+
+The rule you asked for is now a fact on the page rather than something either of
+us has to remember: every PR body carries the dispatch, the SHA it was
+dispatched against, and the literal status `DISPATCHED / UNDELIVERED`.
+
+**2. #328 — MinIO's Docker Hub images are gone, so E2E and Demo are red on every
+open PR.**
+
+    docker pull minio/minio:latest
+    -> pull access denied ... repository does not exist
+
+Reproduced on a dev machine and on the runner. It fails at `Compose up`, so both
+jobs die in 6-14 seconds having run nothing. **No PR can satisfy merge-rule
+condition 1 until this lands.** PR #329 repoints both images at `quay.io`, which
+is MinIO's own registry — both were pulled, and the services recreated and
+checked (minio Healthy, bucket created, api mount confirmed untouched) before
+the edit was written.
+
+Land #329 first. Everything else is behind it.
+
+### What was done, in the order you asked for
+
+**#317 — PR #320.** Tier-1, live on the public sign-up page. `/sign-up`
+rendered "Request validation failed." under the Email field for a malformed
+email or a short password — and named the Email field even when the password was
+the problem. #307 gave every schema 422 a typed `reason`, and the component
+chose between typed copy and its friendly fallback by testing that field's
+PRESENCE, so the fallback became unreachable.
+
+Now keyed on whether the message is fit for a person, not on whether a reason
+exists: the reserved `schema_` namespace is a machine token with no copy behind
+it. The comment stating the old precondition is gone — it was true when written,
+deleted as a fact by #307, and left standing as a sentence telling every later
+reader the branch was sound.
+
+Pinned at both ends, both mutations proved to land before their result was read:
+reverting the helper fails exactly the two schema cases, in vitest and again
+through the real page in `s1-signup-errors.spec.ts`; disabling the typed branch
+fails exactly the non-schema case. The e2e half is the assertion that should have
+caught this — it existed, and only ever ran against the duplicate-email input.
+
+`exceptions.py`'s "additive, deliberately — a consumer that wants the typed
+reason opts in" is corrected in place. It was false at merge time.
+
+**The shape is recorded in `CLAUDE.md`:** a field is additive only if no consumer
+branches on its PRESENCE. Grep the consumers for a presence test before adding
+one. It is mechanical, and nothing in the producing diff reveals it — the
+evidence is entirely in files that PR does not touch.
+
+**The review-timing rule — adopted, and half-mechanised.** Every PR body now
+carries its dispatch, SHA and delivery status. The audit-gate half you asked for
+— refuse a PR whose review is dispatched and undelivered — is **not built**, and
+I did not build it: the gate reads a body and cannot tell a true status line from
+a typed one, which is D-054's recorded hole. Making it real needs something
+attributable: a GitHub review approval, or the reviewer writing its own status
+somewhere the gate can read. Worth deciding rather than bolting on.
+
+**#310 — the `|| true` BLOCKING, fixed.** Confirmed in a shell first, as you
+suggested: a failing command behind `>` leaves the target present and 0 bytes,
+whether or not it existed. So a failed `gh` query was byte-identical to "this PR
+closes nothing", and the guard printed *"clean — no closing references (verified
+against GitHub)"* at exit 0 having verified nothing.
+
+The exit status now decides whether the file is published.
+`tests/gates/close_guard_linked_file.sh` EXTRACTS the block from
+`audit-gate.yml` rather than restating it, stubs `gh`, and asserts all three
+states through the real guard. `--self-test` restores the old shape and requires
+the gate to go red — it does, reproducing the defect verbatim.
+
+Two things that gate found while being written, both recorded in it: `command -v
+python3` resolves the Windows App Execution Alias, which is not an interpreter;
+and `--title/--body/--commits` are file paths, so passing literals made the guard
+exit 2 with "title file not found" — **the same 2 the missing-file case wants.**
+Check 1 was green for the wrong reason until checks 2 and 3 disagreed with it.
+
+**#315 — the print BLOCKING, fixed.** One line, as you said. `freeze_panes` is a
+screen property; a printed workbook carried the notice on page 1 only.
+`print_title_rows` covers the print half, derived from the same `row` as the
+freeze. Both the `_banner` docstring and the module note now state screen and
+print as two separate claims — the old text argued correctly against `oddHeader`,
+named print as the thing `oddHeader` gets wrong, and then left print covered by
+nothing at all.
+
+**#306 — both BLOCKING, fixed.** The read-back's justification described an
+unconstructible state; the ratchet stays and the reason is rewritten in the three
+prescribed lines. Nothing pinned the read-back — `entries_written =
+entries_total` left all four tests green — so the two counts are now compared in
+the route with the verdict recorded in BOTH states, and a test constructs the
+state the comment says nothing constructs, by installing exactly the
+`before_flush` listener it names. Reachability settled by demonstration rather
+than by prose.
+
+**#305 — all three BLOCKING (prose), fixed.** The sharpest was a twin of this
+branch's own claim, live, in a file it edits: `routes/zt.py` said *"A MISSING key
+is untouched here (issue #46)"* over a default that `require_list_at` makes
+unreachable. Also a docstring contradicting its own summary line, and a
+`tech_debt` module docstring describing five shipped features as future work.
+
+**#318's gate half — PR #327.** Fixed the discovery, as you asked, not just the
+two scripts. `check_gate_fixtures.py` now finds shell gates at the repo root and
+**fails when any gate no workflow invokes**. Run before the CI step was added it
+exits 1 naming both orphans; after, 27 cases across 5 gates, exit 0.
+
+**It then found a live defect on its first CI run**, which is the argument for
+it. `tests/gates/prettier_hook.sh` invoked the hook as `sh "$HOOK"`, overriding
+its bash shebang — passed on Windows because Git Bash's `sh` IS bash, failed on
+Ubuntu where `/bin/sh` is dash and `set -o pipefail` is rejected. And
+`scripts/prettier-hook.sh` was mode 644; a 644 script executed directly is
+`Permission denied`, exit 126, measured. Both fixed.
+
+### Filed this session, labelled at filing
+
+`#321` `#322` `#323` from #306's review · `#324` `#325` `#326` from #305's ·
+`#328` the MinIO outage.
+
+Two are worth your attention rather than the queue:
+
+- **#322** — `grep -c "details" apps/web/src/components/admin/AuditViewer.tsx`
+  returns **0**. Every discard counter #122, #132 and the enum work added goes
+  into the audit `details` payload, and the admin console renders none of them.
+  "Now visible" has been true of the API and false of the UI the whole time.
+- **#324** — a DRAFT CSF playbook export is stored with
+  `origin=CONSULTANT_APPROVED`. The reviewer's site was one function off and I
+  re-derived it: the unconditional stamp is reachable from `export_playbook`,
+  which gates on *nothing*, not from the four `finalize` handlers, which all gate
+  on APPROVED. It is the same workbook #277/#294/#315 are making say "working
+  draft" on every page.
+
+### Open work
+
+    gh issue list --label mvp-blocking --state open --json number,labels
+    gh pr list --state open --json number,title,headRefOid,mergeStateStatus
+
+### Still yours, unchanged from the last handoff
+
+1. **244's ownership question** — who owns `apps/web/src/app/**` and the
+   dashboard error surfaces. Flagged three times now.
+2. **220** — `ecdsa` wants a named acceptance: a human name and a date.
+3. **The Dependabot gate.** `Adversarial audit recorded` structurally cannot pass
+   a bot-authored PR, so #147, #148, #149 and #319 are red by construction. This
+   blocks every dependency update, including security ones — and #328 is a
+   reminder that the supply chain moves whether or not we are watching it.
 
 ## PICK UP HERE — 2026-09-11, second session (post-merge)
 
