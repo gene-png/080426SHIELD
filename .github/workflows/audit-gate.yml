@@ -36,6 +36,11 @@ on:
 
 permissions:
   contents: read
+  # #182: `gh pr view --json closingIssuesReferences` needs to read the PR and
+  # the issues it links. READ only, and nothing beyond those two -- this
+  # workflow judges a PR and must never be able to change one.
+  pull-requests: read
+  issues: read
 
 jobs:
   audit-gate:
@@ -89,6 +94,24 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: A failed GitHub query must leave no verdict behind
+        # Runs BEFORE the query it is about, so a broken publish decision stops
+        # the job rather than producing a verdict nobody can trust. #182's
+        # guard tells "GitHub linked nothing" from "I could not look" by
+        # whether the --linked file EXISTS, and only the collect step below can
+        # honour that: `> file || true` creates the file before `gh` runs, so a
+        # failed query used to leave an empty one and the guard printed
+        # "clean -- no closing references (verified against GitHub)".
+        #
+        # The gate EXTRACTS the block from this file and runs it against a
+        # stubbed `gh`, so it goes red when the block changes rather than
+        # agreeing with a copy of itself. `--self-test` puts the old shape back
+        # and requires the gate to fail; without that step a gate that can
+        # never fail reports the same green as one that works.
+        run: |
+          bash tests/gates/close_guard_linked_file.sh
+          bash tests/gates/close_guard_linked_file.sh --self-test
+
       - name: Collect the title, description and every commit message
         env:
           # Via env, never inline. A PR title or body is untrusted text and
@@ -96,6 +119,11 @@ jobs:
           # same reasoning the audit-gate job already documents for the body.
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          # For `gh pr view` below (#182). The job's `permissions:` block grants
+          # `pull-requests: read` and `issues: read` and nothing more -- reading
+          # which issues a PR links is the whole requirement, and this workflow
+          # must not be able to write anything.
+          GH_TOKEN: ${{ github.token }}
         run: |
           printf '%s' "$PR_TITLE" > /tmp/pr_title.txt
           printf '%s' "$PR_BODY"  > /tmp/pr_body.txt
@@ -117,6 +145,59 @@ jobs:
           # `A..HEAD` is the branch's own commits and nothing else.
           git log --format=%B "origin/${{ github.base_ref }}..HEAD" > /tmp/pr_commits.txt
           echo "commit messages collected:"; wc -l < /tmp/pr_commits.txt
+
+          # #182. What GitHub will ACTUALLY close, so the guard can check its
+          # verdict against reality instead of re-reading the prose it was
+          # given. It printed "clean (1 declared close: 108)" over a PR GitHub
+          # had linked nothing for.
+          #
+          # NOT a second implementation of GitHub's adjacency rule. A
+          # restatement agrees with GitHub only until GitHub changes it, and a
+          # parity claim is enforced by CALLING the other thing.
+          #
+          # The guard distinguishes "GitHub linked nothing" from "I could not
+          # look" BY THE FILE: empty is an empty set, missing is exit 2. So the
+          # only thing that matters here is that a failed query leaves no file.
+          #
+          # `... > /tmp/pr_linked.txt || true` does NOT do that, though it
+          # reads as if it does. The shell creates and truncates the redirect
+          # target BEFORE `gh` runs, so a failed query leaves a 0-byte file
+          # that EXISTS -- byte-identical to the real answer "this PR closes
+          # nothing" -- and `|| true` discards the status that would have said
+          # otherwise. A PR whose body the local prose parse found nothing in
+          # then prints "clean -- no closing references (verified against
+          # GitHub)" and merges, having verified nothing: precisely the
+          # accidental close #182 exists to catch, under the sentence saying
+          # it cannot happen. Measured 2026-09-19 in Git Bash (bash 5.2) and in
+          # the Ubuntu runner's `bash -e`, which is the shell this step runs
+          # under: a failing command behind `>` leaves the file present and
+          # empty, whether or not it existed beforehand. The claim is about
+          # POSIX redirection and is NOT asserted for PowerShell, where `>` is
+          # `Out-File` -- naming a date without naming a shell is what D-071
+          # records twice.
+          #
+          # So the STATUS decides whether the file is published at all. The
+          # query writes a scratch path and only a zero exit promotes it; a
+          # failure leaves the real path ABSENT and lets the guard say "I could
+          # not look" in its own words, with its own exit 2 and its own
+          # explanation. This step stays green either way, so a `gh` hiccup is
+          # still reported as a fact about the query rather than about the
+          # change -- which is what the `|| true` was reaching for.
+          #
+          # `tests/gates/close_guard_linked_file.sh` extracts this block from
+          # this file and runs it against a stubbed `gh` in both states.
+          rm -f /tmp/pr_linked.txt /tmp/pr_linked.raw
+          if gh pr view "${{ github.event.pull_request.number }}"                --json closingIssuesReferences                --jq '.closingIssuesReferences[].number' > /tmp/pr_linked.raw
+          then
+            mv /tmp/pr_linked.raw /tmp/pr_linked.txt
+            echo "GitHub says this PR closes:"; cat /tmp/pr_linked.txt
+          else
+            status=$?
+            rm -f /tmp/pr_linked.raw
+            echo "gh pr view failed (exit $status). Leaving /tmp/pr_linked.txt"
+            echo "ABSENT so the close guard fails closed (exit 2) rather than"
+            echo "reporting a verdict it never verified."
+          fi
 
       - name: A subject must not name a decision the commit does not add
         # Placed here because this job already has the full history and the
@@ -162,4 +243,5 @@ jobs:
           python -m scripts.check_issue_references \
             --title /tmp/pr_title.txt \
             --body /tmp/pr_body.txt \
-            --commits /tmp/pr_commits.txt
+            --commits /tmp/pr_commits.txt \
+            --linked /tmp/pr_linked.txt
