@@ -1415,3 +1415,99 @@ def test_a_clean_run_records_no_discards_rather_than_omitting_the_key(
     assert details["entries_received"] == details["entries_written"] + sum(
         details["discarded_entries"].values()
     ), "the invariant must hold on a clean run too, not only where something was lost"
+
+
+@pytest.mark.unit
+def test_a_row_dropped_between_add_and_flush_is_recorded(app_client) -> None:
+    """The read-back must READ, and the mismatch must be loud.
+
+    This is the test the first version of the read-back did not have, and its
+    absence was the finding: substituting `entries_written = entries_total` --
+    a tally computed in the same loop three blocks above -- left all four tests
+    above green, because each of them asserts a run where the two agree. The
+    accounting was pinned; the SOURCE of `entries_written` was not, so an
+    "avoid a round trip" refactor could have removed the whole point of it
+    without turning anything red.
+
+    It also settles the reachability question rather than arguing it. The
+    read-back's comment says no current writer can lose a row between the
+    `db.add` and the flush, and names a `before_flush` listener on `RiskEntry`
+    as one of the ordinary changes that would make it reachable again. This
+    installs exactly that listener. The state is constructible; nothing in the
+    application constructs it today; and the guard fires when it happens.
+
+    The listener is attached to the `Session` CLASS, which is every session in
+    the process, so it is guarded to one entry and removed in a `finally` --
+    an escaped listener would silently drop a row from every later test in the
+    file, which is a worse defect than the one under test.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session as OrmSession
+
+    from app.models.risk_register import RiskEntry as _RiskEntry
+
+    dropped: list[object] = []
+
+    def _drop_one_before_flush(session, flush_context, instances) -> None:
+        if dropped:
+            return
+        for obj in list(session.new):
+            if isinstance(obj, _RiskEntry):
+                session.expunge(obj)
+                dropped.append(obj)
+                return
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Kept", source_id=technique)[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}',
+        _entry("Lost", source_id=technique)[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}',
+    )
+
+    event.listen(OrmSession, "before_flush", _drop_one_before_flush)
+    try:
+        _generate(c, provider, bearer, cid, payload)
+    finally:
+        event.remove(OrmSession, "before_flush", _drop_one_before_flush)
+
+    assert dropped, "the listener never fired; this test proved nothing"
+
+    details = _generated_audit(c, bearer)
+    assert details["entries_total"] == 2, "the loop intended two rows"
+    assert details["entries_written"] == 1, (
+        "entries_written must come from the TABLE. It reports "
+        f"{details['entries_written']} for a run where one of two adds was "
+        "expunged before the flush — which is the value the loop's own tally "
+        "carries, not the value the database holds."
+    )
+    assert details["entries_write_check"] == "MISMATCH", (
+        "a disagreement between what was added and what landed must be stated "
+        "in the audit row, not left for a reader to compute from two numbers."
+    )
+
+
+@pytest.mark.unit
+def test_a_run_where_nothing_was_lost_says_so_rather_than_staying_silent(
+    app_client,
+) -> None:
+    """The other half. "They agreed" and "nobody compared" must not be the
+    same absence — an audit row carrying no verdict reads as the first and
+    means the second, which is the shape this whole issue is about.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+
+    payload = _entries_payload(
+        _entry("Clean", source_id=technique)[:-1]
+        + ', "linked_techniques": [], "linked_controls": []}'
+    )
+    _generate(c, provider, bearer, cid, payload)
+    details = _generated_audit(c, bearer)
+
+    assert details["entries_write_check"] == "agreed"
+    assert details["entries_total"] == details["entries_written"] == 1

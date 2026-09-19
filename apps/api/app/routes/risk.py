@@ -880,15 +880,54 @@ def generate(
             )
         )
 
-    # Counted from the flushed rows, not from the loop. A tally incremented
-    # beside each `db.add` counts INTENTIONS: it is right until something
-    # between the add and the flush drops one, which is exactly the case an
-    # audit row exists to survive. Reading the table back is a check whose two
-    # sides can only agree if the rows are there.
+    # Counted from the flushed rows, not from the loop.
+    #
+    # ## Blast radius, measured before keeping this
+    #
+    # A tally incremented beside each `db.add` counts INTENTIONS. The
+    # population this read-back protects is "a run whose audit row claims rows
+    # the database does not contain", and **no current writer can produce
+    # one**, measured on this tree rather than assumed: no ORM event listener
+    # touches `RiskEntry` (the only `before_flush` hook guards audit rows), no
+    # trigger exists on `risk_entries` (the only two are on `audit_entries`),
+    # `UUIDPKMixin` defaults to `uuid4` so two adds cannot collide on identity,
+    # and a failing flush RAISES -- which produces no audit row at all rather
+    # than a wrong one.
+    #
+    # It is kept as a RATCHET, and the first draft of this comment justified it
+    # with "something between the add and the flush drops one" stated as a live
+    # hazard. It is not one today. What would make it reachable again: a
+    # `before_flush` listener on `RiskEntry`, a database trigger or rule on
+    # `risk_entries`, a cascade that deletes siblings, or a partial-failure
+    # write path that swallows instead of raising. Each is an ordinary change
+    # somebody could make without touching this file.
+    #
+    # ## And it is pinned, rather than only argued
+    #
+    # A read-back nothing observes is indistinguishable from `entries_written =
+    # entries_total`, and that substitution left every test on this branch
+    # green. So the two counts are COMPARED here and a disagreement is recorded
+    # loudly -- in the log and in the audit row -- which is what
+    # `test_a_row_dropped_between_add_and_flush_is_recorded` constructs, by
+    # installing exactly the `before_flush` listener named above. The ratchet
+    # now has something that fires, and the test that fires it is also the
+    # demonstration that the state is reachable at all.
     db.flush()
     entries_written = db.execute(
         select(func.count()).select_from(RiskEntry).where(RiskEntry.register_id == register.id)
     ).scalar_one()
+    # Emitted in BOTH states. "They agreed" and "nobody compared" must not be
+    # the same absence -- an audit row with no verdict here would read as the
+    # former and mean the latter.
+    entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    if entries_written != entries_total:
+        _log.error(
+            "risk_register_entries_lost_before_flush",
+            register_id=str(register.id),
+            entries_total=entries_total,
+            entries_written=entries_written,
+            lost=entries_total - entries_written,
+        )
 
     audit(
         db,
@@ -932,6 +971,7 @@ def generate(
             # distinction D-031 draws for the concurrent case.
             "entries_received": entries_received,
             "entries_written": entries_written,
+            "entries_write_check": entries_write_check,
             "discarded_entries": discarded_entries,
         },
     )
