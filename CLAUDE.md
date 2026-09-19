@@ -616,6 +616,58 @@ a real exit code and a real date, and was the minority outcome (D-071).
   instead (migration 0043) and lets re-approval refresh it, audited with both the
   new and replaced counts. When a guarantee and a workflow collide, ask whether
   the guarantee needs the state frozen or only needs to know what the state WAS.
+- **A CERTIFICATE OVER THE WRONG PROPOSITION IS WORSE THAN NO CERTIFICATE,
+  BECAUSE IT ENDS THE CHECK THAT WOULD HAVE CAUGHT IT.** Every verification step
+  proves some proposition. The failure is proving one ADJACENT to the claim you
+  are making, and then citing it — a bare unsupported claim invites a check; a
+  claim under a command and a date does not.
+
+  The instance, and it is recorded because the author was actively being
+  careful: `context/gene.md` said four dashboard pages *"still key not-released
+  copy on `err.status === 404` and print a hardcoded sentence, ignoring the
+  typed `reason`"*, under
+
+      Measured on `ee819f2`:
+      grep -rn "hasn't been released to your organization yet" apps/web/src
+      -> those four files.
+
+  The grep was honest and its output was real. **It proved that the STRING
+  exists. The claim needed was that the typed reason is IGNORED**, which is a
+  different proposition and was false — all FIVE pages (not four; `risk` was
+  missed as well) do `reason = serverReason(err)` and render
+  `{reason ?? fallback}`, so a typed reason always wins and the hardcoded
+  sentence is the 404 fallback. #295 had shipped it, and the same document's
+  own merged-PR table said so two hundred lines further down.
+
+  Someone acting on that sentence would have opened a PR to rebuild what
+  already ships. It was caught by an adversarial review that had been pointed
+  at the claim as a PREMISE — not by anyone re-reading the grep, because the
+  grep is correct.
+
+  **It generalises well past grep**, which is why it is stated as a shape:
+
+  - a **test** proves its assertions hold, not that they can fail — #72.
+  - an **exit code** proves the last command's status, not the one you meant —
+    this file's opening rule.
+  - a **CI certificate** proves a head passed, not that a branch is ready.
+  - a **`--collect-only`** proves collection, not that anything ran.
+  - a **reviewer's clean report** proves nothing was found in what it read,
+    which is not the same as nothing being there — hence the `Scope:` line.
+
+  Two of this session's adversarial findings were themselves this shape,
+  landing on the reviewer rather than the author: a proposed
+  `(?<![\w.])` word boundary was correct about over-matching and rejected
+  <!-- counted: historical -- the measured result of running that regex once -->
+  dotted module paths, reporting four live gates unwired; and a "this file does
+  not exist" was true of the branch under review and false of the repo, because
+  the file lived on another branch. Both were measured before being acted on,
+  which is the only reason they cost nothing.
+
+  **The check is one question, asked before you cite anything: what
+  proposition does this command actually prove, and is it the one in my
+  sentence?** Where they differ, either change the command or change the
+  sentence. Do not publish the pair.
+
 - **Before reporting a sweep complete, name the SHAPE you searched for and one
   place it could hide that shares no vocabulary with the original.** Keyword
   sweeps keep coming back clean over live defects because the second instance
@@ -1091,6 +1143,52 @@ a real exit code and a real date, and was the minority outcome (D-071).
   have and write beside each one what the input looked like. Any entry whose
   answer is "I don't know" or "there was nothing there" is the bug, and it is
   cheaper to find on that list than in review.
+- **"THE DISCLOSURE REACHES A SCREEN" IS PART OF THE DEFINITION OF DONE FOR ANY
+  PR THAT ADDS A PROVENANCE FIELD.** Not a note about where it should
+  eventually surface — a condition on the PR that adds it. A field that records
+  what was withheld, dropped, rejected, unconfirmed or not-looked-at is only
+  finished when a person can see it without querying the API.
+
+  **The ownership half, decided on #244 and recorded so it is not re-litigated:
+  `apps/web/src/app/**` and the dashboard error surfaces belong to whichever
+  track owns the API surface the page reads. Dashboards go to the service track
+  that produces their numbers.**
+
+  The reason is the load-bearing part: **the person who writes the honesty
+  string is the one who knows what it means.** #244's instance 3 is what
+  happens when they are not the same person — a panel printing "Every source
+  row is accounted for" over a discarded list, because whoever wrote the copy
+  was not the person who knew the guard's operands. Shared ownership of that
+  surface is how it reached zero owners.
+
+  **Ownership alone only relocates the follow-up**, which is why the DoD clause
+  exists alongside it. The evidence that it is needed:
+
+  - `grep -c "details" apps/web/src/components/admin/AuditViewer.tsx` returns
+    **0**. Every discard counter #122, #132 and the enum work added goes into
+    the audit `details` payload, and the admin console renders none of them
+    (#322). "Now visible" was true of the API and false of the UI throughout.
+  - `entries_write_check`, `entries_written`, `entries_received` and
+    `discarded_entries` return no matches anywhere under `apps/web`.
+  - #316's `excluded_inputs` reached exactly one HTTP response and died on
+    reload — the data was already persisted; only the read-back was missing.
+
+  Each of those shipped with its record written where the success is, correctly,
+  and stopped one layer short of anyone seeing it.
+
+  **This is a rule in prose, so it is the interim and not the mechanism.**
+  #336 is the gate: it fails when a field lands in a response schema with no
+  consumer under `apps/web/src`. That is not pessimism about discipline: three
+  rules in this file were walked into this month, each by its own author within
+  hours of writing it — the closing-keyword trap, the mount/migration pair, and
+  the deferral sweep. `CLAUDE.md`'s own finding is that the reflex survives the
+  rule until the rule has a gate.
+
+  Until it exists: before merging a PR that adds such a field, open the
+  component the reader uses and confirm it renders. **The endpoint is not the
+  surface**, and a test that reads the endpoint proves the write rather than
+  the claim.
+
 - **A USER-FACING string naming an action must name a control that exists and
   works TODAY — verified by opening the handler, not by knowing the domain.**
   Knowing the domain is what lets you write a plausible remedy without checking
