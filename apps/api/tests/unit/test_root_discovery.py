@@ -84,19 +84,44 @@ def test_the_nearest_directory_wins(tmp_path: Path) -> None:
     assert find_workflows_dir(here / "test_x.py") == inner_root / ".github" / "workflows"
 
 
-def test_the_workspace_search_raises_rather_than_guessing(tmp_path: Path) -> None:
-    """`scripts/_common.py`'s half, and it RAISES where the other skips.
+def test_the_workspace_search_returns_the_NEAREST_packages_or_raises(
+    tmp_path: Path,
+) -> None:
+    """The invariant, stated so it holds in both worlds rather than one.
 
-    Different consequence, different branch: a loader that silently picked a
-    different root would look for seed data in the wrong place and report
-    success over whatever it found. A test whose artifact is unreachable should
-    not take 7000 unrelated tests down with it.
+    An earlier version asserted a bare `pytest.raises` from a path under
+    `tmp_path`, and it FAILED IN THE CONTAINER -- `DID NOT RAISE`. The walk
+    goes all the way to `/`, and `/packages` EXISTS there, because compose
+    mounts `./packages/zt-data:/packages/zt-data` and Docker creates the parent.
+
+    That is the branch's own reasoning walked into: the same `/packages`
+    is why `extract_csf_questionnaires.py` searches for `reference-docs/`
+    instead, written three files away in this same commit. And the green was
+    the worst kind -- a GitHub runner has no `/packages` and a Windows host has
+    no `packages` beside the drive root, so CI and the host both passed. The only world that
+    failed was the only world #314 is about.
+
+    So the assertion is the INVARIANT and not one of its outcomes: the search
+    returns the nearest ancestor holding `packages/`, and raises when there is
+    none. Which branch a given machine takes is an environment fact, and the
+    test says which one it took rather than assuming.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from scripts._common import _find_workspace
 
-    with pytest.raises(RuntimeError, match="packages"):
-        _find_workspace(tmp_path / "nowhere" / "scripts" / "_common.py")
+    start = tmp_path / "nowhere" / "scripts" / "_common.py"
+    expected = next(
+        (c for c in start.parents if (c / "packages").is_dir()),
+        None,
+    )
+    if expected is None:
+        with pytest.raises(RuntimeError, match="packages"):
+            _find_workspace(start)
+    else:
+        assert _find_workspace(start) == expected, (
+            "an ancestor holds `packages/`, so the search must return the "
+            "NEAREST one rather than wandering past it"
+        )
 
 
 def test_the_workspace_search_finds_a_packages_directory(tmp_path: Path) -> None:
