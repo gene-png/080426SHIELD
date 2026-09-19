@@ -663,7 +663,7 @@ a real exit code and a real date, and was the minority outcome (D-071).
   between typed copy and a friendly fallback by testing `reason`'s PRESENCE, so
   the new key made the fallback unreachable and put the internal string
   "Request validation failed." under the Email field of the **public** sign-up
-  page (#317, tier-1, live on `main` for a week).
+  page (#317, tier-1, live on `main` until PR #320).
 
   A consumer never has to opt in to be broken by a new key. It only has to have
   branched on the key's ABSENCE — which is what a careful consumer does when the
@@ -673,7 +673,12 @@ a real exit code and a real date, and was the minority outcome (D-071).
   **The check is mechanical: before adding a field to a shared envelope, grep
   the consumers for a PRESENCE test rather than a value test.** For the D-016
   envelope that is `error.reason` and `error.message` across `apps/web/src`;
-  `reason === "..."` is safe, a bare `reason &&` is the defect. Nothing about
+  `reason === "..."` is safe, and a bare `reason &&` is the defect **unless
+  something else already excludes the new key** -- `lib/auth/options.ts` tests
+  presence and is safe only because it sits inside `err.status === 403`, and a
+  schema 422 cannot reach it. A status gate is not a value test, so say so at
+  the site: an unstated exemption sends the next person who runs this grep to
+  investigate a non-defect. Nothing about
   the new field's own correctness reveals this, so no review of the producing
   diff can find it — the evidence is entirely in files the PR does not touch.
 
@@ -1806,8 +1811,13 @@ Rules of the road:
 
   FastAPI's own rejection of a bound parameter goes through
   `_handle_validation_error`, which emits `"Request validation failed."` with a
-  `details` array and **no `reason` key**. The web layer's D-016 mapping keys
-  on `reason`, and core principle 2 names a raw validation dump as what a
+  `details` array — and, since #307, a synthesised `schema_*` **`reason`**. The
+  conclusion below is unchanged and its MECHANISM has expired once already: this
+  paragraph said "no `reason` key", which was true when written and false the
+  day #307 merged. A `schema_*` code is a machine token with no client copy
+  behind it, so the web layer's D-016 mapping still has nothing usable to key
+  on; #317 is what happened to the one consumer that read the key's PRESENCE as
+  copy. Core principle 2 names a raw validation dump as what a
   user-facing error must not be. So adding the bound makes the route stricter
   and its error less usable, in one edit, invisibly.
 

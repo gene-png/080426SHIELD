@@ -113,6 +113,16 @@ def _jsonable_validation_errors(exc: RequestValidationError) -> list[dict[str, o
 #: and a client mapping `reason` to copy would then render a schema failure as
 #: a domain refusal. The prefix makes collision impossible by construction
 #: instead of by nobody having picked the same word yet.
+#:
+#: **This literal is duplicated in `apps/web/src/components/auth/SignUpForm.tsx`**,
+#: which treats a `schema_`-prefixed reason as unfit to put in front of a person.
+#: There is no build step shared by this app and that bundle, so neither can be
+#: derived from the other -- and the pointer lives HERE, rather than only there,
+#: because the window is closed by whoever edits THIS constant, who would
+#: otherwise have no way to know the copy exists. The width of the gap, stated
+#: so it is not rediscovered: changing this prefix without changing that file
+#: puts "Request validation failed." back under the Email field of the public
+#: sign-up page, which is #317.
 SCHEMA_REASON_PREFIX = "schema_"
 
 #: The reason when the errors do NOT agree on one type.

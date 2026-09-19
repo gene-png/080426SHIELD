@@ -935,9 +935,16 @@ def gap_analysis(
     # TYPED, mirroring `routes/zt.py`'s twin rather than diverging from it. A
     # bare `Query(ge=1, le=4)` bound would also refuse, earlier and in OpenAPI,
     # but FastAPI's own rejection goes through `_handle_validation_error` and
-    # emits "Request validation failed." with a `details` array and NO `reason`
-    # key -- a raw validation dump, which core principle 2 forbids for a
-    # user-facing error and which the web layer's D-016 mapping keys on. The
+    # emits "Request validation failed." -- a raw validation dump, which core
+    # principle 2 forbids for a user-facing error.
+    #
+    # That message is still the whole of it, but the REASON this comment used
+    # to give has expired: it said the envelope carries "NO `reason` key", and
+    # since #307 `_handle_validation_error` synthesises a `schema_*` reason on
+    # every schema 422. The conclusion survives; the mechanism does not. A
+    # `schema_*` code is a machine token with no client copy behind it, so the
+    # D-016 mapping still has nothing usable to key on -- and #317 is what
+    # happens when a consumer treats the key's PRESENCE as copy.
     # twin already decided this and wrote down why; a second answer here would
     # be an unstated divergence between two copies of one endpoint.
     if not 1 <= target_tier <= CSF_MAX_TIER:

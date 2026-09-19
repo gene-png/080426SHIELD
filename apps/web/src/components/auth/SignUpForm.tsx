@@ -20,12 +20,19 @@ interface FieldErrors {
  * "Request validation failed.", and none has client copy behind it.
  *
  * Duplicated across the language boundary rather than derived, because there is
- * no build step shared by the FastAPI app and this bundle. The window is closed
- * by whoever edits `SCHEMA_REASON_PREFIX` in `exceptions.py`: that constant's
- * own docstring explains it exists so a synthesised code can never collide with
- * a hand-written D-016 reason, so changing it is a deliberate act, not a
- * refactor — and `schemaReasonFallback` in `SignUpForm.test.tsx` names the same
- * literal, so the pinning test goes red with the component.
+ * no build step shared by the FastAPI app and this bundle. Neither half can be
+ * derived from the other, so what closes the window is a POINTER IN BOTH
+ * DIRECTIONS: `SCHEMA_REASON_PREFIX` in `exceptions.py` now names this file in
+ * its own docstring. Saying only "whoever edits the Python constant will know"
+ * was aspirational — that person was the one with no way to find out.
+ *
+ * The width of the gap, stated rather than left to be discovered: a Python-side
+ * edit reddens NOTHING. `test_schema_422_typed_reason.py` imports the constant
+ * from the module under test, so it follows any change silently. A TS-side edit
+ * does redden, because `schemaReasonFallback` in `SignUpForm.test.tsx` spells
+ * the literal out instead of importing it. One direction is covered and the
+ * other is a comment; if this prefix ever changes, #317 returns on the public
+ * sign-up page.
  */
 const SCHEMA_REASON_PREFIX = "schema_";
 
