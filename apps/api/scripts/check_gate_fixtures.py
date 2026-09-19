@@ -194,17 +194,32 @@ def discover_gates(scripts: Path) -> list[str]:
 _SHELL_GATE_SUFFIX = ".sh"
 
 
-def repo_root_for(root: Path) -> Path:
-    """The repo root, from a fixture root at `<repo>/apps/api/tests/gates`."""
-    return root.parents[3]
+def repo_root_for(root: Path) -> Path | None:
+    """The repo root above a fixture root, or None when it is out of reach.
+
+    DERIVED by walking up for `.github/workflows` rather than counting
+    directories. `root.parents[3]` was correct for a full checkout and raised
+    `IndexError` inside the api container, which mounts `apps/api` at `/app` --
+    so the fixture root is `/app/tests/gates`, which has three parents and not
+    four. `CLAUDE.md` records that exact shape costing a whole pytest session
+    (#314, a `parents[4]`), and this file reproduced it within the week.
+
+    A count is a claim about where this file sits in a tree. The marker is a
+    property of the tree itself, so moving either one cannot silently pick the
+    wrong directory -- it can only fail to find one, which the caller reports.
+    """
+    for candidate in [root, *root.parents]:
+        if (candidate / ".github" / "workflows").is_dir():
+            return candidate
+    return None
 
 
-def shell_gates_dir_for(root: Path) -> Path:
-    return repo_root_for(root) / "tests" / "gates"
+def shell_gates_dir_for(repo: Path) -> Path:
+    return repo / "tests" / "gates"
 
 
-def workflows_dir_for(root: Path) -> Path:
-    return repo_root_for(root) / ".github" / "workflows"
+def workflows_dir_for(repo: Path) -> Path:
+    return repo / ".github" / "workflows"
 
 
 def discover_shell_gates(shell_dir: Path) -> list[str]:
@@ -377,35 +392,57 @@ def main(argv: list[str]) -> int:
         print(f"check-gate-fixtures: no check_*.py discovered under {scripts}")
         return 2
 
-    # #318. Shell gates and the wiring check are derived from the REPO around
-    # the fixture root, so they mean nothing against a synthetic one -- and the
-    # unit tests drive this with tmp_path roots on purpose. Skipped there, and
-    # the skip is PRINTED: "I did not look" must never be indistinguishable
-    # from "I looked and it was fine", which is this file's organising rule
-    # applied to itself. The wiring check has its own unit tests, which pass it
-    # real directories.
+    # #318. Shell gates and the wiring check read the REPO around the fixture
+    # root, so whether they run is decided by whether that repo can be found --
+    # not by which mode this was invoked in.
+    #
+    # It keyed on `explicit_root` for one round, which was a blanket exemption
+    # wearing a derivation's clothes: every unit test that drives `main` passes
+    # an explicit root, so the wiring verdict -- this change's whole point --
+    # was reachable from no test at all. It also said nothing useful about the
+    # api container, which passes no explicit root and still cannot see
+    # `.github/`.
+    #
+    # Now a test that builds a repo-shaped tmp tree reaches the real branch,
+    # and one that does not gets a PRINTED skip. "I did not look" must never be
+    # indistinguishable from "I looked and it was fine" -- this file's
+    # organising rule, applied to itself, which it was not.
     shell_gates: list[str] = []
-    if explicit_root:
+    repo_checked = False
+    repo = repo_root_for(root)
+    if repo is None:
+        # NOT a crash and NOT a pass. The repo root is genuinely out of
+        # reach inside the api container, which mounts `apps/api` at
+        # `/app` (#314) -- there is no `.github/` to find. The fixture
+        # half below still runs and still means something; the repo-derived
+        # half cannot, and says so.
         print(
-            "check-gate-fixtures: NOT CHECKED under an explicit fixture root -- "
-            "shell-gate discovery and the gate-wiring check. Both derive from "
-            "the repo around the root, which a synthetic root does not have."
+            "check-gate-fixtures: NOT CHECKED -- no `.github/workflows` above "
+            f"{root}, so shell-gate discovery and the gate-wiring check have "
+            "nothing to read. Expected inside the api container (#314); on a "
+            "full checkout it means the repo root moved."
         )
     else:
-        shell_dir = shell_gates_dir_for(root)
+        shell_dir = shell_gates_dir_for(repo)
         if not shell_dir.is_dir():
             print(f"check-gate-fixtures: no shell-gate directory at {shell_dir}")
             return 2
         shell_gates = discover_shell_gates(shell_dir)
 
-        workflows = workflows_dir_for(root)
-        if not workflows.is_dir():
-            print(f"check-gate-fixtures: no workflows directory at {workflows}")
-            return 2
+        # No `is_dir()` guard here, and its absence is deliberate:
+        # `repo_root_for` RETURNS a directory only when `.github/workflows` is
+        # one, so a guard here would test the predicate that selected `repo`.
+        # A first draft carried it, which read as a fail-closed branch and was
+        # unreachable by construction -- a dead guard invites the next reader
+        # to believe it fires. The reachable "I could not look" for this half
+        # is `repo is None`, above, which is printed rather than returned
+        # because the fixture checks below are still worth running.
+        workflows = workflows_dir_for(repo)
 
-        # Every gate, both languages. A gate no workflow runs cannot fail, and
-        # until #318 nothing in this repo said so -- two shell gates shipped
-        # with real assertions inside and nothing invoking either.
+        # Every gate, both languages. A gate no workflow runs cannot fail,
+        # and until #318 nothing in this repo said so -- two shell gates
+        # shipped with real assertions inside and nothing invoking either.
+        repo_checked = True
         unwired = unwired_gates(sorted(gates) + shell_gates, workflows)
         if unwired:
             print("check-gate-fixtures: FAILED -- gates no workflow invokes:")
@@ -429,15 +466,20 @@ def main(argv: list[str]) -> int:
             )
         return 1
 
-    # Shell entries are excluded under an explicit root rather than reported
-    # missing: discovery for them was skipped above and SAID so, and turning a
+    # Shell entries are excluded whenever the repo half did not RUN -- an
+    # explicit fixture root, or a tree with no `.github/workflows` above it --
+    # rather than reported missing. Both skips are printed, and turning a
     # declared skip into a violation would make the harness unusable against
-    # its own tmp_path fixtures.
+    # its own tmp_path fixtures and inside the api container.
+    #
+    # Keyed on `repo_checked` rather than on `explicit_root`, because those
+    # stopped being the same question the moment the container case existed:
+    # the container has no explicit root and still cannot see the shell gates.
     known = set(gates) | set(shell_gates)
     unknown = sorted(
         name
         for name in set(DEFERRED) - known
-        if not (explicit_root and name.endswith(_SHELL_GATE_SUFFIX))
+        if not (not repo_checked and name.endswith(_SHELL_GATE_SUFFIX))
     )
     if unknown:
         print("check-gate-fixtures: DEFERRED names gates that do not exist:")

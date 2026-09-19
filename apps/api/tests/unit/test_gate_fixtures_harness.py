@@ -357,22 +357,93 @@ def test_a_missing_shell_gate_directory_is_not_an_empty_list(tmp_path: Path) -> 
     assert not (tmp_path / "nope").is_dir()
 
 
-def test_the_explicit_root_skip_is_printed_not_silent(
+def _repo_shaped(tmp_path: Path, *, workflow: str, shell_gates: list[str]) -> Path:
+    """A tmp tree `repo_root_for` can actually find, so `main` takes the real
+    branch instead of the skip.
+
+    This helper is the point of the rewrite. Every `main([...])` test passes an
+    explicit fixture root, and the wiring check used to be skipped on exactly
+    that condition — so the verdict this whole change exists to produce was
+    reachable from no test at all, while three tests called `unwired_gates`
+    directly and looked like coverage.
+    """
+    root = _root(tmp_path)
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(workflow, encoding="utf-8")
+    gates = tmp_path / "tests" / "gates"
+    gates.mkdir(parents=True)
+    for name in shell_gates:
+        (gates / name).write_text("#!/bin/sh" + chr(10) + "exit 0" + chr(10), encoding="utf-8")
+    _case(root / "check_plan_totals" / "ok", expect=0)
+    _case(root / "check_plan_totals" / "bad", expect=1)
+    _case(root / "check_plan_totals" / "cantlook", expect=2)
+    _case(root / "check_plan_totals" / "adv", expect=1, adversarial=True)
+    return root
+
+
+def test_main_fails_when_a_gate_no_workflow_invokes_exists(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Running against a synthetic fixture root cannot check the real repo, and
-    the harness says so out loud.
+    """Red-on-revert for the verdict, through `main` rather than the helper.
 
-    An unannounced skip would make every tmp_path test in this file look like
-    evidence that the wiring check passed. "I did not look" and "I looked and it
-    was fine" must not be the same output — this file's own organising rule,
-    turned on the file itself.
+    Delete the four lines in `main` that turn `unwired` into a verdict and this
+    goes red. Before it existed, that deletion left the whole suite green and CI
+    green, because on the real tree no gate is unwired — the headline feature
+    would have become a computed-and-discarded list with nothing to notice.
+    """
+    workflow = chr(10).join(
+        ["jobs:", "  x:", "    steps:", "      - run: python check_plan_totals.py", ""]
+    )
+    root = _repo_shaped(tmp_path, workflow=workflow, shell_gates=["orphan_guard.sh"])
+    assert main(["x", str(root)]) == 1
+    out = capsys.readouterr().out
+    assert "gates no workflow invokes" in out
+    assert "orphan_guard.sh" in out
+
+
+def test_main_refuses_when_the_shell_gate_directory_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exit 2, not 1 and not 0: the repo was found and one half of it was not.
+
+    Distinct from `repo is None`, which is the container case and is printed
+    rather than returned. Two different "I could not look"s, and only this one
+    is a real absence on a tree that otherwise looks complete.
+    """
+    root = _repo_shaped(tmp_path, workflow="jobs: {}" + chr(10), shell_gates=[])
+    (tmp_path / "tests" / "gates").rmdir()
+    (tmp_path / "tests").rmdir()
+    assert main(["x", str(root)]) == 2
+    assert "no shell-gate directory at" in capsys.readouterr().out
+
+
+def test_main_skips_the_repo_half_out_loud_when_there_is_no_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The container case (#314), and the skip must be AUDIBLE.
+
+    `apps/api` is mounted at `/app`, so there is no `.github/` above the fixture
+    root and the repo-derived half has nothing to read. The fixture checks are
+    still worth running, so this prints and continues rather than returning —
+    which is only defensible because it says so.
     """
     root = _root(tmp_path)
     _case(root / "check_plan_totals" / "ok", expect=0)
     _case(root / "check_plan_totals" / "bad", expect=1)
     _case(root / "check_plan_totals" / "cantlook", expect=2)
+    _case(root / "check_plan_totals" / "adv", expect=1, adversarial=True)
     main(["x", str(root)])
     out = capsys.readouterr().out
-    assert "NOT CHECKED under an explicit fixture root" in out
-    assert "shell-gate discovery and the gate-wiring check" in out
+    assert "NOT CHECKED" in out
+    assert "no `.github/workflows` above" in out
+    # And it CONTINUED: the fixture half ran, evidenced by its own output
+    # naming a gate. The exit code is deliberately not asserted -- these tmp
+    # fixtures do not satisfy the contract (`_case` writes no
+    # `stdout_contains`, which every expect-2 case needs), so pinning the code
+    # would pin an incidental contract failure rather than the skip behaviour
+    # this test is named for.
+    assert "check_plan_totals" in out, (
+        "the run stopped at the skip instead of continuing to the fixture "
+        "checks, which is the whole reason the skip prints rather than returns"
+    )
