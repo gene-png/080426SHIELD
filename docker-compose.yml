@@ -96,7 +96,23 @@ services:
 
   minio:
     restart: unless-stopped
-    image: minio/minio:latest
+    # quay.io, NOT Docker Hub. `minio/minio` and `minio/mc` stopped being
+    # pullable from Docker Hub -- `pull access denied ... repository does not
+    # exist or may require 'docker login'`, measured 2026-09-19 both on a dev
+    # machine and on the GitHub runner. It failed at `Compose up`, so the E2E
+    # and Demo jobs went red on EVERY open PR at once, in 6-14 seconds, on a
+    # fact about a third party rather than about the change.
+    #
+    # quay.io is MinIO's own registry and carries both images. Verified by
+    # pulling each before this edit, rather than by reading that it should
+    # work.
+    #
+    # The tag stays `:latest`, which is the reason this arrived as a surprise
+    # rather than as a dependabot PR: nothing here names a version, so nothing
+    # could notice one moving. Pinning a digest would fix that and would also
+    # take these images out of every automated update -- a trade worth making
+    # deliberately, not as a side effect of an outage. Not decided here.
+    image: quay.io/minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-shield-minio}
@@ -116,7 +132,7 @@ services:
   # and S3Storage assumes it already exists, so without this the first upload
   # fails with NoSuchBucket -> 500. Idempotent (--ignore-existing); exits 0.
   createbuckets:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     depends_on:
       minio:
         condition: service_healthy
