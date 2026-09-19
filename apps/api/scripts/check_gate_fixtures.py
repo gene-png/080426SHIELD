@@ -108,6 +108,42 @@ DEFERRED: dict[str, str] = {
         "the missing half was that nothing ran it. No `--self-test`, so a "
         "harness-cannot-fail defect in it would still be invisible."
     ),
+    # -- #310's shell gate, a DIFFERENT incident from the two above ----------
+    # It was WIRED from the day it landed -- `audit-gate.yml` runs it and its
+    # `--self-test` on every PR -- so the "ran nowhere for weeks" history above
+    # is not its history. What was missing here was this declaration: #327
+    # landed the rule that every shell gate states its coverage, forty minutes
+    # after #310 landed the gate, and each was green against a base that did
+    # not carry the other. `main` was red on every PR until this entry existed.
+    "close_guard_linked_file.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Its evidence is INTERNAL, and is the strongest of the three shell gates. "
+        "It does not restate the workflow: it EXTRACTS the collect block out of "
+        "`audit-gate.yml` by markers, refusing with exit 2 unless it finds "
+        "exactly one, so it goes red when a workflow change breaks the anchor or "
+        "the behaviour -- rather than agreeing with a copy of itself forever. It "
+        "then stubs `gh`, drives the REAL close guard, and asserts the VERDICT in "
+        "three states -- the query fails, the query returns nothing, the query "
+        "returns numbers -- because the file's presence only matters through what "
+        "the guard does with it. "
+        "It is also the only shell gate here carrying a `--self-test`, which runs "
+        "THREE mutations (`prefix`, `donothing`, `alwayspublish`), each pinned to "
+        "an exact expected failure-label set. That shape is the entry's real "
+        "content: the first version applied ONE mutation and accepted any "
+        "non-zero, and under `prefix` alone only the two assertions of the first "
+        "state go red -- so five of the seven labelled checks had been shown able "
+        "to fail exactly never. (The script's own comment says 'four of the six'; "
+        "it enumerates seven labels and omits one. Its count, not this entry's -- "
+        "tracked rather than corrected here.) "
+        "TWO limits, stated because the sentence above certifies strength and a "
+        "reader would otherwise take it as complete. Its own fail-closed branches "
+        "-- `cannot find`, no interpreter, `EXTRACT FAILED`, all exit 2 -- are "
+        "exercised by no mutation and no check, so this gate does not meet the "
+        "exit-2 half that `_contract_failures` demands of a FIXTURED gate. And "
+        "the other two shell gates above have no `--self-test` at all, so a "
+        "harness-cannot-fail defect in either is still invisible. A coverage "
+        "statement, not a clean bill of health."
+    ),
     "leave_row_oracle.py": (
         "STRUCTURALLY unfixturable, which is a stronger reason than the one first "
         "recorded here. --check-registry takes no path: REPO_APP and TESTS are "
