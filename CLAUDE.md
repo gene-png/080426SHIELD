@@ -1150,9 +1150,16 @@ a real exit code and a real date, and was the minority outcome (D-071).
   finished when a person can see it without querying the API.
 
   **The ownership half, decided on #244 and recorded so it is not re-litigated:
-  `apps/web/src/app/**` and the dashboard error surfaces belong to whichever
-  track owns the API surface the page reads. Dashboards go to the service track
-  that produces their numbers.**
+  the pages under `apps/web/src/app/**` AND THE COMPONENTS THEY RENDER belong
+  to whichever track owns the API surface the page reads. Dashboards go to the
+  service track that produces their numbers.**
+
+  "And the components they render" is not padding. The evidence below is
+  `apps/web/src/components/admin/AuditViewer.tsx`, which is not under
+  `app/**` at all -- it is rendered by `app/admin/audit/page.tsx`. A rule
+  quantifying over the route tree alone would have excluded its own lead
+  instance, and every other surface in this repo is built the same way: the
+  page is a thin shell and the component is where the copy lives.
 
   The reason is the load-bearing part: **the person who writes the honesty
   string is the one who knows what it means.** #244's instance 3 is what
