@@ -240,6 +240,18 @@ jobs:
       # fixtures it must pass, fixtures it must FAIL, and at least one
       # adversarial case; a gate with neither fixtures nor a stated deferral
       # fails this step, so silence cannot be how coverage shrinks.
+      # #318. Two shell gates shipped with real both-states assertions inside
+      # and NOTHING invoking either -- no workflow, no CI step, no script. They
+      # proved something to nobody for weeks, and the harness below could not
+      # say so because it discovered gates by globbing `apps/api/scripts/*.py`.
+      # It now discovers these too and FAILS when a gate no workflow runs, so
+      # this step is not optional decoration: delete it and `gates can fail`
+      # goes red naming the gate it can no longer find a caller for.
+      - name: shell gates
+        run: |
+          bash tests/gates/prettier_hook.sh
+          bash tests/gates/web_install_guard.sh
+
       - name: gates can fail
         run: python apps/api/scripts/check_gate_fixtures.py
 

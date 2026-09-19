@@ -82,6 +82,27 @@ from pathlib import Path
 # mapping nor the fixture tree FAILS the run: silence must not be how coverage
 # quietly shrinks.
 DEFERRED: dict[str, str] = {
+    # -- SHELL GATES (#318) -------------------------------------------------
+    # They cannot be fixtured by this harness: `run_case` invokes
+    # `[sys.executable] + argv`, and these are bash. Their both-states evidence
+    # is INTERNAL -- each asserts a passing case and a refusing case of the
+    # thing it guards -- and what this file now enforces for them is the half
+    # that was actually missing: that a workflow INVOKES them. Both shipped
+    # with neither, and ran nowhere for weeks.
+    "prettier_hook.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Covers both states internally via `expect_ok` and `expect_refusal` "
+        "against `--print-version`. The gap this harness now closes for it is "
+        "wiring, not fixtures -- see `unwired_gates`. What is still NOT proved "
+        "is that the gate itself can fail; `close_guard_linked_file.sh`'s "
+        "`--self-test` is the shape that would, and adding one here is filed "
+        "rather than done."
+    ),
+    "web_install_guard.sh": (
+        "Same as `prettier_hook.sh`: bash, internal both-states coverage, and "
+        "the missing half was that nothing ran it. No `--self-test`, so a "
+        "harness-cannot-fail defect in it would still be invisible."
+    ),
     "leave_row_oracle.py": (
         "STRUCTURALLY unfixturable, which is a stronger reason than the one first "
         "recorded here. --check-registry takes no path: REPO_APP and TESTS are "
@@ -159,6 +180,73 @@ def discover_gates(scripts: Path) -> list[str]:
         if _GATE_MARKER in text:
             found.add(path.name)
     return sorted(found)
+
+
+#: Shell gates live at `<repo>/tests/gates/*.sh` -- a different language, a
+#: different directory, and invisible to `discover_gates` twice over (#318).
+#:
+#: `discover_gates` derives Python gates from a property IN THE FILE, which is
+#: the stronger form. There is no shell equivalent of the crash-is-not-a-verdict
+#: handler, so these are derived from LOCATION instead: that directory holds
+#: gates and nothing else, which is the convention the two existing ones were
+#: written to. Weaker, and stated as weaker -- a shell gate written somewhere
+#: else is invisible here, exactly as a Python gate without the marker is.
+_SHELL_GATE_SUFFIX = ".sh"
+
+
+def repo_root_for(root: Path) -> Path:
+    """The repo root, from a fixture root at `<repo>/apps/api/tests/gates`."""
+    return root.parents[3]
+
+
+def shell_gates_dir_for(root: Path) -> Path:
+    return repo_root_for(root) / "tests" / "gates"
+
+
+def workflows_dir_for(root: Path) -> Path:
+    return repo_root_for(root) / ".github" / "workflows"
+
+
+def discover_shell_gates(shell_dir: Path) -> list[str]:
+    """Every `*.sh` under the repo-root gate directory."""
+    if not shell_dir.is_dir():
+        return []
+    return sorted(p.name for p in shell_dir.glob(f"*{_SHELL_GATE_SUFFIX}") if p.is_file())
+
+
+def unwired_gates(gates: list[str], workflows: Path) -> list[str]:
+    """Gates no workflow invokes. THE POINT OF THIS FILE, reached from outside.
+
+    A gate that runs nowhere cannot fail, which is this file's own thesis -- and
+    fixture coverage does not detect it: `web_install_guard.sh` and
+    `prettier_hook.sh` each shipped with real both-states assertions inside and
+    no workflow, no CI step and no script invoking either (#318). They proved
+    something to nobody, for weeks, and the only reason anyone noticed was a
+    reviewer reading the PRs that added them.
+
+    Matched on the gate's STEM against the workflow text with FULL-LINE COMMENTS
+    REMOVED. Both halves are load-bearing and were measured on this tree:
+
+      * the stem, not the filename, because four of the nine Python gates are
+        invoked as modules (`scripts.check_audit_evidence`, `-m
+        scripts.check_test_integrity`) and never by their `.py` name. Matching
+        filenames reports four live gates unwired.
+      * comments stripped, because `audit-gate.yml` mentions `leave_row_oracle`
+        in a comment ABOUT a gate it does not run. A gate named only in prose
+        would otherwise count as wired -- a mention read as an invocation, which
+        is the substitution this whole file exists to refuse.
+
+    Residual, stated: an inline trailing comment is not stripped, so a stem
+    appearing only after a `#` on a value line would still pass. Narrower than
+    matching raw text, not zero.
+    """
+    lines_kept: list[str] = []
+    for path in sorted(workflows.glob("*.y*ml")):
+        for line in path.read_text(encoding="utf-8").split("\n"):
+            if not line.lstrip().startswith("#"):
+                lines_kept.append(line)
+    text = "\n".join(lines_kept)
+    return [g for g in gates if Path(g).stem not in text]
 
 
 def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:
@@ -274,7 +362,8 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
 
 def main(argv: list[str]) -> int:
     default_root = Path(__file__).resolve().parents[1] / "tests" / "gates"
-    root = Path(argv[1]).resolve() if len(argv) > 1 else default_root
+    explicit_root = len(argv) > 1
+    root = Path(argv[1]).resolve() if explicit_root else default_root
     if not root.is_dir():
         print(f"check-gate-fixtures: fixture root not found: {root}")
         return 2
@@ -288,7 +377,68 @@ def main(argv: list[str]) -> int:
         print(f"check-gate-fixtures: no check_*.py discovered under {scripts}")
         return 2
 
-    unknown = sorted(set(DEFERRED) - set(gates))
+    # #318. Shell gates and the wiring check are derived from the REPO around
+    # the fixture root, so they mean nothing against a synthetic one -- and the
+    # unit tests drive this with tmp_path roots on purpose. Skipped there, and
+    # the skip is PRINTED: "I did not look" must never be indistinguishable
+    # from "I looked and it was fine", which is this file's organising rule
+    # applied to itself. The wiring check has its own unit tests, which pass it
+    # real directories.
+    shell_gates: list[str] = []
+    if explicit_root:
+        print(
+            "check-gate-fixtures: NOT CHECKED under an explicit fixture root -- "
+            "shell-gate discovery and the gate-wiring check. Both derive from "
+            "the repo around the root, which a synthetic root does not have."
+        )
+    else:
+        shell_dir = shell_gates_dir_for(root)
+        if not shell_dir.is_dir():
+            print(f"check-gate-fixtures: no shell-gate directory at {shell_dir}")
+            return 2
+        shell_gates = discover_shell_gates(shell_dir)
+
+        workflows = workflows_dir_for(root)
+        if not workflows.is_dir():
+            print(f"check-gate-fixtures: no workflows directory at {workflows}")
+            return 2
+
+        # Every gate, both languages. A gate no workflow runs cannot fail, and
+        # until #318 nothing in this repo said so -- two shell gates shipped
+        # with real assertions inside and nothing invoking either.
+        unwired = unwired_gates(sorted(gates) + shell_gates, workflows)
+        if unwired:
+            print("check-gate-fixtures: FAILED -- gates no workflow invokes:")
+            for name in unwired:
+                print(
+                    f"  {name}: nothing under .github/workflows runs it, so it "
+                    f"cannot fail and its green means nothing"
+                )
+            return 1
+
+    # Shell gates carry their own both-states evidence rather than fixtures, so
+    # they are covered by DEFERRED. The requirement that survives is that they
+    # cannot appear in SILENCE: a new one with no entry here fails the run.
+    unknown_shell = [g for g in shell_gates if g not in DEFERRED]
+    if unknown_shell:
+        print("check-gate-fixtures: FAILED -- shell gates with no stated coverage:")
+        for name in unknown_shell:
+            print(
+                f"  {name}: not in DEFERRED. A shell gate cannot be fixtured by "
+                f"this harness, so it must say here how it is evidenced."
+            )
+        return 1
+
+    # Shell entries are excluded under an explicit root rather than reported
+    # missing: discovery for them was skipped above and SAID so, and turning a
+    # declared skip into a violation would make the harness unusable against
+    # its own tmp_path fixtures.
+    known = set(gates) | set(shell_gates)
+    unknown = sorted(
+        name
+        for name in set(DEFERRED) - known
+        if not (explicit_root and name.endswith(_SHELL_GATE_SUFFIX))
+    )
     if unknown:
         print("check-gate-fixtures: DEFERRED names gates that do not exist:")
         for name in unknown:

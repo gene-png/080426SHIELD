@@ -21,7 +21,15 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.check_gate_fixtures import _GATE_MARKER, DEFERRED, discover_gates, load_cases, main
+from scripts.check_gate_fixtures import (
+    _GATE_MARKER,
+    DEFERRED,
+    discover_gates,
+    discover_shell_gates,
+    load_cases,
+    main,
+    unwired_gates,
+)
 
 # CI runs `pytest -m unit tests/unit`. WITHOUT this marker every test in this
 # file is DESELECTED, and the suite reports the same "7111 passed" as `main`
@@ -179,9 +187,35 @@ def test_deferred_entries_all_name_a_real_gate(tmp_path: Path) -> None:
 
     Same class as an agent definition citing a merged branch: the exemption
     outlives the thing it excused, and nothing notices.
+
+    The universe is BOTH languages since #318, and the two halves are asserted
+    SEPARATELY because only one of them is always reachable. The api container
+    mounts `apps/api` at `/app`, so the repo root — and with it
+    `tests/gates/*.sh` — does not exist inside it (#314). Checking the union
+    would make this test fail in the container and pass in CI; checking only
+    the Python half would let the shell entries read as stale, and the cheapest
+    route to green is deleting them, which is how the exemption that hid two
+    unwired gates comes back.
+
+    So: the Python half always runs, and the shell half SKIPS WITH A REASON
+    when the directory is out of reach. A skip is visible in the output; a
+    silently-empty universe is not.
     """
-    scripts = Path(__file__).resolve().parents[2] / "scripts"
-    assert set(DEFERRED) <= set(discover_gates(scripts))
+    api = Path(__file__).resolve().parents[2]
+    python_gates = set(discover_gates(api / "scripts"))
+    shell_entries = {k for k in DEFERRED if k.endswith(".sh")}
+    assert set(DEFERRED) - shell_entries <= python_gates
+
+    repo = api.parents[1] if len(api.parents) >= 2 else None
+    shell_dir = (repo / "tests" / "gates") if repo is not None else None
+    if shell_dir is None or not shell_dir.is_dir():
+        pytest.skip(
+            f"repo-root tests/gates is not reachable from {api} — the api "
+            f"container mounts apps/api at /app (#314), so the shell half of "
+            f"the DEFERRED universe cannot be checked here. It is checked on "
+            f"a full checkout, which is what CI runs."
+        )
+    assert shell_entries <= set(discover_shell_gates(shell_dir))
 
 
 def test_deferred_reasons_are_not_empty() -> None:
@@ -229,3 +263,116 @@ def test_load_cases_reports_problems_rather_than_skipping(tmp_path: Path) -> Non
     cases, problems = load_cases(tmp_path / "gate")
     assert cases == []
     assert problems and "no case.json" in problems[0]
+
+
+# ---------------------------------------------------------------------------
+# #318 -- a gate that runs NOWHERE cannot fail, and nothing said so.
+#
+# `web_install_guard.sh` and `prettier_hook.sh` each shipped with real
+# both-states assertions inside and no workflow, no CI step and no script
+# invoking either. Fixture coverage cannot detect that: a gate can be perfectly
+# fixtured and still never run. And the harness could not have reported them
+# anyway, because it discovered gates by globbing `apps/api/scripts/*.py` -- so
+# a SHELL gate at the REPO ROOT escaped the registry in silence.
+# ---------------------------------------------------------------------------
+
+
+def _workflows(tmp_path: Path, body: str) -> Path:
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(body, encoding="utf-8")
+    return wf
+
+
+def test_a_gate_no_workflow_invokes_is_reported(tmp_path: Path) -> None:
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: python a.py\n")
+    assert unwired_gates(["check_a.py", "orphan.sh"], wf) == ["check_a.py", "orphan.sh"]
+
+
+def test_a_gate_invoked_by_its_stem_counts_as_wired(tmp_path: Path) -> None:
+    """Four of the nine Python gates are never named by their `.py` filename.
+
+    `check_audit_evidence` arrives as `from scripts.check_audit_evidence import
+    ...` inside a `python -c`, and `check_test_integrity` as `-m
+    scripts.check_test_integrity`. Matching filenames reports four live gates
+    unwired, which would make the check's first run a wall of false positives
+    and its second run a deleted check.
+    """
+    wf = _workflows(
+        tmp_path,
+        "jobs:\n  x:\n    steps:\n"
+        '      - run: python -c "from scripts.check_audit_evidence import missing_evidence"\n'
+        "      - run: python -m scripts.check_test_integrity tests\n",
+    )
+    assert unwired_gates(["check_audit_evidence.py", "check_test_integrity.py"], wf) == []
+
+
+def test_a_gate_named_only_in_a_comment_is_unwired(tmp_path: Path) -> None:
+    """THE ADVERSARIAL CASE, and the reason comments are stripped at all.
+
+    `audit-gate.yml` mentions `leave_row_oracle` in a comment ABOUT a gate that
+    job does not run. Matching raw workflow text would read that mention as an
+    invocation — a gate counted as running because somebody wrote its name in
+    prose, which is precisely the substitution this harness exists to refuse.
+
+    The assertion is worth more than the stripping: without it, someone
+    simplifying `unwired_gates` back to a raw `in text` finds every other test
+    in this file still green.
+    """
+    wf = _workflows(
+        tmp_path,
+        "jobs:\n  x:\n    steps:\n"
+        "      # check_ghost is the gate this job does NOT run; see #318\n"
+        "      - run: python apps/api/scripts/check_real.py\n",
+    )
+    assert unwired_gates(["check_ghost.py", "check_real.py"], wf) == ["check_ghost.py"]
+
+
+def test_shell_gates_are_discovered_at_the_repo_root(tmp_path: Path) -> None:
+    """Derived from LOCATION, not from a property in the file.
+
+    Weaker than `discover_gates`, which reads the crash-is-not-a-verdict handler
+    out of each script, and weaker on purpose: bash has no equivalent of that
+    handler. Pinned here so the weaker derivation is at least the one that runs.
+    """
+    gates = tmp_path / "tests" / "gates"
+    gates.mkdir(parents=True)
+    (gates / "b_guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (gates / "a_guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (gates / "notes.md").write_text("not a gate\n", encoding="utf-8")
+    (gates / "subdir").mkdir()
+    assert discover_shell_gates(gates) == ["a_guard.sh", "b_guard.sh"]
+
+
+def test_a_missing_shell_gate_directory_is_not_an_empty_list(tmp_path: Path) -> None:
+    """`discover_shell_gates` returns [] for a missing directory, so the CALLER
+    must be the one that fails closed — and `main` does, with exit 2.
+
+    Asserted as a pair rather than trusting the helper: an empty list and "the
+    directory is not there" are the same value, which is the shape D-051 is
+    about. The helper is allowed to conflate them only because nothing reads it
+    without checking `is_dir()` first.
+    """
+    assert discover_shell_gates(tmp_path / "nope") == []
+    assert not (tmp_path / "nope").is_dir()
+
+
+def test_the_explicit_root_skip_is_printed_not_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Running against a synthetic fixture root cannot check the real repo, and
+    the harness says so out loud.
+
+    An unannounced skip would make every tmp_path test in this file look like
+    evidence that the wiring check passed. "I did not look" and "I looked and it
+    was fine" must not be the same output — this file's own organising rule,
+    turned on the file itself.
+    """
+    root = _root(tmp_path)
+    _case(root / "check_plan_totals" / "ok", expect=0)
+    _case(root / "check_plan_totals" / "bad", expect=1)
+    _case(root / "check_plan_totals" / "cantlook", expect=2)
+    main(["x", str(root)])
+    out = capsys.readouterr().out
+    assert "NOT CHECKED under an explicit fixture root" in out
+    assert "shell-gate discovery and the gate-wiring check" in out
