@@ -44,23 +44,57 @@ if [ ! -f "$LOCK" ]; then
   exit 1
 fi
 
-# The resolved version, from the package entry pnpm writes as `prettier@X.Y.Z:`
-# at the top level of `packages:` / `snapshots:`. Anchored to two leading
-# spaces so a transitive `foo/prettier@...` cannot match.
+# The resolved version, read from the ROOT IMPORTER -- `importers:` -> `.:` ->
+# `devDependencies:` -> `prettier:` -> `version:`. That is the entry pnpm
+# installs for the root workspace, which is what `pnpm format:check` runs.
 #
-# `|| true` is load-bearing, and the fixture is what found that out. Under
-# `set -euo pipefail` a `grep` that matches nothing exits 1, the pipeline fails,
-# and the script DIES before reaching the check below -- so the refusal exited 1
-# with no message at all, and the reader got a bare failure from the step whose
-# only job is to say what is wrong. `CLAUDE.md` records this exact shape: a
-# legitimate zero-count grep exiting the script.
-VERSION="$( (grep -oE '^  prettier@[0-9]+\.[0-9]+\.[0-9]+:' "$LOCK" || true) | head -1 | sed 's/^  prettier@//; s/:$//')"
+# It used to read the `packages:` section and take `head -1`, and that is a
+# SILENT DOWNGRADE, not a stylistic difference. `packages:` is a flat,
+# ALPHABETICALLY SORTED list, so a second entry does not append -- it sorts by
+# string, and `prettier@2.8.8` sorts before `prettier@3.9.6`. `head -1` then
+# takes the LOWEST version in the file. A transitive dependency pulling any
+# older prettier would have silently rolled the hook back, reformatting every
+# commit with a version CI rejects: the #168 defect, arriving through the fix
+# for #168.
+#
+# The old anchor's comment defended a key shape pnpm 9 never writes
+# (`foo/prettier@...`), while the form that CAN occur sorted first and was
+# undefended. The authoritative entry was in the same file, unread.
+#
+# Parsed with awk rather than grep because the value is positional: the same
+# `version:` key appears under every dependency of every importer, so what
+# identifies this one is the path `. -> (dev)dependencies -> prettier`, not the
+# line's own text. Both `dependencies` and `devDependencies` are accepted -- the
+# root has it under dev today and which section a tool lives in is not this
+# hook's business. A `(peer)` suffix is stripped: pnpm writes
+# `version: 3.9.6(typescript@5.x)` for packages with peers, and prettier has
+# none today, so that is a ratchet rather than a live case.
+VERSION="$(
+  awk '
+    /^importers:/            { in_imp = 1; next }
+    in_imp && /^[^ ]/        { in_imp = 0 }
+    in_imp && /^  [^ ]/      { in_root = ($0 ~ /^  \.:[[:space:]]*$/); next }
+    in_root && /^    [^ ]/   { in_deps = ($0 ~ /^    (dev)?[Dd]ependencies:[[:space:]]*$/); next }
+    in_deps && /^      [^ ]/ { want = ($0 ~ /^      prettier:[[:space:]]*$/); next }
+    want && /^        version:/ {
+      sub(/^        version:[[:space:]]*/, "")
+      sub(/\(.*/, "")
+      print
+      exit
+    }
+  ' "$LOCK"
+)"
 
 if [ -z "$VERSION" ]; then
-  echo "prettier hook: could not read a pinned prettier version from $LOCK." >&2
-  echo "  Looked for a line matching '  prettier@X.Y.Z:'. If pnpm changed its" >&2
-  echo "  lockfile format, fix this pattern rather than falling back to an" >&2
-  echo "  unpinned 'npx prettier' -- an unpinned run is the defect (#168)." >&2
+  echo "prettier hook: could not read prettier's resolved version from $LOCK." >&2
+  echo "  Looked for importers -> '.' -> (dev)dependencies -> prettier -> version," >&2
+  echo "  which is the entry pnpm installs for the root workspace and therefore" >&2
+  echo "  the one CI runs. If pnpm changed its lockfile format, fix this parser" >&2
+  echo "  rather than falling back to an unpinned 'npx prettier' -- an unpinned" >&2
+  echo "  run is the defect (#168)." >&2
+  echo "  Do NOT go back to reading 'packages:' and taking head -1: that list is" >&2
+  echo "  alphabetically sorted, so a second prettier entry silently wins with" >&2
+  echo "  the LOWEST version." >&2
   exit 1
 fi
 
