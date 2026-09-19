@@ -314,17 +314,25 @@ a real exit code and a real date, and was the minority outcome (D-071).
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
-- **A DEPENDENCY change needs a different command, and `--force-recreate` will
-  report success while leaving the OLD package installed.** `node_modules` lives
-  in named volumes (`node-modules-root`, `node-modules-web`) and
-  `docker-compose.yml` guards the install on the binary EXISTING, not on its
-  version:
+- **A DEPENDENCY change needs a different command, and `--force-recreate` used
+  to report success while leaving the OLD package installed.** `node_modules`
+  lives in named volumes (`node-modules-root`, `node-modules-web`), and
+  `docker-compose.yml` guarded the install on the binary EXISTING rather than
+  on its version:
 
       [ -f apps/web/node_modules/next/dist/bin/next ] || pnpm install;
 
-  So after a `package.json` or lockfile change, a recreate brings the stack up
-  green on the previous version, with the manifest and the lockfile both reading
-  the new one. Measured on the `next` 15.5.24 RCE patch: `package.json` said
+  **That guard is GONE.** #226 / PR #309 replaced it with
+  `scripts/web-install-if-stale.sh`, which the web service now runs
+  (`sh /app/web-install-if-stale.sh && exec pnpm -F web dev`) and which keys on
+  the LOCKFILE HASH, so a dependency change does reinstall. The line quoted
+  above is no longer in `docker-compose.yml`; it is kept here because the
+  diagnosis below is what a reader arrives with, and deleting the symptom would
+  leave them matching it against nothing.
+
+  Historically, before that fix: a recreate brought the stack up green on the
+  previous version, with the manifest and the lockfile both reading the new one.
+  Measured on the `next` 15.5.24 RCE patch: `package.json` said
   15.5.24 and the running container said 15.5.23. Use:
 
       docker compose exec -T web sh -c "cd /app && pnpm install"
@@ -2438,6 +2446,16 @@ Rules of the road:
        * `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both
          drive CI jobs, and seed data being clean is why #130 survived months
          of green.
+       * `docker-compose.yml` and `docker-compose.demo.yml` — this list named
+         `scripts/demo-reset.sh`, a WRAPPER around `docker compose`, and not
+         the file it wraps. CI's E2E and Demo jobs ARE this file: it defines
+         the api bind mounts every containerised gate reads, the web install
+         guard, the api boot chain, and every healthcheck. A compose-only PR
+         that also updated the three documents cleared all six conditions and
+         merged unattended, satisfying condition 1 partly by construction.
+         Found by the review of PR #329, whose own one-file change never
+         qualified (condition 3 was unmet), so this was a gap for the next one
+         rather than a live fail-open.
        * the deterministic surfaces the first draft of this list missed:
          `app/attack/coverage.py`, `app/csf/scoring.py`, `app/zt/maturity.py`,
          `app/tech_debt/security_scope.py`, `app/risk/exporters.py`. Naming
