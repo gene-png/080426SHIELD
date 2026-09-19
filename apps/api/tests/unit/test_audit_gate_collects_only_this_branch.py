@@ -50,7 +50,56 @@ import re
 
 import pytest
 
-WORKFLOW = pathlib.Path(__file__).resolve().parents[4] / ".github" / "workflows" / "audit-gate.yml"
+
+def _find_workflow() -> pathlib.Path | None:
+    """The workflow, found by SEARCHING UPWARD for the repo marker.
+
+    This was `parents[4]`, which is correct for the host checkout --
+    `apps/api/tests/unit/x.py` puts the repo root four up -- and raises
+    `IndexError` inside the api container, where `./apps/api` is mounted at
+    `/app` and this file has three parents in total.
+
+    At MODULE SCOPE that is a collection error, not a test failure: pytest
+    imports a module to collect it, so the exception aborts the whole session
+    and the documented command
+
+        docker compose exec -T api pytest -m unit -q
+
+    evaluated not one assertion. CI stayed green because it runs on the runner
+    from a full checkout, where the arithmetic holds -- the correctness lived
+    in a `working-directory:` line in a different file, which is the shape
+    `CLAUDE.md` already records for `check_test_integrity` (#314).
+
+    A count is a claim about where this file sits in a tree. The marker is a
+    property of the tree, so this cannot silently resolve to the WRONG
+    directory -- only fail to find one, which the caller reports.
+    """
+    for candidate in pathlib.Path(__file__).resolve().parents:
+        workflow = candidate / ".github" / "workflows" / "audit-gate.yml"
+        if workflow.is_file():
+            return workflow
+    return None
+
+
+WORKFLOW = _find_workflow()
+
+# Skipped, not raised, and the distinction is the whole fix. "The workflow is
+# not reachable from here" and "the workflow is wrong" are different outcomes,
+# and only the second should be able to fail this file. Taking the entire suite
+# down because one gate test cannot find its input is the fail-closed rule
+# applied in the wrong direction: it stops everything ELSE being checked, which
+# is not the same as refusing to certify itself.
+#
+# The skip is AUDIBLE -- `pytest -rs` names it and the reason says where to run
+# it instead. A silent skip here would be the silent-success shape one level up.
+if WORKFLOW is None:
+    pytest.skip(
+        "no .github/workflows/audit-gate.yml above this file -- expected inside "
+        "the api container, which mounts apps/api at /app and cannot see the "
+        "repo root (#314). This test is exercised on a full checkout, which is "
+        "what CI runs.",
+        allow_module_level=True,
+    )
 
 
 def _git_log_lines() -> list[str]:

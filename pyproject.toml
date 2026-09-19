@@ -12,7 +12,15 @@ line-length = 100
 # codes, NOT style enforcement -- so this exemption is load-bearing on the
 # harness actually running in CI. If the "gates can fail" step is ever removed
 # or skipped, this exemption must go with it.
-extend-exclude = [".venv", "node_modules", "reference-docs", "apps/api/tests/gates"]
+# `apps/api/tests/gates` is written as a GLOB rather than a repo-relative path.
+# An exclude resolves against the config file, and the api container mounts
+# `./apps/api` at `/app` with the root `pyproject.toml` bind-mounted at `/` --
+# so `apps/api/tests/gates` names `/apps/api/tests/gates`, which does not
+# exist, and the MANDATORY in-container lint reported four phantom errors in
+# fixture files that are deliberately not lint-clean (#314). The glob matches
+# the directory wherever the tree is rooted; `per-file-ignores` below already
+# uses this form.
+extend-exclude = [".venv", "node_modules", "reference-docs", "**/tests/gates"]
 # Excludes are bypassed for EXPLICITLY NAMED paths unless this is set, and a
 # pre-commit hook names files explicitly -- which is precisely how #168 says the
 # hook set rewrites files. Without this, `ruff --fix` from a hook would edit the
