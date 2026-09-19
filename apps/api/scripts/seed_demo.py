@@ -1159,6 +1159,25 @@ def _seed_risk_register(
         client_id=org.id,
         version=1,
         generated_by=admin.id,
+        # #244 instance 1. WITHOUT this the seeded register has NULL
+        # provenance, `_serialize` reports `excluded_inputs_recorded=False`,
+        # and the demo admin page renders "This register was generated before
+        # SHIELD recorded which assessments were left out ... re-generate to
+        # find out" -- a data-integrity warning on the flagship page, over a
+        # register the seed created seconds earlier.
+        #
+        # The fail-closed default is correct and stays; the seed is what was
+        # lying. `s8-risk-register.spec.ts` asserts the heading and the
+        # unapproved-sources testid and never the banner, so it stayed green
+        # over it -- seed data being clean is exactly why #130 survived months
+        # of green, and this is the same shape with the polarity reversed.
+        #
+        # An EMPTY `excluded` is a positive claim: the demo register is built
+        # from finalized inputs and nothing was withheld. `inputs` is left out
+        # rather than invented, because the seed does not go through
+        # `_provenance_snapshot` and a hand-written input list would be a
+        # second, drifting answer to a question that resolver owns.
+        provenance={"excluded": []},
     )
     db.add(register)
     db.flush()

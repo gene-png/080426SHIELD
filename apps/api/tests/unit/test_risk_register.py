@@ -1511,3 +1511,112 @@ def test_a_run_where_nothing_was_lost_says_so_rather_than_staying_silent(
 
     assert details["entries_write_check"] == "agreed"
     assert details["entries_total"] == details["entries_written"] == 1
+
+
+# ---------------------------------------------------------------------------
+# #244 instance 1 -- the read-back, and the fail-closed default.
+#
+# These exist because the review found the PR's actual fix had NO test at any
+# level. `_serialize`'s `"excluded" in stored` branch could be deleted and the
+# whole suite stayed green, because the only assertion touching
+# `excluded_inputs` was on the POST /generate response -- the one path that
+# passes the value in explicitly and never reaches the new code. The vitest
+# that covers the false state supplies the flag directly in a mock, so it never
+# reaches `_serialize` either.
+#
+# CLAUDE.md: an assertion that goes red when the guard is deleted, EXERCISED
+# THROUGH THE SURFACE THE CLIENT ACTUALLY REACHES. For this fix that surface is
+# `GET .../register/latest`, because the defect was that a reload returned `[]`.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_the_withheld_set_survives_a_reload(app_client) -> None:
+    """THE HEADLINE. `latest` must return what storage holds.
+
+    The defect was that `excluded_inputs` reached exactly one HTTP response and
+    died on reload. Asserting it on `generate` proves nothing -- that handler
+    passes the list in directly, so it is green whether or not `_serialize`
+    reads anything back.
+
+    The stored provenance is MUTATED rather than produced at generate time, for
+    the same reason `test_export_refuses_a_register_built_from_unapproved_work`
+    does it: `_provenance_snapshot` records only what `_finalized_for_synthesis`
+    returns, and that resolver filters on approved/released, so no register
+    generated today carries a non-empty `excluded`. Writing the row is building
+    the WORLD; the step under test is the read-back, and the test does not
+    perform it.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    stored = dict(reg.provenance or {})
+    stored["excluded"] = ["the CSF assessment", "the Tech Debt review"]
+    reg.provenance = stored
+    db.add(reg)
+    db.commit()
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["excluded_inputs"] == ["the CSF assessment", "the Tech Debt review"], (
+        "the reload lost the withheld set -- `_serialize` is not reading "
+        "`provenance['excluded']` back, which is #244 instance 1 verbatim"
+    )
+    assert body["excluded_inputs_recorded"] is True, (
+        "the server looked and found a record, so it must say so; reporting "
+        "False here is indistinguishable from a register that predates 0047"
+    )
+
+
+@pytest.mark.unit
+def test_a_register_that_predates_provenance_says_nobody_looked(app_client) -> None:
+    """The OTHER half, and the one that must not fail open.
+
+    A NULL `provenance` is a fact about what was recorded. Defaulting it to
+    `True` would render a pre-0047 register identically to one where the server
+    looked and found nothing excluded -- a clean bill of health over the one
+    population nobody can re-check. Missing data defaults to UNCONFIRMED.
+
+    Asserted through the route rather than against `_serialize` directly: the
+    claim is about what a consultant's page receives.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = None  # a pre-0047 row
+    db.add(reg)
+    db.commit()
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["excluded_inputs_recorded"] is False, (
+        "a NULL provenance must report that nothing is on file, not that "
+        "nothing was excluded -- those are different claims and only one of "
+        "them is about the assessments"
+    )
+    assert body["excluded_inputs"] == []

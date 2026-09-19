@@ -70,7 +70,8 @@ export interface RiskEntry {
 export interface RiskRegister {
   /**
    * Inputs that EXISTED and were not approved, so they contributed nothing to
-   * this register. Present and populated on the POST /generate response only.
+   * this register. Carried on EVERY response that returns a register --
+   * generate, latest and export alike.
    *
    * **[2026-09-11, #244] This used to say `GET .../register/latest` always
    * returns `[]`, because nothing was persisted and a read path "cannot

@@ -304,12 +304,23 @@ export function RiskRegisterDashboard(): JSX.Element {
   // `register` being null before anything is generated -- not an absent field,
   // which the API always sends.
   //
-  // **This banner survives until the page is reloaded and no further**, because
-  // nothing about the exclusion is persisted: `GET .../register/latest` returns
-  // `[]`. That is #240, which needs a migration. It is worth rendering anyway --
-  // the moment a consultant generates is the moment the omission is actionable,
-  // and for one review round this field reached no surface at all, which made
-  // "the register says so" true of nobody.
+  // **This banner used to survive until the page was reloaded and no further**,
+  // because nothing about the exclusion was persisted and
+  // `GET .../register/latest` returned `[]`. All three of those claims are now
+  // false: migration 0047 stores the set in `risk_registers.provenance`,
+  // `_serialize` reads it back, and the banner is DERIVED from `register` on
+  // every render rather than held in state.
+  //
+  // Kept and corrected rather than deleted, because the old text is what a
+  // reader would otherwise act on -- and it was the THIRD copy of that claim.
+  // The two in `lib/risk/types.ts` and `schemas/risk.py` were corrected by the
+  // PR that fixed this; this one survived inside the file that PR rewrote,
+  // which is the prose-sweep failure CLAUDE.md records: the sites someone was
+  // handed get corrected, and the sentence saying the same thing in different
+  // words lives on.
+  //
+  // What remains true: rendering it at generate is worth it because the moment
+  // a consultant generates is the moment the omission is actionable.
 
   if (gate && !gate.unlocked) {
     return (

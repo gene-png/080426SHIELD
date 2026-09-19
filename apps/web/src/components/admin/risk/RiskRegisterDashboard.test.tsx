@@ -276,8 +276,20 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     // nothing about the product.
     //
     // The test is kept because the property is the same one -- the disclosure
-    // survives the action it warns about -- and it now fails if `_serialize`
-    // stops reading the snapshot back, which is the way it would break next.
+    // survives the action it warns about.
+    //
+    // It does NOT cover `_serialize`. An earlier version of this comment said
+    // it "fails if `_serialize` stops reading the snapshot back", which it
+    // structurally cannot: `exportRiskRegister` is mocked and hands the
+    // component a register directly, so the Python never runs. Nor does it
+    // discriminate the derivation -- revert the component to the separate-state
+    // version and this still passes, because generate sets the state and export
+    // never clears it.
+    //
+    // What covers `_serialize` is `test_the_withheld_set_survives_a_reload` in
+    // `apps/api/tests/unit/test_risk_register.py`, which goes red when the
+    // read-back branch is deleted. Stated here because a comment claiming a
+    // guarantee is where someone checks for one.
     generateRiskRegister.mockResolvedValue(
       register({ excluded_inputs: ["the Zero Trust assessment"] }),
     );
