@@ -244,8 +244,14 @@ def test_the_notice_is_not_the_methods_own_vocabulary() -> None:
 def test_the_notice_lands_on_the_FIRST_sheet_of_the_workbook() -> None:
     """`_xlsx_text` reads every sheet, so it cannot see tab order.
 
-    `routes/csf.py` claims the status is stamped on "the cover and the first
-    sheet". The property holds today because `wb.create_sheet("About", 0)`
+    The quoted claim this used to cite -- `routes/csf.py` saying the status is
+    stamped on "the cover and the first sheet" -- is NOT in that file and a
+    multiline search of `apps/api/app` finds it nowhere. What the file says is
+    "prints it on the cover" and, now, that every data sheet is stamped. The
+    citation was dead, so a reader checking the motivation found a different
+    sentence and could not tell whether this test still defended anything.
+
+    What it defends is unchanged and worth keeping: the property holds because `wb.create_sheet("About", 0)`
     passes an explicit index -- drop that `0` and the notice moves to the last
     tab, the client opens onto `Enterprise Profile`, and every other test here
     stays green because the string is still somewhere in the package.
@@ -461,6 +467,19 @@ def test_every_data_sheet_repeats_its_banner_when_printed(approved: bool) -> Non
 
     Both states, because a stamp keyed on the wrong side of the boolean would
     leave one of them silently unmarked and the other correct.
+
+    `About` is exempt, and it needs its OWN reason rather than inheriting the
+    freeze test's. That one says About "is short enough not to scroll", which
+    is a SCREEN argument and does not carry to paper. The print reason is that
+    About is a handful of rows and prints on one page, so repeat-titles are
+    moot -- an exemption whose stated reason is about a different property than
+    the rule it exempts from is still an unstated exemption.
+
+    Worth watching rather than fixing here: About holds the methodology prose
+    and is the sheet most likely to GROW. If it ever exceeds one printed page
+    the notice lands on page 1 only -- the exact defect this commit closes --
+    and no test would say so, because About is skipped by every sheet-level
+    test in this file.
 
     `print_title_rows` is asserted against the FREEZE rather than against a
     literal `"1:2"`: the two describe the same rows and the defect available

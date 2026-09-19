@@ -41,8 +41,10 @@ def _autofit(ws: Any, *, from_row: int = 1) -> None:
         ws.column_dimensions[col[0].column_letter].width = min(60, max(10, width + 2))
 
 
-#: What an UNAPPROVED playbook says on EVERY page of the PDF and DOCX, in a
-#: frozen banner row on every workbook sheet, and on the cover (#277, #294).
+#: What an UNAPPROVED playbook says on EVERY page of the PDF and DOCX, on every
+#: DATA sheet of the workbook -- frozen for the screen AND print-repeated for
+#: paper, which are two mechanisms and not one -- and on the cover (#277, #294).
+#: `About` is exempt and carries the notice in its body.
 #:
 #: The scope moved, so the reason it moved is kept rather than the claim it
 #: replaced. #277 stamped the COVER, and argued from a filename failing
