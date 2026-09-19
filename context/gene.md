@@ -329,12 +329,25 @@ UNCONFIRMED. The web component now DERIVES the banner instead of holding a copy
 
 ### 244 is NOT closed by #316, and what is left is partly yours
 
-- **Instance 2 is live.** Four dashboard pages (`zt`, `attack`, `tech-debt`,
-  `csf`) still key not-released copy on `err.status === 404` and print a
-  hardcoded sentence, ignoring the typed `reason` written specifically to avoid
-  saying it. Measured on `ee819f2`:
-  `grep -rn "hasn't been released to your organization yet" apps/web/src` ->
-  those four files.
+- **CORRECTED 2026-09-19 — instance 2 is NOT live. I had this wrong.** The
+  original text read: *"Instance 2 is live. Four dashboard pages still key
+  not-released copy on `err.status === 404` and print a hardcoded sentence,
+  ignoring the typed `reason`"*, certified by
+  `grep -rn "hasn't been released to your organization yet" apps/web/src`.
+
+  The grep was honest and its output was real. **The conclusion drawn from it
+  was false** — it proves the STRING exists, not that the typed reason is
+  ignored. All five dashboard pages (`risk` too, not four) do
+  `reason = serverReason(err)` and render `{reason ?? (notReleased ? "…" : "…")}`,
+  so a typed reason always wins and the hardcoded sentence is the fallback for a
+  404 carrying no usable server message. #295 shipped that, and this file's own
+  merged-PR table lists it two hundred lines further down — the document
+  contradicted itself.
+
+  Found by the adversarial review of #316, which I had pointed at this claim as
+  a premise. A certificate over the wrong proposition is worse than none: it
+  ends the check that would have caught it, and someone acting on this would
+  have opened a PR to fix what #295 already ships.
 - **Instance 3 is already fixed**, by #234. Only test references to the string
   remain.
 - **The issue's own suggested resolution is a question for you**, unanswered:
