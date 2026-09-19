@@ -176,7 +176,9 @@ def _latest_list_or_none(db: Session, service_id: uuid.UUID) -> CapabilityList |
     # caller", quantifying over a set whose evidence covered only the routes
     # named finalize. `csf.py::export_playbook` is an exporting caller that is
     # NOT a finalize: it resolves through THE CSF COPY of this helper (the
-    # sentence is deictic and this block is byte-identical in five files --
+    # sentence is deictic and this block is a COPY in five files, no longer
+    # byte-identical -- csf.py's carries the #243/#277/#294 history and zt.py's
+    # carries the conclusion and points at it --
     # `export_playbook` does not call attack.py's, zt.py's, tech_debt.py's or
     # intake.py's), refuses only on "No
     # assessment yet." and "Seed the Working Profile before exporting.", and
@@ -460,12 +462,27 @@ def latest_capability_list(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No capability list yet. Run extraction first.",
         )
-    # Phase 3 admin-only for now; client view of the released deliverable
-    # comes in stage 9 via /deliverables/.
+    # Admin-only, unconditionally. This used to say "client view of the
+    # released deliverable comes in stage 9 via /deliverables/", 430 lines
+    # below the module docstring this branch corrected for naming the same
+    # stage -- the same file, fixed at the top and not at the bottom. That view
+    # SHIPPED: `routes/clients.py` registers `GET /{client_id}/deliverables`,
+    # filtered on `released_at IS NOT NULL`.
+    #
+    # The content reaches a client as a Deliverable through that route. There
+    # is no branch anywhere letting a client read a CapabilityList after
+    # release, so the refusal below said "until release" over a condition with
+    # no release term in it -- a message naming a state transition this
+    # endpoint never makes. CSF's and ZT's twins DO gate on release state;
+    # Tech Debt differing is the thing worth knowing, and #326 carries whether
+    # it should.
     if user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Capability lists are admin-only until release.",
+            detail=(
+                "Capability lists are admin-only. The released report is "
+                "available to your organization under Deliverables."
+            ),
         )
     return _serialize_list_with_items(db, cap_list)
 

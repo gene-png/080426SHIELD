@@ -401,7 +401,9 @@ def _latest_assessment_status(db: Session, svc: Service) -> str | None:
     # caller", quantifying over a set whose evidence covered only the routes
     # named finalize. `csf.py::export_playbook` is an exporting caller that is
     # NOT a finalize: it resolves through THE CSF COPY of this helper (the
-    # sentence is deictic and this block is byte-identical in five files --
+    # sentence is deictic and this block is a COPY in five files, no longer
+    # byte-identical -- csf.py's carries the #243/#277/#294 history and zt.py's
+    # carries the conclusion and points at it --
     # `export_playbook` does not call attack.py's, zt.py's, tech_debt.py's or
     # intake.py's), refuses only on "No
     # assessment yet." and "Seed the Working Profile before exporting.", and
