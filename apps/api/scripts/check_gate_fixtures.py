@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -94,9 +95,13 @@ DEFERRED: dict[str, str] = {
         "Covers both states internally via `expect_ok` and `expect_refusal` "
         "against `--print-version`. The gap this harness now closes for it is "
         "wiring, not fixtures -- see `unwired_gates`. What is still NOT proved "
-        "is that the gate itself can fail; `close_guard_linked_file.sh`'s "
-        "`--self-test` is the shape that would, and adding one here is filed "
-        "rather than done."
+        "is that the gate itself can fail; `scripts/verify-in-worktree.sh`'s "
+        "`--self-test` is the shape that would -- it appends a deliberate "
+        "error, greps to prove the write landed, requires RED, then removes "
+        "it -- and adding one here is filed rather than done. (An earlier "
+        "version of this entry named a file that does not exist on this "
+        "branch, sending whoever picks the work up to look for an exemplar "
+        "that was not there.)"
     ),
     "web_install_guard.sh": (
         "Same as `prettier_hook.sh`: bash, internal both-states coverage, and "
@@ -239,21 +244,54 @@ def unwired_gates(gates: list[str], workflows: Path) -> list[str]:
     something to nobody, for weeks, and the only reason anyone noticed was a
     reviewer reading the PRs that added them.
 
-    Matched on the gate's STEM against the workflow text with FULL-LINE COMMENTS
-    REMOVED. Both halves are load-bearing and were measured on this tree:
+    Matched on the gate's STEM, at a WORD BOUNDARY, against the workflow text
+    with full-line comments removed.
 
-      * the stem, not the filename, because four of the nine Python gates are
+      * the STEM, not the filename, because four of the nine Python gates are
         invoked as modules (`scripts.check_audit_evidence`, `-m
         scripts.check_test_integrity`) and never by their `.py` name. Matching
-        filenames reports four live gates unwired.
-      * comments stripped, because `audit-gate.yml` mentions `leave_row_oracle`
-        in a comment ABOUT a gate it does not run. A gate named only in prose
-        would otherwise count as wired -- a mention read as an invocation, which
-        is the substitution this whole file exists to refuse.
+        filenames reports four live gates unwired -- measured on this tree.
+      * a WORD BOUNDARY, because a bare substring test reports a gate wired
+        whenever its stem is contained in another word. `check_plan` would be
+        satisfied by `check_plan_totals`, which CI does run; `prettier.sh` by
+        the word `prettier` anywhere in `ci.yml`. No stem on this tree is a
+        substring of another, so that was LATENT rather than live -- but it is
+        the SILENT direction (a gate that runs nowhere reported as wired, which
+        is #318 one naming collision later), where the false-positive direction
+        it replaces is loud and gets investigated inside one run.
+      * comments stripped, and this one is PROPHYLACTIC rather than measured.
+        An earlier version of this docstring said it was "measured on this
+        tree, because `audit-gate.yml` mentions `leave_row_oracle` in a comment
+        ABOUT a gate it does not run". Wrong file and wrong conclusion:
+        `audit-gate.yml` contains no occurrence of `leave_row_oracle` at all;
+        the prose mention is in `ci.yml`, which ALSO runs that gate on a real
+        uncommented step. So stripping changes zero verdicts on this tree, and
+        no gate here is named only in comments. It stays because a mention read
+        as an invocation is the substitution this file exists to refuse, and
+        `test_a_gate_named_only_in_a_comment_is_unwired` is what stops someone
+        deleting it.
 
-    Residual, stated: an inline trailing comment is not stripped, so a stem
-    appearing only after a `#` on a value line would still pass. Narrower than
-    matching raw text, not zero.
+    THREE residuals, stated because the first version of this docstring
+    disclosed only the first and a reader would have taken that as the set:
+
+      * an inline TRAILING comment is not stripped, so a stem appearing only
+        after a `#` on a value line still counts as wired.
+      * "a workflow invokes it" includes a workflow that never runs on a PR.
+        `mutation-sweep.yml` is schedule-plus-dispatch only and carries
+        `continue-on-error` on the job, so a gate named only there is wired by
+        this check and unable to fail a build. The `mutation_sweep.py` DEFERRED
+        entry states that about itself; this function did not.
+      * only `.github/workflows/*.y*ml` is read. A composite action or a
+        reusable workflow is never opened. There is no `.github/actions`
+        directory on this tree, so that is latent -- and it fails LOUDLY when
+        it arrives, reporting a wired gate as unwired.
+      * a stem that is an ordinary WORD still matches wherever that word
+        appears. The boundary closes `check_plan` inside `check_plan_totals`;
+        it does not close a hypothetical `prettier.sh` against `ci.yml`'s
+        `prettier@3.9.6`, because `@` is a boundary. Measured, not reasoned:
+        `unwired_gates(["prettier.sh"], workflows)` returns `[]` on this tree.
+        Naming a gate after a tool the workflows already mention is the way in,
+        and the remedy is the name, not the matcher.
     """
     lines_kept: list[str] = []
     for path in sorted(workflows.glob("*.y*ml")):
@@ -261,7 +299,7 @@ def unwired_gates(gates: list[str], workflows: Path) -> list[str]:
             if not line.lstrip().startswith("#"):
                 lines_kept.append(line)
     text = "\n".join(lines_kept)
-    return [g for g in gates if Path(g).stem not in text]
+    return [g for g in gates if not re.search(rf"(?<!\w){re.escape(Path(g).stem)}(?!\w)", text)]
 
 
 def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:
@@ -438,6 +476,18 @@ def main(argv: list[str]) -> int:
         # is `repo is None`, above, which is printed rather than returned
         # because the fixture checks below are still worth running.
         workflows = workflows_dir_for(repo)
+        # An EMPTY workflows directory is "I could not look", not "every gate
+        # is unwired". Without this, `text` is empty, every stem is absent from
+        # it, and the run prints the violation message and returns 1 -- the
+        # code reserved for "I looked and something is wrong", in the file
+        # whose organising principle is that those two never share one. Loud
+        # either way, and mislabelled, which is the harder thing to debug.
+        if not any(workflows.glob("*.y*ml")):
+            print(
+                f"check-gate-fixtures: no workflow files under {workflows} -- "
+                "cannot tell a wired gate from an unwired one"
+            )
+            return 2
 
         # Every gate, both languages. A gate no workflow runs cannot fail,
         # and until #318 nothing in this repo said so -- two shell gates
@@ -550,7 +600,13 @@ def main(argv: list[str]) -> int:
             print(f"  {line}")
         return 1
 
-    covered = len(gates) - len(DEFERRED)
+    # Counted from the gates the loop actually VISITED, not `len(gates) -
+    # len(DEFERRED)`. That expression was correct while `DEFERRED` held only
+    # Python names; putting shell gates in it made the subtraction cross two
+    # populations, and the line printed 5 where 7 had been exercised. A success
+    # message that understates its own coverage is the mildest version of this
+    # file's subject, and nothing asserts the string, so nothing caught it.
+    covered = len([g for g in gates if g not in DEFERRED])
     print(
         f"check-gate-fixtures: {checked} cases across {covered} gates behaved as "
         f"specified ({len(DEFERRED)} deferred with reasons)"

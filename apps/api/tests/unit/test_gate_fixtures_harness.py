@@ -340,7 +340,11 @@ def test_shell_gates_are_discovered_at_the_repo_root(tmp_path: Path) -> None:
     (gates / "b_guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
     (gates / "a_guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
     (gates / "notes.md").write_text("not a gate\n", encoding="utf-8")
-    (gates / "subdir").mkdir()
+    # Named `*.sh` on purpose. As `subdir` it never matched the glob, so
+    # deleting `if p.is_file()` from `discover_shell_gates` left this test
+    # green -- one deletable clause, nothing noticing, in the PR about tests
+    # that cannot fail.
+    (gates / "subdir.sh").mkdir()
     assert discover_shell_gates(gates) == ["a_guard.sh", "b_guard.sh"]
 
 
@@ -447,3 +451,40 @@ def test_main_skips_the_repo_half_out_loud_when_there_is_no_repo(
         "the run stopped at the skip instead of continuing to the fixture "
         "checks, which is the whole reason the skip prints rather than returns"
     )
+
+
+def test_a_stem_contained_in_another_stem_is_not_counted_as_wired(tmp_path: Path) -> None:
+    """The over-match direction, which is the SILENT one.
+
+    `check_plan` is a substring of `check_plan_totals`, which CI runs. A bare
+    `stem not in text` test reported `check_plan.py` wired while nothing
+    invoked it — #318 reintroduced one naming collision later, and discoverable
+    only by a human reading PRs, which is how #318 was found the first time.
+
+    The false-positive direction the matcher trades against is loud: a wall of
+    red on live gates, investigated inside one run. This one is silent, so it
+    is the one that gets a test.
+    """
+    wf = _workflows(
+        tmp_path,
+        "jobs:\n  x:\n    steps:\n      - run: python check_plan_totals.py FILE\n",
+    )
+    assert unwired_gates(["check_plan.py"], wf) == ["check_plan.py"]
+    assert unwired_gates(["check_plan_totals.py"], wf) == []
+
+
+def test_a_module_path_invocation_still_counts_as_wired(tmp_path: Path) -> None:
+    """The boundary must not reject a dotted module path.
+
+    `scripts.check_audit_evidence` puts a `.` immediately before the stem. A
+    lookbehind excluding `[\w.]` — the obvious spelling, and the one first
+    tried here — rejects it, and the gate then reports four live gates unwired.
+    The lookbehind excludes word characters only, and this is what holds that
+    distinction in place.
+    """
+    wf = _workflows(
+        tmp_path,
+        "jobs:\n  x:\n    steps:\n"
+        '      - run: python -c "from scripts.check_audit_evidence import missing_evidence"\n',
+    )
+    assert unwired_gates(["check_audit_evidence.py"], wf) == []
