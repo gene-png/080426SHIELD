@@ -129,6 +129,15 @@ services:
     # out-of-band, is unverifiable by anyone reading the diff, and freezes
     # MinIO's security fixes behind manual work with no updater to nag. The
     # trade is genuine; it was mis-stated in both directions. Not decided here.
+    #
+    # What `:latest` resolved to when this was written, recorded because the
+    # tag itself describes nothing: RELEASE.2025-09-07T16-13-09Z. Measured
+    # 2026-09-19 against the running container, along with the two surfaces
+    # nothing else checks -- the console answers HTTP 200 on :9001 (six
+    # documents assert it and no spec, gate or healthcheck touches it, so a
+    # console-less release line would have gone quietly wrong) and
+    # /minio/health/live answers 200 on :9000. Both are quay's image, not
+    # Docker Hub's.
     image: quay.io/minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
