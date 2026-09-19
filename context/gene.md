@@ -8,29 +8,28 @@ about state outside the working tree carries the command that produced it.
 
 ### Two things are blocked on you, and one of them blocks everything
 
-**1. The adversarial reviewer is ERRORING, and nothing merges until it is fixed
-or you waive it.**
+**1. The adversarial reviewer is SLOW, not broken — and I recorded it as broken,
+which was wrong.**
 
 Seven reviews were dispatched this session, each against a detached worktree
-pinned to its PR head so it could not drift. All seven agents ran; the completed
-ones report `idle`. **Not one report has been delivered.** Retried by direct
-message twice on the first two, and once more against a freshly-completed one —
-nothing came back. No agent transcript is written under the session's `tasks/`
-directory either, so there is no file to go and read.
+pinned to its PR head. For about an hour every completed agent showed `idle`
+with nothing delivered, and two direct retries produced nothing either. I
+recorded that as **erroring** per `CLAUDE.md`'s taxonomy and wrote that no PR
+was mergeable until you waived it.
 
-This is the same failure your last handoff recorded — nine dispatched, nine
-completed, none delivered — except that last time messaging them afterwards
-retrieved the reports. **That workaround no longer works.**
+**Then all of them arrived at once**, substantive and correct — including two
+findings that were right about defects I had just introduced. The delivery lag
+was roughly an hour from `idle` to report; the retries I sent were answered, and
+the answers landed with the originals.
 
-Per `CLAUDE.md`'s taxonomy this is **erroring**: not absent, and emphatically
-not clean. So every PR body below says `Findings: dispatched — report not yet
-delivered`, and none of them is mergeable on this repo's own standard. **Only
-you can decide to ship without it**, by name, in the PR body. An agent must not,
-and I have not.
+The correction worth keeping is not "be more patient". It is that `idle` is not
+a delivery signal, and that **I had no way to tell a slow reviewer from a dead
+one** — the two states are identical from here, and I resolved the ambiguity in
+the direction that blocks work. If a report is outstanding, the honest status is
+`dispatched — not yet delivered`, which is what every PR body says. Do not read
+`idle` as done.
 
-The rule you asked for is now a fact on the page rather than something either of
-us has to remember: every PR body carries the dispatch, the SHA it was
-dispatched against, and the literal status `DISPATCHED / UNDELIVERED`.
+What the reviews found is below, and it changed the branches.
 
 **2. #328 — MinIO's Docker Hub images are gone, so E2E and Demo are red on every
 open PR.**
@@ -197,9 +196,9 @@ It re-opens a defect already fixed once: `DELIVERY_PLAN.md` records the original
 
 **The three open PRs have their findings commented on the PRs themselves**, so a merger sees them:
 
-- **#310 has one BLOCKING finding that should be fixed before merge**, and it is mechanical: `... > /tmp/pr_linked.txt || true` creates and truncates the file *before* `gh` runs, so a `gh` failure leaves an empty file that EXISTS — and the script's whole could-not-look path keys on the file being MISSING. A failed query can then print *"clean — no closing references (verified against GitHub)"* and merge. Worth confirming the redirect behaviour in a shell first; it takes ten seconds.
-- **#306** — two BLOCKING: the read-back's justification describes an unconstructible state (keep the ratchet, rewrite the reason), and nothing pins the read-back itself (`entries_written = entries_total` leaves all four tests green).
-- **#305** — three BLOCKING (prose), the sharpest being that a twin of the exact claim it fixes is still live in `routes/zt.py`, a file it edits.
+- **SUPERSEDED 2026-09-19 — this finding is FIXED; see the top of this file.** Left in place rather than deleted because it is the record of what the review found, but it is no longer a to-do: the redirect was confirmed in a shell, the status now decides whether the file is published, and `tests/gates/close_guard_linked_file.sh` pins it. Original text: *#310 has one BLOCKING finding that should be fixed before merge, and it is mechanical: the redirect creates and truncates the file before `gh` runs, so a `gh` failure leaves an empty file that EXISTS — and the script's whole could-not-look path keys on the file being MISSING.*
+- **SUPERSEDED 2026-09-19 — FIXED; see the top of this file.** Original text: *#306 — two BLOCKING: the read-back's justification describes an unconstructible state (keep the ratchet, rewrite the reason), and nothing pins the read-back itself (`entries_written = entries_total` leaves all four tests green).* Round 2 of that review returned **no BLOCKING** and confirmed all four reachability claims by measurement.
+- **SUPERSEDED 2026-09-19 — FIXED; see the top of this file.** Original text: *#305 — three BLOCKING (prose), the sharpest being that a twin of the exact claim it fixes is still live in `routes/zt.py`, a file it edits.*
 
 **#315 has one BLOCKING finding against my own work:** a *printed* workbook carries the notice on page 1 only. Freezing is a screen property; `print_title_rows` is set nowhere in the repo. #277's argument names "printed" as one of four survival modes and the XLSX mechanism drops it — under a comment about `oddHeader` that reads as having settled the question. One line fixes it.
 
