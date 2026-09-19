@@ -229,7 +229,19 @@ def test_a_hand_written_refusal_is_untouched(client) -> None:
     `schema_` namespace makes that impossible by construction rather than by
     nobody having picked the same word yet.
     """
-    from app.exceptions import SCHEMA_REASON_PREFIX
+    # The literal, spelled out, NOT the imported constant. A test that reads the
+    # value it is pinning follows any change to it silently (#72), and this one
+    # is load-bearing across a language boundary:
+    # `apps/web/src/components/auth/SignUpForm.tsx` carries the same string and
+    # nothing derives one from the other. Until this line spelled it out, a
+    # Python-side edit reddened NOTHING while the TS side had a test that
+    # spells it out -- one direction covered, the other a comment.
+    #
+    # Known limit, tracked in #318 rather than fixed here: `target_stage: 99`
+    # fails `Field(ge=1, le=4)`, so this route always answers 422 and the
+    # guarded assert below is unreachable. Making it fire needs a
+    # schema-VALID value the route refuses.
+    schema_prefix = "schema_"
 
     headers = _headers(client)
     resp = client.post(
@@ -242,6 +254,33 @@ def test_a_hand_written_refusal_is_untouched(client) -> None:
     body = resp.json()
     reason = body.get("error", {}).get("reason")
     if reason is not None and resp.status_code != 422:
-        assert not reason.startswith(SCHEMA_REASON_PREFIX), (
+        assert not reason.startswith(schema_prefix), (
             "a hand-written D-016 refusal must never be mistaken for a " "synthesised schema code"
         )
+
+
+def test_the_schema_namespace_is_the_literal_the_web_layer_spells_out() -> None:
+    """Pins the cross-language duplicate from the Python side.
+
+    `SCHEMA_REASON_PREFIX` is written in two languages with no build step
+    between them. `SignUpForm.test.tsx` spells the literal out, so a TS-side
+    edit goes red; until this test existed a PYTHON-side edit went red nowhere,
+    because every test that used the constant imported it and followed it.
+
+    The width of that gap is #317: change this prefix without changing the
+    component and "Request validation failed." returns under the Email field of
+    the public sign-up page. A comment in `exceptions.py` names the duplicate,
+    and a comment is not a gate.
+
+    Both literals are written out here on purpose. Comparing the module's value
+    against an independently-spelled string is a real assertion; comparing it
+    against itself is the shape this file's own fixtures exist to catch.
+    """
+    from app import exceptions
+
+    assert exceptions.SCHEMA_REASON_PREFIX == "schema_"
+    assert exceptions.SCHEMA_REASON_MIXED == "schema_multiple"
+    # And the relationship between them, which is what the component relies on:
+    # the mixed code must live INSIDE the namespace, or a multi-field failure
+    # would be treated as friendly copy.
+    assert exceptions.SCHEMA_REASON_MIXED.startswith("schema_")

@@ -10,6 +10,9 @@ import { register, uniqueEmail } from "../helpers/auth";
  *  2. Friendly field-scoped error copy (SMOKE_TEST.md defect 4 / D-016): a
  *     duplicate email surfaces friendly copy on the email field, never the raw
  *     upstream "Request validation failed." string.
+ *  3. The same guarantee for a SCHEMA refusal (#317). Case 2 takes the
+ *     `email_exists` branch, so for months the only assertion in the repo
+ *     forbidding that string never ran against the input that produces it.
  */
 
 const PASSWORD = "correct horse battery staple!";
@@ -57,4 +60,35 @@ test("a brand-new user self-registers and lands signed in on /intake", async ({
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({
     timeout: 20000,
   });
+});
+
+test("a malformed email shows the friendly prompt, not the raw validation string", async ({
+  page,
+}) => {
+  // `noValidate` on the form and a permissive `type="email"` mean the browser
+  // lets this through, so the request reaches the API and fails Pydantic's
+  // `EmailStr` — a schema 422, which since #307 carries a `schema_*` reason.
+  await register(page, "Malformed Email", "abc@x", PASSWORD);
+
+  // The positive state first. Asserting the absence against a page that is
+  // still resolving the POST passes whether or not the defect is present.
+  await expect(
+    page.getByText(/please double-check your name, email/i),
+  ).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText(/request validation failed/i)).toHaveCount(0);
+  expect(new URL(page.url()).pathname).toContain("/sign-up");
+});
+
+test("a too-short password shows the friendly prompt, not the raw validation string", async ({
+  page,
+}) => {
+  // `min_length=12` in `schemas/auth.py`. The interesting half is the FIELD:
+  // before the fix this rendered under Email, naming an input that was fine.
+  await register(page, "Short Password", uniqueEmail("atlas.example"), "short");
+
+  await expect(
+    page.getByText(/please double-check your name, email/i),
+  ).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText(/request validation failed/i)).toHaveCount(0);
+  expect(new URL(page.url()).pathname).toContain("/sign-up");
 });

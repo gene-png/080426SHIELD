@@ -12,6 +12,52 @@ interface FieldErrors {
   form?: string;
 }
 
+/**
+ * The namespace `apps/api/app/exceptions.py` reserves for a reason SYNTHESISED
+ * from Pydantic's own error `type` (#285) — `schema_string_too_short`,
+ * `schema_value_error`, and `schema_multiple` when a request fails several
+ * checks at once. Every one of them rides on the same internal message,
+ * "Request validation failed.", and none has client copy behind it.
+ *
+ * Duplicated across the language boundary rather than derived, because there is
+ * no build step shared by the FastAPI app and this bundle. Neither half can be
+ * derived from the other, so what closes the window is a POINTER IN BOTH
+ * DIRECTIONS: `SCHEMA_REASON_PREFIX` in `exceptions.py` now names this file in
+ * its own docstring. Saying only "whoever edits the Python constant will know"
+ * was aspirational — that person was the one with no way to find out.
+ *
+ * The width of the gap, stated rather than left to be discovered: a Python-side
+ * edit reddens NOTHING. `test_schema_422_typed_reason.py` imports the constant
+ * from the module under test, so it follows any change silently. A TS-side edit
+ * does redden, because `schemaReasonFallback` in `SignUpForm.test.tsx` spells
+ * the literal out instead of importing it. One direction is covered and the
+ * other is a comment; if this prefix ever changes, #317 returns on the public
+ * sign-up page.
+ */
+const SCHEMA_REASON_PREFIX = "schema_";
+
+/**
+ * Whether the envelope's `message` is fit to put in front of a person.
+ *
+ * Keyed on the VALUE of `reason`, never on its presence. #307 gave every
+ * schema-level 422 a typed reason, which made a presence test — the shape this
+ * branch used to carry — true for exactly the responses it was written to
+ * exclude: the friendly fallback below became unreachable and `/sign-up`
+ * rendered "Request validation failed." under the Email field (#317).
+ *
+ * The general shape, worth the sentence: a field added to a shared envelope is
+ * additive only if no consumer branches on its PRESENCE. #307's own docstring
+ * claimed "a consumer that wants the typed reason opts in", and this component
+ * had already opted in by accident.
+ */
+function carriesUserFacingCopy(
+  reason: string | undefined,
+  message: string | undefined,
+): message is string {
+  if (!reason || !message) return false;
+  return !reason.startsWith(SCHEMA_REASON_PREFIX);
+}
+
 export function SignUpForm(): JSX.Element {
   const router = useRouter();
   const [email, setEmail] = React.useState("");
@@ -46,15 +92,15 @@ export function SignUpForm(): JSX.Element {
         });
       } else if (reason === "password_policy") {
         setErrors({ password: message ?? "Choose a stronger password." });
-      } else if (reason && message) {
+      } else if (carriesUserFacingCopy(reason, message)) {
         // Any other typed backend rejection (D-016 envelope) — e.g. the rare
         // email_domain_unavailable or email_invalid — carries friendly copy, so
         // surface it on the email field. (Self-registration is open now, so the
         // old domain-approval reasons no longer fire on the happy path.)
         setErrors({ email: message });
       } else {
-        // Raw schema validation (RequestValidationError) carries no typed
-        // reason and its message is the unfriendly "Request validation failed."
+        // Nothing here is fit to render: either an untyped body, or a schema
+        // refusal whose message is the internal "Request validation failed."
         // Show a plain-language prompt instead of leaking that string.
         setErrors({
           form: "Please double-check your name, email, and password (12+ characters), then try again.",
