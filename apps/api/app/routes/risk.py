@@ -761,9 +761,26 @@ def generate(
     # iterations would report a smaller input than arrived and hide the merge's
     # losses inside a number that looks like agreement.
     #
-    # The invariant this buys, and it is asserted rather than described:
-    #     entries_received == entries_written + sum(discarded_entries.values())
-    # Two sides that can only agree if every entry is accounted for.
+    # The identity this buys, and BOTH halves of it are load-bearing:
+    #
+    #     entries_received == entries_total + sum(discarded_entries.values())
+    #
+    # `entries_total`, NOT `entries_written`. The two are equal exactly when
+    # `entries_write_check` says "agreed", and the one interesting state is the
+    # one where they are not: the test that expunges a row before the flush
+    # produces received 2, total 2, written 1, discarded {} -- so the same
+    # sentence written with `entries_written` is false in precisely the run it
+    # would matter in, and this comment said that for one round.
+    #
+    # Every entry the model sent is therefore either counted into the loop or
+    # named in the discard map, and any gap between that and what the DATABASE
+    # holds is a separate fact, reported separately, by the read-back below.
+    # Two claims, not one.
+    #
+    # It is "asserted rather than described" only in the weak sense: the
+    # assertions in `test_risk_register.py` sit under literal equalities that
+    # already fix all three operands, so they are arithmetic on constants.
+    # Tracked as #321 -- the identity is real, the tests do not exercise it.
     entries_received = sum(discarded_in_batches.values())
 
     def _record_drops(field: str, values: list[str]) -> None:
