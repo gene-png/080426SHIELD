@@ -22,7 +22,18 @@ trap 'rm -rf "$ROOT"' EXIT
 ( cd "$ROOT" && git init -q . )
 
 run() {
-  ( cd "$ROOT" && sh "$HOOK" --print-version 2>&1 )
+  # Executed DIRECTLY so the shebang decides the interpreter, which is what
+  # `language: script` in `.pre-commit-config.yaml` does. `sh "$HOOK"` was an
+  # override, and it made this gate answer a different question than the one it
+  # is named for.
+  #
+  # It passed on Windows for the reason overrides usually pass: Git Bash's `sh`
+  # IS bash. On an Ubuntu runner `sh` is dash, the hook's `set -euo pipefail`
+  # is rejected, and the whole gate came back
+  # `exit 2, 'set: Illegal option -o pipefail'` -- caught on this gate's FIRST
+  # CI run, after #318 wired it into a workflow. It had been in the repo,
+  # invoked by nothing, since #168.
+  ( cd "$ROOT" && "$HOOK" --print-version 2>&1 )
 }
 
 expect_ok() {
@@ -78,7 +89,8 @@ expect_refusal "could not read a pinned prettier version" "no entry -> refuse"
 # file rather than a literal -- a literal here would be the fourth home for one
 # fact, which is the defect this hook exists to end.
 REPO="$(cd "$(dirname "$HOOK")/.." && pwd)"
-real="$( cd "$REPO" && sh "$HOOK" --print-version )"
+# Directly, for the same reason as `run()` above: the shebang decides.
+real="$( cd "$REPO" && "$HOOK" --print-version )"
 pinned="$(grep -oE '^  prettier@[0-9]+\.[0-9]+\.[0-9]+:' "$REPO/pnpm-lock.yaml" | head -1 | sed 's/^  prettier@//; s/:$//')"
 if [ "$real" != "$pinned" ] || [ -z "$real" ]; then
   echo "FAIL: hook reads '$real', lockfile pins '$pinned'"

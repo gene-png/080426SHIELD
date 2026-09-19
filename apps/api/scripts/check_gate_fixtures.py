@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -82,6 +83,31 @@ from pathlib import Path
 # mapping nor the fixture tree FAILS the run: silence must not be how coverage
 # quietly shrinks.
 DEFERRED: dict[str, str] = {
+    # -- SHELL GATES (#318) -------------------------------------------------
+    # They cannot be fixtured by this harness: `run_case` invokes
+    # `[sys.executable] + argv`, and these are bash. Their both-states evidence
+    # is INTERNAL -- each asserts a passing case and a refusing case of the
+    # thing it guards -- and what this file now enforces for them is the half
+    # that was actually missing: that a workflow INVOKES them. Both shipped
+    # with neither, and ran nowhere for weeks.
+    "prettier_hook.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Covers both states internally via `expect_ok` and `expect_refusal` "
+        "against `--print-version`. The gap this harness now closes for it is "
+        "wiring, not fixtures -- see `unwired_gates`. What is still NOT proved "
+        "is that the gate itself can fail; `scripts/verify-in-worktree.sh`'s "
+        "`--self-test` is the shape that would -- it appends a deliberate "
+        "error, greps to prove the write landed, requires RED, then removes "
+        "it -- and adding one here is filed rather than done. (An earlier "
+        "version of this entry named a file that does not exist on this "
+        "branch, sending whoever picks the work up to look for an exemplar "
+        "that was not there.)"
+    ),
+    "web_install_guard.sh": (
+        "Same as `prettier_hook.sh`: bash, internal both-states coverage, and "
+        "the missing half was that nothing ran it. No `--self-test`, so a "
+        "harness-cannot-fail defect in it would still be invisible."
+    ),
     "leave_row_oracle.py": (
         "STRUCTURALLY unfixturable, which is a stronger reason than the one first "
         "recorded here. --check-registry takes no path: REPO_APP and TESTS are "
@@ -159,6 +185,121 @@ def discover_gates(scripts: Path) -> list[str]:
         if _GATE_MARKER in text:
             found.add(path.name)
     return sorted(found)
+
+
+#: Shell gates live at `<repo>/tests/gates/*.sh` -- a different language, a
+#: different directory, and invisible to `discover_gates` twice over (#318).
+#:
+#: `discover_gates` derives Python gates from a property IN THE FILE, which is
+#: the stronger form. There is no shell equivalent of the crash-is-not-a-verdict
+#: handler, so these are derived from LOCATION instead: that directory holds
+#: gates and nothing else, which is the convention the two existing ones were
+#: written to. Weaker, and stated as weaker -- a shell gate written somewhere
+#: else is invisible here, exactly as a Python gate without the marker is.
+_SHELL_GATE_SUFFIX = ".sh"
+
+
+def repo_root_for(root: Path) -> Path | None:
+    """The repo root above a fixture root, or None when it is out of reach.
+
+    DERIVED by walking up for `.github/workflows` rather than counting
+    directories. `root.parents[3]` was correct for a full checkout and raised
+    `IndexError` inside the api container, which mounts `apps/api` at `/app` --
+    so the fixture root is `/app/tests/gates`, which has three parents and not
+    four. `CLAUDE.md` records that exact shape costing a whole pytest session
+    (#314, a `parents[4]`), and this file reproduced it within the week.
+
+    A count is a claim about where this file sits in a tree. The marker is a
+    property of the tree itself, so moving either one cannot silently pick the
+    wrong directory -- it can only fail to find one, which the caller reports.
+    """
+    for candidate in [root, *root.parents]:
+        if (candidate / ".github" / "workflows").is_dir():
+            return candidate
+    return None
+
+
+def shell_gates_dir_for(repo: Path) -> Path:
+    return repo / "tests" / "gates"
+
+
+def workflows_dir_for(repo: Path) -> Path:
+    return repo / ".github" / "workflows"
+
+
+def discover_shell_gates(shell_dir: Path) -> list[str]:
+    """Every `*.sh` under the repo-root gate directory."""
+    if not shell_dir.is_dir():
+        return []
+    return sorted(p.name for p in shell_dir.glob(f"*{_SHELL_GATE_SUFFIX}") if p.is_file())
+
+
+def unwired_gates(gates: list[str], workflows: Path) -> list[str]:
+    """Gates no workflow invokes. THE POINT OF THIS FILE, reached from outside.
+
+    A gate that runs nowhere cannot fail, which is this file's own thesis -- and
+    fixture coverage does not detect it: `web_install_guard.sh` and
+    `prettier_hook.sh` each shipped with real both-states assertions inside and
+    no workflow, no CI step and no script invoking either (#318). They proved
+    something to nobody, for weeks, and the only reason anyone noticed was a
+    reviewer reading the PRs that added them.
+
+    Matched on the gate's STEM, at a WORD BOUNDARY, against the workflow text
+    with full-line comments removed.
+
+      * the STEM, not the filename, because four of the nine Python gates are
+        invoked as modules (`scripts.check_audit_evidence`, `-m
+        scripts.check_test_integrity`) and never by their `.py` name. Matching
+        filenames reports four live gates unwired -- measured on this tree.
+      * a WORD BOUNDARY, because a bare substring test reports a gate wired
+        whenever its stem is contained in another word. `check_plan` would be
+        satisfied by `check_plan_totals`, which CI does run; `prettier.sh` by
+        the word `prettier` anywhere in `ci.yml`. No stem on this tree is a
+        substring of another, so that was LATENT rather than live -- but it is
+        the SILENT direction (a gate that runs nowhere reported as wired, which
+        is #318 one naming collision later), where the false-positive direction
+        it replaces is loud and gets investigated inside one run.
+      * comments stripped, and this one is PROPHYLACTIC rather than measured.
+        An earlier version of this docstring said it was "measured on this
+        tree, because `audit-gate.yml` mentions `leave_row_oracle` in a comment
+        ABOUT a gate it does not run". Wrong file and wrong conclusion:
+        `audit-gate.yml` contains no occurrence of `leave_row_oracle` at all;
+        the prose mention is in `ci.yml`, which ALSO runs that gate on a real
+        uncommented step. So stripping changes zero verdicts on this tree, and
+        no gate here is named only in comments. It stays because a mention read
+        as an invocation is the substitution this file exists to refuse, and
+        `test_a_gate_named_only_in_a_comment_is_unwired` is what stops someone
+        deleting it.
+
+    THREE residuals, stated because the first version of this docstring
+    disclosed only the first and a reader would have taken that as the set:
+
+      * an inline TRAILING comment is not stripped, so a stem appearing only
+        after a `#` on a value line still counts as wired.
+      * "a workflow invokes it" includes a workflow that never runs on a PR.
+        `mutation-sweep.yml` is schedule-plus-dispatch only and carries
+        `continue-on-error` on the job, so a gate named only there is wired by
+        this check and unable to fail a build. The `mutation_sweep.py` DEFERRED
+        entry states that about itself; this function did not.
+      * only `.github/workflows/*.y*ml` is read. A composite action or a
+        reusable workflow is never opened. There is no `.github/actions`
+        directory on this tree, so that is latent -- and it fails LOUDLY when
+        it arrives, reporting a wired gate as unwired.
+      * a stem that is an ordinary WORD still matches wherever that word
+        appears. The boundary closes `check_plan` inside `check_plan_totals`;
+        it does not close a hypothetical `prettier.sh` against `ci.yml`'s
+        `prettier@3.9.6`, because `@` is a boundary. Measured, not reasoned:
+        `unwired_gates(["prettier.sh"], workflows)` returns `[]` on this tree.
+        Naming a gate after a tool the workflows already mention is the way in,
+        and the remedy is the name, not the matcher.
+    """
+    lines_kept: list[str] = []
+    for path in sorted(workflows.glob("*.y*ml")):
+        for line in path.read_text(encoding="utf-8").split("\n"):
+            if not line.lstrip().startswith("#"):
+                lines_kept.append(line)
+    text = "\n".join(lines_kept)
+    return [g for g in gates if not re.search(rf"(?<!\w){re.escape(Path(g).stem)}(?!\w)", text)]
 
 
 def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:
@@ -274,7 +415,8 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
 
 def main(argv: list[str]) -> int:
     default_root = Path(__file__).resolve().parents[1] / "tests" / "gates"
-    root = Path(argv[1]).resolve() if len(argv) > 1 else default_root
+    explicit_root = len(argv) > 1
+    root = Path(argv[1]).resolve() if explicit_root else default_root
     if not root.is_dir():
         print(f"check-gate-fixtures: fixture root not found: {root}")
         return 2
@@ -288,7 +430,107 @@ def main(argv: list[str]) -> int:
         print(f"check-gate-fixtures: no check_*.py discovered under {scripts}")
         return 2
 
-    unknown = sorted(set(DEFERRED) - set(gates))
+    # #318. Shell gates and the wiring check read the REPO around the fixture
+    # root, so whether they run is decided by whether that repo can be found --
+    # not by which mode this was invoked in.
+    #
+    # It keyed on `explicit_root` for one round, which was a blanket exemption
+    # wearing a derivation's clothes: every unit test that drives `main` passes
+    # an explicit root, so the wiring verdict -- this change's whole point --
+    # was reachable from no test at all. It also said nothing useful about the
+    # api container, which passes no explicit root and still cannot see
+    # `.github/`.
+    #
+    # Now a test that builds a repo-shaped tmp tree reaches the real branch,
+    # and one that does not gets a PRINTED skip. "I did not look" must never be
+    # indistinguishable from "I looked and it was fine" -- this file's
+    # organising rule, applied to itself, which it was not.
+    shell_gates: list[str] = []
+    repo_checked = False
+    repo = repo_root_for(root)
+    if repo is None:
+        # NOT a crash and NOT a pass. The repo root is genuinely out of
+        # reach inside the api container, which mounts `apps/api` at
+        # `/app` (#314) -- there is no `.github/` to find. The fixture
+        # half below still runs and still means something; the repo-derived
+        # half cannot, and says so.
+        print(
+            "check-gate-fixtures: NOT CHECKED -- no `.github/workflows` above "
+            f"{root}, so shell-gate discovery and the gate-wiring check have "
+            "nothing to read. Expected inside the api container (#314); on a "
+            "full checkout it means the repo root moved."
+        )
+    else:
+        shell_dir = shell_gates_dir_for(repo)
+        if not shell_dir.is_dir():
+            print(f"check-gate-fixtures: no shell-gate directory at {shell_dir}")
+            return 2
+        shell_gates = discover_shell_gates(shell_dir)
+
+        # No `is_dir()` guard here, and its absence is deliberate:
+        # `repo_root_for` RETURNS a directory only when `.github/workflows` is
+        # one, so a guard here would test the predicate that selected `repo`.
+        # A first draft carried it, which read as a fail-closed branch and was
+        # unreachable by construction -- a dead guard invites the next reader
+        # to believe it fires. The reachable "I could not look" for this half
+        # is `repo is None`, above, which is printed rather than returned
+        # because the fixture checks below are still worth running.
+        workflows = workflows_dir_for(repo)
+        # An EMPTY workflows directory is "I could not look", not "every gate
+        # is unwired". Without this, `text` is empty, every stem is absent from
+        # it, and the run prints the violation message and returns 1 -- the
+        # code reserved for "I looked and something is wrong", in the file
+        # whose organising principle is that those two never share one. Loud
+        # either way, and mislabelled, which is the harder thing to debug.
+        if not any(workflows.glob("*.y*ml")):
+            print(
+                f"check-gate-fixtures: no workflow files under {workflows} -- "
+                "cannot tell a wired gate from an unwired one"
+            )
+            return 2
+
+        # Every gate, both languages. A gate no workflow runs cannot fail,
+        # and until #318 nothing in this repo said so -- two shell gates
+        # shipped with real assertions inside and nothing invoking either.
+        repo_checked = True
+        unwired = unwired_gates(sorted(gates) + shell_gates, workflows)
+        if unwired:
+            print("check-gate-fixtures: FAILED -- gates no workflow invokes:")
+            for name in unwired:
+                print(
+                    f"  {name}: nothing under .github/workflows runs it, so it "
+                    f"cannot fail and its green means nothing"
+                )
+            return 1
+
+    # Shell gates carry their own both-states evidence rather than fixtures, so
+    # they are covered by DEFERRED. The requirement that survives is that they
+    # cannot appear in SILENCE: a new one with no entry here fails the run.
+    unknown_shell = [g for g in shell_gates if g not in DEFERRED]
+    if unknown_shell:
+        print("check-gate-fixtures: FAILED -- shell gates with no stated coverage:")
+        for name in unknown_shell:
+            print(
+                f"  {name}: not in DEFERRED. A shell gate cannot be fixtured by "
+                f"this harness, so it must say here how it is evidenced."
+            )
+        return 1
+
+    # Shell entries are excluded whenever the repo half did not RUN -- an
+    # explicit fixture root, or a tree with no `.github/workflows` above it --
+    # rather than reported missing. Both skips are printed, and turning a
+    # declared skip into a violation would make the harness unusable against
+    # its own tmp_path fixtures and inside the api container.
+    #
+    # Keyed on `repo_checked` rather than on `explicit_root`, because those
+    # stopped being the same question the moment the container case existed:
+    # the container has no explicit root and still cannot see the shell gates.
+    known = set(gates) | set(shell_gates)
+    unknown = sorted(
+        name
+        for name in set(DEFERRED) - known
+        if not (not repo_checked and name.endswith(_SHELL_GATE_SUFFIX))
+    )
     if unknown:
         print("check-gate-fixtures: DEFERRED names gates that do not exist:")
         for name in unknown:
@@ -358,7 +600,13 @@ def main(argv: list[str]) -> int:
             print(f"  {line}")
         return 1
 
-    covered = len(gates) - len(DEFERRED)
+    # Counted from the gates the loop actually VISITED, not `len(gates) -
+    # len(DEFERRED)`. That expression was correct while `DEFERRED` held only
+    # Python names; putting shell gates in it made the subtraction cross two
+    # populations, and the line printed 5 where 7 had been exercised. A success
+    # message that understates its own coverage is the mildest version of this
+    # file's subject, and nothing asserts the string, so nothing caught it.
+    covered = len([g for g in gates if g not in DEFERRED])
     print(
         f"check-gate-fixtures: {checked} cases across {covered} gates behaved as "
         f"specified ({len(DEFERRED)} deferred with reasons)"
