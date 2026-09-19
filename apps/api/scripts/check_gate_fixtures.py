@@ -144,6 +144,32 @@ DEFERRED: dict[str, str] = {
         "harness-cannot-fail defect in either is still invisible. A coverage "
         "statement, not a clean bill of health."
     ),
+    # -- #296's two gates, which were invisible to BOTH harnesses (#318) ------
+    # Neither carried the crash-is-not-a-verdict handler nor a `GATES` entry,
+    # so `discover_gates` could not see them and `test_gate_crash_exit_code`
+    # did not run them -- and the "gates can fail" step was green BECAUSE of
+    # the omission. Both now carry the handler, which is what puts them here.
+    "check_decision_numbers.py": (
+        "Its input is a GIT RANGE, not a path: `--base`/`--head` name refs, and "
+        "`run_case` substitutes `{dir}` into argv and invokes the script with no "
+        "repository around it. A fixture would have to build a repo per case, "
+        "which is what `test_check_decision_numbers.py` now does instead -- it "
+        "drives `main()` against a real tmp repo and covers the pass, the "
+        "mismatch, the unresolvable range (exit 2), and the two-dots-versus-three "
+        "range that re-opens the symmetric-difference defect. Those four are the "
+        "coverage this entry stands in for; it is not an exemption from having "
+        "any."
+    ),
+    "check_mount_matches_database.py": (
+        "Needs a live Postgres and an alembic revision to compare against, "
+        "neither of which `run_case` can supply -- it invokes a script with argv "
+        "and a fixture directory. Covered by "
+        "`tests/unit/test_check_mount_matches_database.py`. Its stated residual "
+        "stands and is NOT covered here: two worktrees each numbering the next "
+        "migration 0047 make the id match while the schemas differ, and the "
+        "check prints agreement. That is filed against the gate, not against "
+        "this registry entry."
+    ),
     "leave_row_oracle.py": (
         "STRUCTURALLY unfixturable, which is a stronger reason than the one first "
         "recorded here. --check-registry takes no path: REPO_APP and TESTS are "

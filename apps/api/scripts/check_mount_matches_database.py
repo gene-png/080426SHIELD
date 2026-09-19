@@ -187,4 +187,24 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # A crash must not share an exit code with "found something": Python exits 1
+    # on an unhandled exception, which is this gate's violation code.
+    #
+    # Duplicated verbatim in every gate rather than shared -- an import is one
+    # more thing that can fail BEFORE the handler is installed, which is the
+    # defect this block exists to close. Drift is caught instead by
+    # tests/unit/test_gate_crash_exit_code.py, which runs every one of them.
+    #
+    # It also carries the marker `discover_gates` keys on, so adding it is what
+    # puts this script into `check_gate_fixtures.py`'s registry. Both harnesses
+    # that prove a gate can fail were blind to it (#318), and the "gates can
+    # fail" step was green BECAUSE of the omission.
+    try:
+        raise SystemExit(main())
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
+        nl = chr(10)
+        sys.stderr.write(f"check-mount-matches-database: CRASHED: {type(exc).__name__}: {exc}{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        raise SystemExit(2) from exc
