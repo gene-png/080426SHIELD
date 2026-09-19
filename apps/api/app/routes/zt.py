@@ -672,10 +672,24 @@ def run_ai(
     # gone with no record.
     written: dict[tuple[str, str], Any] = {}
 
-    # `parse_json_object_with_list("capabilities")` guarantees a list or raises
-    # a typed 502. A non-list `capabilities` is a broken response, not a pile of
-    # drops — enumerating it per entry would report a drop rate for something
-    # that never had entries. A MISSING key is untouched here (issue #46).
+    # `parse_json_object_with_list("capabilities")` guarantees the key is
+    # PRESENT and holds a list, or raises a typed 502. A non-list `capabilities`
+    # is a broken response, not a pile of drops -- enumerating it per entry
+    # would report a drop rate for something that never had entries.
+    #
+    # This used to end "A MISSING key is untouched here (issue #46)", which was
+    # false: #46 is closed, and its fix is `require_list_at` raising on
+    # `key not in data` -- the very guard this loop sits behind. So the `[]`
+    # default below cannot be reached, and the sentence told a reader checking
+    # the missing-key case, at the place they would check it, that the case is
+    # open. #288's own shape, surviving inside #288's branch: a comment citing
+    # the SCOPE of a past change goes stale the day that change lands.
+    #
+    # The default is kept rather than tightened to `data["capabilities"]`: it
+    # costs nothing, and a `KeyError` 500 here would be a worse answer than the
+    # typed 502 the parser already raises. It is belt-and-braces over a
+    # guarantee, not a handled case -- which is why it gets no reason of its
+    # own beyond this one.
     raw_caps = data.get("capabilities", [])
 
     for sugg in raw_caps:

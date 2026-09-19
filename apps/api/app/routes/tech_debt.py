@@ -1,14 +1,37 @@
 """Tech Debt service routes (Master Spec §15 Phase 3).
 
-This stage (Phase 3 stage 4) ships the spine:
-  - POST /tech-debt/services         (open a service workspace; admin-only)
-  - POST /tech-debt/services/{id}/capability-lists/extract
-        (run the AI extraction; produces a new versioned CapabilityList)
-  - GET  /tech-debt/services/{id}/capability-lists/latest
+Endpoint surface, derived from the decorators in this file rather than from
+what a stage plan once said would land:
 
-The editable extraction table (PATCH per item, approve list) lands in
-stage 5; overlap analysis in stage 6; consolidation plan in stage 7;
-deliverable render in stage 8; client release in stage 9.
+  POST   /services
+         Open a service workspace. Admin-only.
+  POST   /services/{service_id}/capability-lists/extract
+         Run the AI extraction; produces a new versioned CapabilityList.
+  GET    /services/{service_id}/capability-lists/latest
+  PATCH  /capability-items/{item_id}
+         Inline edit of one extracted row.
+  POST   /capability-items/{item_id}/components
+  POST   /capability-items/{item_id}/security-classification/confirm
+  POST   /capability-items/{item_id}/security-classification/override
+  POST   /capability-lists/{list_id}/excluded-rows/{row_index}/include
+  POST   /capability-lists/{list_id}/excluded-rows/{row_index}/confirm
+  POST   /capability-lists/{list_id}/approve
+  POST   /capability-lists/{list_id}/discard
+  GET    /services/{service_id}/overlap-analysis
+  GET    /services/{service_id}/consolidation-plan
+  POST   /services/{service_id}/deliverables/finalize
+  GET    /services/{service_id}/deliverables/latest
+  POST   /deliverables/{deliverable_id}/release
+
+This paragraph used to describe five of those as future work -- "the editable
+extraction table (PATCH per item, approve list) lands in stage 5; overlap
+analysis in stage 6; consolidation plan in stage 7; deliverable render in
+stage 8; client release in stage 9". Every one of them is in the list above,
+in this file. #288's sweep: a comment citing the SCOPE of a planned change
+goes stale the day that change lands, and nothing fires. The CSF twin had
+already been converted to a present-tense surface list, which is the form
+copied here -- a list of what the module HAS cannot expire the way a schedule
+of what it will have does.
 """
 
 from __future__ import annotations
