@@ -18,8 +18,18 @@ line-length = 100
 # so `apps/api/tests/gates` names `/apps/api/tests/gates`, which does not
 # exist, and the MANDATORY in-container lint reported four phantom errors in
 # fixture files that are deliberately not lint-clean (#314). The glob matches
-# the directory wherever the tree is rooted; `per-file-ignores` below already
-# uses this form.
+# the directory wherever the tree is rooted.
+#
+# It also matches the REPO-ROOT `tests/gates/`, which exists and holds the two
+# shell gates -- deliberately, for parity with `[tool.black]`'s
+# `extend-exclude`, whose regex has carried a bare alternative covering both
+# all along. No behavioural change today (ruff lints `.py` and there are no
+# Python files there), and it means a future Python gate fixture at the repo
+# root is exempt by the same rule as one under `apps/api`.
+#
+# Measured at this head rather than argued from the `per-file-ignores` analogy
+# below, which is a DIFFERENT matcher: `ruff check --no-cache .` inside the api
+# container exits 0, and `ruff check apps/api` from the repo root exits 0.
 extend-exclude = [".venv", "node_modules", "reference-docs", "**/tests/gates"]
 # Excludes are bypassed for EXPLICITLY NAMED paths unless this is set, and a
 # pre-commit hook names files explicitly -- which is precisely how #168 says the
