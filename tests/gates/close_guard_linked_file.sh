@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# Prove that a FAILED `gh pr view` leaves no `--linked` file, and that an
+# EMPTY answer leaves one.
+#
+# The close guard (#182) tells "GitHub linked nothing" apart from "I could not
+# look" BY THE FILE -- `linked_numbers`' docstring says so in as many words.
+# The collect step in `audit-gate.yml` is the only thing that can honour that,
+# and its first version could not: `... > /tmp/pr_linked.txt || true` creates
+# and truncates the target BEFORE `gh` runs, so a failed query produced an
+# empty file that EXISTS. The guard then read an empty set, found no mismatch,
+# and printed "clean -- no closing references (verified against GitHub)" over a
+# query that never returned -- the accidental close it was built to prevent,
+# carrying the sentence that says it cannot happen.
+#
+# So this EXTRACTS the block from the workflow rather than restating it. A copy
+# here would agree with itself forever; the point is to go red when the
+# workflow changes. It stubs `gh`, asserts both states, and then runs the real
+# guard on what was produced and asserts the VERDICT -- the file's presence is
+# only interesting through what the guard does with it.
+#
+#   tests/gates/close_guard_linked_file.sh              # the gate
+#   tests/gates/close_guard_linked_file.sh --self-test  # prove it can fail
+#
+# `--self-test` puts the old `|| true` shape back and requires this gate to go
+# RED. A harness that cannot fail is the defect it exists to prevent.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+WORKFLOW="$ROOT/.github/workflows/audit-gate.yml"
+GUARD="$ROOT/apps/api/scripts/check_issue_references.py"
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && SELF_TEST=1
+
+for f in "$WORKFLOW" "$GUARD"; do
+  [ -f "$f" ] || { echo "FAIL: cannot find $f"; exit 2; }
+done
+
+# CI runners have `python3`; a Windows dev box usually has only `python`.
+# Resolved rather than assumed, and absent -> exit 2, because "no interpreter"
+# is a could-not-look, not a pass.
+# Probed by RUNNING each candidate, not by `command -v`: Windows ships a
+# `python3.exe` App Execution Alias that resolves, prints an advert for the
+# Microsoft Store, and exits non-zero. `command -v` cannot tell that apart from
+# an interpreter. Absent -> exit 2, because "no interpreter" is a
+# could-not-look, not a pass.
+PYTHON="${PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+  for candidate in python3 python; do
+    if "$candidate" -c "import sys" >/dev/null 2>&1; then PYTHON="$candidate"; break; fi
+  done
+fi
+[ -n "$PYTHON" ] || { echo "FAIL: no working python3/python on PATH; cannot extract the block"; exit 2; }
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# --- extract the block, from the workflow, by its own markers ----------------
+# Anchored on `rm -f /tmp/pr_linked` .. `fi`: the whole publish decision and
+# nothing else. Not found -> exit 2, never a pass. "The block moved" and "the
+# block is correct" must not share a branch.
+"$PYTHON" - "$WORKFLOW" "$WORK/block.sh" <<'EXTRACT'
+import re, sys
+src, dest = sys.argv[1], sys.argv[2]
+lines = open(src, encoding="utf-8").read().split("\n")
+# Anchored on `if gh pr view`, which is unique; `rm -f /tmp/pr_linked` is not,
+# because the else branch cleans up the scratch path too. Then walk back over
+# any leading `rm -f` lines so the pre-clean is part of what gets exercised.
+starts = [i for i, l in enumerate(lines) if l.strip().startswith("if gh pr view")]
+if len(starts) != 1:
+    sys.exit("EXTRACT FAILED: expected 1 `if gh pr view` line, found %d" % len(starts))
+i = starts[0]
+while i > 0 and lines[i - 1].strip().startswith("rm -f "):
+    i -= 1
+ends = [j for j in range(starts[0], len(lines)) if lines[j].strip() == "fi"]
+if not ends:
+    sys.exit("EXTRACT FAILED: no closing `fi` after the publish decision")
+chunk = lines[i:ends[0] + 1]
+block = "\n".join(l[10:] if l.startswith(" " * 10) else l.lstrip() for l in chunk)
+block = re.sub(r"\$\{\{[^}]*\}\}", "1", block)
+# Relocate the fixed /tmp paths into this run's scratch dir, so a real runner's
+# files are never touched.
+block = block.replace("/tmp/pr_linked", "$SCRATCH/pr_linked")
+open(dest, "w", encoding="utf-8", newline="\n").write(block + "\n")
+sys.stderr.write("extracted %d lines from the workflow\n" % len(chunk))
+EXTRACT
+
+if [ "$SELF_TEST" = "1" ]; then
+  # The defect, restored exactly: redirect straight at the real path, swallow
+  # the status. Written as the whole block so nothing of the fix survives.
+  cat > "$WORK/block.sh" <<'BAD'
+gh pr view "1" \
+  --json closingIssuesReferences \
+  --jq '.closingIssuesReferences[].number' > $SCRATCH/pr_linked.txt || true
+BAD
+  echo "self-test: block replaced with the pre-fix shape"
+fi
+
+# --- a stubbed gh ------------------------------------------------------------
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$GH_STUB_MODE" in
+  fail)    echo "gh: could not query the GitHub API" >&2; exit 1 ;;
+  empty)   exit 0 ;;
+  numbers) printf '317\n'; exit 0 ;;
+  *)       echo "gh stub: unknown GH_STUB_MODE" >&2; exit 64 ;;
+esac
+STUB
+chmod +x "$WORK/bin/gh"
+
+FAILURES=0
+note_fail() { echo "FAIL [$1]: $2"; FAILURES=$((FAILURES + 1)); }
+
+LINKED=""
+run_block() {  # $1 = GH_STUB_MODE
+  SCRATCH="$WORK/scratch"
+  rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
+  export SCRATCH
+  LINKED="$SCRATCH/pr_linked.txt"
+  # A stale file from an earlier query, so "left absent" is a real deletion and
+  # not a file that merely never appeared.
+  printf '999\n' > "$LINKED"
+  GH_STUB_MODE="$1" PATH="$WORK/bin:$PATH" bash -e "$WORK/block.sh" > "$WORK/out.log" 2>&1 || true
+}
+
+# `--title`, `--body` and `--commits` are FILE paths, not literals. Passing
+# strings made the guard exit 2 with "title file not found" -- the SAME 2 the
+# missing-linked-file case wants, so check 1 was green for the wrong reason
+# until checks 2 and 3 disagreed with it. Diagnose the disagreement; do not
+# vote on it.
+verdict() {  # $1 = PR body text -> echoes the guard exit code
+  printf 'chore: a title with no numbers\n' > "$WORK/title.txt"
+  printf 'chore: a commit with no numbers\n' > "$WORK/commits.txt"
+  printf '%s\n' "$1" > "$WORK/body.txt"
+  set +e
+  "$PYTHON" "$GUARD" --title "$WORK/title.txt" \
+    --body "$WORK/body.txt" --commits "$WORK/commits.txt" \
+    --linked "$LINKED" > "$WORK/guard.log" 2>&1
+  code=$?
+  set -e
+  echo "$code"
+}
+
+# --- 1. a FAILED query leaves no file, and the guard refuses -----------------
+run_block fail
+if [ -e "$LINKED" ]; then
+  note_fail "gh fails" "the linked file EXISTS ($(wc -c < "$LINKED") bytes) -- the guard cannot tell this from 'closes nothing'"
+else
+  echo "ok   [gh fails] -> linked file absent"
+fi
+code="$(verdict "No closes declared.")"
+if [ "$code" != "2" ]; then
+  note_fail "gh fails -> guard" "guard exited $code, wanted 2 (could not look): $(head -1 "$WORK/guard.log")"
+else
+  echo "ok   [gh fails -> guard] -> exit 2"
+fi
+
+# --- 2. an EMPTY answer is a real answer ------------------------------------
+run_block empty
+if [ ! -e "$LINKED" ]; then
+  note_fail "gh returns nothing" "linked file absent -- 'this PR closes nothing' must stay reportable"
+elif [ -s "$LINKED" ]; then
+  note_fail "gh returns nothing" "linked file is not empty: $(cat "$LINKED")"
+else
+  echo "ok   [gh returns nothing] -> linked file present and empty"
+fi
+code="$(verdict "No closes declared.")"
+if [ "$code" != "0" ]; then
+  note_fail "gh returns nothing -> guard" "guard exited $code, wanted 0: $(head -1 "$WORK/guard.log")"
+else
+  echo "ok   [gh returns nothing -> guard] -> exit 0"
+fi
+
+# --- 3. a real answer still reaches the guard -------------------------------
+# Without this the gate is satisfied by a block that never writes anything.
+run_block numbers
+if ! grep -q 317 "$LINKED" 2>/dev/null; then
+  note_fail "gh returns 317" "linked file does not carry 317"
+else
+  echo "ok   [gh returns 317] -> linked file carries 317"
+fi
+code="$(verdict "Auto-close-approved: 317")"
+if [ "$code" != "0" ]; then
+  note_fail "declared and linked -> guard" "guard exited $code, wanted 0: $(head -1 "$WORK/guard.log")"
+else
+  echo "ok   [declared and linked -> guard] -> exit 0"
+fi
+code="$(verdict "No closes declared.")"
+if [ "$code" != "1" ]; then
+  note_fail "linked but not declared -> guard" "guard exited $code, wanted 1: $(head -1 "$WORK/guard.log")"
+else
+  echo "ok   [linked but not declared -> guard] -> exit 1"
+fi
+
+# --- verdict ----------------------------------------------------------------
+if [ "$SELF_TEST" = "1" ]; then
+  if [ "$FAILURES" -eq 0 ]; then
+    echo "SELF-TEST FAILED: the pre-fix block passed this gate, so the gate cannot fail and proves nothing."
+    exit 1
+  fi
+  echo "self-test ok: the pre-fix block fails this gate ($FAILURES check(s) red)."
+  exit 0
+fi
+
+if [ "$FAILURES" -ne 0 ]; then
+  echo "close-guard linked-file gate: $FAILURES check(s) failed."
+  exit 1
+fi
+echo "close-guard linked-file gate: clean (a failed query leaves no file; an empty answer leaves one)."
