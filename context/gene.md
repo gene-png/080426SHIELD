@@ -200,7 +200,7 @@ It re-opens a defect already fixed once: `DELIVERY_PLAN.md` records the original
 - **SUPERSEDED 2026-09-19 — FIXED; see the top of this file.** Original text: *#306 — two BLOCKING: the read-back's justification describes an unconstructible state (keep the ratchet, rewrite the reason), and nothing pins the read-back itself (`entries_written = entries_total` leaves all four tests green).* Round 2 of that review returned **no BLOCKING** and confirmed all four reachability claims by measurement.
 - **SUPERSEDED 2026-09-19 — FIXED; see the top of this file.** Original text: *#305 — three BLOCKING (prose), the sharpest being that a twin of the exact claim it fixes is still live in `routes/zt.py`, a file it edits.*
 
-**#315 has one BLOCKING finding against my own work:** a *printed* workbook carries the notice on page 1 only. Freezing is a screen property; `print_title_rows` is set nowhere in the repo. #277's argument names "printed" as one of four survival modes and the XLSX mechanism drops it — under a comment about `oddHeader` that reads as having settled the question. One line fixes it.
+**SUPERSEDED 2026-09-19 — FIXED, and the sentence below is false in the tree that now contains it.** `print_title_rows` IS set, in `_header`. Original text: *#315 has one BLOCKING finding against my own work: a printed workbook carries the notice on page 1 only. Freezing is a screen property; `print_title_rows` is set nowhere in the repo. One line fixes it.* Flagged by that PR's round-2 review as an action-licensing claim — a to-do for work already shipped, in the section read to decide what to do next.
 
 **The process finding, which is mine and not the reviewers':** nine agents were dispatched, all nine completed, **not one delivered before its PR merged**, and the reports came back only when I messaged each agent afterwards to ask. The six bodies that said `Findings: not run` were accurate at merge time and insufficient. Worth deciding whether a PR may merge while its dispatched review is outstanding, and what the audit block should say in that state.
 
@@ -298,8 +298,10 @@ printed `SyntaxWarning: invalid escape sequence '\s'`. Verified gone under
 
 **#315 — 294, the CSF Playbook stamp reaches every page.** Three mechanisms,
 because the formats share none: a reportlab `onPage=` canvas callback, a docx
-section footer, and a frozen worksheet banner row (**not** `ws.oddHeader`, which
-renders only when PRINTED). Both states asserted **per page** — the four-cell
+section footer, and on each workbook sheet BOTH a frozen banner row and
+`print_title_rows` — freezing is a SCREEN property and covers print not at all,
+which is what that PR's round-2 review caught; `ws.oddHeader` is the opposite
+trade and renders only when PRINTED)
 matrix #277 established at the document level now holds per page, which is a
 different claim: a stamp keyed on the wrong side of the boolean would leave the
 cover correct and every footer lying, with every existing test green.
