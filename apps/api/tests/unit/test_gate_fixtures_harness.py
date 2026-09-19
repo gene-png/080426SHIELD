@@ -24,10 +24,14 @@ import pytest
 from scripts.check_gate_fixtures import (
     _GATE_MARKER,
     DEFERRED,
+    NON_GATE_SCRIPTS,
+    compose_sources,
     discover_gates,
     discover_shell_gates,
+    invocation_text,
     load_cases,
     main,
+    undiscovered_gates,
     unwired_gates,
 )
 
@@ -474,7 +478,7 @@ def test_a_stem_contained_in_another_stem_is_not_counted_as_wired(tmp_path: Path
 
 
 def test_a_module_path_invocation_still_counts_as_wired(tmp_path: Path) -> None:
-    """The boundary must not reject a dotted module path.
+    r"""The boundary must not reject a dotted module path.
 
     `scripts.check_audit_evidence` puts a `.` immediately before the stem. A
     lookbehind excluding `[\w.]` — the obvious spelling, and the one first
@@ -488,3 +492,169 @@ def test_a_module_path_invocation_still_counts_as_wired(tmp_path: Path) -> None:
         '      - run: python -c "from scripts.check_audit_evidence import missing_evidence"\n',
     )
     assert unwired_gates(["check_audit_evidence.py"], wf) == []
+
+
+# ---------------------------------------------------------------------------
+# THE UNDISCOVERED GATE (#296, #327) -- a gate in NEITHER registry.
+#
+# `test_universe_equals_the_other_gate_enumeration` cross-checks
+# `discover_gates` against `test_gate_crash_exit_code.GATES`. That catches
+# DRIFT BETWEEN the two and is structurally blind to a script missing from
+# BOTH: two lists agreeing about a file neither contains is the answer they
+# were always going to give. #296's two gates were exactly that, and the
+# registry check passed BECAUSE the thing it should have found was not in the
+# registry.
+#
+# `undiscovered_gates` is a THIRD oracle whose population comes from outside
+# both lists -- the files that decide what CI executes. The first test below
+# is that specific case; the rest are the boundaries that stop it becoming a
+# wall of false positives, which is how a check gets deleted.
+# ---------------------------------------------------------------------------
+
+
+def _scripts(tmp_path: Path, files: dict[str, str]) -> Path:
+    scripts = tmp_path / "apps" / "api" / "scripts"
+    scripts.mkdir(parents=True)
+    for name, body in files.items():
+        (scripts / name).write_text(body, encoding="utf-8")
+    return scripts
+
+
+#: A body carrying the handler, i.e. a gate the marker-based discovery can see.
+#: Built FROM `_GATE_MARKER` rather than spelled out, because what is under
+#: test is whether discovery keys on that constant -- spelling it out would
+#: leave these asserting a dead literal the day the constant moves.
+_MARKED = f"# {_GATE_MARKER}\n"
+_UNMARKED = "# an ordinary script\n"
+
+
+def test_a_workflow_invoked_script_with_no_marker_is_reported(tmp_path: Path) -> None:
+    """THE CASE #296 WAS, and the one no other check in this file can see.
+
+    A script CI runs, carrying no handler, in no hand list. `discover_gates`
+    cannot see it -- the marker is absent. `test_gate_crash_exit_code.GATES`
+    does not list it. So the two enumerations agree perfectly, about nothing,
+    and both report clean.
+
+    The precondition is asserted rather than assumed: without it, a change
+    making the marker match everything would leave this test green while the
+    case it is named for had stopped being reachable.
+    """
+    scripts = _scripts(tmp_path, {"check_ghost.py": _UNMARKED, "check_real.py": _MARKED})
+    wf = _workflows(
+        tmp_path,
+        "jobs:\n  x:\n    steps:\n"
+        "      - run: python apps/api/scripts/check_ghost.py\n"
+        "      - run: python apps/api/scripts/check_real.py\n",
+    )
+
+    assert "check_ghost.py" not in discover_gates(scripts), (
+        "precondition: the marker-based registry must be blind to it, or this "
+        "test is not exercising the undiscovered case at all"
+    )
+    assert undiscovered_gates(scripts, wf) == ["check_ghost.py"]
+
+
+def test_a_marked_gate_is_never_reported_as_undiscovered(tmp_path: Path) -> None:
+    """THE PASSING STATE. Without it the report above could be unconditional."""
+    scripts = _scripts(tmp_path, {"check_real.py": _MARKED})
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: python check_real.py\n")
+    assert undiscovered_gates(scripts, wf) == []
+
+
+def test_a_script_no_workflow_invokes_is_not_reported(tmp_path: Path) -> None:
+    """The population is what CI RUNS, not every file in the directory.
+
+    `apps/api/scripts` holds loaders and extractors nothing in CI invokes.
+    Reporting those makes the first run a wall of false positives, and a check
+    whose first run is noise is a check somebody deletes -- the failure mode
+    `unwired_gates` records for filename-versus-stem matching.
+    """
+    scripts = _scripts(tmp_path, {"load_things.py": _UNMARKED})
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: echo hi\n")
+    assert undiscovered_gates(scripts, wf) == []
+
+
+def test_a_declared_non_gate_is_not_reported(tmp_path: Path) -> None:
+    """The exemption is BY NAME and carries a reason -- the `DEFERRED` shape.
+
+    Driven through the real `NON_GATE_SCRIPTS` rather than a patched copy, so
+    emptying it makes this red instead of leaving it asserting a stub.
+    """
+    name = next(iter(NON_GATE_SCRIPTS))
+    scripts = _scripts(tmp_path, {name: _UNMARKED})
+    wf = _workflows(tmp_path, f"jobs:\n  x:\n    steps:\n      - run: python {name}\n")
+    assert undiscovered_gates(scripts, wf) == []
+
+
+def test_every_declared_non_gate_states_a_reason() -> None:
+    """An empty reason is not a reason.
+
+    `load_cases` enforces exactly this for fixture incidents; an exemption list
+    whose entries may be blank is how coverage shrinks in silence.
+    """
+    empty = [k for k, v in NON_GATE_SCRIPTS.items() if not str(v).strip()]
+    assert empty == [], f"declared non-gates with no stated reason: {empty}"
+
+
+def test_a_private_helper_is_not_a_candidate(tmp_path: Path) -> None:
+    """`_common.py` is imported by gates, so its stem appears in workflow text
+    whenever one of them is invoked as a module. Treating it as a candidate
+    reports a finding with no available remedy."""
+    scripts = _scripts(tmp_path, {"_common.py": _UNMARKED})
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: python _common.py\n")
+    assert undiscovered_gates(scripts, wf) == []
+
+
+def test_the_compose_file_is_an_invocation_source(tmp_path: Path) -> None:
+    """A gate invoked ONLY by `docker-compose.yml` is wired, and reading just
+    `.github/workflows` said otherwise.
+
+    Not hypothetical: `check_mount_matches_database.py` is invoked there, one
+    line before `alembic upgrade head`, exactly where its own docstring says it
+    belongs -- and the e2e and demo jobs both `docker compose up`. It was
+    reported unwired the moment #338's marker put it in the registry, and the
+    tempting repair was to add a workflow step. That would have been a
+    certificate over the wrong proposition: CI starts from fresh volumes, so
+    the stale-mount state that gate detects cannot arise there, and the step
+    could only ever pass.
+
+    BOTH directions asserted, because `extra` defaults to empty -- so the
+    without-compose case is the state every other caller in this file is in,
+    and a change quietly reading the compose file by default would leave the
+    positive half green and mean something different.
+    """
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: echo hi\n")
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  api:\n    command: python scripts/check_mount.py && alembic upgrade head\n",
+        encoding="utf-8",
+    )
+
+    assert unwired_gates(["check_mount.py"], wf) == ["check_mount.py"]
+    assert unwired_gates(["check_mount.py"], wf, compose_sources(tmp_path)) == []
+
+
+def test_compose_sources_are_globbed_not_named(tmp_path: Path) -> None:
+    """An override file counts without anyone editing this checker.
+
+    A hand list of one entry is an enumeration, and what enumerations miss is
+    this whole file's subject. The unrelated `.yml` is the negative half: the
+    glob must not widen to every file at the repo root.
+    """
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "docker-compose.ci.yaml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "unrelated.yml").write_text("services: {}\n", encoding="utf-8")
+    assert [p.name for p in compose_sources(tmp_path)] == [
+        "docker-compose.ci.yaml",
+        "docker-compose.yml",
+    ]
+
+
+def test_a_missing_extra_source_is_skipped_not_a_crash(tmp_path: Path) -> None:
+    """A repo with no compose file is legitimate, so a named-but-absent source
+    is skipped -- and the workflows half still has to be read, which is what
+    this asserts. Returning early on the missing file would turn "no compose
+    file" into "nothing is invoked", the could-not-look/nothing-wrong merge
+    this harness exists to refuse."""
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: python check_real.py\n")
+    assert "check_real.py" in invocation_text(wf, [tmp_path / "docker-compose.yml"])
