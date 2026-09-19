@@ -1,14 +1,37 @@
 """Tech Debt service routes (Master Spec §15 Phase 3).
 
-This stage (Phase 3 stage 4) ships the spine:
-  - POST /tech-debt/services         (open a service workspace; admin-only)
-  - POST /tech-debt/services/{id}/capability-lists/extract
-        (run the AI extraction; produces a new versioned CapabilityList)
-  - GET  /tech-debt/services/{id}/capability-lists/latest
+Endpoint surface, derived from the decorators in this file rather than from
+what a stage plan once said would land:
 
-The editable extraction table (PATCH per item, approve list) lands in
-stage 5; overlap analysis in stage 6; consolidation plan in stage 7;
-deliverable render in stage 8; client release in stage 9.
+  POST   /services
+         Open a service workspace. Admin-only.
+  POST   /services/{service_id}/capability-lists/extract
+         Run the AI extraction; produces a new versioned CapabilityList.
+  GET    /services/{service_id}/capability-lists/latest
+  PATCH  /capability-items/{item_id}
+         Inline edit of one extracted row.
+  POST   /capability-items/{item_id}/components
+  POST   /capability-items/{item_id}/security-classification/confirm
+  POST   /capability-items/{item_id}/security-classification/override
+  POST   /capability-lists/{list_id}/excluded-rows/{row_index}/include
+  POST   /capability-lists/{list_id}/excluded-rows/{row_index}/confirm
+  POST   /capability-lists/{list_id}/approve
+  POST   /capability-lists/{list_id}/discard
+  GET    /services/{service_id}/overlap-analysis
+  GET    /services/{service_id}/consolidation-plan
+  POST   /services/{service_id}/deliverables/finalize
+  GET    /services/{service_id}/deliverables/latest
+  POST   /deliverables/{deliverable_id}/release
+
+This paragraph used to describe five of those as future work -- "the editable
+extraction table (PATCH per item, approve list) lands in stage 5; overlap
+analysis in stage 6; consolidation plan in stage 7; deliverable render in
+stage 8; client release in stage 9". Every one of them is in the list above,
+in this file. #288's sweep: a comment citing the SCOPE of a planned change
+goes stale the day that change lands, and nothing fires. The CSF twin had
+already been converted to a present-tense surface list, which is the form
+copied here -- a list of what the module HAS cannot expire the way a schedule
+of what it will have does.
 """
 
 from __future__ import annotations
@@ -153,13 +176,36 @@ def _latest_list_or_none(db: Session, service_id: uuid.UUID) -> CapabilityList |
     # caller", quantifying over a set whose evidence covered only the routes
     # named finalize. `csf.py::export_playbook` is an exporting caller that is
     # NOT a finalize: it resolves through THE CSF COPY of this helper (the
-    # sentence is deictic and this block is byte-identical in five files --
+    # sentence is deictic and this block is a COPY in five files, no longer
+    # byte-identical -- csf.py's carries the #243/#277/#294 history and zt.py's
+    # carries the conclusion and points at it --
     # `export_playbook` does not call attack.py's, zt.py's, tech_debt.py's or
     # intake.py's), refuses only on "No
     # assessment yet." and "Seed the Working Profile before exporting.", and
-    # then writes client-named artifacts through `deliverable_filename`. So a
-    # DRAFT CSF assessment can be exported under a client's name today. Tracked
-    # in #243; it is pre-existing and is not fixed here.
+    # then writes client-named artifacts through `deliverable_filename`.
+    #
+    # This used to end "So a DRAFT CSF assessment can be exported under a
+    # client's name today. Tracked in #243" -- true when written, and false
+    # since #274 landed. `export_playbook` now passes `working=not _approved`,
+    # and `deliverable_filename` prefixes `WORKING_`, so a draft export is
+    # labelled rather than indistinguishable.
+    #
+    # The residual is NARROWER, and it has MOVED TWICE since this paragraph
+    # was written -- which is the same failure one turn later, so it is dated
+    # rather than restated: #277 (PR #293) put the status on the cover of every
+    # rendered document, so a printed or re-saved playbook does now say what it
+    # is; #294 carries it to every PAGE, because the page that gets pasted into
+    # a deck is the scorecard and not page 1. #294 is OPEN as this is written.
+    #
+    # Kept rather than deleted, because the FAILURE is the transferable part: a
+    # reader who checked the old sentence against the code found the prefix,
+    # concluded the comment was stale, and stopped reading a block that is
+    # otherwise still correct. A false clause does not merely fail to inform --
+    # it discredits the true ones around it.
+    #
+    # The full history lives in `routes/csf.py`, beside the code it describes.
+    # This copy carries the conclusion; a fifth copy of the derivation is what
+    # let one expiry falsify five comments at once.
     #
     # It would come into scope if either stopped holding: a new caller that
     # exports without its own APPROVED/RELEASED check, or one that renders
@@ -416,12 +462,27 @@ def latest_capability_list(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No capability list yet. Run extraction first.",
         )
-    # Phase 3 admin-only for now; client view of the released deliverable
-    # comes in stage 9 via /deliverables/.
+    # Admin-only, unconditionally. This used to say "client view of the
+    # released deliverable comes in stage 9 via /deliverables/", 430 lines
+    # below the module docstring this branch corrected for naming the same
+    # stage -- the same file, fixed at the top and not at the bottom. That view
+    # SHIPPED: `routes/clients.py` registers `GET /{client_id}/deliverables`,
+    # filtered on `released_at IS NOT NULL`.
+    #
+    # The content reaches a client as a Deliverable through that route. There
+    # is no branch anywhere letting a client read a CapabilityList after
+    # release, so the refusal below said "until release" over a condition with
+    # no release term in it -- a message naming a state transition this
+    # endpoint never makes. CSF's and ZT's twins DO gate on release state;
+    # Tech Debt differing is the thing worth knowing, and #326 carries whether
+    # it should.
     if user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Capability lists are admin-only until release.",
+            detail=(
+                "Capability lists are admin-only. The released report is "
+                "available to your organization under Deliverables."
+            ),
         )
     return _serialize_list_with_items(db, cap_list)
 

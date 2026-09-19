@@ -36,7 +36,7 @@ export function ConsolidationPlanCard({
         <CardDescription>
           Each row in the table above carries a disposition (keep / consolidate
           / cut). The cut-row costs add up to the estimated annual savings shown
-          below; the actual deliverable lands in stage 8.
+          below. Finalize the deliverable when the dispositions are settled.
         </CardDescription>
       </CardHeader>
       <CardBody>

@@ -209,7 +209,7 @@ def require_list_at(data: dict, key: str) -> dict:
 
 
 def parse_json_object_with_list(key: str) -> Callable[[str], dict]:
-    """`parse_json_object`, but if ``key`` is present it MUST hold a list.
+    """`parse_json_object`, but ``key`` must be PRESENT and must hold a list.
 
     The suggestion loops iterate `data[key]`. A non-list there is not something
     they can partially apply — a string iterates one character at a time, so the
@@ -221,10 +221,24 @@ def parse_json_object_with_list(key: str) -> Callable[[str], dict]:
     condition can never coexist with an applied suggestion, it belongs in the
     error path, not in a per-item drop list.
 
-    A MISSING key is deliberately left alone here — that is issue #46 (the other
-    half of the Sprint 3 T0 drift), which is filed and explicitly outside W1's
-    invariant. This guard covers only the case W1's own counting would otherwise
-    misreport.
+    A MISSING key RAISES too -- and for one round this docstring said so in
+    the body while its SUMMARY still read "if ``key`` is present it MUST hold
+    a list", which is what a reader who stops at the summary takes away. The
+    uniformly-wrong version was replaced by a self-contradictory one, and the
+    half that survived was the half most people read. `require_list_at`'s own
+    summary already had the correct form, one function up.
+
+    It read: "A MISSING key is deliberately left alone here — that is issue #46
+    ... which is filed and explicitly outside W1's invariant." Every clause of
+    that is now false. #46 is closed; `require_list_at` raises
+    `AIResponseShapeError` on `key not in data`, which IS #46's fix; and the
+    line below this docstring calls it. A reader checking whether the
+    missing-key case is covered was being told, at the exact place they would
+    look, that it is not.
+
+    The expiry is the general hazard rather than this instance: a deferral that
+    cites the SCOPE of a past change, rather than a property of the code, goes
+    stale the day that change lands and nothing fires. #288 carries the sweep.
     """
 
     def _parse(content: str) -> dict:

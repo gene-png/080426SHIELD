@@ -321,13 +321,36 @@ def _latest_assessment(db: Session, service_id: uuid.UUID) -> ZtAssessment | Non
     # caller", quantifying over a set whose evidence covered only the routes
     # named finalize. `csf.py::export_playbook` is an exporting caller that is
     # NOT a finalize: it resolves through THE CSF COPY of this helper (the
-    # sentence is deictic and this block is byte-identical in five files --
+    # sentence is deictic and this block is a COPY in five files, no longer
+    # byte-identical -- csf.py's carries the #243/#277/#294 history and zt.py's
+    # carries the conclusion and points at it --
     # `export_playbook` does not call attack.py's, zt.py's, tech_debt.py's or
     # intake.py's), refuses only on "No
     # assessment yet." and "Seed the Working Profile before exporting.", and
-    # then writes client-named artifacts through `deliverable_filename`. So a
-    # DRAFT CSF assessment can be exported under a client's name today. Tracked
-    # in #243; it is pre-existing and is not fixed here.
+    # then writes client-named artifacts through `deliverable_filename`.
+    #
+    # This used to end "So a DRAFT CSF assessment can be exported under a
+    # client's name today. Tracked in #243" -- true when written, and false
+    # since #274 landed. `export_playbook` now passes `working=not _approved`,
+    # and `deliverable_filename` prefixes `WORKING_`, so a draft export is
+    # labelled rather than indistinguishable.
+    #
+    # The residual is NARROWER, and it has MOVED TWICE since this paragraph
+    # was written -- which is the same failure one turn later, so it is dated
+    # rather than restated: #277 (PR #293) put the status on the cover of every
+    # rendered document, so a printed or re-saved playbook does now say what it
+    # is; #294 carries it to every PAGE, because the page that gets pasted into
+    # a deck is the scorecard and not page 1. #294 is OPEN as this is written.
+    #
+    # Kept rather than deleted, because the FAILURE is the transferable part: a
+    # reader who checked the old sentence against the code found the prefix,
+    # concluded the comment was stale, and stopped reading a block that is
+    # otherwise still correct. A false clause does not merely fail to inform --
+    # it discredits the true ones around it.
+    #
+    # The full history lives in `routes/csf.py`, beside the code it describes.
+    # This copy carries the conclusion; a fifth copy of the derivation is what
+    # let one expiry falsify five comments at once.
     #
     # It would come into scope if either stopped holding: a new caller that
     # exports without its own APPROVED/RELEASED check, or one that renders
@@ -651,10 +674,24 @@ def run_ai(
     # gone with no record.
     written: dict[tuple[str, str], Any] = {}
 
-    # `parse_json_object_with_list("capabilities")` guarantees a list or raises
-    # a typed 502. A non-list `capabilities` is a broken response, not a pile of
-    # drops — enumerating it per entry would report a drop rate for something
-    # that never had entries. A MISSING key is untouched here (issue #46).
+    # `parse_json_object_with_list("capabilities")` guarantees the key is
+    # PRESENT and holds a list, or raises a typed 502. A non-list `capabilities`
+    # is a broken response, not a pile of drops -- enumerating it per entry
+    # would report a drop rate for something that never had entries.
+    #
+    # This used to end "A MISSING key is untouched here (issue #46)", which was
+    # false: #46 is closed, and its fix is `require_list_at` raising on
+    # `key not in data` -- the very guard this loop sits behind. So the `[]`
+    # default below cannot be reached, and the sentence told a reader checking
+    # the missing-key case, at the place they would check it, that the case is
+    # open. #288's own shape, surviving inside #288's branch: a comment citing
+    # the SCOPE of a past change goes stale the day that change lands.
+    #
+    # The default is kept rather than tightened to `data["capabilities"]`: it
+    # costs nothing, and a `KeyError` 500 here would be a worse answer than the
+    # typed 502 the parser already raises. It is belt-and-braces over a
+    # guarantee, not a handled case -- which is why it gets no reason of its
+    # own beyond this one.
     raw_caps = data.get("capabilities", [])
 
     for sugg in raw_caps:
