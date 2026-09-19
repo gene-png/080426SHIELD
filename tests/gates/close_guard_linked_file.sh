@@ -31,6 +31,7 @@ WORKFLOW="$ROOT/.github/workflows/audit-gate.yml"
 GUARD="$ROOT/apps/api/scripts/check_issue_references.py"
 SELF_TEST=0
 [ "${1:-}" = "--self-test" ] && SELF_TEST=1
+MUTATION="${MUTATION:-}"
 
 for f in "$WORKFLOW" "$GUARD"; do
   [ -f "$f" ] || { echo "FAIL: cannot find $f"; exit 2; }
@@ -56,9 +57,15 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # --- extract the block, from the workflow, by its own markers ----------------
-# Anchored on `rm -f /tmp/pr_linked` .. `fi`: the whole publish decision and
-# nothing else. Not found -> exit 2, never a pass. "The block moved" and "the
-# block is correct" must not share a branch.
+# Anchored on the `if gh pr view` line -- unique, where `rm -f /tmp/pr_linked`
+# is NOT, because the else branch cleans up the scratch path too. The extractor
+# below says the same thing; this comment said `rm -f .. fi` for one round, and
+# two contradictory statements of the anchor four lines apart send whoever
+# edits `audit-gate.yml` to protect the wrong string.
+#
+# Not found -> exit 2, never a pass, and never the 1 this gate uses for a real
+# violation: "the block moved" and "the block is correct" must not share a
+# branch, and neither must "the block moved" and "the block is wrong".
 "$PYTHON" - "$WORKFLOW" "$WORK/block.sh" <<'EXTRACT'
 import re, sys
 src, dest = sys.argv[1], sys.argv[2]
@@ -68,13 +75,20 @@ lines = open(src, encoding="utf-8").read().split("\n")
 # any leading `rm -f` lines so the pre-clean is part of what gets exercised.
 starts = [i for i, l in enumerate(lines) if l.strip().startswith("if gh pr view")]
 if len(starts) != 1:
-    sys.exit("EXTRACT FAILED: expected 1 `if gh pr view` line, found %d" % len(starts))
+    # `sys.exit(<str>)` prints and exits 1 -- this gate's VIOLATION code. A
+    # could-not-look is 2 everywhere else in this file and in every gate in the
+    # repo, so it is written explicitly rather than inherited from the idiom.
+    sys.stderr.write(
+        "EXTRACT FAILED: expected 1 `if gh pr view` line, found %d\n" % len(starts)
+    )
+    sys.exit(2)
 i = starts[0]
 while i > 0 and lines[i - 1].strip().startswith("rm -f "):
     i -= 1
 ends = [j for j in range(starts[0], len(lines)) if lines[j].strip() == "fi"]
 if not ends:
-    sys.exit("EXTRACT FAILED: no closing `fi` after the publish decision")
+    sys.stderr.write("EXTRACT FAILED: no closing `fi` after the publish decision\n")
+    sys.exit(2)
 chunk = lines[i:ends[0] + 1]
 block = "\n".join(l[10:] if l.startswith(" " * 10) else l.lstrip() for l in chunk)
 block = re.sub(r"\$\{\{[^}]*\}\}", "1", block)
@@ -85,15 +99,44 @@ open(dest, "w", encoding="utf-8", newline="\n").write(block + "\n")
 sys.stderr.write("extracted %d lines from the workflow\n" % len(chunk))
 EXTRACT
 
-if [ "$SELF_TEST" = "1" ]; then
-  # The defect, restored exactly: redirect straight at the real path, swallow
-  # the status. Written as the whole block so nothing of the fix survives.
-  cat > "$WORK/block.sh" <<'BAD'
+if [ -n "$MUTATION" ]; then
+  # A mutation replaces the extracted block entirely, so nothing of the real
+  # publish decision survives to make a check pass by accident.
+  case "$MUTATION" in
+    prefix)
+      # The defect this gate was built for, restored exactly: redirect straight
+      # at the real path, swallow the status.
+      cat > "$WORK/block.sh" <<'BAD'
 gh pr view "1" \
   --json closingIssuesReferences \
   --jq '.closingIssuesReferences[].number' > $SCRATCH/pr_linked.txt || true
 BAD
-  echo "self-test: block replaced with the pre-fix shape"
+      ;;
+    donothing)
+      # A block that publishes nothing and cleans nothing. This is the mutation
+      # that matters, and the reason the self-test runs more than one: under
+      # `prefix`, checks 2 and 3 PASS, so a single-mutation self-test showed
+      # them able to fail exactly never. `donothing` is what fails when the
+      # stale-file pre-creation in `run_block` is removed -- the "redundant
+      # cleanup" deletion that would otherwise reopen the do-nothing hole with
+      # the self-test still green.
+      : > "$WORK/block.sh"
+      ;;
+    alwayspublish)
+      # Publishes an empty file whatever `gh` did -- "I could not look" and
+      # "nothing to report" collapsed into one answer, which is the shape the
+      # whole close guard exists to keep apart.
+      cat > "$WORK/block.sh" <<'BAD'
+rm -f $SCRATCH/pr_linked.txt $SCRATCH/pr_linked.raw
+gh pr view "1" --json closingIssuesReferences \
+  --jq '.closingIssuesReferences[].number' > $SCRATCH/pr_linked.raw || true
+touch $SCRATCH/pr_linked.txt
+BAD
+      ;;
+    *)
+      echo "unknown MUTATION '$MUTATION'"; exit 2 ;;
+  esac
+  echo "mutation: $MUTATION"
 fi
 
 # --- a stubbed gh ------------------------------------------------------------
@@ -110,7 +153,22 @@ STUB
 chmod +x "$WORK/bin/gh"
 
 FAILURES=0
-note_fail() { echo "FAIL [$1]: $2"; FAILURES=$((FAILURES + 1)); }
+FAILED_LABELS=""
+note_fail() {
+  echo "FAIL [$1]: $2"
+  # The extracted block's own stdout and stderr, which were captured and then
+  # thrown away for one round. On a syntax error introduced by editing
+  # `audit-gate.yml`, the gate's only output was a message about the PUBLISH
+  # logic while the real cause -- `syntax error: unexpected end of file` -- sat
+  # unread in a file the EXIT trap then deleted. A guard must name the CAUSE,
+  # not the check.
+  if [ -s "$WORK/out.log" ]; then
+    echo "     the block said:"
+    sed 's/^/       /' "$WORK/out.log"
+  fi
+  FAILURES=$((FAILURES + 1))
+  FAILED_LABELS="$FAILED_LABELS|$1"
+}
 
 LINKED=""
 run_block() {  # $1 = GH_STUB_MODE
@@ -194,12 +252,54 @@ else
 fi
 
 # --- verdict ----------------------------------------------------------------
+# Under a mutation, report the failure SET and stop. The driver below compares
+# it; this pass makes no judgement of its own.
+if [ -n "$MUTATION" ]; then
+  echo "SELF_LABELS=$FAILED_LABELS"
+  exit 0
+fi
+
 if [ "$SELF_TEST" = "1" ]; then
-  if [ "$FAILURES" -eq 0 ]; then
-    echo "SELF-TEST FAILED: the pre-fix block passed this gate, so the gate cannot fail and proves nothing."
+  # Each mutation and the exact set of checks it must break.
+  #
+  # Named rather than counted, and MORE THAN ONE, which is the correction. The
+  # first version of this self-test applied a single mutation and accepted any
+  # non-zero count. Under that mutation checks 1 and 1b fail and checks 2, 3a,
+  # 3b and 3c pass -- so four of the six were never shown able to fail at all,
+  # and a bare `-ne 0` could not tell the difference.
+  #
+  # That was not hypothetical. Deleting the stale-file pre-creation from
+  # `run_block` as redundant cleanup reopens the do-nothing hole this gate
+  # exists to close, and the single-mutation self-test stayed GREEN through it
+  # -- measured, before this was rewritten. `donothing` is the mutation that
+  # goes red on exactly that deletion.
+  #
+  # Asserting the SET rather than a count also means a check that starts or
+  # stops catching something is a red to read, not a number to shrug at.
+  self_fail=0
+  while IFS='=' read -r mutation expected; do
+    [ -n "$mutation" ] || continue
+    out="$(MUTATION="$mutation" bash "$0" 2>&1 || true)"
+    actual="$(printf '%s\n' "$out" | sed -n 's/^SELF_LABELS=//p')"
+    if [ "$actual" != "$expected" ]; then
+      echo "SELF-TEST FAILED [$mutation]: broke a different set of checks than expected."
+      echo "  expected: ${expected:-<none>}"
+      echo "  actual:   ${actual:-<none>}"
+      echo "  Either a check stopped discriminating, or one started catching"
+      echo "  something it did not before. Both need reading, not a re-run."
+      self_fail=1
+    else
+      echo "self-test ok [$mutation] -> fails exactly [${expected#|}]"
+    fi
+  done <<'EXPECTATIONS'
+prefix=|gh fails|gh fails -> guard
+donothing=|gh fails|gh fails -> guard|gh returns nothing|gh returns nothing -> guard|gh returns 317|declared and linked -> guard
+alwayspublish=|gh fails|gh fails -> guard|gh returns 317|declared and linked -> guard|linked but not declared -> guard
+EXPECTATIONS
+  if [ "$self_fail" -ne 0 ]; then
     exit 1
   fi
-  echo "self-test ok: the pre-fix block fails this gate ($FAILURES check(s) red)."
+  echo "self-test ok: every check was observed red under at least one mutation."
   exit 0
 fi
 

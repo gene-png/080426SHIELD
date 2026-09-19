@@ -168,9 +168,13 @@ jobs:
           # then prints "clean -- no closing references (verified against
           # GitHub)" and merges, having verified nothing: precisely the
           # accidental close #182 exists to catch, under the sentence saying
-          # it cannot happen. Measured in a shell on 2026-09-19 -- a failing
-          # command behind `>` leaves the file present and empty, whether or
-          # not it existed beforehand.
+          # it cannot happen. Measured 2026-09-19 in Git Bash (bash 5.2) and in
+          # the Ubuntu runner's `bash -e`, which is the shell this step runs
+          # under: a failing command behind `>` leaves the file present and
+          # empty, whether or not it existed beforehand. The claim is about
+          # POSIX redirection and is NOT asserted for PowerShell, where `>` is
+          # `Out-File` -- naming a date without naming a shell is what D-071
+          # records twice.
           #
           # So the STATUS decides whether the file is published at all. The
           # query writes a scratch path and only a zero exit promotes it; a
