@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.engine import get_job, run_job
@@ -512,8 +512,14 @@ def _run_risk_synthesize_batched(
     requested_by: uuid.UUID,
     client_id: uuid.UUID,
     client_org_name: str | None,
-) -> tuple[list[dict], int, int]:
-    """Run risk_synthesize as concurrent batches. Returns (entries, total, failed).
+) -> tuple[list[dict], int, int, dict[str, int]]:
+    """Run risk_synthesize as concurrent batches.
+
+    Returns `(entries, total, failed, discarded)`. The fourth is #122: the merge
+    below drops any entry that is not an object, and it dropped them with no
+    counter -- so a batch answering with a list of strings contributed nothing
+    and said nothing, and the audit row's `findings` count was as high as if it
+    had contributed everything.
 
     Each batch is a real `run_job` call and therefore writes its own `llm_calls`
     row — N rows per run. That is the honest accounting: N separately-billable
@@ -573,6 +579,7 @@ def _run_risk_synthesize_batched(
     get_job("risk_synthesize")
 
     entries: list[dict] = []
+    discarded: dict[str, int] = {}
     failed = 0
     first_error: Exception | None = None
 
@@ -590,7 +597,18 @@ def _run_risk_synthesize_batched(
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 continue
-            entries.extend(e for e in (data.get("entries") or []) if isinstance(e, dict))
+            for e in data.get("entries") or []:
+                # #122, and it is recorded HERE because this is where the drop
+                # happens. The per-entry loop in `generate` has the same guard,
+                # but by the time a value reaches it this filter has already
+                # removed every non-object -- so a counter there would have sat
+                # at zero forever while the real losses happened one layer up.
+                # CLAUDE.md: find the line that makes it true and put the record
+                # below it.
+                if isinstance(e, dict):
+                    entries.append(e)
+                else:
+                    discarded["not_an_object"] = discarded.get("not_an_object", 0) + 1
 
     _log.info(
         "risk_synthesize_batched",
@@ -599,6 +617,7 @@ def _run_risk_synthesize_batched(
         batches_total=len(batches),
         batches_failed=failed,
         entries=len(entries),
+        discarded_entries=discarded,
     )
 
     if failed == len(batches) and first_error is not None:
@@ -607,7 +626,7 @@ def _run_risk_synthesize_batched(
         with ai_call_boundary(db, llm, purpose="risk_synthesize"):
             raise first_error
 
-    return entries, len(batches), failed
+    return entries, len(batches), failed, discarded
 
 
 @router.post(
@@ -653,15 +672,17 @@ def generate(
     client_org = None if client.legal_name == "(pending intake)" else client.legal_name
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
     # total failure still raises typed, through ai_call_boundary.
-    entries_draft, batches_total, batches_failed = _run_risk_synthesize_batched(
-        db,
-        llm,
-        findings,
-        valid_techniques=sorted(valid_techniques),
-        valid_controls=sorted(valid_controls),
-        requested_by=admin.id,
-        client_id=cid,
-        client_org_name=client_org,
+    entries_draft, batches_total, batches_failed, discarded_in_batches = (
+        _run_risk_synthesize_batched(
+            db,
+            llm,
+            findings,
+            valid_techniques=sorted(valid_techniques),
+            valid_controls=sorted(valid_controls),
+            requested_by=admin.id,
+            client_id=cid,
+            client_org_name=client_org,
+        )
     )
     data = {"entries": entries_draft}
 
@@ -722,6 +743,45 @@ def generate(
     # linkage, no indication any was proposed -- which is #132's whole harm.
     entries_offered_links = 0
     entries_unlinked_after_drops = 0
+    # #122. Entries the model sent that this loop DISCARDED -- keyed by why, so
+    # the audit row names the fault rather than only its size.
+    #
+    # `findings` in the audit row is the INPUT. A run that received 137 findings
+    # and persisted zero entries wrote a row indistinguishable from one that
+    # persisted 137, because nothing ever measured the output. CLAUDE.md: a
+    # success record must be written where the success is; this one was written
+    # where the input is.
+    # Seeded from the BATCH MERGE rather than starting empty: the drops that
+    # happen up there are the same fact as the drops down here, and two separate
+    # maps would let a reader add them up wrong or read one and think it was
+    # the set.
+    discarded_entries: dict[str, int] = dict(discarded_in_batches)
+    # Seeded with what the MERGE already dropped, so this counts what the model
+    # SENT rather than what survived to the loop. Counting only the loop's
+    # iterations would report a smaller input than arrived and hide the merge's
+    # losses inside a number that looks like agreement.
+    #
+    # The identity this buys, and BOTH halves of it are load-bearing:
+    #
+    #     entries_received == entries_total + sum(discarded_entries.values())
+    #
+    # `entries_total`, NOT `entries_written`. The two are equal exactly when
+    # `entries_write_check` says "agreed", and the one interesting state is the
+    # one where they are not: the test that expunges a row before the flush
+    # produces received 2, total 2, written 1, discarded {} -- so the same
+    # sentence written with `entries_written` is false in precisely the run it
+    # would matter in, and this comment said that for one round.
+    #
+    # Every entry the model sent is therefore either counted into the loop or
+    # named in the discard map, and any gap between that and what the DATABASE
+    # holds is a separate fact, reported separately, by the read-back below.
+    # Two claims, not one.
+    #
+    # It is "asserted rather than described" only in the weak sense: the
+    # assertions in `test_risk_register.py` sit under literal equalities that
+    # already fix all three operands, so they are arithmetic on constants.
+    # Tracked as #321 -- the identity is real, the tests do not exercise it.
+    entries_received = sum(discarded_in_batches.values())
 
     def _record_drops(field: str, values: list[str]) -> None:
         seen = dropped_link_values.setdefault(field, [])
@@ -737,7 +797,26 @@ def generate(
             seen.append(rejected)
 
     for raw in data.get("entries", []):
-        if not isinstance(raw, dict) or not raw.get("title"):
+        # Counted from what the LOOP saw, not from `len(...)`. The two agree
+        # today because a non-list `entries` is already refused upstream with a
+        # 502 -- and counting the iterations keeps them agreeing if that ever
+        # stops being true, rather than reporting a length nothing read.
+        entries_received += 1
+        # #122. The false branch EMITS rather than dropping the record. Two
+        # causes, kept apart because they are different things to fix: a
+        # payload shape the prompt did not ask for, and an entry that is
+        # shaped right and has no title to show.
+        if not isinstance(raw, dict):
+            # NOT REACHABLE through the batched path today -- the merge in
+            # `_run_risk_synthesize_batched` filters non-objects out before they
+            # get here, and counts them. Kept, and kept COUNTING, because an
+            # unfiring guard costs one branch while its absence costs a silent
+            # discard the day anything else feeds this loop. Stated so the
+            # zero it reports reads as a decision rather than as evidence.
+            discarded_entries["not_an_object"] = discarded_entries.get("not_an_object", 0) + 1
+            continue
+        if not raw.get("title"):
+            discarded_entries["no_title"] = discarded_entries.get("no_title", 0) + 1
             continue
         lk, lk_bad = _coerce_enum(Likelihood, raw.get("likelihood"))
         _record("likelihood", lk_bad)
@@ -818,6 +897,55 @@ def generate(
             )
         )
 
+    # Counted from the flushed rows, not from the loop.
+    #
+    # ## Blast radius, measured before keeping this
+    #
+    # A tally incremented beside each `db.add` counts INTENTIONS. The
+    # population this read-back protects is "a run whose audit row claims rows
+    # the database does not contain", and **no current writer can produce
+    # one**, measured on this tree rather than assumed: no ORM event listener
+    # touches `RiskEntry` (the only `before_flush` hook guards audit rows), no
+    # trigger exists on `risk_entries` (the only two are on `audit_entries`),
+    # `UUIDPKMixin` defaults to `uuid4` so two adds cannot collide on identity,
+    # and a failing flush RAISES -- which produces no audit row at all rather
+    # than a wrong one.
+    #
+    # It is kept as a RATCHET, and the first draft of this comment justified it
+    # with "something between the add and the flush drops one" stated as a live
+    # hazard. It is not one today. What would make it reachable again: a
+    # `before_flush` listener on `RiskEntry`, a database trigger or rule on
+    # `risk_entries`, a cascade that deletes siblings, or a partial-failure
+    # write path that swallows instead of raising. Each is an ordinary change
+    # somebody could make without touching this file.
+    #
+    # ## And it is pinned, rather than only argued
+    #
+    # A read-back nothing observes is indistinguishable from `entries_written =
+    # entries_total`, and that substitution left every test on this branch
+    # green. So the two counts are COMPARED here and a disagreement is recorded
+    # loudly -- in the log and in the audit row -- which is what
+    # `test_a_row_dropped_between_add_and_flush_is_recorded` constructs, by
+    # installing exactly the `before_flush` listener named above. The ratchet
+    # now has something that fires, and the test that fires it is also the
+    # demonstration that the state is reachable at all.
+    db.flush()
+    entries_written = db.execute(
+        select(func.count()).select_from(RiskEntry).where(RiskEntry.register_id == register.id)
+    ).scalar_one()
+    # Emitted in BOTH states. "They agreed" and "nobody compared" must not be
+    # the same absence -- an audit row with no verdict here would read as the
+    # former and mean the latter.
+    entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    if entries_written != entries_total:
+        _log.error(
+            "risk_register_entries_lost_before_flush",
+            register_id=str(register.id),
+            entries_total=entries_total,
+            entries_written=entries_written,
+            lost=entries_total - entries_written,
+        )
+
     audit(
         db,
         action="risk_register.generated",
@@ -848,6 +976,20 @@ def generate(
             "dropped_link_values": dropped_link_values,
             "entries_offered_links": entries_offered_links,
             "entries_unlinked_after_drops": entries_unlinked_after_drops,
+            # #122. What the run RECEIVED and what it WROTE, side by side, plus
+            # why the difference.
+            #
+            # `entries_received` is counted from the payload rather than from
+            # `findings`: the prompt drafts one entry per finding but a batch
+            # can fail, and reporting the finding count as the input would
+            # hide a lost batch inside a discard number. `entries_written` is
+            # read back from the flushed rows -- the count of what is in the
+            # database, not the count of `db.add` calls, which is the same
+            # distinction D-031 draws for the concurrent case.
+            "entries_received": entries_received,
+            "entries_written": entries_written,
+            "entries_write_check": entries_write_check,
+            "discarded_entries": discarded_entries,
         },
     )
     db.commit()
