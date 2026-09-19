@@ -158,9 +158,19 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
     reintroduced the enumeration the schema exists to avoid, and that list goes
     stale exactly the way the original defect did.
 
-    **Additive, deliberately.** `code`, `message` and `details` are unchanged
-    and in place, so nothing that reads this envelope today breaks. A consumer
-    that wants the typed reason opts in.
+    **"Additive, deliberately" was written here and was false at merge time
+    (#317).** `code`, `message` and `details` are indeed unchanged -- but
+    `SignUpForm.tsx` chose between typed copy and its friendly fallback by
+    testing that `reason` was PRESENT, so adding the key made the fallback
+    unreachable and put "Request validation failed." under the Email field of
+    the public sign-up page. A consumer does not have to opt in to be broken by
+    a new key; it only has to have branched on the key's absence.
+
+    The general rule, since this envelope will grow again: **a field is
+    additive only if no consumer branches on its PRESENCE.** Before adding one,
+    grep the consumers for a presence test rather than a value test -- for this
+    envelope that is `error.reason` / `error.message` in `apps/web/src`. It is a
+    mechanical check and it would have caught this before merge.
 
     `reason` is the single code when every error agrees, and `schema_multiple`
     when they do not; `reasons` always carries the full distinct set. A single

@@ -111,4 +111,72 @@ describe("SignUpForm — open self-registration (D-034)", () => {
     expect(await screen.findByText("Password too weak.")).toBeInTheDocument();
     expect(signInMock).not.toHaveBeenCalled();
   });
+
+  // #317. #307 gave every schema-level 422 a typed `reason`, and the component
+  // chose between typed copy and the friendly fallback by testing that field's
+  // PRESENCE — so the fallback became unreachable and "Request validation
+  // failed." rendered under the Email field on the public sign-up page.
+  //
+  // The reason codes below are written out as literals rather than imported
+  // from the component or from any shared constant. A test that derives its
+  // expected value from the thing it is pinning agrees with it by construction
+  // and cannot fail (#72); these are copied from `schema_reasons()` in
+  // `apps/api/app/exceptions.py`, which is the surface that produces them.
+  const schemaReasonFallback = "schema_string_too_short";
+  const schemaReasonMixed = "schema_multiple";
+
+  it.each([
+    ["a single failing field", schemaReasonFallback],
+    ["several failing fields at once", schemaReasonMixed],
+  ])(
+    "falls back to the friendly prompt for a schema 422 with %s",
+    async (_label, reason) => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          error: { reason, message: "Request validation failed." },
+        }),
+      });
+
+      render(<SignUpForm />);
+      fill();
+      clickCreate();
+
+      // Assert what must APPEAR before what must not: an absence checked while
+      // the handler is still resolving passes vacuously.
+      expect(
+        await screen.findByText(/please double-check your name, email/i),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/request validation failed/i)).toBeNull();
+      expect(signInMock).not.toHaveBeenCalled();
+    },
+  );
+
+  // The other half of the same branch, and it is what keeps the fix honest: a
+  // "repair" that simply deleted the typed-reason branch would satisfy the two
+  // cases above and silently discard every friendly message the API does send.
+  it("still surfaces a typed non-schema rejection's own copy on the email field", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: {
+          reason: "email_domain_unavailable",
+          message: "That domain cannot be used for self-registration.",
+        },
+      }),
+    });
+
+    render(<SignUpForm />);
+    fill();
+    clickCreate();
+
+    expect(
+      await screen.findByText(
+        "That domain cannot be used for self-registration.",
+      ),
+    ).toBeInTheDocument();
+    expect(signInMock).not.toHaveBeenCalled();
+  });
 });

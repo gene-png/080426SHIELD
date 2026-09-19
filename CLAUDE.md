@@ -655,6 +655,40 @@ a real exit code and a real date, and was the minority outcome (D-071).
   names are exact matches on what is stored; aliases are reversals of a
   transformation. Keep them in separate indexes and consult the authoritative one
   first, so an alias can only decide what the real key could not.
+- **A FIELD IS ADDITIVE ONLY IF NO CONSUMER BRANCHES ON ITS PRESENCE.** Adding
+  a key to a shared envelope reads as the safest change there is, and the PR
+  that does it says so: #307 added a typed `reason` to every schema 422 and its
+  docstring promised "additive, deliberately -- a consumer that wants the typed
+  reason opts in". That sentence was false at merge time. `SignUpForm.tsx` chose
+  between typed copy and a friendly fallback by testing `reason`'s PRESENCE, so
+  the new key made the fallback unreachable and put the internal string
+  "Request validation failed." under the Email field of the **public** sign-up
+  page (#317, tier-1, live on `main` for a week).
+
+  A consumer never has to opt in to be broken by a new key. It only has to have
+  branched on the key's ABSENCE — which is what a careful consumer does when the
+  key is optional, so the more defensively it was written the more likely it is
+  to break.
+
+  **The check is mechanical: before adding a field to a shared envelope, grep
+  the consumers for a PRESENCE test rather than a value test.** For the D-016
+  envelope that is `error.reason` and `error.message` across `apps/web/src`;
+  `reason === "..."` is safe, a bare `reason &&` is the defect. Nothing about
+  the new field's own correctness reveals this, so no review of the producing
+  diff can find it — the evidence is entirely in files the PR does not touch.
+
+  Two corollaries, both paid for here:
+
+  - **The comment stating the precondition is what hides the breakage.** The
+    fallback carried "raw schema validation carries no typed reason", which was
+    true when written, was deleted as a fact by #307, and survived as a sentence
+    telling the next reader the branch was sound. This file's
+    narrower-rule-than-the-reader-assumes bullet, arriving from the other
+    direction: not a scope that is too narrow, a precondition that has expired.
+  - **Test both halves of the branch you changed.** A fix keyed on the value can
+    be "repaired" into discarding every friendly message the API does send, and
+    the fallback tests stay green through it. Pin the typed case too.
+
 - **"Uses the same X as the Y path" is a claim to enforce by CALLING X, never by
   reimplementing it.** `_redacted_form` said in its docstring that it used "the
   SAME redactor the egress path uses" and then called `redact_org_name` — one
