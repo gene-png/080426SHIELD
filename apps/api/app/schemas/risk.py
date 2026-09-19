@@ -123,11 +123,12 @@ class RiskRegisterResponse(BaseModel):
     #: which is not the same fact as "nothing was left out", and an empty list
     #: cannot tell them apart.
     #:
-    #: DEFAULTED FALSE, and the direction is the point. `_serialize` sets it
-    #: explicitly on every path, so the default is reached only by a payload
-    #: that predates this field -- which is exactly a register whose exclusions
-    #: were never recorded, so `False` is the TRUE answer there as well as the
-    #: safe one. `CLAUDE.md`: missing data defaults to UNCONFIRMED, never to
+    #: DEFAULTED FALSE, and the direction is the point. NO CURRENT WRITER CAN
+    #: REACH THE DEFAULT: `RiskRegisterResponse` is only ever CONSTRUCTED, in
+    #: `_serialize`, and nothing in `apps/api` deserializes or replays a stored
+    #: payload into it. It is a RATCHET against a future writer that forgets
+    #: the field, and `False` is the right value for one because
+    #: `CLAUDE.md` says missing data defaults to UNCONFIRMED, never to
     #: confirmed. A `True` default would have let any future writer that
     #: forgets the field certify a clean input set it never looked at.
     excluded_inputs_recorded: bool = False

@@ -330,8 +330,15 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
   });
 
   it("shows no banner before anything is generated", async () => {
-    // `latest` returns `[]` for a pre-existing register — the stated #240
-    // limitation. Pinned so the limitation is visible rather than discovered.
+    // There is no #240 limitation left to pin: `latest` returns the persisted
+    // set. This comment used to say it did not, and claimed this test pinned
+    // that limitation — so a reader trying to remove the limitation expected
+    // this test to stand in their way, and it would not have.
+    //
+    // What it actually covers: a register whose `excluded_inputs` is empty
+    // renders no banner. The "nothing generated yet" case is the
+    // `mockResolvedValue(null)` test above; this one mocks a register, so the
+    // name below overstates it.
     fetchRiskRegisterLatest.mockResolvedValue(
       register({ excluded_inputs: [] }),
     );

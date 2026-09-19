@@ -105,9 +105,15 @@ export interface RiskRegister {
    * resolve, and a key it simply omitted. These count the OUTCOME, so they are
    * non-zero under either.
    *
-   * Unlike `excluded_inputs` above, these are DERIVED server-side from the
-   * stored entries rather than being a property of the generate call, so they
-   * are correct on `GET .../register/latest` too and survive a reload.
+   * DERIVED server-side from the stored entries rather than being a property
+   * of the generate call, so they are correct on `GET .../register/latest` too
+   * and survive a reload.
+   *
+   * This used to open "Unlike `excluded_inputs` above" — which asserted, by
+   * CONTRAST, the three things the docblock above now denies. That is how it
+   * survived a sweep: it never says "not persisted", so a grep phrased around
+   * the claim's own vocabulary misses it. `excluded_inputs` is persisted and
+   * derived now too.
    */
   entries_total: number;
   entries_without_tier: number;

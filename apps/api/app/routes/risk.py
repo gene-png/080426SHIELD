@@ -996,10 +996,14 @@ def generate(
     # `g.not_finalized` is the full present-but-unapproved set; the refusal
     # above already cleared the ones that block. Whatever remains contributed
     # nothing to this register, and the register says so.
+    # `excluded_inputs` is NOT passed in. `db.commit()` above has already
+    # persisted the snapshot, so `_serialize` reads the same bytes `latest`
+    # will read next week -- one answer instead of two kept in step. That also
+    # makes the generate assertions cover write -> persist -> read end to end,
+    # which is what closed #244 instance 1's write half.
     return _serialize(
         db,
         register,
-        excluded_inputs=g.not_finalized,
         batches_total=batches_total,
         batches_failed=batches_failed,
     )
@@ -1137,6 +1141,32 @@ def export(
         # The pre-0047 DRAFT-input register -- the hazard #240 opens with -- is
         # NOT caught here. It has NULL provenance and is caught by the branch
         # above. Two different registers; two different branches.
+        # A dict with no `inputs` key is NOT "recorded, all approved" -- it is a
+        # fourth state the three enumerated above do not cover, and
+        # `(_prov.get("inputs") or [])` would land it silently in the
+        # reassuring bucket. `seed_demo.py` is currently the only writer of
+        # that shape (it records `{"excluded": []}` and omits `inputs`
+        # deliberately, because it does not go through `_provenance_snapshot`
+        # and a hand-written input list would be a second, drifting answer).
+        # Today the seeded register is finalized, so it exports through the
+        # carve-out above either way and the blast radius is zero -- what makes
+        # this reachable again is one line: anyone who stops finalizing it, or
+        # seeds a second unfinalized one.
+        #
+        # Do NOT "fix" a caller by writing `"inputs": []` instead; an empty
+        # list is exactly as vacuous and loses the distinction.
+        if "inputs" not in _prov:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "register_predates_provenance",
+                    "message": (
+                        "This register records which assessments were excluded but not "
+                        "which were used, so its inputs cannot be certified. Re-generate "
+                        "it before exporting."
+                    ),
+                },
+            )
         unapproved = [
             f"{i.get('kind')} v{i.get('version')} ({i.get('status')})"
             for i in (_prov.get("inputs") or [])
@@ -1240,7 +1270,6 @@ def _serialize(
     db: Session,
     register: RiskRegister,
     *,
-    excluded_inputs: list[str] | None = None,
     batches_total: int = 0,
     batches_failed: int = 0,
 ) -> RiskRegisterResponse:
@@ -1287,13 +1316,22 @@ def _serialize(
     # before provenance existed had a clean input set, which is a false
     # assurance about the one population that cannot be checked.
     #
-    # An explicit `excluded_inputs=` still wins, for the generate response:
-    # `g.not_finalized` there is the live set the caller just computed, and it
-    # and the snapshot are written in the same transaction.
+    # There is NO explicit `excluded_inputs=` override any more, and removing it
+    # is the fix rather than a tidy-up. The generate handler used to pass
+    # `g.not_finalized` while `_provenance_snapshot` stored the same expression
+    # -- two answers to one question, kept in step by hand. So every assertion
+    # on the generate response was green off the parameter and NOTHING read the
+    # stored value back: the third argument to `_provenance_snapshot` was
+    # replaceable with `[]` with the suite green, and the resulting reload
+    # reported `excluded_inputs: []` with `recorded=True` -- a positive
+    # certificate that the server looked and nothing was withheld, which is
+    # worse than the `[]` #244 was filed for.
+    #
+    # `db.commit()` runs before this call, so the snapshot is already readable.
+    # Derivation over synchronization, and the existing generate assertions now
+    # cover write -> persist -> read for free.
     stored = register.provenance
-    if excluded_inputs is not None:
-        resolved_excluded, excluded_recorded = list(excluded_inputs), True
-    elif isinstance(stored, dict) and "excluded" in stored:
+    if isinstance(stored, dict) and "excluded" in stored:
         resolved_excluded, excluded_recorded = list(stored["excluded"] or []), True
     else:
         resolved_excluded, excluded_recorded = [], False

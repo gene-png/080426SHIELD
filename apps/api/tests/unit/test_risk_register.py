@@ -1538,13 +1538,26 @@ def test_the_withheld_set_survives_a_reload(app_client) -> None:
     passes the list in directly, so it is green whether or not `_serialize`
     reads anything back.
 
-    The stored provenance is MUTATED rather than produced at generate time, for
-    the same reason `test_export_refuses_a_register_built_from_unapproved_work`
-    does it: `_provenance_snapshot` records only what `_finalized_for_synthesis`
-    returns, and that resolver filters on approved/released, so no register
-    generated today carries a non-empty `excluded`. Writing the row is building
-    the WORLD; the step under test is the read-back, and the test does not
-    perform it.
+    The stored provenance is MUTATED here rather than produced at generate.
+    **An earlier version of this docstring justified that with "the resolver
+    filters on approved/released, so no register generated today carries a
+    non-empty `excluded`", and that is FALSE.** It is true of `inputs`;
+    `excluded` is a separate argument sourced from `g.not_finalized` and passes
+    through no resolver at all --
+    `test_an_unapproved_OPTIONAL_input_does_not_block_generation` generates
+    exactly such a register. The sentence was imported wholesale from
+    `test_export_refuses_a_register_built_from_unapproved_work`, where it IS
+    true, and in doing so argued away the test that would have closed the loop.
+
+    The real reason to keep this one is that it pins the READ in isolation, on
+    a value no generate produced -- two exact literals that appear nowhere else
+    in the pairing, so it cannot be satisfied by `inputs`, by a wholesale dict
+    (which fails `list[str]` validation) or by a stale copy. Writing the row is
+    building the WORLD; the step under test is the read-back.
+
+    The WRITE half is covered by
+    `test_the_withheld_set_is_persisted_by_generate_not_just_returned`, which
+    is the one the false sentence talked me out of.
     """
     c, provider = app_client
     bearer, cid = _admin(c)
@@ -1620,3 +1633,51 @@ def test_a_register_that_predates_provenance_says_nobody_looked(app_client) -> N
         "them is about the assessments"
     )
     assert body["excluded_inputs"] == []
+
+
+@pytest.mark.unit
+def test_the_withheld_set_is_persisted_by_generate_not_just_returned(app_client) -> None:
+    """The WRITE half, which had no test and whose absence was argued for.
+
+    `generate` used to compute `g.not_finalized`, store it via
+    `_provenance_snapshot`, AND pass the same expression to `_serialize`. Two
+    answers to one question. Every assertion on the generate response was green
+    off the parameter, so the third argument to `_provenance_snapshot` was
+    replaceable with `[]` and nothing went red — and the resulting reload
+    reported `excluded_inputs: []` with `excluded_inputs_recorded=True`. A
+    positive certificate that the server looked and nothing was withheld is
+    WORSE than the empty list #244 was filed for.
+
+    `_serialize` no longer takes the parameter, so this asserts the same
+    property twice over: the generate response is itself a read-back, and
+    `latest` reads it again in a new request.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    # A THIRD assessment, started and not approved. CSF here, because ATT&CK +
+    # ZT already satisfy the unlock rule without it -- so generation proceeds
+    # and the CSF assessment is withheld and NAMED. Same setup as
+    # `test_an_unapproved_OPTIONAL_input_does_not_block_generation`.
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h)
+
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    gen = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert gen.status_code == 201, gen.text
+    withheld = gen.json()["excluded_inputs"]
+    assert withheld, (
+        "this test needs a run that actually withheld something -- if the "
+        "fixture stopped producing an unfinalized input it proves nothing"
+    )
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    assert r.json()["excluded_inputs"] == withheld, (
+        "generate reported a withheld set that was never STORED -- the "
+        "snapshot's third argument is not carrying it"
+    )
+    assert r.json()["excluded_inputs_recorded"] is True
