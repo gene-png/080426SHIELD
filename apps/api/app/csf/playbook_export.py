@@ -51,8 +51,12 @@ def _autofit(ws: Any, *, from_row: int = 1) -> None:
 #: -- the page anyone pastes is the scorecard or the roadmap table, not page 1
 #: of ~25 -- so #294 carried it to the page. Three mechanisms, because there is
 #: no shared one: a reportlab `onPage=` canvas callback, a docx section footer,
-#: and a frozen worksheet row (NOT `oddHeader`, which is print-only and
-#: invisible to someone reading the file on screen).
+#: and a frozen worksheet row PLUS `print_title_rows`. A workbook needs both:
+#: freezing is a SCREEN property, `print_title_rows` a PRINT one, and neither
+#: covers the other. `oddHeader` is the wrong answer for the screen half --
+#: print-only, invisible to someone reading the file -- which is true, and for
+#: one round was written down as if it settled the whole question, leaving the
+#: PRINT half uncovered by anything at all.
 #:
 #: The cover paragraph is deliberately kept alongside the per-page stamp. It is
 #: the prominent one, and a footer a reader has stopped seeing by page three is
@@ -93,13 +97,21 @@ _BANNER_FILL = {False: "FFFDEBEB", True: "FFEEF2F7"}
 
 
 def _banner(ws: Any, approved: bool) -> None:
-    """Row 1 of a data sheet, frozen by `_header` (#294).
+    """Row 1 of a data sheet, frozen and print-repeated by `_header` (#294).
 
-    A workbook has no page, so "on every page" becomes "on screen wherever the
-    reader has scrolled to". `ws.oddHeader` is the format's own answer and is
-    the wrong one here: it renders only when the sheet is PRINTED, so the
-    reader who opens the file -- which is what happens to a workbook pasted
-    into a deck or mailed on -- sees nothing at all.
+    A workbook has no page, so "on every page" is two claims, not one, and
+    `_header` answers them separately:
+
+    * **on screen**, wherever the reader has scrolled to -> `freeze_panes`.
+    * **when printed**, on every sheet of paper -> `print_title_rows`.
+
+    `ws.oddHeader` is the format's own answer and covers only the second. It
+    renders nothing to the reader who OPENS the file -- which is what happens
+    to a workbook pasted into a deck or mailed on -- so it cannot stand in for
+    the freeze. That is correct and it is not the whole question: for one round
+    this docstring made the case against `oddHeader` and stopped there, and the
+    print half went uncovered under a paragraph that reads as having settled
+    it.
     """
     from openpyxl.styles import Font, PatternFill
 
@@ -161,6 +173,18 @@ def render_xlsx(
         # read that is also a write. Caught by `test_playbook_export_content`,
         # which reads the Action Plan by row.
         ws.freeze_panes = f"A{row + 1}"
+        # Freezing is a SCREEN property and nothing else. A printed workbook
+        # carries the banner on page 1 and no others, so the stamp survives
+        # three of #277's four modes and silently drops the fourth -- and this
+        # block's own comment, in arguing correctly against `oddHeader`,
+        # settled the question in a way that made the gap invisible: it names
+        # print as the thing `oddHeader` gets wrong, then leaves print
+        # uncovered by anything else.
+        #
+        # `print_title_rows` is the format's answer for the repeat-on-every-
+        # printed-page half. Derived from the same `row` as the freeze, so the
+        # two cannot come to disagree about which rows are the stamp.
+        ws.print_title_rows = f"1:{row}"
 
     ws = wb.active
     ws.title = "Enterprise Profile"

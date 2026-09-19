@@ -449,6 +449,49 @@ def test_every_data_sheet_freezes_its_banner() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("approved", [False, True])
+def test_every_data_sheet_repeats_its_banner_when_printed(approved: bool) -> None:
+    """Freezing is a SCREEN property. Printed, it is worth nothing.
+
+    #277 argued the stamp from four survival modes -- opened, PRINTED,
+    re-saved, pasted into a deck -- and the workbook mechanism covered three of
+    them. A printed profile is ~4 sheets of paper and the banner appeared on
+    the first; pages 2 onward are an unmarked table of client scores, which is
+    the artefact the issue is about.
+
+    Both states, because a stamp keyed on the wrong side of the boolean would
+    leave one of them silently unmarked and the other correct.
+
+    `print_title_rows` is asserted against the FREEZE rather than against a
+    literal `"1:2"`: the two describe the same rows and the defect available
+    here is them disagreeing, so a literal would pin the current layout instead
+    of the invariant. It is read back from a saved-and-reloaded workbook, so it
+    pins what openpyxl actually WRITES -- print titles are stored as a defined
+    name, not as a sheet attribute, and an assertion against the live object
+    would pass over a workbook that carries none.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(
+        io.BytesIO(_render("render_xlsx", approved=approved, extra={"tier_profiles": {}}))
+    )
+    for ws in wb.worksheets:
+        if ws.title == "About":
+            continue
+        frozen_below = int(str(ws.freeze_panes)[1:])
+        # openpyxl stores print titles as an ABSOLUTE defined name, so this
+        # reads back "$1:$2" rather than "1:2". Normalised rather than matched
+        # literally: the `$` is the format's, not ours, and pinning it would
+        # make this test about openpyxl's spelling instead of about the stamp.
+        printed = str(ws.print_title_rows or "").replace("$", "")
+        assert printed == f"1:{frozen_below - 1}", (
+            f"sheet {ws.title!r} repeats {printed or '<nothing>'!r} on each "
+            f"printed page but freezes rows 1:{frozen_below - 1} on screen — "
+            f"the stamp survives being opened and not being printed."
+        )
+
+
+@pytest.mark.unit
 def test_the_banner_leaves_no_gap_above_the_data() -> None:
     """The frozen row must be the first DATA row, not a blank one.
 
