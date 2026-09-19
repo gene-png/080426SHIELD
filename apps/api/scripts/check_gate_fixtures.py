@@ -90,6 +90,26 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "close_guard_linked_file.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Its evidence is INTERNAL, and is the strongest of the three shell gates. "
+        "It does not restate the workflow: it EXTRACTS the collect block out of "
+        "`audit-gate.yml` by markers and refuses to run if it does not find "
+        "exactly one, so it goes red when the workflow changes rather than "
+        "agreeing with a copy of itself forever. It then stubs `gh`, drives the "
+        "REAL close guard, and asserts the VERDICT in three states -- the query "
+        "fails, the query returns nothing, the query returns numbers -- because "
+        "the file's presence only matters through what the guard does with it. "
+        "It is also the only shell gate here carrying a `--self-test`, which "
+        "runs THREE mutations (`prefix`, `donothing`, `alwayspublish`), each "
+        "pinned to an exact expected failure-label set. That shape is the entry's "
+        "real content: a single mutation asserting any-non-zero passed while the "
+        "`|| true` defect was back in place, and two of the three checks were "
+        "shown able to fail exactly never. The other two shell gates below have "
+        "no `--self-test` at all, so a harness-cannot-fail defect in either is "
+        "still invisible -- which is why this is a coverage statement and not a "
+        "clean bill of health."
+    ),
     "prettier_hook.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Covers both states internally via `expect_ok` and `expect_refusal` "
