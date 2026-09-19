@@ -161,8 +161,13 @@ Two are worth your attention rather than the queue:
 
 ### Still yours, unchanged from the last handoff
 
-1. **244's ownership question** — who owns `apps/web/src/app/**` and the
-   dashboard error surfaces. Flagged three times now.
+1. **ANSWERED 2026-09-19 — no longer yours.** `apps/web/src/app/**` and the
+   dashboard error surfaces belong to whichever track owns the API surface
+   the page reads; dashboards go to the service track that produces their
+   numbers. Recorded as a comment on #244 and landing in `CLAUDE.md` via
+   PR #337, alongside the half that closes the boundary — "the disclosure
+   reaches a screen" is part of the definition of done for any PR adding a
+   provenance field. The gate that makes it checkable is #336.
 2. **220** — `ecdsa` wants a named acceptance: a human name and a date.
 3. **The Dependabot gate.** `Adversarial audit recorded` structurally cannot pass
    a bot-authored PR, so #147, #148, #149 and #319 are red by construction. This
@@ -352,14 +357,14 @@ UNCONFIRMED. The web component now DERIVES the banner instead of holding a copy
   have opened a PR to fix what #295 already ships.
 - **Instance 3 is already fixed**, by #234. Only test references to the string
   remain.
-- **The issue's own suggested resolution is a question for you**, unanswered:
+- **The issue's own suggested resolution — ANSWERED 2026-09-19** (it read):
   *"Decide who owns `apps/web/src/app/**` and the dashboard error surfaces."*
   That is why instance 2 keeps recurring rather than why it exists. #316
   deliberately does not pre-empt it.
 
 ### Decisions only you can make
 
-1. **244's ownership question**, above. Flagged twice now.
+1. ~~244's ownership question~~ — **answered 2026-09-19**, see above.
 2. **220** — `ecdsa` wants a named acceptance: a human name and a date, which an
    agent must not supply. Draft records are in the issue's comments, deliberately
    unsigned. The recommended route is PyJWT rather than a Dockerfile uninstall.
