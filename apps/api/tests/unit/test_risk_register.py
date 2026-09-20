@@ -1867,6 +1867,18 @@ def _seed_csf_answer_at_tier(c, bearer: str, cid: str, *, tier: int) -> str:
     ans = latest["answers"][0]
     r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": tier})
     assert r.status_code == 200, r.text
+
+    # A SECOND subcategory, deliberately at tier 1 -- below every target the
+    # intake schema allows (`ge=2`). It exists so the finding set is never
+    # EMPTY, which is what lets a `not in` assertion mean "this code was
+    # excluded" rather than "nothing was produced".
+    #
+    # Measured, and this is why it is here: without it,
+    # `test_a_control_at_the_clients_target_is_not_a_finding` asserted
+    # `code not in []` and passed over a run that produced no findings at all.
+    floor = latest["answers"][1]
+    r2 = c.patch(f"/csf/answers/{floor['id']}", headers=h, json={"maturity_tier": 1})
+    assert r2.status_code == 200, r2.text
     ap = c.post(f"/csf/assessments/{a.json()['id']}/approve", headers=h)
     assert ap.status_code == 200, ap.text
     return ans["subcategory_code"]
@@ -1930,6 +1942,16 @@ def _set_csf_target(cid: str, tier: object) -> None:
     db.commit()
 
 
+def _all_findings(cid: str) -> list[dict]:
+    """Every finding, regardless of kind -- so a `not in` assertion can prove
+    the thing is EXCLUDED rather than that nothing was produced."""
+    from app.routes.risk import _gather_findings
+
+    db = _session()
+    findings, _t, _c, _targets = _gather_findings(db, uuid.UUID(cid))
+    return findings
+
+
 def _csf_finding_codes(cid: str) -> list[str]:
     from app.routes.risk import _gather_findings
 
@@ -1968,6 +1990,14 @@ def test_a_control_at_the_clients_target_is_not_a_finding(app_client) -> None:
     # reasoning is invisible at the site, so it is asserted rather than
     # inferred.
     assert _csf_targets(cid) == {"target": 2, "source": "client"}
+    # APPEAR BEFORE ABSENT. `not in` is satisfied by an EMPTY list, so it
+    # would pass over a `_gather_findings` that returned nothing at all --
+    # measured, by forcing `return []` and watching this test stay green while
+    # its positive twin went red. The ATT&CK gap and the stage-1 ZT capability
+    # that `_seed_attack_and_zt` creates are unaffected by the CSF target, so
+    # findings MUST exist; what must not is this code among them.
+    all_codes = [f["source_id"] for f in _all_findings(cid)]
+    assert all_codes, "no findings at all -- the absence below would be vacuous"
     assert code not in _csf_finding_codes(cid), (
         "a control AT the client's engagement target is not a gap; it was "
         "reported as one because the comparison used a hardcoded tier 3"
@@ -2203,6 +2233,9 @@ def test_a_zt_capability_at_the_client_target_is_not_a_finding(app_client) -> No
 
     _set_zt_target(cid, 2)
     assert _zt_targets(cid) == {"target": 2, "source": "client"}
+    # APPEAR BEFORE ABSENT -- same reasoning as the CSF twin. The ATT&CK gap
+    # is independent of the ZT target, so the finding set cannot be empty.
+    assert _all_findings(cid), "no findings at all -- the absence below would be vacuous"
     assert capability not in _zt_finding_codes(cid), (
         "a capability AT the client's target is not a gap; the old hardcoded 3 "
         "reported it as one"
