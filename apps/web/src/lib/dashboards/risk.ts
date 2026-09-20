@@ -49,6 +49,15 @@ export interface RiskDashboardData {
    * certificate out of absence, which is the #244 shape.
    */
   entries_without_tier?: number;
+  /**
+   * #313. The axis and action breakdowns filter INDEPENDENTLY of the tier one,
+   * so one count cannot explain all three. An entry can carry a valid tier and
+   * an unresolvable axis, and is then in the headline, in the matrix, in the
+   * tier counts, and absent from `axis_counts` -- which the tier count reports
+   * as zero.
+   */
+  entries_without_axis?: number;
+  entries_without_action?: number;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe

@@ -210,6 +210,15 @@ export function RiskDashboard({
   // field existed: nobody looked. `0` is looked-and-nothing-withheld, which
   // is silence. Anything else is the disagreement and gets announced.
   const withheld = data.entries_without_tier;
+  // #313. Each breakdown filters independently, so each gets its own count and
+  // the banner names WHICH are affected. A single number silently certified
+  // the other two: an entry with a valid tier and an unresolvable axis left
+  // this at 0 while `axis_counts` summed to fewer than the headline.
+  const gaps: Array<[string, number]> = [
+    ["the 5x5 matrix and the tier counts", data.entries_without_tier ?? 0],
+    ["the axis breakdown", data.entries_without_axis ?? 0],
+    ["the action breakdown", data.entries_without_action ?? 0],
+  ].filter(([, n]) => (n as number) > 0) as Array<[string, number]>;
   const withheldNote =
     withheld === undefined ? (
       <span>
@@ -217,15 +226,22 @@ export function RiskDashboard({
         <span className="font-semibold">not recorded</span> for this register
         version. Regenerate it to find out.
       </span>
-    ) : withheld > 0 ? (
+    ) : gaps.length > 0 ? (
       <span>
         <span className="font-semibold">
-          {withheld} of {data.total_entries} entries have no likelihood, impact
-          or tier
-        </span>
-        , so they are missing from the matrix and every breakdown below while
-        still counting toward Open risks. That is why the tiers sum to fewer
-        than the headline.
+          Some entries are counted in Open risks and missing from a breakdown
+          below.
+        </span>{" "}
+        Of {data.total_entries} entries:{" "}
+        {gaps.map(([label, n], i) => (
+          <span key={label}>
+            {i > 0 ? "; " : ""}
+            {n} are absent from {label}
+          </span>
+        ))}
+        . Each is counted separately because each breakdown filters
+        independently — an entry can carry a valid tier and still be missing
+        from the axis chart.
       </span>
     ) : null;
   return (

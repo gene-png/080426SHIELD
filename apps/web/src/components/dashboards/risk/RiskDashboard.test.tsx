@@ -74,6 +74,54 @@ describe("RiskDashboard withheld-entry disclosure (#313)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/12/);
   });
 
+  it("does not stay silent when the gap is in the AXIS breakdown", () => {
+    // THE FALSE ALL-CLEAR. The first version derived ONE count, from the tier
+    // filter, and claimed the entries were missing from "every breakdown".
+    // `tiers`, `axes` and `actions` filter INDEPENDENTLY, and `_coerce_enum`
+    // returns `(None, raw)` for any value `RiskAxis` does not have -- so a
+    // model answering "mitigation" produces an entry with a VALID tier and no
+    // axis.
+    //
+    // That entry left `entries_without_tier` at 0, so the banner stayed silent
+    // while `axis_counts` summed to fewer than the headline: the original #313
+    // defect, under a disclosure certifying it did not exist. Silence as a
+    // false all-clear is the more expensive direction.
+    render(
+      <RiskDashboard
+        data={data({
+          total_entries: 10,
+          entries_without_tier: 0,
+          entries_without_axis: 1,
+          entries_without_action: 0,
+        })}
+      />,
+    );
+
+    const note = screen.getByTestId("risk-entries-without-tier");
+    expect(note).toHaveTextContent("1 are absent from the axis breakdown");
+    // And it must NOT claim the tier counts are affected, because they are not.
+    expect(note).not.toHaveTextContent("absent from the 5x5 matrix");
+  });
+
+  it("names every affected breakdown, not just the first", () => {
+    render(
+      <RiskDashboard
+        data={data({
+          total_entries: 10,
+          entries_without_tier: 2,
+          entries_without_axis: 1,
+          entries_without_action: 3,
+        })}
+      />,
+    );
+    const note = screen.getByTestId("risk-entries-without-tier");
+    expect(note).toHaveTextContent(
+      "2 are absent from the 5x5 matrix and the tier counts",
+    );
+    expect(note).toHaveTextContent("1 are absent from the axis breakdown");
+    expect(note).toHaveTextContent("3 are absent from the action breakdown");
+  });
+
   it("stays silent when every entry is accounted for", () => {
     // THE OTHER HALF. A banner that always renders is not a disclosure, it is
     // furniture, and a reader learns to skip it -- which is worse than no

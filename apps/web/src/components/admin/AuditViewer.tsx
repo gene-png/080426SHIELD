@@ -146,18 +146,49 @@ export function AuditViewer(): JSX.Element {
     if (pairs.length === 0) {
       return <span className="text-ink-tertiary italic">none recorded</span>;
     }
+    // TRUNCATED, and the cap is not cosmetic.
+    //
+    // `routes/risk.py`'s audit row carries `rejected_enum_values` and
+    // `dropped_link_values` -- RAW MODEL-AUTHORED STRINGS. `_coerce_enum`
+    // ends `return None, raw` with `raw = str(value).strip()` and no length
+    // bound, and `_record` dedupes without capping either the string or the
+    // list. The model was fed the client's own technique and control
+    // inventory, so a client-specific name that fails to resolve is stored
+    // verbatim.
+    //
+    // CSF and ZT hold the opposite constraint and TEST it --
+    // `test_csf_run_ai_audit_row_carries_counts_but_no_model_content` asserts
+    // client content is absent, on the stated ground that the audit row is a
+    // durable store outside the artifact mechanism. Whether `risk.py` is
+    // exempt is a decision nobody has written down; it is filed, not settled
+    // here.
+    //
+    // What this component can do is refuse to be the surface that makes an
+    // unbounded blob a layout problem. The cap is a render boundary, not a
+    // fix: the write side is where the constraint belongs.
+    const MAX_VALUE = 200;
+    const MAX_PAIRS = 24;
+    const shown = pairs.slice(0, MAX_PAIRS);
+    const render = (v: unknown): string => {
+      const text =
+        typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+      return text.length > MAX_VALUE
+        ? `${text.slice(0, MAX_VALUE)}… (${text.length} chars)`
+        : text;
+    };
     return (
       <dl className="font-mono text-xs text-ink-secondary">
-        {pairs.map(([k, v]) => (
+        {shown.map(([k, v]) => (
           <div key={k} className="flex gap-1">
             <dt className="text-ink-tertiary">{k}:</dt>
-            <dd className="break-all">
-              {typeof v === "object" && v !== null
-                ? JSON.stringify(v)
-                : String(v)}
-            </dd>
+            <dd className="break-all">{render(v)}</dd>
           </div>
         ))}
+        {pairs.length > MAX_PAIRS ? (
+          <div className="text-ink-tertiary italic">
+            and {pairs.length - MAX_PAIRS} more keys not shown
+          </div>
+        ) : null}
       </dl>
     );
   }

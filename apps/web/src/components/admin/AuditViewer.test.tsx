@@ -235,3 +235,38 @@ describe("AuditViewer details payload (#322)", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("AuditViewer details truncation (#322)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("caps a long value rather than letting it set the row height", async () => {
+    // `routes/risk.py` stores RAW model-authored strings in `details`
+    // (`rejected_enum_values`, `dropped_link_values`) with no length bound --
+    // `_coerce_enum` ends `return None, raw` and `_record` dedupes without
+    // capping. This component is the surface that would otherwise render one.
+    mockEntries([
+      entry({
+        action: "risk_register.generated",
+        details: { rejected_enum_values: { likelihood: ["x".repeat(500)] } },
+      }),
+    ]);
+    renderAuditEntries();
+
+    expect(await screen.findByText(/rejected_enum_values/)).toBeInTheDocument();
+    expect(screen.getByText(/\(\d+ chars\)/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(new RegExp("x".repeat(300))),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says how many keys it did not show", async () => {
+    const many: Record<string, unknown> = {};
+    for (let i = 0; i < 40; i += 1) many[`k${i}`] = i;
+    mockEntries([entry({ action: "risk_register.generated", details: many })]);
+    renderAuditEntries();
+
+    expect(await screen.findByText(/more keys not shown/)).toBeInTheDocument();
+  });
+});

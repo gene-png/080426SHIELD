@@ -306,7 +306,21 @@ def test_the_client_dashboard_discloses_entries_missing_from_every_breakdown(
         .first()
     )
     assert victim is not None, "no entry to untier"
+    # NULL ALL THREE, because the writer cannot produce tier-without-them.
+    #
+    # `routes/risk.py` sets `tier = tier_for(lk, im).value if (lk is not None
+    # and im is not None) else None` -- so a null tier means likelihood or
+    # impact was null too, and the row is therefore also absent from `pairs`
+    # and the matrix. Nulling ONLY the tier builds a row that is missing from
+    # the tier counts and PRESENT in the matrix: the one state the application
+    # cannot reach, and the one where this dashboard's own matrix claim is
+    # false for its own fixture.
+    #
+    # A double that cannot express the coupling is a double that tests a
+    # different system.
     victim.tier = None
+    victim.likelihood = None
+    victim.impact = None
     db.add(victim)
     db.commit()
     db.close()

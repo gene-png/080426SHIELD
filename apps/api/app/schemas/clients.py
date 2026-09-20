@@ -460,6 +460,13 @@ class RiskDashboardResponse(BaseModel):
     #: construction site supplies it; the web type is optional so a register
     #: serialized before this field renders NOT RECORDED rather than silence.
     entries_without_tier: int
+    #: #313. The axis and action breakdowns filter INDEPENDENTLY of the tier
+    #: one, so one count cannot explain all three. An entry can carry a valid
+    #: tier and an unresolvable axis -- `_coerce_enum` returns `(None, raw)`
+    #: for anything `RiskAxis` does not have -- and it is then in the headline,
+    #: in the matrix, in the tier counts, and absent from `axis_counts`.
+    entries_without_axis: int
+    entries_without_action: int
     critical_count: int
     high_count: int
     tier_counts: dict[str, int]
