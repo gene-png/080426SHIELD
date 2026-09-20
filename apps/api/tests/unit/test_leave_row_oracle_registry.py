@@ -154,8 +154,14 @@ def test_an_unrecognised_argument_cannot_look(argv) -> None:
     [["leave_row_oracle.py"], ["leave_row_oracle.py", "--check-registry"]],
     ids=["report", "check-registry"],
 )
-def test_both_real_modes_reach_the_work(argv, monkeypatch) -> None:
+def test_both_real_arguments_are_accepted(argv, monkeypatch) -> None:
     """THE PASSING HALF. A guard observed only firing is not observed.
+
+    RENAMED from "both real modes reach the work", which was wider than what
+    this establishes. The two modes diverge at the dispatch, which is AFTER
+    `leave_rows()` -- so the stub raises before the branch is evaluated and
+    the two parametrizations execute byte-identical code. Two names over one
+    path. What it proves is ACCEPTANCE; routing is the next test's job.
 
     Proves the argument is RECOGNISED without letting either mode run: the
     first thing `main` does after the dispatch is call `leave_rows()`, so
@@ -187,3 +193,37 @@ def test_both_real_modes_reach_the_work(argv, monkeypatch) -> None:
     monkeypatch.setattr(oracle, "leave_rows", _boom)
     with pytest.raises(_Reached):
         oracle.main(argv)
+
+
+@pytest.mark.unit
+def test_the_registry_argument_actually_routes_to_the_registry_checks(monkeypatch) -> None:
+    """THE ROUTING, which nothing covered.
+
+    `test_the_real_registry_is_currently_complete` calls `check_registry(rows)`
+    DIRECTLY and never touches `main`, so no test asserted that
+    `--check-registry` reaches it. `CLAUDE.md`: the tell is that a test imports
+    the thing it is defending rather than calling what reaches it.
+
+    Why it matters concretely: the flag was TWO independent literals for one
+    round -- the guard's allow-list and the dispatch. Rename the dispatch alone
+    and `--check-registry` is accepted by the guard, matches nothing, falls to
+    the REPORT path and returns 0, with CI's registry step green having run
+    neither check. Every other test in this file stays green through that.
+
+    Both checks are asserted, not just one: `main` returns `max(registry,
+    labels)`, so stubbing only the first would let the second be dropped.
+    """
+    import scripts.leave_row_oracle as oracle
+
+    called = []
+    monkeypatch.setattr(oracle, "leave_rows", lambda: ["a-row"])
+    monkeypatch.setattr(
+        oracle, "check_registry", lambda rows: called.append(("registry", rows)) or 0
+    )
+    monkeypatch.setattr(oracle, "check_labels", lambda: called.append(("labels",)) or 0)
+
+    assert oracle.main(["leave_row_oracle.py", "--check-registry"]) == 0
+    assert [c[0] for c in called] == ["registry", "labels"], (
+        "the registry argument must route to BOTH checks; got " f"{called}"
+    )
+    assert called[0][1] == ["a-row"], "check_registry must receive the rows main read"

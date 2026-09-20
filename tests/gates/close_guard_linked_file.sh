@@ -42,16 +42,25 @@ SELF_TEST=0
 # for `--self-test` -- a flag it does not have, reached for because the gate
 # beside it DOES have one. The trap is aimed at careful people: the instinct
 # to verify was correct and the reward was a false pass.
-case "${1:-}" in
-  "") ;;
-  --self-test) SELF_TEST=1 ;;
-  *)
-    echo "FAIL: unknown argument '$1'. This script accepts only --self-test." >&2
-    exit 2 ;;
-esac
+# Arity is judged on `$#`, NOT on `${1:-}`.
+#
+# `case "${1:-}"` cannot tell an ABSENT argument from an EMPTY one: an
+# explicit `""` expands to the same thing as no argument at all and took the
+# `""` arm, so `close_guard_linked_file.sh ""` ran as though nothing had been
+# passed. Two of the four scripts this commit touched rejected `""` and two
+# accepted it, and nothing said why -- an unstated carve-out inside the change
+# whose thesis is that a script must not accept what it does not implement.
 if [ "$#" -gt 1 ]; then
   echo "FAIL: too many arguments; got: $*" >&2
   exit 2
+fi
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    --self-test) SELF_TEST=1 ;;
+    *)
+      echo "FAIL: unknown argument '$1'. This script accepts only --self-test." >&2
+      exit 2 ;;
+  esac
 fi
 
 MUTATION="${MUTATION:-}"
