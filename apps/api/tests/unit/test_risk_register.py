@@ -1962,6 +1962,12 @@ def test_a_control_at_the_clients_target_is_not_a_finding(app_client) -> None:
     code = _seed_csf_answer_at_tier(c, bearer, cid, tier=2)
 
     _set_csf_target(cid, 2)
+    # APPEAR before ABSENT. The `not in` below is genuinely discriminating --
+    # if the target failed to write, it would resolve to the default 3, `2 < 3`
+    # would put the code back in the list and this goes red -- but that
+    # reasoning is invisible at the site, so it is asserted rather than
+    # inferred.
+    assert _csf_targets(cid) == {"target": 2, "source": "client"}
     assert code not in _csf_finding_codes(cid), (
         "a control AT the client's engagement target is not a gap; it was "
         "reported as one because the comparison used a hardcoded tier 3"
@@ -2005,8 +2011,17 @@ def test_the_target_and_its_source_are_recorded_beside_the_findings(app_client) 
 
     _set_csf_target(cid, None)
     fell_back = _csf_targets(cid)
-    assert fell_back["source"] == "default", fell_back
-    assert fell_back["target"] != 2 or fell_back["source"] == "default"
+    # The literal 3, taken from the SPEC -- CSF's engine default is Tier 3
+    # (Repeatable) -- and not imported from `DEFAULT_TARGET_TIER`. A test that
+    # reads its expected value out of the module under test agrees with it by
+    # construction, and `check_test_integrity` flags exactly that import.
+    #
+    # A first draft wrote `assert fell_back["target"] != 2 or fell_back["source"]
+    # == "default"`. The right operand was asserted TRUE on the line above, so
+    # the whole thing was a tautology -- it passed for `None`, for `2`, for a
+    # string. It was the only assertion on the fallback NUMBER and it asserted
+    # nothing about it.
+    assert fell_back == {"target": 3, "source": "default"}, fell_back
 
 
 @pytest.mark.unit
@@ -2026,3 +2041,205 @@ def test_an_unusable_stored_target_is_named_rather_than_silently_defaulted(
 
     _set_csf_target(cid, 99)
     assert _csf_targets(cid)["source"] == "client_out_of_range"
+
+
+@pytest.mark.unit
+def test_the_baseline_reaches_the_audit_row_a_consultant_reads(app_client) -> None:
+    """#84's disclosure, asserted through the surface rather than the tuple.
+
+    The three tests above read `target_sources` out of `_gather_findings`
+    directly. That proves the value is COMPUTED and says nothing about whether
+    it is RECORDED -- delete `"targets": target_sources` from the audit
+    `details` and every one of them still passes, because none of them looks
+    at the audit row.
+
+    This repo's rule: an assertion that goes red when the guard is deleted,
+    exercised through the surface someone actually reaches. For a disclosure
+    that surface is `/admin/audit-entries`, which is what `_generated_audit`
+    reads -- and its own docstring makes this argument: a test that reads the
+    database proves the write and not the claim.
+
+    Asserts the SOURCE as well as the number, because a run that fell back to
+    the engine default must not be indistinguishable from one that honoured a
+    client's explicit choice.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    details = _generated_audit(c, bearer)
+    assert "targets" in details, (
+        "the baseline every finding was compared against must be recorded "
+        "beside the findings, or the next wrong one is not falsifiable"
+    )
+    zt = details["targets"].get("zt")
+    assert zt is not None, details["targets"]
+    assert set(zt) == {"target", "source"}, zt
+    assert isinstance(zt["target"], int), zt
+    assert zt["source"] in (
+        "client",
+        "default",
+        "client_out_of_range",
+        "client_unparseable",
+    ), zt
+
+
+def _set_zt_stage(cid: str, capability: str, stage: int) -> None:
+    """A capability's CURRENT stage, set through the session.
+
+    Not through `PATCH /zt/answers/{id}`: `_seed_attack_and_zt` APPROVES the
+    assessment, and an approved one refuses the patch with 409. Approval is
+    load-bearing for these tests -- `_finalized_for_synthesis` filters on it,
+    so a draft contributes no findings and every assertion would pass over an
+    empty list.
+    """
+    from app.models.zt_assessment import ZtAnswer, ZtAssessment
+
+    db = _session()
+    ans = (
+        db.execute(
+            select(ZtAnswer)
+            .join(ZtAssessment, ZtAnswer.assessment_id == ZtAssessment.id)
+            .where(ZtAnswer.capability_code == capability)
+            .order_by(ZtAssessment.version.desc())
+        )
+        .scalars()
+        .first()
+    )
+    assert ans is not None, f"no answer for {capability}"
+    ans.maturity_stage = stage
+    db.add(ans)
+    db.commit()
+
+
+def _set_zt_target(cid: str, stage: object, *, kind: str = "zero_trust_cisa") -> None:
+    """The client's ZT engagement target, written onto the ServiceRequest."""
+    from app.models.client import Client
+    from app.models.service import Service
+    from app.models.service_request import ServiceRequest
+    from app.models.user import User
+
+    db = _session()
+    svc = (
+        db.execute(select(Service).where(Service.client_id == uuid.UUID(cid), Service.kind == kind))
+        .scalars()
+        .first()
+    )
+    assert svc is not None, f"no {kind} service on this client"
+    if svc.source_request_id is None:
+        client = db.get(Client, uuid.UUID(cid))
+        requester = db.execute(select(User).limit(1)).scalars().first()
+        sr = ServiceRequest(
+            client_id=client.id,
+            service_type=kind.upper(),
+            requested_by=requester.id,
+        )
+        db.add(sr)
+        db.flush()
+        svc.source_request_id = sr.id
+    sr = db.get(ServiceRequest, svc.source_request_id)
+    sr.zt_target_stage = stage
+    db.add(sr)
+    db.add(svc)
+    db.commit()
+
+
+def _zt_finding_codes(cid: str) -> list[str]:
+    from app.routes.risk import _gather_findings
+
+    db = _session()
+    findings, _t, _c, _targets = _gather_findings(db, uuid.UUID(cid))
+    return [f["source_id"] for f in findings if f["kind"] == "zt"]
+
+
+def _zt_targets(cid: str) -> dict:
+    from app.routes.risk import _gather_findings
+
+    db = _session()
+    _f, _t, _c, targets = _gather_findings(db, uuid.UUID(cid))
+    return targets.get("zt", {})
+
+
+@pytest.mark.unit
+def test_a_zt_capability_below_a_higher_client_target_is_a_finding(app_client) -> None:
+    """THE ZT HALF, which reverting left entirely green.
+
+    `_seed_attack_and_zt` sets one capability to stage 1 and stores no
+    engagement target, so `resolve_target_stage(fw, None)` returns
+    `(3, "default")` -- byte-identical to the old hardcoded 3. Every existing
+    register test is blind to this half of the fix: MEASURED, by reverting
+    `else zt_target` to `else 3` and watching the whole file stay green.
+
+    This engages for stage 4 on CISA, whose ladder has four, with a capability
+    at 3. The old code stopped at 3 and could never see it.
+    """
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _technique, capability = _seed_attack_and_zt(c, bearer, cid)
+
+    # Put the capability AT the old hardcoded target, so only a higher client
+    # target can make it a finding.
+    _set_zt_stage(cid, capability, 3)
+
+    _set_zt_target(cid, 4)
+    assert _zt_targets(cid) == {"target": 4, "source": "client"}
+    assert capability in _zt_finding_codes(cid), (
+        "a capability BELOW the client's stage-4 target must be reported; the "
+        "old hardcoded 3 could never see a stage-3 answer as a gap"
+    )
+
+
+@pytest.mark.unit
+def test_a_zt_capability_at_the_client_target_is_not_a_finding(app_client) -> None:
+    """THE OTHER DIRECTION, without which the above is just 'report more'."""
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _technique, capability = _seed_attack_and_zt(c, bearer, cid)
+
+    _set_zt_stage(cid, capability, 2)
+
+    _set_zt_target(cid, 2)
+    assert _zt_targets(cid) == {"target": 2, "source": "client"}
+    assert capability not in _zt_finding_codes(cid), (
+        "a capability AT the client's target is not a gap; the old hardcoded 3 "
+        "reported it as one"
+    )
+
+
+@pytest.mark.unit
+def test_a_stored_stage_the_framework_does_not_have_is_named_not_used(app_client) -> None:
+    """THE FRAMEWORK ARGUMENT, which the commit calls load-bearing.
+
+    CISA ZTMM has four stages; DoD ZTRA has three. A stored 4 is a legitimate
+    CISA target and is not a stage DoD has at all -- so the SAME integer must
+    resolve differently depending on which framework asks, and that is the
+    whole reason `resolve_target_stage` takes the framework.
+
+    It also pins the enum conversion. `ZtAssessment.framework` is `ZtFramework`
+    and the engine takes `ZtFrameworkCode` -- two StrEnum classes whose values
+    coincide today. If someone converts `stage_definitions`' `==` to `is`, DoD
+    silently gets the CISA ladder, a stored 4 resolves `client` instead of
+    out-of-range, and this test goes red.
+    """
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+
+    # A DoD service alongside, and a stage-4 target it cannot honour.
+    dsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_dod", "title": "ZT DoD"})
+    assert dsvc.status_code in (200, 201), dsvc.text
+    da = c.post(f"/zt/services/{dsvc.json()['id']}/assessments", headers=h)
+    assert da.status_code in (200, 201), da.text
+    assert c.post(f"/zt/assessments/{da.json()['id']}/approve", headers=h).status_code == 200
+
+    _set_zt_target(cid, 4, kind="zero_trust_dod")
+    resolved = _zt_targets(cid)
+    assert resolved["source"] == "client_out_of_range", (
+        "stage 4 is not a stage DoD ZTRA has, so it must be NAMED as unusable "
+        f"rather than silently applied. got {resolved}"
+    )
+    assert resolved["target"] == 3, resolved

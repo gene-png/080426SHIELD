@@ -382,12 +382,28 @@ def capability_target_override(framework: ZtFrameworkCode, stored: object) -> in
 
     STATED EXEMPTION, because an unqualified "the single predicate" would be
     false and false in the reassuring direction: `routes/risk.py` answers the
-    same question inline, against a hardcoded 3
-    (`r.target_stage if r.target_stage is not None else 3`), and calls nothing
-    here. That IS #84 -- still open, deliberately untouched by #124, and the
-    reason this docstring names a scope instead of a guarantee. Anyone changing
-    the rule below has THREE consumers to consider, and the third does not
-    import this module.
+    same question INLINE and calls nothing here. Anyone changing the rule below
+    has THREE consumers to consider, and the third does not call this function.
+
+    REWRITTEN BY THE FIX FOR #84, and the previous wording is worth recording
+    because three of its clauses became false the moment that landed. It said
+    risk.py compares "against a hardcoded 3
+    (`r.target_stage if r.target_stage is not None else 3`)"; that line is
+    gone. It said #84 was "still open"; #84 is closed by the change that edited
+    this paragraph. It said the third consumer "does not import this module";
+    risk.py now imports `resolve_target_stage` from it.
+
+    What SURVIVES is the one clause the old wording buried: risk.py still does
+    not call `capability_target_override`. It resolves the ENGAGEMENT target
+    through this module and then applies the per-capability target raw --
+    without the bool refusal, without the range check, and without the
+    `unusable_target_codes` disclosure. So the exemption is narrower than it
+    was and it is still an exemption.
+
+    This is the shape recorded two sections down about #288: a deferral citing
+    an issue the fix itself closed, in a file the fix itself touched. A
+    one-pass sweep cannot catch it, because the fix is what creates the
+    violation.
 
     THE EXEMPTION THIS PARAGRAPH RECORDED IS DISCHARGED. It read: an
     out-of-range PER-CAPABILITY target "falls back to the engagement stage

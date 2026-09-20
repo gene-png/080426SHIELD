@@ -59,6 +59,7 @@ from app.schemas.risk import (
 from app.security.rate_limit import RateLimiter, get_rate_limiter
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
+from app.zt.maturity import ZtFrameworkCode
 from app.zt.scoring import resolve_target_stage
 
 router = APIRouter(prefix="/risk", tags=["risk-register"])
@@ -476,17 +477,53 @@ def _gather_findings(
         # #84, the ZT half. Framework-aware, because DoD ZTRA has three stages
         # where CISA has four -- a client stage valid under one is out of range
         # under the other, and `resolve_target_stage` is what knows that.
+        # CONVERTED, not passed through. `ZtAssessment.framework` is
+        # `ZtFramework` (app/models); the engine takes `ZtFrameworkCode`
+        # (app/zt/maturity). They are two StrEnum classes with identical
+        # VALUES, and `stage_definitions` decides with `==`, so passing the
+        # model enum straight in returns the right ladder today -- by
+        # coincidence, not by contract.
+        #
+        # One ordinary edit ends that: change that `==` to `is` -- a routine
+        # enum tidy no gate here would question -- and a DoD assessment gets
+        # the CISA ladder, `max_stage` becomes 4, a stored DoD 4 resolves as
+        # `(4, "client")` instead of out-of-range, and every DoD capability at
+        # stage 3 becomes a finding for a client whose ladder tops out at 3.
+        # ruff and black do not read annotations, so the signature violation
+        # is invisible to CI.
+        #
+        # `routes/zt.py` bridges this at every engine boundary with
+        # `_to_catalog_framework`; this is the same conversion, spelled from
+        # the value so it needs no cross-router import.
         zt_target, zt_target_source = resolve_target_stage(
-            zt.framework, _client_target_stage(db, zt.service_id)
+            ZtFrameworkCode(zt.framework.value),
+            _client_target_stage(db, zt.service_id),
         )
         target_sources["zt"] = {"target": zt_target, "source": zt_target_source}
         for r in (
             db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars().all()
         ):
             valid_controls.add(r.capability_code)
-            # Per-capability target first, then the ENGAGEMENT target -- the
-            # same precedence `analyze_gaps` documents. The fallback was a
-            # hardcoded 3 (#84); it is now the client's resolved stage.
+            # Per-capability target first, then the ENGAGEMENT target. The
+            # fallback was a hardcoded 3 (#84); it is now the client's
+            # resolved stage.
+            #
+            # SCOPE OF THE PARITY, stated because the first version of this
+            # comment said "the same precedence `analyze_gaps` documents" --
+            # true of the ORDER and false of the RULE. `analyze_gaps` resolves
+            # through `capability_target_override`, which refuses a bool,
+            # refuses anything outside `1..level_count(framework)`, falls back
+            # to the engagement stage AND reports the discard through
+            # `GapAnalysis.unusable_target_codes`, which `zt/exporters.py`
+            # renders. This reads the stored value raw and discloses nothing.
+            #
+            # Not reachable through the API today -- `patch_answer` 422s a
+            # target outside the framework's range and the AI-apply path
+            # range-checks before storing -- so the divergence is latent, and
+            # the exemption is written here rather than left to be discovered.
+            # Closing it means calling `capability_target_override`; that
+            # changes what the feed reports and wants its own both-states
+            # evidence, so it is tracked rather than done here.
             tgt = r.target_stage if r.target_stage is not None else zt_target
             if r.maturity_stage is not None and r.maturity_stage < tgt:
                 findings.append(
