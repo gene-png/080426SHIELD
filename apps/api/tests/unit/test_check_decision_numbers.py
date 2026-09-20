@@ -267,3 +267,99 @@ def test_main_uses_TWO_dots_not_three(tmp_path: pathlib.Path) -> None:
         "fails, the range is a symmetric difference and is attributing main's "
         "commits to the branch"
     )
+
+
+@pytest.mark.unit
+@requires_git
+def test_main_skips_a_commit_that_adds_no_heading(tmp_path: pathlib.Path) -> None:
+    """THE BRANCH NOTHING COVERED, and the whole suite stayed green without it.
+
+    The module docstring names this as a legitimate exit-0 path: "a commit
+    touches the file and adds no `## D-NNN` heading -- a correction or
+    amendment to an existing entry". It is the two lines `if not added:` /
+    `continue`.
+
+    MEASURED, before this test existed: deleting those two lines left all
+    fourteen tests passing. Every `main()` test supplied a non-empty `added`,
+    and nothing anywhere called `inconsistent(subject, [])`, so the guard was
+    load-bearing and unpinned.
+
+    Without it, a routine correction -- amending the body of an existing entry
+    while naming it in the subject, which is exactly how this repo edits
+    `DECISIONS.md` -- is compared against an EMPTY added-set and flagged. The
+    gate would refuse the most ordinary commit that touches the file it
+    guards, and the cheapest way out of that red is to weaken the gate.
+    """
+    repo = _repo(tmp_path)
+    _git_run(repo, "checkout", "-q", "-b", "f")
+    _commit(
+        repo,
+        "docs(decisions): D-090 -- correct the blast-radius paragraph",
+        "\nAn amendment to the existing D-090 entry, adding no new heading.\n",
+    )
+    assert _run(repo) == 0, (
+        "a commit that adds no `## D-NNN` heading has nothing to be "
+        "inconsistent WITH, so it must be skipped rather than compared "
+        "against an empty set"
+    )
+
+
+@pytest.mark.unit
+@requires_git
+def test_main_still_flags_the_real_defect_alongside_a_correction(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The skip must not become a hole.
+
+    Paired with the test above deliberately: a guard that skips is one
+    `continue` away from skipping everything, and a test proving it skips
+    cannot tell that apart. This puts a REAL mismatch in the same range as a
+    correction commit and requires the mismatch to still be caught, so the
+    skip is narrow rather than a bypass.
+    """
+    repo = _repo(tmp_path)
+    _git_run(repo, "checkout", "-q", "-b", "f")
+    _commit(
+        repo,
+        "docs(decisions): D-090 -- correct a paragraph",
+        "\nAn amendment, no new heading.\n",
+    )
+    _commit(repo, "docs(decisions): D-072 -- a thing", "\n## D-078 -- a thing\n")
+    assert _run(repo) == 1, (
+        "the correction is skipped and the mismatch beside it is not -- if "
+        "this passes, the skip is swallowing the check"
+    )
+
+
+@pytest.mark.unit
+@requires_git
+def test_the_unresolvable_range_names_WHICH_could_not_look(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exit 2 alone does not say which branch fired, and there are TWO.
+
+    `main` returns EXIT_COULD_NOT_LOOK from two places -- a failed `git log`
+    over the range, and a failed `git show` on an individual commit. The
+    existing test asserts the CODE and nothing else, so either branch
+    satisfies it and the two could swap without a test noticing. That is the
+    same defect `check_plan_totals`' fixtures had before `stdout_contains`
+    existed: two copies of one assertion wearing different names.
+
+    This pins the message to the `git log` branch, which is the one an
+    unresolvable base actually reaches.
+    """
+    import os
+
+    repo = _repo(tmp_path)
+    cwd = os.getcwd()
+    os.chdir(repo)
+    try:
+        assert main(["--base", "no/such/ref", "--head", "HEAD"]) == 2
+    finally:
+        os.chdir(cwd)
+    err = capsys.readouterr().err
+    assert "could not look" in err, err
+    assert "git log" in err, (
+        "the message must name WHICH read failed -- a bare exit 2 cannot "
+        f"distinguish the range branch from the per-commit one. got: {err}"
+    )
