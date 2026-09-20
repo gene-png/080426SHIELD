@@ -6,6 +6,7 @@ import io
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,7 +39,9 @@ def app_client(tmp_path) -> Iterator[tuple[TestClient, FixtureProvider]]:
     cfg.set_main_option("sqlalchemy.url", url)
     command.upgrade(cfg, "head")
     engine = create_engine(url, future=True)
-    TestSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    TestSession = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, future=True
+    )
 
     from app.db.session import get_db
     from app.main import create_app
@@ -101,14 +104,18 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> tuple[str, str]
     """Returns (a gap technique_code, a ZT capability_code)."""
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     asvc = c.post(
-        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+        "/attack/services",
+        headers=h,
+        json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
     cov = a.json()["coverage"][0]
     technique = cov["technique_code"]
     c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
 
-    zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
+    zsvc = c.post(
+        "/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"}
+    )
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
     zans = za.json()["answers"][0]
     capability = zans["capability_code"]
@@ -190,12 +197,16 @@ def _generated_audit(c, bearer: str) -> dict:
     somewhere a person can see, and a test that reads the database proves the
     write and not the claim.
     """
-    r = c.get("/admin/audit-entries?limit=50", headers={"Authorization": f"Bearer {bearer}"})
+    r = c.get(
+        "/admin/audit-entries?limit=50", headers={"Authorization": f"Bearer {bearer}"}
+    )
     assert r.status_code == 200, r.text
     rows = r.json()
     rows = rows["entries"] if isinstance(rows, dict) else rows
     generated = [x for x in rows if x.get("action") == "risk_register.generated"]
-    assert generated, f"no risk_register.generated row among {[x.get('action') for x in rows]}"
+    assert (
+        generated
+    ), f"no risk_register.generated row among {[x.get('action') for x in rows]}"
     return generated[0]["details"]
 
 
@@ -298,7 +309,9 @@ def test_coercion_works_THROUGH_generate_not_only_in_isolation(app_client) -> No
 
     provider.register_static(
         "risk_synthesize",
-        LLMResponse(_one_entry(technique, likelihood="Very High", impact="Catastrophic")),
+        LLMResponse(
+            _one_entry(technique, likelihood="Very High", impact="Catastrophic")
+        ),
     )
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
     assert r.status_code == 201, r.text
@@ -326,7 +339,9 @@ def test_a_clean_run_records_zero_rather_than_nothing(app_client) -> None:
     bh = {"Authorization": f"Bearer {bearer}"}
 
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
-    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
 
     details = _generated_audit(c, bearer)
     assert details["rejected_enum_values"] == {}
@@ -348,7 +363,9 @@ def test_generate_records_what_it_was_built_from(app_client) -> None:
     technique, _ = _seed_attack_and_zt(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
-    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
 
     from app.models.risk_register import RiskRegister
 
@@ -403,7 +420,9 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
     technique, _ = _seed_attack_and_zt(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
-    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
 
     from app.models.risk_register import RiskRegister
 
@@ -431,7 +450,9 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
 
 
 @pytest.mark.unit
-def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(app_client) -> None:
+def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(
+    app_client,
+) -> None:
     """NULL provenance is 'not recorded', not 'nothing was excluded'.
 
     A register whose inputs were never captured cannot be certified either way,
@@ -444,7 +465,9 @@ def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(app_c
     technique, _ = _seed_attack_and_zt(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
-    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
 
     from app.models.risk_register import RiskRegister
 
@@ -585,11 +608,15 @@ def test_each_generate_is_a_new_version(app_client) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _seed_many_gaps(c: TestClient, bearer: str, cid: str, count: int) -> tuple[list[str], str]:
+def _seed_many_gaps(
+    c: TestClient, bearer: str, cid: str, count: int
+) -> tuple[list[str], str]:
     """Seed `count` ATT&CK gaps plus one ZT gap. Returns (technique codes, capability)."""
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     asvc = c.post(
-        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+        "/attack/services",
+        headers=h,
+        json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
     rows = a.json()["coverage"][:count]
@@ -597,15 +624,23 @@ def _seed_many_gaps(c: TestClient, bearer: str, cid: str, count: int) -> tuple[l
     for cov in rows:
         c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
 
-    zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
+    zsvc = c.post(
+        "/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"}
+    )
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
     zans = za.json()["answers"][0]
     c.patch(f"/zt/answers/{zans['id']}", headers=h, json={"maturity_stage": 1})
     # Approve both -- #237. Synthesis reads only APPROVED/RELEASED assessments,
     # because what it produces is exported under the client's name. This seed
     # left them DRAFT and the generate below used to succeed.
-    assert c.post(f"/attack/assessments/{a.json()['id']}/approve", headers=h).status_code == 200
-    assert c.post(f"/zt/assessments/{za.json()['id']}/approve", headers=h).status_code == 200
+    assert (
+        c.post(f"/attack/assessments/{a.json()['id']}/approve", headers=h).status_code
+        == 200
+    )
+    assert (
+        c.post(f"/zt/assessments/{za.json()['id']}/approve", headers=h).status_code
+        == 200
+    )
     return [r["technique_code"] for r in rows], zans["capability_code"]
 
 
@@ -753,7 +788,9 @@ def test_generate_object_entries_is_refused_not_iterated_as_keys(app_client) -> 
     _seed_attack_and_zt(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
 
-    provider.register_static("risk_synthesize", LLMResponse('{"entries": {"e1": {"title": "x"}}}'))
+    provider.register_static(
+        "risk_synthesize", LLMResponse('{"entries": {"e1": {"title": "x"}}}')
+    )
     r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
     assert r.status_code == 502, r.text
     assert r.json()["error"]["reason"] == "ai_call_failed"
@@ -763,14 +800,22 @@ def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> None:
     """ATT&CK + ZT assessments that EXIST and are not approved."""
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     asvc = c.post(
-        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+        "/attack/services",
+        headers=h,
+        json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
     cov = a.json()["coverage"][0]
     c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
-    zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
+    zsvc = c.post(
+        "/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"}
+    )
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
-    c.patch(f"/zt/answers/{za.json()['answers'][0]['id']}", headers=h, json={"maturity_stage": 1})
+    c.patch(
+        f"/zt/answers/{za.json()['answers'][0]['id']}",
+        headers=h,
+        json={"maturity_stage": 1},
+    )
 
 
 @pytest.mark.unit
@@ -791,7 +836,9 @@ def test_the_gate_path_must_not_filter_on_finalized(app_client) -> None:
     c, _ = app_client
     bearer, cid = _admin(c)
     _seed_drafts_only(c, bearer, cid)
-    g = c.get(f"/risk/clients/{cid}/gate", headers={"Authorization": f"Bearer {bearer}"}).json()
+    g = c.get(
+        f"/risk/clients/{cid}/gate", headers={"Authorization": f"Bearer {bearer}"}
+    ).json()
 
     assert g["unlocked"] is True, "a draft must still unlock the gate"
     assert g["has_attack"] is True and g["has_zt"] is True
@@ -845,7 +892,9 @@ def test_approving_the_same_inputs_lets_synthesis_through(app_client) -> None:
     """
     c, provider = app_client
     bearer, cid = _admin(c)
-    technique, capability = _seed_attack_and_zt(c, bearer, cid)  # identical seed, plus approve
+    technique, capability = _seed_attack_and_zt(
+        c, bearer, cid
+    )  # identical seed, plus approve
     bh = {"Authorization": f"Bearer {bearer}"}
 
     g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
@@ -1284,8 +1333,16 @@ def test_the_counters_still_read_true_when_the_register_is_fetched_later(
     assert later.status_code == 200, later.text
     body = later.json()
 
-    assert body["entries_with_dropped_links"] == generated["entries_with_dropped_links"] == 1
-    assert body["entries_unlinked_after_drops"] == generated["entries_unlinked_after_drops"] == 1
+    assert (
+        body["entries_with_dropped_links"]
+        == generated["entries_with_dropped_links"]
+        == 1
+    )
+    assert (
+        body["entries_unlinked_after_drops"]
+        == generated["entries_unlinked_after_drops"]
+        == 1
+    )
     assert body["entries"][0]["dropped_links"] == {"linked_techniques": ["T9999"]}
     # And the run-scoped pair is 0 here, which is what makes the contrast real
     # rather than asserted: these two behave differently on a read-back ON
@@ -1529,6 +1586,7 @@ def test_a_run_where_nothing_was_lost_says_so_rather_than_staying_silent(
 # `GET .../register/latest`, because the defect was that a reload returned `[]`.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_the_withheld_set_survives_a_reload(app_client) -> None:
     """THE HEADLINE. `latest` must return what storage holds.
@@ -1564,7 +1622,9 @@ def test_the_withheld_set_survives_a_reload(app_client) -> None:
     technique, _ = _seed_attack_and_zt(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
-    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
 
     from app.models.risk_register import RiskRegister
 
@@ -1610,7 +1670,9 @@ def test_a_register_that_predates_provenance_says_nobody_looked(app_client) -> N
     technique, _ = _seed_attack_and_zt(c, bearer, cid)
     bh = {"Authorization": f"Bearer {bearer}"}
     provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
-    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
 
     from app.models.risk_register import RiskRegister
 
@@ -1636,7 +1698,9 @@ def test_a_register_that_predates_provenance_says_nobody_looked(app_client) -> N
 
 
 @pytest.mark.unit
-def test_the_withheld_set_is_persisted_by_generate_not_just_returned(app_client) -> None:
+def test_the_withheld_set_is_persisted_by_generate_not_just_returned(
+    app_client,
+) -> None:
     """The WRITE half, which had no test and whose absence was argued for.
 
     `generate` used to compute `g.not_finalized`, store it via
@@ -1681,3 +1745,106 @@ def test_the_withheld_set_is_persisted_by_generate_not_just_returned(app_client)
         "snapshot's third argument is not carrying it"
     )
     assert r.json()["excluded_inputs_recorded"] is True
+
+
+@pytest.mark.unit
+def test_export_allows_the_seeded_shape_a_finalized_register_with_no_inputs_key(
+    app_client,
+) -> None:
+    """THE SEEDED REGISTER'S OWN SHAPE, and the one no other test generates.
+
+    `seed_demo.py` writes `provenance={"excluded": []}` -- a dict, with no
+    `inputs` key, deliberately, because it does not go through
+    `_provenance_snapshot`. Every OTHER register in the system is either NULL
+    (pre-0047) or carries a full snapshot, so this third shape exists exactly
+    once and only on the demo path.
+
+    That is why it needs its own test rather than being caught in passing: an
+    input that exists in exactly one place, written by a script no spec drives,
+    is the input no test generates by accident. `s8` downloads the artifacts
+    the seed wrote and never POSTs export; `s30` generates a fresh register
+    first, so it always has a full snapshot. The only register with the broken
+    shape was the one nothing exercised, and CI was green over it.
+
+    The defect this pins: the `finalized_at` carve-out was nested INSIDE the
+    `_prov is None` branch, so a dict lacking `inputs` never reached it and a
+    finalized, already-delivered register began refusing its own re-export with
+    409 `register_predates_provenance`. The comment above the guard asserted
+    the opposite -- "the seeded register is finalized, so it exports through
+    the carve-out above either way and the blast radius is zero" -- which was
+    true of the NULL case and false of this one.
+
+    Re-exporting an already-finalized register protects nobody: the certificate
+    was issued when it was finalized, and refusing now only breaks a working
+    path. That is the same reasoning the NULL branch already applies; this
+    makes the two agree.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    # Exactly what the seed writes -- a dict, `excluded` present, `inputs` absent.
+    reg.provenance = {"excluded": []}
+    reg.finalized_at = datetime.now(timezone.utc)
+    db.add(reg)
+    db.commit()
+
+    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert r.status_code == 200, (
+        "a FINALIZED register whose provenance dict lacks `inputs` -- the shape "
+        "`seed_demo.py` writes -- must still re-export. It was already "
+        "delivered; refusing now breaks the demo path and certifies nothing. "
+        f"got {r.status_code}: {r.text}"
+    )
+
+
+@pytest.mark.unit
+def test_export_still_refuses_that_shape_when_it_was_never_finalized(
+    app_client,
+) -> None:
+    """THE OTHER HALF, without which the test above is a hole rather than a fix.
+
+    The carve-out is for a register that was ALREADY delivered. An UNFINALIZED
+    register whose provenance records what was excluded but not what was used
+    still cannot be certified, and must still be refused -- otherwise widening
+    the branch above would turn a real guard into a pass for every register
+    that omits `inputs`.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert (
+        c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+    )
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = {"excluded": []}
+    reg.finalized_at = None
+    db.add(reg)
+    db.commit()
+
+    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "register_inputs_not_recorded", r.text
