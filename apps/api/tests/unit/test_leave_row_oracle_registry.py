@@ -114,3 +114,76 @@ def test_a_missing_anchor_is_cannot_measure_and_not_a_system_exit() -> None:
 
     with pytest.raises(CannotMeasure, match="anchor not found"):
         _line_containing(source, "gamma")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["leave_row_oracle.py", "--check-registy"],
+        ["leave_row_oracle.py", "--check-registry", "--extra"],
+        ["leave_row_oracle.py", "tests"],
+    ],
+    ids=["typo", "trailing-unknown", "bare-word"],
+)
+def test_an_unrecognised_argument_cannot_look(argv) -> None:
+    """A flag this script does not implement must not SUCCEED.
+
+    `main` selected its mode with `if "--check-registry" in argv` -- a
+    MEMBERSHIP test, so every other argument fell through to the report path
+    and returned 0. A typo in `ci.yml`'s "LEAVE-row oracle registry and
+    labels" step would have run the REPORT and passed the step, with the
+    registry check that step exists for never executing and nothing to see.
+
+    Exit 2 rather than 1, deliberately: an argument the script cannot
+    interpret means it did not look, which is a fact about the instrument and
+    not about the code.
+
+    The `--check-registry --extra` case is the one a single membership test
+    cannot catch at all, and the bare word is the shape that reads most like a
+    path argument the script might accept.
+    """
+    from scripts.leave_row_oracle import main
+
+    assert main(argv) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "argv",
+    [["leave_row_oracle.py"], ["leave_row_oracle.py", "--check-registry"]],
+    ids=["report", "check-registry"],
+)
+def test_both_real_modes_reach_the_work(argv, monkeypatch) -> None:
+    """THE PASSING HALF. A guard observed only firing is not observed.
+
+    Proves the argument is RECOGNISED without letting either mode run: the
+    first thing `main` does after the dispatch is call `leave_rows()`, so
+    stubbing that to raise a sentinel means reaching it proves the dispatch
+    let the argument through, and a `2` would prove it did not.
+
+    THE STUB IS NOT A CONVENIENCE. A first draft called `main` for real and
+    turned three tests in `test_leave_row_oracle_labels.py` red -- measured,
+    and only when the two files ran TOGETHER, which is why running this file
+    alone looked clean. The report path does
+    `REDACT.write_text(original, ...)`: it REWRITES `redact.py` on disk, and
+    the labels tests read what it wrote. A test that rewrites a source file
+    mid-suite is the escaped-listener shape `test_a_row_dropped_between_add_
+    and_flush_is_recorded` guards against in the risk suite, arriving from the
+    other direction.
+
+    Asserting recognition rather than the exit code also keeps this test out
+    of the business of whether the registry currently passes, which is
+    `test_the_real_registry_is_currently_complete`'s job.
+    """
+    import scripts.leave_row_oracle as oracle
+
+    class _Reached(Exception):
+        pass
+
+    def _boom():
+        raise _Reached
+
+    monkeypatch.setattr(oracle, "leave_rows", _boom)
+    with pytest.raises(_Reached):
+        oracle.main(argv)

@@ -838,6 +838,28 @@ def check_registry(rows) -> int:
 
 
 def main(argv: list[str]) -> int:
+    # An UNRECOGNISED ARGUMENT is exit 2, not the default report.
+    #
+    # `if "--check-registry" in argv` is a MEMBERSHIP TEST, so any other flag
+    # fell through to the report path and exited 0. A typo'd
+    # `--check-registy` in `ci.yml`'s "LEAVE-row oracle registry and labels"
+    # step would have run the REPORT and passed the step -- the registry check
+    # that step exists for never running, with nothing to see.
+    #
+    # A flag a script does not implement must not SUCCEED. Found on
+    # `prettier_hook.sh`, which printed its success banner and exited 0 for a
+    # `--self-test` it does not have; this is the same shape on a CI-wired
+    # gate, where the cost is a step that certifies nothing.
+    #
+    # argv[0] is the program name; anything after it must be understood.
+    unknown = [a for a in argv[1:] if a != "--check-registry"]
+    if unknown:
+        print(
+            f"leave-row-oracle: could not look -- unrecognised argument(s) "
+            f"{', '.join(unknown)}. This script accepts only --check-registry.",
+            file=sys.stderr,
+        )
+        return 2
     rows = leave_rows()
     if "--check-registry" in argv:
         # Both, always, and the WORSE code wins. The registry asks whether every

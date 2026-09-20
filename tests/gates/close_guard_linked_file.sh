@@ -30,7 +30,30 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORKFLOW="$ROOT/.github/workflows/audit-gate.yml"
 GUARD="$ROOT/apps/api/scripts/check_issue_references.py"
 SELF_TEST=0
-[ "${1:-}" = "--self-test" ] && SELF_TEST=1
+
+# An UNRECOGNISED ARGUMENT is exit 2, not a clean run.
+#
+# A flag a script does not implement must not SUCCEED. Silent
+# argument-ignoring makes every future `--self-test`, `--dry-run` and
+# `--check` a coin flip where both faces read as heads: the reader gets the
+# success banner they were hoping for and no signal that nothing happened.
+#
+# Found on `prettier_hook.sh`, which printed its success banner and exited 0
+# for `--self-test` -- a flag it does not have, reached for because the gate
+# beside it DOES have one. The trap is aimed at careful people: the instinct
+# to verify was correct and the reward was a false pass.
+case "${1:-}" in
+  "") ;;
+  --self-test) SELF_TEST=1 ;;
+  *)
+    echo "FAIL: unknown argument '$1'. This script accepts only --self-test." >&2
+    exit 2 ;;
+esac
+if [ "$#" -gt 1 ]; then
+  echo "FAIL: too many arguments; got: $*" >&2
+  exit 2
+fi
+
 MUTATION="${MUTATION:-}"
 
 for f in "$WORKFLOW" "$GUARD"; do
