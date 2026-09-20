@@ -1194,6 +1194,39 @@ a real exit code and a real date, and was the minority outcome (D-071).
   have and write beside each one what the input looked like. Any entry whose
   answer is "I don't know" or "there was nothing there" is the bug, and it is
   cheaper to find on that list than in review.
+- **A SELECTOR THAT SELECTS NOTHING PASSES. ASSERT THE COUNT IT SELECTED
+  BEFORE READING ITS RESULT.** Same family as the silent-success branch above,
+  one layer out: there the checker looked and had nothing to say; here the
+  checker never looked, and the green is indistinguishable.
+
+  Measured, four shapes, one property:
+
+  | The selector | What it selected | What it reported |
+  | --- | --- | --- |
+  | `pytest -k <filter>` | zero of the four tests reading a renamed key | green |
+  | `pytest --collect-only` | everything, and ran none of it | a count |
+  | `if "--check-registry" in argv` | nothing; fell through to the report path | exit 0 |
+  | a flag the script does not implement | nothing; ignored | the success banner |
+
+  Every one reports success for having done nothing, and the output is the one
+  you were hoping for. **The remedy is the same in all four: make the count
+  part of the result.** `-k` prints how many it deselected — read it. A grep
+  for the SUBJECT beats a filter you believe in: on the renamed key, `-k` came
+  back green and `grep` found all four consumers.
+
+  **AND A FIXTURE THAT BUILDS AN UNREACHABLE STATE IS THE SAME DEFECT AT THE
+  INPUT END.** A test whose setup constructs something the writer cannot
+  produce proves something about nothing — worse, it can make a correct claim
+  look false, or a false one look proven. The recorded instance: a dashboard
+  fixture set `tier = None` while leaving likelihood and impact intact, but the
+  writer computes `tier_for(lk, im) ... else None`, so a null tier ALWAYS
+  travels with null operands. The fixture built the one state the application
+  cannot reach, and it was the one state where the banner under test made a
+  false claim about its own data.
+
+  The check is one question, asked of the SETUP rather than the assertion:
+  **can the system under test produce this state?** If you cannot name the
+  writer that does it, the test is about a different system.
 - **"THE DISCLOSURE REACHES A SCREEN" IS PART OF THE DEFINITION OF DONE FOR ANY
   PR THAT ADDS A PROVENANCE FIELD.** Not a note about where it should
   eventually surface — a condition on the PR that adds it. A field that records
@@ -1705,6 +1738,58 @@ Rules of the road:
   "not run" is a claim about the process, and the gate accepts both because it
   only checks that the lines exist. That asymmetry is precisely why the honesty
   has to be a rule rather than a check.
+
+  **DISPATCH AGAINST A DETACHED WORKTREE, AND PUT THE TREE IT READ IN THE
+  AUDIT BLOCK.** This is a mechanism, not a courtesy, and it is the one that
+  makes "ran, but not against this change" impossible instead of merely
+  detectable:
+
+      git worktree add --detach ../review-<sha> <sha>
+
+  Give the reviewer that absolute path. It starts no containers, binds no
+  ports, needs no `.env`, and `--detach` takes no branch — so a checkout in the
+  shared tree cannot move underneath it. The reviewer-in-a-detached-worktree
+  case is already carved out of the shared-tree rule above, for exactly this.
+
+  **Measured, and the cost was a whole session's evidence.** A reviewer
+  dispatched against the shared tree reported: *"`.git/HEAD` reads
+  `ref: refs/heads/fix/330-...`; no worktree holds `75bddc2`. What I reviewed
+  is the BASE."* It had been asked about a branch the tree had since moved off,
+  and it read the pre-fix code. It said so — but nothing about the report's
+  SHAPE would have differed if it had not, and every other review dispatched
+  that session had the same exposure, including ones whose PRs had already
+  merged on the strength of them.
+
+  So the audit block carries the tree, not just the verdict:
+
+      Scope: reviewed at <sha>, from `../review-<sha>` (detached worktree)
+
+  The reviewer's own `Scope:` line is where it states what it could not reach.
+  This line is where YOU state what it was pointed at, because "the reviewer
+  was honest about which tree it read" is a property of that reviewer and not
+  of the process.
+
+  **A STATUS WORD FOR AN ACTION NEVER TAKEN IS NOT STALENESS, AND IT GETS ITS
+  OWN LINE.** Everything else in this file about prose going wrong is about a
+  claim that was TRUE WHEN WRITTEN — a count that grew, a citation that moved,
+  a deferral the fix itself discharged. This is the other kind:
+
+      Findings: dispatched, UNDELIVERED at open
+
+  written into a PR body with **nothing dispatched**. Not stale; never true, in
+  the field that exists to be believed. It was written against a rule that
+  enumerates four states — absent, erroring, timed out, not dispatched — so
+  that a fifth could not be invented, and a fifth was invented anyway.
+
+  The enumeration does not stop this, because the failure is not choosing the
+  wrong member of a list; it is describing an action you did not perform. The
+  only thing that catches it is the status-word rule elsewhere in this file:
+  **a status word carries its output.** `Dispatched` carries the tool result.
+  Had that been written the claim could not have been made.
+
+  **Correct it IN PLACE, visibly, rather than overwriting it.** An audit block
+  quietly repaired reads exactly like one that was always right, and the next
+  reader learns nothing. The correction is what makes the field usable again.
 
   **Who may decide a PR ships without it: the human dev at the keyboard, by name,
   recorded in the PR body.** Never an agent, never by inference from silence, and
