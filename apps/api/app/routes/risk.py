@@ -223,9 +223,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     # What BLOCKS is `synthesizable_missing` below, which mirrors unlock exactly.
     # What is merely listed here is disclosed on the register instead.
     not_finalized: list[str] = []
-    finalized_attack = (
-        _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
-    )
+    finalized_attack = _finalized_for_synthesis(db, AttackAssessment, client_id) is not None
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
     for label, present, finalized in (
@@ -259,9 +257,7 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
 def _require_client(db: Session, cid: uuid.UUID) -> Client:
     client = db.get(Client, cid)
     if client is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Client not found."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
     return client
 
 
@@ -279,9 +275,7 @@ def gate(
     return _gate(db, cid)
 
 
-def _provenance_snapshot(
-    db: Session, client_id: uuid.UUID, excluded: list[str]
-) -> dict:
+def _provenance_snapshot(db: Session, client_id: uuid.UUID, excluded: list[str]) -> dict:
     """What this register is being built FROM, as it stands right now (#240).
 
     Captured at GENERATE and never revised. Recomputing it at export would read
@@ -390,9 +384,7 @@ def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list
     return kept, dropped
 
 
-def _gather_findings(
-    db: Session, client_id: uuid.UUID
-) -> tuple[list[dict], set[str], set[str]]:
+def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set[str], set[str]]:
     """Findings (one per gap) + the valid technique/control link universes.
 
     valid_techniques = every technique in the client's ATT&CK assessment.
@@ -405,9 +397,7 @@ def _gather_findings(
     attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
     if attack is not None:
         rows = (
-            db.execute(
-                select(AttackCoverage).where(AttackCoverage.assessment_id == attack.id)
-            )
+            db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == attack.id))
             .scalars()
             .all()
         )
@@ -426,9 +416,7 @@ def _gather_findings(
     csf = _finalized_for_synthesis(db, CsfAssessment, client_id)
     if csf is not None:
         for r in (
-            db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id))
-            .scalars()
-            .all()
+            db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id)).scalars().all()
         ):
             valid_controls.add(r.subcategory_code)
             if r.maturity_tier is not None and r.maturity_tier < 3:
@@ -444,9 +432,7 @@ def _gather_findings(
     zt = _finalized_for_synthesis(db, ZtAssessment, client_id)
     if zt is not None:
         for r in (
-            db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id))
-            .scalars()
-            .all()
+            db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars().all()
         ):
             valid_controls.add(r.capability_code)
             tgt = r.target_stage if r.target_stage is not None else 3
@@ -556,8 +542,7 @@ def _run_risk_synthesize_batched(
     error stays typed and carries `charged_likely`.
     """
     batches = [
-        findings[i : i + _RISK_BATCH_SIZE]
-        for i in range(0, len(findings), _RISK_BATCH_SIZE)
+        findings[i : i + _RISK_BATCH_SIZE] for i in range(0, len(findings), _RISK_BATCH_SIZE)
     ] or [[]]
 
     def _one(batch: list[dict]) -> dict:
@@ -742,9 +727,7 @@ def generate(
     # DERIVED from the findings rather than returned as a fourth value: the
     # source ids ARE the findings' ids, and a second channel for one fact is a
     # second place for it to drift.
-    valid_source_ids = {
-        str(f["source_id"]) for f in findings if f.get("source_id") is not None
-    }
+    valid_source_ids = {str(f["source_id"]) for f in findings if f.get("source_id") is not None}
     entries_total = 0
     entries_without_tier = 0
     # #132. `field -> [values]`, deduped across the whole run, so the audit row
@@ -830,9 +813,7 @@ def generate(
             # unfiring guard costs one branch while its absence costs a silent
             # discard the day anything else feeds this loop. Stated so the
             # zero it reports reads as a decision rather than as evidence.
-            discarded_entries["not_an_object"] = (
-                discarded_entries.get("not_an_object", 0) + 1
-            )
+            discarded_entries["not_an_object"] = discarded_entries.get("not_an_object", 0) + 1
             continue
         if not raw.get("title"):
             discarded_entries["no_title"] = discarded_entries.get("no_title", 0) + 1
@@ -849,12 +830,8 @@ def generate(
         # #132: resolve, do not filter. Both halves come back, and the lost
         # half is recorded ON THE ENTRY rather than only counted -- the
         # consultant reads the register, not the generate response.
-        techs, techs_dropped = _resolve_links(
-            raw.get("linked_techniques"), valid_techniques
-        )
-        controls, controls_dropped = _resolve_links(
-            raw.get("linked_controls"), valid_controls
-        )
+        techs, techs_dropped = _resolve_links(raw.get("linked_techniques"), valid_techniques)
+        controls, controls_dropped = _resolve_links(raw.get("linked_controls"), valid_controls)
         # `source_id` was stored with no validation at all, so an entry could
         # claim provenance from a finding that does not exist. An unrecognised
         # one is dropped rather than persisted: a dangling reference is a claim,
@@ -891,9 +868,7 @@ def generate(
                 entries_unlinked_after_drops += 1
         axis, axis_bad = _coerce_enum(RiskAxis, raw.get("axis"))
         _record("axis", axis_bad)
-        action, action_bad = _coerce_enum(
-            RecommendedAction, raw.get("recommended_action")
-        )
+        action, action_bad = _coerce_enum(RecommendedAction, raw.get("recommended_action"))
         _record("recommended_action", action_bad)
         db.add(
             RiskEntry(
@@ -958,9 +933,7 @@ def generate(
     # demonstration that the state is reachable at all.
     db.flush()
     entries_written = db.execute(
-        select(func.count())
-        .select_from(RiskEntry)
-        .where(RiskEntry.register_id == register.id)
+        select(func.count()).select_from(RiskEntry).where(RiskEntry.register_id == register.id)
     ).scalar_one()
     # Emitted in BOTH states. "They agreed" and "nobody compared" must not be
     # the same absence -- an audit row with no verdict here would read as the
@@ -1233,17 +1206,13 @@ def export(
             )
     entries = (
         db.execute(
-            select(RiskEntry)
-            .where(RiskEntry.register_id == reg.id)
-            .order_by(RiskEntry.created_at)
+            select(RiskEntry).where(RiskEntry.register_id == reg.id).order_by(RiskEntry.created_at)
         )
         .scalars()
         .all()
     )
     org = None if client.legal_name == "(pending intake)" else client.legal_name
-    ctx = risk_exporters.build_context(
-        client_legal_name=org, version=reg.version, entries=entries
-    )
+    ctx = risk_exporters.build_context(client_legal_name=org, version=reg.version, entries=entries)
     today = utcnow().date()
 
     def _rr_name(extension: str) -> str:
@@ -1339,9 +1308,7 @@ def _serialize(
 
     tiers = [RiskTier(e.tier) for e in entries if e.tier]
     axes = [RiskAxis(e.axis) for e in entries if e.axis]
-    actions = [
-        RecommendedAction(e.recommended_action) for e in entries if e.recommended_action
-    ]
+    actions = [RecommendedAction(e.recommended_action) for e in entries if e.recommended_action]
 
     def _fn(aid: uuid.UUID | None) -> str | None:
         if aid is None:
@@ -1406,9 +1373,7 @@ def _serialize(
             # `source_id` is a link field but not a LINKAGE: an entry whose
             # source_id was dropped still shows its technique links, so counting
             # it here would report an outcome the consultant does not see.
-            and any(
-                e.dropped_links.get(f) for f in ("linked_techniques", "linked_controls")
-            )
+            and any(e.dropped_links.get(f) for f in ("linked_techniques", "linked_controls"))
         ),
         entries_links_not_recorded=sum(1 for e in entries if e.dropped_links is None),
         id=register.id,
@@ -1423,9 +1388,7 @@ def _serialize(
         xlsx_filename=_fn(register.xlsx_artifact_id),
         pdf_filename=_fn(register.pdf_artifact_id),
         docx_filename=_fn(register.docx_artifact_id),
-        entries=[
-            RiskEntryResponse.model_validate(e, from_attributes=True) for e in entries
-        ],
+        entries=[RiskEntryResponse.model_validate(e, from_attributes=True) for e in entries],
         tier_counts=tier_counts(tiers),
         axis_counts=axis_counts(axes),
         action_counts=action_counts(actions),
