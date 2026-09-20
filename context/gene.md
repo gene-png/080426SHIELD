@@ -596,13 +596,20 @@ is explicit rather than implied. Recorded as a comment on the PR.
 | **#304** `mvp-blocking` `tier-3` | Nothing fires when an issue closes to ask which code comments cited it |
 | **#312** `mvp-blocking` `tier-3` | `ci.yml` and `audit-gate.yml` disagree about which PR events matter, so a retargeted PR runs two checks of seven |
 
-**#84 was relabelled** `mvp-blocking` / `tier-2`. It was carrying only `bug`, so
-it was invisible to every board query, and it has a live instance in the
-function #302 changes: `_gather_findings` reads
-`tgt = r.target_stage if r.target_stage is not None else 3` — a hardcoded 3
-where `resolve_target_stage` exists. A client on stage 4 has capabilities at
-stage 3 counted as *not* findings, so they never become risk entries at all.
-Left deliberately, with the reason on the issue.
+**#84 was relabelled** `mvp-blocking` / `tier-2`. It was carrying only `bug`,
+so it was invisible to every board query.
+
+**FIXED in PR #348.** The instance recorded here was
+`tgt = r.target_stage if r.target_stage is not None else 3` in
+`_gather_findings` — a hardcoded 3 where `resolve_target_stage` exists, so a
+client on stage 4 had capabilities at stage 3 counted as *not* findings and
+they never became risk entries at all. The CSF half was worse: `maturity_tier
+< 3` ignored the client's tier unconditionally, because `CsfAnswer` carries no
+per-row target at all.
+
+Both now resolve the client's engagement target through the same functions the
+CSF and ZT services use. The quoted line is kept because it is what a reader
+searching for the defect will have in hand; it is no longer in the tree.
 
 Open `mvp-blocking`: run
 `gh issue list --label mvp-blocking --state open --json number | jq length`

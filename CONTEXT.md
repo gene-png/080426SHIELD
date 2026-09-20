@@ -347,7 +347,8 @@ the workspace together.
 other surface resolves — plus a truncation nobody disclosed. Both finalize audit
 rows now record the target AND whether the client chose it, because a gap count
 became uninterpretable the moment the target stopped being a constant. The
-audit that gated it filed #84 (`risk.py` still compares against a hardcoded 3)
+audit that gated it filed #84 (`risk.py` then compared against a hardcoded 3;
+fixed, see below)
 and #85 (self-assessment accepts a target intake rejects). Landed as PR #86.
 
 **W8 is split and half of it is now in the MVP path (2026-08-20).** The #72
@@ -356,7 +357,7 @@ for them, minutes after the seventh was written down. W8a — the mechanised swe
 — becomes DELIVERY_PLAN item 2a; W8b, the adversarial reviewer as a CI job, stays
 deferred with a stated reason (manual invocation is what caught every #86
 finding; automating the working half is lower value than automating the failing
-one). **#84 is folded into W1 Risk** rather than sequenced after it: it sets the
+one). **#84 WAS folded into W1 Risk** rather than sequenced after it: it set the
 input population of the very job W1 Risk instruments. **#87 is now decided (D-050): the contracted
 target**, confirming what #86 shipped by implication. Confirming it surfaced a
 gap it creates — **#90**, no consultant-side write path to that target exists

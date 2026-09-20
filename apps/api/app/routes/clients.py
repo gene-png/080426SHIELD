@@ -450,6 +450,27 @@ def _csf_client_target_tier(db: Session, service_id: uuid.UUID) -> int | None:
     importing another router's underscore helper is how import cycles start.
     Three lines, one query, and the duplication is stated here so the next
     reader does not "fix" it by reaching across.
+
+    THAT LAST CLAUSE IS NO LONGER TRUE OF THE CODEBASE, and saying so here is
+    the point of this paragraph. `routes/risk.py` DOES reach across now
+    (#84): it imports `_client_target_tier` and `_client_target_stage` rather
+    than adding a fourth copy. Two files asserting opposite conventions is
+    worse than either convention, so the split is stated rather than left for
+    a reader to trip over.
+
+    The distinction that makes both correct: the cycle hazard is real and was
+    MEASURED, not inherited. The `app/routes/*` import graph is a DAG --
+    `ai_preview -> attack, csf, zt`; `attack -> tech_debt`; `oidc -> auth`;
+    `risk -> csf, zt, artifacts`; and NOTHING imports `risk` or `clients`.
+    So `risk` is a leaf and may import upward safely; `clients` is imported
+    by nothing today but sits where a future importer is likelier.
+
+    THE REAL ANSWER IS NEITHER, and it is filed rather than done here: three
+    copies of one query plus one importer is past the point where a shared
+    non-router helper is speculative abstraction. That is #84's own argument
+    -- four sites disagreeing about one client's target is the defect #84 is
+    titled for. Tracked; not folded into the PR that closes #84, because a
+    four-router refactor is not what that PR is for.
     """
     svc = db.get(Service, service_id)
     if svc is None or svc.source_request_id is None:
