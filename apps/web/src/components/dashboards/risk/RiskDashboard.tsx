@@ -209,24 +209,26 @@ export function RiskDashboard({
   // THREE states, not two. `undefined` is a register serialized before the
   // field existed: nobody looked. `0` is looked-and-nothing-withheld, which
   // is silence. Anything else is the disagreement and gets announced.
-  const withheld = data.entries_without_tier;
-  // #313. Each breakdown filters independently, so each gets its own count and
-  // the banner names WHICH are affected. A single number silently certified
-  // the other two: an entry with a valid tier and an unresolvable axis left
-  // this at 0 while `axis_counts` summed to fewer than the headline.
-  const gaps: Array<[string, number]> = [
-    ["the 5x5 matrix and the tier counts", data.entries_without_tier ?? 0],
-    ["the axis breakdown", data.entries_without_axis ?? 0],
-    ["the action breakdown", data.entries_without_action ?? 0],
-  ].filter(([, n]) => (n as number) > 0) as Array<[string, number]>;
+  // #313. One count per breakdown, because `tiers`, `axes` and `actions`
+  // filter INDEPENDENTLY in `risk_dashboard`. A single count derived from
+  // `tiers` left this silent while `axis_counts` summed short -- the defect
+  // this banner exists to disclose, under a disclosure certifying its absence.
+  //
+  // NO not-recorded state, and the first version was wrong to have one. These
+  // are computed per request and required in `RiskDashboardResponse`, so the
+  // API always sends them; `undefined` was a state the server cannot produce,
+  // and the branch handling it was production code for an unreachable input
+  // with a test built to exercise it. That pattern belongs to PERSISTED
+  // fields (#316's `excluded_inputs`), which this is not.
+  const gaps: Array<[string, number]> = (
+    [
+      ["the 5x5 matrix and the tier counts", data.entries_without_tier],
+      ["the axis breakdown", data.entries_without_axis],
+      ["the action breakdown", data.entries_without_action],
+    ] as Array<[string, number]>
+  ).filter(([, n]) => n > 0);
   const withheldNote =
-    withheld === undefined ? (
-      <span>
-        Whether any entries are missing from these breakdowns was{" "}
-        <span className="font-semibold">not recorded</span> for this register
-        version. Regenerate it to find out.
-      </span>
-    ) : gaps.length > 0 ? (
+    gaps.length > 0 ? (
       <span>
         <span className="font-semibold">
           Some entries are counted in Open risks and missing from a breakdown
@@ -236,12 +238,13 @@ export function RiskDashboard({
         {gaps.map(([label, n], i) => (
           <span key={label}>
             {i > 0 ? "; " : ""}
-            {n} are absent from {label}
+            {n} missing from {label}
           </span>
         ))}
         . Each is counted separately because each breakdown filters
         independently — an entry can carry a valid tier and still be missing
-        from the axis chart.
+        from the axis chart. Regenerate before exporting: a client reading this
+        register sees those rows as dashes.
       </span>
     ) : null;
   return (

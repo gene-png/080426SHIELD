@@ -42,13 +42,19 @@ export interface RiskDashboardData {
    * therefore in the headline and in none of the breakdowns, and the two
    * disagree with nothing saying why.
    *
-   * OPTIONAL, and the optionality is the disclosure. A register serialized
-   * before this field existed carries no count, which is "nobody looked" and
-   * not "nothing was withheld". `undefined` renders as NOT RECORDED; a zero
-   * renders as silence. Collapsing them would manufacture a positive
-   * certificate out of absence, which is the #244 shape.
+   * REQUIRED, not optional -- and the first version got this backwards by
+   * borrowing #316's pattern for a PERSISTED field. These are computed per
+   * request from `entries` (`len(entries) - len(tiers)` and siblings) and
+   * carry no default in `RiskDashboardResponse`, so the API ALWAYS sends
+   * them. There is no "register serialized before this field existed"
+   * population: the value is recomputed on every read.
+   *
+   * Declaring them optional invented an `undefined` state the API cannot
+   * produce, and the component then rendered a NOT RECORDED branch for it --
+   * production code handling an unreachable state, with a test constructing
+   * it to prove the handling worked.
    */
-  entries_without_tier?: number;
+  entries_without_tier: number;
   /**
    * #313. The axis and action breakdowns filter INDEPENDENTLY of the tier one,
    * so one count cannot explain all three. An entry can carry a valid tier and
@@ -56,8 +62,8 @@ export interface RiskDashboardData {
    * tier counts, and absent from `axis_counts` -- which the tier count reports
    * as zero.
    */
-  entries_without_axis?: number;
-  entries_without_action?: number;
+  entries_without_axis: number;
+  entries_without_action: number;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe

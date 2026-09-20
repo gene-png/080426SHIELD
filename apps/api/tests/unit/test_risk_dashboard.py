@@ -338,6 +338,25 @@ def test_the_client_dashboard_discloses_entries_missing_from_every_breakdown(
     assert (
         "entries_without_tier" in b
     ), "the client surface must carry the qualifier, not only the admin one"
+    # EACH BREAKDOWN RECONCILES WITH ITS OWN COUNT, because each filters
+    # independently and one number cannot explain three.
+    #
+    # Deletion was already caught -- the fields have no default in
+    # `RiskDashboardResponse`, so removing a kwarg is a ValidationError and the
+    # 200 assertion goes red. A WRONG VALUE was not: measured, replacing
+    # `entries_without_axis=len(entries) - len(axes)` with the tier count (the
+    # copy-paste that is one line away) left every test in this file green.
+    axed = sum(b["axis_counts"].values())
+    assert axed + b["entries_without_axis"] == b["total_entries"], (
+        f"the axis breakdown sums to {axed} under a headline of "
+        f"{b['total_entries']} with {b['entries_without_axis']} disclosed"
+    )
+    actioned = sum(b["action_counts"].values())
+    assert actioned + b["entries_without_action"] == b["total_entries"], (
+        f"the action breakdown sums to {actioned} under a headline of "
+        f"{b['total_entries']} with {b['entries_without_action']} disclosed"
+    )
+
     tiered = sum(b["tier_counts"].values())
     assert tiered + b["entries_without_tier"] == b["total_entries"], (
         f"the breakdowns sum to {tiered} under a headline of {b['total_entries']} "

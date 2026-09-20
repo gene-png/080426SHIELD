@@ -41,6 +41,12 @@ function data(overrides: Partial<RiskDashboardData> = {}): RiskDashboardData {
     action_counts: { mitigate: 20, accept: 8 },
     matrix: [],
     entries: [],
+    // All three are computed per request and required in the response schema,
+    // so the API always sends them. The default reflects that rather than
+    // omitting keys the server cannot omit.
+    entries_without_tier: 0,
+    entries_without_axis: 0,
+    entries_without_action: 0,
     ...overrides,
   } as RiskDashboardData;
 }
@@ -98,9 +104,9 @@ describe("RiskDashboard withheld-entry disclosure (#313)", () => {
     );
 
     const note = screen.getByTestId("risk-entries-without-tier");
-    expect(note).toHaveTextContent("1 are absent from the axis breakdown");
+    expect(note).toHaveTextContent("1 missing from the axis breakdown");
     // And it must NOT claim the tier counts are affected, because they are not.
-    expect(note).not.toHaveTextContent("absent from the 5x5 matrix");
+    expect(note).not.toHaveTextContent("missing from the 5x5 matrix");
   });
 
   it("names every affected breakdown, not just the first", () => {
@@ -116,10 +122,10 @@ describe("RiskDashboard withheld-entry disclosure (#313)", () => {
     );
     const note = screen.getByTestId("risk-entries-without-tier");
     expect(note).toHaveTextContent(
-      "2 are absent from the 5x5 matrix and the tier counts",
+      "2 missing from the 5x5 matrix and the tier counts",
     );
-    expect(note).toHaveTextContent("1 are absent from the axis breakdown");
-    expect(note).toHaveTextContent("3 are absent from the action breakdown");
+    expect(note).toHaveTextContent("1 missing from the axis breakdown");
+    expect(note).toHaveTextContent("3 missing from the action breakdown");
   });
 
   it("stays silent when every entry is accounted for", () => {
@@ -136,16 +142,17 @@ describe("RiskDashboard withheld-entry disclosure (#313)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("treats a MISSING count as not-recorded rather than as zero", () => {
-    // A register serialized before this field existed carries no count. That
-    // is "nobody looked", not "nothing was withheld", and rendering silence
-    // for it would be a positive certificate manufactured out of absence --
-    // the exact shape #244 was filed for.
-    const older = data({ total_entries: 40 });
-    delete (older as Partial<RiskDashboardData>).entries_without_tier;
-    render(<RiskDashboard data={older} />);
-
-    const note = screen.getByTestId("risk-entries-without-tier");
-    expect(note).toHaveTextContent(/not recorded/i);
+  it("says what to do about it, like every other banner in the app", () => {
+    // The MOST severe state was the one giving the reader no remedy. Every
+    // sibling banner ends with an instruction; this one ended with a
+    // description.
+    render(
+      <RiskDashboard
+        data={data({ total_entries: 10, entries_without_axis: 1 })}
+      />,
+    );
+    expect(screen.getByTestId("risk-entries-without-tier")).toHaveTextContent(
+      /Regenerate before exporting/,
+    );
   });
 });
