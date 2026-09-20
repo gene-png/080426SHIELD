@@ -12,7 +12,30 @@ line-length = 100
 # codes, NOT style enforcement -- so this exemption is load-bearing on the
 # harness actually running in CI. If the "gates can fail" step is ever removed
 # or skipped, this exemption must go with it.
-extend-exclude = [".venv", "node_modules", "reference-docs", "apps/api/tests/gates"]
+# `apps/api/tests/gates` is written as a GLOB rather than a repo-relative path.
+# An exclude resolves against the config file, and the api container mounts
+# `./apps/api` at `/app` with the root `pyproject.toml` bind-mounted at `/` --
+# so `apps/api/tests/gates` names `/apps/api/tests/gates`, which does not
+# exist, and the MANDATORY in-container lint reported four phantom errors in
+# fixture files that are deliberately not lint-clean (#314). The glob matches
+# the directory wherever the tree is rooted.
+#
+# It also matches the REPO-ROOT `tests/gates/`, which exists and holds the two
+# shell gates -- deliberately, for parity with `[tool.black]`'s
+# `extend-exclude`, whose regex has carried a bare alternative covering both
+# all along. No behavioural change today (ruff lints `.py` and there are no
+# Python files there), and it means a future Python gate fixture at the repo
+# root is exempt by the same rule as one under `apps/api`.
+#
+# Measured rather than argued from the `per-file-ignores` analogy below, which
+# is a DIFFERENT matcher. Both run on 2026-09-20 at 9170c99:
+#
+#     ruff check --no-cache .     inside the api container  -> exit 0
+#     ruff check apps/api         from the repo root        -> exit 0
+#
+# The ref is named because re-deriving means choosing a tree, and the tree a
+# reader picks is `main`: "at this head" is precisely the ref nobody can name.
+extend-exclude = [".venv", "node_modules", "reference-docs", "**/tests/gates"]
 # Excludes are bypassed for EXPLICITLY NAMED paths unless this is set, and a
 # pre-commit hook names files explicitly -- which is precisely how #168 says the
 # hook set rewrites files. Without this, `ruff --fix` from a hook would edit the

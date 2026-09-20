@@ -33,7 +33,43 @@ from pathlib import Path
 from docx import Document
 from docx.table import Table, _Cell
 
-WORKSPACE = Path(__file__).resolve().parents[3]
+
+def _find_workspace(start: Path | None = None) -> Path:
+    """The checkout root, located by its own INPUT directory.
+
+    Was `parents[3]` at module scope -- an `IndexError` at import inside the
+    api container, where `./apps/api` is mounted at `/app` and this file has
+    three parents. `python-docx` is a runtime dependency of `apps/api`, so
+    `import docx` succeeds there and execution reaches this line; the shape is
+    #314's, and the sweep that fixed the two siblings in this directory missed
+    this one.
+
+    Keyed on `reference-docs/`, NOT on `packages/`, and the difference matters.
+    `scripts/_common.py` searches for `packages/` because that is where its
+    seed data lives -- but in the container `/packages` EXISTS (compose mounts
+    `./packages/zt-data` there), so the same marker here would resolve the
+    workspace to `/` and the `OUT_DIR.mkdir(parents=True)` below would
+    cheerfully create `/packages/csf-data/source` instead of failing.
+    `reference-docs/` is this script's actual input and is in no container
+    mount, so finding it means a real checkout.
+
+    Raises with both documented invocations named, rather than an `IndexError`
+    from pathlib that tells the reader nothing.
+    """
+    here = (start or Path(__file__)).resolve()
+    for candidate in here.parents:
+        if (candidate / "reference-docs").is_dir():
+            return candidate
+    raise RuntimeError(
+        f"cannot locate a checkout with a `reference-docs/` directory above {here}. "
+        "This script reads the interview .docx files from there, so it only runs "
+        "on a full checkout: `cd apps/api && python -m scripts.extract_csf_questionnaires`, "
+        "or the `docker run -v ${PWD}:/workspace -w /workspace` one-shot in the module "
+        "docstring. It cannot run inside the api container, which mounts only apps/api."
+    )
+
+
+WORKSPACE = _find_workspace()
 SRC_DIR = WORKSPACE / "reference-docs"
 OUT_DIR = WORKSPACE / "packages" / "csf-data" / "source"
 OUT_DIR.mkdir(parents=True, exist_ok=True)

@@ -50,7 +50,49 @@ import re
 
 import pytest
 
-WORKFLOW = pathlib.Path(__file__).resolve().parents[4] / ".github" / "workflows" / "audit-gate.yml"
+from tests._paths import find_workflows_dir
+
+# The search lives in `tests/_paths.py` so its PASSING state is testable from a
+# tmp tree -- see `test_root_discovery.py`. At module scope reading `__file__`
+# it was not: a typo in the marker path would have skipped this module on the
+# host and on CI alike, forever, green.
+#
+# The directory and not the FILE, and that distinction is the whole guard.
+# This was `parents[4]`, correct for the host checkout and an `IndexError`
+# inside the api container, where `./apps/api` is mounted at `/app` -- this
+# file is then `/app/tests/unit/x.py`, which has four parents and not five. At
+# module
+# scope that aborts collection, so the documented `pytest -m unit` evaluated
+# not one assertion (#314).
+#
+# THE FIRST FIX SEARCHED FOR THE WORKFLOW FILE AND SKIPPED WHEN IT WAS NOT
+# FOUND, WHICH INVERTED THE GUARD. `main` reached `assert WORKFLOW.is_file()`
+# and failed LOUDLY when the workflow was renamed, moved or deleted. Keying the
+# skip on the file made that indistinguishable from "I am in the container" --
+# so folding `audit-gate.yml` into `ci.yml`, a live proposal (#312), would have
+# retired the `..`-versus-`...` guard this file exists for with a green
+# `2 skipped`.
+_WORKFLOWS_DIR = find_workflows_dir(pathlib.Path(__file__).resolve())
+
+# Skipped ONLY when there is no `.github/workflows` above this file at all.
+# That is the container, and it is the one case where skipping beats failing:
+# taking 7000 unrelated tests down because one gate test cannot reach its
+# artifact is the fail-closed rule applied in the wrong direction. The skip is
+# audible -- `pytest -rs` names it and the reason says where the test does run.
+#
+# A checkout that HAS the directory and not the file is a different world, and
+# it keeps the loud failure it had on `main`: `WORKFLOW` is set below and
+# `_git_log_lines` asserts on it.
+if _WORKFLOWS_DIR is None:
+    pytest.skip(
+        "no .github/workflows directory above this file -- expected inside the "
+        "api container, which mounts apps/api at /app and cannot see the repo "
+        "root (#314). This test is exercised on a full checkout, which is what "
+        "CI runs.",
+        allow_module_level=True,
+    )
+
+WORKFLOW = _WORKFLOWS_DIR / "audit-gate.yml"
 
 
 def _git_log_lines() -> list[str]:
