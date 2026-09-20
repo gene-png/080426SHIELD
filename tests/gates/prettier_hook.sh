@@ -13,6 +13,26 @@ set -eu
 
 HOOK="${HOOK:-$(cd "$(dirname "$0")/../.." && pwd)/scripts/prettier-hook.sh}"
 
+# An UNRECOGNISED ARGUMENT is exit 2, not a clean run.
+#
+# This gate took no arguments and ignored whatever it was given, so
+# `prettier_hook.sh --self-test` printed the ordinary success banner and
+# exited 0 -- and this directory's OTHER gate does have a `--self-test`, so
+# reaching for it here is the natural mistake. A developer gets a green and
+# believes a harness-can-fail check ran. That is "I could not look" wearing
+# "nothing to complain about", in the gate suite built to refuse it.
+#
+# Found while verifying, for the registry entry on `main`, that
+# `close_guard_linked_file.sh` is the only shell gate carrying a self-test.
+# It is -- and this is how that turned out to be checkable rather than
+# obvious.
+if [ "$#" -gt 0 ]; then
+  echo "FAIL: this gate takes no arguments; got: $*" >&2
+  echo "      It has no --self-test. \`close_guard_linked_file.sh\` does, and" >&2
+  echo "      silently exiting 0 here would read as one having run." >&2
+  exit 2
+fi
+
 # CI runners have `python3`; a Windows dev box usually has only `python`.
 # Probed by RUNNING each candidate, not by `command -v`: Windows ships a
 # `python3.exe` App Execution Alias that resolves, prints a Microsoft Store
@@ -113,9 +133,20 @@ write_lock 3.1.0 'prettier@3.1.0:'
 expect_ok "3.1.0" "reads a version that is NOT the repo's own"
 
 # --- A TRANSITIVE entry must not win. ---------------------------------------
-# `eslint-plugin-prettier` and friends are real dependencies, and an unanchored
-# grep picks whichever comes first -- silently running some other package's
-# version number as prettier's.
+# `eslint-plugin-prettier` and friends are real dependencies whose names
+# CONTAIN `prettier`, so any derivation matching the bare word picks one of
+# them and runs some other package's version number as prettier's.
+#
+# The rationale here used to say "an unanchored grep picks whichever comes
+# first". THERE IS NO GREP. The hook parses with awk, and even its predecessor
+# grep was anchored to two leading spaces -- so that sentence pointed a reader
+# at a mechanism this file has never contained.
+#
+# SUBSUMED, and kept anyway: cases below cover this and strictly more -- the
+# LOWER-second-entry case and the packages-only case each go red on a full
+# revert to `packages:` + `head -1`, which is the only mutation this one
+# catches. It stays as the cheapest statement of the property; it is not
+# load-bearing, and it should not be cited as though it were.
 write_lock 3.9.6 'eslint-plugin-prettier@5.0.0:' 'prettier@3.9.6:'
 expect_ok "3.9.6" "a transitive prettier-ish entry does not win"
 
@@ -221,13 +252,35 @@ expect_ok "3.9.6" "another importer's prettier does not win"
 # the comments above it, so a file-wide grep passes with the flag deleted from
 # the only line that runs. Measured -- that is exactly what the first version
 # of this check did.
-if ! grep -qE '^exec npx .*--write' "$HOOK"; then
-  echo "FAIL: the hook no longer passes --write, so it formats nothing;"
-  echo "      every version case above still passes, because they all return"
-  echo "      at --print-version before the exec."
+# THE WHOLE LINE, not just the flag, and there must be exactly ONE of it.
+#
+# `^exec npx .*--write` was satisfied by `exec npx -y "prettier@3.1.0" --write
+# "$@"` -- a one-token mutation that reinstates #168 exactly, with every
+# version case above still green, because they all return at
+# `--print-version` before the exec. The derivation stayed correct, stayed
+# tested, and nothing used it.
+#
+# The COUNT closes the other half: `grep -q` stops at its first match, so a
+# shadowing `exec npx -y prettier --write "$@"` inserted ABOVE the pinned line
+# leaves the strict pattern satisfied by the line below while the unpinned one
+# is what actually runs. An unpinned `npx` is named in this hook's own header
+# as how the divergence started.
+exec_lines="$(grep -cE '^exec npx' "$HOOK")"
+if [ "$exec_lines" != "1" ]; then
+  echo "FAIL: expected exactly ONE '^exec npx' line in the hook, found $exec_lines."
+  echo "      \`grep -q\` stops at the first match, so a second exec line above"
+  echo "      the pinned one would run instead while this check still passed."
   exit 1
 fi
-echo "ok   [the hook still passes --write]"
+if ! grep -qE '^exec npx -y "prettier@\$\{VERSION\}" --write "\$@"' "$HOOK"; then
+  echo "FAIL: the exec line is no longer the pinned form"
+  echo "      exec npx -y \"prettier@\${VERSION}\" --write \"\$@\""
+  echo "      A literal version there reinstates #168 with every version case"
+  echo "      above still green -- they all return at --print-version, which is"
+  echo "      NOT the code path that runs prettier."
+  exit 1
+fi
+echo "ok   [the exec line is pinned to \$VERSION and passes --write]"
 
 # --- The version it reads must be the one CI resolves. ----------------------
 # Read from the REAL lockfile, and compared against an INDEPENDENT read of the

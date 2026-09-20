@@ -64,9 +64,19 @@ fi
 # Parsed with awk rather than grep because the value is positional: the same
 # `version:` key appears under every dependency of every importer, so what
 # identifies this one is the path `. -> (dev)dependencies -> prettier`, not the
-# line's own text. Both `dependencies` and `devDependencies` are accepted -- the
-# root has it under dev today and which section a tool lives in is not this
-# hook's business. A `(peer)` suffix is stripped: pnpm writes
+# line's own text. Both `dependencies` and `devDependencies` are accepted, and
+# `optionalDependencies` deliberately is NOT -- the pattern is anchored
+# `^    (dev)?[Dd]ependencies:`, so an optional section closes `in_deps` and
+# the hook REFUSES rather than reading from it. Loud, not silent, which is
+# why it is an exclusion rather than a defect; stated because an unstated
+# one reads as an oversight to whoever finds it. No fixture exercises a
+# plain `dependencies:` section either, so that half of the claim is
+# asserted rather than tested -- and its failure is also a refusal.
+#
+# Both are accepted because the root has prettier under dev today and which
+# section a tool lives in is not this hook's business.
+#
+# A `(peer)` suffix is stripped: pnpm writes
 # `version: 3.9.6(typescript@5.x)` for packages with peers, and prettier has
 # none today, so that is a ratchet rather than a live case.
 VERSION="$(
