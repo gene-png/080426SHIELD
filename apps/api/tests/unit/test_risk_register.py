@@ -1511,3 +1511,154 @@ def test_a_run_where_nothing_was_lost_says_so_rather_than_staying_silent(
 
     assert details["entries_write_check"] == "agreed"
     assert details["entries_total"] == details["entries_written"] == 1
+
+
+def test_the_withheld_set_survives_a_reload(app_client) -> None:
+    """THE HEADLINE. `latest` must return what storage holds.
+
+    The defect was that `excluded_inputs` reached exactly one HTTP response and
+    died on reload. Asserting it on `generate` proves nothing -- that handler
+    passes the list in directly, so it is green whether or not `_serialize`
+    reads anything back.
+
+    The stored provenance is MUTATED here rather than produced at generate.
+    **An earlier version of this docstring justified that with "the resolver
+    filters on approved/released, so no register generated today carries a
+    non-empty `excluded`", and that is FALSE.** It is true of `inputs`;
+    `excluded` is a separate argument sourced from `g.not_finalized` and passes
+    through no resolver at all --
+    `test_an_unapproved_OPTIONAL_input_does_not_block_generation` generates
+    exactly such a register. The sentence was imported wholesale from
+    `test_export_refuses_a_register_built_from_unapproved_work`, where it IS
+    true, and in doing so argued away the test that would have closed the loop.
+
+    The real reason to keep this one is that it pins the READ in isolation, on
+    a value no generate produced -- two exact literals that appear nowhere else
+    in the pairing, so it cannot be satisfied by `inputs`, by a wholesale dict
+    (which fails `list[str]` validation) or by a stale copy. Writing the row is
+    building the WORLD; the step under test is the read-back.
+
+    The WRITE half is covered by
+    `test_the_withheld_set_is_persisted_by_generate_not_just_returned`, which
+    is the one the false sentence talked me out of.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    stored = dict(reg.provenance or {})
+    stored["excluded"] = ["the CSF assessment", "the Tech Debt review"]
+    reg.provenance = stored
+    db.add(reg)
+    db.commit()
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["excluded_inputs"] == ["the CSF assessment", "the Tech Debt review"], (
+        "the reload lost the withheld set -- `_serialize` is not reading "
+        "`provenance['excluded']` back, which is #244 instance 1 verbatim"
+    )
+    assert body["excluded_inputs_recorded"] is True, (
+        "the server looked and found a record, so it must say so; reporting "
+        "False here is indistinguishable from a register that predates 0047"
+    )
+
+
+def test_a_register_that_predates_provenance_says_nobody_looked(app_client) -> None:
+    """The OTHER half, and the one that must not fail open.
+
+    A NULL `provenance` is a fact about what was recorded. Defaulting it to
+    `True` would render a pre-0047 register identically to one where the server
+    looked and found nothing excluded -- a clean bill of health over the one
+    population nobody can re-check. Missing data defaults to UNCONFIRMED.
+
+    Asserted through the route rather than against `_serialize` directly: the
+    claim is about what a consultant's page receives.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = None  # a pre-0047 row
+    db.add(reg)
+    db.commit()
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["excluded_inputs_recorded"] is False, (
+        "a NULL provenance must report that nothing is on file, not that "
+        "nothing was excluded -- those are different claims and only one of "
+        "them is about the assessments"
+    )
+    assert body["excluded_inputs"] == []
+
+
+def test_the_withheld_set_is_persisted_by_generate_not_just_returned(app_client) -> None:
+    """The WRITE half, which had no test and whose absence was argued for.
+
+    `generate` used to compute `g.not_finalized`, store it via
+    `_provenance_snapshot`, AND pass the same expression to `_serialize`. Two
+    answers to one question. Every assertion on the generate response was green
+    off the parameter, so the third argument to `_provenance_snapshot` was
+    replaceable with `[]` and nothing went red â€” and the resulting reload
+    reported `excluded_inputs: []` with `excluded_inputs_recorded=True`. A
+    positive certificate that the server looked and nothing was withheld is
+    WORSE than the empty list #244 was filed for.
+
+    `_serialize` no longer takes the parameter, so this asserts the same
+    property twice over: the generate response is itself a read-back, and
+    `latest` reads it again in a new request.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    # A THIRD assessment, started and not approved. CSF here, because ATT&CK +
+    # ZT already satisfy the unlock rule without it -- so generation proceeds
+    # and the CSF assessment is withheld and NAMED. Same setup as
+    # `test_an_unapproved_OPTIONAL_input_does_not_block_generation`.
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h)
+
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    gen = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert gen.status_code == 201, gen.text
+    withheld = gen.json()["excluded_inputs"]
+    assert withheld, (
+        "this test needs a run that actually withheld something -- if the "
+        "fixture stopped producing an unfinalized input it proves nothing"
+    )
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    assert r.json()["excluded_inputs"] == withheld, (
+        "generate reported a withheld set that was never STORED -- the "
+        "snapshot's third argument is not carrying it"
+    )
+    assert r.json()["excluded_inputs_recorded"] is True
