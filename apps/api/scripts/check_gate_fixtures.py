@@ -309,14 +309,10 @@ def discover_shell_gates(shell_dir: Path) -> list[str]:
     """Every `*.sh` under the repo-root gate directory."""
     if not shell_dir.is_dir():
         return []
-    return sorted(
-        p.name for p in shell_dir.glob(f"*{_SHELL_GATE_SUFFIX}") if p.is_file()
-    )
+    return sorted(p.name for p in shell_dir.glob(f"*{_SHELL_GATE_SUFFIX}") if p.is_file())
 
 
-def unwired_gates(
-    gates: list[str], workflows: Path, extra: Sequence[Path] = ()
-) -> list[str]:
+def unwired_gates(gates: list[str], workflows: Path, extra: Sequence[Path] = ()) -> list[str]:
     """Gates no workflow invokes. THE POINT OF THIS FILE, reached from outside.
 
     A gate that runs nowhere cannot fail, which is this file's own thesis -- and
@@ -447,9 +443,7 @@ NON_GATE_SCRIPTS: dict[str, str] = {
 }
 
 
-def undiscovered_gates(
-    scripts: Path, workflows: Path, extra: Sequence[Path] = ()
-) -> list[str]:
+def undiscovered_gates(scripts: Path, workflows: Path, extra: Sequence[Path] = ()) -> list[str]:
     """Scripts CI RUNS that carry no gate marker and are not declared non-gates.
 
     THE THIRD ORACLE, and it exists because the other two cannot see this case.
@@ -519,9 +513,7 @@ def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:
         try:
             data = json.loads(spec.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            problems.append(
-                f"{case_dir.name}: unreadable case.json ({type(exc).__name__})"
-            )
+            problems.append(f"{case_dir.name}: unreadable case.json ({type(exc).__name__})")
             continue
         missing = [k for k in _REQUIRED_KEYS if k not in data]
         if missing:
@@ -551,9 +543,7 @@ def run_case(scripts: Path, gate: str, case: dict) -> tuple[int, str]:
     this call site did not; a fixtured gate that hangs would otherwise hang the CI
     job with no diagnostic.
     """
-    argv = [str(scripts / gate)] + [
-        a.replace("{dir}", str(case["_dir"])) for a in case["argv"]
-    ]
+    argv = [str(scripts / gate)] + [a.replace("{dir}", str(case["_dir"])) for a in case["argv"]]
     proc = subprocess.run(  # noqa: S603
         [sys.executable] + argv,
         capture_output=True,
@@ -599,9 +589,7 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
     # look -- the two branches merged, inside the gate whose organising principle
     # is that they never share one. Latent when found: all four covered gates
     # already had a 1.
-    for case in [
-        c for c in cases if int(c["expect"]) == 2 and not c.get("stdout_contains")
-    ]:
+    for case in [c for c in cases if int(c["expect"]) == 2 and not c.get("stdout_contains")]:
         out.append(
             f"{gate}/{case['_dir'].name}: expects exit 2 without stdout_contains "
             f"-- a gate has several 'could not look' branches and the code alone "
@@ -726,9 +714,7 @@ def main(argv: list[str]) -> int:
                 )
             return 1
 
-        unwired = unwired_gates(
-            sorted(gates) + shell_gates, workflows, compose_sources(repo)
-        )
+        unwired = unwired_gates(sorted(gates) + shell_gates, workflows, compose_sources(repo))
         if unwired:
             print("check-gate-fixtures: FAILED -- gates no workflow invokes:")
             for name in unwired:

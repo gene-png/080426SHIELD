@@ -145,9 +145,7 @@ def test_case_without_an_incident_is_rejected(tmp_path: Path) -> None:
 # the result.
 
 
-def test_no_negative_control_fails(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_no_negative_control_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Fixtures that only ever pass prove the gate RUNS, not that it discriminates.
 
     This is the whole reason the harness exists, so it is the assertion that must
@@ -159,9 +157,7 @@ def test_no_negative_control_fails(
     assert "NO NEGATIVE CONTROL" in capsys.readouterr().out
 
 
-def test_no_adversarial_case_fails(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_no_adversarial_case_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = _root(tmp_path)
     _case(root / "check_plan_totals" / "passing", expect=0)
     _case(root / "check_plan_totals" / "failing", expect=2)
@@ -169,9 +165,7 @@ def test_no_adversarial_case_fails(
     assert "no case marked adversarial" in capsys.readouterr().out
 
 
-def test_wrong_exit_code_is_reported(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_wrong_exit_code_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = _root(tmp_path)
     _case(root / "check_plan_totals" / "passing", expect=0)
     _case(root / "check_plan_totals" / "mislabelled", expect=1, adversarial=True)
@@ -319,9 +313,7 @@ def test_a_gate_invoked_by_its_stem_counts_as_wired(tmp_path: Path) -> None:
         '      - run: python -c "from scripts.check_audit_evidence import missing_evidence"\n'
         "      - run: python -m scripts.check_test_integrity tests\n",
     )
-    assert (
-        unwired_gates(["check_audit_evidence.py", "check_test_integrity.py"], wf) == []
-    )
+    assert unwired_gates(["check_audit_evidence.py", "check_test_integrity.py"], wf) == []
 
 
 def test_a_gate_named_only_in_a_comment_is_unwired(tmp_path: Path) -> None:
@@ -395,9 +387,7 @@ def _repo_shaped(tmp_path: Path, *, workflow: str, shell_gates: list[str]) -> Pa
     gates = tmp_path / "tests" / "gates"
     gates.mkdir(parents=True)
     for name in shell_gates:
-        (gates / name).write_text(
-            "#!/bin/sh" + chr(10) + "exit 0" + chr(10), encoding="utf-8"
-        )
+        (gates / name).write_text("#!/bin/sh" + chr(10) + "exit 0" + chr(10), encoding="utf-8")
     _case(root / "check_plan_totals" / "ok", expect=0)
     _case(root / "check_plan_totals" / "bad", expect=1)
     _case(root / "check_plan_totals" / "cantlook", expect=2)
@@ -557,9 +547,7 @@ def test_a_workflow_invoked_script_with_no_marker_is_reported(tmp_path: Path) ->
     making the marker match everything would leave this test green while the
     case it is named for had stopped being reachable.
     """
-    scripts = _scripts(
-        tmp_path, {"check_ghost.py": _UNMARKED, "check_real.py": _MARKED}
-    )
+    scripts = _scripts(tmp_path, {"check_ghost.py": _UNMARKED, "check_real.py": _MARKED})
     wf = _workflows(
         tmp_path,
         "jobs:\n  x:\n    steps:\n"
@@ -577,9 +565,7 @@ def test_a_workflow_invoked_script_with_no_marker_is_reported(tmp_path: Path) ->
 def test_a_marked_gate_is_never_reported_as_undiscovered(tmp_path: Path) -> None:
     """THE PASSING STATE. Without it the report above could be unconditional."""
     scripts = _scripts(tmp_path, {"check_real.py": _MARKED})
-    wf = _workflows(
-        tmp_path, "jobs:\n  x:\n    steps:\n      - run: python check_real.py\n"
-    )
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: python check_real.py\n")
     assert undiscovered_gates(scripts, wf) == []
 
 
@@ -623,9 +609,7 @@ def test_a_private_helper_is_not_a_candidate(tmp_path: Path) -> None:
     whenever one of them is invoked as a module. Treating it as a candidate
     reports a finding with no available remedy."""
     scripts = _scripts(tmp_path, {"_common.py": _UNMARKED})
-    wf = _workflows(
-        tmp_path, "jobs:\n  x:\n    steps:\n      - run: python _common.py\n"
-    )
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: python _common.py\n")
     assert undiscovered_gates(scripts, wf) == []
 
 
@@ -679,7 +663,5 @@ def test_a_missing_extra_source_is_skipped_not_a_crash(tmp_path: Path) -> None:
     this asserts. Returning early on the missing file would turn "no compose
     file" into "nothing is invoked", the could-not-look/nothing-wrong merge
     this harness exists to refuse."""
-    wf = _workflows(
-        tmp_path, "jobs:\n  x:\n    steps:\n      - run: python check_real.py\n"
-    )
+    wf = _workflows(tmp_path, "jobs:\n  x:\n    steps:\n      - run: python check_real.py\n")
     assert "check_real.py" in invocation_text(wf, [tmp_path / "docker-compose.yml"])
