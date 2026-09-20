@@ -31,6 +31,20 @@ in DEFERRED with a reason. A covered gate must have:
     expect to pass, that must not. Ordinary cases test the rule; adversarial
     cases test the boundary, and the boundary is where all of these have broken.
 
+    IT IS THE ONLY ONE OF THE FOUR THAT LOOKS FOR INPUTS THE AUTHOR DID NOT
+    ALREADY HAVE IN MIND. The other three are answerable from the code you
+    just wrote: a pass, a refusal, a could-not-look. An adversarial case is
+    answerable only by asking what someone ELSE would reasonably send. That
+    asymmetry is why it is required rather than encouraged -- ordinary cases
+    test what you thought of, which is the set that cannot contain the defect
+    you are looking for.
+
+    Measured, first time it was demanded of a gate that lacked one: writing an
+    adversarial fixture for `check_decision_numbers` surfaced a live defect
+    (#342) -- a subject REFERENCING another decision is flagged as naming one
+    it does not add, which is an ordinary commit message here and reddens a
+    PR. The fixture found it on construction, before it was ever run.
+
 Every case names the INCIDENT it derives from, because a fixture derived from the
 rule rather than from the failure is the inversion that produced the defects
 above.
@@ -617,7 +631,11 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
     if not [c for c in cases if c.get("adversarial")]:
         out.append(
             f"{gate}: no case marked adversarial -- ordinary cases test the "
-            f"rule, adversarial cases test the boundary"
+            f"rule, adversarial cases test the boundary. It is the only one of "
+            f"the four that looks for inputs the author did not already have "
+            f"in mind: the other three are answerable from the code you just "
+            f"wrote, this one only by asking what someone else would "
+            f"reasonably send"
         )
     return out
 
