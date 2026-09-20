@@ -91,20 +91,6 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
-    "close_guard_linked_file.sh": (
-        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
-        "Its evidence is INTERNAL and is the strongest of the three shell gates: "
-        "it EXTRACTS the collect block from `audit-gate.yml` by markers rather "
-        "than restating it, stubs `gh`, drives the real close guard, and asserts "
-        "the VERDICT in three states -- query fails (no file), query returns "
-        "empty (file present, empty), query returns numbers. "
-        "It is the only shell gate here carrying a `--self-test`, and that is "
-        "what this entry is really standing in for: it runs THREE mutations, "
-        "each with an exact expected failure-label set, because a single "
-        "mutation with an any-non-zero assertion passed while the defect was "
-        "back in place. The other two shell gates have no `--self-test` at all, "
-        "so a harness-cannot-fail defect in either is still invisible."
-    ),
     "prettier_hook.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Covers both states internally via `expect_ok` and `expect_refusal` "
@@ -323,7 +309,9 @@ def discover_shell_gates(shell_dir: Path) -> list[str]:
     """Every `*.sh` under the repo-root gate directory."""
     if not shell_dir.is_dir():
         return []
-    return sorted(p.name for p in shell_dir.glob(f"*{_SHELL_GATE_SUFFIX}") if p.is_file())
+    return sorted(
+        p.name for p in shell_dir.glob(f"*{_SHELL_GATE_SUFFIX}") if p.is_file()
+    )
 
 
 def unwired_gates(
@@ -531,7 +519,9 @@ def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:
         try:
             data = json.loads(spec.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            problems.append(f"{case_dir.name}: unreadable case.json ({type(exc).__name__})")
+            problems.append(
+                f"{case_dir.name}: unreadable case.json ({type(exc).__name__})"
+            )
             continue
         missing = [k for k in _REQUIRED_KEYS if k not in data]
         if missing:
@@ -561,7 +551,9 @@ def run_case(scripts: Path, gate: str, case: dict) -> tuple[int, str]:
     this call site did not; a fixtured gate that hangs would otherwise hang the CI
     job with no diagnostic.
     """
-    argv = [str(scripts / gate)] + [a.replace("{dir}", str(case["_dir"])) for a in case["argv"]]
+    argv = [str(scripts / gate)] + [
+        a.replace("{dir}", str(case["_dir"])) for a in case["argv"]
+    ]
     proc = subprocess.run(  # noqa: S603
         [sys.executable] + argv,
         capture_output=True,
@@ -607,7 +599,9 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
     # look -- the two branches merged, inside the gate whose organising principle
     # is that they never share one. Latent when found: all four covered gates
     # already had a 1.
-    for case in [c for c in cases if int(c["expect"]) == 2 and not c.get("stdout_contains")]:
+    for case in [
+        c for c in cases if int(c["expect"]) == 2 and not c.get("stdout_contains")
+    ]:
         out.append(
             f"{gate}/{case['_dir'].name}: expects exit 2 without stdout_contains "
             f"-- a gate has several 'could not look' branches and the code alone "
@@ -870,5 +864,8 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         # stderr, not stdout: the success line goes to stdout, and a crash notice
         # sharing that stream is one grep away from being read as output.
-        print(f"check-gate-fixtures: CRASHED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"check-gate-fixtures: CRASHED: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         raise SystemExit(2) from exc
