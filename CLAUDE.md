@@ -970,13 +970,22 @@ a real exit code and a real date, and was the minority outcome (D-071).
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
   #73/#75/#79 sweep exactly that way: `risk.py` never calls `analyze_gaps`, it
   re-derives the comparison inline, so a complete call-site sweep reported clean
-  over a file that computes client-facing risk findings against a hardcoded
+  over a file that computed client-facing risk findings against a hardcoded
   target. Grep for what the defect LOOKS like — the literal default values, the
   truncation constant, the magic number, the shape of the comparison. Concretely,
-  on the trio: `grep -rnE "(maturity_tier|maturity_stage) *< *[0-9]"` returns
-  `risk.py:177` on the first try, and `grep -rnE "is not None else [0-9]"`
-  returns `risk.py:193`. Neither appears in any list of `analyze_gaps` callers.
+  on the trio, **as `risk.py` read before #84 was fixed**:
+  `grep -rnE "(maturity_tier|maturity_stage) *< *[0-9]"` returned `risk.py:177`
+  on the first try, and `grep -rnE "is not None else [0-9]"` returned
+  `risk.py:193`. Neither appeared in any list of `analyze_gaps` callers.
   A reimplementation shares the symptom, never the symbol.
+
+  **The example is DATE-QUALIFIED rather than refreshed, and that is the
+  repair this file prescribes for itself.** #84's fix replaced both lines, so
+  both greps now return nothing -- and a reader who tries the technique on a
+  fixed tree gets silence and concludes the technique does not work. Swapping
+  in a fresh live instance would re-arm exactly that: the cited instance is the
+  first thing anyone fixes, and fixing it makes the sentence false again. Pin
+  the example to when it was true; the TECHNIQUE is what survives.
 
   **AND THE OBVIOUS FIX -- "so call `analyze_gaps`" -- IS REFUSED, deliberately,
   so the next reader does not make it.** #84 was closed by sharing the TARGET
