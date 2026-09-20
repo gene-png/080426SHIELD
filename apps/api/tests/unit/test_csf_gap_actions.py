@@ -272,7 +272,7 @@ def test_fresh_assessment_parses_with_zero_actions(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_xlsx_gains_action_plan_sheet() -> None:
+def test_xlsx_gains_action_plan_sheet(xlsx_data_start) -> None:
     rows = [
         SimpleNamespace(
             subcategory_code="GV.OC-01",
@@ -319,7 +319,10 @@ def test_xlsx_gains_action_plan_sheet() -> None:
     wb = load_workbook(io.BytesIO(raw))
     assert "Action Plan" in wb.sheetnames
     ws = wb["Action Plan"]
-    header = [c.value for c in ws[1]]
+    # Row 1 is #294's approval banner; the headings are the row above the
+    # data, and the data row is derived from the freeze pane.
+    first = xlsx_data_start(ws)
+    header = [c.value for c in ws[first - 1]]
     for col in (
         "Characterization",
         "Owner",
@@ -330,7 +333,7 @@ def test_xlsx_gains_action_plan_sheet() -> None:
     ):
         assert col in header
     # Only the gap row appears, with the override priority + annotation values.
-    body = [[cell.value for cell in row] for row in ws.iter_rows(min_row=2)]
+    body = [[cell.value for cell in row] for row in ws.iter_rows(min_row=first)]
     assert len(body) == 1
     row0 = dict(zip(header, body[0], strict=True))
     assert row0["Subcategory"] == "GV.OC-01"
