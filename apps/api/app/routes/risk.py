@@ -49,6 +49,16 @@ from app.risk.engine import (
     tier_for,
 )
 from app.routes.artifacts import _storage_dep
+
+# IMPORTED, not copied -- and `routes/clients.py` carries a comment saying the
+# opposite, which is stated at both sites rather than left contradictory.
+#
+# A fourth copy of this two-line query is how four surfaces come to disagree
+# about one client's target, which is the defect #84 is titled for. The cycle
+# hazard `clients.py` names is real and measured: the `app/routes/*` graph is
+# a DAG and NOTHING imports `risk`, so this module is a leaf and may import
+# upward. The durable answer is a shared non-router helper; filed, not done
+# here.
 from app.routes.csf import _client_target_tier
 from app.routes.zt import _client_target_stage
 from app.schemas.risk import (
