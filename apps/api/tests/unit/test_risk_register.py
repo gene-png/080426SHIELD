@@ -7,6 +7,7 @@ import json
 import os
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,7 +102,9 @@ def _seed_attack_and_zt(c: TestClient, bearer: str, cid: str) -> tuple[str, str]
     """Returns (a gap technique_code, a ZT capability_code)."""
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     asvc = c.post(
-        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+        "/attack/services",
+        headers=h,
+        json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
     cov = a.json()["coverage"][0]
@@ -431,7 +434,9 @@ def test_export_refuses_a_register_built_from_unapproved_work(app_client) -> Non
 
 
 @pytest.mark.unit
-def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(app_client) -> None:
+def test_export_refuses_a_pre_provenance_register_that_was_never_delivered(
+    app_client,
+) -> None:
     """NULL provenance is 'not recorded', not 'nothing was excluded'.
 
     A register whose inputs were never captured cannot be certified either way,
@@ -589,7 +594,9 @@ def _seed_many_gaps(c: TestClient, bearer: str, cid: str, count: int) -> tuple[l
     """Seed `count` ATT&CK gaps plus one ZT gap. Returns (technique codes, capability)."""
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     asvc = c.post(
-        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+        "/attack/services",
+        headers=h,
+        json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
     rows = a.json()["coverage"][:count]
@@ -763,14 +770,20 @@ def _seed_drafts_only(c: TestClient, bearer: str, cid: str) -> None:
     """ATT&CK + ZT assessments that EXIST and are not approved."""
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     asvc = c.post(
-        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+        "/attack/services",
+        headers=h,
+        json={"kind": "attack_coverage", "title": "ATT&CK"},
     )
     a = c.post(f"/attack/services/{asvc.json()['id']}/assessments", headers=h)
     cov = a.json()["coverage"][0]
     c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "gap"})
     zsvc = c.post("/zt/services", headers=h, json={"kind": "zero_trust_cisa", "title": "ZT"})
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h)
-    c.patch(f"/zt/answers/{za.json()['answers'][0]['id']}", headers=h, json={"maturity_stage": 1})
+    c.patch(
+        f"/zt/answers/{za.json()['answers'][0]['id']}",
+        headers=h,
+        json={"maturity_stage": 1},
+    )
 
 
 @pytest.mark.unit
@@ -1511,3 +1524,327 @@ def test_a_run_where_nothing_was_lost_says_so_rather_than_staying_silent(
 
     assert details["entries_write_check"] == "agreed"
     assert details["entries_total"] == details["entries_written"] == 1
+
+
+# ---------------------------------------------------------------------------
+# #244 instance 1 -- the read-back, and the fail-closed default.
+#
+# These exist because the review found the PR's actual fix had NO test at any
+# level. `_serialize`'s `"excluded" in stored` branch could be deleted and the
+# whole suite stayed green, because the only assertion touching
+# `excluded_inputs` was on the POST /generate response -- the one path that
+# passes the value in explicitly and never reaches the new code. The vitest
+# that covers the false state supplies the flag directly in a mock, so it never
+# reaches `_serialize` either.
+#
+# CLAUDE.md: an assertion that goes red when the guard is deleted, EXERCISED
+# THROUGH THE SURFACE THE CLIENT ACTUALLY REACHES. For this fix that surface is
+# `GET .../register/latest`, because the defect was that a reload returned `[]`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_the_withheld_set_survives_a_reload(app_client) -> None:
+    """THE HEADLINE. `latest` must return what storage holds.
+
+    The defect was that `excluded_inputs` reached exactly one HTTP response and
+    died on reload. Asserting it on `generate` proves nothing -- that handler
+    passes the list in directly, so it is green whether or not `_serialize`
+    reads anything back.
+
+    The stored provenance is MUTATED here rather than produced at generate.
+    **An earlier version of this docstring justified that with "the resolver
+    filters on approved/released, so no register generated today carries a
+    non-empty `excluded`", and that is FALSE.** It is true of `inputs`;
+    `excluded` is a separate argument sourced from `g.not_finalized` and passes
+    through no resolver at all --
+    `test_an_unapproved_OPTIONAL_input_does_not_block_generation` generates
+    exactly such a register. The sentence was imported wholesale from
+    `test_export_refuses_a_register_built_from_unapproved_work`, where it IS
+    true, and in doing so argued away the test that would have closed the loop.
+
+    The real reason to keep this one is that it pins the READ in isolation, on
+    a value no generate produced -- two exact literals that appear nowhere else
+    in the pairing, so it cannot be satisfied by `inputs`, by a wholesale dict
+    (which fails `list[str]` validation) or by a stale copy. Writing the row is
+    building the WORLD; the step under test is the read-back.
+
+    The WRITE half is covered by
+    `test_the_withheld_set_is_persisted_by_generate_not_just_returned`, which
+    is the one the false sentence talked me out of.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    stored = dict(reg.provenance or {})
+    stored["excluded"] = ["the CSF assessment", "the Tech Debt review"]
+    reg.provenance = stored
+    db.add(reg)
+    db.commit()
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["excluded_inputs"] == ["the CSF assessment", "the Tech Debt review"], (
+        "the reload lost the withheld set -- `_serialize` is not reading "
+        "`provenance['excluded']` back, which is #244 instance 1 verbatim"
+    )
+    assert body["excluded_inputs_recorded"] is True, (
+        "the server looked and found a record, so it must say so; reporting "
+        "False here is indistinguishable from a register that predates 0047"
+    )
+
+
+@pytest.mark.unit
+def test_a_register_that_predates_provenance_says_nobody_looked(app_client) -> None:
+    """The OTHER half, and the one that must not fail open.
+
+    A NULL `provenance` is a fact about what was recorded. Defaulting it to
+    `True` would render a pre-0047 register identically to one where the server
+    looked and found nothing excluded -- a clean bill of health over the one
+    population nobody can re-check. Missing data defaults to UNCONFIRMED.
+
+    Asserted through the route rather than against `_serialize` directly: the
+    claim is about what a consultant's page receives.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = None  # a pre-0047 row
+    db.add(reg)
+    db.commit()
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["excluded_inputs_recorded"] is False, (
+        "a NULL provenance must report that nothing is on file, not that "
+        "nothing was excluded -- those are different claims and only one of "
+        "them is about the assessments"
+    )
+    assert body["excluded_inputs"] == []
+
+
+@pytest.mark.unit
+def test_the_withheld_set_is_persisted_by_generate_not_just_returned(
+    app_client,
+) -> None:
+    """The WRITE half, which had no test and whose absence was argued for.
+
+    `generate` used to compute `g.not_finalized`, store it via
+    `_provenance_snapshot`, AND pass the same expression to `_serialize`. Two
+    answers to one question. Every assertion on the generate response was green
+    off the parameter, so the third argument to `_provenance_snapshot` was
+    replaceable with `[]` and nothing went red — and the resulting reload
+    reported `excluded_inputs: []` with `excluded_inputs_recorded=True`. A
+    positive certificate that the server looked and nothing was withheld is
+    WORSE than the empty list #244 was filed for.
+
+    `_serialize` no longer takes the parameter, so this asserts the same
+    property twice over: the generate response is itself a read-back, and
+    `latest` reads it again in a new request.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+
+    # A THIRD assessment, started and not approved. CSF here, because ATT&CK +
+    # ZT already satisfy the unlock rule without it -- so generation proceeds
+    # and the CSF assessment is withheld and NAMED. Same setup as
+    # `test_an_unapproved_OPTIONAL_input_does_not_block_generation`.
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    csvc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    c.post(f"/csf/services/{csvc.json()['id']}/assessments", headers=h)
+
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    gen = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert gen.status_code == 201, gen.text
+    withheld = gen.json()["excluded_inputs"]
+    assert withheld, (
+        "this test needs a run that actually withheld something -- if the "
+        "fixture stopped producing an unfinalized input it proves nothing"
+    )
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    assert r.json()["excluded_inputs"] == withheld, (
+        "generate reported a withheld set that was never STORED -- the "
+        "snapshot's third argument is not carrying it"
+    )
+    assert r.json()["excluded_inputs_recorded"] is True
+
+
+@pytest.mark.unit
+def test_export_allows_the_seeded_shape_a_finalized_register_with_no_inputs_key(
+    app_client,
+) -> None:
+    """THE SEEDED REGISTER'S OWN SHAPE, and the one no other test generates.
+
+    `seed_demo.py` writes `provenance={"excluded": []}` -- a dict, with no
+    `inputs` key, deliberately, because it does not go through
+    `_provenance_snapshot`. Every OTHER register in the system is either NULL
+    (pre-0047) or carries a full snapshot, so this third shape exists exactly
+    once and only on the demo path.
+
+    That is why it needs its own test rather than being caught in passing: an
+    input that exists in exactly one place, written by a script no spec drives,
+    is the input no test generates by accident. `s8` downloads the artifacts
+    the seed wrote and never POSTs export; `s30` generates a fresh register
+    first, so it always has a full snapshot. The only register with the broken
+    shape was the one nothing exercised, and CI was green over it.
+
+    The defect this pins: the `finalized_at` carve-out was nested INSIDE the
+    `_prov is None` branch, so a dict lacking `inputs` never reached it and a
+    finalized, already-delivered register began refusing its own re-export with
+    409 `register_predates_provenance`. The comment above the guard asserted
+    the opposite -- "the seeded register is finalized, so it exports through
+    the carve-out above either way and the blast radius is zero" -- which was
+    true of the NULL case and false of this one.
+
+    Re-exporting an already-finalized register protects nobody: the certificate
+    was issued when it was finalized, and refusing now only breaks a working
+    path. That is the same reasoning the NULL branch already applies; this
+    makes the two agree.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    # Exactly what the seed writes -- a dict, `excluded` present, `inputs` absent.
+    reg.provenance = {"excluded": []}
+    reg.finalized_at = datetime.now(UTC)
+    db.add(reg)
+    db.commit()
+
+    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert r.status_code == 200, (
+        "a FINALIZED register whose provenance dict lacks `inputs` -- the shape "
+        "`seed_demo.py` writes -- must still re-export. It was already "
+        "delivered; refusing now breaks the demo path and certifies nothing. "
+        f"got {r.status_code}: {r.text}"
+    )
+
+
+@pytest.mark.unit
+def test_export_still_refuses_that_shape_when_it_was_never_finalized(
+    app_client,
+) -> None:
+    """THE OTHER HALF, without which the test above is a hole rather than a fix.
+
+    The carve-out is for a register that was ALREADY delivered. An UNFINALIZED
+    register whose provenance records what was excluded but not what was used
+    still cannot be certified, and must still be refused -- otherwise widening
+    the branch above would turn a real guard into a pass for every register
+    that omits `inputs`.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = {"excluded": []}
+    reg.finalized_at = None
+    db.add(reg)
+    db.commit()
+
+    r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "register_inputs_not_recorded", r.text
+
+
+@pytest.mark.unit
+def test_a_null_excluded_value_is_not_read_as_nothing_was_withheld(app_client) -> None:
+    """THE FOURTH STATE, and the mirror of the export guard in this same PR.
+
+    `export` was taught that a provenance dict with no `inputs` key is NOT
+    "recorded, all approved" -- it is a state the enumeration did not cover.
+    `_serialize` still did the mirror-image thing for `excluded`: the key
+    PRESENT but null satisfied `"excluded" in stored`, and `or []` collapsed it
+    to an empty list with `excluded_inputs_recorded=True`.
+
+    That is a positive certificate -- "the server looked and nothing was
+    withheld" -- manufactured out of a value that records nothing. This PR's
+    own comment calls that outcome worse than the bare `[]` #244 was filed for,
+    and then left the branch that produces it one function below.
+
+    The key-ABSENT case was already fail-closed. Only key-present-but-null was
+    not, so the two halves of one dict disagreed about what absence means.
+
+    UNREACHABLE TODAY, and said so rather than dressed up: `_provenance_snapshot`
+    always writes a list and the seed writes `[]`. No current writer produces
+    this. It is kept as a RATCHET for the same reason the export guard beside it
+    is -- the seed is proof that hand-written provenance dicts are ordinary here,
+    and the seed is what produced the export defect this PR just fixed.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = {"excluded": None, "inputs": []}
+    db.add(reg)
+    db.commit()
+
+    body = c.get(f"/risk/clients/{cid}/register/latest", headers=bh).json()
+    assert body["excluded_inputs_recorded"] is False, (
+        "a null `excluded` records nothing, so it must report that nobody "
+        "looked -- not that the server looked and withheld nothing. Those are "
+        "different claims and only one of them is about the assessments."
+    )
+    assert body["excluded_inputs"] == []

@@ -70,29 +70,50 @@ export interface RiskEntry {
 export interface RiskRegister {
   /**
    * Inputs that EXISTED and were not approved, so they contributed nothing to
-   * this register. Present and populated on the POST /generate response only.
+   * this register. Carried on EVERY response that returns a register --
+   * generate, latest and export alike.
    *
-   * **`GET .../register/latest` always returns `[]`, and that is a limit rather
-   * than a bug in this type.** Nothing about the exclusion is persisted, so a
-   * read path cannot reconstruct it without a schema change -- tracked in #240.
-   * The consequence is that the banner below survives until the page is
-   * reloaded and no further, which the renderer says out loud rather than
-   * implying durability it does not have.
+   * **[2026-09-11, #244] This used to say `GET .../register/latest` always
+   * returns `[]`, because nothing was persisted and a read path "cannot
+   * reconstruct it without a schema change -- tracked in #240".** The schema
+   * change landed (migration 0047 stores the set in
+   * `risk_registers.provenance`); only the read-back was missing, and
+   * `_serialize` now does it. Every response carries the same set, so the
+   * banner survives a reload.
+   *
+   * The note is kept rather than deleted because the OLD text is what a reader
+   * would otherwise act on: it reads as a live limitation, and the remedy it
+   * points at had already shipped.
    */
   excluded_inputs: string[];
+  /**
+   * Whether `excluded_inputs` is an answer or a silence.
+   *
+   * `false` means the register predates provenance recording, so nothing on
+   * file says what was left out. An empty `excluded_inputs` cannot express
+   * that, and reading it as "nothing was excluded" would be a false assurance
+   * about the one population nobody can check.
+   */
+  excluded_inputs_recorded: boolean;
   /**
    * #121's outcome counters.
    *
    * An entry stored with no tier renders as em dashes, is dropped from the 5x5
-   * matrix, and is still counted by `total_entries` -- so a register can report
+   * matrix, and is still counted by `entries_total` -- so a register can report
    * forty open risks whose matrix sums to fewer than forty with nothing saying
    * why. Two causes reach that state: a value the model supplied that would not
    * resolve, and a key it simply omitted. These count the OUTCOME, so they are
    * non-zero under either.
    *
-   * Unlike `excluded_inputs` above, these are DERIVED server-side from the
-   * stored entries rather than being a property of the generate call, so they
-   * are correct on `GET .../register/latest` too and survive a reload.
+   * DERIVED server-side from the stored entries rather than being a property
+   * of the generate call, so they are correct on `GET .../register/latest` too
+   * and survive a reload.
+   *
+   * This used to open "Unlike `excluded_inputs` above" — which asserted, by
+   * CONTRAST, the three things the docblock above now denies. That is how it
+   * survived a sweep: it never says "not persisted", so a grep phrased around
+   * the claim's own vocabulary misses it. `excluded_inputs` is persisted and
+   * derived now too.
    */
   entries_total: number;
   entries_without_tier: number;

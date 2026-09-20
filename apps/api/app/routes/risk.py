@@ -845,7 +845,9 @@ def generate(
         dropped = {
             field: values
             for field, values in zip(
-                LINK_FIELDS, (techs_dropped, controls_dropped, source_dropped), strict=True
+                LINK_FIELDS,
+                (techs_dropped, controls_dropped, source_dropped),
+                strict=True,
             )
             if values
         }
@@ -996,10 +998,14 @@ def generate(
     # `g.not_finalized` is the full present-but-unapproved set; the refusal
     # above already cleared the ones that block. Whatever remains contributed
     # nothing to this register, and the register says so.
+    # `excluded_inputs` is NOT passed in. `db.commit()` above has already
+    # persisted the snapshot, so `_serialize` reads the same bytes `latest`
+    # will read next week -- one answer instead of two kept in step. That also
+    # makes the generate assertions cover write -> persist -> read end to end,
+    # which is what closed #244 instance 1's write half.
     return _serialize(
         db,
         register,
-        excluded_inputs=g.not_finalized,
         batches_total=batches_total,
         batches_failed=batches_failed,
     )
@@ -1105,8 +1111,20 @@ def export(
     #     bounded: 0 of 1 registers in the dev database were unfinalized when
     #     this was written, so nothing is mid-flight through the hole.
     _prov = reg.provenance
+    # HOISTED, and the nesting it replaces was a live defect. This fact was
+    # consulted only inside the `_prov is None` branch, so a register whose
+    # provenance dict merely LACKS `inputs` -- which is exactly what
+    # `seed_demo.py` writes -- could never reach the carve-out and began
+    # refusing its own re-export with 409. Measured, not argued: the test
+    # `test_export_allows_the_seeded_shape_a_finalized_register_with_no_inputs_key`
+    # returned 409 against this code and 200 against the version below.
+    #
+    # The reasoning is the same for both shapes, which is why it is one fact:
+    # an already-finalized register was certified when it was finalized, and
+    # refusing to re-export it protects nobody while breaking a delivered path.
+    _already_delivered = reg.finalized_at is not None
     if _prov is None:
-        if reg.finalized_at is None:
+        if not _already_delivered:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
@@ -1137,6 +1155,40 @@ def export(
         # The pre-0047 DRAFT-input register -- the hazard #240 opens with -- is
         # NOT caught here. It has NULL provenance and is caught by the branch
         # above. Two different registers; two different branches.
+        # A dict with no `inputs` key is NOT "recorded, all approved" -- it is a
+        # fourth state the three enumerated above do not cover, and
+        # `(_prov.get("inputs") or [])` would land it silently in the
+        # reassuring bucket. `seed_demo.py` is currently the only writer of
+        # that shape (it records `{"excluded": []}` and omits `inputs`
+        # deliberately, because it does not go through `_provenance_snapshot`
+        # and a hand-written input list would be a second, drifting answer).
+        # The seeded register IS this shape, and the claim that used to stand
+        # here -- "it exports through the carve-out above either way and the
+        # blast radius is zero" -- was false. `finalized_at` was consulted only
+        # when provenance was NULL, so the seeded dict never reached it and
+        # every re-export of the demo register 409'd. The carve-out is now a
+        # hoisted fact both branches read, and two tests pin the pair: the
+        # finalized case must export, the unfinalized case must still refuse.
+        #
+        # Do NOT "fix" a caller by writing `"inputs": []` instead; an empty
+        # list is exactly as vacuous and loses the distinction.
+        if "inputs" not in _prov and not _already_delivered:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    # NOT `register_predates_provenance`, which was the reason
+                    # this raised for one round and is false of the only shape
+                    # that reaches it: this register does not predate
+                    # provenance, it HAS provenance with one key missing. A
+                    # reason mapped to copy would have named the wrong cause.
+                    "reason": "register_inputs_not_recorded",
+                    "message": (
+                        "This register records which assessments were excluded but not "
+                        "which were used, so its inputs cannot be certified. Re-generate "
+                        "it before exporting."
+                    ),
+                },
+            )
         unapproved = [
             f"{i.get('kind')} v{i.get('version')} ({i.get('status')})"
             for i in (_prov.get("inputs") or [])
@@ -1240,7 +1292,6 @@ def _serialize(
     db: Session,
     register: RiskRegister,
     *,
-    excluded_inputs: list[str] | None = None,
     batches_total: int = 0,
     batches_failed: int = 0,
 ) -> RiskRegisterResponse:
@@ -1265,8 +1316,64 @@ def _serialize(
         art = db.get(Artifact, aid)
         return art.title if art else None
 
+    # #244 instance 1. `excluded_inputs` was passed in by ONE call site -- the
+    # POST that generates -- so `latest` and `export` returned `[]` and the
+    # disclosure did not survive a page reload. It is the same argument the
+    # `entries_with_dropped_links` comment below makes, one field up: a
+    # register read back next week must report what the generate run reported.
+    #
+    # The value is persisted. #240's migration 0047 put it in
+    # `register.provenance["excluded"]`, written by `_provenance_snapshot` and
+    # never revised. Nothing needed building; the read-back was simply never
+    # wired, and `excluded_inputs: list[str] = []` could not express the
+    # difference between "nothing was excluded" and "nobody recorded".
+    #
+    # THREE STATES, and the third is why `recorded` exists as its own field:
+    #
+    #   provenance is NULL      -> pre-0047. NOT RECORDED. `recorded=False`.
+    #   provenance["excluded"]  -> [] means nothing was excluded, and a list
+    #                              means these were. `recorded=True` for both.
+    #
+    # Collapsing NULL into `[]` would tell a consultant that a register built
+    # before provenance existed had a clean input set, which is a false
+    # assurance about the one population that cannot be checked.
+    #
+    # There is NO explicit `excluded_inputs=` override any more, and removing it
+    # is the fix rather than a tidy-up. The generate handler used to pass
+    # `g.not_finalized` while `_provenance_snapshot` stored the same expression
+    # -- two answers to one question, kept in step by hand. So every assertion
+    # on the generate response was green off the parameter and NOTHING read the
+    # stored value back: the third argument to `_provenance_snapshot` was
+    # replaceable with `[]` with the suite green, and the resulting reload
+    # reported `excluded_inputs: []` with `recorded=True` -- a positive
+    # certificate that the server looked and nothing was withheld, which is
+    # worse than the `[]` #244 was filed for.
+    #
+    # `db.commit()` runs before this call, so the snapshot is already readable.
+    # Derivation over synchronization, and the existing generate assertions now
+    # cover write -> persist -> read for free.
+    stored = register.provenance
+    # A LIST, not merely a PRESENT KEY. `"excluded" in stored` with `or []`
+    # let a null collapse to an empty list carrying `recorded=True` -- a
+    # positive certificate that the server looked and withheld nothing,
+    # manufactured out of a value recording nothing. The comment on the export
+    # guard above calls that outcome worse than the bare `[]` #244 was filed
+    # for; this is the same fourth state, one function down, and it was the
+    # half that was left.
+    #
+    # Unreachable today -- `_provenance_snapshot` always writes a list and the
+    # seed writes `[]` -- and kept as a ratchet for the reason the export guard
+    # is: the seed proves hand-written provenance dicts are ordinary here, and
+    # the seed is what produced the export defect this PR fixed.
+    _excluded = stored.get("excluded") if isinstance(stored, dict) else None
+    if isinstance(_excluded, list):
+        resolved_excluded, excluded_recorded = list(_excluded), True
+    else:
+        resolved_excluded, excluded_recorded = [], False
+
     return RiskRegisterResponse(
-        excluded_inputs=excluded_inputs or [],
+        excluded_inputs=resolved_excluded,
+        excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),
         entries_without_tier=sum(1 for e in entries if e.tier is None),
         # #132, derived here rather than passed in, so a register read back next
