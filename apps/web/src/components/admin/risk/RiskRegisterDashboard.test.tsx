@@ -68,6 +68,10 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     // assert "nothing failed", which is a claim, not an absence.
     batches_total: null,
     batches_failed: null,
+    // #330, and `null` for the same reason as the pair above: the server
+    // declares `int | None = None` and sends the KEY carrying null, so a
+    // fixture omitting it would build a response shape the API never emits.
+    entries_intended: null,
     excluded_inputs: [],
     // #244. `true` here means "the server looked and there was nothing", which
     // is what every register generated today reports. The `false` case -- a
@@ -497,5 +501,84 @@ describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {
     );
     await loaded();
     expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
+  });
+});
+
+// #330 -- the banner divided by the wrong quantity.
+//
+// `entries_total` named two things: the generate loop's INTENDED tally (audit
+// row) and the table READ-BACK (response). They agree on every run any current
+// writer can produce, and diverge in exactly one state -- a row lost between
+// `db.add` and the flush.
+//
+// The banner rendered `{entries_without_tier} of {entries_total}` against the
+// POST-LOSS denominator, so a register that lost a row presented as complete:
+// "0 of 1" rather than "0 of 2", with the missing row invisible. That is
+// CLAUDE.md's withheld-denominator shape reached from a different direction --
+// the withholding is not deliberate, it is two variables sharing a name.
+//
+// Latent: no current writer produces the divergent state. Pinned anyway,
+// because the names will outlive the measurements that make them safe, and
+// the failure is silent AND optimistic when it fires.
+// ---------------------------------------------------------------------------
+
+describe("RiskRegisterDashboard denominator (#330)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getActiveClientId.mockResolvedValue("c1");
+    getClientName.mockResolvedValue("Atlas");
+    fetchRiskGate.mockResolvedValue(gate());
+  });
+
+  it("divides by the INTENDED count, not the post-loss one", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 1,
+        entries_intended: 2,
+        entries_without_tier: 0,
+      }),
+    );
+    await loaded();
+
+    const note = screen.getByTestId("risk-entries-lost");
+    // THE EXACT PHRASE, not the digits separately. A first draft asserted
+    // `/2/` and `/1/` and passed with the denominator swapped to the
+    // post-loss count -- because the banner mentions BOTH numbers again
+    // later ("over 1 rows and not 2"), so the loose match was satisfied
+    // elsewhere in the same element. Measured, by making that swap and
+    // watching the test stay green.
+    expect(note).toHaveTextContent("1 of 2 entries did not reach storage");
+  });
+
+  it("stays silent when the two agree", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 2,
+        entries_intended: 2,
+        entries_without_tier: 0,
+      }),
+    );
+    await loaded();
+    expect(screen.queryByTestId("risk-entries-lost")).not.toBeInTheDocument();
+  });
+
+  it("stays silent when the intended count was never recorded", async () => {
+    // A register generated before #330 carries a NULL `entries_intended` --
+    // the key arrives, the value is null. That is "nobody counted", not
+    // "nothing was lost", and it must not render a loss banner built from an
+    // absent operand.
+    //
+    // Written explicitly rather than left to the factory default, because the
+    // whole point of this case is WHICH absence it tests: null-on-the-wire,
+    // which the server emits, and not an omitted key, which it never does.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 2,
+        entries_without_tier: 0,
+        entries_intended: null,
+      }),
+    );
+    await loaded();
+    expect(screen.queryByTestId("risk-entries-lost")).not.toBeInTheDocument();
   });
 });

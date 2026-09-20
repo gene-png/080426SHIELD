@@ -242,7 +242,7 @@ def test_an_unresolvable_enum_value_is_reported_not_dropped(app_client) -> None:
     assert details["rejected_enum_values"] == {"likelihood": ["severe"]}, details
     # And the outcome, which is what the client would see.
     assert details["entries_without_tier"] == 1, details
-    assert details["entries_total"] == 1, details
+    assert details["entries_intended"] == 1, details
 
 
 @pytest.mark.unit
@@ -334,7 +334,7 @@ def test_a_clean_run_records_zero_rather_than_nothing(app_client) -> None:
     details = _generated_audit(c, bearer)
     assert details["rejected_enum_values"] == {}
     assert details["entries_without_tier"] == 0
-    assert details["entries_total"] == 1
+    assert details["entries_intended"] == 1
 
 
 @pytest.mark.unit
@@ -1502,7 +1502,7 @@ def test_a_row_dropped_between_add_and_flush_is_recorded(app_client) -> None:
     assert dropped, "the listener never fired; this test proved nothing"
 
     details = _generated_audit(c, bearer)
-    assert details["entries_total"] == 2, "the loop intended two rows"
+    assert details["entries_intended"] == 2, "the loop intended two rows"
     assert details["entries_written"] == 1, (
         "entries_written must come from the TABLE. It reports "
         f"{details['entries_written']} for a run where one of two adds was "
@@ -1535,7 +1535,7 @@ def test_a_run_where_nothing_was_lost_says_so_rather_than_staying_silent(
     details = _generated_audit(c, bearer)
 
     assert details["entries_write_check"] == "agreed"
-    assert details["entries_total"] == details["entries_written"] == 1
+    assert details["entries_intended"] == details["entries_written"] == 1
 
 
 # ---------------------------------------------------------------------------

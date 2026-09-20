@@ -201,6 +201,18 @@ class RiskRegisterResponse(BaseModel):
     # stored entries here, stored provenance there -- not in whether one
     # survives a fetch.
     entries_total: int = 0
+    #: #330. The generate loop's INTENDED tally, read back from provenance.
+    #:
+    #: `entries_total` above is the TABLE read-back. The two named the same
+    #: thing for a while and are not the same quantity: they agree on every run
+    #: any current writer can produce, and diverge where a row is lost between
+    #: `db.add` and the flush -- audit row 2, response 1, one key.
+    #:
+    #: OPTIONAL, and the optionality is the disclosure. A register generated
+    #: before this field carries no count, which is "nobody counted" and not
+    #: "nothing was lost". `None` renders no banner; a value LOWER than
+    #: `entries_total` is impossible and a HIGHER one is the loss.
+    entries_intended: int | None = None
     entries_without_tier: int = 0
 
     # #132, the same instrument pointed at the LINKS.

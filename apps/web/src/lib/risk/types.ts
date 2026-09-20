@@ -136,6 +136,26 @@ export interface RiskRegister {
   batches_total: number | null;
   batches_failed: number | null;
 
+  /**
+   * #330. The generate loop's INTENDED tally.
+   *
+   * `entries_total` is the TABLE read-back. The two shared a name for a while
+   * and are not the same quantity -- they agree on every run any current
+   * writer can produce, and diverge where a row is lost between `db.add` and
+   * the flush.
+   *
+   * `| null`, NOT `?: number`, for the same measured reason as `batches_*`
+   * above: `schemas/risk.py` declares `entries_intended: int | None = None`
+   * and no `exclude_none` or `response_model_exclude_none` exists anywhere in
+   * `apps/api`, so FastAPI serialises the KEY with a null value. The optional
+   * form declared a shape the server never produces, and a presence test
+   * against it could never discriminate -- which is #317's defect.
+   *
+   * `null` is "nobody counted" and renders no banner; a value ABOVE
+   * `entries_total` is the loss. A value BELOW is impossible: one writer
+   * creates `RiskEntry` rows and nothing deletes them.
+   */
+  entries_intended: number | null;
   entries_without_tier: number;
   /**
    * #132, the same instrument pointed at the LINKS, and three counters because

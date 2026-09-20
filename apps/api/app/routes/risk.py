@@ -1080,6 +1080,21 @@ def generate(
     # the same absence -- an audit row with no verdict here would read as the
     # former and mean the latter.
     entries_write_check = "agreed" if entries_written == entries_total else "MISMATCH"
+    # #330. The INTENDED tally is a generate-time fact, so `_serialize` -- which
+    # reads the table -- cannot recover it a week later. Persisted into the
+    # provenance blob rather than a new column: no migration, and provenance is
+    # already where this register's generate-time facts live (`inputs`,
+    # `excluded`).
+    #
+    # Without it the client-facing banner has only the POST-LOSS count to
+    # divide by, so a register that lost a row reads "0 of 1" instead of
+    # "0 of 2" and presents as complete. Shrinking the denominator until the
+    # ratio looks right is not an honest answer to losing a row.
+    if register.provenance is not None:
+        _prov_with_count = dict(register.provenance)
+        _prov_with_count["entries_intended"] = entries_total
+        register.provenance = _prov_with_count
+        db.add(register)
     if entries_written != entries_total:
         _log.error(
             "risk_register_entries_lost_before_flush",
@@ -1122,7 +1137,16 @@ def generate(
             # cause -- including a key the model simply omitted, which the
             # rejection map cannot see.
             "rejected_enum_values": rejected_enum_values,
-            "entries_total": entries_total,
+            # #330. RENAMED from `entries_total`, which named two different
+            # quantities on two surfaces: this LOOP TALLY, and the table
+            # read-back `_serialize` publishes under the same key. They agree
+            # on every run any current writer can produce and diverge in
+            # exactly one state -- the one `test_a_row_dropped_between_add_and_flush_is_recorded`
+            # constructs -- where the audit row said 2 and the response said 1
+            # under one name.
+            #
+            # The two names will outlive the measurements that make them safe.
+            "entries_intended": entries_total,
             "entries_without_tier": entries_without_tier,
             # #132, and the same pairing: the map names what to fix, the count
             # names what the consultant sees. `entries_offered_links` is the
@@ -1557,6 +1581,12 @@ def _serialize(
         excluded_inputs=resolved_excluded,
         excluded_inputs_recorded=excluded_recorded,
         entries_total=len(entries),
+        # #330. From provenance, because it is a GENERATE-TIME fact this
+        # function cannot recompute -- it reads the table, and a row lost
+        # before the flush is not in the table to be counted. Absent on any
+        # register generated before the field existed, which renders as
+        # silence rather than as a zero.
+        entries_intended=(stored.get("entries_intended") if isinstance(stored, dict) else None),
         entries_without_tier=sum(1 for e in entries if e.tier is None),
         # #132, derived here rather than passed in, so a register read back next
         # week reports the same thing the generate run did.

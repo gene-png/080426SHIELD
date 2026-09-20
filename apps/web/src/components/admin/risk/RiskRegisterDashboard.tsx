@@ -517,6 +517,30 @@ export function RiskRegisterDashboard(): JSX.Element {
               come back.
             </div>
           ) : null}
+          {/* `!== null`, not `!== undefined`. The field is `number | null`
+              because `schemas/risk.py` declares `int | None = None` and no
+              `exclude_none` exists in `apps/api`, so the key ARRIVES carrying
+              null rather than being absent. An `undefined` test against a key
+              the server always sends is a guard that can never fire -- #317's
+              defect, and the same one `batches_*` above was fixed for. */}
+          {register.entries_intended !== null &&
+          register.entries_intended > register.entries_total ? (
+            <div
+              className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
+              role="alert"
+              data-testid="risk-entries-lost"
+            >
+              <span className="font-semibold">
+                {register.entries_intended - register.entries_total} of{" "}
+                {register.entries_intended} entries did not reach storage
+              </span>
+              , so every count below is over {register.entries_total} rows and
+              not {register.entries_intended}. #330: this banner divides by the
+              INTENDED tally deliberately. Dividing by what survived would make
+              a register that lost a row read as complete, which is shrinking
+              the denominator until the ratio looks right.
+            </div>
+          ) : null}
           {register.entries_without_tier > 0 ? (
             <div
               className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
