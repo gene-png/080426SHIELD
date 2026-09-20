@@ -54,6 +54,13 @@ GATES = [
     # hand reads exit 1 as "surviving mutants". The sweep that fixed the other
     # eight missed it, which is this repo's twin rule in its own tooling.
     ("mutation_sweep", ""),
+    # #296's pair, added by #318's review. Both shipped without the handler and
+    # without an entry here, so BOTH harnesses were blind to them -- and this
+    # list is one of the two. A gate that is in neither is invisible twice
+    # over, which is why `discover_gates` derives from the file and this list
+    # exists to catch what that derivation cannot see.
+    ("check_decision_numbers", ""),
+    ("check_mount_matches_database", ""),
 ]
 
 MARKER = 'if __name__ == "__main__":'

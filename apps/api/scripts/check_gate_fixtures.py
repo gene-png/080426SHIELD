@@ -31,6 +31,20 @@ in DEFERRED with a reason. A covered gate must have:
     expect to pass, that must not. Ordinary cases test the rule; adversarial
     cases test the boundary, and the boundary is where all of these have broken.
 
+    IT IS THE ONLY ONE OF THE FOUR THAT LOOKS FOR INPUTS THE AUTHOR DID NOT
+    ALREADY HAVE IN MIND. The other three are answerable from the code you
+    just wrote: a pass, a refusal, a could-not-look. An adversarial case is
+    answerable only by asking what someone ELSE would reasonably send. That
+    asymmetry is why it is required rather than encouraged -- ordinary cases
+    test what you thought of, which is the set that cannot contain the defect
+    you are looking for.
+
+    Measured, first time it was demanded of a gate that lacked one: writing an
+    adversarial fixture for `check_decision_numbers` surfaced a live defect
+    (#342) -- a subject REFERENCING another decision is flagged as naming one
+    it does not add, which is an ordinary commit message here and reddens a
+    PR. The fixture found it on construction, before it was ever run.
+
 Every case names the INCIDENT it derives from, because a fixture derived from the
 rule rather than from the failure is the inversion that produced the defects
 above.
@@ -77,6 +91,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 # Gates knowingly without fixtures, each with its reason. A gate in neither this
@@ -143,6 +158,46 @@ DEFERRED: dict[str, str] = {
         "the other two shell gates above have no `--self-test` at all, so a "
         "harness-cannot-fail defect in either is still invisible. A coverage "
         "statement, not a clean bill of health."
+    ),
+    # -- #296's two gates, which were invisible to BOTH harnesses (#318) ------
+    # Neither carried the crash-is-not-a-verdict handler nor a `GATES` entry,
+    # so `discover_gates` could not see them and `test_gate_crash_exit_code`
+    # did not run them -- and the "gates can fail" step was green BECAUSE of
+    # the omission. Both now carry the handler, which is what puts them here.
+    "check_decision_numbers.py": (
+        "Its input is a GIT RANGE, not a path: `--base`/`--head` name refs, and "
+        "`run_case` substitutes `{dir}` into argv and invokes the script with no "
+        "repository around it. A fixture would have to build a repo per case, "
+        "which is what `test_check_decision_numbers.py` does instead -- it drives "
+        "`main()` against a real tmp repository. That FILE is the coverage this "
+        "entry stands in for; the enumeration that used to stand here named four "
+        "behaviours and went stale the moment a fifth was added, so it points at "
+        "the file rather than counting it. "
+        "WHAT IS STILL MISSING, because the entry claimed parity with the "
+        "fixtured contract and did not have it. `_contract_failures` demands four "
+        "things of a fixtured gate and this file met two: it had a 0 and a 1, its "
+        "exit-2 case asserted the CODE and no message while `main` has TWO "
+        "could-not-look branches, and it had no adversarial case at all. The "
+        "exit-2 message is now pinned to the `git log` branch. The ADVERSARIAL "
+        "case is still absent, and the reason is worth more than the gap: "
+        "constructing one surfaced a LIVE defect in the gate -- a subject that "
+        "REFERENCES another decision (`D-090 -- supersedes D-072`) is flagged as "
+        "naming a decision it does not add, which is an ordinary commit message "
+        "here and turns a PR red. Filed as #342, not fixed on this branch. "
+        "One more branch was unpinned until this round: `if not added: continue`, "
+        "the legitimate skip for a commit that amends an entry without adding a "
+        "heading. Deleting those two lines left all fourteen tests green -- "
+        "measured, not argued -- and one named test now goes red for it."
+    ),
+    "check_mount_matches_database.py": (
+        "Needs a live Postgres and an alembic revision to compare against, "
+        "neither of which `run_case` can supply -- it invokes a script with argv "
+        "and a fixture directory. Covered by "
+        "`tests/unit/test_check_mount_matches_database.py`. Its stated residual "
+        "stands and is NOT covered here: two worktrees each numbering the next "
+        "migration 0047 make the id match while the schemas differ, and the "
+        "check prints agreement. That is filed against the gate, not against "
+        "this registry entry."
     ),
     "leave_row_oracle.py": (
         "STRUCTURALLY unfixturable, which is a stronger reason than the one first "
@@ -263,6 +318,21 @@ def workflows_dir_for(repo: Path) -> Path:
     return repo / ".github" / "workflows"
 
 
+def compose_sources(repo: Path) -> list[Path]:
+    """Compose files at the repo root -- the OTHER place CI invocation is declared.
+
+    GLOBBED rather than named, so a second compose file (an override, a CI
+    variant) is read without anyone remembering to add it here. A hand list of
+    one entry is an enumeration, and this file's whole subject is what those
+    miss.
+
+    Non-recursive on purpose: a compose file nested in a subdirectory is not
+    what `docker compose up` at the repo root reads, so counting it would
+    report a gate wired by a file CI never loads -- the quiet direction.
+    """
+    return sorted(p for p in repo.glob("docker-compose*.y*ml") if p.is_file())
+
+
 def discover_shell_gates(shell_dir: Path) -> list[str]:
     """Every `*.sh` under the repo-root gate directory."""
     if not shell_dir.is_dir():
@@ -270,7 +340,7 @@ def discover_shell_gates(shell_dir: Path) -> list[str]:
     return sorted(p.name for p in shell_dir.glob(f"*{_SHELL_GATE_SUFFIX}") if p.is_file())
 
 
-def unwired_gates(gates: list[str], workflows: Path) -> list[str]:
+def unwired_gates(gates: list[str], workflows: Path, extra: Sequence[Path] = ()) -> list[str]:
     """Gates no workflow invokes. THE POINT OF THIS FILE, reached from outside.
 
     A gate that runs nowhere cannot fail, which is this file's own thesis -- and
@@ -329,13 +399,130 @@ def unwired_gates(gates: list[str], workflows: Path) -> list[str]:
         Naming a gate after a tool the workflows already mention is the way in,
         and the remedy is the name, not the matcher.
     """
+    text = invocation_text(workflows, extra)
+    return [g for g in gates if not mentions(text, Path(g).stem)]
+
+
+def invocation_text(workflows: Path, extra: Sequence[Path] = ()) -> str:
+    """The non-comment text of everything that DECIDES WHAT CI EXECUTES.
+
+    Factored out so `unwired_gates` and `undiscovered_gates` share ONE
+    definition of what counts as an invocation. They ask opposite questions
+    over different populations -- "which of these gates is unmentioned" versus
+    "which mentioned script is not a gate" -- so a shared matcher is a common
+    definition rather than a mirror. Two copies of this stripping would let the
+    two answers disagree about the same file.
+
+    `extra` is what makes the surface correct rather than merely plausible.
+    Reading only `.github/workflows` was a live FALSE POSITIVE, not a latent
+    one: `check_mount_matches_database.py` is invoked by `docker-compose.yml`,
+    on the line `python scripts/check_mount_matches_database.py &&`,
+    immediately before `alembic upgrade head` -- exactly where that gate's own
+    docstring says it belongs. The e2e and demo jobs both `docker compose up`,
+    so it runs on every CI run of either. It was reported unwired the moment
+    #338's marker put it in the registry.
+
+    Wiring it into a workflow to clear that report would have been a
+    certificate over the wrong proposition: CI starts from fresh volumes, so
+    the stale-mount state the gate detects cannot arise there and a CI
+    invocation could only ever pass. The gate was right, its placement was
+    right, and the CHECKER's notion of "invoked" was too narrow.
+
+    Residual, unchanged in kind: a gate invoked from a file named in neither
+    the workflows glob nor `extra` -- a composite action, a Makefile, a script
+    calling a script -- still reads as unwired. That direction fails LOUDLY,
+    which is how this one was found.
+    """
     lines_kept: list[str] = []
-    for path in sorted(workflows.glob("*.y*ml")):
-        for line in path.read_text(encoding="utf-8").split("\n"):
+    for path in [*sorted(workflows.glob("*.y*ml")), *extra]:
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").split(chr(10)):
             if not line.lstrip().startswith("#"):
                 lines_kept.append(line)
-    text = "\n".join(lines_kept)
-    return [g for g in gates if not re.search(rf"(?<!\w){re.escape(Path(g).stem)}(?!\w)", text)]
+    return chr(10).join(lines_kept)
+
+
+def mentions(text: str, stem: str) -> bool:
+    r"""Whether the workflow text names `stem` at a word boundary.
+
+    The boundary rationale is in `unwired_gates`, and `(?<!\w)` rather than
+    `\b` because a stem is invoked as a dotted module path
+    (`scripts.check_audit_evidence`) as often as by filename -- `\b` after a
+    `.` rejects those and reports four live gates unwired. Measured.
+    """
+    return re.search(rf"(?<!\w){re.escape(stem)}(?!\w)", text) is not None
+
+
+#: Scripts a workflow runs that are NOT gates, each with its reason. The set is
+#: small and each entry is a claim someone can check by opening the file --
+#: same shape as `DEFERRED`, and for the same reason: an unexplained absence is
+#: how coverage shrinks in silence.
+NON_GATE_SCRIPTS: dict[str, str] = {
+    "seed_demo.py": (
+        "Populates the demo tenant for the e2e and demo jobs. It has no verdict "
+        "to give -- it either seeds or raises -- and `CLAUDE.md` records it "
+        "exiting 0 while deliberately skipping, which is the opposite of a gate."
+    ),
+    "fire_scheduled_triggers.py": (
+        "A scheduled job that performs work. Nothing about its exit status is a "
+        "judgement on the tree."
+    ),
+}
+
+
+def undiscovered_gates(scripts: Path, workflows: Path, extra: Sequence[Path] = ()) -> list[str]:
+    """Scripts CI RUNS that carry no gate marker and are not declared non-gates.
+
+    THE THIRD ORACLE, and it exists because the other two cannot see this case.
+
+    `discover_gates` derives gates from a marker IN THE FILE;
+    `test_gate_crash_exit_code.GATES` is a hand list. A test comparing those two
+    catches drift BETWEEN them and is blind to a script missing from BOTH --
+    which is not hypothetical: it is exactly what #296's two gates were, and the
+    registry check passed BECAUSE the thing it should have found was not in the
+    registry. `discover_gates`'s own docstring states that residual; this
+    narrows it rather than restating it.
+
+    The signal is independent of the marker: a workflow INVOKING a script is
+    evidence someone treats it as CI-significant, and it is written in a
+    different file by a different hand. So a script CI runs is either a gate
+    (marker present), or declared here with a reason, or a finding.
+
+    MEASURED on `main` at b516891, which is where the defect was live: this
+    returns `check_decision_numbers.py` -- one of #296's two gates, invoked by
+    `audit-gate.yml` and in neither Python registry. The version of this file
+    that shipped before #338 could not see it.
+
+    HALF, and stated as half. `check_mount_matches_database.py` -- the OTHER of
+    #296's two -- is invisible here, because no workflow invokes it at all. It
+    is caught by `unwired_gates` instead, and only once its marker puts it in
+    the registry. Two arms, two different blind spots, and neither alone covers
+    #296.
+
+    Residuals, inherited from `mentions` and worth naming where they bite
+    differently in this direction: a script named only in a stripped comment
+    reads as not-invoked here, which is the QUIET direction -- a real gate
+    mentioned only in prose goes unreported. And a script whose stem is an
+    ordinary word reads as invoked wherever that word appears, which is loud
+    and gets investigated.
+    """
+    text = invocation_text(workflows, extra)
+    out: list[str] = []
+    for path in sorted(scripts.glob("*.py")):
+        if path.name == _SELF or path.name.startswith("_"):
+            continue
+        if path.name in NON_GATE_SCRIPTS:
+            continue
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _GATE_MARKER in body:
+            continue
+        if mentions(text, path.stem):
+            out.append(path.name)
+    return sorted(out)
 
 
 def load_cases(gate_dir: Path) -> tuple[list[dict], list[str]]:
@@ -444,7 +631,11 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
     if not [c for c in cases if c.get("adversarial")]:
         out.append(
             f"{gate}: no case marked adversarial -- ordinary cases test the "
-            f"rule, adversarial cases test the boundary"
+            f"rule, adversarial cases test the boundary. It is the only one of "
+            f"the four that looks for inputs the author did not already have "
+            f"in mind: the other three are answerable from the code you just "
+            f"wrote, this one only by asking what someone else would "
+            f"reasonably send"
         )
     return out
 
@@ -529,7 +720,33 @@ def main(argv: list[str]) -> int:
         # and until #318 nothing in this repo said so -- two shell gates
         # shipped with real assertions inside and nothing invoking either.
         repo_checked = True
-        unwired = unwired_gates(sorted(gates) + shell_gates, workflows)
+
+        # THE THIRD ORACLE (#296, #327). The two Python registries -- the
+        # marker `discover_gates` reads and the hand list in
+        # `test_gate_crash_exit_code.GATES` -- are cross-checked against EACH
+        # OTHER, so a script missing from both is invisible to that check. It
+        # passed BECAUSE what it should have found was not in the registry.
+        # This arm derives its population from the WORKFLOWS instead, which is
+        # a different file written by a different hand, so it can see what
+        # neither registry lists.
+        undiscovered = undiscovered_gates(scripts, workflows, compose_sources(repo))
+        if undiscovered:
+            print(
+                "check-gate-fixtures: FAILED -- scripts CI runs that are "
+                "neither gates nor declared non-gates:"
+            )
+            for name in undiscovered:
+                print(
+                    f"  {name}: a workflow invokes it, it carries no "
+                    f"crash-is-not-a-verdict handler, and it is not in "
+                    f"NON_GATE_SCRIPTS. Either it is a gate missing the marker "
+                    f"-- in which case no registry can see it and its green "
+                    f"means nothing -- or it is not a gate and belongs in "
+                    f"NON_GATE_SCRIPTS with a reason."
+                )
+            return 1
+
+        unwired = unwired_gates(sorted(gates) + shell_gates, workflows, compose_sources(repo))
         if unwired:
             print("check-gate-fixtures: FAILED -- gates no workflow invokes:")
             for name in unwired:
@@ -665,5 +882,8 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         # stderr, not stdout: the success line goes to stdout, and a crash notice
         # sharing that stream is one grep away from being read as output.
-        print(f"check-gate-fixtures: CRASHED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"check-gate-fixtures: CRASHED: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         raise SystemExit(2) from exc
