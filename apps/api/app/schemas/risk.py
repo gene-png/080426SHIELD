@@ -119,7 +119,9 @@ class RiskRegisterResponse(BaseModel):
     #: Whether `excluded_inputs` is an ANSWER or a SILENCE.
     #:
     #: `False` means this register predates provenance recording (NULL
-    #: `provenance`, pre-0047), so nothing on file says what was left out --
+    #: `provenance`, pre-0047 -- OR a dict that records no `excluded` list at
+    #: all, which `_serialize` also reports as not-recorded), so nothing on
+    #: file says what was left out --
     #: which is not the same fact as "nothing was left out", and an empty list
     #: cannot tell them apart.
     #:
@@ -155,7 +157,7 @@ class RiskRegisterResponse(BaseModel):
     # #121's outcome counter, reaching the CALLER and not only the audit blob.
     #
     # An entry stored with no tier renders as em dashes in the register, is
-    # dropped from the 5x5 matrix, and is counted by `total_entries` -- so a
+    # dropped from the 5x5 matrix, and is counted by `entries_total` -- so a
     # register can report forty open risks whose matrix sums to fewer than
     # forty, with nothing saying why. That is the #121 client outcome, and it
     # has two causes: a value the model supplied that would not resolve, and a
