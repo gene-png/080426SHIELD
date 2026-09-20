@@ -616,6 +616,89 @@ a real exit code and a real date, and was the minority outcome (D-071).
   instead (migration 0043) and lets re-approval refresh it, audited with both the
   new and replaced counts. When a guarantee and a workflow collide, ask whether
   the guarantee needs the state frozen or only needs to know what the state WAS.
+- **A CERTIFICATE OVER THE WRONG PROPOSITION IS WORSE THAN NO CERTIFICATE,
+  BECAUSE IT ENDS THE CHECK THAT WOULD HAVE CAUGHT IT.** Every verification step
+  proves some proposition. The failure is proving one ADJACENT to the claim you
+  are making, and then citing it — a bare unsupported claim invites a check; a
+  claim under a command and a date does not.
+
+  The instance, and it is recorded because the author was actively being
+  careful: `context/gene.md` said four dashboard pages *"still key not-released
+  copy on `err.status === 404` and print a hardcoded sentence, ignoring the
+  typed `reason`"*, under
+
+      Measured on `ee819f2`:
+      grep -rn "hasn't been released to your organization yet" apps/web/src
+      -> those four files.
+
+  The grep was honest and its output was real. **It proved that the STRING
+  exists. The claim needed was that the typed reason is IGNORED**, which is a
+  different proposition and was false — all FIVE pages (not four; `risk` was
+  missed as well) do `reason = serverReason(err)` and render
+  `{reason ?? fallback}`, so a typed reason always wins and the hardcoded
+  sentence is the 404 fallback. #295 had shipped it, and the same document's
+  own merged-PR table said so two hundred lines further down.
+
+  Someone acting on that sentence would have opened a PR to rebuild what
+  already ships. It was caught by an adversarial review that had been pointed
+  at the claim as a PREMISE — not by anyone re-reading the grep, because the
+  grep is correct.
+
+  **It generalises well past grep**, which is why it is stated as a shape:
+
+  - a **test** proves its assertions hold, not that they can fail — #72.
+  - an **exit code** proves the last command's status, not the one you meant —
+    this file's opening rule.
+  - a **CI certificate** proves a head passed, not that a branch is ready.
+  - a **`--collect-only`** proves collection, not that anything ran.
+  - a **reviewer's clean report** proves nothing was found in what it read,
+    which is not the same as nothing being there — hence the `Scope:` line.
+
+  Two of this session's adversarial findings were themselves this shape,
+  landing on the reviewer rather than the author: a proposed
+  `(?<![\w.])` word boundary was correct about over-matching and rejected
+  <!-- counted: historical -- the measured result of running that regex once -->
+  dotted module paths, reporting four live gates unwired; and a "this file does
+  not exist" was true of the branch under review and false of the repo, because
+  the file lived on another branch. Both were measured before being acted on,
+  which is the only reason they cost nothing.
+
+  **The check is one question, asked before you cite anything: what
+  proposition does this command actually prove, and is it the one in my
+  sentence?** Where they differ, either change the command or change the
+  sentence. Do not publish the pair.
+
+  **AND THE SENTENCE THAT NAMES ITS OWN VERIFICATION IS THE ONE TO RE-RUN,
+  because the phrase is doing the work the measurement should.** "Checked and
+  left alone", "measured, not assumed", "verified", "confirmed" -- each reads
+  as evidence and is only ever a claim ABOUT evidence. A bare assertion
+  invites a check; an assertion wearing the word `checked` ends it.
+
+  Measured on #343, and the instance is exact. A sweep closed the
+  ignore-unknown-arguments defect in five scripts and reported of the six it
+  did not touch:
+
+      MEASURED, not assumed, for the six other raw-argv Python gates: they
+      already fail closed on an unknown flag, because they read it as a path
+      and the path does not exist. Checked and left alone.
+
+  True of a LEADING flag. False of a TRAILING one -- five of the six ignore
+  `argv[2:]` entirely, and `ci.yml` passes a path to three of them, so the
+  first slot is already occupied in exactly the invocations that matter. The
+  <!-- counted: for g in the 7 raw-argv gates: python <g> <its ci.yml path arg> --bogus; echo $? -> six return 0, check_recalled_counts returns 2, 2026-09-20 at aecf3bf -->
+  one gate that does refuse uses an explicit allow-list, so the stated
+  MECHANISM described the only case that does not use it.
+
+  The sentence carrying the words *checked and left alone* was the sentence
+  covering the absence of a check. Nothing in it is a lie and every part of it
+  is wrong.
+
+  So the trigger is mechanical and it is about YOUR OWN prose: when you write
+  a word asserting you verified something, that is the sentence to go back and
+  run. Not because you are careless -- the author here had run six commands
+  and read the output -- but because the phrase closes the question for every
+  later reader, and it closed it around a property nobody had tested.
+
 - **Before reporting a sweep complete, name the SHAPE you searched for and one
   place it could hide that shares no vocabulary with the original.** Keyword
   sweeps keep coming back clean over live defects because the second instance
@@ -1091,6 +1174,92 @@ a real exit code and a real date, and was the minority outcome (D-071).
   have and write beside each one what the input looked like. Any entry whose
   answer is "I don't know" or "there was nothing there" is the bug, and it is
   cheaper to find on that list than in review.
+- **"THE DISCLOSURE REACHES A SCREEN" IS PART OF THE DEFINITION OF DONE FOR ANY
+  PR THAT ADDS A PROVENANCE FIELD.** Not a note about where it should
+  eventually surface — a condition on the PR that adds it. A field that records
+  what was withheld, dropped, rejected, unconfirmed or not-looked-at is only
+  finished when a person can see it without querying the API -- **on a screen
+  OR in a delivered artifact.**
+
+  The artifact half is not a widening for completeness. This repo's canonical
+  instance lives in an EXPORT: `source_rows_total` and `withheld` appear in
+  `app/tech_debt/exporters.py` and `app/attack/exporters.py`, and the
+  exclusion disclosure that understated spend by $240,000 is one of them. Read
+  as screens-only, a PR adding a withheld count consumed solely by the XLSX
+  exporter either builds a web surface nobody asked for, or decides the rule
+  does not apply and records no exemption.
+
+  **The ownership half, decided on #244 and recorded so it is not re-litigated:
+  the pages under `apps/web/src/app/**` AND THE COMPONENTS THEY RENDER belong
+  to whichever track owns the API surface the page reads. Dashboards go to the
+  service track that produces their numbers.**
+
+  **Where a page reads SEVERAL API surfaces, or NONE, it belongs to the track
+  that owns the numbers the page exists to show.** The five dashboards are the
+  unambiguous case and the rule was derived from them; the rest of the route
+  tree is not. Measured: nine pages under `apps/web/src/app/**` read no
+  service API at all (`sign-in`, `privacy`, `help`, the password flows), and
+  `results/page.tsx` makes five API calls spanning `/auth/me`,
+  `/clients/*/deliverables` and `/clients/*/risk/dashboard` in one handler.
+  Without this clause the rule yields NO owner for those, and two tracks each
+  reading it conclude the other owns the work -- the #244 outcome reproduced
+  under the rule written to end it.
+
+  "And the components they render" is not padding. The evidence below is
+  `apps/web/src/components/admin/AuditViewer.tsx`, which is not under
+  `app/**` at all -- it is rendered by `app/admin/audit/page.tsx`. A rule
+  quantifying over the route tree alone would have excluded its own lead
+  instance, and every other surface in this repo is built the same way: the
+  page is a thin shell and the component is where the copy lives.
+
+  The reason is the load-bearing part: **the person who writes the honesty
+  string is the one who knows what it means.** #244's instance 3 is what
+  happens when they are not the same person — a panel printing "Every source
+  row is accounted for" over a discarded list, because whoever wrote the copy
+  was not the person who knew the guard's operands. Shared ownership of that
+  surface is how it reached zero owners.
+
+  **Ownership alone only relocates the follow-up**, which is why the DoD clause
+  exists alongside it. The evidence that it is needed:
+
+  - `grep -rnE "\.details|details:" apps/web/src` returns **one** hit, the
+    type declaration `details: Record<string, unknown> | null;` in
+    `lib/admin/audit.ts`. Every discard counter #122, #132 and the enum work
+    added goes into the audit `details` payload, and nothing under `apps/web`
+    reads it (#322). "Now visible" was true of the API and false of the UI.
+
+    **The first version of this bullet ran `grep -c "details"` over
+    `AuditViewer.tsx` alone and got 0.** True, and a claim about one file
+    under a sentence quantifying over the console -- this bullet's own
+    neighbouring rule, in the evidence for it. The wider grep is also
+    STRICTLY BETTER evidence: it shows the field is declared on
+    `AuditEntryRow`, so the data reaches the browser and is discarded THERE,
+    which is a sharper statement than a count of zero in one component.
+  - `entries_write_check`, `entries_written`, `entries_received` and
+    `discarded_entries` return no matches anywhere under `apps/web`.
+  - #316's `excluded_inputs` reached exactly one HTTP response and died on
+    reload — the data was already persisted; only the read-back was missing.
+
+  Each of those shipped with its record written where the success is, correctly,
+  and stopped one layer short of anyone seeing it.
+
+  **This is a rule in prose, so it is the interim and not the mechanism.**
+  #336 **would be** the gate: it would fail when a field lands in a response
+  schema with no consumer under `apps/web/src`. It is filed and NOT BUILT, and
+  the tense matters -- a reader who greps `#336` and lands on a sentence
+  describing a gate's behaviour in the present tense has met the exact shape
+  this file names elsewhere: a control stated in the present tense whose
+  implementation is a deferral. That is not pessimism about discipline: three
+  rules in this file were walked into this month, each by its own author within
+  hours of writing it — the closing-keyword trap, the mount/migration pair, and
+  the deferral sweep. `CLAUDE.md`'s own finding is that the reflex survives the
+  rule until the rule has a gate.
+
+  Until it exists: before merging a PR that adds such a field, open the
+  component the reader uses and confirm it renders. **The endpoint is not the
+  surface**, and a test that reads the endpoint proves the write rather than
+  the claim.
+
 - **A USER-FACING string naming an action must name a control that exists and
   works TODAY — verified by opening the handler, not by knowing the domain.**
   Knowing the domain is what lets you write a plausible remedy without checking
