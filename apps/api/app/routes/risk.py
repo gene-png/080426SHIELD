@@ -1353,8 +1353,21 @@ def _serialize(
     # Derivation over synchronization, and the existing generate assertions now
     # cover write -> persist -> read for free.
     stored = register.provenance
-    if isinstance(stored, dict) and "excluded" in stored:
-        resolved_excluded, excluded_recorded = list(stored["excluded"] or []), True
+    # A LIST, not merely a PRESENT KEY. `"excluded" in stored` with `or []`
+    # let a null collapse to an empty list carrying `recorded=True` -- a
+    # positive certificate that the server looked and withheld nothing,
+    # manufactured out of a value recording nothing. The comment on the export
+    # guard above calls that outcome worse than the bare `[]` #244 was filed
+    # for; this is the same fourth state, one function down, and it was the
+    # half that was left.
+    #
+    # Unreachable today -- `_provenance_snapshot` always writes a list and the
+    # seed writes `[]` -- and kept as a ratchet for the reason the export guard
+    # is: the seed proves hand-written provenance dicts are ordinary here, and
+    # the seed is what produced the export defect this PR fixed.
+    _excluded = stored.get("excluded") if isinstance(stored, dict) else None
+    if isinstance(_excluded, list):
+        resolved_excluded, excluded_recorded = list(_excluded), True
     else:
         resolved_excluded, excluded_recorded = [], False
 

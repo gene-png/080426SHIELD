@@ -109,13 +109,21 @@ async function loaded(): Promise<void> {
  * #237 review round 2: `excluded_inputs` reached no surface. Round 3: the
  * banner that fixed it was erased by the export it warns about.
  *
- * **These tests drive `generateRiskRegister`, which is the ONLY producer of a
- * non-empty withheld set.** The first version drove `fetchRiskRegisterLatest`,
- * which this PR's own type doc says "always returns `[]`" — so every test
- * exercised the one path that can never carry the field, and the export defect
- * was invisible to a green suite. A fixture describing a response the API
- * cannot emit is the defect this branch exists to end, committed in the tests
- * for it.
+ * **That was true when written and is now false, and the correction matters
+ * more than the original.** This block used to say `generateRiskRegister` was
+ * the ONLY producer of a non-empty withheld set, because `fetchRiskRegisterLatest`
+ * "always returns `[]`". #316 persisted the set and taught `latest` and
+ * `export` to read it back, so all three carry it now.
+ *
+ * Left standing, that sentence told the next reader that a `latest`-driven
+ * fixture describes a response the API cannot emit — so the right move would
+ * have looked like DELETING the `fetchRiskRegisterLatest` tests below as
+ * invalid, and writing no `latest` test for this field. That belief is exactly
+ * what let #244 live for a release.
+ *
+ * The original defect it records is real and still worth knowing: the first
+ * version of these tests drove the one path that could not carry the field, so
+ * the export defect was invisible to a green suite.
  */
 describe("RiskRegisterDashboard tier-less entries disclosure", () => {
   beforeEach(() => {
@@ -130,9 +138,14 @@ describe("RiskRegisterDashboard tier-less entries disclosure", () => {
     // matrix, and is STILL counted by "Entries" -- so that card can read 40
     // while the matrix sums to fewer, with nothing explaining the gap.
     //
-    // Derived server-side from the stored entries, so unlike the
-    // excluded-inputs banner this arrives on a plain LOAD, not only after a
-    // Generate. That is what this test asserts by mocking `latest`.
+    // Derived server-side from the stored entries, so it arrives on a plain
+    // LOAD. That is what this test asserts by mocking `latest`.
+    //
+    // The contrast this used to draw -- "unlike the excluded-inputs banner",
+    // which arrived only after a Generate -- is dead as of #316: the withheld
+    // set is persisted and `latest` returns it. A contrast-by-comparison is
+    // how the claim survived one sweep already; it asserts something about
+    // ANOTHER field without naming it in a way a grep for that field finds.
     fetchRiskRegisterLatest.mockResolvedValue(
       register({ entries_total: 40, entries_without_tier: 12 }),
     );

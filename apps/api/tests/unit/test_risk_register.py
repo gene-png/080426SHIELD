@@ -1796,3 +1796,55 @@ def test_export_still_refuses_that_shape_when_it_was_never_finalized(
     r = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "register_inputs_not_recorded", r.text
+
+
+@pytest.mark.unit
+def test_a_null_excluded_value_is_not_read_as_nothing_was_withheld(app_client) -> None:
+    """THE FOURTH STATE, and the mirror of the export guard in this same PR.
+
+    `export` was taught that a provenance dict with no `inputs` key is NOT
+    "recorded, all approved" -- it is a state the enumeration did not cover.
+    `_serialize` still did the mirror-image thing for `excluded`: the key
+    PRESENT but null satisfied `"excluded" in stored`, and `or []` collapsed it
+    to an empty list with `excluded_inputs_recorded=True`.
+
+    That is a positive certificate -- "the server looked and nothing was
+    withheld" -- manufactured out of a value that records nothing. This PR's
+    own comment calls that outcome worse than the bare `[]` #244 was filed for,
+    and then left the branch that produces it one function below.
+
+    The key-ABSENT case was already fail-closed. Only key-present-but-null was
+    not, so the two halves of one dict disagreed about what absence means.
+
+    UNREACHABLE TODAY, and said so rather than dressed up: `_provenance_snapshot`
+    always writes a list and the seed writes `[]`. No current writer produces
+    this. It is kept as a RATCHET for the same reason the export guard beside it
+    is -- the seed is proof that hand-written provenance dicts are ordinary here,
+    and the seed is what produced the export defect this PR just fixed.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    reg.provenance = {"excluded": None, "inputs": []}
+    db.add(reg)
+    db.commit()
+
+    body = c.get(f"/risk/clients/{cid}/register/latest", headers=bh).json()
+    assert body["excluded_inputs_recorded"] is False, (
+        "a null `excluded` records nothing, so it must report that nobody "
+        "looked -- not that the server looked and withheld nothing. Those are "
+        "different claims and only one of them is about the assessments."
+    )
+    assert body["excluded_inputs"] == []
