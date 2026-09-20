@@ -92,16 +92,25 @@ CHECK_ONLY=0
 # Here the silent path had a SIDE EFFECT: a typo'd `--checks` left
 # CHECK_ONLY at 0 and performed a real install where a check was asked
 # for. Strictly worse than a false green.
-case "${1:-}" in
-  "") ;;
-  --check) CHECK_ONLY=1 ;;
-  *)
-    echo "FAIL: unknown argument '$1'. This script accepts only --check." >&2
-    exit 2 ;;
-esac
+# Arity is judged on `$#`, NOT on `${1:-}`.
+#
+# `case "${1:-}"` cannot tell an ABSENT argument from an EMPTY one: an
+# explicit `""` expands to the same thing as no argument at all and took the
+# `""` arm, so `web-install-if-stale.sh ""` ran as though nothing had been
+# passed. Two of the four scripts this commit touched rejected `""` and two
+# accepted it, and nothing said why -- an unstated carve-out inside the change
+# whose thesis is that a script must not accept what it does not implement.
 if [ "$#" -gt 1 ]; then
   echo "FAIL: too many arguments; got: $*" >&2
   exit 2
+fi
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    --check) CHECK_ONLY=1 ;;
+    *)
+      echo "FAIL: unknown argument '$1'. This script accepts only --check." >&2
+      exit 2 ;;
+  esac
 fi
 
 

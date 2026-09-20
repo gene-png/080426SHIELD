@@ -837,6 +837,20 @@ def check_registry(rows) -> int:
     return 0
 
 
+#: The ONE spelling of the registry flag.
+#:
+#: It was two independent literals for one round -- the allow-list in `main`'s
+#: guard and the dispatch below it -- with nothing checking they agreed.
+#: Renaming the dispatch alone would have made `--check-registry` ACCEPTED by
+#: the guard and then unmatched by the dispatch, so it fell to the report path
+#: and returned 0: CI's "LEAVE-row oracle registry and labels" step green
+#: having run neither check. That is verbatim the defect the guard was added
+#: to close, reintroduced by the guard's own duplication.
+#:
+#: `CLAUDE.md`: prefer a derivation over a synchronization.
+_CHECK_REGISTRY = "--check-registry"
+
+
 def main(argv: list[str]) -> int:
     # An UNRECOGNISED ARGUMENT is exit 2, not the default report.
     #
@@ -852,16 +866,16 @@ def main(argv: list[str]) -> int:
     # gate, where the cost is a step that certifies nothing.
     #
     # argv[0] is the program name; anything after it must be understood.
-    unknown = [a for a in argv[1:] if a != "--check-registry"]
+    unknown = [a for a in argv[1:] if a != _CHECK_REGISTRY]
     if unknown:
         print(
             f"leave-row-oracle: could not look -- unrecognised argument(s) "
-            f"{', '.join(unknown)}. This script accepts only --check-registry.",
+            f"{', '.join(unknown)}. This script accepts only {_CHECK_REGISTRY}.",
             file=sys.stderr,
         )
         return 2
     rows = leave_rows()
-    if "--check-registry" in argv:
+    if _CHECK_REGISTRY in argv:
         # Both, always, and the WORSE code wins. The registry asks whether every
         # table is classified; the labels ask whether the classification is
         # true. A complete registry over a wrong label is the failure #221

@@ -49,6 +49,26 @@ stamp_from_lock() {
   sha256sum "$ROOT/pnpm-lock.yaml" | cut -d' ' -f1 > "$ROOT/node_modules/.shield-installed-lock"
 }
 
+# `$1` expected exit, `$2` a fragment the output must contain, `$3` the label,
+# and `$4...` the ARGUMENTS to pass. `expect` below fixes them at `--check`;
+# this is what lets the argument-handling states be exercised at all.
+expect_args() {
+  want_code="$1"; want_text="$2"; label="$3"; shift 3
+  set +e
+  out="$(SHIELD_WEB_APP_DIR="$ROOT" sh "$SCRIPT" "$@" 2>&1)"
+  code=$?
+  set -e
+  if [ "$code" -ne "$want_code" ]; then
+    echo "FAIL [$label]: exit $code, wanted $want_code"
+    echo "$out"
+    exit 1
+  fi
+  case "$out" in
+    *"$want_text"*) echo "ok   [$label]" ;;
+    *) echo "FAIL [$label]: output did not contain '$want_text'"; echo "$out"; exit 1 ;;
+  esac
+}
+
 # `$1` expected exit, `$2` a fragment the output must contain, `$3` the label.
 expect() {
   want_code="$1"; want_text="$2"; label="$3"
@@ -154,5 +174,14 @@ rm -f "$probe"
 echo "ok   [both scripts are LF, so the container's sh can read them]"
 
 echo
+# --- ARGUMENT HANDLING. Added because this file claimed "EVERY state it can
+# --- reach" while every case it ran passed `--check`, so the script's
+# --- unknown-argument arm was exercised by nothing in the repo: delete that
+# --- guard and this gate still printed its certificate. The claim was the
+# --- thing a reader checks INSTEAD of reading the gate.
+expect_args 2 "unknown argument" "an unknown flag is refused, not ignored" --checks
+expect_args 2 "unknown argument" "an EMPTY argument is not 'no argument'" ""
+expect_args 2 "too many arguments" "a second argument is refused" --check --check
+
 echo "web-install-guard: all states exercised -- 1 skip, 3 installs, 1 refusal,"
 echo "plus the line-ending check that makes the others readable at all."
