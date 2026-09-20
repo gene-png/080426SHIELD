@@ -1595,6 +1595,22 @@ def risk_dashboard(
         client_id=client.id,
         released_at=reg.finalized_at,
         version=reg.version,
+        # #330 TWIN, DELIBERATELY NOT FOLLOWED HERE -- and the reason is the ranking,
+        # not the effort.
+        #
+        # `RiskRegisterDashboard` (admin) now discloses when the generate loop intended
+        # more rows than reached storage, dividing by the INTENDED tally. This surface
+        # still divides by the post-loss count and says nothing.
+        #
+        # Unreachable today, re-measured rather than inherited: `RiskEntry` is
+        # constructed in exactly one place (`generate` in routes/risk.py) and deleted
+        # nowhere under `apps/api/app`, so no writer can produce the divergent state.
+        # No client is misled.
+        #
+        # Recorded because the ratchet went to the CONSULTANT and not to the CLIENT,
+        # which inverts this repo's stated priority -- a false assurance delivered to a
+        # client is the unrecoverable one. Tracked in #355; an unstated exemption reads
+        # as an oversight to whoever runs the twin sweep next.
         total_entries=len(entries),
         critical_count=tc.get(RiskTier.CRITICAL.value, 0),
         high_count=tc.get(RiskTier.HIGH.value, 0),

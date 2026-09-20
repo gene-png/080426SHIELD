@@ -144,15 +144,17 @@ export interface RiskRegister {
    * writer can produce, and diverge where a row is lost between `db.add` and
    * the flush.
    *
-   * `| null`, NOT `?: number`, for the same measured reason as `batches_*`
-   * above: `schemas/risk.py` declares `entries_intended: int | None = None`
-   * and no `exclude_none` or `response_model_exclude_none` exists anywhere in
-   * `apps/api`, so FastAPI serialises the KEY with a null value. The optional
-   * form declared a shape the server never produces, and a presence test
-   * against it could never discriminate -- which is #317's defect.
+   * `| null`, NOT `?: number`, because that is what the wire carries. No
+   * `exclude_none` exists anywhere in `apps/api` -- measured -- so FastAPI
+   * serialises `"entries_intended": null` for every register predating the
+   * field. The optional form declared a value that cannot arrive, and the
+   * guard reading it (`!== undefined`) therefore never discriminated: the
+   * banner stayed silent only because `null > n` coerces to false, an
+   * implicit coercion nobody wrote down carrying the whole pre-#330
+   * disclosure. Every sibling nullable on this interface is `| null`.
    *
    * `null` is "nobody counted" and renders no banner; a value ABOVE
-   * `entries_total` is the loss. A value BELOW is impossible: one writer
+   * `entries_total` is the loss. A value BELOW is impossible -- one writer
    * creates `RiskEntry` rows and nothing deletes them.
    */
   entries_intended: number | null;

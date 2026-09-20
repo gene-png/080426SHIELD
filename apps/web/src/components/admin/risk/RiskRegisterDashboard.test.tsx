@@ -563,19 +563,19 @@ describe("RiskRegisterDashboard denominator (#330)", () => {
   });
 
   it("stays silent when the intended count was never recorded", async () => {
-    // A register generated before #330 carries a NULL `entries_intended` --
-    // the key arrives, the value is null. That is "nobody counted", not
-    // "nothing was lost", and it must not render a loss banner built from an
-    // absent operand.
+    // A register generated before #330 carries no `entries_intended`. That is
+    // "nobody counted", not "nothing was lost" -- and it must not render a
+    // loss banner built from an absent operand.
     //
-    // Written explicitly rather than left to the factory default, because the
-    // whole point of this case is WHICH absence it tests: null-on-the-wire,
-    // which the server emits, and not an omitted key, which it never does.
+    // SENDS `null`, NOT an omitted key, because null is what the wire carries:
+    // there is no `exclude_none` anywhere in `apps/api`. The first version
+    // omitted the key, so the one test protecting this population could not
+    // fail for the input that population actually produces.
     fetchRiskRegisterLatest.mockResolvedValue(
       register({
         entries_total: 2,
-        entries_without_tier: 0,
         entries_intended: null,
+        entries_without_tier: 0,
       }),
     );
     await loaded();

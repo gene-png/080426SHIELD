@@ -1090,11 +1090,39 @@ def generate(
     # divide by, so a register that lost a row reads "0 of 1" instead of
     # "0 of 2" and presents as complete. Shrinking the denominator until the
     # ratio looks right is not an honest answer to losing a row.
+    #
+    # ## Blast radius, measured before keeping this
+    #
+    # THE GUARD CANNOT BE FALSE ON THIS PATH. `register` is constructed above
+    # with `provenance=_provenance_snapshot(...)`, and that function ends
+    # `return {"inputs": inputs, "excluded": list(excluded)}` unconditionally
+    # -- no early return, no conditional -- and nothing between the
+    # construction and here reassigns it. So this is a RATCHET, not protection
+    # against a live hazard, and saying so is the difference between a reader
+    # sizing their change against a real state and against one that cannot
+    # occur.
+    #
+    # What would make it reachable: any writer that constructs a register with
+    # NULL provenance (`seed_demo.py` already writes a partial dict, so the
+    # shape is not hypothetical), or a `_provenance_snapshot` that gains an
+    # early return.
+    #
+    # THE FALSE BRANCH IS NOT SILENT, because a silent one would publish
+    # `entries_intended: null` -- "nobody counted" -- over a run that DID
+    # count, and the three-state rendering treats that as benign. A zero-value
+    # record that names the fault is honest; silence is not.
     if register.provenance is not None:
         _prov_with_count = dict(register.provenance)
         _prov_with_count["entries_intended"] = entries_total
         register.provenance = _prov_with_count
         db.add(register)
+    else:
+        _log.error(
+            "risk_register_intended_count_not_persisted",
+            register_id=str(register.id),
+            entries_intended=entries_total,
+            reason="provenance is NULL, which no current writer produces",
+        )
     if entries_written != entries_total:
         _log.error(
             "risk_register_entries_lost_before_flush",
