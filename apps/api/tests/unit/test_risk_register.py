@@ -1848,3 +1848,181 @@ def test_a_null_excluded_value_is_not_read_as_nothing_was_withheld(app_client) -
         "different claims and only one of them is about the assessments."
     )
     assert body["excluded_inputs"] == []
+
+
+def _seed_csf_answer_at_tier(c, bearer: str, cid: str, *, tier: int) -> str:
+    """One APPROVED CSF assessment with a single subcategory at `tier`.
+
+    Approved deliberately: `_finalized_for_synthesis` filters on approved or
+    released, so a draft contributes no findings at all and every assertion
+    below would pass over an empty list.
+    """
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"})
+    assert svc.status_code in (200, 201), svc.text
+    svc_id = svc.json()["id"]
+    a = c.post(f"/csf/services/{svc_id}/assessments", headers=h)
+    assert a.status_code in (200, 201), a.text
+    latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=h).json()
+    ans = latest["answers"][0]
+    r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": tier})
+    assert r.status_code == 200, r.text
+    ap = c.post(f"/csf/assessments/{a.json()['id']}/approve", headers=h)
+    assert ap.status_code == 200, ap.text
+    return ans["subcategory_code"]
+
+
+# ---------------------------------------------------------------------------
+# #84 -- the findings baseline.
+#
+# Every finding is "current is below target", so the TARGET decides whether a
+# row exists at all. It was a hardcoded 3 for CSF and a hardcoded fallback of 3
+# for ZT, regardless of what the client engaged for -- so a client targeting
+# tier 2 was handed findings for controls already AT their goal, and one
+# targeting tier 4 got a register that stopped looking one tier early.
+#
+# A register built on the wrong baseline is not visibly wrong. It has the right
+# shape, plausible counts, and nothing a reader can use to tell which tier it
+# measured against. That is why these assert the FINDING SET changes with the
+# target, rather than asserting the target is stored somewhere.
+# ---------------------------------------------------------------------------
+
+
+def _set_csf_target(cid: str, tier: object) -> None:
+    """Write the client's engagement target straight onto the ServiceRequest.
+
+    Direct SQL rather than driving intake: the intake route is a different
+    surface with its own validation, and what is under test here is which
+    number `_gather_findings` COMPARES AGAINST. Building the world, not
+    performing the step under test.
+    """
+    from app.models.client import Client
+    from app.models.service import Service
+    from app.models.service_request import ServiceRequest
+
+    db = _session()
+    svc = (
+        db.execute(
+            select(Service).where(Service.client_id == uuid.UUID(cid), Service.kind == "nist_csf")
+        )
+        .scalars()
+        .first()
+    )
+    assert svc is not None, "no CSF service on this client"
+    if svc.source_request_id is None:
+        from app.models.user import User
+
+        client = db.get(Client, uuid.UUID(cid))
+        requester = db.execute(select(User).limit(1)).scalars().first()
+        assert requester is not None, "no user to attribute the request to"
+        sr = ServiceRequest(
+            client_id=client.id,
+            service_type="NIST_CSF",
+            requested_by=requester.id,
+        )
+        db.add(sr)
+        db.flush()
+        svc.source_request_id = sr.id
+    sr = db.get(ServiceRequest, svc.source_request_id)
+    sr.csf_target_tier = tier
+    db.add(sr)
+    db.add(svc)
+    db.commit()
+
+
+def _csf_finding_codes(cid: str) -> list[str]:
+    from app.routes.risk import _gather_findings
+
+    db = _session()
+    findings, _techs, _controls, _targets = _gather_findings(db, uuid.UUID(cid))
+    return [f["source_id"] for f in findings if f["kind"] == "csf"]
+
+
+def _csf_targets(cid: str) -> dict:
+    from app.routes.risk import _gather_findings
+
+    db = _session()
+    _f, _t, _c, targets = _gather_findings(db, uuid.UUID(cid))
+    return targets.get("csf", {})
+
+
+@pytest.mark.unit
+def test_a_control_at_the_clients_target_is_not_a_finding(app_client) -> None:
+    """THE DEFECT, from the side a client feels.
+
+    A subcategory answered at tier 2, for a client who engaged for tier 2, is
+    AT its goal. The old code compared against a hardcoded 3 and reported it as
+    a gap -- a finding in the client's Risk Register for work they never
+    committed to doing.
+
+    Goes RED against the old baseline: `2 < 3` is true, so the code appears.
+    """
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    code = _seed_csf_answer_at_tier(c, bearer, cid, tier=2)
+
+    _set_csf_target(cid, 2)
+    assert code not in _csf_finding_codes(cid), (
+        "a control AT the client's engagement target is not a gap; it was "
+        "reported as one because the comparison used a hardcoded tier 3"
+    )
+
+
+@pytest.mark.unit
+def test_a_control_below_a_higher_target_is_still_a_finding(app_client) -> None:
+    """THE OTHER HALF, without which the fix above is just 'report less'.
+
+    Same stored answer, a client targeting tier 4. The control IS below goal
+    and must appear. The old code stopped at 3 and missed the tier-3 shortfall
+    entirely for every client aiming higher than the hardcode.
+    """
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    code = _seed_csf_answer_at_tier(c, bearer, cid, tier=3)
+
+    _set_csf_target(cid, 4)
+    assert code in _csf_finding_codes(cid), (
+        "a control BELOW the client's target must be reported; the old "
+        "hardcoded 3 could never see a tier-3 answer as a gap"
+    )
+
+
+@pytest.mark.unit
+def test_the_target_and_its_source_are_recorded_beside_the_findings(app_client) -> None:
+    """The baseline is recorded, so the next wrong one is falsifiable.
+
+    Asserts the SOURCE too, not just the number: "the client chose nothing" and
+    "the client's choice could not be used" resolve to the same number and are
+    different facts. A run that fell back to the engine default must not be
+    indistinguishable from one that honoured a client's explicit choice.
+    """
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+
+    _set_csf_target(cid, 2)
+    assert _csf_targets(cid) == {"target": 2, "source": "client"}
+
+    _set_csf_target(cid, None)
+    fell_back = _csf_targets(cid)
+    assert fell_back["source"] == "default", fell_back
+    assert fell_back["target"] != 2 or fell_back["source"] == "default"
+
+
+@pytest.mark.unit
+def test_an_unusable_stored_target_is_named_rather_than_silently_defaulted(
+    app_client,
+) -> None:
+    """A stored value that is not a tier is a THIRD state.
+
+    `resolve_target_tier` separates "chose nothing" from "chose something
+    unusable" because the second is answerable by re-asking the client. If this
+    collapses to `default`, that distinction is lost at the one place it was
+    recorded -- and the register silently uses a target nobody picked.
+    """
+    c, _provider = app_client
+    bearer, cid = _admin(c)
+    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+
+    _set_csf_target(cid, 99)
+    assert _csf_targets(cid)["source"] == "client_out_of_range"

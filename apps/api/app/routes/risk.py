@@ -24,6 +24,7 @@ from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.attack.catalog import all_codes as attack_all_codes
 from app.audit import audit
+from app.csf.gap import resolve_target_tier
 from app.db.session import get_db
 from app.dependencies import require_role
 from app.docx_export import DOCX_MIME
@@ -48,6 +49,8 @@ from app.risk.engine import (
     tier_for,
 )
 from app.routes.artifacts import _storage_dep
+from app.routes.csf import _client_target_tier
+from app.routes.zt import _client_target_stage
 from app.schemas.risk import (
     RiskEntryResponse,
     RiskGateStatus,
@@ -56,6 +59,7 @@ from app.schemas.risk import (
 from app.security.rate_limit import RateLimiter, get_rate_limiter
 from app.storage import StorageBackend
 from app.tech_debt.filename import SERVICE_SLUG_RISK_REGISTER, deliverable_filename
+from app.zt.scoring import resolve_target_stage
 
 router = APIRouter(prefix="/risk", tags=["risk-register"])
 
@@ -384,15 +388,38 @@ def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list
     return kept, dropped
 
 
-def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set[str], set[str]]:
-    """Findings (one per gap) + the valid technique/control link universes.
+def _gather_findings(
+    db: Session, client_id: uuid.UUID
+) -> tuple[list[dict], set[str], set[str], dict[str, dict]]:
+    """Findings (one per gap) + the valid link universes + the TARGETS USED.
 
     valid_techniques = every technique in the client's ATT&CK assessment.
     valid_controls   = CSF subcategory codes + ZT capability codes present.
+    target_sources   = per service, the target this run compared against and
+                       WHERE IT CAME FROM (#84).
+
+    The fourth return value is not bookkeeping. Every finding here is "current
+    is below target", so the target is the operand that decides whether a row
+    exists at all -- and until #84 it was a hardcoded 3 for CSF and a hardcoded
+    fallback of 3 for ZT, regardless of what the client engaged for. A register
+    computed against the wrong baseline is not visibly wrong: it has the right
+    shape, plausible counts, and no way for a reader to tell which tier it was
+    measuring against. Recording the target beside the findings is what makes
+    the next one falsifiable.
+
+    NOT switched to `analyze_gaps`, and the reason is measured rather than
+    preference. That function returns `gaps=tuple(rows[:top_n])` with
+    `DEFAULT_TOP_N = 20`, so calling it here would silently cap this feed at 20
+    findings per service -- the truncation #75/#79 record in three renderers,
+    arriving in the risk register. Closing #84's baseline defect by opening a
+    data-loss one is not a trade worth making, so the target RESOLUTION is
+    shared (the point of #84) and the comparison stays here. Tracked as the
+    remaining half.
     """
     findings: list[dict] = []
     valid_techniques: set[str] = set()
     valid_controls: set[str] = set()
+    target_sources: dict[str, dict] = {}
 
     attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
     if attack is not None:
@@ -415,11 +442,26 @@ def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set
 
     csf = _finalized_for_synthesis(db, CsfAssessment, client_id)
     if csf is not None:
+        # #84. This read `r.maturity_tier < 3` -- a HARDCODED tier, so every
+        # client's CSF findings were computed against tier 3 no matter what
+        # they engaged for. A client targeting tier 2 was handed findings for
+        # controls already AT their goal; one targeting tier 4 was handed a
+        # register that stopped looking one tier early. The number reached the
+        # client's Risk Register, which is what makes it the defect it is
+        # rather than an internal inconsistency.
+        #
+        # Resolved through `resolve_target_tier`, the SAME function
+        # `routes/csf.py` uses -- imported rather than reimplemented, because a
+        # second copy is how two services come to disagree about one client's
+        # target. It returns the source too, so "the client chose nothing" and
+        # "the client's choice could not be used" stay separate facts.
+        csf_target, csf_target_source = resolve_target_tier(_client_target_tier(db, csf.service_id))
+        target_sources["csf"] = {"target": csf_target, "source": csf_target_source}
         for r in (
             db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id)).scalars().all()
         ):
             valid_controls.add(r.subcategory_code)
-            if r.maturity_tier is not None and r.maturity_tier < 3:
+            if r.maturity_tier is not None and r.maturity_tier < csf_target:
                 findings.append(
                     {
                         "source": "questionnaire_response",
@@ -431,11 +473,21 @@ def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set
 
     zt = _finalized_for_synthesis(db, ZtAssessment, client_id)
     if zt is not None:
+        # #84, the ZT half. Framework-aware, because DoD ZTRA has three stages
+        # where CISA has four -- a client stage valid under one is out of range
+        # under the other, and `resolve_target_stage` is what knows that.
+        zt_target, zt_target_source = resolve_target_stage(
+            zt.framework, _client_target_stage(db, zt.service_id)
+        )
+        target_sources["zt"] = {"target": zt_target, "source": zt_target_source}
         for r in (
             db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars().all()
         ):
             valid_controls.add(r.capability_code)
-            tgt = r.target_stage if r.target_stage is not None else 3
+            # Per-capability target first, then the ENGAGEMENT target -- the
+            # same precedence `analyze_gaps` documents. The fallback was a
+            # hardcoded 3 (#84); it is now the client's resolved stage.
+            tgt = r.target_stage if r.target_stage is not None else zt_target
             if r.maturity_stage is not None and r.maturity_stage < tgt:
                 findings.append(
                     {
@@ -446,7 +498,7 @@ def _gather_findings(db: Session, client_id: uuid.UUID) -> tuple[list[dict], set
                     }
                 )
 
-    return findings, valid_techniques, valid_controls
+    return findings, valid_techniques, valid_controls, target_sources
 
 
 def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
@@ -668,7 +720,7 @@ def generate(
             ),
         )
 
-    findings, valid_techniques, valid_controls = _gather_findings(db, cid)
+    findings, valid_techniques, valid_controls, target_sources = _gather_findings(db, cid)
     client_org = None if client.legal_name == "(pending intake)" else client.legal_name
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
     # total failure still raises typed, through ai_call_boundary.
@@ -957,6 +1009,18 @@ def generate(
         details={
             "version": next_version,
             "findings": len(findings),
+            # #84. The TARGET each service was compared against, and where it
+            # came from. Every finding is "current is below target", so this is
+            # the operand that decides whether a row exists -- and it was a
+            # hardcoded 3 until now, for every client regardless of what they
+            # engaged for.
+            #
+            # A register computed against the wrong baseline is not visibly
+            # wrong: right shape, plausible counts, no way for a reader to tell
+            # which tier it measured against. Recording it here is what makes
+            # the next one falsifiable, and `source` keeps "the client chose
+            # nothing" apart from "the client's choice could not be used".
+            "targets": target_sources,
             "batches_total": batches_total,
             "batches_failed": batches_failed,
             # Both present rather than omitted, so a reader can tell
