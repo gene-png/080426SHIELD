@@ -47,6 +47,37 @@ jobs:
         working-directory: apps/api
         run: python -m scripts.check_test_integrity tests
 
+      # The audit-gate test module SKIPS itself when it cannot find
+      # `.github/workflows` above it -- correct inside the api container, which
+      # mounts only `apps/api` (#314). But nothing asserted the skip does not
+      # fire HERE, on a full checkout, so the `..`-versus-`...` guard that
+      # module exists for could be silently retired and every test in
+      # `test_root_discovery.py` would stay green while `pytest -m unit`
+      # reported `2 skipped` and exited 0.
+      #
+      # It cannot be closed by a pytest test: a test living in the tree that
+      # skips itself skips with it. So it is asserted from OUTSIDE, in the one
+      # place a full checkout is guaranteed.
+      - name: the audit-gate tests must not skip on a full checkout
+        working-directory: apps/api
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          from tests._paths import find_workflows_dir
+
+          seed = pathlib.Path("tests/unit/test_audit_gate_collects_only_this_branch.py").resolve()
+          found = find_workflows_dir(seed)
+          if found is None:
+              print("FAIL: find_workflows_dir returned None on a full checkout.")
+              print("      The audit-gate module would SKIP here, retiring the")
+              print("      two-dots-versus-three guard with nothing going red.")
+              sys.exit(1)
+          if not (found / "audit-gate.yml").is_file():
+              print(f"FAIL: {found} has no audit-gate.yml; the module asserts it does.")
+              sys.exit(1)
+          print(f"ok: workflows resolved to {found}")
+          PY
+
       # Stray control characters, repo-wide. Runs from the ROOT, not apps/api,
       # because the files this defect actually lands in are DECISIONS.md and
       # CONTEXT.md -- prose about regexes, where an interpolated `\b` becomes an

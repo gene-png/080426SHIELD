@@ -34,7 +34,7 @@ from docx import Document
 from docx.table import Table, _Cell
 
 
-def _find_workspace() -> Path:
+def _find_workspace(start: Path | None = None) -> Path:
     """The checkout root, located by its own INPUT directory.
 
     Was `parents[3]` at module scope -- an `IndexError` at import inside the
@@ -56,7 +56,7 @@ def _find_workspace() -> Path:
     Raises with both documented invocations named, rather than an `IndexError`
     from pathlib that tells the reader nothing.
     """
-    here = Path(__file__).resolve()
+    here = (start or Path(__file__)).resolve()
     for candidate in here.parents:
         if (candidate / "reference-docs").is_dir():
             return candidate

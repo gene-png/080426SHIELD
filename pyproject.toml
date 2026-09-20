@@ -27,9 +27,14 @@ line-length = 100
 # Python files there), and it means a future Python gate fixture at the repo
 # root is exempt by the same rule as one under `apps/api`.
 #
-# Measured at this head rather than argued from the `per-file-ignores` analogy
-# below, which is a DIFFERENT matcher: `ruff check --no-cache .` inside the api
-# container exits 0, and `ruff check apps/api` from the repo root exits 0.
+# Measured rather than argued from the `per-file-ignores` analogy below, which
+# is a DIFFERENT matcher. Both run on 2026-09-20 at 9170c99:
+#
+#     ruff check --no-cache .     inside the api container  -> exit 0
+#     ruff check apps/api         from the repo root        -> exit 0
+#
+# The ref is named because re-deriving means choosing a tree, and the tree a
+# reader picks is `main`: "at this head" is precisely the ref nobody can name.
 extend-exclude = [".venv", "node_modules", "reference-docs", "**/tests/gates"]
 # Excludes are bypassed for EXPLICITLY NAMED paths unless this is set, and a
 # pre-commit hook names files explicitly -- which is precisely how #168 says the

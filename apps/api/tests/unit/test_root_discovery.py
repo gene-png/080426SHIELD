@@ -1,4 +1,4 @@
-"""Both directions of the two root searches that replaced `parents[N]` (#314).
+"""Both directions of the THREE root searches that replaced `parents[N]` (#314).
 
 `CLAUDE.md`: *a guard must be observed in BOTH states before it is trusted.
 Watching it fire proves it fires; it does not prove it passes.*
@@ -145,3 +145,61 @@ def test_the_workspace_search_finds_a_packages_directory(tmp_path: Path) -> None
     app = container / "app" / "scripts"
     app.mkdir(parents=True)
     assert _find_workspace(app / "_common.py") == container
+
+
+# ---------------------------------------------------------------------------
+# THE THIRD ROOT SEARCH.
+#
+# This file opened by saying "the two root searches that replaced `parents[N]`".
+# There are THREE. `extract_csf_questionnaires._find_workspace` took no `start`
+# parameter, so neither of its directions could be exercised at all -- and the
+# one thing it does differently from its two siblings, the choice of MARKER, was
+# the part pinned least.
+#
+# That choice is the subtle half of #314's fix. `_common` searches for
+# `packages/` because that is where its seed data lives. In the api container
+# `/packages` EXISTS -- compose mounts `./packages/zt-data` there -- so the same
+# marker here would resolve the workspace to `/` and the module-scope
+# `OUT_DIR.mkdir(parents=True, exist_ok=True)` would create
+# `/packages/csf-data/source` and write tier JSON nothing reads. Exit 0,
+# cheerful output, wrong directory.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_the_extractor_finds_a_checkout_by_its_reference_docs(tmp_path: Path) -> None:
+    """THE FINDING HALF, and it asserts an EXACT path rather than re-deriving.
+
+    Building the expectation by walking ancestors for `reference-docs` would be
+    a second copy of the function under test, agreeing with it by construction
+    -- including when both are wrong about nearest-versus-furthest.
+    """
+    from scripts.extract_csf_questionnaires import _find_workspace
+
+    root = tmp_path / "checkout"
+    (root / "reference-docs").mkdir(parents=True)
+    deep = root / "apps" / "api" / "scripts"
+    deep.mkdir(parents=True)
+
+    assert _find_workspace(deep / "extract_csf_questionnaires.py") == root
+
+
+@pytest.mark.unit
+def test_the_extractor_refuses_a_tree_with_no_reference_docs(tmp_path: Path) -> None:
+    """THE RAISING HALF. A guard watched only firing is not watched; a guard
+    watched only passing is not watched either.
+
+    `packages/` is present here ON PURPOSE. It is the marker the SIBLING search
+    uses, and the container state that makes it the wrong one: if someone
+    "simplifies" this search to match `_common`, this test goes red instead of
+    the extractor silently writing to `/packages/csf-data/source`.
+    """
+    from scripts.extract_csf_questionnaires import _find_workspace
+
+    wrong = tmp_path / "not-a-checkout"
+    (wrong / "packages").mkdir(parents=True)
+    deep = wrong / "apps" / "api" / "scripts"
+    deep.mkdir(parents=True)
+
+    with pytest.raises(RuntimeError, match="reference-docs"):
+        _find_workspace(deep / "extract_csf_questionnaires.py")
