@@ -977,6 +977,17 @@ a real exit code and a real date, and was the minority outcome (D-071).
   `risk.py:177` on the first try, and `grep -rnE "is not None else [0-9]"`
   returns `risk.py:193`. Neither appears in any list of `analyze_gaps` callers.
   A reimplementation shares the symptom, never the symbol.
+
+  **AND THE OBVIOUS FIX -- "so call `analyze_gaps`" -- IS REFUSED, deliberately,
+  so the next reader does not make it.** #84 was closed by sharing the TARGET
+  RESOLUTION (`resolve_target_tier` / `resolve_target_stage`, imported rather
+  than copied) and leaving the comparison local. Calling `analyze_gaps` here
+  would cap the risk-synthesis feed at `DEFAULT_TOP_N = 20`, because it returns
+  `gaps=tuple(rows[:top_n])` -- the truncation #75/#79 record in three
+  renderers, arriving in the client's register. Trading a wrong baseline for
+  silent data loss is not a trade. The full migration needs an explicit
+  `top_n` and its own red-on-revert for the truncation; until then this file is
+  a deliberate non-caller, and PR #348 carries the reason at the site.
 - **A CHANGE THAT REMOVES OR REPLACES A GUARD NEEDS AT LEAST ONE ASSERTION
   THAT GOES RED WHEN THE GUARD IS DELETED, EXERCISED THROUGH THE SURFACE THE
   CLIENT ACTUALLY REACHES.** A resolver and a pure function are not that
@@ -1913,6 +1924,30 @@ Rules of the road:
   unless you go and generate one. "Green" carries its check list; "ready"
   carried nothing, because merge state is not printed by anything you were
   already running.
+
+  **AND A THIRD CLAIM RIDES WITH THEM: WHAT THE PR WILL CLOSE, VERIFIED
+  AGAINST `closingIssuesReferences` AND NEVER AGAINST THE APPROVAL MARKER.**
+
+      gh pr view <n> --json closingIssuesReferences
+
+  `Auto-close-approved: <n>` AUTHORISES this repo's own guard. It closes
+  nothing. A body carrying the marker and no closing keyword merges having
+  closed nothing, and the two are easy to conflate because the marker contains
+  the issue number and the word "close".
+
+  Measured on #348, the #84 fix: body carried `Auto-close-approved: 84`,
+  `closingIssuesReferences` returned **`[]`**. Merging it would have left #84
+  FIXED AND OPEN on the mvp-blocking board.
+
+  **That is a REPORTING failure, not a bookkeeping one**, and it is why this
+  sits beside green-and-mergeable rather than in a filing convention. Every
+  <!-- counted: the MAGNITUDE of an off-by-one error, not a tally of a population; it cannot grow -->
+  status given after that merge would have been wrong by one issue, the board
+  would have shown a defect that no longer existed, and the next person
+  planning from it would have sized work against a lie. The check costs one
+  command and it is the same command the closing-keyword bullet already
+  prescribes -- what was missing is that nothing made it part of REPORTING
+  READY.
 
 - **A STATUS WORD CARRIES ITS OUTPUT, OR IT DOES NOT GO IN THE REPORT.**
   "Merged" carries the `git log --oneline -1 origin/main` line. "Pushed" carries
