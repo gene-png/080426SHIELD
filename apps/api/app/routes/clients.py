@@ -1596,6 +1596,11 @@ def risk_dashboard(
         released_at=reg.finalized_at,
         version=reg.version,
         total_entries=len(entries),
+        # #313. Derived from the SAME filter the breakdowns use, so the two
+        # cannot disagree: `tiers` drops every entry whose tier is None, and
+        # this is exactly what it dropped. Deriving it rather than recounting
+        # means a change to the filter moves both numbers together.
+        entries_without_tier=len(entries) - len(tiers),
         critical_count=tc.get(RiskTier.CRITICAL.value, 0),
         high_count=tc.get(RiskTier.HIGH.value, 0),
         tier_counts=tc,

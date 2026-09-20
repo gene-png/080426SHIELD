@@ -32,6 +32,23 @@ export interface RiskDashboardData {
   action_counts: Record<string, number>;
   matrix: RiskMatrixCell[];
   entries: RiskEntry[];
+  /**
+   * #313. How many entries are counted in `total_entries` but missing from
+   * every breakdown.
+   *
+   * `routes/clients.py::risk_dashboard` publishes `total_entries=len(entries)`
+   * while the tier, axis, action and matrix counts are computed over filtered
+   * lists -- `[t for t in (...) if t is not None]`. An entry with no tier is
+   * therefore in the headline and in none of the breakdowns, and the two
+   * disagree with nothing saying why.
+   *
+   * OPTIONAL, and the optionality is the disclosure. A register serialized
+   * before this field existed carries no count, which is "nobody looked" and
+   * not "nothing was withheld". `undefined` renders as NOT RECORDED; a zero
+   * renders as silence. Collapsing them would manufacture a positive
+   * certificate out of absence, which is the #244 shape.
+   */
+  entries_without_tier?: number;
 }
 
 // Display order. Likelihood is shown high→low down the rows so the most severe

@@ -200,6 +200,34 @@ export function RiskDashboard({
   data: RiskDashboardData;
 }): JSX.Element {
   const tc = data.tier_counts;
+  // #313. The qualifier existed, was computed, and reached the ADMIN only --
+  // `_serialize` publishes it and `RiskRegisterDashboard.tsx` banners it, and
+  // that banner's own copy ends by saying a client reading this register sees
+  // those rows as dashes. The admin was told the client sees the undisclosed
+  // version, and this surface was left in exactly that state.
+  //
+  // THREE states, not two. `undefined` is a register serialized before the
+  // field existed: nobody looked. `0` is looked-and-nothing-withheld, which
+  // is silence. Anything else is the disagreement and gets announced.
+  const withheld = data.entries_without_tier;
+  const withheldNote =
+    withheld === undefined ? (
+      <span>
+        Whether any entries are missing from these breakdowns was{" "}
+        <span className="font-semibold">not recorded</span> for this register
+        version. Regenerate it to find out.
+      </span>
+    ) : withheld > 0 ? (
+      <span>
+        <span className="font-semibold">
+          {withheld} of {data.total_entries} entries have no likelihood, impact
+          or tier
+        </span>
+        , so they are missing from the matrix and every breakdown below while
+        still counting toward Open risks. That is why the tiers sum to fewer
+        than the headline.
+      </span>
+    ) : null;
   return (
     <DashShell
       title="Risk Register"
@@ -207,6 +235,15 @@ export function RiskDashboard({
       releasedAt={data.released_at}
       version={data.version}
     >
+      {withheldNote ? (
+        <div
+          className="mb-4 rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
+          role="alert"
+          data-testid="risk-entries-without-tier"
+        >
+          {withheldNote}
+        </div>
+      ) : null}
       <KpiRow>
         <KpiCard
           label="Open risks"

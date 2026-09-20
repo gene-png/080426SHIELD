@@ -64,6 +64,13 @@ def app_client(tmp_path) -> Iterator[TestClient]:
     _seed.close()
 
     with TestClient(app, headers={"X-Client-Id": _cid}) as c:
+        # The sessionmaker rides on the client so a test can build a state the
+        # generator does not produce on its own -- an entry with no tier. Every
+        # register this fixture generates tiers every entry, which is why a
+        # test asserting the disclosure passes for the wrong reason unless it
+        # constructs the case itself. Measured: publishing a constant 0 left
+        # the reconciliation assertion green.
+        c.test_session = TestSession  # type: ignore[attr-defined]
         yield c
 
 
@@ -246,3 +253,80 @@ def test_risk_dashboard_unfinalized_is_404(app_client) -> None:
     )
     assert r.status_code == 404
     assert r.json()["error"]["reason"] == "dashboard_not_released"
+
+
+@pytest.mark.unit
+def test_the_client_dashboard_discloses_entries_missing_from_every_breakdown(
+    app_client,
+) -> None:
+    """#313. The headline and the breakdowns must not disagree in silence.
+
+    `total_entries` is `len(entries)` while `tier_counts`, `axis_counts`,
+    `action_counts` and `matrix` are computed over `[t for t in (...) if t is
+    not None]`. An entry with no tier is therefore in the headline and in none
+    of the breakdowns.
+
+    The fact was already computed and already published -- to the ADMIN.
+    `_serialize` carries `entries_without_tier`, the admin dashboard banners
+    it, and that banner's copy ends by saying a client reading this register
+    sees those rows as dashes. So the admin was told the client sees the
+    undisclosed version, and the client surface was left that way.
+
+    Asserts the INVARIANT rather than a literal: the disclosed count plus the
+    tier counts must equal the headline. A literal would pass for a run that
+    happened to have no untiered entries, which is most of them.
+    """
+    c = app_client
+    admin = _register(c, "admin2@example.com")
+    client = _register(c, "client2@example.com")
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+    client_id = client["user"]["client_id"]
+
+    c.headers["X-Client-Id"] = client_id
+    _generate_and_finalize(c, bearer_admin, client_id)
+
+    # BUILD THE STATE THE GENERATOR DOES NOT. Every register this fixture
+    # produces tiers every entry, so without this the disclosure is 0 whatever
+    # the code does -- measured, by publishing a constant 0 and watching this
+    # test stay green.
+    from sqlalchemy import select as _select
+
+    from app.models.risk_register import RiskEntry, RiskRegister
+
+    db = c.test_session()  # type: ignore[attr-defined]
+    reg = (
+        db.execute(_select(RiskRegister).order_by(RiskRegister.version.desc()).limit(1))
+        .scalars()
+        .first()
+    )
+    victim = (
+        db.execute(_select(RiskEntry).where(RiskEntry.register_id == reg.id).limit(1))
+        .scalars()
+        .first()
+    )
+    assert victim is not None, "no entry to untier"
+    victim.tier = None
+    db.add(victim)
+    db.commit()
+    db.close()
+
+    r = c.get(
+        f"/clients/{client_id}/risk/dashboard",
+        headers={"Authorization": f"Bearer {bearer_client}"},
+    )
+    assert r.status_code == 200, r.text
+    b = r.json()
+
+    assert (
+        b["entries_without_tier"] >= 1
+    ), "an entry with no tier must be disclosed, not absorbed into the headline"
+    assert (
+        "entries_without_tier" in b
+    ), "the client surface must carry the qualifier, not only the admin one"
+    tiered = sum(b["tier_counts"].values())
+    assert tiered + b["entries_without_tier"] == b["total_entries"], (
+        f"the breakdowns sum to {tiered} under a headline of {b['total_entries']} "
+        f"with {b['entries_without_tier']} disclosed -- these must reconcile, "
+        "or the disclosure is a number that explains nothing"
+    )
