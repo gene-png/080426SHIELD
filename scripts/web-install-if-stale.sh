@@ -77,7 +77,33 @@ BIN="$APP/apps/web/node_modules/next/dist/bin/next"
 STAMP="$APP/node_modules/.shield-installed-lock"
 
 CHECK_ONLY=0
-[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+
+# An UNRECOGNISED ARGUMENT is exit 2, not a clean run.
+#
+# A flag a script does not implement must not SUCCEED. Silent
+# argument-ignoring makes every future `--self-test`, `--dry-run` and
+# `--check` a coin flip where both faces read as heads: the reader gets the
+# success banner they were hoping for and no signal that nothing happened.
+#
+# Found on `prettier_hook.sh`, which printed its success banner and exited 0
+# for `--self-test` -- a flag it does not have, reached for because the gate
+# beside it DOES have one. The trap is aimed at careful people: the instinct
+# to verify was correct and the reward was a false pass.
+# Here the silent path had a SIDE EFFECT: a typo'd `--checks` left
+# CHECK_ONLY at 0 and performed a real install where a check was asked
+# for. Strictly worse than a false green.
+case "${1:-}" in
+  "") ;;
+  --check) CHECK_ONLY=1 ;;
+  *)
+    echo "FAIL: unknown argument '$1'. This script accepts only --check." >&2
+    exit 2 ;;
+esac
+if [ "$#" -gt 1 ]; then
+  echo "FAIL: too many arguments; got: $*" >&2
+  exit 2
+fi
+
 
 decide() {
   if [ ! -f "$LOCK" ]; then

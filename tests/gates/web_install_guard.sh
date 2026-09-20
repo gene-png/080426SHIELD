@@ -20,6 +20,18 @@
 
 set -eu
 
+# An UNRECOGNISED ARGUMENT is exit 2, not a clean run.
+#
+# This script takes none. Ignoring whatever it is given makes a mistyped or
+# imagined flag read as a successful run -- `prettier_hook.sh` printed its
+# success banner and exited 0 for a `--self-test` it does not have, reached
+# for because the gate beside it DOES have one.
+if [ "$#" -gt 0 ]; then
+  echo "FAIL: this script takes no arguments; got: $*" >&2
+  exit 2
+fi
+
+
 SCRIPT="${SCRIPT:-$(cd "$(dirname "$0")/../.." && pwd)/scripts/web-install-if-stale.sh}"
 [ -f "$SCRIPT" ] || { echo "FAIL: cannot find $SCRIPT"; exit 2; }
 

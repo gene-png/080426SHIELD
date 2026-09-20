@@ -973,6 +973,44 @@ _FLAGS: dict[str, Callable[[], int]] = {
 
 
 def main(argv: list[str]) -> int:
+    # An UNRECOGNISED ARGUMENT is exit 2, not the default report.
+    #
+    # `if "--check-registry" in argv` was a MEMBERSHIP TEST, so any other flag
+    # fell through to the report path and exited 0. A typo'd
+    # `--check-registy` in `ci.yml`'s "LEAVE-row oracle registry and labels"
+    # step would have run the REPORT and passed the step -- the registry check
+    # that step exists for never running, with nothing to see.
+    #
+    # A flag a script does not implement must not SUCCEED. Found on
+    # `prettier_hook.sh`, which printed its success banner and exited 0 for a
+    # `--self-test` it does not have; this is the same shape on a CI-wired
+    # gate, where the cost is a step that certifies nothing.
+    #
+    # argv[0] is the program name; anything after it must be understood.
+    #
+    # THE ALLOW-LIST IS `_FLAGS`, WHICH IS ALSO THE DISPATCH, and that is what
+    # keeps this guard correct as flags are added. A guard carrying its own
+    # list of accepted flags is a second fact that has to be kept in step with
+    # the first, and the failure when it is not is not a syntax error: the
+    # guard refuses a flag the script implements, with a confident message
+    # naming the only flag it believes in.
+    #
+    # That is not hypothetical, and it is why this branch now sits on top of
+    # #299 rather than beside it. A first draft had this guard reading its own
+    # literal; #299 adds `--check-anchors` and wires it into `ci.yml`; the two
+    # touch different hunks of this function, so both MERGED CLEAN and `main`
+    # went red on the step whose job is to report whether the oracle can still
+    # measure. Reading the dispatch means a flag is accepted if and only if
+    # something handles it.
+    unknown = [a for a in argv[1:] if a not in _FLAGS]
+    if unknown:
+        print(
+            f"leave-row-oracle: could not look -- unrecognised argument(s) "
+            f"{', '.join(unknown)}. This script accepts only "
+            f"{', '.join(_FLAGS)}.",
+            file=sys.stderr,
+        )
+        return 2
     # EVERY FLAG NAMED ON THE COMMAND LINE RUNS, and the WORST code wins.
     #
     # Written first as two `if <flag> in argv: ... return` blocks in sequence,
