@@ -92,10 +92,8 @@ export function TechDebtWorkspace({
    * and its plan-refresh write was also the one unguarded write in a function
    * whose every other write is sequence-guarded -- see `refreshOverlap`.
    */
-  const {
-    messages: refreshMessages,
-    begin: beginRefresh,
-  } = useRefreshFailures();
+  const { messages: refreshMessages, begin: beginRefresh } =
+    useRefreshFailures();
   const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);

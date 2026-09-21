@@ -113,10 +113,8 @@ export function AttackWorkspace({
    * IDENTICAL sentence, so a failed heatmap and a failed deliverable check
    * were the same bytes in the same slot with no way to tell them apart.
    */
-  const {
-    messages: refreshMessages,
-    begin: beginRefresh,
-  } = useRefreshFailures();
+  const { messages: refreshMessages, begin: beginRefresh } =
+    useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
   >(null);

@@ -169,7 +169,9 @@ const SWALLOWING_CHAIN =
   /\.catch\s*\(\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*(?:null|undefined|\{\s*\}|\[\s*\]|void 0)\s*\)/;
 
 function swallows(src: string): boolean {
-  return silentCatches(src).length > 0 || SWALLOWING_CHAIN.test(stripComments(src));
+  return (
+    silentCatches(src).length > 0 || SWALLOWING_CHAIN.test(stripComments(src))
+  );
 }
 
 describe("admin workspaces never present a failed fetch as an ongoing load", () => {
@@ -201,7 +203,10 @@ describe("admin workspaces never present a failed fetch as an ongoing load", () 
 
   it.each([
     ["a catch that reverts", "try { a(); } catch { setX(null); }"],
-    ["a catch that surfaces", "try { a(); } catch (e) {\n  // why\n  note(e);\n}"],
+    [
+      "a catch that surfaces",
+      "try { a(); } catch (e) {\n  // why\n  note(e);\n}",
+    ],
     ["a chain that handles", "load().catch((e) => note(e));"],
     // The false positive the first rewrite shipped: every workspace here
     // DOCUMENTS the original defect in its header comment, so a scanner that
@@ -225,9 +230,9 @@ describe("admin workspaces never present a failed fetch as an ongoing load", () 
   });
 
   it("no component swallows a failure", () => {
-    const offenders = FILES.filter((f) => swallows(readFileSync(f, "utf8"))).map(
-      (f) => f.slice(f.indexOf("src")),
-    );
+    const offenders = FILES.filter((f) =>
+      swallows(readFileSync(f, "utf8")),
+    ).map((f) => f.slice(f.indexOf("src")));
 
     expect(
       offenders,

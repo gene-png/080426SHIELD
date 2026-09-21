@@ -160,10 +160,8 @@ export function ZtWorkspace({
    * permanent "may be out of date" warning over figures that had since
    * refreshed correctly.
    */
-  const {
-    messages: refreshMessages,
-    begin: beginRefresh,
-  } = useRefreshFailures();
+  const { messages: refreshMessages, begin: beginRefresh } =
+    useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
   >(null);
@@ -260,12 +258,7 @@ export function ZtWorkspace({
     } catch (err) {
       setLoadError(describeError(err));
     }
-  }, [
-    serviceId,
-    framework,
-    refreshScoreAndGap,
-    beginRefresh,
-  ]);
+  }, [serviceId, framework, refreshScoreAndGap, beginRefresh]);
 
   React.useEffect(() => {
     void (async () => {

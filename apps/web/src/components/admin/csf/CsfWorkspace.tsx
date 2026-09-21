@@ -133,10 +133,8 @@ export function CsfWorkspace({
    * `initialLoad` notes a failed interview fetch and then, three statements
    * later, a SUCCESSFUL score/gap refresh cleared it.
    */
-  const {
-    messages: refreshMessages,
-    begin: beginRefresh,
-  } = useRefreshFailures();
+  const { messages: refreshMessages, begin: beginRefresh } =
+    useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
   >(null);
