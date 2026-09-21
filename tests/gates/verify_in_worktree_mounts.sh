@@ -1,6 +1,13 @@
 #!/bin/sh
 # Prove `verify-in-worktree.sh` resolves the PRIMARY TREE correctly, and
-# refuses when it cannot (#175).
+# refuses when it cannot.
+#
+# NOT #175, though the script used to say so. #175 is a `docker-compose.yml`
+# defect -- the line `- ./packages:/app/packages`, bind-mounted with no
+# node_modules overlay. The bug this gate covers is the PRIMARY_TREE
+# derivation in `verify-in-worktree.sh`, which shares #175's symptoms and
+# none of its cause. Conflating them is what sent every reader to the
+# compose file to look for a fault in this script.
 #
 # ## What went wrong
 #
@@ -91,7 +98,10 @@ if [ "$rc" -ne 0 ]; then
       ;;
     *)
       echo "      CAUSE: the primary tree is being derived from the script's own" >&2
-      echo "      location, which in a worktree is the worktree. That is #175." >&2
+      echo "      location, which in a worktree is the worktree, so the mount" >&2
+      echo "      named a source that does not exist and Docker created it" >&2
+      echo "      empty. The bug is in verify-in-worktree.sh, NOT in" >&2
+      echo "      docker-compose.yml -- this is not #175." >&2
       ;;
   esac
   echo "$out" | sed 's/^/      | /' >&2
@@ -113,7 +123,9 @@ primary_line="$(printf '%s
 case "$primary_line" in
   *shield-primary-fixture*) : ;;
   *shield-linked-fixture*)
-    echo "FAIL: resolved the LINKED WORKTREE as the primary tree -- that is #175." >&2
+    echo "FAIL: resolved the LINKED WORKTREE as the primary tree." >&2
+    echo "      That is the PRIMARY_TREE derivation bug in verify-in-worktree.sh," >&2
+    echo "      not #175, which is a docker-compose.yml mount defect." >&2
     echo "      $primary_line" >&2
     fail=1
     ;;

@@ -254,7 +254,25 @@ tsc() {
 ' "$out" | grep 'error TS' | grep -c '\.\./\.\./packages/' || true)"
   echo "verify-in-worktree: tsc -- ${total} error(s), ${outside} of them outside apps/web (packages/*, i.e. the mount, not this branch)"
   if [ "$outside" -gt 0 ]; then
-    echo "verify-in-worktree: COULD NOT FULLY LOOK -- packages/* did not type-check here (#175). apps/web errors: $((total - outside))." >&2
+    echo "verify-in-worktree: COULD NOT FULLY LOOK -- packages/* did not type-check here. apps/web errors: $((total - outside))." >&2
+    # THE TWIN of the vitest message below, and it was left behind for a
+    # commit: that one was rewritten to stop attributing every failure to
+    # #175 while this one went on doing it unconditionally, one function
+    # above. `outside` counts errors whose PATH is under `packages/`, which a
+    # genuine type error in that package's own source satisfies just as well
+    # as a missing module does.
+    #
+    # `TS2307: Cannot find module` is the mount's signature -- nothing
+    # resolves, so every downstream annotation degrades to implicit `any`.
+    # Real type errors in that source carry other codes.
+    if printf '%s\n' "$out" | grep -q 'error TS2307'; then
+      echo "verify-in-worktree: modules under packages/ could not be RESOLVED, which is" >&2
+      echo "verify-in-worktree: #175's shape -- packages/ is bind-mounted with no" >&2
+      echo "verify-in-worktree: node_modules overlay. Not this branch." >&2
+    else
+      echo "verify-in-worktree: these are TYPE errors in packages/ source, not missing" >&2
+      echo "verify-in-worktree: modules, so they are NOT the mount and NOT #175. Read them." >&2
+    fi
     return 2
   fi
   return "$status"
@@ -279,18 +297,43 @@ vitest() {
 ' "$out" | grep -m1 -E 'Failed to resolve import|Cannot find module' || true)"
     echo "verify-in-worktree: COULD NOT FULLY LOOK -- ${uncollected} of ${found} test files never ran, so this result is a floor of unknown depth." >&2
     [ -n "$why" ] && echo "verify-in-worktree: skip reason: ${why}" >&2
-    # #175 is ONE cause, not the only one, and this line used to name it as
-    # though it were. The other is a wrong PRIMARY_TREE, which mounted a
-    # non-existent source that Docker created empty -- symptoms identical,
-    # cause entirely inside this script, and every reader sent to a
-    # compose-file issue to look for it. `require_primary_tree` now refuses
-    # that case up front, so reaching HERE means the modules were found and
-    # still did not resolve, which is #175's shape: host-absolute symlinks
-    # written by a `pnpm install` on the host.
-    echo "verify-in-worktree: the modules were found but did not resolve." >&2
-    echo "verify-in-worktree: most likely #175 -- packages/ is bind-mounted with no" >&2
-    echo "verify-in-worktree: node_modules overlay, so a HOST pnpm install leaves" >&2
-    echo "verify-in-worktree: host-absolute symlinks the container cannot follow." >&2
+    # WHICH CAUSE, decided from the evidence rather than asserted.
+    #
+    # This block used to print "see #175" for every collection failure. #175 is
+    # ONE cause; a wrong PRIMARY_TREE was a second, with identical symptoms and
+    # the cause entirely inside this script. `require_primary_tree` closes that
+    # one -- but a THIRD remains and is the commonest: `count_uncollected`
+    # matches `FAIL <file> [ <file> ]`, which vitest prints for ANY collection
+    # failure, so a broken import in this branch's own `apps/web/src`, or a
+    # dependency in the lockfile that this volume has not installed, lands here
+    # too. Telling that author it is a compose-file defect is worse than saying
+    # nothing: they go and read `docker-compose.yml` instead of their own diff.
+    #
+    # The discriminator is the IMPORTING FILE, not the specifier. #175's shape
+    # is a module unresolvable FROM a file under `packages/` -- the observed
+    # form is `Failed to resolve import "clsx" from
+    # "../../packages/design-system/src/utils/cn.ts"`. A failure from a file
+    # under `apps/web/src` is this branch's code, whatever the specifier is.
+    case "$why" in
+      *packages/*|*'"@shield/'*)
+        echo "verify-in-worktree: a module could not be resolved FROM a file under packages/." >&2
+        echo "verify-in-worktree: that is #175's shape -- packages/ is bind-mounted with no" >&2
+        echo "verify-in-worktree: node_modules overlay, so a HOST pnpm install leaves" >&2
+        echo "verify-in-worktree: host-absolute symlinks the container cannot follow." >&2
+        ;;
+      "")
+        echo "verify-in-worktree: no unresolved-import line was printed, so the cause is" >&2
+        echo "verify-in-worktree: NOT known to be a mount problem. Read the output above" >&2
+        echo "verify-in-worktree: before assuming it is one." >&2
+        ;;
+      *)
+        echo "verify-in-worktree: the failing import is NOT from packages/, so this is most" >&2
+        echo "verify-in-worktree: likely THIS BRANCH's own code -- a bad import path, a" >&2
+        echo "verify-in-worktree: renamed module, or a dependency added to the lockfile that" >&2
+        echo "verify-in-worktree: the node_modules volume has not installed yet." >&2
+        echo "verify-in-worktree: exit 2 means these files never RAN, not that you are clear." >&2
+        ;;
+    esac
     return 2
   fi
   return "$status"
