@@ -1,79 +1,78 @@
 # Gene's Context: 080426SHIELD
 
-## PICK UP HERE — 2026-09-20
+## PICK UP HERE — 2026-09-21
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every claim
 about state outside the working tree carries the command that produced it.
 
 **Assume the reader has none of the previous session's context.**
 
-### THE REVIEWS LANDED, AND I WAS WRONG ABOUT THE CHANNEL
+### State
 
-Every outstanding review delivered, in a burst, roughly an hour after
-dispatch — exactly the lag this file already recorded. My earlier claim on
-#318 that the retrieval workaround had stopped working is withdrawn there in
-writing. **`idle` is not a delivery signal, and an agent cannot tell a slow
-reviewer from a dead one**; that remains the durable finding and the argument
-for W8b.
+**#362 is merged at `1d573ec`** — the live client-facing regression on all
+five dashboards. `main` is green.
 
-Three reports arrived truncated (a 16k cap on the delivery). I asked those
-three for blocking findings only, in a smaller message. **Those three — on
-#363, #364, #366 — are still outstanding.**
+Twelve PRs open. **All pairwise-merge-checked**, which is now standing
+practice: GitHub computes mergeability against the base only, so two PRs that
+each merge cleanly and conflict with each other are both `MERGEABLE` and
+invisible. Nine pairs share a file; all nine are clean, measured just now.
 
-**They found a great deal, and it changed every PR.** Headline first.
+| PR | What it is |
+| --- | --- |
+| #366 | Internal proxy strings reaching clients — **rebased onto `1d573ec`**, conflict hand-resolved |
+| #351 | Disclosures reach a screen — **was CONFLICTING against `main` and is rebased** |
+| #369 | Both Quick-start paths bypassed the install guard |
+| #367 | The mount check claimed agreement it had not established |
+| #364 | `apiFetch`, the choke point six proxies share, had no test |
+| #363 | A test that asked a question with no answer |
+| #370 | A D-number failure read as an issue-close failure |
+| #360 | Item 12 is done, and the claim that sequenced it was backwards |
+| #359 | Why the typed-reason guard stops at `dashboards/` |
+| #358 | The disclosure consumer gate |
+| #353 | `entries_total` named two quantities |
+| #343 | A flag a script does not implement must not succeed |
+| #374 | The known-good-shape rule — **review dispatched** |
+| #375 | Four rules from tonight — **review dispatched** |
 
-#### The consumer gate was green over a live instance of its own defect
+### Standing decisions Gene made, recorded so they are not re-litigated
 
-`RiskRegisterResponse.batches_total` / `batches_failed` reach **no screen and
-no exporter**. The gate passed them because it pooled every reader surface
-into one blob, and `batches_total` is ALSO declared on `AttackRunAiResponse`,
-which IS rendered. **The Risk fields were passing on ATT&CK's renderer.**
+1. **No merging with a review outstanding.** The rule stands. It earned its
+   place twice this week — it caught a review that read the base rather than
+   the diff, and a "dispatched" that never happened. **What changed is the
+   threshold: 90 minutes of no delivery before saying so, not 43.** The
+   recorded lag is about an hour and `idle` is not a delivery signal. Under 90,
+   keep working and do not report it. Now in `CLAUDE.md` (PR #375).
+2. **Merge order when two PRs conflict with each other: the one with a live
+   client consequence goes first.** #362 before #366, done.
+3. **Do not split #370's job.** A new job is not required until it is named in
+   branch protection, so splitting silently turns a blocking check
+   non-blocking — a reporting defect fixed by introducing an enforcement
+   defect. Fix the message inside the existing job instead. If the split is
+   wanted later it lands as TWO actions in ONE PR: the split, and Gene adding
+   the job name to required checks. **Never the first without the second.**
 
-A partial Risk synthesis therefore renders a register missing entries with
-nothing saying so — the deliverable a client's remediation budget is argued
-from. ATT&CK fixed the identical defect as #115; Risk is the untouched twin.
+### The pairwise check is now part of the ready report
 
-Fixed by scoping readers per service, derived from the union of the schema
-file stem and the model's role-stripped prefix. Measured before adopting:
-**2 of 18 fields flagged, both the Risk pair, no false positive among the
-other 16.** Two weaker derivations were tried and discarded on measurement.
-The defect it now finds is **#372** (tier-2); the fields are exempt with that
-number and a delete-this instruction.
+Whenever two or more open PRs touch the same file, run the pairwise merge and
+**say which pairs you checked** — an unstated set makes the verdict
+uncheckable. It found two conflicts GitHub could not see tonight, both against
+#351, and then found that #351 had gone conflicting against `main` itself
+while still showing `MERGEABLE/CLEAN` from earlier in the evening.
 
-#### What the reviews found in my own published claims
+Same class as two individually-green merges taking `main` red forty minutes
+apart. Second occurrence.
 
-Three of my PR bodies asserted something false. All corrected in place, none
-overwritten:
+### Housekeeping done
 
-- **#367**: I wrote that `check_test_integrity` caught two weak assertions.
-  It caught one, and **cannot** catch the other — TI002 fires only on
-  `str(...)` or an f-string, never a plain literal. Measured: restoring the
-  bare literal leaves the gate clean. I had read two shifted line numbers as
-  two findings and credited a gate with a catch it cannot make, which is a
-  false assurance about coverage.
-- **#359**: my docstring's heading says the predicate is "renders error COPY"
-  and both its greps search the token `ApiError`. Different propositions. It
-  then concluded "exactly the five dashboards" — a finding turned into a
-  certificate, under the word MEASURED. Two component surfaces
-  (`SignUpForm.tsx` via bare `res.status`, `IntakeWizard.tsx` via
-  `ProxyError`) share no vocabulary with the search term. Neither is a live
-  defect — verified — but the sentence claimed a closed set.
-- **#360**: I corrected item 12's row and left the sizing prose above it
-  saying item 12 is unsized remaining work, in four places. Half-corrected is
-  worse than consistently wrong, and it is rule 3 exactly.
-
-#### And in the work itself
-
-- **#362**: the rename window on `GENERIC_COPY_IS_BETTER` was unstated (a
-  pointer now sits at the API literal, where the renamer works); a test
-  comment named the wrong population; the exclusion regex did not catch the
-  case its own comment claimed; a filter could select nothing.
-- **#369**: my sweep missed `apps/web/README.md`, which carried the same
-  impossible command AND a third unguarded `pnpm install`.
-- **#367**: `check_gate_fixtures`'s registry entry still described the defect
-  that PR had just fixed.
-
-Issues filed from the reviews: **#372** (tier-2), **#373** (tier-3).
+- **57 review worktrees pruned.** 60 remain and were NOT touched: they are
+  `wt-*` checkouts of unmerged branches from earlier sessions, all clean, no
+  stashes. Removing a worktree keeps its branch, but these are in-flight
+  checkouts rather than my dispatch garbage, so they are Gene's call.
+- **The four dependabot PRs are closed** (#319, #149, #148, #147), each with a
+  measured behind-count in the closing comment — 29, 97, 29, 29. Closed so
+  dependabot re-raises against a current base, not on their merits. If nothing
+  re-raises within a day that is worth looking at: it would mean the update is
+  no longer offered, which is a different fact.
 
 ### The second wave, and the two worst things in it
 
