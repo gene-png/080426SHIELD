@@ -2,20 +2,42 @@
 
 Next.js 14 (App Router) frontend for SHIELD by Kentro v2.0. TypeScript strict, Tailwind for styling, NextAuth for sessions, shadcn primitives copied into `packages/design-system` (stage 6).
 
-## Run inside the dev container
+## Run the web dev server
 
 ```bash
-docker compose exec web bash scripts/dev-web.sh
-```
-
-Or directly with pnpm if you're already in the `web` container:
-
-```bash
-pnpm install
-pnpm dev
+docker compose up -d web
+docker compose logs -f web    # the install guard, then Next.js boot
 ```
 
 The server starts on http://localhost:3000.
+
+### Two commands that used to be here, and why neither is
+
+```bash
+docker compose exec web bash scripts/dev-web.sh   # CANNOT RUN
+```
+
+The `web` service mounts individual paths — `apps/web`, `packages`,
+`package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, and the install guard
+as a single file at `/app/web-install-if-stale.sh`. It does **not** mount
+`./scripts`. Measured 2026-09-20 against the running stack:
+`ls /app/scripts` → `No such file or directory`.
+
+```bash
+pnpm install    # BYPASSES THE GUARD
+pnpm dev
+```
+
+No `--frozen-lockfile`, so it resolves `package.json` RANGES while CI runs
+`pnpm install --frozen-lockfile` and installs what the lockfile pins. The two
+can differ at any time with nothing saying so — the drift
+`scripts/web-install-if-stale.sh` exists to end (#226). `docker compose up -d
+web` runs the service's own `command:`, which runs that guard, so the
+Quick-start and CI install the same tree by construction.
+
+If you are already inside a dev container with the repo mounted, use
+`bash scripts/dev-web.sh` — it calls the same guard rather than installing on
+its own.
 
 ## Environment variables
 
