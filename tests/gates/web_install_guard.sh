@@ -350,11 +350,21 @@ fi
 echo "ok   [a refusal is fatal and installs nothing]"
 
 echo
-echo "web-install-guard: the DECIDE half -- 1 skip, 3 installs, 1 refusal -- and"
-echo "the INSTALL half: --frozen-lockfile, the stamp written only after a"
-echo "successful install, and a refusal fatal without installing. Plus the"
-echo "line-ending check that makes the others readable at all, and dev-web.sh"
-echo "proved to delegate rather than reimplement."
+# THE CERTIFICATE CARRIES NO TALLY, deliberately.
+#
+# It said "all states exercised -- 1 skip, 3 installs, 1 refusal" while this
+# branch appended a whole install-half section, and #343 appended three argument
+# cases to the same file and rewrote only ITS own version of this line. Whichever
+# won the merge would have named neither the other's cases nor the true count --
+# a false-coverage certificate of exactly the kind this file already shipped
+# once, produced by two correct changes that never saw each other.
+#
+# `CLAUDE.md`: don't write the count -- if a number describes a list in the same
+# document, delete the number and let the list be the count. The `ok [...]` lines
+# printed immediately above ARE the list, and they cannot go stale.
+echo "web-install-guard: every check above printed ok. There is no tally here on"
+echo "purpose -- the labelled lines are the list, and a hand-written count in"
+echo "this position has already gone stale twice."
 echo
 echo "NOT covered: pnpm is stubbed, so nothing here says a real install"
 echo "succeeds. That is npm's job, not this guard's."
