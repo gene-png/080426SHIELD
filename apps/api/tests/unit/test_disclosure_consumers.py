@@ -449,6 +449,40 @@ def test_the_clean_line_counts_only_the_tree_it_LOOKED_AT(tmp_path, capsys) -> N
 
 
 @pytest.mark.unit
+def test_no_model_subject_is_a_substring_of_another() -> None:
+    """The one way the subject attribution can still clear the wrong model.
+
+    The subject is matched as a plain SUBSTRING, and it has to be: the readers
+    say `TechDebtDashboardData` and `AttackRunAiResponse`, so a word boundary
+    would reject every real one. That leaves one hole -- if one subject were
+    contained in another, the containing model's reader would satisfy the
+    contained model, which is the cross-model false pass of #387 one level up.
+
+    LATENT, not live, and this is what keeps it that way. Derived from the real
+    schemas rather than asserted against the list measured today, so a model
+    that lands and breaks it goes red here instead of passing under a sentence
+    that used to be true.
+    """
+    import scripts.check_disclosure_consumers as gate
+
+    root = repo_root_for(pathlib.Path(gate.__file__).resolve())
+    if root is None:
+        pytest.skip(
+            "no repo root above the gate -- the api container mounts apps/api at /app (#314)."
+        )
+    fields, problems = gate.response_disclosure_fields(root / "apps" / "api" / "app" / "schemas")
+    assert not problems, problems
+    subjects = sorted({model_subject(m) for _, m, _ in fields})
+    contained = [(a, b) for a in subjects for b in subjects if a != b and a in b]
+    assert not contained, (
+        f"these model subjects contain one another: {contained}. The reader of "
+        f"the longer one satisfies the shorter one's fields, so a disclosure "
+        f"that reaches nobody would pass. Disambiguate the model names, or "
+        f"replace the substring match with something that can tell them apart."
+    )
+
+
+@pytest.mark.unit
 def test_every_exemption_names_a_field_that_EXISTS(tmp_path) -> None:
     """The residual `expired_field_exemptions` cannot cover, asserted where it can be.
 

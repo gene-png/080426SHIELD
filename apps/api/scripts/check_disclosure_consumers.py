@@ -331,6 +331,18 @@ def unconsumed(
     the model. The alternative is parsing TSX for property access, which is a
     second implementation of a TypeScript compiler and is how a gate stops
     being maintained.
+
+    The subject match is a plain SUBSTRING, and it must be -- the readers say
+    `TechDebtDashboardData` and `AttackRunAiResponse`, so a word boundary would
+    reject every real one. The cost is that a subject CONTAINED IN another
+    subject would let that model's reader clear it, which is this same
+    cross-model false pass one level up. LATENT rather than live: measured on
+    this tree, no subject is a substring of another (`AttackRunAi`,
+    `CapabilityList`, `GapAnalysis`, `RiskEntry`, `RiskRegister`,
+    `TechDebtDashboard`, `ZtDashboard`).
+    `test_no_model_subject_is_a_substring_of_another` re-derives that from the
+    real schemas, so it goes red when a model lands that breaks it instead of
+    being a sentence that was true once.
     """
     out = []
     for origin, model, field in fields:
