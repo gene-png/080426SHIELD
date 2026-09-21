@@ -38,6 +38,25 @@ unreviewed work.
 | #363 | A test that asked a question with no answer | running | MERGEABLE |
 | #360 | Item 12 is done, and the claim that sequenced it was backwards | 7/7 green | MERGEABLE |
 | #359 | Why the typed-reason guard stops at `dashboards/` | 7/7 green | MERGEABLE |
+| #367 | The mount check claimed agreement it had not established | running | MERGEABLE |
+
+**#362 and #366 conflict WITH EACH OTHER, and nothing on GitHub says so.**
+Both are MERGEABLE against `main` and both are green, because GitHub computes
+mergeability against the base only. Measured with a detached worktree and
+`git merge --no-commit --no-ff`: they collide in
+`apps/web/src/lib/describe-save-error.test.ts`. Each appends an independent
+`describe(...)` block to the end of that file and both extend the same import
+line — a positional conflict, resolution "keep both". I have NOT resolved it in
+advance because that means choosing a merge order and the order is yours. Tell
+me which goes first, or merge either and I will rebase the survivor and re-run
+its gates.
+
+Every other pair merges cleanly, checked the same way. #359 and #362 both touch
+`dashboards-render-the-typed-reason.test.ts` and merge cleanly. #360 is the
+only one touching `CLAUDE.md`.
+
+This is the stale-green shape one level out: **`MERGEABLE` is evidence about a
+branch and `main`, and says nothing about that branch and its sibling.**
 
 Still open from before tonight: **#343, #351, #353, #358**. You merged **#349**
 while I was working; the table above is measured against `main` at that commit.
