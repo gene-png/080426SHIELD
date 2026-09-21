@@ -235,6 +235,19 @@ verdict table, no summary of the change, no per-file inventory of what you
 read. If you are running out of room, drop findings from the bottom and still
 emit the terminator.
 
+**A FINDING ABOUT THE RUN IS NOT WHAT THIS TRIMS EITHER**, and the ranking
+rule above is what makes that need saying. "Could this reach a client, corrupt
+data, or cost money" sorts a run-finding LAST -- a stale or absent definition,
+a tree you could not reach, a rule your dispatch named that the file does not
+contain, reaches no client and costs nothing. So the trim would drop first
+exactly the class step 0 exists to surface, and the two rules would quietly
+cancel.
+
+They must not. Found by a pairs review of this branch against #377: that
+branch's whole subject is making step 0 able to detect a stale rule set, and
+this section would have discarded its output. **Report the run-finding, always,
+and cut an ordinary finding instead if you are short of room.**
+
 **The `Scope:` line is NOT what this trims, and it is never the thing you cut.**
 It is one line, it is required, and it is what separates "nothing found" from
 "never looked" — the merge rule's condition 2 reads it, and a reviewer who
