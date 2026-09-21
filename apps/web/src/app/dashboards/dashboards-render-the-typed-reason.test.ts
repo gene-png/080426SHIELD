@@ -107,14 +107,30 @@ import { describe, expect, it } from "vitest";
  * instance.
  *
  * - `components/auth/SignUpForm.tsx` -- bare `fetch` and `res.status`, never
- *   `ApiError`. `if (res.status === 409 || res.status === 422)` gates whether
- *   the typed envelope is read at all. NOT a live instance: every typed
- *   reason `/auth/register` can emit is a 409 or 422 (`email_exists`,
- *   `email_domain_unavailable`, `email_invalid`, `password_policy`), so all
- *   of them land inside the branch that does consult `reason`. Measured twice
- *   on purpose: slicing the handler lexically finds only two of the four --
- *   the other two are raised by a helper it calls, at 409 and 422 -- so the
- *   first measurement would have understated the set it was certifying.
+ *   `ApiError`. Its status gate decides whether the typed envelope is read at
+ *   all.
+ *
+ *   **THIS PARAGRAPH USED TO CERTIFY IT AS "NOT a live instance: every typed
+ *   reason `/auth/register` can emit is a 409 or 422", and that was false.**
+ *   `register` opens with `limiter.enforce_auth(request, email)`, and
+ *   `RateLimiter.check` raises a typed 429 `{"reason": "rate_limited", ...}`
+ *   before the handler body runs. A throttled sign-up fell past the gate to
+ *   the untyped fallback and was told to "Try again" -- re-tripping the
+ *   limiter, with the server's own "slow down and try again shortly"
+ *   discarded.
+ *
+ *   The enumeration was made TWICE, deliberately, and the old text said so:
+ *   "Measured twice on purpose: slicing the handler lexically finds only two
+ *   of the four -- the other two are raised by a helper it calls". Both
+ *   passes read the HANDLER BODY. The missing one is raised on the line above
+ *   it. **A sentence naming its own care is the one to re-run**, and this is
+ *   the instance: the care was real, the method was wrong, and the phrase
+ *   "measured twice" is what stopped anyone looking a third time.
+ *
+ *   The component now gates on 429 as well and maps `rate_limited` to a
+ *   form-level error. The exemption is kept rather than deleted because the
+ *   reasoning it records -- that a status gate can silently exclude a typed
+ *   envelope -- is the thing worth carrying forward.
  * - `components/intake/IntakeWizard.tsx` -- `ProxyError`, not `ApiError`.
  *   Its 400 branch selects a UI MODE rather than a sentence, which is the
  *   `results/page.tsx` case by this file's own predicate.
@@ -148,7 +164,21 @@ function pageFiles(dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) out.push(...pageFiles(p));
-    else if (entry === "page.tsx") out.push(p);
+    // `page.tsx` AND the error boundaries. A carve-out on ONE filename was
+    // stated nowhere while this docstring argued at length about the DIRECTORY
+    // boundary, so a dashboard whose failed-load copy sat in an `error.tsx`
+    // was swept by nothing and this file reported it covered.
+    //
+    // Latent rather than live when found -- measured: no `error.tsx` or
+    // `global-error.tsx` exists anywhere under `apps/web/src/app` today. Which
+    // is exactly why it is worth closing now: the hole opens on the day
+    // someone adds one, and nothing would say so.
+    else if (
+      entry === "page.tsx" ||
+      entry === "error.tsx" ||
+      entry === "global-error.tsx"
+    )
+      out.push(p);
   }
   return out;
 }

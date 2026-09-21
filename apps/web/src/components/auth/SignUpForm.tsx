@@ -76,7 +76,22 @@ export function SignUpForm(): JSX.Element {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, display_name: displayName }),
     });
-    if (res.status === 409 || res.status === 422) {
+    // 429 is here because the exemption that used to omit it was FALSE.
+    //
+    // `dashboards-render-the-typed-reason.test.ts` certified this component as
+    // "NOT a live instance: every typed reason `/auth/register` can emit is a
+    // 409 or 422", enumerating four reasons. `register` opens with
+    // `limiter.enforce_auth(request, email)`, and `RateLimiter.check` raises a
+    // typed 429 `{"reason": "rate_limited", ...}` before the handler body runs
+    // -- so the throttled case fell past this gate to the untyped fallback and
+    // told the user to "Try again", which re-trips the limiter it was throttled
+    // by. The server's own "slow down and try again shortly" was discarded.
+    //
+    // The enumeration was made twice, carefully, and still missed it: both
+    // passes read the handler body, and this one is raised on the line above
+    // it. That is why the sweep below is now by STATUS rather than by a list of
+    // reasons -- any typed envelope this endpoint can produce is read.
+    if (res.status === 409 || res.status === 422 || res.status === 429) {
       // The API returns a typed error envelope: error.reason is a stable
       // machine code, error.message is human-friendly copy. Map each reason to
       // the field it belongs to so the copy lands next to the offending input
@@ -92,6 +107,15 @@ export function SignUpForm(): JSX.Element {
         });
       } else if (reason === "password_policy") {
         setErrors({ password: message ?? "Choose a stronger password." });
+      } else if (reason === "rate_limited") {
+        // FORM-level, not a field error: nothing the user typed is wrong.
+        // Rendering it on the email input would be a false claim about that
+        // value, and the remedy is about timing rather than input.
+        setErrors({
+          form:
+            message ??
+            "Too many attempts. Please wait a moment before trying again.",
+        });
       } else if (carriesUserFacingCopy(reason, message)) {
         // Any other typed backend rejection (D-016 envelope) — e.g. the rare
         // email_domain_unavailable or email_invalid — carries friendly copy, so
