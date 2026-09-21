@@ -43,6 +43,118 @@ import { describe, expect, it } from "vitest";
  * day it is added rather than the day someone remembers this file. That is the
  * point: #244 is about the boundary, and a new page written to the old pattern
  * is the boundary failing again.
+ *
+ * ## WHY THE SCOPE IS `dashboards/` AND NOT `app/**`
+ *
+ * The ownership rule in `CLAUDE.md` quantifies over `apps/web/src/app/**`, so
+ * a reader will reasonably ask why this guard stops at one directory. The
+ * answer is measured, and it is written here so the next person does not
+ * repeat the search -- and so that they do not repeat the MISREADING, which
+ * is the part that cost time.
+ *
+ * ### The predicate is "renders error COPY", not "reads `err.status`"
+ *
+ * Keying on a status to decide WHETHER A RESOURCE EXISTS is correct: there is
+ * no sentence to prefer a typed reason for. Keying on one to decide WHAT
+ * SENTENCE TO SHOW is #244, because the server sent a sentence and the page
+ * threw it away. A grep for the status check cannot tell those apart, and
+ * reading one as the other is how `results/page.tsx` was briefly written up
+ * as a live instance of this issue. It is not one.
+ *
+ * ### WHAT WAS ACTUALLY SEARCHED, which is NARROWER than the predicate above
+ *
+ * Stated first, because the first version of this docstring did not state it
+ * and thereby turned a finding into a certificate.
+ *
+ * The sweep below greps the token `ApiError`. The predicate that matters is
+ * "renders error COPY". Those are different, and the substitution is
+ * invisible precisely because the dashboards satisfy both. **This section is
+ * evidence about `ApiError` consumers, not a closed set of copy-rendering
+ * surfaces.**
+ *
+ *     grep -rl ApiError apps/web/src/app --include=*.ts --include=*.tsx \
+ *       | grep -v /dashboards/
+ *     # -> 36 files, 2026-09-20
+ *
+ * All but two of those are `app/api/proxy/**` route handlers -- the two are
+ * the pages below. They are not a counterexample and not an unswept
+ * remainder: they are the layer that makes this guard possible. Each catches
+ * `ApiError` to FORWARD `err.payload` at `err.status`, so the typed
+ * `{reason, message}` survives the hop to the browser. (`_proxy.ts`'s
+ * non-`ApiError` 502 is the transport-failed case, where there is no upstream
+ * payload to forward.) That invariant is stated here and guarded nowhere --
+ * `app/api/proxy/proxies-never-synthesise-an-empty-result.test.ts` is where a
+ * reader would look for it, and it does not assert this.
+ *
+ * ### The two PAGES outside `dashboards/`, both checked by reading them
+ *
+ *     grep -rl ApiError apps/web/src/app --include=page.tsx
+ *     # -> the five dashboards, plus the two below, 2026-09-20
+ *
+ * - `account/page.tsx` keys on no status at all.
+ * - `results/page.tsx` does
+ *   `if (!(err instanceof ApiError && err.status === 404)) throw err;` around
+ *   a probe for whether a Risk Register exists. It sets `hasRiskDashboard`,
+ *   re-throws everything else, and renders no error copy.
+ *
+ * ### Two surfaces the `ApiError` sweep CANNOT see, checked separately
+ *
+ * Both are components rendered by one-line pages, which is the half
+ * `CLAUDE.md`'s ownership rule exists to warn about -- it says "the pages
+ * under `apps/web/src/app/**` AND THE COMPONENTS THEY RENDER", because "the
+ * page is a thin shell and the component is where the copy lives". A sweep
+ * over the route tree alone would have excluded that rule's own lead
+ * instance.
+ *
+ * - `components/auth/SignUpForm.tsx` -- bare `fetch` and `res.status`, never
+ *   `ApiError`. Its status gate decides whether the typed envelope is read at
+ *   all.
+ *
+ *   **THIS PARAGRAPH USED TO CERTIFY IT AS "NOT a live instance: every typed
+ *   reason `/auth/register` can emit is a 409 or 422", and that was false.**
+ *   `register` opens with `limiter.enforce_auth(request, email)`, and
+ *   `RateLimiter.check` raises a typed 429 `{"reason": "rate_limited", ...}`
+ *   before the handler body runs. A throttled sign-up fell past the gate to
+ *   the untyped fallback and was told to "Try again" -- re-tripping the
+ *   limiter, with the server's own "slow down and try again shortly"
+ *   discarded.
+ *
+ *   The enumeration was made TWICE, deliberately, and the old text said so:
+ *   "Measured twice on purpose: slicing the handler lexically finds only two
+ *   of the four -- the other two are raised by a helper it calls". Both
+ *   passes read the HANDLER BODY. The missing one is raised on the line above
+ *   it. **A sentence naming its own care is the one to re-run**, and this is
+ *   the instance: the care was real, the method was wrong, and the phrase
+ *   "measured twice" is what stopped anyone looking a third time.
+ *
+ *   The component now gates on 429 as well and maps `rate_limited` to a
+ *   form-level error. The exemption is kept rather than deleted because the
+ *   reasoning it records -- that a status gate can silently exclude a typed
+ *   envelope -- is the thing worth carrying forward.
+ * - `components/intake/IntakeWizard.tsx` -- `ProxyError`, not `ApiError`.
+ *   Its 400 branch selects a UI MODE rather than a sentence, which is the
+ *   `results/page.tsx` case by this file's own predicate.
+ *
+ * Named rather than omitted so the exclusion reads as a decision. `ProxyError`
+ * and `res.status` share no vocabulary with `ApiError`, which is the sweep
+ * rule's own test: name one place the defect could hide using none of your
+ * search terms.
+ *
+ * ### So: why this directory
+ *
+ * Every surface found to render status-keyed error COPY is one of the five
+ * dashboards; the surfaces outside it that were checked either render no copy
+ * or already consult the typed reason. That is a measured claim about what was
+ * looked at, not a proof that nothing else exists -- `AiPreviewError` and
+ * `AuditProxyError` are two more error classes this sweep does not reach.
+ *
+ * If a page or component outside `dashboards/` starts rendering status-keyed
+ * error copy, widening this guard is the fix rather than adding a second one.
+ * **Widening the ROOT alone goes red immediately** and that is not a bug in
+ * the advice: `results/page.tsx` and `account/page.tsx` both contain
+ * `ApiError`, so both would pass the per-page filter while containing neither
+ * `dashboardLoadReason(` nor `{reason ??`. Widen the root and refine the
+ * filter in the same change.
  */
 
 const DASHBOARDS = join(process.cwd(), "src/app/dashboards");
@@ -52,7 +164,21 @@ function pageFiles(dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) out.push(...pageFiles(p));
-    else if (entry === "page.tsx") out.push(p);
+    // `page.tsx` AND the error boundaries. A carve-out on ONE filename was
+    // stated nowhere while this docstring argued at length about the DIRECTORY
+    // boundary, so a dashboard whose failed-load copy sat in an `error.tsx`
+    // was swept by nothing and this file reported it covered.
+    //
+    // Latent rather than live when found -- measured: no `error.tsx` or
+    // `global-error.tsx` exists anywhere under `apps/web/src/app` today. Which
+    // is exactly why it is worth closing now: the hole opens on the day
+    // someone adds one, and nothing would say so.
+    else if (
+      entry === "page.tsx" ||
+      entry === "error.tsx" ||
+      entry === "global-error.tsx"
+    )
+      out.push(p);
   }
   return out;
 }

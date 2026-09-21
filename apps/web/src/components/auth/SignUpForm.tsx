@@ -76,7 +76,44 @@ export function SignUpForm(): JSX.Element {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, display_name: displayName }),
     });
-    if (res.status === 409 || res.status === 422) {
+    // 429 is here because the exemption that used to omit it was FALSE.
+    //
+    // `dashboards-render-the-typed-reason.test.ts` certified this component as
+    // "NOT a live instance: every typed reason `/auth/register` can emit is a
+    // 409 or 422", enumerating four reasons. `register` opens with
+    // `limiter.enforce_auth(request, email)`, and `RateLimiter.check` raises a
+    // typed 429 `{"reason": "rate_limited", ...}` before the handler body runs
+    // -- so the throttled case fell past this gate to the untyped fallback and
+    // told the user to "Try again", which re-trips the limiter it was throttled
+    // by. The server's own "slow down and try again shortly" was discarded.
+    //
+    // The enumeration was made twice, carefully, and still missed it: both
+    // passes read the handler body, and this one is raised on the line above
+    // it. That is why the dispatch below is by STATUS rather than by a list of
+    // reasons.
+    //
+    // BUT THIS IS STILL AN ENUMERATION, and "any typed envelope this endpoint
+    // can produce is read" -- what this comment said -- is the failed claim in
+    // a new costume: a present-tense completeness claim over a population that
+    // keeps acquiring members. Re-derived 2026-09-21 by reading
+    // `routes/auth.py::register` and everything it calls, the typed reasons
+    // reachable here are `rate_limited` (429, from
+    // `security/rate_limit.py::RateLimiter.check`), `email_exists` (409),
+    // `password_policy` (422), `email_invalid` (422) and
+    // `email_domain_unavailable` (409, both from
+    // `_resolve_registration_tenant`), and `schema_*` (422, from
+    // `_handle_validation_error`). Three statuses cover all six TODAY. Nothing
+    // makes that keep being true.
+    //
+    // The trigger, stated so it is mechanical rather than remembered: adding a
+    // typed refusal to `/auth/register` -- or to anything it calls, which is
+    // where the 429 came from -- at a status outside this list reinstates the
+    // defect silently. `SignUpForm.test.tsx` pins the 429 and would not notice
+    // a fourth status. The structural fix is to gate on `!res.ok` and keep a
+    // 5xx-specific fallback in the final `else`; not done here because it
+    // changes the copy a 500 shows, which is wider than the review this came
+    // from.
+    if (res.status === 409 || res.status === 422 || res.status === 429) {
       // The API returns a typed error envelope: error.reason is a stable
       // machine code, error.message is human-friendly copy. Map each reason to
       // the field it belongs to so the copy lands next to the offending input
@@ -92,6 +129,15 @@ export function SignUpForm(): JSX.Element {
         });
       } else if (reason === "password_policy") {
         setErrors({ password: message ?? "Choose a stronger password." });
+      } else if (reason === "rate_limited") {
+        // FORM-level, not a field error: nothing the user typed is wrong.
+        // Rendering it on the email input would be a false claim about that
+        // value, and the remedy is about timing rather than input.
+        setErrors({
+          form:
+            message ??
+            "Too many attempts. Please wait a moment before trying again.",
+        });
       } else if (carriesUserFacingCopy(reason, message)) {
         // Any other typed backend rejection (D-016 envelope) — e.g. the rare
         // email_domain_unavailable or email_invalid — carries friendly copy, so

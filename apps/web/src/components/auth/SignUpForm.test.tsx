@@ -1,6 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SignUpForm } from "./SignUpForm";
@@ -93,6 +99,81 @@ describe("SignUpForm — open self-registration (D-034)", () => {
       await screen.findByText(/an account already exists/i),
     ).toBeInTheDocument();
     expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the server's rate-limit copy instead of telling the user to retry now", async () => {
+    // THE DEFECT THIS TEST EXISTS FOR, and it was certified as impossible.
+    //
+    // `dashboards-render-the-typed-reason.test.ts` exempted this component
+    // because "every typed reason /auth/register can emit is a 409 or 422".
+    // `register` opens with `limiter.enforce_auth(...)`, which raises a typed
+    // 429 before the handler body runs -- so a throttled sign-up fell past the
+    // status gate to the untyped fallback, "Something went wrong creating your
+    // account. Try again.", and trying again re-trips the limiter.
+    //
+    // Both halves are asserted: the server's sentence appears, and the advice
+    // that re-trips the limiter does not. Pinning only the first would let a
+    // future change render both.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({
+        error: {
+          reason: "rate_limited",
+          message: "Too many requests. Please slow down and try again shortly.",
+        },
+      }),
+    });
+
+    render(<SignUpForm />);
+    fill();
+    clickCreate();
+
+    expect(
+      await screen.findByText(/slow down and try again shortly/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/something went wrong creating your account/i),
+    ).toBeNull();
+    expect(signInMock).not.toHaveBeenCalled();
+
+    // WHERE it renders, which is the branch's whole reason for existing and
+    // was pinned by nothing. Measured: replace `reason === "rate_limited"`
+    // with an unreachable code and the assertions above STAY GREEN -- the
+    // message falls through to `carriesUserFacingCopy` and renders on the
+    // EMAIL FIELD, where `findByText` finds it just as happily. Only the
+    // message-less test below went red, and that is about the fallback, not
+    // about placement.
+    //
+    // So a later simplification that deletes this branch as redundant would
+    // reinstate exactly the false claim its comment warns against, against a
+    // green suite. Two discriminators, because the form error is the only
+    // `role="alert"` and a field error is the only thing that marks an input
+    // invalid.
+    expect(
+      within(screen.getByRole("alert")).getByText(
+        /slow down and try again shortly/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Email")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("falls back to its own copy when a 429 carries no usable message", async () => {
+    // Missing data defaults to UNCONFIRMED: an untyped or message-less 429 is
+    // still a throttle, and the user must not be told to retry immediately.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { reason: "rate_limited" } }),
+    });
+
+    render(<SignUpForm />);
+    fill();
+    clickCreate();
+
+    expect(
+      await screen.findByText(/wait a moment before trying again/i),
+    ).toBeInTheDocument();
   });
 
   it("shows the server message on the password field for a weak password", async () => {
