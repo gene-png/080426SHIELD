@@ -31,7 +31,73 @@
 # not do its job -- a missing file, a search string that is absent or not
 # unique, or a restore that did not verify. Distinct codes because "the test did
 # not go red" and "I could not run the experiment" are different answers.
+#
+# ## --self-test
+#
+#     scripts/red-on-revert.sh --self-test
+#
+# Proves the harness can produce each of its three answers, on a scratch file
+# it creates and removes. A harness that cannot fail is the defect it exists to
+# prevent, and this script shipped for eleven days with a restore check that
+# compared a file to itself -- a green no matter what, in the one place a
+# reader would look for the guarantee.
+#
+# NOTE ON <search>: matching is LINE-BASED (`grep -c -F`), so a multi-line
+# search string matches zero times and the script exits 2 rather than mutating.
+# That is fail-closed and deliberate, but it means multi-line mutations are not
+# supported -- pick a unique single line.
 set -euo pipefail
+
+if [ "${1:-}" = "--self-test" ]; then
+  # Run the harness against a scratch file and require each answer in turn.
+  # Every assertion below is on the EXIT CODE, which is the thing callers
+  # branch on, and the scratch file is checked afterwards to prove the restore
+  # path ran rather than assuming it did.
+  self_dir="$(mktemp -d)"
+  trap 'rm -rf -- "$self_dir"' EXIT
+  probe="$self_dir/probe.txt"
+  printf 'alpha
+beta
+gamma
+' > "$probe"
+  before="$(cksum < "$probe")"
+  fail=0
+
+  # </dev/null so a check that would read stdin fails fast instead of hanging.
+  run() { "$0" "$@" >/dev/null 2>&1 </dev/null; echo $?; }
+
+  # NOTE the explicit file argument. `grep -q gamma` with no file reads STDIN
+  # and blocks forever, which is how the first draft of this self-test hung --
+  # a harness that cannot finish is no better than one that cannot fail.
+  got="$(run "$probe" beta BETA -- grep -q gamma "$probe")"
+  [ "$got" = "1" ] || { echo "self-test: a check that STAYS GREEN must exit 1, got $got" >&2; fail=1; }
+
+  got="$(run "$probe" beta BETA -- grep -q beta "$probe")"
+  [ "$got" = "0" ] || { echo "self-test: a check that GOES RED must exit 0, got $got" >&2; fail=1; }
+
+  got="$(run "$probe" nowhere X -- true)"
+  [ "$got" = "2" ] || { echo "self-test: an absent search string must exit 2, got $got" >&2; fail=1; }
+
+  printf 'dup
+dup
+' > "$self_dir/dup.txt"
+  got="$(run "$self_dir/dup.txt" dup X -- true)"
+  [ "$got" = "2" ] || { echo "self-test: a search string matching twice must exit 2, got $got" >&2; fail=1; }
+
+  got="$(run "$self_dir/absent.txt" a b -- true)"
+  [ "$got" = "2" ] || { echo "self-test: a missing file must exit 2, got $got" >&2; fail=1; }
+
+  # The restore actually happened -- asserted on the bytes, not inferred from
+  # the exit codes above.
+  [ "$(cksum < "$probe")" = "$before" ] || { echo "self-test: the probe was left MUTATED after all runs" >&2; fail=1; }
+
+  if [ "$fail" -ne 0 ]; then
+    echo "red-on-revert: SELF-TEST FAILED -- do not trust this harness." >&2
+    exit 2
+  fi
+  echo "red-on-revert: self-test passed -- 1 (stayed green), 0 (went red), 2 (could not look) x3, and the probe is byte-identical."
+  exit 0
+fi
 
 if [ "$#" -lt 5 ]; then
   cat >&2 <<'USAGE'
@@ -64,6 +130,11 @@ if [ "$occurrences" != "1" ]; then
   echo "red-on-revert: refusing to mutate. A miss and an unintended double-hit both look like success afterwards." >&2
   exit 2
 fi
+
+# The ORIGINAL's fingerprint, taken before anything is touched. The restore is
+# checked against this rather than against the backup, because the backup is
+# MOVED onto the file and stops existing at the moment the check would need it.
+ORIGINAL_SUM="$(cksum < "$FILE")"
 
 BACKUP="$(mktemp)"
 cp -- "$FILE" "$BACKUP"
@@ -104,8 +175,25 @@ set -e
 restore
 trap - EXIT
 
-if ! cmp -s -- "$FILE" "$FILE"; then :; fi
-echo "red-on-revert: restored ${FILE}"
+# THE RESTORE IS VERIFIED, and until 2026-09-21 it was not.
+#
+# This line read `if ! cmp -s -- "$FILE" "$FILE"; then :; fi` -- the file
+# compared against ITSELF, always identical, with the result discarded by a
+# `:` either way. It looked exactly like a verification, it sat where a reader
+# checking for one would look, and the header three dozen lines up promised
+# exit 2 for "a restore that did not verify".
+#
+# So the script written to stop a silent data-loss trap carried a silent
+# no-op in its own safety check. Same shape as the defects it exists to find:
+# the branch that says "I could not look" did not exist, and the line standing
+# in for it produced the reassuring answer unconditionally.
+if [ "$(cksum < "$FILE")" != "$ORIGINAL_SUM" ]; then
+  echo "red-on-revert: THE RESTORE DID NOT LAND. ${FILE} does not match what" >&2
+  echo "red-on-revert: it contained when this script started. Your working tree" >&2
+  echo "red-on-revert: is MUTATED -- fix it before reading any result below." >&2
+  exit 2
+fi
+echo "red-on-revert: restored ${FILE} (verified byte-identical to the original)"
 
 if [ "$code" -eq 0 ]; then
   echo "red-on-revert: THE CHECK STAYED GREEN under mutation." >&2
