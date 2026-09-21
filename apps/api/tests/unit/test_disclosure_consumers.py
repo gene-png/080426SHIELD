@@ -35,21 +35,20 @@ def _tree(
     schema: str,
     web: str = "",
     exporter: str = "",
-    audit_renderer: bool = False,
+    audit_renderer: bool = True,
 ) -> pathlib.Path:
     """A repo-shaped tree: schemas, a web surface, an exporter.
 
-    `audit_renderer` defaults to ABSENT because that is the state of the real
-    tree: `AuditViewer.tsx` does not iterate `details` yet, and arm 2 is held
-    open by `AUDIT_RENDERER_EXEMPT` until #351 lands. A fixture that supplies
-    the renderer while the exemption is set builds a state the repo does not
-    have -- and, since the exemption now EXPIRES when the renderer arrives,
-    that state is a deliberate red rather than a neutral backdrop.
+    `audit_renderer` defaults to PRESENT, because that is now the state of the
+    real tree: this PR added the generic `details` renderer to
+    `AuditViewer.tsx` and deleted `AUDIT_RENDERER_EXEMPT`. A fixture without it
+    would build a tree the repo does not have, and every arm-1 test would fail
+    on arm 2 for reasons that have nothing to do with what it is testing.
 
-    When #351 merges and the exemption is deleted, this default flips and the
-    arm-2 discriminating case the `DEFERRED` entry says is owed becomes
-    writable. Nothing here silently adapts to that; the tests go red and say
-    which way.
+    The default was ABSENT while the exemption was set, for the same reason
+    pointed the other way. It flipped here rather than silently adapting: four
+    arm-1 tests went red the moment the exemption was deleted, which is what
+    told us they had been passing only because arm 2 was suppressed.
     """
     (tmp_path / "apps" / "api" / "app" / "schemas").mkdir(parents=True)
     (tmp_path / "apps" / "api" / "app" / "schemas" / "thing.py").write_text(
@@ -71,8 +70,18 @@ def _tree(
         )
     viewer = tmp_path / "apps" / "web" / "src" / "components" / "admin"
     viewer.mkdir(parents=True)
+    # BOTH halves, because arm 2 needs both. Iteration alone is satisfied by a
+    # renderer that EXISTS and is never called -- the "function with no
+    # callers" shape -- so the gate also requires a column cell referencing the
+    # payload. A fixture emitting only the iteration would build a tree the
+    # gate correctly rejects, and every test using it would be about that
+    # rejection rather than about its own subject.
     (viewer / "AuditViewer.tsx").write_text(
-        "const pairs = Object.entries(details);" if audit_renderer else "const rows = entries;",
+        (
+            "const pairs = Object.entries(details);\ncell: (e) => renderDetails(e.details),"
+            if audit_renderer
+            else "const rows = entries;"
+        ),
         encoding="utf-8",
     )
     return tmp_path / "apps" / "api" / "app" / "schemas" / "thing.py"
@@ -516,35 +525,74 @@ def test_every_exemption_names_a_field_that_EXISTS(tmp_path) -> None:
 
 
 @pytest.mark.unit
-def test_the_audit_renderer_exemption_expires_when_the_renderer_ARRIVES(
+def test_the_audit_renderer_exemption_is_DISCHARGED_and_the_slot_still_works(
     tmp_path, capsys, monkeypatch
 ) -> None:
-    """Arm 2's exemption could be discharged and never read again.
+    """The exemption is `None`, and setting one again still suppresses arm 2.
 
-    `AUDIT_RENDERER_EXEMPT` is consulted only on the runs where arm 2 FAILS.
-    Once #351's generic `details` renderer exists, the branch holding the
-    exemption becomes unreachable -- so the string sits in the file forever,
-    and arm 2 can no longer go red if the renderer is later deleted, because
-    this exemption would catch it. A deferral that cannot detect its own
-    discharge is a permanent exemption wearing an expiry date.
+    This replaces the expiry test, which asserted the exemption was SET and
+    told whoever deleted it to write this. Its reasoning holds and is why the
+    slot is kept rather than removed: while a string is set, arm 2 cannot go
+    red, so the renderer could be deleted and nothing would say so.
+
+    Both halves, because a slot observed in one state is not observed.
     """
     import scripts.check_disclosure_consumers as gate
 
-    assert gate.AUDIT_RENDERER_EXEMPT is not None, (
-        "this test is about the exemption being SET. When #351 lands and the "
-        "exemption is deleted, replace it with the case that proves arm 2 "
-        "discriminates -- the one the DEFERRED entry says is owed."
+    assert gate.AUDIT_RENDERER_EXEMPT is None, (
+        "the exemption is discharged; #351 shipped the renderer. If it is set "
+        "again, arm 2 is suppressed and cannot notice the renderer going away."
     )
+
+    # Arm 2 red, for real, with no exemption to catch it.
+    missing = _tree(
+        tmp_path / "a",
+        schema=_SCHEMA,
+        web="const t: Thing = d;\nt.excluded_inputs;",
+        audit_renderer=False,
+    )
+    assert main(["x", str(missing)]) == 1
+    assert "nothing renders the audit `details` payload generically" in capsys.readouterr().out
+
+    # The same tree passes once a string is set -- so the slot still
+    # suppresses, and the red above is arm 2 rather than an unrelated failure.
+    monkeypatch.setattr(gate, "AUDIT_RENDERER_EXEMPT", "test: a reason with an expiry")
+    assert main(["x", str(missing)]) == 0
+
+
+@pytest.mark.unit
+def test_arm_2_needs_the_renderer_to_be_WIRED_not_merely_present(tmp_path, capsys) -> None:
+    """A renderer that exists and is never called does not satisfy arm 2.
+
+    The discriminating case the `DEFERRED` entry says is owed. Arm 2 used to
+    match `Object.entries(details)` anywhere in the file, so replacing the
+    column's `cell` with `() => null` left `renderDetails` defined, the regex
+    still matched, and the gate stayed GREEN over an audit viewer that
+    rendered no details at all -- `CLAUDE.md`'s "a function with no callers",
+    in the gate written to catch exactly that.
+
+    Measured on 2026-09-21 against the real `AuditViewer.tsx`: that mutation
+    left the gate at exit 0. It is now exit 1.
+    """
     seed = _tree(
         tmp_path,
         schema=_SCHEMA,
         web="const t: Thing = d;\nt.excluded_inputs;",
         audit_renderer=True,
     )
-    assert main(["x", str(seed)]) == 1
-    assert "EXPIRED exemption" in capsys.readouterr().out
-
-    # And with the exemption cleared, the same tree passes -- so the red above
-    # is the EXEMPTION being stale, not the renderer check being broken.
-    monkeypatch.setattr(gate, "AUDIT_RENDERER_EXEMPT", None)
     assert main(["x", str(seed)]) == 0
+    capsys.readouterr()
+
+    # Keep the iteration, delete only the WIRING.
+    viewer = tmp_path / "apps" / "web" / "src" / "components" / "admin" / "AuditViewer.tsx"
+    before = viewer.read_text(encoding="utf-8")
+    assert before.count("cell:") == 1, "the fixture must carry exactly one cell to remove"
+    viewer.write_text(
+        before.replace("cell: (e) => renderDetails(e.details),", ""), encoding="utf-8"
+    )
+    assert "Object.entries(details)" in viewer.read_text(
+        encoding="utf-8"
+    ), "the iteration must SURVIVE, or this proves nothing about wiring"
+
+    assert main(["x", str(seed)]) == 1
+    assert "nothing renders the audit `details` payload generically" in capsys.readouterr().out
