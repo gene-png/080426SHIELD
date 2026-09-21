@@ -508,9 +508,15 @@ def _editable_list_or_404(db: Session, list_id: uuid.UUID, client: Client) -> Ca
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This capability list has been released and is locked."
+                {
+                    "reason": "capability_list_released",
+                    "message": "This capability list has been released and is locked.",
+                }
                 if cap_list.status == CapabilityListStatus.RELEASED
-                else "This capability list has been discarded."
+                else {
+                    "reason": "capability_list_discarded",
+                    "message": "This capability list has been discarded.",
+                }
             ),
         )
     return cap_list
@@ -773,9 +779,15 @@ def add_capability_components(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This capability list has been released and is locked."
+                {
+                    "reason": "capability_list_released",
+                    "message": "This capability list has been released and is locked.",
+                }
                 if cap_list.status == CapabilityListStatus.RELEASED
-                else "This capability list has been discarded."
+                else {
+                    "reason": "capability_list_discarded",
+                    "message": "This capability list has been discarded.",
+                }
             ),
         )
     # One level only: a component of a component has no real-world counterpart
@@ -860,9 +872,15 @@ def patch_capability_item(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This capability list has been released and is locked."
+                {
+                    "reason": "capability_list_released",
+                    "message": "This capability list has been released and is locked.",
+                }
                 if cap_list.status == CapabilityListStatus.RELEASED
-                else "This capability list has been discarded."
+                else {
+                    "reason": "capability_list_discarded",
+                    "message": "This capability list has been discarded.",
+                }
             ),
         )
 
@@ -946,15 +964,35 @@ def _refuse_approval(current: CapabilityListStatus) -> HTTPException:
                 ),
             },
         )
-    # RELEASED. Deliberately left as a bare string rather than converted to the
-    # D-016 `{reason, message}` shape in this PR: that is a change to an error
-    # payload no test pins, on a path #231 is not about, and folding it in here
-    # would put an unrelated contract change inside a concurrency fix. Filed as
-    # #298 so the inconsistency is a decision on record rather than an oversight
-    # a later reader has to reconstruct.
+    # RELEASED, typed by #298 like its DISCARDED twin three lines up. It was a
+    # bare string while the sibling carried
+    # `{"reason": "capability_list_discarded", ...}` -- one function, two
+    # shapes, and the released case reached the client with no `reason` key at
+    # all. Core principle 2 says user-facing API errors are typed.
+    #
+    # REWRITTEN RATHER THAN AMENDED. This comment opened "Deliberately left as
+    # a bare string rather than converted to the D-016 shape in this PR" and
+    # the correction was spliced into the middle of it, at "Filed as / CLOSED
+    # by #298" -- so a reader checking whether this refusal carries a reason
+    # met a confident "no" three lines above the dict that says yes. A stale
+    # clause sited exactly where the question gets looked up is worse than no
+    # comment.
+    #
+    # The MESSAGE is byte-identical, so only a `reason` key is added. The
+    # consumer is `proxyMessage` in `lib/tech_debt/client.ts`, which reads
+    # `error.message` and never `reason`, and it is pinned by
+    # `techdebt-workspace-surfaces-server-errors.test.ts`, which asserts this
+    # sentence. NO E2E SPEC MATCHES IT: `rg "released and is" e2e/` returns
+    # nothing, with `rg "is locked" e2e/` returning three hits as the control
+    # that the search works. An earlier draft of this comment claimed two, and
+    # a claim that consumers exist is a reason to change copy carefully, so
+    # inventing them was the expensive direction to be wrong in.
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
-        detail="This capability list has been released and is locked.",
+        detail={
+            "reason": "capability_list_released",
+            "message": "This capability list has been released and is locked.",
+        },
     )
 
 
@@ -1381,9 +1419,25 @@ def finalize_deliverable(
         CapabilityListStatus.APPROVED,
         CapabilityListStatus.RELEASED,
     ):
+        # THE SAME-FILE TWIN of the `_refuse_approval` conversion ABOVE, and it
+        # was found by sweeping the shape rather than from a list anyone handed
+        # over: a 409 in this module whose `detail` is a bare string. It was the
+        # last one. After this, pairing every `HTTP_409_CONFLICT` in the file
+        # with the `detail=` within three lines of it returns no bare strings;
+        # the ones that remain are all 404s, which #298 is not about and which
+        # are filed rather than swept in here.
+        #
+        # The MESSAGE is byte-identical, and nothing outside this module matches
+        # it -- `grep -rn "approved before finalizing" apps/web e2e` returns
+        # nothing. `proxyMessage` in `lib/tech_debt/client.ts` reads
+        # `error.message` and falls back to `detail`, so the admin workspace
+        # would have been unaffected either way.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Capability list must be approved before finalizing the deliverable.",
+            detail={
+                "reason": "capability_list_not_approved",
+                "message": "Capability list must be approved before finalizing the deliverable.",
+            },
         )
     items = (
         db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))

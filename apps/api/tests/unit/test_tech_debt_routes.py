@@ -791,6 +791,18 @@ def test_finalize_deliverable_renders_pdf_and_xlsx(app_client) -> None:
 
 @pytest.mark.unit
 def test_finalize_requires_approved_list(app_client) -> None:
+    """#298, the same-file twin.
+
+    The status assertion is original. The two below it are not: this refusal
+    was the last bare-string 409 in `routes/tech_debt.py` after
+    `_refuse_approval` was typed, and a status code alone pins nothing about
+    the payload -- which is exactly how one function came to carry two shapes
+    for long enough to need an issue.
+
+    Found by sweeping the SHAPE, `grep -n 'detail="' routes/tech_debt.py`
+    filtered to 409s, rather than from a list anyone handed over. Every bare
+    string that survives that grep is now a 404.
+    """
     c, _, provider = app_client
     admin = _register(c, "admin@example.com")
     bearer = admin["tokens"]["access_token"]
@@ -800,6 +812,9 @@ def test_finalize_requires_approved_list(app_client) -> None:
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert r.status_code == 409
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_not_approved", r.text
+    assert error["message"] == "Capability list must be approved before finalizing the deliverable."
 
 
 @pytest.mark.unit
@@ -1213,3 +1228,78 @@ def test_unknown_excluded_row_index_is_rejected(app_client) -> None:
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert r.status_code == 404, r.text
+
+
+@pytest.mark.unit
+def test_a_released_refusal_carries_a_typed_reason_like_its_twin(app_client) -> None:
+    """#298. Two refusals, one function, two shapes.
+
+    `_refuse_approval` returned `{"reason": "capability_list_discarded", ...}`
+    for DISCARDED and a BARE STRING for RELEASED, so the released case reached
+    the client with no `reason` key while its sibling three lines up had one.
+    Core principle 2: user-facing API errors are typed.
+
+    No PYTHON test pinned either shape, which is why the inconsistency survived
+    long enough to be filed rather than noticed. An earlier draft of this
+    docstring said "zero tests", which was a claim about the repo and false:
+    `apps/web/src/components/admin/techdebt-workspace-surfaces-server-errors.test.ts`
+    asserts this exact sentence through `proxyMessage`. Saying zero is what
+    tells the next reader nothing downstream can break.
+
+    THE MESSAGE IS ASSERTED VERBATIM, not just the reason. The conversion's
+    whole safety argument is that `message` is unchanged: `proxyMessage` in
+    `lib/tech_debt/client.ts` reads `error.message` and never `reason`, and the
+    vitest above matches this sentence with a regex. A future edit that retypes
+    the reason and rewords the copy would break exactly the consumer a typed
+    reason exists to serve, and this line is what makes that loud.
+
+    NO E2E SPEC MATCHES IT. An earlier draft claimed two. Measured:
+    `rg "released and is" e2e/` returns nothing, and the control
+    `rg "is locked" e2e/` returns three hits, so the search works and the
+    absence is real rather than a failed search. Inventing consumers is the
+    expensive direction to be wrong in -- a later reader loosens the copy
+    believing e2e will catch it.
+    """
+    c, _, provider = app_client
+    admin = _register(c, "released-refusal@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, _item_id = _create_list_with_item(c, bearer, provider)
+    list_id = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=h).json()["id"]
+
+    assert c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200
+
+    # SETTING THE COLUMN IS WHAT THE ONLY REAL WRITER DOES, so this fixture
+    # matches production rather than inventing a state.
+    #
+    # This comment used to open "Drive it to RELEASED through the real
+    # transition rather than by writing the column" -- directly above the
+    # column write, disclaiming the thing on the next line. It was also wrong
+    # about the code: NO ROUTE TRANSITIONS A CAPABILITY LIST TO RELEASED.
+    # `grep -rnE "(status|\.status)\s*=\s*CapabilityListStatus\.RELEASED"
+    # apps/api` returns exactly one non-test site, `scripts/seed_demo.py:501`,
+    # which CONSTRUCTS the row released. Everything else in `app/` only
+    # compares against it.
+    #
+    # So the honest version of the question `CLAUDE.md` asks of a setup -- can
+    # the system under test produce this state? -- is yes, by direct
+    # construction, and that is the writer this mirrors. What would make it
+    # reachable by transition is W4 flipping the parent on release, which
+    # `finalize_deliverable` already anticipates in its own comment; until
+    # then the refusal fires for seeded and demo data, and the guard is a
+    # ratchet against that change landing without one.
+    from app.models.capability import CapabilityList, CapabilityListStatus
+
+    _c, sessionmaker_, _p = app_client
+    with sessionmaker_() as db:
+        cl = db.get(CapabilityList, _uuid.UUID(list_id))
+        assert cl is not None and cl.status == CapabilityListStatus.APPROVED
+        cl.status = CapabilityListStatus.RELEASED
+        db.add(cl)
+        db.commit()
+
+    r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_released", r.text
+    assert error["message"] == "This capability list has been released and is locked."
