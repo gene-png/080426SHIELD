@@ -47,6 +47,13 @@ jobs:
         working-directory: apps/api
         run: python -m scripts.check_test_integrity tests
 
+      # #336. A disclosure the product writes must reach a person -- on a
+      # screen or in a delivered artifact. `CLAUDE.md` carries the rule; this
+      # is what makes it hold, because the reflex survives the rule until the
+      # rule has a gate.
+      - name: disclosures reach a reader
+        run: python apps/api/scripts/check_disclosure_consumers.py
+
       # The audit-gate test module SKIPS itself when it cannot find
       # `.github/workflows` above it -- correct inside the api container, which
       # mounts only `apps/api` (#314). But nothing asserted the skip does not

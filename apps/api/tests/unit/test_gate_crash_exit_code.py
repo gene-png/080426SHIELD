@@ -61,6 +61,17 @@ GATES = [
     # exists to catch what that derivation cannot see.
     ("check_decision_numbers", ""),
     ("check_mount_matches_database", ""),
+    # The #336 consumer gate. It shipped with the handler (so `discover_gates`
+    # sees it) and WITHOUT an entry here, so the two enumerations diverged and
+    # `test_universe_equals_the_other_gate_enumeration` went red -- which is
+    # that test doing exactly the job it was written for, on the first gate
+    # added after it existed. Recorded rather than quietly added: the pair
+    # above is here because BOTH harnesses were once blind to them, and this
+    # one was caught because one of the two could see the other's gap.
+    #
+    # `sys.argv` because `main(argv)` takes the argument list; the crash
+    # injection has to replace a callable with the same shape.
+    ("check_disclosure_consumers", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

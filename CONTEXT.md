@@ -13,6 +13,47 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**#336 landed: a gate now enforces that disclosures reach a reader.**
+`apps/api/scripts/check_disclosure_consumers.py`, wired as the CI step
+"disclosures reach a reader". A field on a `*Response` model recording what was
+withheld, dropped or rejected must have its name referenced under
+`apps/web/src` OR in an exporter -- "a screen or a delivered artifact", per the
+definition-of-done rule.
+
+**18 such fields today: 15 reach a reader, 3 do not and are exempt with a
+tracked reason.** An earlier draft of this line said "all reachable", which was
+false on both halves -- it stated a count as a clean bill of health over a set
+the gate's own exemption text calls "a REAL unconsumed disclosure". The gate
+prints the split on every clean run, so the number here is a summary of a
+measurement rather than a claim of its own:
+
+    check-disclosure-consumers: 15 of 18 disclosure fields reach a screen or a
+    deliverable; 3 do NOT and are exempt with a tracked reason
+
+**Every exemption has an expiry, and two of the three expire on a PR that is
+already open.** `batches_total` and `batches_failed` are unconsumed only because
+the banner that renders them is in #376; the moment it lands they are ordinary
+reachable fields and their entries must go. `unusable_target_codes` is the third
+and is a live client-facing defect rather than a timing artifact -- it reaches no
+screen at all, and it is **#387**.
+
+That matters more than the count. The gate was passing over
+`unusable_target_codes` before this branch, because per-service scoping did not
+separate two models of the same service: `zt/exporters.py` carries the token
+`zt` and reads a DIFFERENT model's field on a different route. A gate green over
+a live instance of the defect it exists to catch.
+
+Two design calls worth knowing. The consumer surface is TWO surfaces, not the
+web alone: `unusable_target_codes` reaches the client only through
+`zt/exporters.py`, so a web-only search would have reported a defect over a
+field that already reaches the reader who matters most. And the audit `details`
+payload -- #322's population, which are dict keys rather than schema fields --
+is checked STRUCTURALLY, by asserting a generic renderer exists, because
+enumerating its keys would report violations over a payload that a generic
+renderer makes fully visible. That arm is exempt until #351 lands, with an
+expiry stated in the code.
+
+
 ### Open `mvp-blocking` issues
 
 **The count is not written here. Run it:**

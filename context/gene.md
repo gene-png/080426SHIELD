@@ -417,6 +417,15 @@ end of a session.
 
 ## Earlier — 2026-09-19
 
+**#336 is done** -- the consumer gate. It caught its own author twice while
+being built: applying the issue's sketch literally (`apps/web/src` only) would
+have flagged `unusable_target_codes`, which reaches the client's deliverable
+through `zt/exporters.py`; and the audit-key arm the issue asked for would have
+reported eight violations over a payload #351's generic renderer makes fully
+visible. Both are the same lesson -- a known-good shape carries no marker
+saying what made it right.
+
+
 **Maintained by the agent since D-063; Gene owns it by review.** Every claim
 about state outside the working tree carries the command that produced it.
 

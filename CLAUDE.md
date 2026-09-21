@@ -1305,22 +1305,41 @@ a real exit code and a real date, and was the minority outcome (D-071).
   Each of those shipped with its record written where the success is, correctly,
   and stopped one layer short of anyone seeing it.
 
-  **This is a rule in prose, so it is the interim and not the mechanism.**
-  #336 **would be** the gate: it would fail when a field lands in a response
-  schema with no consumer under `apps/web/src`. It is filed and NOT BUILT, and
-  the tense matters -- a reader who greps `#336` and lands on a sentence
-  describing a gate's behaviour in the present tense has met the exact shape
-  this file names elsewhere: a control stated in the present tense whose
-  implementation is a deferral. That is not pessimism about discipline: three
-  rules in this file were walked into this month, each by its own author within
-  hours of writing it — the closing-keyword trap, the mount/migration pair, and
-  the deferral sweep. `CLAUDE.md`'s own finding is that the reflex survives the
-  rule until the rule has a gate.
+  **THE MECHANISM NOW EXISTS**: `apps/api/scripts/check_disclosure_consumers.py`,
+  wired into `ci.yml`. It fails when a disclosure-shaped field lands on a
+  `*Response` model with no consumer on a screen OR in a deliverable.
 
-  Until it exists: before merging a PR that adds such a field, open the
-  component the reader uses and confirm it renders. **The endpoint is not the
-  surface**, and a test that reads the endpoint proves the write rather than
-  the claim.
+  Two things about it are worth knowing before you rely on it, because both
+  were wrong in its first version:
+
+  - **It matches per SERVICE, not across one pooled blob.** Field names are not
+    unique across models -- `batches_total` is declared on both
+    `AttackRunAiResponse` and `RiskRegisterResponse` -- so a pooled search let
+    the Risk fields pass on ATT&CK's renderer, and the gate ran green over a
+    live instance of the defect it exists to catch (#372). A reader now counts
+    for a field only when its path carries that field's service token.
+  - **Both surfaces are checked, and the exporter half is load-bearing.**
+    `unusable_target_codes` reaches no screen at all; `zt/exporters.py` is its
+    only reader. A web-only gate -- which is what this paragraph used to
+    describe -- would report a defect over a field that reaches the client's
+    deliverable.
+
+  Its residuals are stated in its own docstring rather than here. The largest:
+  the predicate is prefix-anchored, so `<noun>_<disposition>` names like
+  `unconfirmed_citations` and a bare `dropped` are invisible to it (#373), and
+  it does not recurse into nested models.
+
+  **This paragraph described the gate in the conditional for a day after it
+  shipped**, saying "filed and NOT BUILT" -- so a reader who grepped `#336`
+  would have built what already ships. Recorded rather than quietly swapped,
+  because the sentence it replaced was itself warning that the tense matters.
+  That is `CLAUDE.md`'s own finding arriving one more time: the reflex survives
+  the rule until the rule has a gate, and a rule ABOUT prose has none.
+
+  The gate is a floor, not a census. Before merging a PR that adds such a
+  field, still open the component the reader uses and confirm it renders.
+  **The endpoint is not the surface**, and a test that reads the endpoint
+  proves the write rather than the claim.
 
 - **A USER-FACING string naming an action must name a control that exists and
   works TODAY — verified by opening the handler, not by knowing the domain.**
