@@ -52,6 +52,7 @@ import { AttackTechniquePanel } from "./AttackTechniquePanel";
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
+import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 
 export interface AttackWorkspaceProps {
   serviceId: string;
@@ -96,6 +97,24 @@ export function AttackWorkspace({
   const [deliverable, setDeliverable] =
     React.useState<AttackDeliverable | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  /**
+   * SUPPLEMENTARY fetches that failed, keyed by source (#292). Distinct from
+   * `loadError`: that one blocks and says the workspace could not load; these
+   * are side panels that failed while the workspace itself is fine.
+   *
+   * `null` was doing two jobs. The panels are `T | null`, and a bare
+   * `} catch {}` left them null on failure -- byte-identical to
+   * still-loading. `CLAUDE.md`: a value that is `null` for BOTH "still
+   * loading" and "request failed" makes its callers conflate the two.
+   *
+   * Keyed rather than a single string because one slot was wrong in two
+   * opposite directions; see `useRefreshFailures`. This file had BOTH halves
+   * of the second one: it never cleared, and its two catches wrote the
+   * IDENTICAL sentence, so a failed heatmap and a failed deliverable check
+   * were the same bytes in the same slot with no way to tell them apart.
+   */
+  const { messages: refreshMessages, begin: beginRefresh } =
+    useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
   >(null);
@@ -147,16 +166,32 @@ export function AttackWorkspace({
   }, [heatmap]);
 
   const refreshHeatmap = React.useCallback(async () => {
+    const heatmapAttempt = beginRefresh("heatmap");
     try {
       const next = await fetchHeatmap(serviceId);
       setHeatmap(next);
+      heatmapAttempt.clear();
     } catch {
-      // non-blocking
+      // NON-BLOCKING IS NOT SILENT. The old comment was true and is
+      // why this survived: a panel's own loading state cannot be told
+      // apart from a slow network.
+      heatmapAttempt.note(
+        "Couldn't refresh the coverage heatmap. What is shown may be out of date; reload to try again.",
+      );
     }
-  }, [serviceId]);
+  }, [serviceId, beginRefresh]);
 
   const initialLoad = React.useCallback(async () => {
     const seq = ++assessmentSeq.current;
+    // EVERY token this function will use is minted HERE, before any await.
+    // See `useRefreshFailures`: mint below an await and the tokens are ordered
+    // by RESOLUTION, so an initialLoad started FIRST whose earlier fetch is
+    // slow issues the LATER token and overwrites a newer load's record.
+    //
+    // The `seq` early-return below does NOT close this. It narrows the window:
+    // a load that PASSES that check can still be overtaken while it awaits
+    // `refreshScoreAndGap`, and would then mint after the newer load did.
+    const deliverableAttempt = beginRefresh("deliverable");
     try {
       const cat = await fetchCatalog();
       setCatalog(cat);
@@ -178,14 +213,25 @@ export function AttackWorkspace({
         try {
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
+          deliverableAttempt.clear();
         } catch {
-          // non-blocking
+          // A FALSE NEGATIVE, not a stale panel, and the first version of this
+          // fix gave it the generic "part of this workspace" message -- a
+          // half-fix, because `AttackDeliverableCard` renders "Not finalized
+          // yet" exactly as its CSF and Tech Debt twins do. That is a claim
+          // ABOUT THE SERVER made on the strength of a request that failed,
+          // and a consultant can act on it by finalizing a second time.
+          //
+          // Missing data defaults to UNCONFIRMED, never to a known negative.
+          deliverableAttempt.note(
+            "Couldn't check for a finalized deliverable. The deliverable card below is not a statement about whether one exists.",
+          );
         }
       }
     } catch (err) {
       setLoadError(describeError(err));
     }
-  }, [serviceId, refreshHeatmap]);
+  }, [serviceId, refreshHeatmap, beginRefresh]);
 
   React.useEffect(() => {
     void (async () => {
@@ -422,6 +468,18 @@ export function AttackWorkspace({
           kind={serviceStages.kind}
           version={serviceStages.version}
         />
+      ) : null}
+
+      {refreshMessages.length > 0 ? (
+        <div
+          className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+          role="status"
+          data-testid="attack-refresh-error"
+        >
+          {refreshMessages.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
+        </div>
       ) : null}
 
       {loadError ? (

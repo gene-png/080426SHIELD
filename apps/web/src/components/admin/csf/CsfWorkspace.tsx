@@ -38,6 +38,7 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
+import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 
 import { CsfDeliverableCard } from "./CsfDeliverableCard";
 import { CsfGapList } from "./CsfGapList";
@@ -115,6 +116,25 @@ export function CsfWorkspace({
     null,
   );
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  /**
+   * SUPPLEMENTARY fetches that failed, keyed by source (#292). Distinct from
+   * `loadError`, which renders "Couldn't load the assessment" -- a blocking
+   * card that would misdescribe these: the assessment loaded, a side panel did
+   * not.
+   *
+   * It exists because `null` was doing two jobs. `score`, `gap`, `deliverable`
+   * and the interview map are all `T | null`, and a bare `} catch {}` left
+   * them null on failure -- byte-identical to still-loading. `CLAUDE.md`: a
+   * value that is `null` for BOTH "still loading" and "request failed" makes
+   * its callers conflate the two.
+   *
+   * Keyed rather than a single string because a single slot was wrong in two
+   * opposite directions; see `useRefreshFailures`. Here it was the eager half:
+   * `initialLoad` notes a failed interview fetch and then, three statements
+   * later, a SUCCESSFUL score/gap refresh cleared it.
+   */
+  const { messages: refreshMessages, begin: beginRefresh } =
+    useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
   >(null);
@@ -143,6 +163,7 @@ export function CsfWorkspace({
 
   const refreshScoreAndGap = React.useCallback(
     async (currentTarget: number) => {
+      const scoreGapAttempt = beginRefresh("score-gap");
       try {
         const [s, g] = await Promise.all([
           fetchScore(serviceId),
@@ -150,15 +171,33 @@ export function CsfWorkspace({
         ]);
         setScore(s);
         setGap(g);
+        scoreGapAttempt.clear();
       } catch {
-        // Non-blocking; the score/gap panels show their own loading state.
+        // NON-BLOCKING IS NOT THE SAME AS SILENT. The old comment here said
+        // "the score/gap panels show their own loading state" -- true, and the
+        // reason the defect survived: that state is indistinguishable from a
+        // slow network, so a consultant watching a permanently-spinning score
+        // card cannot tell in-flight from failed from never-attempted.
+        scoreGapAttempt.note(
+          "Couldn't refresh the score and gap panels. The figures shown may be out of date; reload to try again.",
+        );
       }
     },
-    [serviceId],
+    [serviceId, beginRefresh],
   );
 
   const initialLoad = React.useCallback(async () => {
     const seq = ++assessmentSeq.current;
+    // EVERY token this function will use is minted HERE, before any await.
+    // See `useRefreshFailures`: mint below an await and the tokens are ordered
+    // by RESOLUTION, so an initialLoad started FIRST whose earlier fetch is
+    // slow issues the LATER token and overwrites a newer load's record.
+    //
+    // The `seq` early-return below does NOT close this. It narrows the window:
+    // a load that PASSES that check can still be overtaken while it awaits
+    // `refreshScoreAndGap`, and would then mint after the newer load did.
+    const interviewAttempt = beginRefresh("interview");
+    const deliverableAttempt = beginRefresh("deliverable");
     try {
       const cat = await fetchCatalog();
       setCatalog(cat);
@@ -177,8 +216,14 @@ export function CsfWorkspace({
         }
         setInterviewByCode(map);
       }
+      interviewAttempt.clear();
     } catch {
-      // Non-blocking: interview prompts are supplemental context.
+      // Supplemental, and still not silent: the prompts simply do not appear,
+      // which reads as "this subcategory has none" rather than "we could not
+      // fetch them".
+      interviewAttempt.note(
+        "Couldn't load the interview prompts. Subcategories will show none, which is not the same as having none.",
+      );
     }
     try {
       const a = await fetchLatestAssessment(serviceId);
@@ -197,14 +242,25 @@ export function CsfWorkspace({
         try {
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
+          deliverableAttempt.clear();
         } catch {
-          // non-blocking; deliverable card shows "not finalized yet".
+          // THE SHARPEST OF THE THREE, and the old comment states the defect
+          // as if it were the mitigation: "deliverable card shows 'not
+          // finalized yet'". That card is then asserting a FACT ABOUT THE
+          // SERVER -- that no deliverable has been finalized -- on the
+          // strength of a request that failed. A consultant can act on it by
+          // finalizing a second time.
+          //
+          // Missing data defaults to UNCONFIRMED, never to a known negative.
+          deliverableAttempt.note(
+            "Couldn't check for a finalized deliverable. The deliverable card below is not a statement about whether one exists.",
+          );
         }
       }
     } catch (err) {
       setLoadError(describeError(err));
     }
-  }, [serviceId, refreshScoreAndGap]);
+  }, [serviceId, refreshScoreAndGap, beginRefresh]);
 
   React.useEffect(() => {
     void (async () => {
@@ -409,6 +465,18 @@ export function CsfWorkspace({
           Review and edit their answers below for completeness and accuracy,
           then <span className="font-medium">Approve client inputs</span> and
           send for evaluation in the deliverable section.
+        </div>
+      ) : null}
+
+      {refreshMessages.length > 0 ? (
+        <div
+          className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+          role="status"
+          data-testid="csf-refresh-error"
+        >
+          {refreshMessages.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
         </div>
       ) : null}
 

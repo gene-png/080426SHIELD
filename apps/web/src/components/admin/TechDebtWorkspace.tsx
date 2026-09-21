@@ -51,6 +51,7 @@ import type { JSX } from "react";
 import { ProgressStages } from "./ProgressStages";
 import { SecurityClassificationQueue } from "./SecurityClassificationQueue";
 import { useServiceStages } from "@/lib/stages/client";
+import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 
 export interface TechDebtWorkspaceProps {
   serviceId: string;
@@ -76,6 +77,23 @@ export function TechDebtWorkspace({
     null,
   );
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  /**
+   * SUPPLEMENTARY fetches that failed, keyed by source (#292). Distinct from
+   * `loadError`: that one blocks and says the workspace could not load; these
+   * are side panels that failed while the workspace itself is fine.
+   *
+   * `null` was doing two jobs. The panels are `T | null`, and a bare
+   * `} catch {}` left them null on failure -- byte-identical to
+   * still-loading. `CLAUDE.md`: a value that is `null` for BOTH "still
+   * loading" and "request failed" makes its callers conflate the two.
+   *
+   * Keyed rather than a single string because one slot was wrong in two
+   * opposite directions; see `useRefreshFailures`. This file never cleared,
+   * and its plan-refresh write was also the one unguarded write in a function
+   * whose every other write is sequence-guarded -- see `refreshOverlap`.
+   */
+  const { messages: refreshMessages, begin: beginRefresh } =
+    useRefreshFailures();
   const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);
@@ -96,7 +114,14 @@ export function TechDebtWorkspace({
   const overlapSeq = React.useRef(0);
 
   const refreshOverlap = React.useCallback(async () => {
+    // BOTH sequence numbers are taken HERE, before any await, and the token is
+    // one of them. See `useRefreshFailures`: minting after an await orders the
+    // tokens by RESOLUTION rather than by INVOCATION, which inverts the guard
+    // for exactly the interleaving it exists to stop. The first version of
+    // this fix minted it below the overlap fetch and was weaker than the
+    // hand-rolled `seq` it replaced.
     const seq = ++overlapSeq.current;
+    const overlapAttempt = beginRefresh("overlap-plan");
     setOverlapLoading(true);
     try {
       const next = await fetchOverlapAnalysis(serviceId);
@@ -115,14 +140,41 @@ export function TechDebtWorkspace({
     }
     try {
       const nextPlan = await fetchConsolidationPlan(serviceId);
-      if (seq === overlapSeq.current) setPlan(nextPlan);
+      if (seq === overlapSeq.current) {
+        setPlan(nextPlan);
+      }
+      // The hook sequences this one itself now. `seq` still guards `setPlan`
+      // above, because that is component state the hook knows nothing about.
+      overlapAttempt.clear();
     } catch {
-      // non-blocking; dashboard already shows the overlap.
+      // NON-BLOCKING IS NOT SILENT. The old comment was true and is
+      // why this survived: a panel's own loading state cannot be told
+      // apart from a slow network.
+      //
+      // SEQUENCE-GUARDED, and the guard now lives in the hook rather than
+      // here. An edit fires refresh #1; a second edit ~200ms later fires #2,
+      // which completes, so `plan` is current and correct; #1 then rejects.
+      // An unguarded write put a permanent "may be out of date" warning over
+      // figures that were up to date -- a superseded request describing the
+      // state of a newer one.
+      //
+      // This was the ONLY guarded write in the first version of the fix, and
+      // the review found every other one unguarded. A rule applied at four
+      // sites diverges at four sites, so it moved into `useRefreshFailures`
+      // and there is no longer an unsequenced way to write.
+      overlapAttempt.note(
+        "Couldn't refresh the overlap figures. What is shown may be out of date.",
+      );
     }
-  }, [serviceId]);
+  }, [serviceId, beginRefresh]);
 
   const refresh = React.useCallback(async () => {
+    // Before any await, for the reason above. This one sat below TWO of them
+    // -- `fetchLatestList` and the whole of `refreshOverlap` -- so a mount
+    // whose list fetch was slow could mint its deliverable token after a later
+    // `refresh` had already minted and cleared one.
     const seq = ++listSeq.current;
+    const deliverableAttempt = beginRefresh("deliverable");
     try {
       const next = await fetchLatestList(serviceId);
       if (seq === listSeq.current) {
@@ -140,10 +192,19 @@ export function TechDebtWorkspace({
     try {
       const deliv = await fetchLatestDeliverable(serviceId);
       setDeliverable(deliv);
+      deliverableAttempt.clear();
     } catch {
-      // non-blocking; deliverable section will just show "not finalized yet".
+      // A FALSE NEGATIVE, not an ambiguity: the old comment stated
+      // the defect as if it were the mitigation. "Not finalized yet"
+      // is a claim ABOUT THE SERVER made on the strength of a request
+      // that failed, and a consultant can act on it by finalizing a
+      // second time. Missing data defaults to UNCONFIRMED, never to a
+      // known negative.
+      deliverableAttempt.note(
+        "Couldn't check for a finalized deliverable. The section below is not a statement about whether one exists.",
+      );
     }
-  }, [serviceId, refreshOverlap]);
+  }, [serviceId, refreshOverlap, beginRefresh]);
 
   React.useEffect(() => {
     void (async () => {
@@ -456,6 +517,18 @@ Components carry no cost of their own — this licence keeps its full value.`,
           reloadKey={docsReloadKey}
         />
       </WorkflowStep>
+
+      {refreshMessages.length > 0 ? (
+        <div
+          className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+          role="status"
+          data-testid="techdebt-refresh-error"
+        >
+          {refreshMessages.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
+        </div>
+      ) : null}
 
       {loadError ? (
         <Card>
