@@ -149,6 +149,43 @@ def test_an_unrecognised_argument_cannot_look(argv) -> None:
 
 
 @pytest.mark.unit
+def test_the_guard_reads_the_FLAGS_TUPLE_and_not_a_literal(monkeypatch, capsys) -> None:
+    """Registering a flag must be ONE edit, and this is what makes that true.
+
+    The guard was `a != _CHECK_REGISTRY`: correct, and correct only while there
+    is exactly one flag. The next flag has to be added in two places, and the
+    failure when it is added in one is not a syntax error -- the guard rejects
+    a flag the script implements, with a confident message naming the only flag
+    it believes in.
+
+    #382 is that next flag. It adds `--check-anchors` and wires it into
+    `ci.yml`, and the two branches merge clean because they touch different
+    hunks of `main`, so git cannot see the collision. `main` would go
+    permanently red on the step whose job is to report whether the oracle can
+    still measure.
+
+    Emptying `_FLAGS` must make the one flag that exists today be REFUSED. If
+    it is not, the guard is reading a literal and the tuple is decoration.
+
+    Safe to run: every assertion here lands on the exit-2 path, which returns
+    before `leave_rows()` and therefore before the report path that REWRITES
+    `redact.py` on disk -- the hazard the test above documents.
+    """
+    import scripts.leave_row_oracle as oracle
+
+    monkeypatch.setattr(oracle, "_FLAGS", ())
+    assert oracle.main(["leave_row_oracle.py", oracle._CHECK_REGISTRY]) == 2
+
+    # And the message enumerates from the same tuple, so it cannot advertise a
+    # set the guard is not enforcing.
+    monkeypatch.setattr(oracle, "_FLAGS", ("--alpha", "--beta"))
+    assert oracle.main(["leave_row_oracle.py", "--gamma"]) == 2
+    err = capsys.readouterr().err
+    assert "--alpha, --beta" in err
+    assert "--gamma" in err
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "argv",
     [["leave_row_oracle.py"], ["leave_row_oracle.py", "--check-registry"]],

@@ -160,13 +160,16 @@ output names which:
       would not compile, the source could not be restored); the label check
       could not classify a table (an undeclared unreadable table, a stale
       UNREADABLE_NOT_LEAVE declaration, or a declaration pointing at a table
-      that no longer exists); or an ANCHOR IS STALE OR AMBIGUOUS under
-      --check-anchors. An unreadable input is NOT a pass.
+      that no longer exists); an ANCHOR IS STALE OR AMBIGUOUS under
+      --check-anchors; or an ARGUMENT WAS NOT UNDERSTOOD, which is decided
+      before anything is read. An unreadable input is NOT a pass.
 
       Written as an open list on purpose. It was a closed one ("Either ... or
-      ...") and a third cause was added below it without the list moving,
-      which is worse than no list: a reader debugging an exit 2 checks the two
-      documented causes, finds neither, and concludes the tool is broken.
+      ...") and causes were twice added below it without the list moving,
+      which is worse than no list: a reader debugging an exit 2 checks the
+      documented causes, finds none of them, and concludes the tool is broken.
+      If a fifth is added, this sentence is the reminder to come back here --
+      or to stop enumerating and point at `main`.
 """
 
 from __future__ import annotations
@@ -970,6 +973,32 @@ _FLAGS: dict[str, Callable[[], int]] = {
     "--check-registry": check_registry_and_labels,
     "--check-anchors": check_anchors,
 }
+
+#: EVERY FLAG THIS SCRIPT ACCEPTS. The guard reads this; it does not carry its
+#: own copy.
+#:
+#: One line to register a flag, and that is the whole point of the tuple
+#: existing for a single member. The guard was written as
+#: `a != _CHECK_REGISTRY` -- correct, and correct only while there is exactly
+#: one flag. The NEXT flag has to be added in two places, and the failure when
+#: it is added in one is not a syntax error: the guard rejects a flag the
+#: script implements, with a confident message naming the only flag it thinks
+#: exists.
+#:
+#: That is not hypothetical. #382 adds `--check-anchors` and wires it into
+#: `ci.yml`. Both branches merge clean, because they touch different hunks of
+#: this function -- so git cannot see it, and `main` would go permanently red
+#: on a step whose whole job is to report whether the oracle can still
+#: measure. Measured by running `--check-anchors` against a tree carrying both
+#: changes: exit 2, refused by this guard.
+#:
+#: The fix belongs in the branch that INTRODUCES the flag -- a PR that adds a
+#: flag registers it -- so #382 adds one entry here. The alternative, listing
+#: `--check-anchors` in this branch, would have the guard accept a flag this
+#: tree does not implement; the argument then falls through to the default
+#: path, which is the FULL oracle, which WRITES `redact.py`. Strictly worse
+#: than the red it would be papering over.
+_FLAGS: tuple[str, ...] = (_CHECK_REGISTRY,)
 
 
 def main(argv: list[str]) -> int:
