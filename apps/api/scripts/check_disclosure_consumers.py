@@ -148,20 +148,28 @@ EXEMPT_FIELDS: dict[str, str] = {
     ),
 }
 
-#: Arm 2's exemption, and it is temporary BY CONSTRUCTION.
+#: Arm 2's exemption, DISCHARGED. It was temporary by construction and its
+#: condition has been met: PR #351 added the generic `details` renderer, so
+#: arm 2 now passes for real rather than by exemption.
 #:
-#: The generic `details` renderer is #322's fix and lands in PR #351. Until it
-#: does, this gate would be red on `main` for a defect that is real, open and
-#: already being fixed -- and a gate that turns `main` red on landing is a gate
-#: someone reverts.
+#: `None` rather than a deleted name, because the check below reads it and the
+#: annotation is what makes a future exemption a typed value rather than a new
+#: invention.
 #:
-#: Delete this the moment #351 merges. The check below then passes for real
-#: rather than by exemption, and if it does not, #322 regressed.
-AUDIT_RENDERER_EXEMPT: str | None = (
-    "#322: the admin Audit viewer does not render `details` yet. PR #351 adds "
-    "a generic renderer. This entry is deleted when that merges -- it is an "
-    "exemption with an expiry, not a standing one."
-)
+#: Kept as a live slot on purpose. While a string is set, arm 2 cannot go red
+#: -- so the renderer could be deleted and nothing would say so. Setting it
+#: back to `None` is what re-arms the check, and that is the whole point of
+#: writing the expiry into the exemption rather than into a comment somewhere
+#: else: the gate detected its own expiry and named the remedy, which is how
+#: this line came to be edited at all.
+#:
+#: "Passes for real" is a claim about `audit_payload_has_a_generic_reader`, and
+#: it was FALSE until this same PR strengthened it. It matched iteration over
+#: the payload anywhere in the file, which a renderer that exists and is never
+#: called satisfies; the discharge below was about to be made on that green.
+#: It now requires the iteration AND a column cell referencing the payload, and
+#: both halves are verified red-on-revert. See that function's docstring.
+AUDIT_RENDERER_EXEMPT: str | None = None
 
 #: Where a person reads things. Two surfaces, per `CLAUDE.md`'s
 #: "on a screen OR in a delivered artifact".
@@ -416,12 +424,28 @@ def audit_payload_has_a_generic_reader(repo: Path) -> bool:
 
     Matched on iteration over the payload rather than on a component name, so
     moving or renaming the component does not silently pass.
+
+    TWO conditions, and the second was missing. Iteration alone is satisfied by
+    a renderer that EXISTS and is never called -- `a function with no callers`,
+    which `CLAUDE.md` names as a control stated in the present tense whose
+    implementation is not reachable. Measured 2026-09-21 while discharging
+    `AUDIT_RENDERER_EXEMPT`: replacing the column's `cell` with `() => null`
+    left `renderDetails` defined, so the iteration regex still matched and this
+    gate stayed GREEN over an audit viewer that rendered no details at all.
+    The exemption was about to be discharged on the strength of that green.
+
+    So a column CELL must also reference the payload. `details` rather than a
+    function name, so both `(e) => renderDetails(e.details)` and a destructured
+    `({ details }) => ...` satisfy it; a renamed helper does not need a change
+    here, but deleting the wiring does.
     """
     viewer = repo / "apps" / "web" / "src" / "components" / "admin" / "AuditViewer.tsx"
     if not viewer.is_file():
         return False
     text = viewer.read_text(encoding="utf-8")
-    return bool(re.search(r"Object\.(entries|keys)\s*\(\s*details", text))
+    iterates = bool(re.search(r"Object\.(entries|keys)\s*\(\s*details", text))
+    wired = bool(re.search(r"cell:[^\n]*\bdetails\b", text))
+    return iterates and wired
 
 
 def main(argv: list[str]) -> int:
