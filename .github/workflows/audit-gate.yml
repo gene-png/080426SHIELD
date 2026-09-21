@@ -199,6 +199,36 @@ jobs:
             echo "reporting a verdict it never verified."
           fi
 
+      - name: The PR template must not satisfy the audit gate by itself
+        # Its text goes into every PR body, so one character decides whether this
+        # check means anything. The commented examples use "->" and not ":"
+        # because this checker does not strip HTML comments -- restore the colon
+        # and every PR passes having recorded nothing, in a body that renders no
+        # audit block at all.
+        #
+        # This lives in CI rather than pytest because the api container mounts
+        # only apps/api, so no test in that tree can read .github/.
+        working-directory: apps/api
+        run: >-
+          python -c "import sys;
+          from pathlib import Path;
+          from scripts.check_audit_evidence import missing_evidence;
+          body = Path('../../.github/pull_request_template.md').read_text(encoding='utf-8');
+          p = ' '.join(missing_evidence(body));
+          sys.exit('UNFILLED PR TEMPLATE SATISFIES THE AUDIT GATE -- the commented
+          examples must use an arrow, not a colon. missing_evidence() said: ' + (p or '(nothing)'))
+          if ('no \"Findings:\" line' not in p or 'no \"Disposition:\" line' not in p)
+          else print('PR template correctly fails the gate when unfilled.')"
+
+      - name: Reject undeclared issue closes
+        working-directory: apps/api
+        run: |
+          python -m scripts.check_issue_references \
+            --title /tmp/pr_title.txt \
+            --body /tmp/pr_body.txt \
+            --commits /tmp/pr_commits.txt \
+            --linked /tmp/pr_linked.txt
+
       - name: >-
           D-NUMBERS: a subject must not name a decision the commit does not add
           (this step is NOT about issue closes -- see its failure output)
@@ -224,8 +254,19 @@ jobs:
         # it properly needs a branch-protection change, which only a human with
         # admin can make, and is tracked rather than done unilaterally.
         #
-        # Placed here in the first place because this job already has the full
-        # history and the branch's own commit range; no other workflow does.
+        # PLACED LAST IN THIS JOB, DELIBERATELY. It used to run BEFORE
+        # `Reject undeclared issue closes`, and neither later step carries an
+        # `if:` or `continue-on-error` -- so a D-number failure SKIPPED the
+        # close guard, and this banner then told the reader their closing
+        # keywords were fine about a check that had never run. "I could not
+        # look" wearing "nothing to complain about", emitted by the fix for a
+        # reporting defect.
+        #
+        # Running last makes the assurance true by construction rather than by
+        # wording: if this step is reached, the close guard has already passed.
+        #
+        # In this job at all because it already has the full history and the
+        # branch's own commit range; no other workflow does.
         #
         # A branch shipped `docs(decisions): D-072 -- ...` for a commit adding
         # D-078. On rebase, every positional conflict in an append-only file
@@ -258,44 +299,28 @@ jobs:
           if [ "$status" -ne 0 ]; then
             echo ""
             echo "=============================================================="
-            echo "THIS IS NOT AN ISSUE-CLOSE FAILURE."
+            echo "THIS STEP DOES NOT CHECK CLOSING KEYWORDS."
             echo ""
-            echo "The check that went red is named 'No accidental issue closes'"
-            echo "because this D-NUMBER check shares that job. Your closing"
-            echo "keywords are fine. What failed is above: a commit SUBJECT"
-            echo "names a D-number the commit does not add."
+            echo "The red check is named 'No accidental issue closes' because"
+            echo "this D-NUMBER step shares that job. What failed is above."
             echo ""
-            echo "Fix the commit subject, not the PR body. Tracked in #318."
+            # TWO EXIT CODES, TWO CAUSES. check_decision_numbers.py returns 1
+            # for a real mismatch and 2 for 'I could not look' -- its own
+            # __main__ says "a crash must not share an exit code with 'found
+            # something'". A banner naming the exit-1 cause unconditionally
+            # would hand a reader a false cause AND an imperative naming work
+            # that cannot help.
+            if [ "$status" -eq 1 ]; then
+              echo "A commit SUBJECT names a D-number the commit does not add."
+              echo "Fix the commit subject, not the PR body."
+            else
+              echo "The check could not run (exit $status) -- it reached no"
+              echo "verdict about your commits. Read its output above: this is"
+              echo "a git or environment failure, not something to fix in a"
+              echo "commit message."
+            fi
+            echo ""
+            echo "Tracked in #318."
             echo "=============================================================="
             exit $status
           fi
-
-      - name: The PR template must not satisfy the audit gate by itself
-        # Its text goes into every PR body, so one character decides whether this
-        # check means anything. The commented examples use "->" and not ":"
-        # because this checker does not strip HTML comments -- restore the colon
-        # and every PR passes having recorded nothing, in a body that renders no
-        # audit block at all.
-        #
-        # This lives in CI rather than pytest because the api container mounts
-        # only apps/api, so no test in that tree can read .github/.
-        working-directory: apps/api
-        run: >-
-          python -c "import sys;
-          from pathlib import Path;
-          from scripts.check_audit_evidence import missing_evidence;
-          body = Path('../../.github/pull_request_template.md').read_text(encoding='utf-8');
-          p = ' '.join(missing_evidence(body));
-          sys.exit('UNFILLED PR TEMPLATE SATISFIES THE AUDIT GATE -- the commented
-          examples must use an arrow, not a colon. missing_evidence() said: ' + (p or '(nothing)'))
-          if ('no \"Findings:\" line' not in p or 'no \"Disposition:\" line' not in p)
-          else print('PR template correctly fails the gate when unfilled.')"
-
-      - name: Reject undeclared issue closes
-        working-directory: apps/api
-        run: |
-          python -m scripts.check_issue_references \
-            --title /tmp/pr_title.txt \
-            --body /tmp/pr_body.txt \
-            --commits /tmp/pr_commits.txt \
-            --linked /tmp/pr_linked.txt
