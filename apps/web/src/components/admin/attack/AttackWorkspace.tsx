@@ -96,6 +96,17 @@ export function AttackWorkspace({
   const [deliverable, setDeliverable] =
     React.useState<AttackDeliverable | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  /**
+   * A SUPPLEMENTARY fetch that failed (#292). Distinct from `loadError`: that
+   * one blocks and says the workspace could not load; these are side panels
+   * that failed while the workspace itself is fine.
+   *
+   * `null` was doing two jobs. The panels are `T | null`, and a bare
+   * `} catch {}` left them null on failure -- byte-identical to
+   * still-loading. `CLAUDE.md`: a value that is `null` for BOTH "still
+   * loading" and "request failed" makes its callers conflate the two.
+   */
+  const [refreshError, setRefreshError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
   >(null);
@@ -151,7 +162,12 @@ export function AttackWorkspace({
       const next = await fetchHeatmap(serviceId);
       setHeatmap(next);
     } catch {
-      // non-blocking
+      // NON-BLOCKING IS NOT SILENT. The old comment was true and is
+      // why this survived: a panel's own loading state cannot be told
+      // apart from a slow network.
+      setRefreshError(
+        "Couldn't refresh part of this workspace. What is shown may be out of date; reload to try again.",
+      );
     }
   }, [serviceId]);
 
@@ -179,7 +195,12 @@ export function AttackWorkspace({
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
         } catch {
-          // non-blocking
+          // NON-BLOCKING IS NOT SILENT. The old comment was true and is
+          // why this survived: a panel's own loading state cannot be told
+          // apart from a slow network.
+          setRefreshError(
+            "Couldn't refresh part of this workspace. What is shown may be out of date; reload to try again.",
+          );
         }
       }
     } catch (err) {
@@ -422,6 +443,16 @@ export function AttackWorkspace({
           kind={serviceStages.kind}
           version={serviceStages.version}
         />
+      ) : null}
+
+      {refreshError ? (
+        <p
+          className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+          role="status"
+          data-testid="attack-refresh-error"
+        >
+          {refreshError}
+        </p>
       ) : null}
 
       {loadError ? (

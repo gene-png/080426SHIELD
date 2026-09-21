@@ -76,6 +76,17 @@ export function TechDebtWorkspace({
     null,
   );
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  /**
+   * A SUPPLEMENTARY fetch that failed (#292). Distinct from `loadError`: that
+   * one blocks and says the workspace could not load; these are side panels
+   * that failed while the workspace itself is fine.
+   *
+   * `null` was doing two jobs. The panels are `T | null`, and a bare
+   * `} catch {}` left them null on failure -- byte-identical to
+   * still-loading. `CLAUDE.md`: a value that is `null` for BOTH "still
+   * loading" and "request failed" makes its callers conflate the two.
+   */
+  const [refreshError, setRefreshError] = React.useState<string | null>(null);
   const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);
@@ -117,7 +128,12 @@ export function TechDebtWorkspace({
       const nextPlan = await fetchConsolidationPlan(serviceId);
       if (seq === overlapSeq.current) setPlan(nextPlan);
     } catch {
-      // non-blocking; dashboard already shows the overlap.
+      // NON-BLOCKING IS NOT SILENT. The old comment was true and is
+      // why this survived: a panel's own loading state cannot be told
+      // apart from a slow network.
+      setRefreshError(
+        "Couldn't refresh the overlap figures. What is shown may be out of date.",
+      );
     }
   }, [serviceId]);
 
@@ -141,7 +157,15 @@ export function TechDebtWorkspace({
       const deliv = await fetchLatestDeliverable(serviceId);
       setDeliverable(deliv);
     } catch {
-      // non-blocking; deliverable section will just show "not finalized yet".
+      // A FALSE NEGATIVE, not an ambiguity: the old comment stated
+      // the defect as if it were the mitigation. "Not finalized yet"
+      // is a claim ABOUT THE SERVER made on the strength of a request
+      // that failed, and a consultant can act on it by finalizing a
+      // second time. Missing data defaults to UNCONFIRMED, never to a
+      // known negative.
+      setRefreshError(
+        "Couldn't check for a finalized deliverable. The section below is not a statement about whether one exists.",
+      );
     }
   }, [serviceId, refreshOverlap]);
 
@@ -456,6 +480,16 @@ Components carry no cost of their own — this licence keeps its full value.`,
           reloadKey={docsReloadKey}
         />
       </WorkflowStep>
+
+      {refreshError ? (
+        <p
+          className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+          role="status"
+          data-testid="techdebt-refresh-error"
+        >
+          {refreshError}
+        </p>
+      ) : null}
 
       {loadError ? (
         <Card>

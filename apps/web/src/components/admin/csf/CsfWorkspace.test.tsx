@@ -246,3 +246,70 @@ describe("CsfWorkspace discard affordance", () => {
     ).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #292 -- a failed supplementary fetch was swallowed, leaving `score`, `gap`
+// and `deliverable` null: byte-identical to still-loading. A consultant
+// watching a permanently-spinning score card could not tell in-flight from
+// failed from never-attempted.
+//
+// These assert the DISTINGUISHABILITY, not a particular sentence: the point is
+// that failure and loading stop being the same rendered state.
+// ---------------------------------------------------------------------------
+
+describe("CsfWorkspace supplementary-fetch failures (#292)", () => {
+  it("says so when the score/gap refresh fails, rather than leaving the panels loading", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchInterviewQuestionnaire.mockResolvedValue(null);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    // The refresh is what fails. Everything else succeeds, so a spinner here
+    // would be indistinguishable from a slow network -- which is the defect.
+    fetchScore.mockRejectedValue(new Error("boom-score"));
+    fetchGapAnalysis.mockRejectedValue(new Error("boom-gap"));
+
+    render(<CsfWorkspace serviceId="svc-1" serviceTitle="Atlas CSF" />);
+
+    const note = await screen.findByTestId("csf-refresh-error");
+    expect(note.textContent).toMatch(/score and gap/i);
+    // Names what the consultant should distrust, not just that something broke.
+    expect(note.textContent).toMatch(/out of date/i);
+  });
+
+  it("does not claim the deliverable is unfinalized when the check itself failed", async () => {
+    // THE FALSE-NEGATIVE HALF, and the sharper one. The old comment here said
+    // the card "shows 'not finalized yet'" -- a claim ABOUT THE SERVER made on
+    // a request that failed. A consultant can act on it by finalizing twice.
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchInterviewQuestionnaire.mockResolvedValue(null);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchScore.mockResolvedValue(SCORE);
+    fetchGapAnalysis.mockResolvedValue(GAP);
+    vi.mocked(csfClient.fetchLatestDeliverable).mockRejectedValue(
+      new Error("boom-deliverable"),
+    );
+
+    render(<CsfWorkspace serviceId="svc-2" serviceTitle="Atlas CSF" />);
+
+    const note = await screen.findByTestId("csf-refresh-error");
+    expect(note.textContent).toMatch(
+      /not a statement about whether one exists/i,
+    );
+  });
+
+  it("stays silent when every supplementary fetch succeeds", async () => {
+    // THE OTHER HALF. A notice that always renders is furniture, and a reader
+    // learns to skip it -- which is worse than none, because the one time it
+    // matters it looks the same.
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchInterviewQuestionnaire.mockResolvedValue(null);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchScore.mockResolvedValue(SCORE);
+    fetchGapAnalysis.mockResolvedValue(GAP);
+    vi.mocked(csfClient.fetchLatestDeliverable).mockResolvedValue(null);
+
+    render(<CsfWorkspace serviceId="svc-3" serviceTitle="Atlas CSF" />);
+
+    await screen.findByText(/Atlas CSF/);
+    expect(screen.queryByTestId("csf-refresh-error")).toBeNull();
+  });
+});
