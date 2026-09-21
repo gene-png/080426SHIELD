@@ -36,6 +36,45 @@ Every path that exits 0 here, and what the input looked like:
   * **the stamped revision IS in the tree** — the ordinary state, including a
     tree AHEAD of the database, which is what `upgrade head` is for. Exit 0.
 
+## The branch this list did not have, and what it costs (#318)
+
+The bullet above says "IS in the tree", and the code tested exactly that, and
+then printed **"tree and database agree on revision 0047"**. Those are not the
+same claim. An id being PRESENT does not make it the SAME MIGRATION.
+
+This repo numbers migrations sequentially, so two worktrees each writing "the
+next one" both write `0047`. Mount the wrong one and:
+
+    database stamped   0047   <- worktree A's migration, already applied
+    mounted tree has   0047   <- worktree B's, a different file entirely
+
+The id matches. The check printed a reassuring sentence. `upgrade head` then
+does nothing, because the database is already stamped at head, and the first
+request 500s on `psycopg.errors.UndefinedColumn` — into the same log this
+check had just written its agreement into.
+
+**Half of that is now detectable and is detected; half is not, and is stated
+rather than implied.**
+
+  * **Two files in the MOUNTED tree claiming one revision id** — exit 1,
+    naming both files. This is what a merge of those two worktrees' branches
+    produces, and it was previously invisible for a reason worth recording:
+    `tree_revisions` returned a `set`, and a set deduplicates in silence. The
+    check could not have reported a collision it had already collapsed.
+    MEASURED 2026-09-20: 48 migration files, 48 distinct ids, so this is
+    LATENT today rather than live — the hole opens on the next merge of two
+    branches that each added a migration.
+
+  * **One file here, a different file there, never merged** — NOT detectable
+    with the data available. `alembic_version` stores a version string and
+    nothing about the migration's content, so the two trees are
+    indistinguishable from inside this container. The message no longer claims
+    otherwise: it says which revision was found and where it read it, and
+    leaves "agree" unsaid. What WOULD detect it is comparing the live schema
+    against the models AFTER `upgrade head`, which is a different check with a
+    different failure mode (a tree legitimately ahead of the database would
+    trip it here). Tracked rather than bolted on.
+
 And the paths that do not:
 
   * **the stamped revision is NOT in the tree** — exit 1, the defect.
@@ -83,12 +122,23 @@ EXIT_COULD_NOT_LOOK = 2
 _REVISION = re.compile(r"^revision(?:\s*:\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", re.M)
 
 
-def tree_revisions(versions_dir: pathlib.Path) -> set[str]:
-    found: set[str] = set()
-    for path in versions_dir.glob("*.py"):
+def tree_revisions(versions_dir: pathlib.Path) -> dict[str, list[str]]:
+    """Revision id -> the filenames claiming it.
+
+    A MAPPING rather than a set, and that is the point. The first version
+    returned `set[str]`, so two files both declaring `revision = "0047"`
+    collapsed into one entry before anything could look at them -- the check
+    could not report a collision it had already discarded. Same shape as a
+    Python dict silently keeping the last duplicate key, which this repo has
+    also been bitten by.
+
+    Sorted, so the reported filenames do not depend on filesystem order.
+    """
+    found: dict[str, list[str]] = {}
+    for path in sorted(versions_dir.glob("*.py")):
         match = _REVISION.search(path.read_text(encoding="utf-8", errors="replace"))
         if match:
-            found.add(match.group(1))
+            found.setdefault(match.group(1), []).append(path.name)
     return found
 
 
@@ -120,7 +170,8 @@ def main() -> int:
         )
         return EXIT_COULD_NOT_LOOK
 
-    in_tree = tree_revisions(versions)
+    by_revision = tree_revisions(versions)
+    in_tree = set(by_revision)
     if not in_tree:
         print(
             f"check-mount: could not look -- {versions} contains no migration with a "
@@ -129,6 +180,32 @@ def main() -> int:
             file=sys.stderr,
         )
         return EXIT_COULD_NOT_LOOK
+
+    collisions = {rev: files for rev, files in by_revision.items() if len(files) > 1}
+    if collisions:
+        # Reported BEFORE the database is consulted, because it is true of the
+        # mounted tree alone and because alembic will refuse this tree anyway --
+        # with a message about revisions rather than about files.
+        lines = [
+            "",
+            "check-mount: TWO MIGRATIONS IN THIS TREE CLAIM THE SAME REVISION ID.",
+            "",
+        ]
+        for rev, files in sorted(collisions.items()):
+            lines.append(f"  revision {rev} : {', '.join(files)}")
+        lines += [
+            "",
+            f"  reading        : {versions}",
+            "",
+            "Migrations here are numbered sequentially, so two branches that each",
+            "added `the next one` both added the same number, and merging them",
+            "produced this. One of these files has to be renumbered and have its",
+            "`down_revision` re-pointed -- the DATABASE cannot tell you which,",
+            "because it stores a version string and nothing about the content.",
+            "",
+        ]
+        print("\n".join(lines), file=sys.stderr)
+        return EXIT_MISMATCH
 
     url = os.environ.get("DATABASE_URL")
     if not url:
@@ -153,7 +230,16 @@ def main() -> int:
         return EXIT_OK
 
     if stamped in in_tree:
-        print(f"check-mount: tree and database agree on revision {stamped}.")
+        # NOT "tree and database agree". What was checked is that the stamped id
+        # is PRESENT here, which is a weaker claim, and the gap between the two
+        # is a whole failure mode (see the module docstring). The message states
+        # what was compared and where it looked, so a reader debugging an
+        # UndefinedColumn a minute later is not told this pair was verified.
+        print(
+            f"check-mount: revision {stamped} is stamped in the database and present "
+            f"in the mounted tree ({by_revision[stamped][0]}); "
+            f"{len(in_tree)} revision(s) read from {versions}."
+        )
         return EXIT_OK
 
     newest = sorted(in_tree)[-1]
