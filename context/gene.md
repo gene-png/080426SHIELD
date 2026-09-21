@@ -7,7 +7,77 @@ about state outside the working tree carries the command that produced it.
 
 **Assume the reader has none of the previous session's context.**
 
+### THE REVIEWS LANDED, AND I WAS WRONG ABOUT THE CHANNEL
+
+Every outstanding review delivered, in a burst, roughly an hour after
+dispatch — exactly the lag this file already recorded. My earlier claim on
+#318 that the retrieval workaround had stopped working is withdrawn there in
+writing. **`idle` is not a delivery signal, and an agent cannot tell a slow
+reviewer from a dead one**; that remains the durable finding and the argument
+for W8b.
+
+Three reports arrived truncated (a 16k cap on the delivery). I asked those
+three for blocking findings only, in a smaller message. **Those three — on
+#363, #364, #366 — are still outstanding.**
+
+**They found a great deal, and it changed every PR.** Headline first.
+
+#### The consumer gate was green over a live instance of its own defect
+
+`RiskRegisterResponse.batches_total` / `batches_failed` reach **no screen and
+no exporter**. The gate passed them because it pooled every reader surface
+into one blob, and `batches_total` is ALSO declared on `AttackRunAiResponse`,
+which IS rendered. **The Risk fields were passing on ATT&CK's renderer.**
+
+A partial Risk synthesis therefore renders a register missing entries with
+nothing saying so — the deliverable a client's remediation budget is argued
+from. ATT&CK fixed the identical defect as #115; Risk is the untouched twin.
+
+Fixed by scoping readers per service, derived from the union of the schema
+file stem and the model's role-stripped prefix. Measured before adopting:
+**2 of 18 fields flagged, both the Risk pair, no false positive among the
+other 16.** Two weaker derivations were tried and discarded on measurement.
+The defect it now finds is **#372** (tier-2); the fields are exempt with that
+number and a delete-this instruction.
+
+#### What the reviews found in my own published claims
+
+Three of my PR bodies asserted something false. All corrected in place, none
+overwritten:
+
+- **#367**: I wrote that `check_test_integrity` caught two weak assertions.
+  It caught one, and **cannot** catch the other — TI002 fires only on
+  `str(...)` or an f-string, never a plain literal. Measured: restoring the
+  bare literal leaves the gate clean. I had read two shifted line numbers as
+  two findings and credited a gate with a catch it cannot make, which is a
+  false assurance about coverage.
+- **#359**: my docstring's heading says the predicate is "renders error COPY"
+  and both its greps search the token `ApiError`. Different propositions. It
+  then concluded "exactly the five dashboards" — a finding turned into a
+  certificate, under the word MEASURED. Two component surfaces
+  (`SignUpForm.tsx` via bare `res.status`, `IntakeWizard.tsx` via
+  `ProxyError`) share no vocabulary with the search term. Neither is a live
+  defect — verified — but the sentence claimed a closed set.
+- **#360**: I corrected item 12's row and left the sizing prose above it
+  saying item 12 is unsized remaining work, in four places. Half-corrected is
+  worse than consistently wrong, and it is rule 3 exactly.
+
+#### And in the work itself
+
+- **#362**: the rename window on `GENERIC_COPY_IS_BETTER` was unstated (a
+  pointer now sits at the API literal, where the renamer works); a test
+  comment named the wrong population; the exclusion regex did not catch the
+  case its own comment claimed; a filter could select nothing.
+- **#369**: my sweep missed `apps/web/README.md`, which carried the same
+  impossible command AND a third unguarded `pnpm install`.
+- **#367**: `check_gate_fixtures`'s registry entry still described the defect
+  that PR had just fixed.
+
+Issues filed from the reviews: **#372** (tier-2), **#373** (tier-3).
+
 ### The one thing that needs you
+
+
 
 **The PRs opened this session are listed below, and none can merge under the
 standing rule, for a reason that has nothing to do with their contents.** Each carries
