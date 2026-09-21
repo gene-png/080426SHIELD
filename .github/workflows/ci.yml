@@ -296,6 +296,14 @@ jobs:
           # nothing: delete any of the three and every other gate in the repo
           # still printed its certificate.
           bash tests/gates/argument_guards.sh
+          # A self-test nobody runs is furniture. `red-on-revert.sh` is the
+          # harness that keeps `git checkout --` out of the restore path, and
+          # it shipped with a restore check that compared a file to itself --
+          # a green no matter what, in the one place a reader would look for
+          # the guarantee. It went unnoticed for eleven days because nothing
+          # executed it. This is one line and it exercises all three exit
+          # codes on a scratch file.
+          bash scripts/red-on-revert.sh --self-test
 
       - name: gates can fail
         run: python apps/api/scripts/check_gate_fixtures.py
