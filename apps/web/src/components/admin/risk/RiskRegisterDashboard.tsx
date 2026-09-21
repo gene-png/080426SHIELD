@@ -461,6 +461,40 @@ export function RiskRegisterDashboard(): JSX.Element {
               keyed on the OUTCOME so it is non-zero under either, and it is
               derived server-side from the stored entries, so unlike the
               withheld-inputs banner below it survives a reload. */}
+          {/* #372. A partial synthesis keeps what succeeded, so the register
+              renders SHORT -- and until now nothing said so. The endpoint has
+              always returned both counts; `lib/risk/types.ts` did not declare
+              them, so they were dropped at the TypeScript boundary and the
+              consultant exported a register missing a quarter of its entries
+              with no indication. ATT&CK fixed the identical pair as #115.
+
+              TRANSIENT BY CONSTRUCTION, and stated here rather than left to be
+              discovered: both counts are 0 on a register read back from
+              storage, because they describe a GENERATE RUN. So this banner
+              shows after a generate and is gone on reload -- the same
+              limitation the withheld-inputs banner below carries, and for the
+              same reason. Persisting it needs a migration; tracked separately.
+
+              `> 0` rather than a presence test: 0 and absent are the same value
+              from this API, so a presence test would fire on every stored
+              read. */}
+          {(register.batches_failed ?? 0) > 0 ? (
+            <div
+              className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
+              role="alert"
+              data-testid="risk-batches-failed"
+            >
+              <span className="font-semibold">
+                {register.batches_failed} of {register.batches_total} synthesis
+                batches failed
+              </span>
+              , so this register is INCOMPLETE -- the entries those batches
+              would have produced are missing, not merely unscored. Regenerate
+              before exporting. This notice describes the run you just made and
+              will not reappear after a reload, so do not navigate away
+              expecting to find it.
+            </div>
+          ) : null}
           {register.entries_without_tier > 0 ? (
             <div
               className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"

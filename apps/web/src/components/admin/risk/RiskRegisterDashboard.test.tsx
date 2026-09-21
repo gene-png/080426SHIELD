@@ -359,3 +359,88 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     expect(screen.queryByTestId(BANNER)).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #372 -- a partial synthesis KEEPS what succeeded, so the register renders
+// SHORT. The endpoint has always returned `batches_total` / `batches_failed`;
+// `lib/risk/types.ts` did not declare them, so they were dropped at the
+// TypeScript boundary and nothing could render them. ATT&CK fixed the
+// identical pair as #115.
+//
+// EXERCISED THROUGH GENERATE, NOT THROUGH `latest`, and that is the whole
+// design of this block. Both counts are 0 on a register read back from
+// storage -- they describe a GENERATE RUN. Mocking `fetchRiskRegisterLatest`
+// with `batches_failed: 3` would build a state the API cannot produce, and a
+// test whose setup constructs something the writer cannot emit proves nothing
+// about the writer.
+// ---------------------------------------------------------------------------
+
+describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {
+  beforeEach(() => {
+    getActiveClientId.mockResolvedValue("c1");
+    getClientName.mockResolvedValue("Atlas");
+    fetchRiskGate.mockResolvedValue(gate());
+    fetchRiskRegisterLatest.mockResolvedValue(null);
+  });
+
+  async function generated(over: Partial<RiskRegister>): Promise<void> {
+    generateRiskRegister.mockResolvedValue(register(over));
+    await loaded();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    });
+  }
+
+  it("says the register is incomplete when a batch failed", async () => {
+    await generated({ batches_total: 12, batches_failed: 3 });
+
+    const note = await screen.findByTestId("risk-batches-failed");
+    // BOTH operands. "3 batches failed" does not tell a consultant whether
+    // that is three of four or three of forty, and the decision -- regenerate
+    // or ship -- turns on exactly that.
+    expect(note.textContent).toMatch(/3 of 12/);
+    // The word that makes it actionable rather than ambient, and the remedy.
+    expect(note.textContent).toMatch(/INCOMPLETE/);
+    expect(note.textContent).toMatch(/Regenerate before exporting/i);
+    expect(note).toHaveAttribute("role", "alert");
+  });
+
+  it("warns that the notice does not survive a reload", async () => {
+    // The transience is a property of the API, not of the component: a stored
+    // read returns 0. A consultant who navigates away loses the only record
+    // that this register is short, so the banner has to say so -- otherwise
+    // the disclosure quietly becomes a trap.
+    await generated({ batches_total: 12, batches_failed: 3 });
+    const note = await screen.findByTestId("risk-batches-failed");
+    expect(note.textContent).toMatch(/will not reappear after a reload/i);
+  });
+
+  it("stays silent when every batch succeeded", async () => {
+    await generated({ batches_total: 12, batches_failed: 0 });
+    expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
+  });
+
+  it("stays silent on a register read back from storage", async () => {
+    // THE PREDICATE'S REASON. Both counts are 0 on a stored read, so a
+    // PRESENCE test would fire this banner on every reload of every register
+    // ever generated. A banner that always renders is furniture, and a reader
+    // learns to skip it -- which is worse than no banner, because the one time
+    // it matters it looks the same.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ batches_total: 0, batches_failed: 0 }),
+    );
+    await loaded();
+    expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
+  });
+
+  it("stays silent when the fields are absent entirely", async () => {
+    // A register serialized before these fields reached the type. `?? 0` reads
+    // that as "not a partial run", which is the same conclusion as 0 -- and is
+    // the only safe one, because this API cannot distinguish absent from zero.
+    // Asserted so nobody "improves" it into a not-recorded banner, which would
+    // fire on every stored register.
+    fetchRiskRegisterLatest.mockResolvedValue(register({}));
+    await loaded();
+    expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
+  });
+});

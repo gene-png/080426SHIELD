@@ -116,6 +116,21 @@ export interface RiskRegister {
    * derived now too.
    */
   entries_total: number;
+  /**
+   * A partial synthesis KEEPS what succeeded (#372). `risk_synthesize` runs
+   * concurrent batches, and a failed one costs its entries silently -- the
+   * register renders short with nothing saying so.
+   *
+   * OPTIONAL, and that is the API's shape rather than defensiveness: both are
+   * `0` on a register read back from storage, because they describe a GENERATE
+   * RUN and not the register. The schema comment says so at the field. A
+   * consumer must therefore treat `0` as "not a partial run", never as "no
+   * failures recorded" -- absence and zero are the same value here, which is a
+   * limit of the API, stated so nobody reads more out of it than it holds.
+   */
+  batches_total?: number;
+  batches_failed?: number;
+
   entries_without_tier: number;
   /**
    * #132, the same instrument pointed at the LINKS, and three counters because
