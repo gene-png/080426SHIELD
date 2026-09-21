@@ -70,8 +70,20 @@ gamma
   before="$(cksum < "$probe")"
   fail=0
 
+  # `bash "$0"`, NOT `"$0"`. This file is mode 100644 in git -- as is nearly
+  # every script in this repo, because `core.fileMode` is false on the Windows
+  # checkout where they are written, so an exec bit set locally never reaches
+  # the index. `ci.yml` invokes all of them as `bash <script>` for the same
+  # reason.
+  #
+  # Invoking `"$0"` directly worked on the author's machine (the filesystem
+  # bit was set) and returned 126 -- "found but not executable" -- for EVERY
+  # case in CI. The self-test failed loudly and named the code, which is the
+  # only reason this took minutes rather than a morning: a harness that had
+  # swallowed the 126 would have reported the runs as ordinary failures.
+  #
   # </dev/null so a check that would read stdin fails fast instead of hanging.
-  run() { "$0" "$@" >/dev/null 2>&1 </dev/null; echo $?; }
+  run() { bash "$0" "$@" >/dev/null 2>&1 </dev/null; echo $?; }
 
   # NOTE the explicit file argument. `grep -q gamma` with no file reads STDIN
   # and blocks forever, which is how the first draft of this self-test hung --
@@ -156,8 +168,13 @@ two
   # the exit codes above.
   [ "$(cksum < "$probe")" = "$before" ] || { echo "self-test: the probe was left MUTATED after all runs" >&2; fail=1; }
 
+  # 126/127 are "could not execute", never a verdict. Saying so turns a
+  # confusing wall of wrong-exit-code lines into one sentence naming the cause.
   if [ "$fail" -ne 0 ]; then
     echo "red-on-revert: SELF-TEST FAILED -- do not trust this harness." >&2
+    echo "red-on-revert: if the codes above are 126 or 127, the script could not" >&2
+    echo "red-on-revert: be EXECUTED rather than having produced a verdict --" >&2
+    echo "red-on-revert: check how it is being invoked, not what it decided." >&2
     exit 2
   fi
   echo "red-on-revert: self-test passed -- 1 (stayed green), 0 (named test went red), 1 (red on a DIFFERENT test), 2 (could not look) x6, multi-pair applied and refused atomically, and every probe is byte-identical."
