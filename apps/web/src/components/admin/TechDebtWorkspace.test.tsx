@@ -88,18 +88,21 @@ const fetchLatestDeliverable = vi.mocked(techDebtClient.fetchLatestDeliverable);
 
 interface Deferred<T> {
   promise: Promise<T>;
+  resolve: (value: T) => void;
   reject: (err: unknown) => void;
 }
 
 function deferred<T>(): Deferred<T> {
   let reject!: (err: unknown) => void;
-  const promise = new Promise<T>((_res, rej) => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
     reject = rej;
   });
   // Nothing awaits this until the test rejects it; an unhandled rejection
   // warning would otherwise fire before the workspace attaches its catch.
   promise.catch(() => undefined);
-  return { promise, reject };
+  return { promise, resolve, reject };
 }
 
 const OVERLAP = { groups: [] } as unknown as OverlapAnalysis;
@@ -157,6 +160,76 @@ describe("TechDebtWorkspace supplementary-fetch failures (#292)", () => {
       await Promise.resolve();
     });
 
+    expect(screen.queryByTestId("techdebt-refresh-error")).toBeNull();
+  });
+
+  it("ignores a superseded refresh whose FIRST fetch resolved out of order", async () => {
+    // THE INVERSION, and it is the defect the previous revision of this fix
+    // introduced while closing the one above.
+    //
+    // A token's ordering is the order `begin` was CALLED. Minted after an
+    // await, the tokens are ordered by when those awaits RESOLVED instead --
+    // so the refresh invoked FIRST, whose earlier fetch is slow, mints the
+    // LATER token, owns the slot, and writes over the newer one. That is
+    // verbatim what the token replaced.
+    //
+    // The test above cannot see it: `fetchOverlapAnalysis` is a plain
+    // `mockResolvedValue`, so only the plan fetch ever varies in timing and
+    // the mint order can never invert. Here the FIRST fetch is the one that
+    // resolves late, which is what this file's own comment says happens --
+    // "overlapping fetches can resolve out of order".
+    fetchLatestList.mockResolvedValue(draftList());
+    fetchLatestDeliverable.mockResolvedValue(null);
+
+    const slowOverlap = deferred<OverlapAnalysis>();
+    fetchOverlapAnalysis
+      .mockResolvedValueOnce(OVERLAP) // mount
+      .mockReturnValueOnce(slowOverlap.promise) // edit #1 -- SLOW
+      .mockResolvedValue(OVERLAP); // edit #2 -- fast
+
+    // MOCK ORDER FOLLOWS CALL ORDER, NOT EDIT ORDER, and getting that wrong is
+    // how the first draft of this test asserted the opposite of what it meant.
+    // Edit #1 is blocked on its overlap fetch, so it has not reached its plan
+    // fetch at all -- edit #2 calls second. Edit #1 calls THIRD, after its
+    // overlap is released below.
+    const stalePlan = deferred<ConsolidationPlanSummary>();
+    fetchConsolidationPlan
+      .mockResolvedValueOnce(PLAN) // 1st call: mount
+      .mockResolvedValueOnce(PLAN) // 2nd call: edit #2 -- succeeds
+      .mockReturnValueOnce(stalePlan.promise); // 3rd call: edit #1, late
+
+    render(<TechDebtWorkspace serviceId="svc-1" serviceTitle="Atlas TD" />);
+    const edit = await screen.findByRole("button", { name: "edit a row" });
+
+    await act(async () => {
+      fireEvent.click(edit); // edit #1: overlap fetch hangs
+    });
+    await act(async () => {
+      fireEvent.click(edit); // edit #2: completes end to end
+    });
+
+    // Edit #1 has not reached its plan fetch yet -- its overlap is still in
+    // flight. Asserted so the interleaving under test is the real one.
+    expect(fetchConsolidationPlan).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("techdebt-refresh-error")).toBeNull();
+
+    // Now edit #1's overlap finally lands, LATE, and it goes on to make its
+    // plan call. With the token minted after this await it would be issued
+    // HERE -- after edit #2's -- and would therefore own the slot.
+    await act(async () => {
+      slowOverlap.resolve(OVERLAP);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchConsolidationPlan).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      stalePlan.reject(new Error("plan 503"));
+      await Promise.resolve();
+    });
+
+    // The figures on screen came from edit #2 and are current. A superseded
+    // request must not describe them.
     expect(screen.queryByTestId("techdebt-refresh-error")).toBeNull();
   });
 

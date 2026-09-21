@@ -114,7 +114,14 @@ export function TechDebtWorkspace({
   const overlapSeq = React.useRef(0);
 
   const refreshOverlap = React.useCallback(async () => {
+    // BOTH sequence numbers are taken HERE, before any await, and the token is
+    // one of them. See `useRefreshFailures`: minting after an await orders the
+    // tokens by RESOLUTION rather than by INVOCATION, which inverts the guard
+    // for exactly the interleaving it exists to stop. The first version of
+    // this fix minted it below the overlap fetch and was weaker than the
+    // hand-rolled `seq` it replaced.
     const seq = ++overlapSeq.current;
+    const overlapAttempt = beginRefresh("overlap-plan");
     setOverlapLoading(true);
     try {
       const next = await fetchOverlapAnalysis(serviceId);
@@ -131,7 +138,6 @@ export function TechDebtWorkspace({
     } finally {
       if (seq === overlapSeq.current) setOverlapLoading(false);
     }
-    const overlapAttempt = beginRefresh("overlap-plan");
     try {
       const nextPlan = await fetchConsolidationPlan(serviceId);
       if (seq === overlapSeq.current) {
@@ -163,7 +169,12 @@ export function TechDebtWorkspace({
   }, [serviceId, beginRefresh]);
 
   const refresh = React.useCallback(async () => {
+    // Before any await, for the reason above. This one sat below TWO of them
+    // -- `fetchLatestList` and the whole of `refreshOverlap` -- so a mount
+    // whose list fetch was slow could mint its deliverable token after a later
+    // `refresh` had already minted and cleared one.
     const seq = ++listSeq.current;
+    const deliverableAttempt = beginRefresh("deliverable");
     try {
       const next = await fetchLatestList(serviceId);
       if (seq === listSeq.current) {
@@ -178,7 +189,6 @@ export function TechDebtWorkspace({
       setLoadError(err instanceof Error ? err.message : "Failed to load list.");
     }
     await refreshOverlap();
-    const deliverableAttempt = beginRefresh("deliverable");
     try {
       const deliv = await fetchLatestDeliverable(serviceId);
       setDeliverable(deliv);

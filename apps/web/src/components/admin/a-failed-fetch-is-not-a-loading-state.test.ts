@@ -202,7 +202,6 @@ describe("admin workspaces never present a failed fetch as an ongoing load", () 
   });
 
   it.each([
-    ["a catch that reverts", "try { a(); } catch { setX(null); }"],
     [
       "a catch that surfaces",
       "try { a(); } catch (e) {\n  // why\n  note(e);\n}",
@@ -229,6 +228,26 @@ describe("admin workspaces never present a failed fetch as an ongoing load", () 
     expect(swallows(sample)).toBe(false);
   });
 
+  // WHAT THIS DETECTOR CANNOT SEE, stated because the table above reads as a
+  // coverage claim and a reader will take it as one.
+  //
+  // It tests EMPTINESS. A catch whose body sets state back to the same value
+  // the loading state uses -- `catch { setScore(null); }` where `score` is
+  // `T | null` -- is byte-identical in EFFECT to `} catch {}` and this
+  // detector passes it clean. That form was in the known-good table for one
+  // revision, labelled "a catch that reverts", which asserted the opposite of
+  // what it does for exactly the panels this suite is about.
+  //
+  // It is removed rather than reclassified: a row in a known-good table is a
+  // statement that the form is FINE, and there is no honest way to say "fine,
+  // except in the case this file exists for". What covers it instead is the
+  // behavioural tests in `CsfWorkspace.test.tsx` and `TechDebtWorkspace.test.tsx`,
+  // which assert a notice RENDERS -- a reverting catch fails those even though
+  // it passes this.
+  //
+  // So the failure message below says "empty", not "neither revert nor
+  // surface". The stronger wording was a claim the detector does not support.
+
   it("no component swallows a failure", () => {
     const offenders = FILES.filter((f) =>
       swallows(readFileSync(f, "utf8")),
@@ -236,9 +255,10 @@ describe("admin workspaces never present a failed fetch as an ongoing load", () 
 
     expect(
       offenders,
-      `these admin components catch a failure and neither revert nor surface it,
-so the panel is left in a state a consultant reads as "still loading". Set a
-refresh-error state and render it; "non-blocking" is not the same as silent.`,
+      `these admin components have a catch whose body is EMPTY after comments,
+so a failure is discarded and the panel is left in a state a consultant reads
+as "still loading". Set a refresh-error state and render it; "non-blocking" is
+not the same as silent.`,
     ).toEqual([]);
   });
 });

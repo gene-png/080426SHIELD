@@ -36,9 +36,17 @@ export function EnsureActiveClient({
         if (!svc.client_id) throw new Error("Service has no client.");
 
         // An ADVISORY read: its only job is to decide whether the POST
-        // below is redundant. A failure here genuinely is safe to absorb --
-        // it falls through to the write, which throws into the catch at the
-        // bottom and surfaces to the user.
+        // below is redundant. A failure here is safe to absorb because it
+        // falls through to the write -- and the write is now CHECKED, which
+        // it was not when this sentence was first written.
+        //
+        // The original claim was that the POST "throws into the catch at the
+        // bottom and surfaces to the user". `fetch` rejects only on network
+        // failure: a 403 or a 500 resolves, so the cookie stayed unset,
+        // `setReady(true)` rendered the children, and every tenant-scoped
+        // call underneath 400'd or 404'd under a misleading per-workspace
+        // error. The exemption rested on a check that did not exist, and the
+        // sentence is what would have stopped the next reader adding it.
         //
         // Written as an explicit handler rather than `.catch(() => null)`
         // because the two are indistinguishable to any reader, and to the
@@ -56,11 +64,20 @@ export function EnsureActiveClient({
           cur = null;
         }
         if (cur?.active !== svc.client_id) {
-          await fetch("/api/active-client", {
+          const set = await fetch("/api/active-client", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ clientId: svc.client_id }),
           });
+          if (!set.ok) {
+            // FAIL CLOSED. Without this the cookie is unset, the children
+            // render anyway, and every tenant-scoped call underneath fails
+            // with a message about the wrong thing. A workspace that cannot
+            // establish its client has not opened.
+            throw new Error(
+              `Couldn't open this workspace for its client (${set.status}).`,
+            );
+          }
         }
         if (!cancelled) setReady(true);
       } catch (err) {

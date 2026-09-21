@@ -70,6 +70,22 @@ export type RefreshFailures = {
    * token; there is deliberately no unsequenced `note`/`clear` on this
    * object, because an optional guard is one a caller can forget and three
    * of four callers did.
+   *
+   * **CALL THIS BEFORE ANY `await`, at the top of the refresh function.**
+   *
+   * The token's ordering is the order `begin` was CALLED. Mint it after an
+   * await and the tokens are ordered by when those awaits RESOLVED, which is
+   * the opposite of what the guard needs: a refresh invoked FIRST whose
+   * earlier fetch is slow mints the LATER token, owns the slot, and writes
+   * over the newer refresh -- verbatim the defect the token replaced.
+   *
+   * Not hypothetical. `TechDebtWorkspace.refreshOverlap` minted below
+   * `await fetchOverlapAnalysis`, in a function whose own comment says those
+   * fetches "can resolve out of order", so the first version of this fix was
+   * WEAKER than the hand-rolled `seq` it replaced -- that captured at entry.
+   * Caught by the third adversarial round, not by the tests: the existing one
+   * mocks the first fetch with `mockResolvedValue`, so only the second ever
+   * varied in timing and the inversion could not arise.
    */
   begin: (source: string) => RefreshAttempt;
 };
