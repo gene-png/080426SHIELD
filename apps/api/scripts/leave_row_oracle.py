@@ -852,6 +852,50 @@ def main(argv: list[str]) -> int:
         labels = check_labels()
         return max(registry, labels)
 
+    if "--check-anchors" in argv:
+        # CAN THIS TOOL STILL MEASURE? A yes/no, needing no judgement, which is
+        # why it is gateable when the oracle itself is not (#299).
+        #
+        # The anchors are lines LIFTED from `redact.py`, and that file keeps
+        # being edited. Two had drifted out of it -- `+ r"){1,3}"` became
+        # `+ r"+){1,3}"`, and a `words` local was renamed `substantive` -- so
+        # the whole oracle had been exiting 2 for an unknown length of time.
+        # It said so, loudly and correctly, to nobody: CI's only step is
+        # `--check-registry`, which returns before `build_mutations` is ever
+        # called. The one property CI watched was the one that could not see
+        # this, while `CLAUDE.md` named the oracle as what keeps LEAVE tables
+        # from pinning nothing.
+        #
+        # This writes nothing and evaluates no row. It builds the mutations --
+        # which raises on a missing anchor or a no-op -- and repeats the
+        # uniqueness check `main` does per mutation, because an anchor matching
+        # TWO lines is equally unmeasurable and is not caught by construction.
+        #
+        # Deliberately NOT the full oracle. Scoring a row needs judgement and
+        # that decision stands; whether the instrument works does not.
+        original = _original()
+        try:
+            muts = build_mutations(original)
+        except CannotMeasure as exc:
+            print(f"leave-row-oracle: ANCHORS STALE -- {exc}")
+            print("The guard list and redact.py have drifted apart, so the")
+            print("oracle cannot measure and any earlier run is evidence about")
+            print("a tree that no longer exists. Re-anchor the mutation.")
+            return 2
+        ambiguous = [
+            (name, original.count(old)) for name, old, _new in muts if original.count(old) != 1
+        ]
+        if ambiguous:
+            print("leave-row-oracle: ANCHORS AMBIGUOUS -- cannot measure:")
+            for name, n in ambiguous:
+                print(f"  {name}: anchor appears {n} times, not 1")
+            return 2
+        print(f"leave-row-oracle: {len(muts)} anchors resolve, each on exactly one line.")
+        print("The instrument can measure. This says NOTHING about whether any")
+        print("LEAVE row pins anything -- that is the oracle's own run, and it")
+        print("is deliberately not automated.")
+        return 0
+
     original = _original()
     REDACT.write_text(original, encoding="utf-8")
     if _evaluate(rows):

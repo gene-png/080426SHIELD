@@ -320,6 +320,24 @@ jobs:
         working-directory: apps/api
         run: python scripts/leave_row_oracle.py --check-registry
 
+      # Whether the oracle CAN MEASURE, which is not what the step above asks
+      # (#299). `--check-registry` returns before `build_mutations` is called,
+      # so a mutation anchor that has drifted out of `redact.py` is invisible
+      # to it -- and two had, leaving the whole oracle exiting 2 for an unknown
+      # length of time while CI stayed green.
+      #
+      # This is the repo's recorded shape one level up: a gate whose
+      # correctness lives in something nothing checks. `check_test_integrity`
+      # had it in a `working-directory:` line; this one has it in the distance
+      # between an anchor string and a file that keeps being edited.
+      #
+      # Seconds to run, no redaction pass, no judgement. Running the FULL
+      # oracle here is deliberately not done -- scoring a row needs judgement
+      # and `CLAUDE.md` already decided that.
+      - name: LEAVE-row oracle can still measure
+        working-directory: apps/api
+        run: python scripts/leave_row_oracle.py --check-anchors
+
       # Spelled counts of things that change, in the SHARED documents. Blocking:
       # a wrong count in CLAUDE.md or DELIVERY_PLAN.md is a claim every reader of
       # the repo is entitled to rely on, and anyone may fix it. The enforced set
