@@ -199,23 +199,6 @@ jobs:
             echo "reporting a verdict it never verified."
           fi
 
-      - name: A subject must not name a decision the commit does not add
-        # Placed here because this job already has the full history and the
-        # branch's own commit range; no other workflow does.
-        #
-        # A branch shipped `docs(decisions): D-072 -- ...` for a commit adding
-        # D-078. On rebase, every positional conflict in an append-only file
-        # then looked like a D-number collision and had to be opened to find
-        # out it was not one. The subject was the only thing that was wrong.
-        #
-        # This checks CONSISTENCY, not completeness: a subject naming no
-        # decision is fine, because every squash merge on main is a PR title
-        # that names none. Requiring completeness would have failed the whole
-        # history to catch one defect -- measured against the real commits
-        # before the boundary was chosen.
-        run: |
-          python apps/api/scripts/check_decision_numbers.py             --base "origin/${{ github.base_ref }}" --head HEAD
-
       - name: The PR template must not satisfy the audit gate by itself
         # Its text goes into every PR body, so one character decides whether this
         # check means anything. The commented examples use "->" and not ":"
@@ -245,3 +228,99 @@ jobs:
             --body /tmp/pr_body.txt \
             --commits /tmp/pr_commits.txt \
             --linked /tmp/pr_linked.txt
+
+      - name: >-
+          D-NUMBERS: a subject must not name a decision the commit does not add
+          (this step is NOT about issue closes -- see its failure output)
+        # ## Why this step lives in a job called "No accidental issue closes"
+        #
+        # It does not belong to that name, and GitHub shows a reader the JOB
+        # name, never the step's. So a D-number mismatch turns a required check
+        # called "No accidental issue closes" red, and the reader goes looking
+        # for a closing keyword that is not there (#318, from the #296 review).
+        # That is this repo's own guard-names-the-CHECK-not-the-CAUSE defect,
+        # in the workflow file whose neighbouring comment states the principle.
+        #
+        # **It is not split into its own job, and that is a deliberate trade
+        # rather than an oversight.** A new job is not a required check until
+        # someone edits branch protection, so splitting it here would move a
+        # currently-BLOCKING check into a non-blocking one and leave an
+        # enforcement gap open for as long as it took anyone to notice. A
+        # misleading name costs a wrong search; losing the block costs the
+        # defect. Between the two, keep the block.
+        #
+        # So the cost is paid where it actually lands -- at the failure -- by
+        # the step name above and by the banner the run prints below. Splitting
+        # it properly needs a branch-protection change, which only a human with
+        # admin can make, and is tracked rather than done unilaterally.
+        #
+        # PLACED LAST IN THIS JOB, DELIBERATELY. It used to run BEFORE
+        # `Reject undeclared issue closes`, and neither later step carries an
+        # `if:` or `continue-on-error` -- so a D-number failure SKIPPED the
+        # close guard, and this banner then told the reader their closing
+        # keywords were fine about a check that had never run. "I could not
+        # look" wearing "nothing to complain about", emitted by the fix for a
+        # reporting defect.
+        #
+        # Running last makes the assurance true by construction rather than by
+        # wording: if this step is reached, the close guard has already passed.
+        #
+        # In this job at all because it already has the full history and the
+        # branch's own commit range; no other workflow does.
+        #
+        # A branch shipped `docs(decisions): D-072 -- ...` for a commit adding
+        # D-078. On rebase, every positional conflict in an append-only file
+        # then looked like a D-number collision and had to be opened to find
+        # out it was not one. The subject was the only thing that was wrong.
+        #
+        # This checks CONSISTENCY, not completeness: a subject naming no
+        # decision is fine, because every squash merge on main is a PR title
+        # that names none. Requiring completeness would have failed the whole
+        # history to catch one defect -- measured against the real commits
+        # before the boundary was chosen.
+        run: |
+          # The banner is the point. A reader arrives here from a red check
+          # named "No accidental issue closes" and needs to be told, before
+          # anything else, that the closing keywords are not what failed.
+          # `set +e` / capture / `set -e`, NOT `if ! cmd; then status=$?`.
+          # Inside the then-branch of a negated test, `$?` is the status of the
+          # NEGATION -- 0 when the command failed. MEASURED:
+          #
+          #     bash -c 'if ! false; then echo $?; fi'   ->   0
+          #
+          # So that idiom would have printed the banner and exited 0: a step
+          # that announces a failure and reports success. The exact shape
+          # CLAUDE.md opens with, one layer down, inside the fix for a
+          # different reporting defect.
+          set +e
+          python apps/api/scripts/check_decision_numbers.py             --base "origin/${{ github.base_ref }}" --head HEAD
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo ""
+            echo "=============================================================="
+            echo "THIS STEP DOES NOT CHECK CLOSING KEYWORDS."
+            echo ""
+            echo "The red check is named 'No accidental issue closes' because"
+            echo "this D-NUMBER step shares that job. What failed is above."
+            echo ""
+            # TWO EXIT CODES, TWO CAUSES. check_decision_numbers.py returns 1
+            # for a real mismatch and 2 for 'I could not look' -- its own
+            # __main__ says "a crash must not share an exit code with 'found
+            # something'". A banner naming the exit-1 cause unconditionally
+            # would hand a reader a false cause AND an imperative naming work
+            # that cannot help.
+            if [ "$status" -eq 1 ]; then
+              echo "A commit SUBJECT names a D-number the commit does not add."
+              echo "Fix the commit subject, not the PR body."
+            else
+              echo "The check could not run (exit $status) -- it reached no"
+              echo "verdict about your commits. Read its output above: this is"
+              echo "a git or environment failure, not something to fix in a"
+              echo "commit message."
+            fi
+            echo ""
+            echo "Tracked in #318."
+            echo "=============================================================="
+            exit $status
+          fi
