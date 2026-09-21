@@ -200,6 +200,53 @@ export function RiskDashboard({
   data: RiskDashboardData;
 }): JSX.Element {
   const tc = data.tier_counts;
+  // #313. The qualifier existed, was computed, and reached the ADMIN only --
+  // `_serialize` publishes it and `RiskRegisterDashboard.tsx` banners it, and
+  // that banner's own copy ends by saying a client reading this register sees
+  // those rows as dashes. The admin was told the client sees the undisclosed
+  // version, and this surface was left in exactly that state.
+  //
+  // THREE states, not two. `undefined` is a register serialized before the
+  // field existed: nobody looked. `0` is looked-and-nothing-withheld, which
+  // is silence. Anything else is the disagreement and gets announced.
+  // #313. One count per breakdown, because `tiers`, `axes` and `actions`
+  // filter INDEPENDENTLY in `risk_dashboard`. A single count derived from
+  // `tiers` left this silent while `axis_counts` summed short -- the defect
+  // this banner exists to disclose, under a disclosure certifying its absence.
+  //
+  // NO not-recorded state, and the first version was wrong to have one. These
+  // are computed per request and required in `RiskDashboardResponse`, so the
+  // API always sends them; `undefined` was a state the server cannot produce,
+  // and the branch handling it was production code for an unreachable input
+  // with a test built to exercise it. That pattern belongs to PERSISTED
+  // fields (#316's `excluded_inputs`), which this is not.
+  const gaps: Array<[string, number]> = (
+    [
+      ["the 5x5 matrix and the tier counts", data.entries_without_tier],
+      ["the axis breakdown", data.entries_without_axis],
+      ["the action breakdown", data.entries_without_action],
+    ] as Array<[string, number]>
+  ).filter(([, n]) => n > 0);
+  const withheldNote =
+    gaps.length > 0 ? (
+      <span>
+        <span className="font-semibold">
+          Some entries are counted in Open risks and missing from a breakdown
+          below.
+        </span>{" "}
+        Of {data.total_entries} entries:{" "}
+        {gaps.map(([label, n], i) => (
+          <span key={label}>
+            {i > 0 ? "; " : ""}
+            {n} missing from {label}
+          </span>
+        ))}
+        . Each is counted separately because each breakdown filters
+        independently — an entry can carry a valid tier and still be missing
+        from the axis chart. Regenerate before exporting: a client reading this
+        register sees those rows as dashes.
+      </span>
+    ) : null;
   return (
     <DashShell
       title="Risk Register"
@@ -207,6 +254,15 @@ export function RiskDashboard({
       releasedAt={data.released_at}
       version={data.version}
     >
+      {withheldNote ? (
+        <div
+          className="mb-4 rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
+          role="alert"
+          data-testid="risk-entries-without-tier"
+        >
+          {withheldNote}
+        </div>
+      ) : null}
       <KpiRow>
         <KpiCard
           label="Open risks"

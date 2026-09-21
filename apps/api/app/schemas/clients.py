@@ -440,6 +440,33 @@ class RiskDashboardResponse(BaseModel):
     released: bool = True
     version: int
     total_entries: int
+    #: #313. How many entries are in `total_entries` and in NO breakdown.
+    #:
+    #: `risk_dashboard` computes `tier_counts`, `axis_counts`, `action_counts`
+    #: and `matrix` over filtered lists -- `[t for t in (...) if t is not
+    #: None]` -- while `total_entries` is `len(entries)`. So an entry with no
+    #: tier is counted in the headline and dropped from every breakdown, and
+    #: the two disagree with nothing explaining the gap.
+    #:
+    #: The fact was already computed and already published -- to the ADMIN.
+    #: `routes/risk.py::_serialize` carries `entries_without_tier` and the
+    #: admin dashboard banners it, and that banner's copy ends by saying a
+    #: client reading this register sees those rows as dashes. The admin was
+    #: told the client sees the undisclosed version.
+    #:
+    #: NO DEFAULT, deliberately. A default of 0 would make "nobody looked"
+    #: indistinguishable from "looked and nothing was withheld" at the one
+    #: place the distinction is recorded -- the #244 shape. The one
+    #: construction site supplies it; the web type is optional so a register
+    #: serialized before this field renders NOT RECORDED rather than silence.
+    entries_without_tier: int
+    #: #313. The axis and action breakdowns filter INDEPENDENTLY of the tier
+    #: one, so one count cannot explain all three. An entry can carry a valid
+    #: tier and an unresolvable axis -- `_coerce_enum` returns `(None, raw)`
+    #: for anything `RiskAxis` does not have -- and it is then in the headline,
+    #: in the matrix, in the tier counts, and absent from `axis_counts`.
+    entries_without_axis: int
+    entries_without_action: int
     critical_count: int
     high_count: int
     tier_counts: dict[str, int]

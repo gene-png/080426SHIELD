@@ -1612,6 +1612,29 @@ def risk_dashboard(
         # client is the unrecoverable one. Tracked in #355; an unstated exemption reads
         # as an oversight to whoever runs the twin sweep next.
         total_entries=len(entries),
+        # #313. Derived from the SAME filter the breakdowns use, so the two
+        # cannot disagree: `tiers` drops every entry whose tier is None, and
+        # this is exactly what it dropped. Deriving it rather than recounting
+        # means a change to the filter moves both numbers together.
+        # #313. ONE COUNT PER BREAKDOWN, because the four lists above filter
+        # INDEPENDENTLY and a single number cannot explain all of them.
+        #
+        # The first version published only the tier gap and the banner claimed
+        # the entries were "missing from the matrix and every breakdown below".
+        # That is true of the matrix -- `tier is None` exactly when likelihood
+        # or impact was None, which is the same predicate `pairs` uses -- and
+        # FALSE of axis and action, which null independently. `_coerce_enum`
+        # returns `(None, raw)` for any value `RiskAxis` does not have, so a
+        # model answering "mitigation" produces an entry with a valid tier and
+        # no axis.
+        #
+        # The failure direction was the expensive one: that entry left
+        # `entries_without_tier` at 0, so the banner stayed SILENT while
+        # `axis_counts` summed to fewer than the headline -- the original #313
+        # defect, now under a disclosure certifying it does not exist.
+        entries_without_tier=len(entries) - len(tiers),
+        entries_without_axis=len(entries) - len(axes),
+        entries_without_action=len(entries) - len(actions),
         critical_count=tc.get(RiskTier.CRITICAL.value, 0),
         high_count=tc.get(RiskTier.HIGH.value, 0),
         tier_counts=tc,

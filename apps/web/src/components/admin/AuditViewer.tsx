@@ -131,6 +131,68 @@ export function AuditViewer(): JSX.Element {
       <span className="text-xs text-ink-tertiary">—</span>
     );
 
+  // NOT RECORDED rather than an empty cell, for the reason the redaction
+  // column already applies: a blank reads as "nothing was discarded" when it
+  // means "nothing was recorded", and those are different facts. An EMPTY
+  // object is a THIRD state -- the writer looked and had nothing to say --
+  // and is rendered as such rather than folded into either.
+  function renderDetails(
+    details: Record<string, unknown> | null,
+  ): React.ReactNode {
+    if (details === null || details === undefined) {
+      return <span className="text-ink-tertiary italic">not recorded</span>;
+    }
+    const pairs = Object.entries(details);
+    if (pairs.length === 0) {
+      return <span className="text-ink-tertiary italic">none recorded</span>;
+    }
+    // TRUNCATED, and the cap is not cosmetic.
+    //
+    // `routes/risk.py`'s audit row carries `rejected_enum_values` and
+    // `dropped_link_values` -- RAW MODEL-AUTHORED STRINGS. `_coerce_enum`
+    // ends `return None, raw` with `raw = str(value).strip()` and no length
+    // bound, and `_record` dedupes without capping either the string or the
+    // list. The model was fed the client's own technique and control
+    // inventory, so a client-specific name that fails to resolve is stored
+    // verbatim.
+    //
+    // CSF and ZT hold the opposite constraint and TEST it --
+    // `test_csf_run_ai_audit_row_carries_counts_but_no_model_content` asserts
+    // client content is absent, on the stated ground that the audit row is a
+    // durable store outside the artifact mechanism. Whether `risk.py` is
+    // exempt is a decision nobody has written down; it is filed, not settled
+    // here.
+    //
+    // What this component can do is refuse to be the surface that makes an
+    // unbounded blob a layout problem. The cap is a render boundary, not a
+    // fix: the write side is where the constraint belongs.
+    const MAX_VALUE = 200;
+    const MAX_PAIRS = 24;
+    const shown = pairs.slice(0, MAX_PAIRS);
+    const render = (v: unknown): string => {
+      const text =
+        typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+      return text.length > MAX_VALUE
+        ? `${text.slice(0, MAX_VALUE)}… (${text.length} chars)`
+        : text;
+    };
+    return (
+      <dl className="font-mono text-xs text-ink-secondary">
+        {shown.map(([k, v]) => (
+          <div key={k} className="flex gap-1">
+            <dt className="text-ink-tertiary">{k}:</dt>
+            <dd className="break-all">{render(v)}</dd>
+          </div>
+        ))}
+        {pairs.length > MAX_PAIRS ? (
+          <div className="text-ink-tertiary italic">
+            and {pairs.length - MAX_PAIRS} more keys not shown
+          </div>
+        ) : null}
+      </dl>
+    );
+  }
+
   const activityColumns: DataTableColumn<AuditEntryRow>[] = [
     {
       key: "at",
@@ -166,6 +228,27 @@ export function AuditViewer(): JSX.Element {
           {shortId(e.actor_user_id)}
         </span>
       ),
+    },
+    {
+      key: "details",
+      header: "Details",
+      // #322. Every discard counter this repo has added lands in `details`:
+      // #122's entries_received / entries_written / discarded_entries /
+      // entries_write_check, #132's dropped_link_values and
+      // entries_unlinked_after_drops, and earlier rejected_enum_values,
+      // entries_without_tier, batches_failed.
+      //
+      // All of it was reachable through /admin/audit-entries and none of it
+      // through here -- the row already carried `details` and this component
+      // dropped it, so "now visible" was true of the API and false of the UI.
+      // A consultant looking at this tab after a run that discarded every
+      // entry saw a row identical to a clean one.
+      //
+      // Rendered as key/value pairs rather than a summary, deliberately: the
+      // payload's shape differs per action, and a component that knows which
+      // keys matter is a second place to update every time a counter is
+      // added. Whatever the API records, a person can read.
+      cell: (e) => renderDetails(e.details),
     },
     {
       key: "correlation",
