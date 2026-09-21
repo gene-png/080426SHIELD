@@ -62,6 +62,12 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
 
 function register(over: Partial<RiskRegister> = {}): RiskRegister {
   return {
+    // #372. `null` is the honest default: most registers in these fixtures are
+    // not the product of a recorded generate run, and `null` is exactly what
+    // the server sends for those. Defaulting to `0` would have every fixture
+    // assert "nothing failed", which is a claim, not an absence.
+    batches_total: null,
+    batches_failed: null,
     excluded_inputs: [],
     // #244. `true` here means "the server looked and there was nothing", which
     // is what every register generated today reports. The `false` case -- a
@@ -405,14 +411,60 @@ describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {
     expect(note).toHaveAttribute("role", "alert");
   });
 
-  it("warns that the notice does not survive a reload", async () => {
-    // The transience is a property of the API, not of the component: a stored
-    // read returns 0. A consultant who navigates away loses the only record
-    // that this register is short, so the banner has to say so -- otherwise
-    // the disclosure quietly becomes a trap.
+  it("KEEPS the disclosure after Export — the action it warns about", async () => {
+    // THE DEFECT THIS BLOCK WAS MISSING, and the sibling block one screen up
+    // pins the identical property for `excluded_inputs` because it was burned
+    // by it first.
+    //
+    // `onExport` does `setRegister(await exportRiskRegister(cid))`. While the
+    // tally was response-only, `export` built its response from a STORED
+    // register, so it carried the schema default and this line erased the
+    // "INCOMPLETE" warning at the exact moment the consultant produced the
+    // deliverable it was warning about. Generate, see INCOMPLETE, click
+    // Export, banner gone, short register in the client's XLSX.
+    //
+    // It is persisted now, so the export response carries it. The mock says
+    // so: a `0/0` export response is a state the server no longer produces.
     await generated({ batches_total: 12, batches_failed: 3 });
+    await screen.findByTestId("risk-batches-failed");
+
+    exportRiskRegister.mockResolvedValue(
+      register({
+        batches_total: 12,
+        batches_failed: 3,
+        finalized_at: "2026-09-21T01:00:00Z",
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Export XLSX / PDF / Word" }),
+      );
+    });
+    await waitFor(() => expect(exportRiskRegister).toHaveBeenCalled());
+
+    expect(screen.getByTestId("risk-batches-failed").textContent).toMatch(
+      /3 of 12/,
+    );
+  });
+
+  it("KEEPS the disclosure on a reload, because the tally is persisted", async () => {
+    // The other half, and what the previous revision got wrong. It shipped a
+    // banner whose own copy promised it would vanish, and a comment calling
+    // that "the same limitation the withheld-inputs banner below carries" --
+    // which was false, that one is persisted and survives.
+    //
+    // This is a `latest` read with no generate in front of it: the component
+    // has no run-scoped memory to fall back on, so a pass here can only come
+    // from `_serialize` having read the tally back out of provenance.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ batches_total: 12, batches_failed: 3 }),
+    );
+    await loaded();
+
     const note = await screen.findByTestId("risk-batches-failed");
-    expect(note.textContent).toMatch(/will not reappear after a reload/i);
+    expect(note.textContent).toMatch(/3 of 12/);
+    // And it must not promise its own disappearance any more.
+    expect(note.textContent).not.toMatch(/will not reappear/i);
   });
 
   it("stays silent when every batch succeeded", async () => {
@@ -420,26 +472,22 @@ describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {
     expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
   });
 
-  it("stays silent on a register read back from storage", async () => {
-    // THE PREDICATE'S REASON. Both counts are 0 on a stored read, so a
-    // PRESENCE test would fire this banner on every reload of every register
-    // ever generated. A banner that always renders is furniture, and a reader
-    // learns to skip it -- which is worse than no banner, because the one time
-    // it matters it looks the same.
+  it("stays silent when NOBODY COUNTED, rather than reporting complete", async () => {
+    // `null` is a register generated before the tally was persisted. It is not
+    // "nothing failed" and it is not "something failed" -- nobody looked.
+    //
+    // Renders nothing, deliberately, and this is the one place the PR does NOT
+    // fail closed: there is no record to fail closed on, and a permanent
+    // "completeness unrecorded" banner on every historical register is
+    // furniture that teaches readers to skip the real one. What it does
+    // instead is refuse to assert the positive -- the register is never
+    // described as complete anywhere.
+    //
+    // Asserted so nobody "improves" `!== null` into `?? 0`, which would make a
+    // never-counted register indistinguishable from a clean one.
     fetchRiskRegisterLatest.mockResolvedValue(
-      register({ batches_total: 0, batches_failed: 0 }),
+      register({ batches_total: null, batches_failed: null }),
     );
-    await loaded();
-    expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
-  });
-
-  it("stays silent when the fields are absent entirely", async () => {
-    // A register serialized before these fields reached the type. `?? 0` reads
-    // that as "not a partial run", which is the same conclusion as 0 -- and is
-    // the only safe one, because this API cannot distinguish absent from zero.
-    // Asserted so nobody "improves" it into a not-recorded banner, which would
-    // fire on every stored register.
-    fetchRiskRegisterLatest.mockResolvedValue(register({}));
     await loaded();
     expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
   });

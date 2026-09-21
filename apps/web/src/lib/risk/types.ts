@@ -121,15 +121,20 @@ export interface RiskRegister {
    * concurrent batches, and a failed one costs its entries silently -- the
    * register renders short with nothing saying so.
    *
-   * OPTIONAL, and that is the API's shape rather than defensiveness: both are
-   * `0` on a register read back from storage, because they describe a GENERATE
-   * RUN and not the register. The schema comment says so at the field. A
-   * consumer must therefore treat `0` as "not a partial run", never as "no
-   * failures recorded" -- absence and zero are the same value here, which is a
-   * limit of the API, stated so nobody reads more out of it than it holds.
+   * `| null`, NOT `?: number`, and the first revision of this field had it the
+   * other way. The tally is PERSISTED in the register's provenance and read
+   * back by `_serialize`, so every path -- generate, export, latest -- reports
+   * the run the register came from. `null` means the register predates that
+   * and nobody counted; it is NOT "nothing failed", and the two must stay
+   * distinguishable or a reload reads as an all-clear.
+   *
+   * The wire really does carry `null`: no `exclude_none` or
+   * `response_model_exclude_none` exists anywhere in `apps/api` (measured), so
+   * FastAPI serialises the key. `?: number` declared a shape the server never
+   * produces, and a presence test against it could never discriminate.
    */
-  batches_total?: number;
-  batches_failed?: number;
+  batches_total: number | null;
+  batches_failed: number | null;
 
   entries_without_tier: number;
   /**
