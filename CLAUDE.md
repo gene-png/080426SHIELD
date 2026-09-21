@@ -970,13 +970,33 @@ a real exit code and a real date, and was the minority outcome (D-071).
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
   #73/#75/#79 sweep exactly that way: `risk.py` never calls `analyze_gaps`, it
   re-derives the comparison inline, so a complete call-site sweep reported clean
-  over a file that computes client-facing risk findings against a hardcoded
+  over a file that computed client-facing risk findings against a hardcoded
   target. Grep for what the defect LOOKS like — the literal default values, the
   truncation constant, the magic number, the shape of the comparison. Concretely,
-  on the trio: `grep -rnE "(maturity_tier|maturity_stage) *< *[0-9]"` returns
-  `risk.py:177` on the first try, and `grep -rnE "is not None else [0-9]"`
-  returns `risk.py:193`. Neither appears in any list of `analyze_gaps` callers.
+  on the trio, **as `risk.py` read before #84 was fixed**:
+  `grep -rnE "(maturity_tier|maturity_stage) *< *[0-9]"` returned `risk.py:177`
+  on the first try, and `grep -rnE "is not None else [0-9]"` returned
+  `risk.py:193`. Neither appeared in any list of `analyze_gaps` callers.
   A reimplementation shares the symptom, never the symbol.
+
+  **The example is DATE-QUALIFIED rather than refreshed, and that is the
+  repair this file prescribes for itself.** #84's fix replaced both lines, so
+  both greps now return nothing -- and a reader who tries the technique on a
+  fixed tree gets silence and concludes the technique does not work. Swapping
+  in a fresh live instance would re-arm exactly that: the cited instance is the
+  first thing anyone fixes, and fixing it makes the sentence false again. Pin
+  the example to when it was true; the TECHNIQUE is what survives.
+
+  **AND THE OBVIOUS FIX -- "so call `analyze_gaps`" -- IS REFUSED, deliberately,
+  so the next reader does not make it.** #84 was closed by sharing the TARGET
+  RESOLUTION (`resolve_target_tier` / `resolve_target_stage`, imported rather
+  than copied) and leaving the comparison local. Calling `analyze_gaps` here
+  would cap the risk-synthesis feed at `DEFAULT_TOP_N = 20`, because it returns
+  `gaps=tuple(rows[:top_n])` -- the truncation #75/#79 record in three
+  renderers, arriving in the client's register. Trading a wrong baseline for
+  silent data loss is not a trade. The full migration needs an explicit
+  `top_n` and its own red-on-revert for the truncation; until then this file is
+  a deliberate non-caller, and PR #348 carries the reason at the site.
 - **A CHANGE THAT REMOVES OR REPLACES A GUARD NEEDS AT LEAST ONE ASSERTION
   THAT GOES RED WHEN THE GUARD IS DELETED, EXERCISED THROUGH THE SURFACE THE
   CLIENT ACTUALLY REACHES.** A resolver and a pure function are not that
@@ -1174,6 +1194,39 @@ a real exit code and a real date, and was the minority outcome (D-071).
   have and write beside each one what the input looked like. Any entry whose
   answer is "I don't know" or "there was nothing there" is the bug, and it is
   cheaper to find on that list than in review.
+- **A SELECTOR THAT SELECTS NOTHING PASSES. ASSERT THE COUNT IT SELECTED
+  BEFORE READING ITS RESULT.** Same family as the silent-success branch above,
+  one layer out: there the checker looked and had nothing to say; here the
+  checker never looked, and the green is indistinguishable.
+
+  Measured, four shapes, one property:
+
+  | The selector | What it selected | What it reported |
+  | --- | --- | --- |
+  | `pytest -k <filter>` | zero of the four tests reading a renamed key | green |
+  | `pytest --collect-only` | everything, and ran none of it | a count |
+  | `if "--check-registry" in argv` | nothing; fell through to the report path | exit 0 |
+  | a flag the script does not implement | nothing; ignored | the success banner |
+
+  Every one reports success for having done nothing, and the output is the one
+  you were hoping for. **The remedy is the same in all four: make the count
+  part of the result.** `-k` prints how many it deselected — read it. A grep
+  for the SUBJECT beats a filter you believe in: on the renamed key, `-k` came
+  back green and `grep` found all four consumers.
+
+  **AND A FIXTURE THAT BUILDS AN UNREACHABLE STATE IS THE SAME DEFECT AT THE
+  INPUT END.** A test whose setup constructs something the writer cannot
+  produce proves something about nothing — worse, it can make a correct claim
+  look false, or a false one look proven. The recorded instance: a dashboard
+  fixture set `tier = None` while leaving likelihood and impact intact, but the
+  writer computes `tier_for(lk, im) ... else None`, so a null tier ALWAYS
+  travels with null operands. The fixture built the one state the application
+  cannot reach, and it was the one state where the banner under test made a
+  false claim about its own data.
+
+  The check is one question, asked of the SETUP rather than the assertion:
+  **can the system under test produce this state?** If you cannot name the
+  writer that does it, the test is about a different system.
 - **"THE DISCLOSURE REACHES A SCREEN" IS PART OF THE DEFINITION OF DONE FOR ANY
   PR THAT ADDS A PROVENANCE FIELD.** Not a note about where it should
   eventually surface — a condition on the PR that adds it. A field that records
@@ -1686,6 +1739,58 @@ Rules of the road:
   only checks that the lines exist. That asymmetry is precisely why the honesty
   has to be a rule rather than a check.
 
+  **DISPATCH AGAINST A DETACHED WORKTREE, AND PUT THE TREE IT READ IN THE
+  AUDIT BLOCK.** This is a mechanism, not a courtesy, and it is the one that
+  makes "ran, but not against this change" impossible instead of merely
+  detectable:
+
+      git worktree add --detach ../review-<sha> <sha>
+
+  Give the reviewer that absolute path. It starts no containers, binds no
+  ports, needs no `.env`, and `--detach` takes no branch — so a checkout in the
+  shared tree cannot move underneath it. The reviewer-in-a-detached-worktree
+  case is already carved out of the shared-tree rule above, for exactly this.
+
+  **Measured, and the cost was a whole session's evidence.** A reviewer
+  dispatched against the shared tree reported: *"`.git/HEAD` reads
+  `ref: refs/heads/fix/330-...`; no worktree holds `75bddc2`. What I reviewed
+  is the BASE."* It had been asked about a branch the tree had since moved off,
+  and it read the pre-fix code. It said so — but nothing about the report's
+  SHAPE would have differed if it had not, and every other review dispatched
+  that session had the same exposure, including ones whose PRs had already
+  merged on the strength of them.
+
+  So the audit block carries the tree, not just the verdict:
+
+      Scope: reviewed at <sha>, from `../review-<sha>` (detached worktree)
+
+  The reviewer's own `Scope:` line is where it states what it could not reach.
+  This line is where YOU state what it was pointed at, because "the reviewer
+  was honest about which tree it read" is a property of that reviewer and not
+  of the process.
+
+  **A STATUS WORD FOR AN ACTION NEVER TAKEN IS NOT STALENESS, AND IT GETS ITS
+  OWN LINE.** Everything else in this file about prose going wrong is about a
+  claim that was TRUE WHEN WRITTEN — a count that grew, a citation that moved,
+  a deferral the fix itself discharged. This is the other kind:
+
+      Findings: dispatched, UNDELIVERED at open
+
+  written into a PR body with **nothing dispatched**. Not stale; never true, in
+  the field that exists to be believed. It was written against a rule that
+  enumerates four states — absent, erroring, timed out, not dispatched — so
+  that a fifth could not be invented, and a fifth was invented anyway.
+
+  The enumeration does not stop this, because the failure is not choosing the
+  wrong member of a list; it is describing an action you did not perform. The
+  only thing that catches it is the status-word rule elsewhere in this file:
+  **a status word carries its output.** `Dispatched` carries the tool result.
+  Had that been written the claim could not have been made.
+
+  **Correct it IN PLACE, visibly, rather than overwriting it.** An audit block
+  quietly repaired reads exactly like one that was always right, and the next
+  reader learns nothing. The correction is what makes the field usable again.
+
   **Who may decide a PR ships without it: the human dev at the keyboard, by name,
   recorded in the PR body.** Never an agent, never by inference from silence, and
   never the author of the code when the author is an agent — the same principle
@@ -1913,6 +2018,30 @@ Rules of the road:
   unless you go and generate one. "Green" carries its check list; "ready"
   carried nothing, because merge state is not printed by anything you were
   already running.
+
+  **AND A THIRD CLAIM RIDES WITH THEM: WHAT THE PR WILL CLOSE, VERIFIED
+  AGAINST `closingIssuesReferences` AND NEVER AGAINST THE APPROVAL MARKER.**
+
+      gh pr view <n> --json closingIssuesReferences
+
+  `Auto-close-approved: <n>` AUTHORISES this repo's own guard. It closes
+  nothing. A body carrying the marker and no closing keyword merges having
+  closed nothing, and the two are easy to conflate because the marker contains
+  the issue number and the word "close".
+
+  Measured on #348, the #84 fix: body carried `Auto-close-approved: 84`,
+  `closingIssuesReferences` returned **`[]`**. Merging it would have left #84
+  FIXED AND OPEN on the mvp-blocking board.
+
+  **That is a REPORTING failure, not a bookkeeping one**, and it is why this
+  sits beside green-and-mergeable rather than in a filing convention. Every
+  <!-- counted: the MAGNITUDE of an off-by-one error, not a tally of a population; it cannot grow -->
+  status given after that merge would have been wrong by one issue, the board
+  would have shown a defect that no longer existed, and the next person
+  planning from it would have sized work against a lie. The check costs one
+  command and it is the same command the closing-keyword bullet already
+  prescribes -- what was missing is that nothing made it part of REPORTING
+  READY.
 
 - **A STATUS WORD CARRIES ITS OUTPUT, OR IT DOES NOT GO IN THE REPORT.**
   "Merged" carries the `git log --oneline -1 origin/main` line. "Pushed" carries
