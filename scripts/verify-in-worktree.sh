@@ -110,20 +110,71 @@ fi
 # a second opinion.
 is_known_mode() {
   case "$1" in
-    --self-test|--self-test-bound|tsc|vitest|eslint|--all) return 0 ;;
+    --self-test|--self-test-bound|--check-mounts|tsc|vitest|eslint|--all) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 if ! is_known_mode "${1:---all}"; then
   echo "FAIL: unknown mode '${1:-}'." >&2
-  echo "usage: $0 [tsc|vitest|eslint|--all|--self-test|--self-test-bound]" >&2
+  echo "usage: $0 [tsc|vitest|eslint|--all|--check-mounts|--self-test|--self-test-bound]" >&2
   exit 2
 fi
 
-PRIMARY_TREE="${SHIELD_PRIMARY_TREE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# The PRIMARY TREE is the one `pnpm install` ran in, because that is the only
+# tree holding `packages/*/node_modules`. Derive it from git's COMMON dir.
+#
+# It used to be derived from THIS SCRIPT'S OWN LOCATION:
+#
+#     PRIMARY_TREE="${SHIELD_PRIMARY_TREE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+#
+# Every worktree carries its own copy of the script, so from a worktree that
+# resolved to the WORKTREE -- precisely the tree that lacks the node_modules
+# this mount exists to supply. The mount then named a host path that does not
+# exist, and Docker CREATES a missing bind source as an empty directory and
+# mounts it, SHADOWING the real `packages/design-system/node_modules` the line
+# above had just provided.
+#
+# Measured 2026-09-21, `wt-353` vs the primary tree, same commit content:
+#
+#   primary tree   tsc 0 errors      vitest 53/53 files, 575 tests, exit 0
+#   worktree       tsc 139 errors    vitest 33/53 files, 414 tests, exit 2
+#                  (138 in packages/*)   20 files never collected
+#
+# So the one line the header calls "the line that makes this work" was correct
+# only in the tree that does not need it. The script's own bound-printing is
+# what kept this from being silent -- it reported COULD NOT FULLY LOOK and
+# exited 2 rather than reporting 414 passed -- but a reader taking the test
+# count instead of the exit code got a floor of unknown depth.
+PRIMARY_TREE="${SHIELD_PRIMARY_TREE:-$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")}"
 WORKTREE="$(git rev-parse --show-toplevel)"
 IMAGE="${SHIELD_VERIFY_IMAGE:-node:22-bookworm}"
+
+# REFUSE rather than mount a missing directory.
+#
+# Docker does not fail on a bind source that does not exist; it creates it
+# empty. So a wrong PRIMARY_TREE cannot announce itself at mount time -- it
+# announces itself as errors in `packages/*`, 150 lines later, attributed to
+# the branch under test. That is the shape this whole script exists to
+# prevent, reached through the script itself.
+#
+# Named for the CAUSE, not for the check: the most plausible misreading of a
+# bare "mount check failed" is that Docker is unwell.
+require_primary_tree() {
+  if [ -d "$PRIMARY_TREE/packages/design-system/node_modules" ]; then
+    return 0
+  fi
+  echo "verify-in-worktree: REFUSING -- no packages/design-system/node_modules under" >&2
+  echo "    $PRIMARY_TREE" >&2
+  echo "  That path is the PRIMARY TREE, the one \`pnpm install\` ran in. Docker would" >&2
+  echo "  mount the missing directory as an EMPTY one, shadowing the real modules, and" >&2
+  echo "  every \`packages/*\` import would fail to resolve -- reported against YOUR" >&2
+  echo "  branch, which is not where the fault is." >&2
+  echo "  Fix: run \`pnpm install\` in the primary tree, or set SHIELD_PRIMARY_TREE to" >&2
+  echo "  a tree that has one." >&2
+  exit 2
+}
+require_primary_tree
 
 # MSYS rewrites any argument beginning with `/` when it crosses into a native
 # Windows executable, and `docker.exe` is one. Without this, `-w /app` arrives
@@ -203,7 +254,25 @@ tsc() {
 ' "$out" | grep 'error TS' | grep -c '\.\./\.\./packages/' || true)"
   echo "verify-in-worktree: tsc -- ${total} error(s), ${outside} of them outside apps/web (packages/*, i.e. the mount, not this branch)"
   if [ "$outside" -gt 0 ]; then
-    echo "verify-in-worktree: COULD NOT FULLY LOOK -- packages/* did not type-check here (#175). apps/web errors: $((total - outside))." >&2
+    echo "verify-in-worktree: COULD NOT FULLY LOOK -- packages/* did not type-check here. apps/web errors: $((total - outside))." >&2
+    # THE TWIN of the vitest message below, and it was left behind for a
+    # commit: that one was rewritten to stop attributing every failure to
+    # #175 while this one went on doing it unconditionally, one function
+    # above. `outside` counts errors whose PATH is under `packages/`, which a
+    # genuine type error in that package's own source satisfies just as well
+    # as a missing module does.
+    #
+    # `TS2307: Cannot find module` is the mount's signature -- nothing
+    # resolves, so every downstream annotation degrades to implicit `any`.
+    # Real type errors in that source carry other codes.
+    if printf '%s\n' "$out" | grep -q 'error TS2307'; then
+      echo "verify-in-worktree: modules under packages/ could not be RESOLVED, which is" >&2
+      echo "verify-in-worktree: #175's shape -- packages/ is bind-mounted with no" >&2
+      echo "verify-in-worktree: node_modules overlay. Not this branch." >&2
+    else
+      echo "verify-in-worktree: these are TYPE errors in packages/ source, not missing" >&2
+      echo "verify-in-worktree: modules, so they are NOT the mount and NOT #175. Read them." >&2
+    fi
     return 2
   fi
   return "$status"
@@ -228,7 +297,43 @@ vitest() {
 ' "$out" | grep -m1 -E 'Failed to resolve import|Cannot find module' || true)"
     echo "verify-in-worktree: COULD NOT FULLY LOOK -- ${uncollected} of ${found} test files never ran, so this result is a floor of unknown depth." >&2
     [ -n "$why" ] && echo "verify-in-worktree: skip reason: ${why}" >&2
-    echo "verify-in-worktree: see #175 (packages/ bind-mounted with no node_modules overlay)." >&2
+    # WHICH CAUSE, decided from the evidence rather than asserted.
+    #
+    # This block used to print "see #175" for every collection failure. #175 is
+    # ONE cause; a wrong PRIMARY_TREE was a second, with identical symptoms and
+    # the cause entirely inside this script. `require_primary_tree` closes that
+    # one -- but a THIRD remains and is the commonest: `count_uncollected`
+    # matches `FAIL <file> [ <file> ]`, which vitest prints for ANY collection
+    # failure, so a broken import in this branch's own `apps/web/src`, or a
+    # dependency in the lockfile that this volume has not installed, lands here
+    # too. Telling that author it is a compose-file defect is worse than saying
+    # nothing: they go and read `docker-compose.yml` instead of their own diff.
+    #
+    # The discriminator is the IMPORTING FILE, not the specifier. #175's shape
+    # is a module unresolvable FROM a file under `packages/` -- the observed
+    # form is `Failed to resolve import "clsx" from
+    # "../../packages/design-system/src/utils/cn.ts"`. A failure from a file
+    # under `apps/web/src` is this branch's code, whatever the specifier is.
+    case "$why" in
+      *packages/*|*'"@shield/'*)
+        echo "verify-in-worktree: a module could not be resolved FROM a file under packages/." >&2
+        echo "verify-in-worktree: that is #175's shape -- packages/ is bind-mounted with no" >&2
+        echo "verify-in-worktree: node_modules overlay, so a HOST pnpm install leaves" >&2
+        echo "verify-in-worktree: host-absolute symlinks the container cannot follow." >&2
+        ;;
+      "")
+        echo "verify-in-worktree: no unresolved-import line was printed, so the cause is" >&2
+        echo "verify-in-worktree: NOT known to be a mount problem. Read the output above" >&2
+        echo "verify-in-worktree: before assuming it is one." >&2
+        ;;
+      *)
+        echo "verify-in-worktree: the failing import is NOT from packages/, so this is most" >&2
+        echo "verify-in-worktree: likely THIS BRANCH's own code -- a bad import path, a" >&2
+        echo "verify-in-worktree: renamed module, or a dependency added to the lockfile that" >&2
+        echo "verify-in-worktree: the node_modules volume has not installed yet." >&2
+        echo "verify-in-worktree: exit 2 means these files never RAN, not that you are clear." >&2
+        ;;
+    esac
     return 2
   fi
   return "$status"
@@ -319,6 +424,27 @@ self_test_bound() {
 }
 
 case "${1:---all}" in
+  # Reports the resolved trees and stops, without starting a container, so
+  # `require_primary_tree`'s PASSING state is assertable -- a guard watched
+  # only while it fires has been observed in one state.
+  #
+  # IT CHECKS ONE MOUNT, NOT ALL OF THEM, and says so rather than printing
+  # "mounts OK". `run_in_container` declares five host binds; this validates
+  # the `packages/design-system/node_modules` one, because that is the bind
+  # whose source is a DIFFERENT tree and therefore the one that can be wrong
+  # while everything else looks right.
+  #
+  # The other four are not checked here, and two of them -- `package.json`
+  # and `pnpm-workspace.yaml` -- are FILE binds, which Docker materialises as
+  # DIRECTORIES when the source is absent. That is a real silent failure and
+  # it is simply out of this mode's scope; an earlier draft of this comment
+  # claimed "arriving here at all means the mounts are sound", which was the
+  # over-claim, in the mode added to make a claim checkable.
+  --check-mounts)
+    echo "verify-in-worktree: primary tree   $PRIMARY_TREE"
+    echo "verify-in-worktree: worktree       $WORKTREE"
+    echo "verify-in-worktree: checked 1 of 5 host binds -- packages/design-system/node_modules resolves"
+    ;;
   --self-test) self_test ;;
   --self-test-bound) self_test_bound ;;
   tsc)         tsc ;;

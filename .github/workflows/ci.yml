@@ -296,6 +296,15 @@ jobs:
           # nothing: delete any of the three and every other gate in the repo
           # still printed its certificate.
           bash tests/gates/argument_guards.sh
+          # `verify-in-worktree.sh` derived the PRIMARY TREE from its own
+          # location, so in a worktree it resolved to the worktree -- the one
+          # tree guaranteed to lack `packages/*/node_modules`. Docker creates a
+          # missing bind source as an EMPTY directory rather than failing, so
+          # the real modules were shadowed and 20 of 53 vitest files never
+          # collected, reported against the branch under test. This gate builds
+          # a real throwaway worktree, because a test of the refusal alone stays
+          # green with the derivation reverted.
+          bash tests/gates/verify_in_worktree_mounts.sh
           # A self-test nobody runs is furniture. `red-on-revert.sh` is the
           # harness that keeps `git checkout --` out of the restore path, and
           # it shipped with a restore check that compared a file to itself --

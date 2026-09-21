@@ -105,6 +105,36 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "verify_in_worktree_mounts.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Both states are covered internally and BOTH ARE REAL RUNS: the passing "
+        "state runs `--check-mounts` from a genuine `git worktree` it builds in "
+        "a temp dir, and the refusing state points `SHIELD_PRIMARY_TREE` at a "
+        "directory with no `node_modules` and requires exit 2 with the rejected "
+        "path named. "
+        "UNLIKE the other shell gates, it also has EXTERNAL evidence that it can "
+        "fail, which is the half they are all still missing: both halves were "
+        "red-on-reverted through `scripts/red-on-revert.sh --expect` on "
+        "2026-09-21 -- reverting the derivation reddens `linked worktree`, "
+        "neutralising the refusal reddens `no node_modules exited`, and "
+        "silencing the unknown-mode message reddens `without refusing`. "
+        "TWO adversarial cases, both found by review rather than by the "
+        "author, and both the same shape: a green from a run that never "
+        "reached the thing under test. The second is that the first version "
+        "invoked `sh scripts/verify-in-worktree.sh`, which is "
+        "`#!/usr/bin/env bash` with `set -euo pipefail` -- fine under Git "
+        "Bash, where `sh` IS bash, and exit 2 under `dash` on the runner "
+        "before any argument is read, which `argument_guards.sh` had already "
+        "measured against that exact line. All 3 call sites use `bash` now, "
+        "and the unknown-mode check asserts the refusal MESSAGE rather than "
+        "only the code, because exit 2 is also what the dash death produces. "
+        "The first is the fixture's own construction: it originally "
+        "COMMITTED `packages/design-system/node_modules`, so the "
+        "worktree checkout recreated it and the gate passed under both "
+        "derivations. It is left untracked now, as the real one is, because a "
+        "worktree having the modules is precisely the state that cannot "
+        "discriminate."
+    ),
     "prettier_hook.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Covers both states internally via `expect_ok` and `expect_refusal` "
