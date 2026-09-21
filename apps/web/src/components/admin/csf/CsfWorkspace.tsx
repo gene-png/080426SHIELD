@@ -135,8 +135,7 @@ export function CsfWorkspace({
    */
   const {
     messages: refreshMessages,
-    note: noteRefreshFailure,
-    clear: clearRefreshFailure,
+    begin: beginRefresh,
   } = useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
@@ -166,6 +165,7 @@ export function CsfWorkspace({
 
   const refreshScoreAndGap = React.useCallback(
     async (currentTarget: number) => {
+      const scoreGapAttempt = beginRefresh("score-gap");
       try {
         const [s, g] = await Promise.all([
           fetchScore(serviceId),
@@ -173,20 +173,19 @@ export function CsfWorkspace({
         ]);
         setScore(s);
         setGap(g);
-        clearRefreshFailure("score-gap");
+        scoreGapAttempt.clear();
       } catch {
         // NON-BLOCKING IS NOT THE SAME AS SILENT. The old comment here said
         // "the score/gap panels show their own loading state" -- true, and the
         // reason the defect survived: that state is indistinguishable from a
         // slow network, so a consultant watching a permanently-spinning score
         // card cannot tell in-flight from failed from never-attempted.
-        noteRefreshFailure(
-          "score-gap",
+        scoreGapAttempt.note(
           "Couldn't refresh the score and gap panels. The figures shown may be out of date; reload to try again.",
         );
       }
     },
-    [serviceId, noteRefreshFailure, clearRefreshFailure],
+    [serviceId, beginRefresh],
   );
 
   const initialLoad = React.useCallback(async () => {
@@ -198,6 +197,7 @@ export function CsfWorkspace({
       setLoadError(describeError(err));
       return;
     }
+    const interviewAttempt = beginRefresh("interview");
     try {
       const q = await fetchInterviewQuestionnaire(serviceId);
       if (q) {
@@ -209,13 +209,12 @@ export function CsfWorkspace({
         }
         setInterviewByCode(map);
       }
-      clearRefreshFailure("interview");
+      interviewAttempt.clear();
     } catch {
       // Supplemental, and still not silent: the prompts simply do not appear,
       // which reads as "this subcategory has none" rather than "we could not
       // fetch them".
-      noteRefreshFailure(
-        "interview",
+      interviewAttempt.note(
         "Couldn't load the interview prompts. Subcategories will show none, which is not the same as having none.",
       );
     }
@@ -233,10 +232,11 @@ export function CsfWorkspace({
         const t = normalizeTarget(a.client_target_tier);
         setTargetTier(t);
         await refreshScoreAndGap(t);
+        const deliverableAttempt = beginRefresh("deliverable");
         try {
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
-          clearRefreshFailure("deliverable");
+          deliverableAttempt.clear();
         } catch {
           // THE SHARPEST OF THE THREE, and the old comment states the defect
           // as if it were the mitigation: "deliverable card shows 'not
@@ -246,8 +246,7 @@ export function CsfWorkspace({
           // finalizing a second time.
           //
           // Missing data defaults to UNCONFIRMED, never to a known negative.
-          noteRefreshFailure(
-            "deliverable",
+          deliverableAttempt.note(
             "Couldn't check for a finalized deliverable. The deliverable card below is not a statement about whether one exists.",
           );
         }
@@ -255,7 +254,7 @@ export function CsfWorkspace({
     } catch (err) {
       setLoadError(describeError(err));
     }
-  }, [serviceId, refreshScoreAndGap, noteRefreshFailure, clearRefreshFailure]);
+  }, [serviceId, refreshScoreAndGap, beginRefresh]);
 
   React.useEffect(() => {
     void (async () => {

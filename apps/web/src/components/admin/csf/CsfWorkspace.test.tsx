@@ -420,7 +420,21 @@ describe("CsfWorkspace supplementary-fetch failures (#292)", () => {
 
     render(<CsfWorkspace serviceId="svc-3" serviceTitle="Atlas CSF" />);
 
+    // ASSERT WHAT MUST APPEAR BEFORE WHAT MUST NOT.
+    //
+    // This waited on `/Atlas CSF/` alone, which is the <h1> and renders in the
+    // FIRST PAINT, before any fetch settles -- so the negative below could be
+    // satisfied by a page that had not yet had the chance to render a notice.
+    // `toBeNull()` on a page still fetching passes vacuously, and this is the
+    // one test that would catch an always-rendering banner.
+    //
+    // Wait on the last fetch in the chain instead. Its sibling tests in this
+    // file already do this; this one did not, which is why it was the weak one.
     await screen.findByText(/Atlas CSF/);
+    await vi.waitFor(() => expect(fetchScore).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(csfClient.fetchLatestDeliverable).toHaveBeenCalled(),
+    );
     expect(screen.queryByTestId("csf-refresh-error")).toBeNull();
   });
 });

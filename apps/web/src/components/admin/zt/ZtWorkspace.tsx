@@ -162,8 +162,7 @@ export function ZtWorkspace({
    */
   const {
     messages: refreshMessages,
-    note: noteRefreshFailure,
-    clear: clearRefreshFailure,
+    begin: beginRefresh,
   } = useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
@@ -193,6 +192,7 @@ export function ZtWorkspace({
 
   const refreshScoreAndGap = React.useCallback(
     async (currentTarget: number) => {
+      const scoreGapAttempt = beginRefresh("score-gap");
       try {
         const [s, g] = await Promise.all([
           fetchScore(serviceId),
@@ -200,18 +200,17 @@ export function ZtWorkspace({
         ]);
         setScore(s);
         setGap(g);
-        clearRefreshFailure("score-gap");
+        scoreGapAttempt.clear();
       } catch {
         // NON-BLOCKING IS NOT SILENT. The old comment was true and is
         // why this survived: a panel's own loading state cannot be told
         // apart from a slow network.
-        noteRefreshFailure(
-          "score-gap",
+        scoreGapAttempt.note(
           "Couldn't refresh the maturity and gap panels. The figures shown may be out of date; reload to try again.",
         );
       }
     },
-    [serviceId, noteRefreshFailure, clearRefreshFailure],
+    [serviceId, beginRefresh],
   );
 
   const initialLoad = React.useCallback(async () => {
@@ -239,10 +238,11 @@ export function ZtWorkspace({
         const t = normalizeTarget(a.client_target_stage, cat.stages);
         setTargetStage(t);
         await refreshScoreAndGap(t);
+        const deliverableAttempt = beginRefresh("deliverable");
         try {
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
-          clearRefreshFailure("deliverable");
+          deliverableAttempt.clear();
         } catch {
           // A FALSE NEGATIVE, not a stale panel, and the first version of this
           // fix gave it the generic "part of this workspace" message -- a
@@ -252,8 +252,7 @@ export function ZtWorkspace({
           // consultant can act on it by finalizing a second time.
           //
           // Missing data defaults to UNCONFIRMED, never to a known negative.
-          noteRefreshFailure(
-            "deliverable",
+          deliverableAttempt.note(
             "Couldn't check for a finalized deliverable. The deliverable card below is not a statement about whether one exists.",
           );
         }
@@ -265,8 +264,7 @@ export function ZtWorkspace({
     serviceId,
     framework,
     refreshScoreAndGap,
-    noteRefreshFailure,
-    clearRefreshFailure,
+    beginRefresh,
   ]);
 
   React.useEffect(() => {

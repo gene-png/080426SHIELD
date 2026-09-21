@@ -115,8 +115,7 @@ export function AttackWorkspace({
    */
   const {
     messages: refreshMessages,
-    note: noteRefreshFailure,
-    clear: clearRefreshFailure,
+    begin: beginRefresh,
   } = useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "run" | "discard" | null
@@ -169,20 +168,20 @@ export function AttackWorkspace({
   }, [heatmap]);
 
   const refreshHeatmap = React.useCallback(async () => {
+    const heatmapAttempt = beginRefresh("heatmap");
     try {
       const next = await fetchHeatmap(serviceId);
       setHeatmap(next);
-      clearRefreshFailure("heatmap");
+      heatmapAttempt.clear();
     } catch {
       // NON-BLOCKING IS NOT SILENT. The old comment was true and is
       // why this survived: a panel's own loading state cannot be told
       // apart from a slow network.
-      noteRefreshFailure(
-        "heatmap",
+      heatmapAttempt.note(
         "Couldn't refresh the coverage heatmap. What is shown may be out of date; reload to try again.",
       );
     }
-  }, [serviceId, noteRefreshFailure, clearRefreshFailure]);
+  }, [serviceId, beginRefresh]);
 
   const initialLoad = React.useCallback(async () => {
     const seq = ++assessmentSeq.current;
@@ -204,10 +203,11 @@ export function AttackWorkspace({
       setAssessment(a);
       if (a) {
         await refreshHeatmap();
+        const deliverableAttempt = beginRefresh("deliverable");
         try {
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
-          clearRefreshFailure("deliverable");
+          deliverableAttempt.clear();
         } catch {
           // A FALSE NEGATIVE, not a stale panel, and the first version of this
           // fix gave it the generic "part of this workspace" message -- a
@@ -217,8 +217,7 @@ export function AttackWorkspace({
           // and a consultant can act on it by finalizing a second time.
           //
           // Missing data defaults to UNCONFIRMED, never to a known negative.
-          noteRefreshFailure(
-            "deliverable",
+          deliverableAttempt.note(
             "Couldn't check for a finalized deliverable. The deliverable card below is not a statement about whether one exists.",
           );
         }
@@ -226,7 +225,7 @@ export function AttackWorkspace({
     } catch (err) {
       setLoadError(describeError(err));
     }
-  }, [serviceId, refreshHeatmap, noteRefreshFailure, clearRefreshFailure]);
+  }, [serviceId, refreshHeatmap, beginRefresh]);
 
   React.useEffect(() => {
     void (async () => {

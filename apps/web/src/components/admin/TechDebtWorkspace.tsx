@@ -94,8 +94,7 @@ export function TechDebtWorkspace({
    */
   const {
     messages: refreshMessages,
-    note: noteRefreshFailure,
-    clear: clearRefreshFailure,
+    begin: beginRefresh,
   } = useRefreshFailures();
   const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
@@ -134,32 +133,36 @@ export function TechDebtWorkspace({
     } finally {
       if (seq === overlapSeq.current) setOverlapLoading(false);
     }
+    const overlapAttempt = beginRefresh("overlap-plan");
     try {
       const nextPlan = await fetchConsolidationPlan(serviceId);
       if (seq === overlapSeq.current) {
         setPlan(nextPlan);
-        clearRefreshFailure("overlap-plan");
       }
+      // The hook sequences this one itself now. `seq` still guards `setPlan`
+      // above, because that is component state the hook knows nothing about.
+      overlapAttempt.clear();
     } catch {
       // NON-BLOCKING IS NOT SILENT. The old comment was true and is
       // why this survived: a panel's own loading state cannot be told
       // apart from a slow network.
       //
-      // SEQUENCE-GUARDED like every other write in this function, and the
-      // first version of this fix was the one exception to that. An edit
-      // fires refresh #1; a second edit ~200ms later fires #2, which
-      // completes, so `plan` is current and correct; #1 then rejects. An
-      // unguarded write put a permanent "may be out of date" warning over
+      // SEQUENCE-GUARDED, and the guard now lives in the hook rather than
+      // here. An edit fires refresh #1; a second edit ~200ms later fires #2,
+      // which completes, so `plan` is current and correct; #1 then rejects.
+      // An unguarded write put a permanent "may be out of date" warning over
       // figures that were up to date -- a superseded request describing the
       // state of a newer one.
-      if (seq === overlapSeq.current) {
-        noteRefreshFailure(
-          "overlap-plan",
-          "Couldn't refresh the overlap figures. What is shown may be out of date.",
-        );
-      }
+      //
+      // This was the ONLY guarded write in the first version of the fix, and
+      // the review found every other one unguarded. A rule applied at four
+      // sites diverges at four sites, so it moved into `useRefreshFailures`
+      // and there is no longer an unsequenced way to write.
+      overlapAttempt.note(
+        "Couldn't refresh the overlap figures. What is shown may be out of date.",
+      );
     }
-  }, [serviceId, noteRefreshFailure, clearRefreshFailure]);
+  }, [serviceId, beginRefresh]);
 
   const refresh = React.useCallback(async () => {
     const seq = ++listSeq.current;
@@ -177,10 +180,11 @@ export function TechDebtWorkspace({
       setLoadError(err instanceof Error ? err.message : "Failed to load list.");
     }
     await refreshOverlap();
+    const deliverableAttempt = beginRefresh("deliverable");
     try {
       const deliv = await fetchLatestDeliverable(serviceId);
       setDeliverable(deliv);
-      clearRefreshFailure("deliverable");
+      deliverableAttempt.clear();
     } catch {
       // A FALSE NEGATIVE, not an ambiguity: the old comment stated
       // the defect as if it were the mitigation. "Not finalized yet"
@@ -188,12 +192,11 @@ export function TechDebtWorkspace({
       // that failed, and a consultant can act on it by finalizing a
       // second time. Missing data defaults to UNCONFIRMED, never to a
       // known negative.
-      noteRefreshFailure(
-        "deliverable",
+      deliverableAttempt.note(
         "Couldn't check for a finalized deliverable. The section below is not a statement about whether one exists.",
       );
     }
-  }, [serviceId, refreshOverlap, noteRefreshFailure, clearRefreshFailure]);
+  }, [serviceId, refreshOverlap, beginRefresh]);
 
   React.useEffect(() => {
     void (async () => {

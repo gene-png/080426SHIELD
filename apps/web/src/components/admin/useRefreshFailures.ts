@@ -35,13 +35,43 @@ import * as React from "react";
  * a repeated failure or a clear of something that never failed does not
  * re-render.
  */
+/**
+ * One attempt at refreshing one source. Both writes are NO-OPS once a later
+ * attempt on the same source has begun.
+ *
+ * This is the guard, and it lives here rather than at the call sites because
+ * that is exactly where it went missing. The review of `158c2af` found the
+ * sequence check present in ONE function (`TechDebtWorkspace.refreshOverlap`,
+ * where the original finding was reported) and absent from every other write
+ * -- three workspaces captured no sequence at all, and even in Tech Debt the
+ * deliverable branch sat outside its own file's guard. Same shape as the
+ * single-slot defect one level up: a rule applied at four sites diverges at
+ * four sites.
+ *
+ * Concretely, what it stops: two answer edits ~200ms apart. Refresh #2
+ * succeeds and clears; refresh #1 then rejects and pins a permanent
+ * "the figures shown may be out of date" over figures that are up to date.
+ * The mirror is equally live -- a stale SUCCESS clearing a current failure.
+ */
+export type RefreshAttempt = {
+  /** True once a later attempt on this source has begun. */
+  superseded: () => boolean;
+  /** Record that this source failed -- unless this attempt is superseded. */
+  note: (message: string) => void;
+  /** Withdraw this source's message -- unless this attempt is superseded. */
+  clear: () => void;
+};
+
 export type RefreshFailures = {
   /** Live failure messages, in the order their sources first failed. */
   messages: string[];
-  /** Record that `source` failed. Replaces whatever that source said before. */
-  note: (source: string, message: string) => void;
-  /** Withdraw `source`'s message, if it had one. Touches no other source. */
-  clear: (source: string) => void;
+  /**
+   * Start an attempt on `source`. EVERY write goes through the returned
+   * token; there is deliberately no unsequenced `note`/`clear` on this
+   * object, because an optional guard is one a caller can forget and three
+   * of four callers did.
+   */
+  begin: (source: string) => RefreshAttempt;
 };
 
 export function useRefreshFailures(): RefreshFailures {
@@ -62,6 +92,29 @@ export function useRefreshFailures(): RefreshFailures {
     });
   }, []);
 
+  // Latest attempt number per source. A ref, not state: it must be readable
+  // synchronously by an in-flight attempt deciding whether it still owns the
+  // slot, and bumping it must not re-render.
+  const seqBySource = React.useRef<Record<string, number>>({});
+
+  const begin = React.useCallback(
+    (source: string): RefreshAttempt => {
+      const mine = (seqBySource.current[source] ?? 0) + 1;
+      seqBySource.current[source] = mine;
+      const owns = () => mine === (seqBySource.current[source] ?? 0);
+      return {
+        superseded: () => !owns(),
+        note: (message: string) => {
+          if (owns()) note(source, message);
+        },
+        clear: () => {
+          if (owns()) clear(source);
+        },
+      };
+    },
+    [note, clear],
+  );
+
   const messages = React.useMemo(() => Object.values(bySource), [bySource]);
 
   // Memoized so the returned object is stable while nothing has failed.
@@ -69,8 +122,5 @@ export function useRefreshFailures(): RefreshFailures {
   // actually put in their dependency arrays -- a `refreshScoreAndGap` that
   // depended on the whole object would be rebuilt every time an UNRELATED
   // source failed, which is the clobbering shape one level up.
-  return React.useMemo(
-    () => ({ messages, note, clear }),
-    [messages, note, clear],
-  );
+  return React.useMemo(() => ({ messages, begin }), [messages, begin]);
 }
