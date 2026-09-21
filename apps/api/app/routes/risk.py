@@ -799,6 +799,48 @@ def generate(
         # in the response.
         provenance=_provenance_snapshot(db, cid, g.not_finalized),
     )
+    # #372. The batch tally is PERSISTED, into the provenance column 0047
+    # already added -- no migration, and no new state to keep in step.
+    #
+    # It was response-only for one revision, and that was wrong in the way this
+    # file has been wrong before: `export` and `latest` build their response
+    # from a STORED register, so they had nothing to report and the schema
+    # default said "zero failed" -- a positive claim about a run nobody
+    # recorded. The consultant generated a short register, saw "INCOMPLETE",
+    # clicked Export, and the click erased the warning it was warning about.
+    #
+    # `_serialize` reads this back, so the disclosure is DERIVED from stored
+    # state on every path rather than carried by whichever response happened to
+    # know. CLAUDE.md: prefer a derivation over a synchronization.
+    #
+    # Copy-then-reassign. In-place mutation of a plain JSON column does not
+    # dirty it and the write is silently lost -- the same trap `entries_intended`
+    # documents one field over.
+    # AND `or {}` NORMALISES NULL PROVENANCE HERE, WHICH IS A FACT ANY LATER
+    # GUARD ON THIS COLUMN INHERITS.
+    #
+    # After this line `register.provenance` is a dict on every path out of
+    # `generate`. So a downstream `if register.provenance is not None:` is
+    # always true from here on, and its else-branch is unreachable by
+    # construction rather than by luck. That is fine as long as it is SAID:
+    # #353 adds exactly such a guard further down, whose else-branch logs
+    # `risk_register_intended_count_not_persisted` as a deliberate fail-loud
+    # ratchet, and whose own blast-radius note certifies that nothing
+    # reassigns this column between the register's construction and the guard.
+    # This line is that reassignment.
+    #
+    # Found by a PAIRS review -- two branches that merge clean and are each
+    # correct alone. Neither diff shows it; `CLAUDE.md` records that a per-PR
+    # review structurally cannot. Whoever rebases #353 onto this owns the
+    # reconciliation, and the choice is theirs: drop the now-vacuous None
+    # check, or keep it as a ratchet and say here what would make it reachable
+    # again. What is not acceptable is leaving the certificate standing.
+    _prov_with_batches = dict(register.provenance or {})
+    _prov_with_batches["batches"] = {
+        "total": batches_total,
+        "failed": batches_failed,
+    }
+    register.provenance = _prov_with_batches
     db.add(register)
     db.flush()
     if prior is not None:
@@ -1403,9 +1445,38 @@ def _serialize(
     db: Session,
     register: RiskRegister,
     *,
-    batches_total: int = 0,
-    batches_failed: int = 0,
+    batches_total: int | None = None,
+    batches_failed: int | None = None,
 ) -> RiskRegisterResponse:
+    # #372. Read the persisted tally back when the caller did not supply one,
+    # so `export` and `latest` report the run the register came from instead of
+    # defaulting to a claim of completeness.
+    #
+    # Both stay None when provenance predates this, and None renders NO banner
+    # either way -- "nobody counted" is not "nothing failed", and the web type
+    # is `number | null` so a consumer can tell them apart. The residual is
+    # stated rather than hidden: a register generated before this shipped
+    # cannot be distinguished from a complete one, and nothing in the product
+    # can clear that. Fail-closed is unavailable here because there is no
+    # record to fail closed ON; what is available is refusing to assert the
+    # positive, which is what None does.
+    if batches_total is None and batches_failed is None:
+        _recorded = (register.provenance or {}).get("batches")
+        if isinstance(_recorded, dict):
+            _t = _recorded.get("total")
+            _f = _recorded.get("failed")
+            # Both, and both ints. A half-written record is not a tally, and
+            # `bool` is an `int` in Python -- exclude it, per CLAUDE.md's rule
+            # that a coercion is not a validator.
+            if (
+                isinstance(_t, int)
+                and not isinstance(_t, bool)
+                and isinstance(_f, int)
+                and not isinstance(_f, bool)
+            ):
+                batches_total = _t
+                batches_failed = _f
+
     entries = (
         db.execute(
             select(RiskEntry)

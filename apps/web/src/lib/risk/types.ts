@@ -116,6 +116,26 @@ export interface RiskRegister {
    * derived now too.
    */
   entries_total: number;
+  /**
+   * A partial synthesis KEEPS what succeeded (#372). `risk_synthesize` runs
+   * concurrent batches, and a failed one costs its entries silently -- the
+   * register renders short with nothing saying so.
+   *
+   * `| null`, NOT `?: number`, and the first revision of this field had it the
+   * other way. The tally is PERSISTED in the register's provenance and read
+   * back by `_serialize`, so every path -- generate, export, latest -- reports
+   * the run the register came from. `null` means the register predates that
+   * and nobody counted; it is NOT "nothing failed", and the two must stay
+   * distinguishable or a reload reads as an all-clear.
+   *
+   * The wire really does carry `null`: no `exclude_none` or
+   * `response_model_exclude_none` exists anywhere in `apps/api` (measured), so
+   * FastAPI serialises the key. `?: number` declared a shape the server never
+   * produces, and a presence test against it could never discriminate.
+   */
+  batches_total: number | null;
+  batches_failed: number | null;
+
   entries_without_tier: number;
   /**
    * #132, the same instrument pointed at the LINKS, and three counters because

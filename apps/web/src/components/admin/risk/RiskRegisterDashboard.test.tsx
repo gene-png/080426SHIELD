@@ -62,6 +62,12 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
 
 function register(over: Partial<RiskRegister> = {}): RiskRegister {
   return {
+    // #372. `null` is the honest default: most registers in these fixtures are
+    // not the product of a recorded generate run, and `null` is exactly what
+    // the server sends for those. Defaulting to `0` would have every fixture
+    // assert "nothing failed", which is a claim, not an absence.
+    batches_total: null,
+    batches_failed: null,
     excluded_inputs: [],
     // #244. `true` here means "the server looked and there was nothing", which
     // is what every register generated today reports. The `false` case -- a
@@ -357,5 +363,139 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
     );
     await loaded();
     expect(screen.queryByTestId(BANNER)).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #372 -- a partial synthesis KEEPS what succeeded, so the register renders
+// SHORT. The endpoint has always returned `batches_total` / `batches_failed`;
+// `lib/risk/types.ts` did not declare them, so they were dropped at the
+// TypeScript boundary and nothing could render them. ATT&CK fixed the
+// identical pair as #115.
+//
+// EXERCISED THROUGH GENERATE **AND** THROUGH `latest`, and the second half is
+// new. This block used to say a `latest` fixture carrying `batches_failed: 3`
+// "would build a state the API cannot produce" -- correct then, because the
+// counts were response-only and a read-back defaulted to 0.
+//
+// That default was the defect. It made `export` erase the INCOMPLETE warning
+// at the exact moment the consultant produced the deliverable, and a reload do
+// the same. The tally is persisted now, so a `latest` carrying a real failure
+// count is a state the writer EMITS, and a test that mocks it is testing the
+// product rather than an impossible fixture.
+//
+// The unreachable-state rule has not been relaxed -- the reachable set moved,
+// and this comment is what tells the next reader which.
+// ---------------------------------------------------------------------------
+
+describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {
+  beforeEach(() => {
+    getActiveClientId.mockResolvedValue("c1");
+    getClientName.mockResolvedValue("Atlas");
+    fetchRiskGate.mockResolvedValue(gate());
+    fetchRiskRegisterLatest.mockResolvedValue(null);
+  });
+
+  async function generated(over: Partial<RiskRegister>): Promise<void> {
+    generateRiskRegister.mockResolvedValue(register(over));
+    await loaded();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    });
+  }
+
+  it("says the register is incomplete when a batch failed", async () => {
+    await generated({ batches_total: 12, batches_failed: 3 });
+
+    const note = await screen.findByTestId("risk-batches-failed");
+    // BOTH operands. "3 batches failed" does not tell a consultant whether
+    // that is three of four or three of forty, and the decision -- regenerate
+    // or ship -- turns on exactly that.
+    expect(note.textContent).toMatch(/3 of 12/);
+    // The word that makes it actionable rather than ambient, and the remedy.
+    expect(note.textContent).toMatch(/INCOMPLETE/);
+    expect(note.textContent).toMatch(/Regenerate before exporting/i);
+    expect(note).toHaveAttribute("role", "alert");
+  });
+
+  it("KEEPS the disclosure after Export — the action it warns about", async () => {
+    // THE DEFECT THIS BLOCK WAS MISSING, and the sibling block one screen up
+    // pins the identical property for `excluded_inputs` because it was burned
+    // by it first.
+    //
+    // `onExport` does `setRegister(await exportRiskRegister(cid))`. While the
+    // tally was response-only, `export` built its response from a STORED
+    // register, so it carried the schema default and this line erased the
+    // "INCOMPLETE" warning at the exact moment the consultant produced the
+    // deliverable it was warning about. Generate, see INCOMPLETE, click
+    // Export, banner gone, short register in the client's XLSX.
+    //
+    // It is persisted now, so the export response carries it. The mock says
+    // so: a `0/0` export response is a state the server no longer produces.
+    await generated({ batches_total: 12, batches_failed: 3 });
+    await screen.findByTestId("risk-batches-failed");
+
+    exportRiskRegister.mockResolvedValue(
+      register({
+        batches_total: 12,
+        batches_failed: 3,
+        finalized_at: "2026-09-21T01:00:00Z",
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Export XLSX / PDF / Word" }),
+      );
+    });
+    await waitFor(() => expect(exportRiskRegister).toHaveBeenCalled());
+
+    expect(screen.getByTestId("risk-batches-failed").textContent).toMatch(
+      /3 of 12/,
+    );
+  });
+
+  it("KEEPS the disclosure on a reload, because the tally is persisted", async () => {
+    // The other half, and what the previous revision got wrong. It shipped a
+    // banner whose own copy promised it would vanish, and a comment calling
+    // that "the same limitation the withheld-inputs banner below carries" --
+    // which was false, that one is persisted and survives.
+    //
+    // This is a `latest` read with no generate in front of it: the component
+    // has no run-scoped memory to fall back on, so a pass here can only come
+    // from `_serialize` having read the tally back out of provenance.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ batches_total: 12, batches_failed: 3 }),
+    );
+    await loaded();
+
+    const note = await screen.findByTestId("risk-batches-failed");
+    expect(note.textContent).toMatch(/3 of 12/);
+    // And it must not promise its own disappearance any more.
+    expect(note.textContent).not.toMatch(/will not reappear/i);
+  });
+
+  it("stays silent when every batch succeeded", async () => {
+    await generated({ batches_total: 12, batches_failed: 0 });
+    expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
+  });
+
+  it("stays silent when NOBODY COUNTED, rather than reporting complete", async () => {
+    // `null` is a register generated before the tally was persisted. It is not
+    // "nothing failed" and it is not "something failed" -- nobody looked.
+    //
+    // Renders nothing, deliberately, and this is the one place the PR does NOT
+    // fail closed: there is no record to fail closed on, and a permanent
+    // "completeness unrecorded" banner on every historical register is
+    // furniture that teaches readers to skip the real one. What it does
+    // instead is refuse to assert the positive -- the register is never
+    // described as complete anywhere.
+    //
+    // Asserted so nobody "improves" `!== null` into `?? 0`, which would make a
+    // never-counted register indistinguishable from a clean one.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ batches_total: null, batches_failed: null }),
+    );
+    await loaded();
+    expect(screen.queryByTestId("risk-batches-failed")).toBeNull();
   });
 });

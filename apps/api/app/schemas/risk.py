@@ -146,13 +146,39 @@ class RiskRegisterResponse(BaseModel):
     axis_counts: dict[str, int] = {}
     action_counts: dict[str, int] = {}
     # risk_synthesize runs as concurrent batches (one llm_calls row each).
-    # Additive + defaulted so older clients and stored payloads parse unchanged
-    # (C0). A partial run KEEPS what succeeded rather than discarding it, so the
-    # consultant must be told the draft is incomplete and by how much. Both are
-    # 0 on a register read back from storage — they describe a generate run, not
-    # the register itself.
-    batches_total: int = 0
-    batches_failed: int = 0
+    # A partial run KEEPS what succeeded rather than discarding it, so the
+    # consultant must be told the draft is incomplete and by how much.
+    #
+    # `| None`, NOT `int = 0`, and the first version of this field got it
+    # wrong. These describe a GENERATE RUN, not the register, so `export` and
+    # `latest` -- which read a stored register -- have nothing to report. With
+    # a `0` default those paths said "zero batches failed", which is a
+    # POSITIVE CLAIM the server cannot support, and `CLAUDE.md`'s standing rule
+    # is that missing data defaults to UNCONFIRMED and never to a known
+    # negative.
+    #
+    # The argument is measured, not inherited: no `exclude_none` or
+    # `response_model_exclude_none` exists anywhere in `apps/api`, so FastAPI
+    # serialises `"batches_total": null` and a consumer can tell "nobody
+    # counted" from "counted, none failed". `?: number` on the web side would
+    # have declared a shape the server never produces.
+    #
+    # `excluded_inputs: list[str] = []` had this exact defect and `_serialize`
+    # carries its postmortem a few lines above the signature -- "could not
+    # express the difference between 'nothing was excluded' and 'nobody
+    # recorded'". That comment did not stop this field repeating it.
+    #
+    # THE TWIN IS CHECKED AND DELIBERATELY LEFT AS `int = 0`.
+    # `AttackRunAiResponse` in `schemas/attack.py` carries the same two fields
+    # with the same default, and it is NOT the same defect: it has exactly one
+    # construction site (`routes/attack.py`, the Run-AI POST) and no GET builds
+    # it from a stored row, so every response it produces comes from a run that
+    # counted. `0` there can only mean "counted, none failed". The defect here
+    # was `export` and `latest` reading a STORED register, which ATT&CK has no
+    # equivalent of. Stated because an unstated exemption reads as an oversight
+    # to whoever greps these two field names next.
+    batches_total: int | None = None
+    batches_failed: int | None = None
 
     # #121's outcome counter, reaching the CALLER and not only the audit blob.
     #
@@ -165,9 +191,15 @@ class RiskRegisterResponse(BaseModel):
     # either.
     #
     # DERIVED from the stored entries rather than passed in from the generate
-    # run, deliberately. `batches_*` describe a run and are 0 on a read-back;
-    # these describe the REGISTER, so they are correct whenever it is read.
-    # A derived value cannot be out of sync; a passed one merely is not, yet.
+    # run, deliberately: a derived value cannot be out of sync, a passed one
+    # merely is not, yet.
+    #
+    # This comment used to contrast them with `batches_*`, "which describe a
+    # run and are 0 on a read-back". #372 ended that: a 0 on a read-back was a
+    # positive claim about a run nobody recorded, so the tally is persisted and
+    # read back too. The two pairs now differ only in WHERE the record lives --
+    # stored entries here, stored provenance there -- not in whether one
+    # survives a fetch.
     entries_total: int = 0
     entries_without_tier: int = 0
 

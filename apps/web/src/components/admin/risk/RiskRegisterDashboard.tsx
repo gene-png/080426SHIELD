@@ -243,9 +243,22 @@ export function RiskRegisterDashboard(): JSX.Element {
     setBusy("export");
     setError(null);
     try {
-      // Safe to assign wholesale now. The export response carries the same
-      // persisted withheld set as every other path (#244); before that it
-      // carried `[]` and this line was the one that erased the banner.
+      // Safe to assign wholesale -- and this comment is now load-bearing for
+      // TWO disclosures, which is why it says so explicitly.
+      //
+      // The export response carries the same persisted withheld set as every
+      // other path (#244); before that it carried `[]` and this line was the
+      // one that erased the banner. #372's batch tally was ABOUT TO REPEAT
+      // that exactly: it shipped response-only, so `export` returned the
+      // schema default and this line destroyed the "INCOMPLETE" warning at the
+      // moment the consultant did the thing it warns against.
+      //
+      // It is persisted now too, in the same provenance column, so both
+      // survive. **Anything added to this response that is not persisted
+      // breaks this line again** -- the sentence "safe to assign wholesale" is
+      // a claim about every field, and it expires silently the next time one
+      // is added. That is the precondition-comment shape CLAUDE.md records,
+      // and it has now caught this file twice.
       setRegister(await exportRiskRegister(cid));
     } catch (err) {
       setError(describeRiskError(err));
@@ -461,6 +474,49 @@ export function RiskRegisterDashboard(): JSX.Element {
               keyed on the OUTCOME so it is non-zero under either, and it is
               derived server-side from the stored entries, so unlike the
               withheld-inputs banner below it survives a reload. */}
+          {/* #372. A partial synthesis keeps what succeeded, so the register
+              renders SHORT -- and until now nothing said so. The endpoint has
+              always returned both counts; `lib/risk/types.ts` did not declare
+              them, so they were dropped at the TypeScript boundary and the
+              consultant exported a register missing a quarter of its entries
+              with no indication. ATT&CK fixed the identical pair as #115.
+
+              DURABLE, on every path. The tally is persisted in the register's
+              provenance and `_serialize` reads it back, so generate, export
+              and latest all report the run the register came from.
+
+              An earlier revision of this comment claimed the banner was
+              "transient by construction ... the same limitation the
+              withheld-inputs banner below carries". BOTH HALVES WERE WRONG.
+              The withheld-inputs banner is persisted and survives a reload --
+              the comment two banners down says so in as many words -- so the
+              parity was backwards, and citing it made a real defect read as an
+              accepted limitation. The transience itself was not a limitation
+              to document; it was the defect, and Export triggered it rather
+              than merely failing to survive it.
+
+              `=== null` is "nobody counted", which renders nothing: a register
+              generated before this shipped carries no tally and must not be
+              reported as complete OR as short. `> 0` on a non-null value is
+              the loss. The two are distinguishable because the field is
+              `number | null` rather than optional. */}
+          {register.batches_failed !== null && register.batches_failed > 0 ? (
+            <div
+              className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
+              role="alert"
+              data-testid="risk-batches-failed"
+            >
+              <span className="font-semibold">
+                {register.batches_failed} of {register.batches_total} synthesis
+                batches failed
+              </span>
+              , so this register is INCOMPLETE -- the entries those batches
+              would have produced are missing, not merely unscored. Regenerate
+              before exporting. This notice is recorded with the register, so it
+              survives an export and a reload and will still be here when you
+              come back.
+            </div>
+          ) : null}
           {register.entries_without_tier > 0 ? (
             <div
               className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"

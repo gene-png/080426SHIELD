@@ -1276,11 +1276,22 @@ def test_the_counters_still_read_true_when_the_register_is_fetched_later(
 ) -> None:
     """What the migration bought, and the reason a counter alone was not enough.
 
-    `batches_total` and `batches_failed` describe a RUN and are 0 on a read-back
-    -- the schema says so. The drop is not like that: the consultant opens the
-    register a week later and the question "was linkage proposed and lost?" is
-    exactly as live as it was at generate time. Because the drop is PERSISTED,
-    these counters are derived from the stored entries and survive the fetch.
+    The drop counters are derived from the stored entries, so the consultant
+    who opens the register a week later gets the same answer to "was linkage
+    proposed and lost?" as the run did.
+
+    **This docstring used to end by contrasting them with `batches_*`, which it
+    said "describe a RUN and are 0 on a read-back".** That was true of the
+    design when it was written and #372 changed it: a `0` on a read-back is a
+    positive claim that nothing failed, made about a run nobody recorded, and
+    it was destroying the partial-synthesis warning on export and reload. The
+    tally is persisted now and read back by `_serialize`, so BOTH pairs survive
+    the fetch and the contrast this test was built around no longer exists.
+
+    The assertion below was changed rather than deleted, and it is STRONGER
+    than the one it replaces: it now pins the read-back instead of pinning the
+    absence of one. CI caught it -- three local attempts at this file were lost
+    or reaped, and the merge gate is what actually ran it.
     """
     c, provider = app_client
     bearer, cid = _admin(c)
@@ -1300,10 +1311,11 @@ def test_the_counters_still_read_true_when_the_register_is_fetched_later(
     assert body["entries_with_dropped_links"] == generated["entries_with_dropped_links"] == 1
     assert body["entries_unlinked_after_drops"] == generated["entries_unlinked_after_drops"] == 1
     assert body["entries"][0]["dropped_links"] == {"linked_techniques": ["T9999"]}
-    # And the run-scoped pair is 0 here, which is what makes the contrast real
-    # rather than asserted: these two behave differently on a read-back ON
-    # PURPOSE, and the difference is the point of migration 0048.
-    assert body["batches_total"] == 0
+    # And the batch tally survives the read-back too, since #372 persisted it.
+    # One run, one batch: `latest` must report it rather than defaulting to a
+    # claim that nothing failed.
+    assert body["batches_total"] == generated["batches_total"] == 1
+    assert body["batches_failed"] == generated["batches_failed"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -2276,3 +2288,188 @@ def test_a_stored_stage_the_framework_does_not_have_is_named_not_used(app_client
         f"rather than silently applied. got {resolved}"
     )
     assert resolved["target"] == 3, resolved
+
+
+@pytest.mark.unit
+def test_the_batch_tally_is_persisted_by_generate_not_just_returned(app_client) -> None:
+    """THE WRITE HALF (#372).
+
+    The tally reached exactly one HTTP response for one revision, which is
+    `excluded_inputs`' defect repeated four fields away from its own
+    postmortem. Asserting it on the `generate` RESPONSE proves nothing: that
+    handler passes the numbers straight into `_serialize`, so it is green
+    whether or not anything was stored.
+
+    So this reads the DATABASE, not the response. Writing the row is not the
+    step under test here -- `generate` doing the write is exactly the claim.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    recorded = (reg.provenance or {}).get("batches")
+    assert isinstance(recorded, dict), (
+        "generate did not persist the batch tally, so `export` and `latest` "
+        "have nothing to read back and the INCOMPLETE banner dies with the "
+        "response -- #372, and #244 instance 1 verbatim"
+    )
+    assert isinstance(recorded.get("total"), int)
+    assert isinstance(recorded.get("failed"), int)
+
+
+@pytest.mark.unit
+def test_the_batch_tally_survives_a_reload_and_an_export(app_client) -> None:
+    """THE READ HALF, on BOTH paths that erased it.
+
+    `export` is the one that mattered: the component assigns its response to
+    state wholesale, so a response lacking the tally destroyed the "this
+    register is INCOMPLETE -- regenerate before exporting" warning at the exact
+    moment the consultant produced the deliverable. `latest` lost it on a
+    reload.
+
+    The stored value is MUTATED here rather than produced by a failing batch,
+    for the reason the withheld-set test gives: a literal that no generate in
+    this suite produces cannot be satisfied by a stale copy or by the caller's
+    own arguments. Building the world is not performing the step.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    stored = dict(reg.provenance or {})
+    stored["batches"] = {"total": 17, "failed": 5}
+    reg.provenance = stored
+    db.add(reg)
+    db.commit()
+
+    r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert r.status_code == 200, r.text
+    assert (r.json()["batches_total"], r.json()["batches_failed"]) == (17, 5), (
+        "the reload lost the tally -- `_serialize` is not reading " "`provenance['batches']` back"
+    )
+
+    e = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert e.status_code in (200, 201), e.text
+    assert (e.json()["batches_total"], e.json()["batches_failed"]) == (17, 5), (
+        "EXPORT lost the tally, which is the defect itself: the admin page "
+        "assigns this response to state, so the INCOMPLETE banner is erased "
+        "by the very click it warns against"
+    )
+
+
+@pytest.mark.unit
+def test_a_register_with_no_recorded_tally_says_nobody_counted(app_client) -> None:
+    """The half that must not fail open.
+
+    A register generated before the tally was persisted has no record. The
+    first revision of this field defaulted it to `0`, which reports "zero
+    batches failed" -- a POSITIVE claim about a run nobody observed, over the
+    one population that cannot be re-checked. Missing data defaults to
+    UNCONFIRMED.
+
+    `null` is what the wire must carry, and it can: no `exclude_none` exists
+    anywhere in `apps/api`, so the key is serialised rather than omitted, and a
+    consumer can tell "nobody counted" from "counted, none failed".
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    assert c.post(f"/risk/clients/{cid}/register/generate", headers=bh).status_code == 201
+
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(select(RiskRegister).where(RiskRegister.client_id == uuid.UUID(cid)))
+        .scalars()
+        .first()
+    )
+    stored = dict(reg.provenance or {})
+    stored.pop("batches", None)
+    reg.provenance = stored
+    db.add(reg)
+    db.commit()
+
+    body = c.get(f"/risk/clients/{cid}/register/latest", headers=bh).json()
+    assert body["batches_total"] is None, (
+        "a register with no recorded tally reported a number, so a run nobody "
+        "observed is being described as complete"
+    )
+    assert body["batches_failed"] is None
+    assert "batches_total" in body, (
+        "the key must be PRESENT and null -- an omitted key cannot be "
+        "distinguished from an old client, and the web type is `number | null`"
+    )
+
+
+@pytest.mark.unit
+def test_the_batch_keys_are_always_present_on_the_wire(app_client) -> None:
+    """THE TYPE AND THE WIRE, PINNED TO EACH OTHER (#372).
+
+    The admin banner's predicate is `batches_failed !== null && > 0`. That is
+    correct against `number | null`, and the `| null` was chosen by measuring
+    that no `exclude_none` exists anywhere in `apps/api`.
+
+    But the predicate is SHAPED like a presence test, and a presence test is
+    what made #317 invisible: if these keys ever stop being serialised,
+    `undefined > 0` is false and the INCOMPLETE banner disappears in silence on
+    a register that really did lose entries. The measurement that licensed the
+    type would still be true of the code and false of the response.
+
+    So this asserts PRESENCE, separately from value, on every path a consumer
+    reads -- generate, export and latest. A `response_model_exclude_none`, an
+    `exclude_unset`, or a hand-rolled projection on any one of them turns this
+    red instead of turning the banner off.
+
+    Deliberately NOT merged into the value assertions above. A test that checks
+    presence and value together passes for either reason, and the failure this
+    guards is exactly the one where the value would have been right had the key
+    survived.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+
+    gen = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert gen.status_code == 201, gen.text
+    latest = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert latest.status_code == 200, latest.text
+    export = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert export.status_code in (200, 201), export.text
+
+    for label, resp in (("generate", gen), ("latest", latest), ("export", export)):
+        body = resp.json()
+        for key in ("batches_total", "batches_failed"):
+            assert key in body, (
+                f"{label} omitted {key!r} from the serialised payload. The web "
+                "type is `number | null` and the banner reads "
+                "`batches_failed !== null`, so an ABSENT key makes the "
+                "INCOMPLETE disclosure vanish on a register that lost entries "
+                "-- silently, and #317 is the recorded instance of exactly this"
+            )
