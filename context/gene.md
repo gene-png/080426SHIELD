@@ -39,7 +39,23 @@ unreviewed work.
 | #360 | Item 12 is done, and the claim that sequenced it was backwards | 7/7 green | MERGEABLE |
 | #359 | Why the typed-reason guard stops at `dashboards/` | 7/7 green | MERGEABLE |
 
-Still open from before tonight: **#343, #349, #351, #353, #358**.
+Still open from before tonight: **#343, #351, #353, #358**. You merged **#349**
+while I was working; the table above is measured against `main` at that commit.
+
+**None of the six is rebased, deliberately, and the standing rule says to
+rebase at 2+ behind.** They are 2 behind and all six merge cleanly — measured,
+not assumed: `git worktree add --detach` per branch, `git merge --no-commit
+--no-ff origin/main`, exit 0 for all six, aborted and cleaned up. The rule's
+purpose is mergeability and mergeability holds.
+
+Rebasing would cost something concrete: every audit block cites
+`Scope: reviewed at <sha>`, and a rebase ORPHANS that commit. `git cat-file -t`
+would still answer `commit` for a fortnight, so a citation check asking "does
+this resolve?" would pass over a sha no longer on the branch —
+`git merge-base --is-ancestor` is the check that fails loudly, and it would
+fail. I would rather hand you six branches whose review provenance is verifiable
+than six that are tidier and cannot prove what was read. If any of them starts
+conflicting, that trade flips and I rebase it.
 
 ### #362 is the one with a client consequence
 
