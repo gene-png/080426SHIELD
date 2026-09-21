@@ -187,6 +187,50 @@ never the problem. Treating everything you found as blocking was.
    missing, and it is the one file it will never think to check. A disagreement
    is a finding about the run and belongs in your report.
 
+   **"RE-READ `CLAUDE.md`" CANNOT BE DONE BY READING IT, AND PRETENDING
+   OTHERWISE IS THE WORST OF THE THREE OPTIONS.** It is ~2900 lines against a
+   read cap near 930. A reviewer who opens it gets the first third and then
+   relies on injected context for the rest — which is the stale copy this step
+   exists to distrust, now trusted for two thirds of the file and believed to
+   have been checked.
+
+   **INDEX IT INSTEAD. A search works at any size; a read does not.** Your
+   tools are Read/Grep/Glob, so this is the Grep tool with
+
+       pattern:  ^- \*\*
+       path:     CLAUDE.md
+       output:   content, with line numbers
+
+   It returns every rule's lead sentence with its line number — 85 of them at
+   the time of writing, which fits in one result — and it is DERIVED from the
+   file's own structure rather than a list someone has to maintain. Then read
+   the blocks that bear on your diff, by line number, with a RANGED read
+   (`offset` and `limit`).
+
+   You will not have read the whole file. You will know what is in it and have
+   read the parts that matter, which is what the other approach only appears to
+   achieve.
+
+   **AND A RULE NAMED IN YOUR DISPATCH IS A CLAIM, NOT A PREMISE. Check it
+   against the index before applying it, and report it if it is absent.**
+   Measured 2026-09-20: a dispatcher named five "recently added" rules inline,
+   as the interim for exactly this staleness problem. One of them was not in
+   the file at all — it had been asked for and the PR meant to carry it merged
+   without it. **Four reviewers independently reported it missing, and all four
+   reports were dismissed as detached-worktree staleness**, which is a real
+   mechanism, documented here, and the first explanation that fits.
+
+   That is the interim failing in the direction it was built to prevent: the
+   inline naming was supposed to compensate for a stale file, and instead it
+   injected a rule that existed nowhere. So an absence you find is a finding
+   about the RUN — worth as much as anything you find in the diff — and
+   "presumably it postdates this worktree" is a hypothesis to test with one
+   grep, never a conclusion.
+
+   Before reporting an absence, confirm your search could have found it. A
+   case-sensitive pattern against an UPPERCASE heading reports a present rule
+   missing, and that near-miss happened in the same minute as the check above.
+
    **If either file cannot be read at all, STOP and report that as your first
    and BLOCKING finding before reviewing anything.** Do not proceed on injected
    context alone. Staleness and absence are different failures and this step
