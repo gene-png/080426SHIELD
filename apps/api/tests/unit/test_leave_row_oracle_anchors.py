@@ -25,7 +25,29 @@ imports fine and whose anchors have moved.
 from __future__ import annotations
 
 import pytest
-from scripts import leave_row_oracle as oracle
+
+# THE DOTTED FORM, deliberately, and not a blank line above a bare one.
+#
+# `pyproject.toml` records why: ruff resolves first-party by asking
+# whether the DOTTED MODULE PATH exists under `src`, which defaults to
+# the directory holding the config. This repo has a top-level `scripts/`
+# unrelated to `apps/api/scripts/`, so the BARE form
+# `from scripts import leave_row_oracle` resolves against it in a full
+# checkout -- FIRST-party in CI, THIRD-party in the api container, which
+# mounts apps/api at /app and has neither path. I001 on the runner, clean
+# in the container, and the loop gate structurally cannot see it (PR #155).
+#
+# MEASURED, both layouts, both variants -- because `ruff --fix` proposes the
+# blank line and it is the obvious answer:
+#
+#   bare + blank line   CI layout: PASS    container layout: I001
+#   dotted (this file)  CI layout: PASS    container layout: PASS
+#
+# So taking the `--fix` would have moved the red from the runner to the
+# loop gate rather than removing it. The dotted form is stable because it
+# fails to resolve in BOTH environments -- they agree by accident, as
+# `pyproject.toml` says -- and the nine other test files here use it.
+import scripts.leave_row_oracle as oracle
 
 
 @pytest.mark.unit
