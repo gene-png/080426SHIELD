@@ -125,7 +125,7 @@ DEFERRED: dict[str, str] = {
         "`#!/usr/bin/env bash` with `set -euo pipefail` -- fine under Git "
         "Bash, where `sh` IS bash, and exit 2 under `dash` on the runner "
         "before any argument is read, which `argument_guards.sh` had already "
-        "measured against that exact line. Both call sites use `bash` now, "
+        "measured against that exact line. All 3 call sites use `bash` now, "
         "and the unknown-mode check asserts the refusal MESSAGE rather than "
         "only the code, because exit 2 is also what the dash death produces. "
         "The first is the fixture's own construction: it originally "
