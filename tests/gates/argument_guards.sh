@@ -97,11 +97,58 @@ if [ "$count" -eq 0 ]; then
   exit 2
 fi
 
+# EACH SUBJECT RUNS UNDER THE INTERPRETER ITS OWN SHEBANG NAMES.
+#
+# This ran everything with `sh`, and CI is where that showed: on Ubuntu `sh` is
+# dash, and three subjects declaring `#!/usr/bin/env bash` died at
+# `set -o pipefail` -- line 27 of `close_guard_linked_file.sh`, line 5 of
+# `dev-web.sh`, line 59 of `verify-in-worktree.sh` -- before reaching any
+# argument handling. Exit 2, no refusal message, and this gate flagged them.
+# The gate was right about what it saw and wrong about how it looked.
+#
+# It could not reproduce locally: Git Bash's `sh` IS bash in POSIX mode and
+# accepts `set -o pipefail`, so every subject passed on Windows and three
+# failed on the runner. Measured under real dash (`debian:bookworm-slim`,
+# `/bin/sh -> dash`) to find it.
+#
+# THE INTERPRETER IS NOT A CONVENTION TO PICK -- it is already written in each
+# file, it VARIES, and the variation is load-bearing. Measured across all seven
+# subjects, survival under dash correlates exactly with the shebang:
+#
+#   #!/bin/sh or env sh  -> argument_guards.sh, prettier_hook.sh,
+#                           web_install_guard.sh, web-install-if-stale.sh
+#   #!/usr/bin/env bash  -> close_guard_linked_file.sh, dev-web.sh,
+#                           verify-in-worktree.sh
+#
+# `web-install-if-stale.sh` is why "just use bash everywhere" is wrong:
+# `docker-compose.yml` runs it as `sh /app/web-install-if-stale.sh`, so POSIX
+# compatibility is a REAL requirement for that one and a harness forcing bash
+# would stop checking the thing that matters. Equally, making a bash script
+# POSIX to satisfy this harness would be the harness dictating a constraint
+# nobody asked for.
+#
+# So the shebang is read and honoured. A subject with no shebang is a
+# could-not-look, not a guess.
+interpreter_for() {
+  first="$(head -n 1 "$1")"
+  case "$first" in
+    "#!"*bash) echo bash ;;
+    "#!"*/sh|"#!"*" sh") echo sh ;;
+    *)
+      echo "FAIL [could not look] $1 has no recognisable shebang: '$first'" >&2
+      echo "      This gate runs each script under the interpreter its own" >&2
+      echo "      shebang names. Guessing one would test a configuration" >&2
+      echo "      nothing uses." >&2
+      exit 2 ;;
+  esac
+}
+
 # `$1` the script, `$2` the label for the argument, `$3...` the argument(s).
 refuses() {
   script="$1"; what="$2"; shift 2
+  shell="$(interpreter_for "$script")"
   set +e
-  out="$(sh "$script" "$@" 2>&1)"
+  out="$("$shell" "$script" "$@" 2>&1)"
   code=$?
   set -e
   name="${script##*/}"
@@ -116,7 +163,7 @@ refuses() {
   # interpreter or an unrelated could-not-look branch produces, so the number
   # alone does not say the ARGUMENT GUARD is what ran.
   case "$out" in
-    *"FAIL:"*) echo "ok   [$name] $what refused, with a message" ;;
+    *"FAIL"*) echo "ok   [$name] $what refused under $shell, with a message" ;;
     *)
       echo "FAIL [$name]: $what exited 2 with no refusal message."
       echo "      Exit 2 without a message is indistinguishable from a crash."

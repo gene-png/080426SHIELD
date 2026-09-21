@@ -63,6 +63,64 @@ set -euo pipefail
 # taken from a pipe's last stage or a trailing statement is the failure this
 # repo has hit three times in one day.
 
+# CHECKED BEFORE ANY WORK, and that position is the point. It sat just above
+# the `case` at the bottom of the file -- after `git rev-parse`, after the path
+# computation -- so on a machine without git in PATH the script exited 127
+# before it could refuse a bad argument. An argument check that runs after the
+# side effects is not an argument check.
+# AN ARGUMENT THIS SCRIPT DOES NOT IMPLEMENT MUST NOT SUCCEED, and the
+# dangerous slot here is the SECOND one, not the first.
+#
+# The `case` below reads `$1` and rejects an unknown mode correctly. It ignored
+# everything after it -- so `verify-in-worktree.sh tsc --self-test` ran an
+# ordinary tsc, exited 0, and read as a self-test having run. That is the worst
+# instance of this shape in the repo, because `CLAUDE.md` tells readers to run
+# `--self-test` before trusting a clean result from a worktree they have not
+# verified from before: the one command whose job is to prove the harness can
+# fail was silently not running, and the reward for asking was a green.
+#
+# Arity is judged on `$#`, NOT on `${1:-}`. `case "${1:---all}"` cannot tell an
+# ABSENT argument from an explicit `""` -- both take the `--all` default, so
+# `verify-in-worktree.sh ""` quietly ran the entire toolchain.
+if [ "$#" -gt 1 ]; then
+  echo "FAIL: too many arguments; got: $*" >&2
+  echo "      This script takes ONE mode. Everything after the first was" >&2
+  echo "      ignored, so \`$0 tsc --self-test\` ran an ordinary tsc, exited 0," >&2
+  echo "      and read as a self-test having run." >&2
+  exit 2
+fi
+if [ "$#" -eq 1 ] && [ -z "$1" ]; then
+  echo "FAIL: empty argument. An explicit \"\" is not 'no argument' -- it took" >&2
+  echo "      the --all default and ran the whole toolchain." >&2
+  exit 2
+fi
+
+# AND THE MODE IS VALIDATED HERE TOO, not only by the `case` at the bottom.
+#
+# The arity guard above catches a SECOND argument. A single unrecognised mode
+# fell through it and reached the `case` 150 lines below -- which is after
+# `git rev-parse` on the next line, so on a machine without git in PATH the
+# script exited 127 instead of refusing. Measured: `verify-in-worktree.sh
+# --definitely-not-a-flag` in a container without git gave
+# `line 99: git: command not found`, exit 127.
+#
+# `is_known_mode` is the authority and holds the list ONCE. The `case` at the
+# bottom still names each mode because that is the dispatch, and its `*)` arm
+# is unreachable while the two agree -- it says so rather than silently being
+# a second opinion.
+is_known_mode() {
+  case "$1" in
+    --self-test|--self-test-bound|tsc|vitest|eslint|--all) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if ! is_known_mode "${1:---all}"; then
+  echo "FAIL: unknown mode '${1:-}'." >&2
+  echo "usage: $0 [tsc|vitest|eslint|--all|--self-test|--self-test-bound]" >&2
+  exit 2
+fi
+
 PRIMARY_TREE="${SHIELD_PRIMARY_TREE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 WORKTREE="$(git rev-parse --show-toplevel)"
 IMAGE="${SHIELD_VERIFY_IMAGE:-node:22-bookworm}"
@@ -260,33 +318,6 @@ self_test_bound() {
   echo "self-test-bound: PASS"
 }
 
-# AN ARGUMENT THIS SCRIPT DOES NOT IMPLEMENT MUST NOT SUCCEED, and the
-# dangerous slot here is the SECOND one, not the first.
-#
-# The `case` below reads `$1` and rejects an unknown mode correctly. It ignored
-# everything after it -- so `verify-in-worktree.sh tsc --self-test` ran an
-# ordinary tsc, exited 0, and read as a self-test having run. That is the worst
-# instance of this shape in the repo, because `CLAUDE.md` tells readers to run
-# `--self-test` before trusting a clean result from a worktree they have not
-# verified from before: the one command whose job is to prove the harness can
-# fail was silently not running, and the reward for asking was a green.
-#
-# Arity is judged on `$#`, NOT on `${1:-}`. `case "${1:---all}"` cannot tell an
-# ABSENT argument from an explicit `""` -- both take the `--all` default, so
-# `verify-in-worktree.sh ""` quietly ran the entire toolchain.
-if [ "$#" -gt 1 ]; then
-  echo "FAIL: too many arguments; got: $*" >&2
-  echo "      This script takes ONE mode. Everything after the first was" >&2
-  echo "      ignored, so \`$0 tsc --self-test\` ran an ordinary tsc, exited 0," >&2
-  echo "      and read as a self-test having run." >&2
-  exit 2
-fi
-if [ "$#" -eq 1 ] && [ -z "$1" ]; then
-  echo "FAIL: empty argument. An explicit \"\" is not 'no argument' -- it took" >&2
-  echo "      the --all default and ran the whole toolchain." >&2
-  exit 2
-fi
-
 case "${1:---all}" in
   --self-test) self_test ;;
   --self-test-bound) self_test_bound ;;
@@ -296,7 +327,12 @@ case "${1:---all}" in
   --all)       echo "== tsc ==";    tsc
                echo "== vitest =="; vitest
                echo "== eslint =="; eslint ;;
-  *) echo "FAIL: unknown mode '$1'." >&2
-     echo "usage: $0 [tsc|vitest|eslint|--all|--self-test|--self-test-bound]" >&2
+  # UNREACHABLE while this list and `is_known_mode` agree -- the mode is
+  # validated at the top of the file, before any work. Kept as fail-closed
+  # cover for the case where they drift, and it says which check is the
+  # authority so the next reader fixes the right one.
+  *) echo "FAIL: unknown mode '$1' reached the dispatch." >&2
+     echo "      is_known_mode() accepted it and this case did not, so the two" >&2
+     echo "      have drifted. is_known_mode is the authority." >&2
      exit 2 ;;
 esac
