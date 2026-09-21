@@ -2424,3 +2424,52 @@ def test_a_register_with_no_recorded_tally_says_nobody_counted(app_client) -> No
         "the key must be PRESENT and null -- an omitted key cannot be "
         "distinguished from an old client, and the web type is `number | null`"
     )
+
+
+@pytest.mark.unit
+def test_the_batch_keys_are_always_present_on_the_wire(app_client) -> None:
+    """THE TYPE AND THE WIRE, PINNED TO EACH OTHER (#372).
+
+    The admin banner's predicate is `batches_failed !== null && > 0`. That is
+    correct against `number | null`, and the `| null` was chosen by measuring
+    that no `exclude_none` exists anywhere in `apps/api`.
+
+    But the predicate is SHAPED like a presence test, and a presence test is
+    what made #317 invisible: if these keys ever stop being serialised,
+    `undefined > 0` is false and the INCOMPLETE banner disappears in silence on
+    a register that really did lose entries. The measurement that licensed the
+    type would still be true of the code and false of the response.
+
+    So this asserts PRESENCE, separately from value, on every path a consumer
+    reads -- generate, export and latest. A `response_model_exclude_none`, an
+    `exclude_unset`, or a hand-rolled projection on any one of them turns this
+    red instead of turning the banner off.
+
+    Deliberately NOT merged into the value assertions above. A test that checks
+    presence and value together passes for either reason, and the failure this
+    guards is exactly the one where the value would have been right had the key
+    survived.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+
+    gen = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert gen.status_code == 201, gen.text
+    latest = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
+    assert latest.status_code == 200, latest.text
+    export = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert export.status_code in (200, 201), export.text
+
+    for label, resp in (("generate", gen), ("latest", latest), ("export", export)):
+        body = resp.json()
+        for key in ("batches_total", "batches_failed"):
+            assert key in body, (
+                f"{label} omitted {key!r} from the serialised payload. The web "
+                "type is `number | null` and the banner reads "
+                "`batches_failed !== null`, so an ABSENT key makes the "
+                "INCOMPLETE disclosure vanish on a register that lost entries "
+                "-- silently, and #317 is the recorded instance of exactly this"
+            )
