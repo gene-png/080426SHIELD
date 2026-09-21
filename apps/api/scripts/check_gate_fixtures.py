@@ -123,6 +123,31 @@ DEFERRED: dict[str, str] = {
         "the missing half was that nothing ran it. No `--self-test`, so a "
         "harness-cannot-fail defect in it would still be invisible."
     ),
+    "argument_guards.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Its subject set is DERIVED -- `tests/gates/*.sh` globbed, plus two "
+        "named `scripts/` entries -- so a shell gate added later is covered "
+        "with nobody registering it, and it drives ITSELF, which terminates "
+        "because the child hits its own guard before reaching the loop. "
+        "It exists because three of the five argument guards added for #343 "
+        "were asserted by NOTHING: `scripts/dev-web.sh`'s, and the two the "
+        "harness scripts `web_install_guard.sh` and `close_guard_linked_file.sh` "
+        "grew for themselves. Deleting any of the three left every gate in the "
+        "repo printing its certificate -- a guard against a silent success, "
+        "itself silently unguarded, inside the change that exists to end that. "
+        "Both states are covered and BOTH ARE REAL RUNS, not a restatement: "
+        "the refusing state is every subject invoked with an unknown flag and "
+        "with an empty argument, and the passing state is the exit-0 path, "
+        "which is reached only when all of them refused. Each case asserts the "
+        "MESSAGE as well as the code, because exit 2 is also what a crash, a "
+        "missing interpreter and an unrelated could-not-look branch produce. "
+        "TWO LIMITS, stated because the paragraph above certifies strength. "
+        "It cannot see a script that has NO guard at all: the set is derived "
+        "from the files present, not from a list of who ought to carry one, so "
+        "a new script with silent argument handling is invisible here. And it "
+        "has no `--self-test`, so a harness-cannot-fail defect in it is "
+        "invisible too -- the same residual the two entries above carry."
+    ),
     # -- #310's shell gate, a DIFFERENT incident from the two above ----------
     # It was WIRED from the day it landed -- `audit-gate.yml` runs it and its
     # `--self-test` on every PR -- so the "ran nowhere for weeks" history above

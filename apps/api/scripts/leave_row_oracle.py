@@ -142,11 +142,20 @@ from it can come from either:
       AND every not-LEAVE label is true
   1 - --check-registry: a LEAVE table has no registered guards, OR a table
       declared not-LEAVE holds rows the redactor leaves alone
-  2 - could not look. Either the oracle could not run (baseline not green, a
-      mutation would not compile, the source could not be restored), or the
-      label check could not classify a table (an undeclared unreadable table, a
-      stale UNREADABLE_NOT_LEAVE declaration, or a declaration pointing at a
-      table that no longer exists). An unreadable input is NOT a pass.
+  2 - could not look. The oracle could not run (baseline not green, a mutation
+      would not compile, the source could not be restored); the label check
+      could not classify a table (an undeclared unreadable table, a stale
+      UNREADABLE_NOT_LEAVE declaration, or a declaration pointing at a table
+      that no longer exists); or an ARGUMENT WAS NOT UNDERSTOOD, which is
+      decided before anything is read. An unreadable input is NOT a pass.
+
+      That last cause is listed because the enumeration was written as a
+      CLOSED list ("Either ... or ...") and then a third cause was added below
+      it without the list moving. A closed list of an open set is worse than no
+      list: a reader debugging an exit 2 checks the two documented causes,
+      finds neither, and concludes the tool is broken. If a fourth is added,
+      this sentence is the reminder to come back here -- or to stop
+      enumerating and point at `main`.
 """
 
 from __future__ import annotations
@@ -850,6 +859,32 @@ def check_registry(rows) -> int:
 #: `CLAUDE.md`: prefer a derivation over a synchronization.
 _CHECK_REGISTRY = "--check-registry"
 
+#: EVERY FLAG THIS SCRIPT ACCEPTS. The guard reads this; it does not carry its
+#: own copy.
+#:
+#: One line to register a flag, and that is the whole point of the tuple
+#: existing for a single member. The guard was written as
+#: `a != _CHECK_REGISTRY` -- correct, and correct only while there is exactly
+#: one flag. The NEXT flag has to be added in two places, and the failure when
+#: it is added in one is not a syntax error: the guard rejects a flag the
+#: script implements, with a confident message naming the only flag it thinks
+#: exists.
+#:
+#: That is not hypothetical. #382 adds `--check-anchors` and wires it into
+#: `ci.yml`. Both branches merge clean, because they touch different hunks of
+#: this function -- so git cannot see it, and `main` would go permanently red
+#: on a step whose whole job is to report whether the oracle can still
+#: measure. Measured by running `--check-anchors` against a tree carrying both
+#: changes: exit 2, refused by this guard.
+#:
+#: The fix belongs in the branch that INTRODUCES the flag -- a PR that adds a
+#: flag registers it -- so #382 adds one entry here. The alternative, listing
+#: `--check-anchors` in this branch, would have the guard accept a flag this
+#: tree does not implement; the argument then falls through to the default
+#: path, which is the FULL oracle, which WRITES `redact.py`. Strictly worse
+#: than the red it would be papering over.
+_FLAGS: tuple[str, ...] = (_CHECK_REGISTRY,)
+
 
 def main(argv: list[str]) -> int:
     # An UNRECOGNISED ARGUMENT is exit 2, not the default report.
@@ -866,11 +901,17 @@ def main(argv: list[str]) -> int:
     # gate, where the cost is a step that certifies nothing.
     #
     # argv[0] is the program name; anything after it must be understood.
-    unknown = [a for a in argv[1:] if a != _CHECK_REGISTRY]
+    #
+    # Read from `_FLAGS` rather than compared against the one flag that exists
+    # today, so registering a new flag is one line and the guard follows. The
+    # message enumerates from the same tuple, so it cannot name a set the
+    # guard is not enforcing.
+    unknown = [a for a in argv[1:] if a not in _FLAGS]
     if unknown:
         print(
             f"leave-row-oracle: could not look -- unrecognised argument(s) "
-            f"{', '.join(unknown)}. This script accepts only {_CHECK_REGISTRY}.",
+            f"{', '.join(unknown)}. This script accepts only "
+            f"{', '.join(_FLAGS)}.",
             file=sys.stderr,
         )
         return 2
