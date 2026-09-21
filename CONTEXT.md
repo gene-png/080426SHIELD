@@ -13,6 +13,24 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**#336 landed: a gate now enforces that disclosures reach a reader.**
+`apps/api/scripts/check_disclosure_consumers.py`, wired as the CI step
+"disclosures reach a reader". A field on a `*Response` model recording what was
+withheld, dropped or rejected must have its name referenced under
+`apps/web/src` OR in an exporter -- "a screen or a delivered artifact", per the
+definition-of-done rule. 18 such fields today, all reachable.
+
+Two design calls worth knowing. The consumer surface is TWO surfaces, not the
+web alone: `unusable_target_codes` reaches the client only through
+`zt/exporters.py`, so a web-only search would have reported a defect over a
+field that already reaches the reader who matters most. And the audit `details`
+payload -- #322's population, which are dict keys rather than schema fields --
+is checked STRUCTURALLY, by asserting a generic renderer exists, because
+enumerating its keys would report violations over a payload that a generic
+renderer makes fully visible. That arm is exempt until #351 lands, with an
+expiry stated in the code.
+
+
 ### Open `mvp-blocking` issues
 
 **The count is not written here. Run it:**
