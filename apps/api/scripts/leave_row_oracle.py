@@ -162,6 +162,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_APP = Path(__file__).resolve().parents[1]
@@ -859,31 +860,57 @@ def check_registry(rows) -> int:
 #: `CLAUDE.md`: prefer a derivation over a synchronization.
 _CHECK_REGISTRY = "--check-registry"
 
-#: EVERY FLAG THIS SCRIPT ACCEPTS. The guard reads this; it does not carry its
-#: own copy.
+
+def check_registry_and_labels() -> int:
+    """`--check-registry`: the registry check AND the label check.
+
+    Both, always, and the WORSE code wins. The registry asks whether every
+    table is classified; the labels ask whether the classification is true. A
+    complete registry over a wrong label is the failure #221 records, so
+    reporting only the first would keep producing it.
+
+    2 beats 1 deliberately: "I could not look" is the more urgent of the two,
+    because a violation is a fact about the code and a 2 is a fact about the
+    instrument.
+
+    Lifted out of `main` so it can be a VALUE in `_FLAGS` below. The flag has
+    always run two checks; the name says so now.
+    """
+    rows = leave_rows()
+    return max(check_registry(rows), check_labels())
+
+
+#: EVERY FLAG THIS SCRIPT IMPLEMENTS, mapped to what it runs.
 #:
-#: One line to register a flag, and that is the whole point of the tuple
-#: existing for a single member. The guard was written as
-#: `a != _CHECK_REGISTRY` -- correct, and correct only while there is exactly
-#: one flag. The NEXT flag has to be added in two places, and the failure when
-#: it is added in one is not a syntax error: the guard rejects a flag the
-#: script implements, with a confident message naming the only flag it thinks
-#: exists.
+#: ONE STRUCTURE SERVING BOTH ROLES, and that is the whole point of it existing
+#: for a single entry. It is the DISPATCH, so a key cannot exist without a
+#: handler; and it is what the guard below reads, so the allow-list is true by
+#: construction rather than kept in step by hand.
 #:
-#: That is not hypothetical. #382 adds `--check-anchors` and wires it into
-#: `ci.yml`. Both branches merge clean, because they touch different hunks of
-#: this function -- so git cannot see it, and `main` would go permanently red
-#: on a step whose whole job is to report whether the oracle can still
-#: measure. Measured by running `--check-anchors` against a tree carrying both
-#: changes: exit 2, refused by this guard.
+#: `_CHECK_REGISTRY` already collapsed two literals into one constant, and its
+#: comment argues the case -- prefer a derivation over a synchronization. It
+#: stopped one step short: a constant shared by two SITES still leaves the
+#: accepted set and the implemented set as separate facts that happen to agree.
+#: A table serving as both cannot disagree.
 #:
-#: The fix belongs in the branch that INTRODUCES the flag -- a PR that adds a
-#: flag registers it -- so #382 adds one entry here. The alternative, listing
-#: `--check-anchors` in this branch, would have the guard accept a flag this
-#: tree does not implement; the argument then falls through to the default
-#: path, which is the FULL oracle, which WRITES `redact.py`. Strictly worse
-#: than the red it would be papering over.
-_FLAGS: tuple[str, ...] = (_CHECK_REGISTRY,)
+#: WHY IT MATTERS BEYOND TIDINESS, and this branch cannot see the evidence.
+#: #382 adds `--check-anchors` and wires it into `ci.yml`. It touches a
+#: different hunk of `main`, so a first draft of both MERGED CLEAN and `main`
+#: went red: measured on a combined tree, `leave_row_oracle.py
+#: --check-anchors` exited 2, refused by the guard below, on the step whose
+#: whole job is to report whether the oracle can still measure.
+#:
+#: Registering a flag is adding its entry here -- which is also implementing
+#: it. So the guard accepts a flag IF AND ONLY IF this tree implements one,
+#: whichever branch adds it and in either merge order. The alternative
+#: considered and rejected was listing `--check-anchors` in this branch's
+#: allow-list: this tree does not implement it, so the argument would be
+#: ACCEPTED and fall through to the default path, which is the full oracle,
+#: which WRITES `redact.py`. A silent write to the redactor is not a fix for a
+#: red CI.
+_FLAGS: dict[str, Callable[[], int]] = {
+    _CHECK_REGISTRY: check_registry_and_labels,
+}
 
 
 def main(argv: list[str]) -> int:
@@ -902,9 +929,9 @@ def main(argv: list[str]) -> int:
     #
     # argv[0] is the program name; anything after it must be understood.
     #
-    # Read from `_FLAGS` rather than compared against the one flag that exists
-    # today, so registering a new flag is one line and the guard follows. The
-    # message enumerates from the same tuple, so it cannot name a set the
+    # Read from `_FLAGS`, which IS the dispatch -- so the accepted set and the
+    # implemented set are one fact rather than two that have to agree. The
+    # message enumerates from the same table, so it cannot advertise a set the
     # guard is not enforcing.
     unknown = [a for a in argv[1:] if a not in _FLAGS]
     if unknown:
@@ -915,20 +942,20 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
-    rows = leave_rows()
-    if _CHECK_REGISTRY in argv:
-        # Both, always, and the WORSE code wins. The registry asks whether every
-        # table is classified; the labels ask whether the classification is
-        # true. A complete registry over a wrong label is the failure #221
-        # records, so reporting only the first would keep producing it.
-        #
-        # 2 beats 1 deliberately: "I could not look" is the more urgent of the
-        # two, because a violation is a fact about the code and a 2 is a fact
-        # about the instrument.
-        registry = check_registry(rows)
-        labels = check_labels()
-        return max(registry, labels)
+    # EVERY FLAG NAMED ON THE COMMAND LINE RUNS, and the WORST code wins.
+    # Dispatched through the same table the guard reads, so a flag it accepts
+    # is a flag something handles.
+    selected = [flag for flag in _FLAGS if flag in argv]
+    if selected:
+        return max(_FLAGS[flag]() for flag in selected)
 
+    # THE DEFAULT PATH: the full oracle, which WRITES `redact.py`.
+    #
+    # `rows` is collected HERE rather than at the top of `main`. Every
+    # flagged path returns without needing it, and collecting it first
+    # meant an invocation that only asks a cheap question still imported
+    # and walked every truth table.
+    rows = leave_rows()
     original = _original()
     REDACT.write_text(original, encoding="utf-8")
     if _evaluate(rows):

@@ -149,7 +149,7 @@ def test_an_unrecognised_argument_cannot_look(argv) -> None:
 
 
 @pytest.mark.unit
-def test_the_guard_reads_the_FLAGS_TUPLE_and_not_a_literal(monkeypatch, capsys) -> None:
+def test_the_guard_reads_the_FLAGS_TABLE_and_not_a_literal(monkeypatch, capsys) -> None:
     """Registering a flag must be ONE edit, and this is what makes that true.
 
     The guard was `a != _CHECK_REGISTRY`: correct, and correct only while there
@@ -165,7 +165,14 @@ def test_the_guard_reads_the_FLAGS_TUPLE_and_not_a_literal(monkeypatch, capsys) 
     still measure.
 
     Emptying `_FLAGS` must make the one flag that exists today be REFUSED. If
-    it is not, the guard is reading a literal and the tuple is decoration.
+    it is not, the guard is reading a literal and the table is decoration.
+
+    AND THE TABLE IS ALSO THE DISPATCH, which is the half that makes the merge
+    order stop mattering: a key cannot be present without a handler, so a guard
+    reading these keys accepts a flag if and only if this tree implements one.
+    The state the earlier design could reach -- a flag ACCEPTED by the
+    allow-list and then not dispatched -- falls through to the default path,
+    which is the full oracle, which WRITES `redact.py`.
 
     Safe to run: every assertion here lands on the exit-2 path, which returns
     before `leave_rows()` and therefore before the report path that REWRITES
@@ -173,12 +180,17 @@ def test_the_guard_reads_the_FLAGS_TUPLE_and_not_a_literal(monkeypatch, capsys) 
     """
     import scripts.leave_row_oracle as oracle
 
-    monkeypatch.setattr(oracle, "_FLAGS", ())
+    # Every registered flag has a handler. A key with none is the accepted-but-
+    # undispatched state described above.
+    for flag, handler in oracle._FLAGS.items():
+        assert callable(handler), f"{flag} is registered with no handler"
+
+    monkeypatch.setattr(oracle, "_FLAGS", {})
     assert oracle.main(["leave_row_oracle.py", oracle._CHECK_REGISTRY]) == 2
 
-    # And the message enumerates from the same tuple, so it cannot advertise a
+    # And the message enumerates from the same table, so it cannot advertise a
     # set the guard is not enforcing.
-    monkeypatch.setattr(oracle, "_FLAGS", ("--alpha", "--beta"))
+    monkeypatch.setattr(oracle, "_FLAGS", {"--alpha": lambda: 0, "--beta": lambda: 0})
     assert oracle.main(["leave_row_oracle.py", "--gamma"]) == 2
     err = capsys.readouterr().err
     assert "--alpha, --beta" in err
