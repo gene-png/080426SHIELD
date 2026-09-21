@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-09 (#237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-21 (status-only correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 11 and 12, and every issue in the `mvp-blocking` mapping below has closed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and its export/publish half has not started; item 6 has F10 left, which owns no issue; item 9's remaining work is #185 and #194. Every status now cites landed code rather than issue state. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged, and the live `mvp-blocking` blockers own no item. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -54,7 +54,7 @@ renderer makes fully visible. That arm is exempt until #351 lands, with an
 expiry stated in the code.
 
 
-### Open `mvp-blocking` issues
+### `mvp-blocking` issues — the live list is a command, the mapping below is history
 
 **The count is not written here. Run it:**
 
@@ -81,6 +81,35 @@ have on 2026-08-26, when four were orphaned. By item:
   fixed and then orphaned when it closed
 - **12 (new)** — `#168`, the pre-commit hook set running three tools at versions
   no gate uses
+
+**EVERY ISSUE IN THE MAPPING ABOVE IS NOW CLOSED. Measured 2026-09-21 at
+`8e68d46`** (`gh issue view <n> --json state` per issue; landed code verified for
+each, cited in the `DELIVERY_PLAN.md` row that owns it). The mapping is kept
+because it is the durable half — an issue's owning item does not change when the
+issue closes either — but it is **no longer a to-do list, and it is sitting under
+a heading that says "Open"**, which is how it came to be read as one: a night's
+work order was written from the `DELIVERY_PLAN.md` rows this mapping mirrors, on
+2026-09-21, and pointed at work that had already landed.
+
+**So the section's own rule has a hole this correction exposes rather than
+fixes.** Replacing the count with a command made the COUNT honest and left the
+MAPPING to go stale by a different route: not by drifting, but by every member
+of it closing while the live blockers — the ones the command returns today —
+appear nowhere here and own no item in `DELIVERY_PLAN.md`. Run the command and
+compare the numbers it returns against the mapping above; where a returned
+number is absent from it, that blocker has no owning item, which
+`DELIVERY_PLAN.md` states is a condition its total silently stops covering. At
+`8e68d46` the only returned issue carrying `unowned-with-reason` was `#220`.
+Assigning the rest is a scoping judgement and is flagged for Gene, not done
+here.
+
+**Items 6 and 8 are NOT complete despite every issue in the mapping being
+closed**, and the reason is the same both times — an item's issues are a sample of its
+scope, not its definition. Item 6 still carries F10 (the allow-list swap the
+2026-08-08 plan folds into it by name, live in `routes/risk.py`, no issue filed).
+Item 8's export/publish split — what the item is named after — has shipped
+nothing and owns no issue at all, so issue state reads complete over it. Both are
+written up in the `DELIVERY_PLAN.md` rows with the quoted code.
 
 In flight: `#165` closes with the prettier-pin PR. `#159` loses the label — it
 is developer tooling and does not meet "the MVP cannot ship while this is open",
