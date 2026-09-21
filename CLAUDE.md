@@ -2829,13 +2829,33 @@ Rules of the road:
          one file for three of five services and none for ATT&CK or Tech Debt
          was a half-sweep — the defect this file has a bullet about.
        * `apps/api/scripts/check_*.py`, `apps/api/scripts/leave_row_oracle.py`
-         (a CI gate whose name does not match `check_*`),
+         (a CI gate whose name does not match `check_*`), **`tests/gates/**`**,
          `.github/workflows/**`, and
          `.github/pull_request_template.md` — the gates and the harness that
          enforce this rule. A change here satisfies condition 1 by construction.
          This file already records that `fetch-depth: 0` and one colon in the PR
          template are each the single character deciding whether a gate means
          anything.
+
+         **`tests/gates/**` was missing and that was a live fail-open, found
+         2026-09-21 by applying this list to every open PR rather than by
+         reading it.** `ci.yml` runs `bash tests/gates/prettier_hook.sh` and
+         `bash tests/gates/web_install_guard.sh`, so those are CI gates by the
+         same definition as everything else on this line — and a PR editing one
+         cleared conditions 4 and 5 outright. The construction is D-059a's
+         exactly: the list named ONE SPELLING of "a gate", `check_*.py`, and a
+         gate written in shell was invisible to it. `scripts/demo-reset.sh` was
+         already here, which is what made the gap hard to see — a `.sh` path was
+         present, so the list did not read as Python-only.
+
+         **Derive the set; do not extend the list.** The membership test is
+         "does CI execute it as a gate", answerable from `ci.yml` alone:
+
+             grep -nE '^\s+(run:.*|bash )(tests/gates|scripts)/' .github/workflows/ci.yml
+
+         Reach for that before adding a path here, and if it returns something
+         this list does not name, the list is wrong again rather than the
+         command being wrong.
   6. Nothing that changes deliverable content, exporter output, or client
      dashboard numbers.
 
