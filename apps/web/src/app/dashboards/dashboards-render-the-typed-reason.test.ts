@@ -61,18 +61,30 @@ import { describe, expect, it } from "vitest";
  * reading one as the other is how `results/page.tsx` was briefly written up
  * as a live instance of this issue. It is not one.
  *
- * ### What the broad grep returns, and why it is not a contradiction
+ * ### WHAT WAS ACTUALLY SEARCHED, which is NARROWER than the predicate above
  *
- *     grep -rl ApiError apps/web/src/app --include=*.ts --include=*.tsx  *       | grep -v /dashboards/        # -> 36 files, 2026-09-20
+ * Stated first, because the first version of this docstring did not state it
+ * and thereby turned a finding into a certificate.
+ *
+ * The sweep below greps the token `ApiError`. The predicate that matters is
+ * "renders error COPY". Those are different, and the substitution is
+ * invisible precisely because the dashboards satisfy both. **This section is
+ * evidence about `ApiError` consumers, not a closed set of copy-rendering
+ * surfaces.**
+ *
+ *     grep -rl ApiError apps/web/src/app --include=*.ts --include=*.tsx \
+ *       | grep -v /dashboards/
+ *     # -> 36 files, 2026-09-20
  *
  * All but two of those are `app/api/proxy/**` route handlers -- the two are
- * the pages below. They are not a
- * counterexample and they are not an unswept remainder -- they are the layer
- * that makes this guard possible. Each catches `ApiError` to FORWARD
- * `err.payload` at `err.status`, so the typed `{reason, message}` survives the
- * hop to the browser. A proxy that synthesised copy here would be the defect;
- * none does. (`_proxy.ts`'s non-`ApiError` 502 is the transport-failed case,
- * where there is no upstream payload to forward.)
+ * the pages below. They are not a counterexample and not an unswept
+ * remainder: they are the layer that makes this guard possible. Each catches
+ * `ApiError` to FORWARD `err.payload` at `err.status`, so the typed
+ * `{reason, message}` survives the hop to the browser. (`_proxy.ts`'s
+ * non-`ApiError` 502 is the transport-failed case, where there is no upstream
+ * payload to forward.) That invariant is stated here and guarded nowhere --
+ * `app/api/proxy/proxies-never-synthesise-an-empty-result.test.ts` is where a
+ * reader would look for it, and it does not assert this.
  *
  * ### The two PAGES outside `dashboards/`, both checked by reading them
  *
@@ -85,10 +97,48 @@ import { describe, expect, it } from "vitest";
  *   a probe for whether a Risk Register exists. It sets `hasRiskDashboard`,
  *   re-throws everything else, and renders no error copy.
  *
- * So the pages that render error copy are exactly the five dashboards, which
- * is why the directory is the right scope. If a page outside it starts
- * rendering error copy, widening this guard is the fix -- not a second guard,
- * which would be two places for the convention to drift.
+ * ### Two surfaces the `ApiError` sweep CANNOT see, checked separately
+ *
+ * Both are components rendered by one-line pages, which is the half
+ * `CLAUDE.md`'s ownership rule exists to warn about -- it says "the pages
+ * under `apps/web/src/app/**` AND THE COMPONENTS THEY RENDER", because "the
+ * page is a thin shell and the component is where the copy lives". A sweep
+ * over the route tree alone would have excluded that rule's own lead
+ * instance.
+ *
+ * - `components/auth/SignUpForm.tsx` -- bare `fetch` and `res.status`, never
+ *   `ApiError`. `if (res.status === 409 || res.status === 422)` gates whether
+ *   the typed envelope is read at all. NOT a live instance: every typed
+ *   reason `/auth/register` can emit is a 409 or 422 (`email_exists`,
+ *   `email_domain_unavailable`, `email_invalid`, `password_policy`), so all
+ *   of them land inside the branch that does consult `reason`. Measured twice
+ *   on purpose: slicing the handler lexically finds only two of the four --
+ *   the other two are raised by a helper it calls, at 409 and 422 -- so the
+ *   first measurement would have understated the set it was certifying.
+ * - `components/intake/IntakeWizard.tsx` -- `ProxyError`, not `ApiError`.
+ *   Its 400 branch selects a UI MODE rather than a sentence, which is the
+ *   `results/page.tsx` case by this file's own predicate.
+ *
+ * Named rather than omitted so the exclusion reads as a decision. `ProxyError`
+ * and `res.status` share no vocabulary with `ApiError`, which is the sweep
+ * rule's own test: name one place the defect could hide using none of your
+ * search terms.
+ *
+ * ### So: why this directory
+ *
+ * Every surface found to render status-keyed error COPY is one of the five
+ * dashboards; the surfaces outside it that were checked either render no copy
+ * or already consult the typed reason. That is a measured claim about what was
+ * looked at, not a proof that nothing else exists -- `AiPreviewError` and
+ * `AuditProxyError` are two more error classes this sweep does not reach.
+ *
+ * If a page or component outside `dashboards/` starts rendering status-keyed
+ * error copy, widening this guard is the fix rather than adding a second one.
+ * **Widening the ROOT alone goes red immediately** and that is not a bug in
+ * the advice: `results/page.tsx` and `account/page.tsx` both contain
+ * `ApiError`, so both would pass the per-page filter while containing neither
+ * `dashboardLoadReason(` nor `{reason ??`. Widen the root and refine the
+ * filter in the same change.
  */
 
 const DASHBOARDS = join(process.cwd(), "src/app/dashboards");
