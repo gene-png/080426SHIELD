@@ -136,16 +136,6 @@ DISCLOSURE_SUBSTRINGS = ("withheld", "provenance")
 #: the entry stays forever, and a future twin inherits an exemption written for
 #: a defect somebody already fixed.
 EXEMPT_FIELDS: dict[str, str] = {
-    "risk.py::RiskRegisterResponse.batches_total": (
-        "TEMPORARY, tracked in #372. This is a REAL unconsumed disclosure, not "
-        "an API-only field: a partial Risk synthesis keeps what succeeded, and "
-        "nothing tells the consultant the draft is short. It is exempt only so "
-        "this gate can land detecting it -- ATT&CK fixed the identical defect "
-        "as #115. DELETE THIS when the Risk banner renders."
-    ),
-    "risk.py::RiskRegisterResponse.batches_failed": (
-        "TEMPORARY, tracked in #372. The other half of the pair above."
-    ),
     "clients.py::ZtDashboardResponse.unusable_target_codes": (
         "TEMPORARY, tracked in #387. The field this gate shipped BLIND to, and "
         "the reason the attribution below is keyed on the model's subject "
