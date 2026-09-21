@@ -75,11 +75,25 @@ fail=0
 
 # 1. THE REGRESSION TEST. Run from the worktree, with no override.
 #    Reverting the derivation makes this exit 2.
-out="$(cd "$WT" && sh scripts/verify-in-worktree.sh --check-mounts 2>&1)" && rc=0 || rc=$?
+out="$(cd "$WT" && bash scripts/verify-in-worktree.sh --check-mounts 2>&1)" && rc=0 || rc=$?
 if [ "$rc" -ne 0 ]; then
   echo "FAIL: --check-mounts from a linked worktree exited $rc, expected 0." >&2
-  echo "      The primary tree is being derived from the script's own location," >&2
-  echo "      which in a worktree is the worktree. That is #175." >&2
+  # WHICH CAUSE. This assertion fires for two unrelated reasons and they are
+  # debugged in opposite directions, so it must not name only the likelier one.
+  case "$out" in
+    *"Illegal option"*|*"pipefail"*)
+      echo "      CAUSE: the script was run by a shell that is not bash." >&2
+      echo "      verify-in-worktree.sh is '#!/usr/bin/env bash' and sets" >&2
+      echo "      'set -euo pipefail'; dash rejects that and exits 2 before" >&2
+      echo "      reading any argument. Invoke it with 'bash', not 'sh' --" >&2
+      echo "      on a CI runner /bin/sh is dash, while Git Bash's sh IS bash," >&2
+      echo "      so this passes locally and fails there." >&2
+      ;;
+    *)
+      echo "      CAUSE: the primary tree is being derived from the script's own" >&2
+      echo "      location, which in a worktree is the worktree. That is #175." >&2
+      ;;
+  esac
   echo "$out" | sed 's/^/      | /' >&2
   fail=1
 fi
@@ -114,7 +128,7 @@ esac
 #    observed only in its passing state is not observed.
 empty="$TMP/empty"
 mkdir -p "$empty"
-out2="$(cd "$WT" && SHIELD_PRIMARY_TREE="$empty" sh scripts/verify-in-worktree.sh --check-mounts 2>&1)" && rc2=0 || rc2=$?
+out2="$(cd "$WT" && SHIELD_PRIMARY_TREE="$empty" bash scripts/verify-in-worktree.sh --check-mounts 2>&1)" && rc2=0 || rc2=$?
 if [ "$rc2" -ne 2 ]; then
   echo "FAIL: a primary tree with no node_modules exited $rc2, expected 2." >&2
   echo "      Docker would mount the missing path as an empty directory and the" >&2
@@ -131,11 +145,29 @@ case "$out2" in
 esac
 
 # 4. An unrecognised mode is still exit 2, not a silent success.
-(cd "$WT" && sh scripts/verify-in-worktree.sh --not-a-real-mode >/dev/null 2>&1) && rc3=0 || rc3=$?
+#
+#    THE MESSAGE IS ASSERTED, NOT ONLY THE CODE. Exit 2 is also what the
+#    script produces when it dies before reading any argument at all -- under
+#    `dash`, `set -o pipefail` on line 59 is an illegal option and kills it
+#    with exactly 2, no refusal printed. So a code-only assertion here passes
+#    for a run that never reached the mode check, which is the same "a
+#    selector that selects nothing passes" shape this gate exists to close.
+#    Checks 1 and 3 above are covered because each asserts on output too.
+out3="$(cd "$WT" && bash scripts/verify-in-worktree.sh --not-a-real-mode 2>&1)" && rc3=0 || rc3=$?
 if [ "$rc3" -ne 2 ]; then
   echo "FAIL: unknown mode exited $rc3, expected 2." >&2
   fail=1
 fi
+case "$out3" in
+  *"unknown mode"*) : ;;
+  *)
+    echo "FAIL: unknown mode exited 2 without refusing -- nothing names the mode." >&2
+    echo "      An exit 2 with no message is what a crash produces, so this" >&2
+    echo "      run does not show the argument check was ever reached." >&2
+    echo "$out3" | sed 's/^/      | /' >&2
+    fail=1
+    ;;
+esac
 
 git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1 || true
 

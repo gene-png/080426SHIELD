@@ -370,14 +370,26 @@ self_test_bound() {
 }
 
 case "${1:---all}" in
-  # Validates the mount preconditions and stops. `require_primary_tree` has
-  # already run by the time the dispatch is reached, so arriving here at all
-  # means the mounts are sound; this mode exists so that fact is assertable
-  # without starting a container.
+  # Reports the resolved trees and stops, without starting a container, so
+  # `require_primary_tree`'s PASSING state is assertable -- a guard watched
+  # only while it fires has been observed in one state.
+  #
+  # IT CHECKS ONE MOUNT, NOT ALL OF THEM, and says so rather than printing
+  # "mounts OK". `run_in_container` declares five host binds; this validates
+  # the `packages/design-system/node_modules` one, because that is the bind
+  # whose source is a DIFFERENT tree and therefore the one that can be wrong
+  # while everything else looks right.
+  #
+  # The other four are not checked here, and two of them -- `package.json`
+  # and `pnpm-workspace.yaml` -- are FILE binds, which Docker materialises as
+  # DIRECTORIES when the source is absent. That is a real silent failure and
+  # it is simply out of this mode's scope; an earlier draft of this comment
+  # claimed "arriving here at all means the mounts are sound", which was the
+  # over-claim, in the mode added to make a claim checkable.
   --check-mounts)
     echo "verify-in-worktree: primary tree   $PRIMARY_TREE"
     echo "verify-in-worktree: worktree       $WORKTREE"
-    echo "verify-in-worktree: mounts OK -- packages/design-system/node_modules resolves"
+    echo "verify-in-worktree: checked 1 of 5 host binds -- packages/design-system/node_modules resolves"
     ;;
   --self-test) self_test ;;
   --self-test-bound) self_test_bound ;;
