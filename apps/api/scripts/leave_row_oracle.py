@@ -974,32 +974,6 @@ _FLAGS: dict[str, Callable[[], int]] = {
     "--check-anchors": check_anchors,
 }
 
-#: EVERY FLAG THIS SCRIPT ACCEPTS. The guard reads this; it does not carry its
-#: own copy.
-#:
-#: One line to register a flag, and that is the whole point of the tuple
-#: existing for a single member. The guard was written as
-#: `a != _CHECK_REGISTRY` -- correct, and correct only while there is exactly
-#: one flag. The NEXT flag has to be added in two places, and the failure when
-#: it is added in one is not a syntax error: the guard rejects a flag the
-#: script implements, with a confident message naming the only flag it thinks
-#: exists.
-#:
-#: That is not hypothetical. #382 adds `--check-anchors` and wires it into
-#: `ci.yml`. Both branches merge clean, because they touch different hunks of
-#: this function -- so git cannot see it, and `main` would go permanently red
-#: on a step whose whole job is to report whether the oracle can still
-#: measure. Measured by running `--check-anchors` against a tree carrying both
-#: changes: exit 2, refused by this guard.
-#:
-#: The fix belongs in the branch that INTRODUCES the flag -- a PR that adds a
-#: flag registers it -- so #382 adds one entry here. The alternative, listing
-#: `--check-anchors` in this branch, would have the guard accept a flag this
-#: tree does not implement; the argument then falls through to the default
-#: path, which is the FULL oracle, which WRITES `redact.py`. Strictly worse
-#: than the red it would be papering over.
-_FLAGS: tuple[str, ...] = (_CHECK_REGISTRY,)
-
 
 def main(argv: list[str]) -> int:
     # An UNRECOGNISED ARGUMENT is exit 2, not the default report.

@@ -260,6 +260,33 @@ self_test_bound() {
   echo "self-test-bound: PASS"
 }
 
+# AN ARGUMENT THIS SCRIPT DOES NOT IMPLEMENT MUST NOT SUCCEED, and the
+# dangerous slot here is the SECOND one, not the first.
+#
+# The `case` below reads `$1` and rejects an unknown mode correctly. It ignored
+# everything after it -- so `verify-in-worktree.sh tsc --self-test` ran an
+# ordinary tsc, exited 0, and read as a self-test having run. That is the worst
+# instance of this shape in the repo, because `CLAUDE.md` tells readers to run
+# `--self-test` before trusting a clean result from a worktree they have not
+# verified from before: the one command whose job is to prove the harness can
+# fail was silently not running, and the reward for asking was a green.
+#
+# Arity is judged on `$#`, NOT on `${1:-}`. `case "${1:---all}"` cannot tell an
+# ABSENT argument from an explicit `""` -- both take the `--all` default, so
+# `verify-in-worktree.sh ""` quietly ran the entire toolchain.
+if [ "$#" -gt 1 ]; then
+  echo "FAIL: too many arguments; got: $*" >&2
+  echo "      This script takes ONE mode. Everything after the first was" >&2
+  echo "      ignored, so \`$0 tsc --self-test\` ran an ordinary tsc, exited 0," >&2
+  echo "      and read as a self-test having run." >&2
+  exit 2
+fi
+if [ "$#" -eq 1 ] && [ -z "$1" ]; then
+  echo "FAIL: empty argument. An explicit \"\" is not 'no argument' -- it took" >&2
+  echo "      the --all default and ran the whole toolchain." >&2
+  exit 2
+fi
+
 case "${1:---all}" in
   --self-test) self_test ;;
   --self-test-bound) self_test_bound ;;
@@ -269,5 +296,7 @@ case "${1:---all}" in
   --all)       echo "== tsc ==";    tsc
                echo "== vitest =="; vitest
                echo "== eslint =="; eslint ;;
-  *) echo "usage: $0 [tsc|vitest|eslint|--all|--self-test|--self-test-bound]" >&2; exit 2 ;;
+  *) echo "FAIL: unknown mode '$1'." >&2
+     echo "usage: $0 [tsc|vitest|eslint|--all|--self-test|--self-test-bound]" >&2
+     exit 2 ;;
 esac

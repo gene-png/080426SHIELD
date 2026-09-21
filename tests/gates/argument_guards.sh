@@ -32,12 +32,13 @@
 # whose argument handling is not this gate's to assert. A glob there would
 # fail on somebody else's file and be deleted within a day.
 #
-# `verify-in-worktree.sh` is a KNOWN GAP and is named so it is not mistaken
-# for something this covers: it ignores everything after `$1`, so
-# `verify-in-worktree.sh tsc --self-test` runs an ordinary tsc, exits 0, and
-# reads as a self-test having run -- while `CLAUDE.md` tells readers to run
-# that self-test before trusting a clean result from a worktree. Filed, not
-# fixed here.
+# `verify-in-worktree.sh` is IN the set, and it is the reason the set is worth
+# having: it ignored everything after `$1`, so `verify-in-worktree.sh tsc
+# --self-test` ran an ordinary tsc, exited 0, and read as a self-test having
+# run -- while `CLAUDE.md` tells readers to run that self-test before trusting
+# a clean result from a worktree they have not verified from before. The one
+# command whose job is to prove the harness can fail was the one silently not
+# running, and the reward for asking was a green.
 #
 # ## Both spellings, because one of them was an unstated carve-out
 #
@@ -76,7 +77,7 @@ for f in "$ROOT"/tests/gates/*.sh; do
   [ -f "$f" ] || continue
   SUBJECTS="$SUBJECTS $f"
 done
-for named in scripts/dev-web.sh scripts/web-install-if-stale.sh; do
+for named in scripts/dev-web.sh scripts/web-install-if-stale.sh scripts/verify-in-worktree.sh; do
   if [ ! -f "$ROOT/$named" ]; then
     echo "FAIL: could not look -- $named is missing. This gate names it" >&2
     echo "      explicitly, so its absence is a moved file rather than a" >&2

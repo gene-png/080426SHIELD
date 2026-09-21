@@ -93,12 +93,41 @@ _SKIP_PATHS = {
     # every OTHER gate's fixtures are still swept: a blanket exemption for the
     # whole fixture tree would be a blind spot exactly where new files land.
     Path("apps/api/tests/gates/check_no_control_chars"),
+    # ^ correct ONLY when `root` is the repo root, which is a property of the
+    # INVOCATION and therefore of a line in `ci.yml`. See `_OWN_FIXTURES`
+    # below, which is the same directory derived from `__file__` and is what
+    # actually does the pruning.
     Path("e2e/artifacts"),
     Path("e2e/test-results"),
     Path("e2e/playwright-report"),
     Path("test-results"),
     Path("playwright-report"),
 }
+
+
+#: THIS GATE'S OWN FIXTURE DIRECTORY, DERIVED, not written relative to a root
+#: this script does not control.
+#:
+#: `_SKIP_PATHS` holds `apps/api/tests/gates/check_no_control_chars`, which is
+#: relative to the REPO ROOT -- so the pruning worked for `ci.yml`'s
+#: `check_no_control_chars.py .` run from the root, and for nothing else. Run
+#: from `apps/api` with no argument, as anyone debugging it would, the relative
+#: path is `tests/gates/...`, the prune misses, the gate scans its own corpus
+#: of deliberate control bytes and exits 1.
+#:
+#: That is this repo's recorded shape: a gate whose correctness lives in an
+#: argument in a different file that nothing checks -- `check_test_integrity`'s
+#: `working-directory:` and `fetch-depth: 0` are the two instances already
+#: written down. Reorder the step or drop the argument and you get a red that
+#: means nothing.
+#:
+#: Derived from `__file__`, so it is the same directory whatever the cwd or the
+#: root. The literal above is kept because a reader grepping `_SKIP_PATHS` for
+#: "why are the fixtures not scanned" should find the answer there, and it now
+#: points here rather than quietly being the only mechanism.
+_OWN_FIXTURES = (
+    Path(__file__).resolve().parents[1] / "tests" / "gates" / "check_no_control_chars"
+).resolve()
 
 
 def _candidate_files(root: Path) -> list[Path]:
@@ -113,7 +142,11 @@ def _candidate_files(root: Path) -> list[Path]:
     for dirpath, dirnames, filenames in os.walk(root):
         here = Path(dirpath).relative_to(root)
         dirnames[:] = [
-            d for d in dirnames if d not in _SKIP_DIR_NAMES and (here / d) not in _SKIP_PATHS
+            d
+            for d in dirnames
+            if d not in _SKIP_DIR_NAMES
+            and (here / d) not in _SKIP_PATHS
+            and (Path(dirpath) / d).resolve() != _OWN_FIXTURES
         ]
         for name in filenames:
             if Path(name).suffix in _TEXT_SUFFIXES:
@@ -133,6 +166,34 @@ def main(argv: list[str]) -> int:
     having to catch an exception for one of the three outcomes. `_candidate_files`
     still raises for the unreadable-tree case; it is caught here.
     """
+    # AN ARGUMENT THIS SCRIPT DOES NOT IMPLEMENT MUST NOT SUCCEED, and the
+    # live slot is the SECOND one.
+    #
+    # A leading unknown flag was already caught by accident -- it resolves as a
+    # path, the path is not a directory, exit 2. `argv[2:]` was dropped in
+    # silence, and `ci.yml` PASSES A PATH here, so the first slot is occupied
+    # in exactly the invocation that matters. MEASURED before the guard:
+    # `check_no_control_chars.py . --bogus` exited 0 having scanned the tree
+    # and ignored the flag.
+    #
+    # A sweep recorded the opposite: "MEASURED, not assumed ... they already
+    # fail closed on an unknown flag, because they read it as a path and the
+    # path does not exist. Checked and left alone." True of a LEADING flag,
+    # false of a trailing one, in the sentence whose words closed the question.
+    if len(argv) > 2:
+        print(
+            f"check-control-chars: could not look -- too many arguments; got: "
+            f"{argv[1:]}. This script takes at most one PATH and implements no flags.",
+            file=sys.stderr,
+        )
+        return 2
+    if len(argv) > 1 and argv[1].startswith("-"):
+        print(
+            f"check-control-chars: could not look -- {argv[1]!r} is a flag, and "
+            f"this script implements none. It takes an optional PATH.",
+            file=sys.stderr,
+        )
+        return 2
     root = Path(argv[1]).resolve() if len(argv) > 1 else Path.cwd()
     violations: list[str] = []
     unreadable: list[str] = []

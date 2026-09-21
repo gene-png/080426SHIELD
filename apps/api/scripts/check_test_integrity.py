@@ -304,6 +304,35 @@ def scan_tree(root: Path) -> list[Finding]:
 
 
 def main(argv: list[str]) -> int:
+    # AN ARGUMENT THIS SCRIPT DOES NOT IMPLEMENT MUST NOT SUCCEED, and the
+    # live slot is the SECOND one.
+    #
+    # This read `argv[1]` and ignored `argv[2:]` entirely. A leading unknown
+    # flag was already caught by accident -- it resolves as a path and the path
+    # does not exist -- but `ci.yml` PASSES A PATH to this gate, so the first
+    # slot is occupied in exactly the invocation that matters and anything
+    # after it was dropped in silence. `<gate> <path> --dry-run` ran a real
+    # check and exited on its own verdict, reading as though the flag had done
+    # something.
+    #
+    # A sweep recorded the opposite: "MEASURED, not assumed ... they already
+    # fail closed on an unknown flag, because they read it as a path and the
+    # path does not exist. Checked and left alone." True of a LEADING flag,
+    # false of a trailing one, in the sentence whose words closed the question.
+    if len(argv) > 2:
+        print(
+            f"check-test-integrity: could not look -- too many arguments; got: {argv[1:]}. "
+            f"This script takes at most one PATH and implements no flags.",
+            file=sys.stderr,
+        )
+        return 2
+    if len(argv) > 1 and argv[1].startswith("-"):
+        print(
+            f"check-test-integrity: could not look -- {argv[1]!r} is a flag, and this script "
+            f"implements none. It takes an optional PATH and nothing else.",
+            file=sys.stderr,
+        )
+        return 2
     root = Path(argv[1]) if len(argv) > 1 else Path(__file__).resolve().parents[1] / "tests"
     try:
         findings = scan_tree(root)

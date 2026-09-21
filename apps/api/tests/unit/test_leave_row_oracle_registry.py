@@ -149,36 +149,44 @@ def test_an_unrecognised_argument_cannot_look(argv) -> None:
 
 
 @pytest.mark.unit
-def test_the_guard_reads_the_FLAGS_TUPLE_and_not_a_literal(monkeypatch, capsys) -> None:
-    """Registering a flag must be ONE edit, and this is what makes that true.
+def test_the_guard_reads_the_FLAGS_TABLE_and_not_a_literal(monkeypatch, capsys) -> None:
+    """The allow-list must BE the dispatch, not a second list beside it.
 
-    The guard was `a != _CHECK_REGISTRY`: correct, and correct only while there
-    is exactly one flag. The next flag has to be added in two places, and the
-    failure when it is added in one is not a syntax error -- the guard rejects
-    a flag the script implements, with a confident message naming the only flag
-    it believes in.
+    A guard carrying its own list of accepted flags is a second fact that has
+    to be kept in step with the first, and the failure when it is not is not a
+    syntax error: the guard refuses a flag the script implements, with a
+    confident message naming the only flag it believes in.
 
-    #382 is that next flag. It adds `--check-anchors` and wires it into
-    `ci.yml`, and the two branches merge clean because they touch different
-    hunks of `main`, so git cannot see the collision. `main` would go
-    permanently red on the step whose job is to report whether the oracle can
-    still measure.
+    That is not hypothetical, and it is why this branch sits on top of #299.
+    A first draft had this guard reading its own literal while #299 added
+    `--check-anchors` and wired it into `ci.yml`; the two touch different hunks
+    of `main`, so both MERGED CLEAN and `main` went red -- measured on a
+    combined tree, `--check-anchors` exited 2, refused by a guard that did not
+    know the flag existed, on the step whose job is to report whether the
+    oracle can still measure.
 
-    Emptying `_FLAGS` must make the one flag that exists today be REFUSED. If
-    it is not, the guard is reading a literal and the tuple is decoration.
+    Emptying `_FLAGS` must make a flag that exists today be REFUSED. If it is
+    not, the guard is reading a literal and the table is decoration.
 
-    Safe to run: every assertion here lands on the exit-2 path, which returns
-    before `leave_rows()` and therefore before the report path that REWRITES
+    Safe to run: every assertion lands on the exit-2 path, which returns before
+    `leave_rows()` and therefore before the default path that REWRITES
     `redact.py` on disk -- the hazard the test above documents.
     """
     import scripts.leave_row_oracle as oracle
 
-    monkeypatch.setattr(oracle, "_FLAGS", ())
-    assert oracle.main(["leave_row_oracle.py", oracle._CHECK_REGISTRY]) == 2
+    # Every registered flag has a handler. A key with none is precisely the
+    # accepted-but-undispatched state: the argument gets past the guard and
+    # then falls through to the full oracle, which writes `redact.py`.
+    assert oracle._FLAGS, "the dispatch table is empty"
+    for flag, handler in oracle._FLAGS.items():
+        assert callable(handler), f"{flag} is registered with no handler"
 
-    # And the message enumerates from the same tuple, so it cannot advertise a
+    monkeypatch.setattr(oracle, "_FLAGS", {})
+    assert oracle.main(["leave_row_oracle.py", "--check-registry"]) == 2
+
+    # And the message enumerates from the same table, so it cannot advertise a
     # set the guard is not enforcing.
-    monkeypatch.setattr(oracle, "_FLAGS", ("--alpha", "--beta"))
+    monkeypatch.setattr(oracle, "_FLAGS", {"--alpha": lambda: 0, "--beta": lambda: 0})
     assert oracle.main(["leave_row_oracle.py", "--gamma"]) == 2
     err = capsys.readouterr().err
     assert "--alpha, --beta" in err

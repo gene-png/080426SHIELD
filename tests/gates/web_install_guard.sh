@@ -183,5 +183,19 @@ expect_args 2 "unknown argument" "an unknown flag is refused, not ignored" --che
 expect_args 2 "unknown argument" "an EMPTY argument is not 'no argument'" ""
 expect_args 2 "too many arguments" "a second argument is refused" --check --check
 
-echo "web-install-guard: all states exercised -- 1 skip, 3 installs, 1 refusal,"
-echo "plus the line-ending check that makes the others readable at all."
+# THE CERTIFICATE CARRIES NO TALLY, deliberately.
+#
+# It said "all states exercised -- 1 skip, 3 installs, 1 refusal" and then this
+# branch appended three argument cases without touching it, so the sentence
+# certifying coverage undercounted the file it was certifying. #318 appended an
+# install-half section to the same file and rewrote only ITS own version of this
+# line -- so whichever won the merge would have named neither the other's cases
+# nor the true count, which is a false-coverage certificate of exactly the kind
+# this file already shipped once.
+#
+# `CLAUDE.md`: don't write the count -- if a number describes a list in the same
+# document, delete the number and let the list be the count. The `ok [...]` lines
+# printed immediately above ARE the list, and they cannot go stale.
+echo "web-install-guard: every check above printed ok. There is no tally here on"
+echo "purpose -- the labelled lines are the list, and a hand-written count in"
+echo "this position has already gone stale twice."
