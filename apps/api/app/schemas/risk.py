@@ -191,9 +191,15 @@ class RiskRegisterResponse(BaseModel):
     # either.
     #
     # DERIVED from the stored entries rather than passed in from the generate
-    # run, deliberately. `batches_*` describe a run and are 0 on a read-back;
-    # these describe the REGISTER, so they are correct whenever it is read.
-    # A derived value cannot be out of sync; a passed one merely is not, yet.
+    # run, deliberately: a derived value cannot be out of sync, a passed one
+    # merely is not, yet.
+    #
+    # This comment used to contrast them with `batches_*`, "which describe a
+    # run and are 0 on a read-back". #372 ended that: a 0 on a read-back was a
+    # positive claim about a run nobody recorded, so the tally is persisted and
+    # read back too. The two pairs now differ only in WHERE the record lives --
+    # stored entries here, stored provenance there -- not in whether one
+    # survives a fetch.
     entries_total: int = 0
     entries_without_tier: int = 0
 

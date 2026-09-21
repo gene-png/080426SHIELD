@@ -373,12 +373,19 @@ describe("RiskRegisterDashboard excluded-inputs disclosure", () => {
 // TypeScript boundary and nothing could render them. ATT&CK fixed the
 // identical pair as #115.
 //
-// EXERCISED THROUGH GENERATE, NOT THROUGH `latest`, and that is the whole
-// design of this block. Both counts are 0 on a register read back from
-// storage -- they describe a GENERATE RUN. Mocking `fetchRiskRegisterLatest`
-// with `batches_failed: 3` would build a state the API cannot produce, and a
-// test whose setup constructs something the writer cannot emit proves nothing
-// about the writer.
+// EXERCISED THROUGH GENERATE **AND** THROUGH `latest`, and the second half is
+// new. This block used to say a `latest` fixture carrying `batches_failed: 3`
+// "would build a state the API cannot produce" -- correct then, because the
+// counts were response-only and a read-back defaulted to 0.
+//
+// That default was the defect. It made `export` erase the INCOMPLETE warning
+// at the exact moment the consultant produced the deliverable, and a reload do
+// the same. The tally is persisted now, so a `latest` carrying a real failure
+// count is a state the writer EMITS, and a test that mocks it is testing the
+// product rather than an impossible fixture.
+//
+// The unreachable-state rule has not been relaxed -- the reachable set moved,
+// and this comment is what tells the next reader which.
 // ---------------------------------------------------------------------------
 
 describe("RiskRegisterDashboard partial-synthesis disclosure (#372)", () => {

@@ -1276,11 +1276,22 @@ def test_the_counters_still_read_true_when_the_register_is_fetched_later(
 ) -> None:
     """What the migration bought, and the reason a counter alone was not enough.
 
-    `batches_total` and `batches_failed` describe a RUN and are 0 on a read-back
-    -- the schema says so. The drop is not like that: the consultant opens the
-    register a week later and the question "was linkage proposed and lost?" is
-    exactly as live as it was at generate time. Because the drop is PERSISTED,
-    these counters are derived from the stored entries and survive the fetch.
+    The drop counters are derived from the stored entries, so the consultant
+    who opens the register a week later gets the same answer to "was linkage
+    proposed and lost?" as the run did.
+
+    **This docstring used to end by contrasting them with `batches_*`, which it
+    said "describe a RUN and are 0 on a read-back".** That was true of the
+    design when it was written and #372 changed it: a `0` on a read-back is a
+    positive claim that nothing failed, made about a run nobody recorded, and
+    it was destroying the partial-synthesis warning on export and reload. The
+    tally is persisted now and read back by `_serialize`, so BOTH pairs survive
+    the fetch and the contrast this test was built around no longer exists.
+
+    The assertion below was changed rather than deleted, and it is STRONGER
+    than the one it replaces: it now pins the read-back instead of pinning the
+    absence of one. CI caught it -- three local attempts at this file were lost
+    or reaped, and the merge gate is what actually ran it.
     """
     c, provider = app_client
     bearer, cid = _admin(c)
@@ -1300,10 +1311,11 @@ def test_the_counters_still_read_true_when_the_register_is_fetched_later(
     assert body["entries_with_dropped_links"] == generated["entries_with_dropped_links"] == 1
     assert body["entries_unlinked_after_drops"] == generated["entries_unlinked_after_drops"] == 1
     assert body["entries"][0]["dropped_links"] == {"linked_techniques": ["T9999"]}
-    # And the run-scoped pair is 0 here, which is what makes the contrast real
-    # rather than asserted: these two behave differently on a read-back ON
-    # PURPOSE, and the difference is the point of migration 0048.
-    assert body["batches_total"] == 0
+    # And the batch tally survives the read-back too, since #372 persisted it.
+    # One run, one batch: `latest` must report it rather than defaulting to a
+    # claim that nothing failed.
+    assert body["batches_total"] == generated["batches_total"] == 1
+    assert body["batches_failed"] == generated["batches_failed"] == 0
 
 
 # ---------------------------------------------------------------------------
