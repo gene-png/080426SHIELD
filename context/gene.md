@@ -30,15 +30,24 @@ unreviewed work.
 
 ### Tonight's PRs, in the order I would read them
 
-| PR | What it is | CI | Merge state |
-| --- | --- | --- | --- |
-| **#362** | **Read first.** Live client-facing regression on all five dashboards | 7/7 green | MERGEABLE |
-| **#366** | An internal proxy string ("ZT proxy 409") reaching clients, nine sites | running | MERGEABLE |
-| #364 | `apiFetch` — the choke point six proxies share — had no test | running | MERGEABLE |
-| #363 | A test that asked a question with no answer | running | MERGEABLE |
-| #360 | Item 12 is done, and the claim that sequenced it was backwards | 7/7 green | MERGEABLE |
-| #359 | Why the typed-reason guard stops at `dashboards/` | 7/7 green | MERGEABLE |
-| #367 | The mount check claimed agreement it had not established | running | MERGEABLE |
+| PR | What it is | Merge state |
+| --- | --- | --- |
+| **#362** | **Read first.** Live client-facing regression on all five dashboards | MERGEABLE |
+| **#366** | An internal proxy string ("ZT proxy 409") reaching clients, nine sites | MERGEABLE |
+| #369 | Both documented Quick-start paths bypassed the install guard — one could not run at all | MERGEABLE |
+| #367 | The mount check claimed agreement it had not established | MERGEABLE |
+| #364 | `apiFetch` — the choke point six proxies share — had no test | MERGEABLE |
+| #363 | A test that asked a question with no answer | MERGEABLE |
+| #370 | A D-number failure reads as an issue-close failure | MERGEABLE |
+| #360 | Item 12 is done, and the claim that sequenced it was backwards | MERGEABLE |
+| #359 | Why the typed-reason guard stops at `dashboards/` | MERGEABLE |
+
+CI: six were 7/7 green at the time of writing and three still had jobs running.
+**Run `gh pr checks <n>` rather than trusting that sentence** — it is a claim
+about a moment, which is the whole of the stale-certificate lesson.
+
+Still open from before tonight: **#343, #351, #353, #358**. You merged #349
+while I was working.
 
 **#362 and #366 conflict WITH EACH OTHER, and nothing on GitHub says so.**
 Both are MERGEABLE against `main` and both are green, because GitHub computes
@@ -46,10 +55,10 @@ mergeability against the base only. Measured with a detached worktree and
 `git merge --no-commit --no-ff`: they collide in
 `apps/web/src/lib/describe-save-error.test.ts`. Each appends an independent
 `describe(...)` block to the end of that file and both extend the same import
-line — a positional conflict, resolution "keep both". I have NOT resolved it in
-advance because that means choosing a merge order and the order is yours. Tell
-me which goes first, or merge either and I will rebase the survivor and re-run
-its gates.
+line — a positional conflict, resolution "keep both". I have NOT resolved it
+in advance because that means choosing a merge order and the order is yours.
+Tell me which goes first, or merge either and I will rebase the survivor and
+re-run its gates.
 
 Every other pair merges cleanly, checked the same way. #359 and #362 both touch
 `dashboards-render-the-typed-reason.test.ts` and merge cleanly. #360 is the
@@ -58,23 +67,15 @@ only one touching `CLAUDE.md`.
 This is the stale-green shape one level out: **`MERGEABLE` is evidence about a
 branch and `main`, and says nothing about that branch and its sibling.**
 
-Still open from before tonight: **#343, #351, #353, #358**. You merged **#349**
-while I was working; the table above is measured against `main` at that commit.
-
-**None of the six is rebased, deliberately, and the standing rule says to
-rebase at 2+ behind.** They are 2 behind and all six merge cleanly — measured,
-not assumed: `git worktree add --detach` per branch, `git merge --no-commit
---no-ff origin/main`, exit 0 for all six, aborted and cleaned up. The rule's
-purpose is mergeability and mergeability holds.
-
-Rebasing would cost something concrete: every audit block cites
-`Scope: reviewed at <sha>`, and a rebase ORPHANS that commit. `git cat-file -t`
-would still answer `commit` for a fortnight, so a citation check asking "does
-this resolve?" would pass over a sha no longer on the branch —
-`git merge-base --is-ancestor` is the check that fails loudly, and it would
-fail. I would rather hand you six branches whose review provenance is verifiable
-than six that are tidier and cannot prove what was read. If any of them starts
-conflicting, that trade flips and I rebase it.
+**None of the nine is rebased, deliberately**, though the standing rule says to
+rebase at 2+ behind. All nine merge cleanly, so the rule's purpose is met.
+Rebasing would ORPHAN the sha each audit block cites in its `Scope:` line —
+`git cat-file -t` would still answer `commit` for a fortnight, so a citation
+check asking "does this resolve?" would pass over a commit no longer on the
+branch, while `git merge-base --is-ancestor` would fail. I would rather hand
+you nine branches whose review provenance is verifiable than nine that are
+tidier and cannot prove what was read. If any starts conflicting, that trade
+flips and I rebase it.
 
 ### #362 is the one with a client consequence
 
@@ -167,38 +168,53 @@ reachable case plus a derived sweep over every hand-written reason code.
    later. Discarded rather than read, recorded on #363, and CI is the authority
    for that PR's full suite.
 
+### Where #318 stands
+
+#318 carries findings from six reviews that landed after their PRs merged.
+**Every substantive finding I can act on without you is now addressed**, one
+PR each: the #295 client-copy regression and its silent-exemption guard (#362),
+the #295 internal-string twins (#366), the #307 unfailable test (#363), the
+#308 `apiFetch` gap (#364), both #311 prose findings (#360), the #296 mount
+check (#367), the #296 D-number check name (#370), and the #309 Quick-start
+paths (#369).
+
+**Several were already fixed by #339 and by the #311 merge, and I verified
+that rather than assuming it**: the shell gates are wired into CI,
+`check_decision_numbers.py` and `check_mount_matches_database.py` carry the
+crash marker, `test_check_decision_numbers.py` exists, and the prettier-hook
+gate already pins both the hardcoded-version and the `--write` mutations — I
+ran it.
+
+**Three findings I declined, with the reason on the PR each time.** The #308
+claim that "no route emits a 204 today" is false: the comment is explicitly
+bounded to the six proxied routers and admin/auth are not among them, and I
+checked the two proxies that do reach a 204 endpoint — neither is broken. The
+#307 remedy ("send a schema-valid value the route refuses") would not have
+worked either, because that refusal is also a 422. And the #296 "eighteen
+months" figure is replaced by a derived one rather than corrected to another
+guess.
+
+**What is left in #318 needs you, or is sequenced behind a merge:**
+
+- **#370's proper fix** is to split the D-number check into its own job. I did
+  not, because a new job is not a REQUIRED check until branch protection names
+  it, so splitting would silently turn a blocking check non-blocking. That is
+  two coordinated changes and the second needs an admin. Say the word and I
+  will do the first.
+- **#371** (filed, tier-2) — `describeSaveError` tells a client "the value on
+  screen has been restored to what the server has" ABOVE the re-fetch that
+  would make it true, and the catch block's comment asserts the message says
+  the opposite of what it says. Deliberately sequenced AFTER #362 and #366:
+  it is a third change to `describe-save-error.ts`, and those two already
+  conflict with each other. One conflict to resolve is better than three.
+
 ### Issues filed tonight, all labelled at creation
 
 - **#361** (tier-3) — e2e asserts the dashboard failure heading, never its body.
 - **#365** (tier-3) — ten ADMIN surfaces render "CSF proxy 409" as error copy.
-  The client-facing half is #366; the fix is a one-line change per site plus
-  adding one directory to the guard's `ROOTS`.
-
-### Where #318 stands
-
-#318 carries findings from six reviews that landed after their PRs merged.
-Addressed tonight: the #295 client-copy regression (#362), its silent-exemption
-guard (#362), the #295 internal-string twins (#366), the #307 unfailable test
-(#363), the #308 `apiFetch` gap (#364), and both #311 prose findings (#360).
-
-**Several were already fixed by #339** and I verified that rather than assuming:
-the shell gates are wired in CI, `check_decision_numbers.py` and
-`check_mount_matches_database.py` carry the marker, and
-`test_check_decision_numbers.py` exists.
-
-**Two findings I declined, with reasons on the PRs:** the #308 claim that "no
-route emits a 204 today" is false — the comment is explicitly bounded to the
-six proxied routers, and admin/auth are not among them; and I checked the two
-proxies that do reach a 204 endpoint, neither is broken.
-
-**Still open in #318**, roughly in value order: the #296 mount check printing
-agreement over a two-worktree 0047 collision; the D-number gate reporting under
-the check name "No accidental issue closes" (a guard naming the check instead of
-the cause — the fix needs a new job, which changes the required-check count in
-the merge rule and needs a branch-protection change only you can make); #309's
-`dev-web.sh` being the documented Quick-start path while the new guard runs on
-neither documented path; and the #311 hook assertions that all expect 3.9.6,
-which is also the real pin, so a hardcoded version passes three of five.
+- **#368** (tier-3) — `.devcontainer/post-create.sh` is a third install path:
+  resolves ranges and swallows its own failure.
+- **#371** (tier-2) — the restored-value claim above, sequenced.
 
 ### Process notes worth keeping
 
@@ -212,6 +228,18 @@ which is also the real pin, so a hardcoded version passes three of five.
 - **A mutation guard earned its keep on first use.** `assert s.count(old) == 1`
   refused a red-on-revert mutation because the string appeared TWICE; a partial
   mutation would have produced a misleading half-red.
+- **Two checks I wrote tonight could not fail, and red-on-revert found both.**
+  One asserted `grep -q 'web-install-if-stale.sh'` over a file that NAMES that
+  script five times in its own header, so deleting the actual call left it
+  green. The other wrapped a gate as `if ! cmd; then status=$?`, where `$?` is
+  the status of the NEGATION — measured, `bash -c 'if ! false; then echo $?;
+  fi'` prints 0 — so it would have printed a failure banner and exited 0.
+  Neither looked wrong. Both were correctly motivated. Only running the
+  mutation found them, which is D-051's finding arriving twice in one evening.
+- **CI caught two weak assertions I had not run the right gate against.** #367
+  went red on `check_test_integrity`, not pytest, in 41 seconds. The lesson is
+  narrower than "run everything": run the gate whose INPUT you just changed —
+  that commit was mostly tests, and that is the gate which reads tests.
 
 ---
 
