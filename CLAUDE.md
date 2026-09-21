@@ -1063,6 +1063,31 @@ a real exit code and a real date, and was the minority outcome (D-071).
   treat "the revert produced no failures" as a claim about your tooling until
   proven otherwise — the first hypothesis is that the mutation did not land, not
   that the assertion is weak.
+
+  **THE STRONGEST RECORDED CASE FOR THIS IS ONE WHERE EVERY OTHER SIGNAL
+  AGREED, INCLUDING THE AUTHOR'S OWN EYES.** A sweep's regex was widened to
+  match a second form; `\b` was written for the boundary and reached the file
+  as a literal BACKSPACE byte (U+0008) inside a raw string, so the alternation
+  read `<BS>reason\s*=` and matched nothing.
+
+  What agreed that the fix had landed: `grep` printed a correct-looking line,
+  because a backspace renders as nothing. The module's tests passed. The same
+  regex typed inline in a shell found the codes. The diff looked right.
+  **Only the mutation disagreed** — and finding out why took a probe printing
+  `literal.pattern` from inside pytest. A stale `.pyc`, a wrong root directory
+  and a duplicate pattern were each ruled out first, all wrong.
+
+  Nothing short of red-on-revert speaks here, because every other signal is
+  reading the SOURCE and the defect is in the COMPILED value.
+
+  **And a gate caught it, correctly, on the first run — and was not read.**
+  `check_no_control_chars.py` reported `U+0008` at that line, which is the
+  entire reason it exists. A gate that fires correctly and is ignored is worse
+  than one that is missing: the missing gate leaves you knowing you have no
+  cover, and the ignored one leaves a green-looking wall of output with the
+  answer inside it. **When a gate reports something you did not expect, read it
+  before deciding what it is about** — it is the cheapest signal in the repo and
+  the one most easily skimmed past on the way to the thing you were doing.
 - **Replacing a character class with an enumerated one is a subtraction you must
   COMPUTE, not guess.** `\s` matches 19 horizontal characters. Narrowing it to
   "space, tab, non-breaking space" to stop a rule crossing newlines therefore
@@ -1713,6 +1738,14 @@ Rules of the road:
   **When the reviewer cannot run.** "Use judgement" is the gap this rule exists to
   close, so the cases are named and so is the person who may decide.
 
+  **A reviewer that has not delivered yet is not a reviewer that failed, and
+  the threshold is 90 MINUTES.** The measured lag from `idle` to a delivered
+  report is about an hour; `idle` is not a delivery signal, and an agent cannot
+  tell a slow reviewer from a dead one. Under 90 minutes, keep working and do
+  not report it — a session that called the channel broken at 43 minutes was
+  wrong, and so was the session before it that made the same call and then
+  received every report at once.
+
   Kinds of unavailable — **an open list, not an enumeration**, because the fourth
   one below is the case this repo has actually hit and the first draft omitted it:
 
@@ -2028,6 +2061,28 @@ Rules of the road:
   carried nothing, because merge state is not printed by anything you were
   already running.
 
+  **AND `MERGEABLE` IS A CLAIM ABOUT A BRANCH AND `main`. IT SAYS NOTHING
+  ABOUT THAT BRANCH AND ITS SIBLING.** GitHub computes mergeability against the
+  base and nothing else, so two PRs that each merge cleanly and conflict WITH
+  EACH OTHER are both reported `MERGEABLE`, both green, and invisible. Whichever
+  merges first turns the other red — after the decision, not before it.
+
+  Measured: two PRs on one evening, each `MERGEABLE`, colliding in a test file
+  both appended to. Same class as two individually-green merges taking `main`
+  red forty minutes apart, which is the second occurrence of this shape.
+
+  **So: whenever two or more open PRs touch the same file, run the pairwise
+  merge and say WHICH PAIRS you checked.** The ready report carries that line
+  the way it carries the merge state, and for the same reason — nothing else
+  generates it:
+
+      git worktree add --detach ../pairtest origin/<branch-a>
+      git -C ../pairtest merge --no-commit --no-ff origin/<branch-b>
+
+  Naming the pairs matters as much as the verdict: "they merge cleanly" over an
+  unstated set is the certificate-over-the-wrong-proposition shape, and the set
+  is what makes it checkable.
+
   **AND A THIRD CLAIM RIDES WITH THEM: WHAT THE PR WILL CLOSE, VERIFIED
   AGAINST `closingIssuesReferences` AND NEVER AGAINST THE APPROVAL MARKER.**
 
@@ -2289,6 +2344,27 @@ Rules of the road:
   A no-match is a claim about the world. **Before reporting an absence, confirm
   the tool could have found it** — re-search a fragment that cannot wrap. This
   nearly produced an accusation of fabrication against correctly-quoted text.
+
+  **AND WHEN N INDEPENDENT SOURCES REPORT THE SAME ABSENCE, RUN THE SEARCH
+  BEFORE NAMING A MECHANISM.** Four reviewers, in four separate runs against
+  four different trees, each reported the same rule missing from this file.
+  Each report was dismissed as detached-worktree staleness — a real mechanism,
+  documented here, and the first explanation that fits. The rule was simply not
+  in the file: it had been asked for, and the PR that was meant to carry it
+  merged without it.
+
+  The failure is not credulity about worktrees. It is that **four independent
+  observations of one fact are data, and a mechanism that explains them away
+  costs one command to test.** The more familiar the explanation, the faster it
+  arrives and the less it is checked — and "your context is stale" explains any
+  disagreement whatsoever, which is what should make it suspect rather than
+  comfortable.
+
+  **The verification itself then nearly produced a SECOND false absence in the
+  same file.** The first search was case-sensitive against an UPPERCASE
+  heading, so it reported a rule missing that is present. Both halves of this
+  bullet in one minute: confirm the tool could have found it, then believe the
+  result.
 
   **And prefer a MEASUREMENT to a citation wherever one exists.** Reading
   `audit-gate.yml`'s `on:` block settles what triggers it; citing a document
