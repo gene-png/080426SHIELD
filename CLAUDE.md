@@ -1212,17 +1212,34 @@ a real exit code and a real date, and was the minority outcome (D-071).
     pointer lives HERE, rather than only there, because the window is closed by
     whoever edits THIS constant, who would otherwise have no way to know the
     copy exists."* The property is **the pointer sits where the change
-    originates**. A later duplicate — a reason code in `routes/clients.py`
-    mirrored by a Set in the web bundle — got its pointer on the CONSUMING
-    side, which reads as the same shape and closes nothing: the person
-    renaming the API literal never opens the web file.
+    originates**.
+
+    **The instance originally cited here was `dashboard_not_released` in
+    `routes/clients.py`, and by the time this shipped it was fixed.** #362
+    landed the producing-side pointer — the file now carries *"THE STRING
+    `dashboard_not_released` IS DUPLICATED IN THE WEB BUNDLE"* and a stated
+    width of the gap — so a reader acting on the old text would have opened a
+    PR to move a pointer already sitting where the rule wants it.
+
+    That is this file's own *an example of a rule being violated is falsified
+    by the rule being followed* shape, and the repair is the one it prescribes:
+    cite the PROPERTY, not a live breach. A pointer on the consuming side
+    closes nothing, because the person renaming the API literal never opens
+    the web file — true whether or not any instance of it survives today.
   - **Two helpers that choose between a server's sentence and local copy.**
     One withholds the server's message, one always prefers it, and both are
     right. The property that decides it is whether the LOCAL copy carries
     information the server's does not — not which module the caller lives in,
-    which is the thing that looks like the difference. Written into both, so
-    that moving either answer into the other's position reads as the
-    regression it would be rather than as consistency.
+    which is the thing that looks like the difference.
+
+    **A draft of this said the property was "written into both", and it was
+    not.** Only the withholding side carries it (`GENERIC_COPY_IS_BETTER` /
+    `dashboardLoadReason` in `apps/web/src/lib/describe-save-error.ts`); the
+    always-prefers side documents its copy rules and says nothing about why it
+    prefers the server's sentence. The sentence therefore told the one reader
+    who would otherwise have written it that it was already there — a
+    certificate over the wrong proposition, in the bullet about unstated
+    preconditions. **Write it into the side that lacks it.**
 
   **The test is one sentence, and it goes in the code rather than the PR:** name
   the property, then say why it holds here. If you cannot name it, you have
