@@ -3,8 +3,19 @@
 #
 # `scripts/web-install-if-stale.sh` decides whether a security patch is applied.
 # The thing it replaced was a one-line `[ -f ... ] ||` inside a YAML folded
-# scalar, which nothing could test and which was wrong for eighteen months
-# without anyone able to see it.
+# scalar, which nothing could test and which nobody could see was wrong.
+#
+# It said "wrong for eighteen months", and nothing in this repo supports that.
+# DERIVED instead, which is both smaller and checkable:
+#
+#   git log --reverse --format=%ad --date=short | head -1        -> 2026-08-04
+#   git log -S'apps/web/node_modules/next/dist/bin/next' -- docker-compose.yml
+#                                              -> 072ffad, the BASELINE IMPORT
+#
+# So it was present in the first commit this repo has and was wrong for the
+# whole of its recorded history, which is about six weeks to the #226 fix. How
+# long it was wrong BEFORE the import is not knowable from here, and a number
+# that cannot be re-derived does not belong in a file about checks that can be.
 #
 # Watching a guard fire proves it fires. It does not prove it PASSES, and a
 # guard that installs unconditionally would make every `up` reinstall the world
@@ -172,6 +183,74 @@ if tr -d '\r' < "$probe" | cmp -s - "$probe"; then
 fi
 rm -f "$probe"
 echo "ok   [both scripts are LF, so the container's sh can read them]"
+
+# ---------------------------------------------------------------------------
+# `scripts/dev-web.sh` must CALL this guard, not carry a second copy of the
+# idea (#318).
+#
+# It used to guard its own `pnpm install` on `[[ ! -d node_modules ]]`, over a
+# NAMED VOLUME that exists from the first boot onward -- so the guard was false
+# forever after and a lockfile change installed nothing. That is #226 exactly,
+# surviving inside a script `README.md` documents as a Quick-start path. The
+# install also had no `--frozen-lockfile`, so the one run it did fire resolved
+# package.json RANGES while CI installs what the lockfile pins.
+#
+# `CLAUDE.md`: "uses the same X as the Y path" is a claim to enforce by CALLING
+# X, never by reimplementing it. Asserted statically because the alternative is
+# running a real install, and a gate that installs the world is a gate nobody
+# runs.
+# ---------------------------------------------------------------------------
+DEV_WEB="$(cd "$(dirname "$0")/../.." && pwd)/scripts/dev-web.sh"
+if [ ! -f "$DEV_WEB" ]; then
+  echo "FAIL: $DEV_WEB is missing; this check cannot look, which is not a pass."
+  exit 2
+fi
+
+# COMMENT LINES STRIPPED FIRST, and that is not tidiness.
+#
+# The first version of this check was `grep -q 'web-install-if-stale.sh'` over
+# the whole file. `dev-web.sh` NAMES that script five times in its own header,
+# explaining why it calls it -- so deleting the actual call left the check
+# green. MEASURED: removing the invocation and running this gate returned
+# `ok   [dev-web.sh calls the guard...]`, exit 0.
+#
+# An assertion satisfied by a COMMENT is the #308 shape (a 204 needle matched
+# by the sentence three lines above it) and the reason `check_test_integrity`
+# exists. It was caught here by red-on-revert and by nothing else: the check
+# was correct-looking, correctly motivated, and could not fail.
+code_only="$(mktemp)"
+sed 's/[[:space:]]*#.*$//' "$DEV_WEB" > "$code_only"
+
+if ! grep -q 'web-install-if-stale' "$code_only"; then
+  rm -f "$code_only"
+  echo "FAIL: scripts/dev-web.sh does not name web-install-if-stale.sh in CODE."
+  echo "      It is documented as a Quick-start path, so an install it performs"
+  echo "      itself bypasses the guard that decides whether a patch is applied."
+  echo "      (Mentioning it in a comment is not calling it.)"
+  exit 1
+fi
+
+# Naming it is not running it. Require an actual invocation -- `sh <something>`
+# where the something is the guard or the variable holding it.
+if ! grep -qE '(^|[[:space:]])(sh|bash)[[:space:]]+.*(\$GUARD|\$\{GUARD\}|web-install-if-stale)' "$code_only"; then
+  rm -f "$code_only"
+  echo "FAIL: scripts/dev-web.sh references the guard but never executes it."
+  echo "      Assigning its path and not running it installs nothing, and the"
+  echo "      dev server then starts against whatever is in the volume."
+  exit 1
+fi
+rm -f "$code_only"
+
+# The second copy, stated as what must NOT be there. A script that calls the
+# guard AND keeps its own install is not fixed -- whichever runs last wins, and
+# the unfrozen one is the one that drifts.
+if sed 's/[[:space:]]*#.*$//' "$DEV_WEB" | grep -qE '^[[:space:]]*pnpm install'; then
+  echo "FAIL: scripts/dev-web.sh still runs its own \`pnpm install\`."
+  echo "      The guard installs with --frozen-lockfile; a second, unguarded"
+  echo "      install beside it re-opens #226 whichever order they run in."
+  exit 1
+fi
+echo "ok   [dev-web.sh calls the guard and carries no install of its own]"
 
 echo
 # --- ARGUMENT HANDLING. Added because this file claimed "EVERY state it can
