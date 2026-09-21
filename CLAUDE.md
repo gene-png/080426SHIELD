@@ -339,11 +339,28 @@ a real exit code and a real date, and was the minority outcome (D-071).
 
   **The transferable part is not about shells.** It is that a local run can
   exercise a different interpreter, library or resolver than CI under the same
-  command name, and nothing in the output says so. Three separate verification
-  wrappers failed this way in one evening -- a shell that was not the shell, a
-  pipe that returned `tail`'s status, and a scratch worktree that was never
-  created so a failed `cd` read as a clean result. When a check passes locally
+  command name, and nothing in the output says so. When a check passes locally
   and fails on the runner, suspect the interpreter before the code.
+
+  **A WRAPPER WRITTEN TO VERIFY SOMETHING IS WHERE THIS KEEPS LANDING**, and
+  the list is left as a list on purpose -- an earlier draft of this paragraph
+  said "three", which was stale within the hour. The instances from one
+  evening, by three different authors:
+
+  - `sh` that was bash, so every bashism passed locally;
+  - `pytest ... | tail` inside `sh -lc`, which has no `pipefail`, so the
+    harness read `tail`'s status and reported STAYED GREEN over two failures;
+  - the same pipe again, independently, in a second author's check helper;
+  - `git worktree add` failing so the following `cd` failed, and `sed` ran in
+    the wrong directory -- empty output, read as "no conflict";
+  - `mktemp -d` giving an MSYS path Docker could not mount, reporting PASS for
+    both variants of a comparison having scanned ZERO files, with
+    `warning: No Python files found` sitting in the output;
+  - `gh pr edit ... | tail` from a directory that was not a repo: `gh` failed,
+    `tail` returned 0, and the empty output read as success.
+
+  **Most of them produced the answer the author was hoping for.** That is the
+  property worth remembering: the failure mode is not noise, it is agreement.
 
 - **RUFF'S FIRST-PARTY RESOLUTION DEPENDS ON THE LAYOUT IT IS RUN IN, so the
   in-container lint gate is STRUCTURALLY BLIND to one class of import error
@@ -2124,6 +2141,41 @@ Rules of the road:
   **Worth stating plainly: the verification layer produced more defects than the
   code under test that day.** That is not an argument for more checking
   machinery. Every fix went toward a more primitive signal, not a cleverer one.
+
+- **"IS THIS ALREADY LANDED?" HAS EXACTLY ONE SOUND TEST HERE, AND IT IS NOT
+  ANCESTRY AND NOT A DIFF.** Merge it and count what it stages:
+
+      git worktree add --detach ../landed-check origin/main
+      cd ../landed-check
+      git merge --no-commit --no-ff origin/<branch>
+      git diff --cached --name-only | wc -l     # 0 = the content is already on main
+      git merge --abort
+
+  **Run it against a branch you KNOW is unlanded in the same pass.** A test that
+  returns 0 for everything answers the question you wanted and means nothing;
+  this one discriminates, and confirming that costs one extra invocation.
+
+  **Why `git merge-base --is-ancestor` is the wrong tool: THIS REPO
+  <!-- counted: the cardinality of a squash merge by definition, not a tally of a population; it cannot grow -->
+  SQUASH-MERGES.** A squash creates one new commit whose parent is `main`'s, so
+  a branch's own commits never become ancestors of `main` however completely its
+  content landed. `--is-ancestor` therefore answers NO for every PR this repo
+  has ever merged. It is not a weak signal, it is a constant.
+
+  **Why a file count is the wrong tool, and this one is subtler.**
+  `git diff main <branch>` answers "how do these two trees differ";
+  `git diff main...<branch>` answers "what did this branch ADD". Read the first
+  as the second and a branch whose base is behind looks like it contributes
+  every file `main` has moved on since. Measured 2026-09-21: a branch reported
+  as "21 files differ" was 131 insertions against 3169 deletions -- the
+  deletions being `main`'s own work, which merging can never remove.
+
+  Both mistakes were made on the same question within an hour, by two people,
+  with two different instruments, and both answers were shaped like the right
+  one. A third reading -- pointing the CORRECT test at a different branch than
+  the one being asked about -- produced a confident "already landed" for a
+  branch contributing nineteen files. **Name the branch the test ran against in
+  the same breath as the result.**
 
 - **"READY" IS TWO CLAIMS. GREEN AND MERGEABLE ARE DIFFERENT, AND A CI
   CERTIFICATE IS ABOUT A HEAD, NOT A BRANCH.** Before reporting a PR ready,
