@@ -323,11 +323,39 @@ def test_no_hand_written_reason_anywhere_squats_on_the_schema_namespace() -> Non
     app_dir = Path(__file__).resolve().parents[2] / "app"
     assert app_dir.is_dir(), f"cannot find the app package at {app_dir}"
 
-    literal = re.compile(r"""["']reason["']\s*:\s*["']([A-Za-z0-9_]+)["']""")
+    # BOTH FORMS a hand-written reason takes in this repo. The first version
+    # matched only `"reason": "code"` and therefore reported clean over
+    # `oidc_jwks_unavailable`, which is written as a CONSTRUCTOR KWARG in
+    # `app/security/oidc.py` and surfaced verbatim by `routes/oidc.py` as
+    # `detail={"reason": exc.reason, ...}` -- a live, client-reaching D-016
+    # code the sweep could not see. `oidc_token_invalid` was found only
+    # because `routes/oidc.py` separately spells it as a literal.
+    #
+    # The scope was generalised over the DIRECTORY ("every other module under
+    # `app/`") and left enumerated over the FORM, and the one service module
+    # that raises typed refusals is the one the form missed. CLAUDE.md's
+    # "the sweep predicate was a PATH instead of a defect", arriving at the
+    # other axis.
+    # A NEGATIVE LOOKBEHIND, not `\b`. The first attempt wrote `\b` and it
+    # reached the file as a literal BACKSPACE byte (U+0008) inside the raw
+    # string, so the alternation read `<BS>reason\s*=` and matched nothing --
+    # the sweep silently lost the entire kwarg form it had just been widened
+    # to cover, and `grep` showed a correct-looking line because a backspace
+    # renders as nothing. Caught by `check_no_control_chars.py`, which exists
+    # for exactly this and reported `339: U+0008`.
+    #
+    # The lookbehind also does the job `\b` was there for: it stops
+    # `rejected_reason=` being read as a reason code.
+    literal = re.compile(
+        r"""(?:["']reason["']\s*:|(?<![A-Za-z0-9_])reason\s*=)""" r"""\s*["']([A-Za-z0-9_]+)["']"""
+    )
     found: dict[str, str] = {}
     scanned = 0
     for path in sorted(app_dir.rglob("*.py")):
-        if path.name == "exceptions.py":
+        # Compared as a PATH, not a basename: `path.name` would also exempt a
+        # future `app/<pkg>/exceptions.py`, silently, and the exemption is
+        # meant to cover the ONE synthesiser.
+        if path == app_dir / "exceptions.py":
             continue
         scanned += 1
         for code in literal.findall(path.read_text(encoding="utf-8")):
@@ -336,13 +364,26 @@ def test_no_hand_written_reason_anywhere_squats_on_the_schema_namespace() -> Non
     # FAIL CLOSED. An empty sweep is "I could not look", never "nothing to
     # complain about" -- if a refactor moves these or this path breaks, the
     # test must say so rather than pass on nothing.
-    assert scanned > 10, f"only scanned {scanned} modules under {app_dir}; the sweep is broken"
-    assert len(found) >= 5, (
+    # FLOORS SET FROM THE MEASURED VALUES, not from caution. At the time of
+    # writing the sweep reads 131 modules and finds 47 distinct codes, so
+    # these sit well below the truth (a refactor must not redden them) and
+    # well above zero (a broken pattern must). A floor of 5 against 47 would
+    # have let the pattern lose 90% of its population in silence.
+    assert scanned > 50, f"only scanned {scanned} modules under {app_dir}; the sweep is broken"
+    assert len(found) >= 25, (
         f"found only {len(found)} hand-written reason codes under {app_dir}. "
         "This repo has many; a sweep this thin means the pattern stopped "
         "matching, not that the codes went away."
     )
 
+    # THE RESIDUAL, stated rather than left implied. A code held in a module
+    # CONSTANT and referenced by name is unreachable by any reason-keyed text
+    # scan -- `AI_CALL_FAILED = "ai_call_failed"` in `app/ai/failures.py` and
+    # `_NO_CITATION` in `app/attack/pending.py` are both used as
+    # `"reason": AI_CALL_FAILED`, and neither constant's VALUE is visible
+    # here. Writing this down is what stops the next reader believing the
+    # sweep is total; closing it would mean resolving constants, which is a
+    # different tool.
     squatters = {c: where for c, where in found.items() if c.startswith("schema_")}
     assert squatters == {}, (
         "these hand-written D-016 reasons sit inside the synthesised schema "
