@@ -38,10 +38,22 @@ describe("serverReason", () => {
     ).toBe("Your self-assessment is no longer editable.");
   });
 
-  it("reads the ARRAY detail a schema rejection produces", () => {
-    // The shape `extra="forbid"` and any `max_length` violation emit. The
-    // `describeError` copies in the three admin workspaces read `payload.detail`
-    // unconditionally and would hand React an array of objects here.
+  it("refuses the ARRAY detail a schema rejection produces", () => {
+    // THESE TWO ASSERTIONS ARE REVERSED FROM WHAT THEY PINNED, deliberately,
+    // and it is the behaviour that was wrong rather than the test.
+    //
+    // The old pair asserted that `serverReason` returned the Pydantic `msg`,
+    // and joined several with a space. That is the raw validation dump core
+    // principle 2 names as what a user-facing error must not be: "String
+    // should have at most 8000 characters" is a limit in a vocabulary the
+    // client never saw, for a field identified only in the `loc` nothing
+    // renders. `CLAUDE.md` forbids weakening a test to reach green and
+    // requires saying so out loud when the test itself is wrong -- this one
+    // was, and the file it protected was rendering the dump to clients.
+    //
+    // The array is still HANDLED, which was the original point: returning
+    // null is what stops the three admin `describeError` copies handing React
+    // an array of objects. It is refused, not ignored.
     expect(
       serverReason({
         payload: {
@@ -53,18 +65,96 @@ describe("serverReason", () => {
           ],
         },
       }),
-    ).toBe("String should have at most 8000 characters");
-  });
+    ).toBeNull();
 
-  it("joins a multi-field rejection rather than reporting the first", () => {
-    // Reporting one of two is how a client fixes half a problem and resubmits.
     expect(
       serverReason({
         payload: {
           detail: [{ msg: "field a is wrong" }, { msg: "field b is wrong" }],
         },
       }),
-    ).toBe("field a is wrong field b is wrong");
+    ).toBeNull();
+  });
+
+  it("refuses the ENVELOPED schema 422, on the code and not on presence", () => {
+    // THE DEFECT. This is what `_handle_validation_error` produces for any
+    // `max_length` or `extra="forbid"` violation -- copied off the producer,
+    // not written to suit the parser. `IntakeSubmitRequest.notes` is
+    // `max_length=4000` and the Step 5 textarea sets no `maxLength`, so a
+    // client pasting a long paragraph submitted the intake and read
+    // "Request validation failed." `clientFacingError` returned it because
+    // `serverReason` had no guard at all, one surface over from
+    // `SignUpForm.tsx`, which does.
+    const schema422 = {
+      status: 422,
+      payload: {
+        error: {
+          code: 422,
+          correlation_id: "c-3",
+          reason: "schema_string_too_long",
+          reasons: ["schema_string_too_long"],
+          message: "Request validation failed.",
+          details: [
+            {
+              loc: ["body", "services", 0, "notes"],
+              msg: "String should have at most 4000 characters",
+              type: "string_too_long",
+            },
+          ],
+        },
+      },
+    };
+    expect(serverReason(schema422)).toBeNull();
+    expect(clientFacingError(schema422, "Failed to submit intake.")).toBe(
+      "Failed to submit intake.",
+    );
+
+    // `schema_multiple`, the code for a body that fails several checks at
+    // once. Asserted separately because a guard written against one literal
+    // code rather than the PREFIX would pass the line above and fail here.
+    expect(
+      serverReason({
+        status: 422,
+        payload: {
+          error: {
+            reason: "schema_multiple",
+            message: "Request validation failed.",
+          },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps a typed DOMAIN refusal, which is the other half", () => {
+    // Without this, "withhold everything with a reason" passes every
+    // assertion above while destroying every friendly message the API sends.
+    // `target_stage_out_of_range` is a hand-written D-016 refusal with client
+    // copy behind it; only the `schema_` namespace is synthesised.
+    expect(
+      serverReason({
+        status: 422,
+        payload: {
+          error: {
+            reason: "target_stage_out_of_range",
+            message: "DoD ZTRA has stages 1-3.",
+          },
+        },
+      }),
+    ).toBe("DoD ZTRA has stages 1-3.");
+
+    // And a code that merely CONTAINS the prefix elsewhere is not a schema
+    // code. The guard anchors at the start, and this pins that it does.
+    expect(
+      serverReason({
+        status: 409,
+        payload: {
+          error: {
+            reason: "capability_schema_stale",
+            message: "Re-run the extraction first.",
+          },
+        },
+      }),
+    ).toBe("Re-run the extraction first.");
   });
 
   it("returns null rather than an internal string when there is no reason", () => {

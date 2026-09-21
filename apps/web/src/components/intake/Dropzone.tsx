@@ -3,11 +3,7 @@ import * as React from "react";
 
 import { cn, EmptyState } from "@shield/design-system";
 
-import {
-  type ArtifactSummary,
-  ArtifactUploadError,
-  uploadArtifact,
-} from "@/lib/intake/artifacts";
+import { type ArtifactSummary, uploadArtifact } from "@/lib/intake/artifacts";
 
 import type { JSX } from "react";
 import { clientFacingError } from "@/lib/describe-save-error";
@@ -73,19 +69,22 @@ export function Dropzone({
         setItem(id, { status: "done" });
         onUploaded(artifact);
       } catch (err) {
-        const msg =
-          err instanceof ArtifactUploadError
-            ? (() => {
-                const payload = err.payload as
-                  { error?: { message?: string }; detail?: string } | undefined;
-                return (
-                  payload?.error?.message ??
-                  payload?.detail ??
-                  `Upload failed (${err.status})`
-                );
-              })()
-            : clientFacingError(err, "Upload failed.");
-        setItem(id, { status: "error", message: msg });
+        // ONE branch, because the two used to disagree and the disagreement
+        // was the defect. The `instanceof` arm re-implemented two of
+        // `serverReason`'s three payload shapes by hand — missing the array
+        // `detail` form entirely — and ended `Upload failed (${err.status})`,
+        // an HTTP status code as client copy. That is the same shape this PR
+        // deleted from `lib/messages/client.ts` and called forbidden, and
+        // leaving it standing in a file the PR edits would have been an
+        // unstated exemption (#318).
+        //
+        // `clientFacingError` reaches `ArtifactUploadError` without the
+        // `instanceof`: it duck-types on `.payload`, which that class carries.
+        // So this is strictly more coverage, not a swap.
+        setItem(id, {
+          status: "error",
+          message: clientFacingError(err, "Upload failed."),
+        });
       }
     }
   }
