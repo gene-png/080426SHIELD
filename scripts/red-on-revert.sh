@@ -24,7 +24,14 @@
 #
 # ## Usage
 #
-#     scripts/red-on-revert.sh <file> <search> <replace> -- <command...>
+#     scripts/red-on-revert.sh <file> <search> <replace> [<search> <replace>...] -- <command...>
+#
+# SEVERAL PAIRS, applied together as ONE mutation, because some properties
+# cannot be broken with a single edit. Moving a statement past an `await` is
+# the case that forced this: it is a delete in one place and an insert in
+# another, and neither half alone reproduces the defect -- the delete just
+# fails to compile. Every pair must match exactly once, and if any pair does
+# not, NOTHING is written.
 #
 # Exits 0 when the command FAILED under mutation (which is the result you want:
 # the check can see the change), 1 when it passed, and 2 when the harness could
@@ -87,6 +94,39 @@ dup
   got="$(run "$self_dir/absent.txt" a b -- true)"
   [ "$got" = "2" ] || { echo "self-test: a missing file must exit 2, got $got" >&2; fail=1; }
 
+  # TWO pairs applied together. The check requires BOTH originals to still be
+  # present, so it goes RED only if both replacements landed -- which is the
+  # property multi-pair exists for: a statement moved past an await is a delete
+  # plus an insert, and neither half alone reproduces the defect.
+  #
+  # Note the polarity, which the first draft of this case got backwards: the
+  # script exits 0 when the CHECK FAILS. A check that succeeds under mutation
+  # is the "stayed green" answer. The self-test caught that, which is the
+  # entire argument for having one.
+  multi="$self_dir/multi.txt"
+  printf 'one
+two
+three
+' > "$multi"
+  before_multi="$(cksum < "$multi")"
+  got="$(run "$multi" one ONE three THREE -- sh -c "grep -qx one '$multi' && grep -qx three '$multi'")"
+  [ "$got" = "0" ] || { echo "self-test: both pairs must land and the check go red, got $got" >&2; fail=1; }
+  [ "$(cksum < "$multi")" = "$before_multi" ] || { echo "self-test: multi-pair left the file MUTATED" >&2; fail=1; }
+
+  # A pair that does not match refuses the WHOLE mutation. A partial write
+  # measures a state nobody designed, so nothing may be written at all.
+  printf 'one
+two
+' > "$multi"
+  before_multi="$(cksum < "$multi")"
+  got="$(run "$multi" one ONE nowhere X -- true)"
+  [ "$got" = "2" ] || { echo "self-test: one bad pair must refuse everything with 2, got $got" >&2; fail=1; }
+  [ "$(cksum < "$multi")" = "$before_multi" ] || { echo "self-test: a refused multi-pair still wrote to the file" >&2; fail=1; }
+
+  # An odd number of pair arguments is a usage error, not a silent drop.
+  got="$(run "$multi" one ONE dangling -- true)"
+  [ "$got" = "2" ] || { echo "self-test: an unpaired search must exit 2, got $got" >&2; fail=1; }
+
   # The restore actually happened -- asserted on the bytes, not inferred from
   # the exit codes above.
   [ "$(cksum < "$probe")" = "$before" ] || { echo "self-test: the probe was left MUTATED after all runs" >&2; fail=1; }
@@ -95,7 +135,7 @@ dup
     echo "red-on-revert: SELF-TEST FAILED -- do not trust this harness." >&2
     exit 2
   fi
-  echo "red-on-revert: self-test passed -- 1 (stayed green), 0 (went red), 2 (could not look) x3, and the probe is byte-identical."
+  echo "red-on-revert: self-test passed -- 1 (stayed green), 0 (went red), 2 (could not look) x5, multi-pair applied and refused atomically, and every probe is byte-identical."
   exit 0
 fi
 
@@ -113,9 +153,15 @@ USAGE
   exit 2
 fi
 
-FILE="$1"; SEARCH="$2"; REPLACE="$3"; shift 3
+FILE="$1"; shift
+PAIRS=()
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+  [ "$#" -ge 2 ] || { echo "red-on-revert: search/replace pairs must come in twos" >&2; exit 2; }
+  PAIRS+=("$1" "$2"); shift 2
+done
 [ "${1:-}" = "--" ] || { echo "red-on-revert: expected -- before the command" >&2; exit 2; }
 shift
+[ "${#PAIRS[@]}" -ge 2 ] || { echo "red-on-revert: need at least one search/replace pair" >&2; exit 2; }
 
 [ -f "$FILE" ] || { echo "red-on-revert: no such file: $FILE" >&2; exit 2; }
 
@@ -124,12 +170,19 @@ shift
 # the same green as a check that cannot fail -- the answer you are hoping for,
 # which is the worst possible combination. A string that matches twice means
 # you changed something you did not mean to.
-occurrences="$(grep -c -F -- "$SEARCH" "$FILE" || true)"
-if [ "$occurrences" != "1" ]; then
-  echo "red-on-revert: search string occurs ${occurrences} time(s) in ${FILE}; need exactly 1." >&2
-  echo "red-on-revert: refusing to mutate. A miss and an unintended double-hit both look like success afterwards." >&2
-  exit 2
-fi
+# EVERY pair is counted BEFORE anything is written. A partial mutation is
+# worse than none: it changes the file and measures a state nobody designed.
+i=0
+while [ "$i" -lt "${#PAIRS[@]}" ]; do
+  occurrences="$(grep -c -F -- "${PAIRS[$i]}" "$FILE" || true)"
+  if [ "$occurrences" != "1" ]; then
+    echo "red-on-revert: search string occurs ${occurrences} time(s) in ${FILE}; need exactly 1." >&2
+    echo "red-on-revert:   ${PAIRS[$i]}" >&2
+    echo "red-on-revert: refusing to mutate. A miss and an unintended double-hit both look like success afterwards." >&2
+    exit 2
+  fi
+  i=$((i + 2))
+done
 
 # The ORIGINAL's fingerprint, taken before anything is touched. The restore is
 # checked against this rather than against the backup, because the backup is
@@ -147,23 +200,32 @@ restore() {
 }
 trap restore EXIT
 
-python - "$FILE" "$SEARCH" "$REPLACE" <<'PY'
+python - "$FILE" "${PAIRS[@]}" <<'PY'
 import sys
-path, search, replace = sys.argv[1], sys.argv[2], sys.argv[3]
+path, rest = sys.argv[1], sys.argv[2:]
 with open(path, encoding="utf-8") as fh:
     text = fh.read()
-assert text.count(search) == 1, "count changed between check and write"
+for j in range(0, len(rest), 2):
+    search, replace = rest[j], rest[j + 1]
+    assert text.count(search) == 1, "count changed between check and write: %r" % search
+    text = text.replace(search, replace)
 with open(path, "w", encoding="utf-8", newline="") as fh:
-    fh.write(text.replace(search, replace))
+    fh.write(text)
 PY
 
-# Prove the mutation LANDED before reading any result. A revert or a write that
-# silently did not apply reports the same green as a test that cannot fail.
-if ! grep -q -F -- "$REPLACE" "$FILE"; then
-  echo "red-on-revert: the mutation did not land in ${FILE}. Nothing was measured." >&2
-  exit 2
-fi
-echo "red-on-revert: mutated ${FILE} (verified present), running the check..."
+# Prove EVERY replacement LANDED before reading any result. A write that
+# silently did not apply reports the same green as a test that cannot fail --
+# and with several pairs, one landing is not evidence that the rest did.
+i=1
+while [ "$i" -lt "${#PAIRS[@]}" ]; do
+  if ! grep -q -F -- "${PAIRS[$i]}" "$FILE"; then
+    echo "red-on-revert: a replacement did not land in ${FILE}. Nothing was measured." >&2
+    echo "red-on-revert:   ${PAIRS[$i]}" >&2
+    exit 2
+  fi
+  i=$((i + 2))
+done
+echo "red-on-revert: mutated ${FILE} -- $(( ${#PAIRS[@]} / 2 )) replacement(s), all verified present. Running the check..."
 
 set +e
 "$@"
