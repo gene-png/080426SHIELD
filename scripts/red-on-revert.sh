@@ -191,6 +191,14 @@ fi
 #
 # --any-red is the explicit opt-out, and it has to be typed. An accidental
 # omission must not silently buy the weaker guarantee.
+#
+# THE COMMAND MUST PRINT THE FAILING TEST'S IDENTIFIER, because the match
+# needs a failure marker and the name on the SAME LINE. A name that appears
+# anywhere in the log proves nothing -- it appears in passing output too.
+# Practically: pytest needs `-rf` (or no `-rN`), which prints
+# `FAILED <nodeid>`; vitest prints `x <name>` by default. A run that hides
+# its failure summary is refused with "WENT RED ON SOMETHING ELSE", which is
+# the harness being strict rather than wrong.
 EXPECT=""
 ANY_RED=0
 while [ "$#" -gt 0 ]; do
