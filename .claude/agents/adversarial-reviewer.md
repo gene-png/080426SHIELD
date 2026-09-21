@@ -197,19 +197,58 @@ never the problem. Treating everything you found as blocking was.
    **INDEX IT INSTEAD. A search works at any size; a read does not.** Your
    tools are Read/Grep/Glob, so this is the Grep tool with
 
-       pattern:  ^- \*\*
-       path:     CLAUDE.md
+       pattern:  ^(#{2,3} |[0-9]+\. \*\*|- \*\*|\*\*)
+       path:     <the ABSOLUTE worktree path you were handed>/CLAUDE.md
        output:   content, with line numbers
 
-   It returns every rule's lead sentence with its line number — 85 of them at
-   the time of writing, which fits in one result — and it is DERIVED from the
-   file's own structure rather than a list someone has to maintain. Then read
-   the blocks that bear on your diff, by line number, with a RANGED read
-   (`offset` and `limit`).
+   **THE PATH IS THE ABSOLUTE ONE FROM YOUR DISPATCH. A relative `CLAUDE.md`
+   here re-opens the exact hazard this step exists to close.** Your working
+   directory is the PRIMARY tree, not the detached worktree you were sent to,
+   so a relative path silently resolves there: you index `main`'s file,
+   range-read `main`'s line numbers, and report on prose the branch does not
+   contain — under a `Scope:` line that is TRUE, because it names where you
+   were SENT rather than what you READ.
 
-   You will not have read the whole file. You will know what is in it and have
-   read the parts that matter, which is what the other approach only appears to
-   achieve.
+   Measured 2026-09-21, and it is why this paragraph exists: a reviewer
+   dispatched against `../review-1441f37` searched `path:
+   .claude/agents/adversarial-reviewer.md` and got **zero matches** for a
+   string that is in that worktree's copy of this very file. The search had
+   gone to the primary tree. It reported the miss rather than concluding from
+   it, which is the only reason it cost nothing.
+
+   **The absolute path's loudness is in its FAILURE, not in its output — both
+   measured on 2026-09-21, and assuming otherwise is how this gets trusted for
+   the wrong reason.** A successful search prints a BARE label (`CLAUDE.md:120`)
+   whichever path you passed, so **the result never discloses which tree it
+   read**, and on a day when both trees agree the wrong answer and the right one
+   are byte-identical. What an absolute path buys you is that a wrong one is an
+   ERROR naming your working directory, where a relative one cannot fail at all.
+   So the disclosure has to come from you: name the absolute path you read, in
+   your report.
+
+   It returns each rule's lead line with its line number — the section
+   headings, the six numbered core principles, the `**`-led paragraphs and
+   every top-level `- **` bullet — and it is DERIVED from the file's own
+   structure rather than a list someone maintains. Then read the blocks that
+   bear on your diff, by line number, with a RANGED read (`offset` and
+   `limit`). If it ever stops fitting in one result, narrow to `^- \*\*` and
+   ranged-read the head separately rather than dropping the index.
+
+   **`^- \*\*` ALONE IS NOT ENOUGH, and the first draft of this step used it.**
+   Its first hit is line 125. Above that sit the task-routing table that
+   decides which rows apply to you, `VERIFY BY RUNNING` — which the file itself
+   calls the one rule outranking the rest — and all six core principles, none
+   of them written as bullets. A bullets-only pattern indexes the exceptions
+   and misses what they are exceptions to.
+
+   **You will have an INDEX, not a READ, and the gap is real rather than
+   formal.** You will know which rules exist and where. You will not have read
+   their bodies, and a rule's body is where its SCOPE lives — the defect this
+   file records most often is a rule whose lead sentence is true and whose
+   scope is narrower than the reader assumes. Ranged-read anything you are
+   about to apply or cite. Citing an index entry as though you had read the
+   rule is this repo's certificate-over-the-wrong-proposition shape, produced
+   by the tool built to prevent it.
 
    **AND A RULE NAMED IN YOUR DISPATCH IS A CLAIM, NOT A PREMISE. Check it
    against the index before applying it, and report it if it is absent.**
