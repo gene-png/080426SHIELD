@@ -35,9 +35,26 @@ export function EnsureActiveClient({
         const svc = (await res.json()) as { client_id?: string };
         if (!svc.client_id) throw new Error("Service has no client.");
 
-        const cur = await fetch("/api/active-client", { cache: "no-store" })
-          .then((r) => r.json())
-          .catch(() => null);
+        // An ADVISORY read: its only job is to decide whether the POST
+        // below is redundant. A failure here genuinely is safe to absorb --
+        // it falls through to the write, which throws into the catch at the
+        // bottom and surfaces to the user.
+        //
+        // Written as an explicit handler rather than `.catch(() => null)`
+        // because the two are indistinguishable to any reader, and to the
+        // guard: a considered fallback and a silent swallow look identical
+        // when the fallback is written as an arrow returning null. Saying
+        // WHY here is what makes it an exemption rather than an oversight.
+        let cur: { active?: string } | null = null;
+        try {
+          const r = await fetch("/api/active-client", { cache: "no-store" });
+          cur = (await r.json()) as { active?: string };
+        } catch {
+          // Leave `cur` null so the branch below re-asserts the active
+          // client. Not silence: the write is the recovery, and its failure
+          // is surfaced.
+          cur = null;
+        }
         if (cur?.active !== svc.client_id) {
           await fetch("/api/active-client", {
             method: "POST",
