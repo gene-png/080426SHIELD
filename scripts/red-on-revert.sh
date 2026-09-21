@@ -55,6 +55,31 @@
 # supported -- pick a unique single line.
 set -euo pipefail
 
+# REFUSE A POISONED ENVIRONMENT RATHER THAN ANSWER FROM ONE.
+#
+# This script hands a PATH to Python, which is a native Windows executable on
+# the machines this repo is developed on. MSYS rewrites such a path at the exe
+# boundary; MSYS_NO_PATHCONV=1 suppresses exactly that rewrite, so Python
+# receives a literal /c/... that does not exist and dies.
+#
+# `CLAUDE.md` PRESCRIBES that variable -- correctly -- for `docker ... -w /app`.
+# It is an exported variable in a long-lived shell, so the next person setting
+# up a docker mount exports it and every later gate in that shell is measuring
+# from a poisoned environment. That happened, and it cost three "flaky gate"
+# observations that were deterministic all along.
+#
+# Exit 2, not 1: this is a COULD NOT LOOK. The script cannot trust the path it
+# is about to hand over, so it refuses rather than producing a verdict.
+#
+# Deliberately NOT repaired with `cygpath`. Silently fixing a poisoned
+# environment is how a script stops being able to tell you it is poisoned.
+if [ "${MSYS_NO_PATHCONV:-}" = "1" ]; then
+  echo "$0: MSYS_NO_PATHCONV=1 is set. This script hands a path to Python," >&2
+  echo "  which needs the MSYS rewrite that variable suppresses. Unset it" >&2
+  echo "  and re-run; do not read this exit as a verdict about the code." >&2
+  exit 2
+fi
+
 if [ "${1:-}" = "--self-test" ]; then
   # Run the harness against a scratch file and require each answer in turn.
   # Every assertion below is on the EXIT CODE, which is the thing callers
