@@ -75,7 +75,56 @@ overwritten:
 
 Issues filed from the reviews: **#372** (tier-2), **#373** (tier-3).
 
+### The second wave, and the two worst things in it
+
+The three truncated reports came back, plus one more. Everything is acted on;
+eleven PRs are open and none is red.
+
+**A test I "fixed" twice did nothing, and every signal said otherwise.** The
+#363 sweep was widened to see reason codes written as `reason=` kwargs. I
+wrote `\b` for the word boundary; it reached the file as a literal BACKSPACE
+byte inside the raw string, so the alternation read `<BS>reason\s*=` and
+matched nothing. `grep` printed a correct-looking line, because a backspace
+renders as nothing. The module's tests passed. The same regex typed inline
+found the code. **Only the mutation disagreed** -- and it took a probe
+printing `literal.pattern` from inside pytest to see `\x08`. I ruled out a
+stale `.pyc`, the wrong `app_dir` and a duplicate pattern first, each wrong.
+`check_no_control_chars.py` catches it and reported `339: U+0008` on the
+first run; that gate exists for exactly this and this is its fifth recorded
+instance.
+
+**A gate was registered without the handler it was registered FOR.** The #336
+consumer gate's `__main__` was a bare `SystemExit(main(...))` -- no crash
+handler, so a crash exited 1, this gate's VIOLATION code. It was in the
+registry anyway because `discover_gates` keys on the marker string
+`crash != verdict`, and that marker sat in a standalone COMMENT. CI caught
+it: the equality assertion between the two gate enumerations fired on the
+first gate added after it was written.
+
+That is **three instances of one shape tonight** -- a check satisfied by a
+COMMENT rather than by code. The others: `web_install_guard.sh` greping a
+file that names the script it must CALL, and a guard matching its own
+docstring.
+
+#### And the one that is mine to own
+
+**I told four reviewers a rule was in `CLAUDE.md` when it is not.** You asked
+for the known-good-shape rule in the session that produced #349, and #349
+merged without it. I then named it in every review dispatch tonight; four
+reviewers independently reported it absent; I dismissed all four as
+detached-worktree staleness -- a plausible mechanism, and the one this repo
+warns about, reached for instead of running the search. **PR #374 adds it.**
+My first verification was case-sensitive against an uppercase heading and
+nearly produced a second false absence.
+
+Also client-facing and now fixed: #366's sweep had stopped at two
+directories, so `AssessmentsView` still showed a client "Intake proxy 409",
+and `describeMessagesError` showed "Messages proxy 500" -- through
+`MessageThread` **on the very page that branch was written for**.
+
 ### The one thing that needs you
+
+
 
 
 
