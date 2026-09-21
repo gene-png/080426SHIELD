@@ -142,6 +142,34 @@ describe("refresh tokens are minted before any await", () => {
     expect(walk(ADMIN).length).toBeGreaterThanOrEqual(15);
   });
 
+  it("finds the mints it is scanning for", () => {
+    // THE SELECTOR MUST SELECT SOMETHING.
+    //
+    // Everything below reports offenders. If every `beginRefresh` moved out of
+    // this directory -- renamed, relocated, or the hook replaced -- the file
+    // count above still passes, the offender list is still empty, and this
+    // gate goes green over ZERO mints. A selector that selects nothing passes,
+    // and it passes with the answer you were hoping for.
+    //
+    // Six exist today: score-gap/interview/deliverable in Csf, score-gap and
+    // deliverable in Zt, heatmap and deliverable in Attack, overlap-plan and
+    // deliverable in TechDebt. The floor is deliberately lower than that count
+    // so an intentional consolidation does not fail this, while a wholesale
+    // disappearance does.
+    const mints = walk(ADMIN).reduce(
+      (n, f) =>
+        n +
+        (readFileSync(f, "utf8").match(/\bbeginRefresh\s*\(/g)?.length ?? 0),
+      0,
+    );
+    expect(
+      mints,
+      `no beginRefresh call was found under ${ADMIN}. Either the hook was
+replaced -- in which case this gate must follow it or be deleted -- or the scan
+is looking in the wrong place. Until then every assertion below is vacuous.`,
+    ).toBeGreaterThanOrEqual(6);
+  });
+
   // THE DETECTOR MUST BE ABLE TO FAIL. Without these, a scan that matched
   // nothing would report every file clean and read as coverage.
   it.each([
