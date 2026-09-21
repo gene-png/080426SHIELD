@@ -279,7 +279,18 @@ vitest() {
 ' "$out" | grep -m1 -E 'Failed to resolve import|Cannot find module' || true)"
     echo "verify-in-worktree: COULD NOT FULLY LOOK -- ${uncollected} of ${found} test files never ran, so this result is a floor of unknown depth." >&2
     [ -n "$why" ] && echo "verify-in-worktree: skip reason: ${why}" >&2
-    echo "verify-in-worktree: see #175 (packages/ bind-mounted with no node_modules overlay)." >&2
+    # #175 is ONE cause, not the only one, and this line used to name it as
+    # though it were. The other is a wrong PRIMARY_TREE, which mounted a
+    # non-existent source that Docker created empty -- symptoms identical,
+    # cause entirely inside this script, and every reader sent to a
+    # compose-file issue to look for it. `require_primary_tree` now refuses
+    # that case up front, so reaching HERE means the modules were found and
+    # still did not resolve, which is #175's shape: host-absolute symlinks
+    # written by a `pnpm install` on the host.
+    echo "verify-in-worktree: the modules were found but did not resolve." >&2
+    echo "verify-in-worktree: most likely #175 -- packages/ is bind-mounted with no" >&2
+    echo "verify-in-worktree: node_modules overlay, so a HOST pnpm install leaves" >&2
+    echo "verify-in-worktree: host-absolute symlinks the container cannot follow." >&2
     return 2
   fi
   return "$status"
