@@ -9,30 +9,61 @@ about state outside the working tree carries the command that produced it.
 
 ### State
 
-**#362 is merged at `1d573ec`** — the live client-facing regression on all
-five dashboards. `main` is green.
+**#362 is merged at `1d573ec`** — the live client-facing regression on all five
+dashboards. `main` is green.
 
-Twelve PRs open. **All pairwise-merge-checked**, which is now standing
-practice: GitHub computes mergeability against the base only, so two PRs that
-each merge cleanly and conflict with each other are both `MERGEABLE` and
-invisible. Nine pairs share a file; all nine are clean, measured just now.
+**Eighteen PRs open, seventeen fully green**, the eighteenth still running.
+All pairwise-merge-checked; all mergeable against `main`.
 
 | PR | What it is |
 | --- | --- |
-| #366 | Internal proxy strings reaching clients — **rebased onto `1d573ec`**, conflict hand-resolved |
-| #351 | Disclosures reach a screen — **was CONFLICTING against `main` and is rebased** |
+| #366 | Internal proxy strings reaching clients — rebased onto `1d573ec`, conflict hand-resolved |
+| #351 | Disclosures reach a screen — was CONFLICTING against `main`, rebased |
+| #379 | A failed refresh is not a loading state — nine silent catches in four admin workspaces |
+| #381 | A released refusal is typed, like the twin three lines above it |
+| #377 | "Re-read CLAUDE.md" cannot be done by reading it — the reviewer indexes instead |
+| #376 | A partial Risk synthesis told nobody the register was short |
+| #375 | Four rules from tonight, folded into existing bullets |
+| #374 | The known-good-shape rule you asked for |
 | #369 | Both Quick-start paths bypassed the install guard |
 | #367 | The mount check claimed agreement it had not established |
-| #364 | `apiFetch`, the choke point six proxies share, had no test |
+| #364 | `apiFetch` had no test |
 | #363 | A test that asked a question with no answer |
 | #370 | A D-number failure read as an issue-close failure |
-| #360 | Item 12 is done, and the claim that sequenced it was backwards |
+| #360 | Item 12 is done; the claim that sequenced it was backwards |
 | #359 | Why the typed-reason guard stops at `dashboards/` |
 | #358 | The disclosure consumer gate |
 | #353 | `entries_total` named two quantities |
 | #343 | A flag a script does not implement must not succeed |
-| #374 | The known-good-shape rule — **review dispatched** |
-| #375 | Four rules from tonight — **review dispatched** |
+
+#353's E2E had failed on a transient Docker Hub token error
+(`connection reset by peer` fetching an oauth token) — infrastructure, not the
+PR, and distinct from #328's `pull access denied`. Re-run, now green.
+
+### Issues filed since the last handoff
+
+- **#372** (tier-2) — the Risk disclosure the consumer gate found. **Fixed by
+  #376.**
+- **#373** (tier-3) — the gate's predicate is prefix-anchored and misses nested
+  models.
+- **#378** (tier-3) — `ClientSwitcher` renders a failed fetch as "no clients",
+  a FALSE EMPTY rather than a silent catch. Third sub-shape of #292.
+- **#380** (tier-3) — `tech_debt.py` has 20 untyped refusals beside 5 typed,
+  with no stated rule. Eleven are not-found (defensibly untyped); five are
+  state refusals that name a remedy.
+
+### One thing you should know about the dependabot closures
+
+Closing them was right for staleness. **It does not let them land.** Re-measured
+on #148: `Adversarial audit recorded` **fails** on a bot-authored PR, and
+`check_audit_evidence.py` has exactly one exemption — documentation-only —
+while `audit-gate.yml` contains no author test at all. A lockfile bump is not
+docs, so it needs an audit block in the body that dependabot never writes.
+
+Red by construction. #149 has been red since 2026-08-25. Three routes and the
+trade-offs are written up on #220; **the choice is yours, not an agent's** — it
+is the check that stops an agent merging its own unreviewed work, and I am not
+widening it on my own initiative.
 
 ### Standing decisions Gene made, recorded so they are not re-litigated
 
