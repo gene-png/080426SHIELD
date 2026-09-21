@@ -228,35 +228,167 @@ def test_a_hand_written_refusal_is_untouched(client) -> None:
     `reason` to copy would render a schema failure as a domain refusal. The
     `schema_` namespace makes that impossible by construction rather than by
     nobody having picked the same word yet.
-    """
-    # The literal, spelled out, NOT the imported constant. A test that reads the
-    # value it is pinning follows any change to it silently (#72), and this one
-    # is load-bearing across a language boundary:
-    # `apps/web/src/components/auth/SignUpForm.tsx` carries the same string and
-    # nothing derives one from the other. Until this line spelled it out, a
-    # Python-side edit reddened NOTHING while the TS side had a test that
-    # spells it out -- one direction covered, the other a comment.
-    #
-    # Known limit, tracked in #318 rather than fixed here: `target_stage: 99`
-    # fails `Field(ge=1, le=4)`, so this route always answers 422 and the
-    # guarded assert below is unreachable. Making it fire needs a
-    # schema-VALID value the route refuses.
-    schema_prefix = "schema_"
 
+    ## This test used to prove nothing, and the reason is worth keeping
+
+    It posted `{"target_stage": 99}` to `/zt/self-assessment/submit` and
+    guarded its assertion with `if reason is not None and status != 422`.
+    Three things were wrong with that, discovered in that order:
+
+    1. **The URL does not exist.** The route is
+       `/zt/services/{service_id}/self-assessment/submit`. MEASURED: that POST
+       answers **404** with `{"error": {"code": 404, "message": "Not Found"}}`
+       and no `reason` key at all, so the guard's first clause was false and
+       the assertion never ran. The request never reached a route.
+    2. **The annotation left on it was also wrong.** It said `target_stage: 99`
+       "fails `Field(ge=1, le=4)`, so this route always answers 422". It never
+       reaches schema validation either.
+    3. **The remedy proposed for it was wrong too** -- send a schema-VALID
+       value the route refuses, `target_stage=4` against a DoD ZTRA assessment.
+       That refusal is `HTTP_422_UNPROCESSABLE_ENTITY`, so `status != 422` is
+       STILL false and the assertion would still never run.
+
+    Point 3 is the load-bearing one: **a hand-written D-016 refusal can be a
+    422.** `target_stage_out_of_range` is one. So the HTTP STATUS cannot
+    separate "schema rejection" from "hand-written refusal", and a guard built
+    on it is not merely unreachable here -- it is asking a question that has no
+    answer. The two tests below replace it: one reaches that refusal for real,
+    and one asserts the property over the whole set rather than one case.
+    """
     headers = _headers(client)
-    resp = client.post(
-        "/zt/self-assessment/submit",
-        json={"target_stage": 99},
+
+    # A DoD ZTRA service: its ladder ends at stage 3, while
+    # `ZtSelfAssessmentSubmit.target_stage` is bound `ge=1, le=4` for both
+    # frameworks because a field constraint cannot see the service. Stage 4 is
+    # therefore SCHEMA-VALID and domain-invalid -- the only shape that reaches a
+    # hand-written refusal on this route.
+    svc = client.post(
+        "/zt/services",
+        json={"kind": "zero_trust_dod", "title": "ZT DoD"},
         headers=headers,
     )
-    # Whatever this route answers, a schema code and a domain code cannot be the
-    # same string.
-    body = resp.json()
-    reason = body.get("error", {}).get("reason")
-    if reason is not None and resp.status_code != 422:
-        assert not reason.startswith(schema_prefix), (
-            "a hand-written D-016 refusal must never be mistaken for a " "synthesised schema code"
-        )
+    assert svc.status_code in (200, 201), svc.text
+    service_id = svc.json()["id"]
+    created = client.post(f"/zt/services/{service_id}/assessments", headers=headers)
+    assert created.status_code in (200, 201), created.text
+
+    resp = client.post(
+        f"/zt/services/{service_id}/self-assessment/submit",
+        json={"target_stage": 4},
+        headers=headers,
+    )
+
+    # ASSERT WHAT THE FILTER SELECTED BEFORE READING ITS RESULT. The old test's
+    # whole failure was a condition that silently selected nothing, so the
+    # precondition is an assertion here rather than a guard.
+    assert resp.status_code == 422, (
+        "this test needs the hand-written range refusal; if the route now "
+        f"answers {resp.status_code} it has changed and this no longer "
+        f"exercises what it claims. body={resp.text}"
+    )
+    reason = resp.json()["error"]["reason"]
+
+    # The refusal is hand-written -- it names the framework and the stage.
+    assert reason == "target_stage_out_of_range", resp.text
+    # ...and it arrives at 422, which is the fact that made the old
+    # status-based guard incoherent. Pinned so the point cannot be lost.
+    assert not reason.startswith("schema_"), (
+        "a hand-written D-016 refusal must never be mistaken for a " "synthesised schema code"
+    )
+
+
+def test_no_hand_written_reason_anywhere_squats_on_the_schema_namespace() -> None:
+    """The claim the test above can only sample: collision is impossible.
+
+    One route proves one route. "The `schema_` namespace makes that impossible
+    by construction" is a claim about EVERY hand-written refusal in the API, so
+    it is asserted over the derived set rather than over the case someone
+    happened to write a test for -- the enumeration-versus-derivation rule in
+    `CLAUDE.md`, applied to a test's population.
+
+    Goes red the day anyone writes `"reason": "schema_..."` by hand, which is
+    the only way the two namespaces can ever meet.
+
+    ## Scope, stated rather than left to be inferred
+
+    `app/exceptions.py` is EXCLUDED, and it is the one file that must be: it is
+    the synthesiser, so producing `schema_` codes is its job. Excluding it is
+    the point of the test, not a hole in it. Every other module under `app/` is
+    in scope -- routes, schemas and services alike, because a typed refusal can
+    be raised from any of them and a route-only sweep would be an enumeration
+    of where refusals live today.
+    """
+    import re
+
+    app_dir = Path(__file__).resolve().parents[2] / "app"
+    assert app_dir.is_dir(), f"cannot find the app package at {app_dir}"
+
+    # BOTH FORMS a hand-written reason takes in this repo. The first version
+    # matched only `"reason": "code"` and therefore reported clean over
+    # `oidc_jwks_unavailable`, which is written as a CONSTRUCTOR KWARG in
+    # `app/security/oidc.py` and surfaced verbatim by `routes/oidc.py` as
+    # `detail={"reason": exc.reason, ...}` -- a live, client-reaching D-016
+    # code the sweep could not see. `oidc_token_invalid` was found only
+    # because `routes/oidc.py` separately spells it as a literal.
+    #
+    # The scope was generalised over the DIRECTORY ("every other module under
+    # `app/`") and left enumerated over the FORM, and the one service module
+    # that raises typed refusals is the one the form missed. CLAUDE.md's
+    # "the sweep predicate was a PATH instead of a defect", arriving at the
+    # other axis.
+    # A NEGATIVE LOOKBEHIND, not `\b`. The first attempt wrote `\b` and it
+    # reached the file as a literal BACKSPACE byte (U+0008) inside the raw
+    # string, so the alternation read `<BS>reason\s*=` and matched nothing --
+    # the sweep silently lost the entire kwarg form it had just been widened
+    # to cover, and `grep` showed a correct-looking line because a backspace
+    # renders as nothing. Caught by `check_no_control_chars.py`, which exists
+    # for exactly this and reported `339: U+0008`.
+    #
+    # The lookbehind also does the job `\b` was there for: it stops
+    # `rejected_reason=` being read as a reason code.
+    literal = re.compile(
+        r"""(?:["']reason["']\s*:|(?<![A-Za-z0-9_])reason\s*=)""" r"""\s*["']([A-Za-z0-9_]+)["']"""
+    )
+    found: dict[str, str] = {}
+    scanned = 0
+    for path in sorted(app_dir.rglob("*.py")):
+        # Compared as a PATH, not a basename: `path.name` would also exempt a
+        # future `app/<pkg>/exceptions.py`, silently, and the exemption is
+        # meant to cover the ONE synthesiser.
+        if path == app_dir / "exceptions.py":
+            continue
+        scanned += 1
+        for code in literal.findall(path.read_text(encoding="utf-8")):
+            found.setdefault(code, str(path.relative_to(app_dir)))
+
+    # FAIL CLOSED. An empty sweep is "I could not look", never "nothing to
+    # complain about" -- if a refactor moves these or this path breaks, the
+    # test must say so rather than pass on nothing.
+    # FLOORS SET FROM THE MEASURED VALUES, not from caution. At the time of
+    # writing the sweep reads 131 modules and finds 47 distinct codes, so
+    # these sit well below the truth (a refactor must not redden them) and
+    # well above zero (a broken pattern must). A floor of 5 against 47 would
+    # have let the pattern lose 90% of its population in silence.
+    assert scanned > 50, f"only scanned {scanned} modules under {app_dir}; the sweep is broken"
+    assert len(found) >= 25, (
+        f"found only {len(found)} hand-written reason codes under {app_dir}. "
+        "This repo has many; a sweep this thin means the pattern stopped "
+        "matching, not that the codes went away."
+    )
+
+    # THE RESIDUAL, stated rather than left implied. A code held in a module
+    # CONSTANT and referenced by name is unreachable by any reason-keyed text
+    # scan -- `AI_CALL_FAILED = "ai_call_failed"` in `app/ai/failures.py` and
+    # `_NO_CITATION` in `app/attack/pending.py` are both used as
+    # `"reason": AI_CALL_FAILED`, and neither constant's VALUE is visible
+    # here. Writing this down is what stops the next reader believing the
+    # sweep is total; closing it would mean resolving constants, which is a
+    # different tool.
+    squatters = {c: where for c, where in found.items() if c.startswith("schema_")}
+    assert squatters == {}, (
+        "these hand-written D-016 reasons sit inside the synthesised schema "
+        f"namespace, so a client cannot tell them apart: {squatters}"
+    )
 
 
 def test_the_schema_namespace_is_the_literal_the_web_layer_spells_out() -> None:
