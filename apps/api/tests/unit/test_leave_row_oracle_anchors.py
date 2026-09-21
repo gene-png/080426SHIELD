@@ -100,3 +100,58 @@ def test_check_anchors_writes_nothing(monkeypatch) -> None:
     monkeypatch.setattr(type(oracle.REDACT), "write_text", refuse)
     assert oracle.main(["x", "--check-anchors"]) == 0
     assert oracle.REDACT.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.unit
+def test_the_flag_table_is_the_dispatch_AND_the_allow_list() -> None:
+    """One structure serving both roles, which is what makes the order not matter.
+
+    #343 adds an unknown-argument guard to `main`, refusing anything outside an
+    allow-list. It was written against a tree with ONE flag, so its allow-list
+    was that one literal; this branch adds a second flag and wires it into
+    `ci.yml`. The two touch different hunks of `main`, so a first draft of both
+    MERGED CLEAN and `main` went red -- measured on a combined tree,
+    `--check-anchors` exited 2, refused by a guard that did not know the flag
+    existed, on the step whose job is to report whether the oracle can measure.
+
+    `_FLAGS` is the dispatch, so a key cannot exist without a handler, and any
+    guard reading its keys accepts a flag if and only if this tree implements
+    it. Registering a flag is adding its entry here, in either branch, in
+    either merge order.
+
+    Asserting the VALUES are callable is the half that matters: a key with no
+    working handler is precisely the state the other branch's allow-list would
+    have created -- a flag accepted and then not dispatched, falling through to
+    the full oracle, which WRITES `redact.py`.
+    """
+    assert set(oracle._FLAGS) == {"--check-registry", "--check-anchors"}
+    for flag, handler in oracle._FLAGS.items():
+        assert callable(handler), f"{flag} is registered with no handler"
+
+
+@pytest.mark.unit
+def test_BOTH_flags_together_run_BOTH_checks(monkeypatch, capsys) -> None:
+    """Passing both flags must not silently skip one.
+
+    The dispatch was two `if <flag> in argv: ... return` blocks in sequence,
+    which is a priority list wearing a dispatch's clothes: `--check-registry
+    --check-anchors` returned from the registry block having never called
+    `build_mutations`. That reinstates the exact #299 blind spot this flag
+    exists to close -- stale anchors, exit 0, and an output that truthfully
+    reports the registry is complete.
+
+    Driven by breaking the ANCHORS only. If the anchor check runs, the combined
+    invocation must be 2; if it is skipped, the registry check passes and the
+    run is 0. Asserting the code alone would be satisfied by a gate that ran
+    neither and crashed, so the anchor message is asserted too.
+    """
+    original = oracle._original()
+    _name, old, _new = oracle.build_mutations(original)[0]
+    monkeypatch.setattr(oracle, "_original", lambda: original.replace(old, "# gone"))
+
+    assert oracle.main(["x", "--check-registry", "--check-anchors"]) == 2
+    out = capsys.readouterr().out
+    assert "ANCHORS STALE" in out
+    # And the registry check ran as well -- this is not the anchor check having
+    # pre-empted it, which would be the same defect facing the other way.
+    assert "registry" in out
