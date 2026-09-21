@@ -216,6 +216,29 @@ guess.
   resolves ranges and swallows its own failure.
 - **#371** (tier-2) — the restored-value claim above, sequenced.
 
+### Cleanup owed, and why I did not do it
+
+`git worktree list` reports 117 entries. Almost all are detached
+`../review-<sha>` trees from this session and the previous one — the
+dispatch discipline creates one per review and nothing removes them.
+
+**I did not prune them, and that is deliberate rather than laziness.**
+Reviews were still running against several at the time of writing, and
+removing a tree an agent is reading is precisely the orchestrating-session
+rule: while a job holds a tree, the session driving it changes nothing that
+job depends on. A worktree is not a checkout of a branch, so none of them
+can collide with anything — they cost disk and list-noise, not correctness.
+
+Safe to run once the reviews have delivered:
+
+    git worktree list | grep review- | awk '{print $1}' | xargs -n1 git worktree remove --force
+    git worktree prune
+
+Worth a thought at the same time: the dispatch discipline that makes reviews
+verifiable also makes this garbage, and nothing collects it. A one-line
+cleanup at the end of a review's life would be better than a sweep at the
+end of a session.
+
 ### Process notes worth keeping
 
 - **Every review this session was dispatched against
