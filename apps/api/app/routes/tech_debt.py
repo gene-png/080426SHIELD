@@ -508,9 +508,15 @@ def _editable_list_or_404(db: Session, list_id: uuid.UUID, client: Client) -> Ca
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This capability list has been released and is locked."
+                {
+                    "reason": "capability_list_released",
+                    "message": "This capability list has been released and is locked.",
+                }
                 if cap_list.status == CapabilityListStatus.RELEASED
-                else "This capability list has been discarded."
+                else {
+                    "reason": "capability_list_discarded",
+                    "message": "This capability list has been discarded.",
+                }
             ),
         )
     return cap_list
@@ -773,9 +779,15 @@ def add_capability_components(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This capability list has been released and is locked."
+                {
+                    "reason": "capability_list_released",
+                    "message": "This capability list has been released and is locked.",
+                }
                 if cap_list.status == CapabilityListStatus.RELEASED
-                else "This capability list has been discarded."
+                else {
+                    "reason": "capability_list_discarded",
+                    "message": "This capability list has been discarded.",
+                }
             ),
         )
     # One level only: a component of a component has no real-world counterpart
@@ -860,9 +872,15 @@ def patch_capability_item(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This capability list has been released and is locked."
+                {
+                    "reason": "capability_list_released",
+                    "message": "This capability list has been released and is locked.",
+                }
                 if cap_list.status == CapabilityListStatus.RELEASED
-                else "This capability list has been discarded."
+                else {
+                    "reason": "capability_list_discarded",
+                    "message": "This capability list has been discarded.",
+                }
             ),
         )
 
@@ -950,11 +968,24 @@ def _refuse_approval(current: CapabilityListStatus) -> HTTPException:
     # D-016 `{reason, message}` shape in this PR: that is a change to an error
     # payload no test pins, on a path #231 is not about, and folding it in here
     # would put an unrelated contract change inside a concurrency fix. Filed as
-    # #298 so the inconsistency is a decision on record rather than an oversight
-    # a later reader has to reconstruct.
+    # CLOSED by #298: this refusal is now typed, like its DISCARDED twin
+    # three lines up. It was a bare string while the sibling carried
+    # `{"reason": "capability_list_discarded", ...}` -- one function, two
+    # shapes, and the released case reached the client with no `reason` key at
+    # all. Core principle 2 says user-facing API errors are typed.
+    #
+    # The MESSAGE is byte-identical to what it was. Only a `reason` key is
+    # added, so `proxyMessage` in `lib/tech_debt/client.ts` (which reads
+    # `error.message`, never `reason`) and the e2e specs that match this
+    # sentence are unaffected. Checked before changing it, because a typed
+    # conversion that reworded the copy would break exactly the consumers a
+    # typed reason exists to serve.
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
-        detail="This capability list has been released and is locked.",
+        detail={
+            "reason": "capability_list_released",
+            "message": "This capability list has been released and is locked.",
+        },
     )
 
 

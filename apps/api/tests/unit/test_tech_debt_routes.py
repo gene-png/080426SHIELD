@@ -1213,3 +1213,52 @@ def test_unknown_excluded_row_index_is_rejected(app_client) -> None:
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert r.status_code == 404, r.text
+
+
+@pytest.mark.unit
+def test_a_released_refusal_carries_a_typed_reason_like_its_twin(app_client) -> None:
+    """#298. Two refusals, one function, two shapes.
+
+    `_refuse_approval` returned `{"reason": "capability_list_discarded", ...}`
+    for DISCARDED and a BARE STRING for RELEASED, so the released case reached
+    the client with no `reason` key while its sibling three lines up had one.
+    Core principle 2: user-facing API errors are typed.
+
+    Nothing pinned either shape -- `rg "released and is locked"` returned four
+    route sites and zero tests -- which is why the inconsistency survived long
+    enough to be filed rather than noticed.
+
+    THE MESSAGE IS ASSERTED VERBATIM, not just the reason. The conversion's
+    whole safety argument is that `message` is unchanged: `proxyMessage` in
+    `lib/tech_debt/client.ts` reads `error.message` and never `reason`, and two
+    e2e specs match this sentence. A future edit that retypes the reason and
+    rewords the copy would break exactly the consumers a typed reason exists to
+    serve, and this line is what makes that loud.
+    """
+    c, _, provider = app_client
+    admin = _register(c, "released-refusal@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id, _item_id = _create_list_with_item(c, bearer, provider)
+    list_id = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=h).json()["id"]
+
+    assert c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h).status_code == 200
+
+    # Drive it to RELEASED through the real transition rather than by writing
+    # the column: a fixture that sets the status directly would prove the
+    # refusal fires for a state the product may not be able to reach.
+    from app.models.capability import CapabilityList, CapabilityListStatus
+
+    _c, sessionmaker_, _p = app_client
+    with sessionmaker_() as db:
+        cl = db.get(CapabilityList, _uuid.UUID(list_id))
+        assert cl is not None and cl.status == CapabilityListStatus.APPROVED
+        cl.status = CapabilityListStatus.RELEASED
+        db.add(cl)
+        db.commit()
+
+    r = c.post(f"/tech-debt/capability-lists/{list_id}/approve", headers=h)
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["reason"] == "capability_list_released", r.text
+    assert error["message"] == "This capability list has been released and is locked."
