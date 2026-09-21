@@ -194,8 +194,20 @@ never the problem. Treating everything you found as blocking was.
    exists to distrust, now trusted for two thirds of the file and believed to
    have been checked.
 
-   **INDEX IT INSTEAD. A search works at any size; a read does not.** Your
-   tools are Read/Grep/Glob, so this is the Grep tool with
+   **INDEX IT INSTEAD. A search works at any size; a read does not.** Search
+   rather than read, using whichever search tool your `tools:` line grants --
+   do NOT infer your capability set from this sentence.
+
+   That is not pedantry. An earlier draft said "your tools are Read/Grep/Glob",
+   which was true when written and is a NARROWER-THAN-ACTUAL enumeration
+   sitting in the step you execute FIRST and are told to trust over injected
+   context. #384 adds `SendMessage` to that line in the same file. A reviewer
+   whose injected prompt also predates it would read this sentence as
+   confirming it has no delivery channel, emit plain text, and deliver
+   nothing -- the measured non-delivery failure #384 exists to end, caused by
+   the step meant to catch stale context.
+
+   Read your own frontmatter for the list. Concretely, the search is
 
        pattern:  ^(#{2,3} |[0-9]+\. \*\*|- \*\*|\*\*)
        path:     <the ABSOLUTE worktree path you were handed>/CLAUDE.md
