@@ -105,6 +105,25 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "verify_in_worktree_mounts.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Both states are covered internally and BOTH ARE REAL RUNS: the passing "
+        "state runs `--check-mounts` from a genuine `git worktree` it builds in "
+        "a temp dir, and the refusing state points `SHIELD_PRIMARY_TREE` at a "
+        "directory with no `node_modules` and requires exit 2 with the rejected "
+        "path named. "
+        "UNLIKE the other shell gates, it also has EXTERNAL evidence that it can "
+        "fail, which is the half they are all still missing: both halves were "
+        "red-on-reverted through `scripts/red-on-revert.sh --expect` on "
+        "2026-09-21 -- reverting the derivation reddens `linked worktree`, and "
+        "neutralising the refusal reddens `no node_modules exited`. "
+        "The adversarial case is the fixture's own construction: the first "
+        "version COMMITTED `packages/design-system/node_modules`, so the "
+        "worktree checkout recreated it and the gate passed under both "
+        "derivations. It is left untracked now, as the real one is, because a "
+        "worktree having the modules is precisely the state that cannot "
+        "discriminate."
+    ),
     "prettier_hook.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Covers both states internally via `expect_ok` and `expect_refusal` "

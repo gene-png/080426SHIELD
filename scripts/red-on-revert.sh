@@ -375,7 +375,20 @@ fi
 # WHICH red. A failure marker and the named test on the SAME LINE: the name
 # alone appears in passing output too, so matching it anywhere proves nothing.
 if [ -n "$EXPECT" ]; then
-  if ! grep -F -- "$EXPECT" "$OUTPUT" | grep -qE '(×|✕|✗|FAILED|FAIL |AssertionError|not ok)'; then
+  # `FAIL[ :]`, not `FAIL `. The house style under `tests/gates/` is `FAIL:`
+  # with a COLON, which a trailing space cannot match -- so `--expect` reported
+  # THE CHECK WENT RED ON SOMETHING ELSE for a gate that had gone red on
+  # exactly the named assertion.
+  #
+  # Measured 2026-09-21 across the four gates PREDATING this change, so the
+  # count excludes the one added alongside it: 22 `FAIL:` against 11 `FAIL `.
+  #
+  # It failed LOUDLY, which is why it cost nothing. But it is a false negative
+  # in the harness whose whole job is telling a real assertion from a
+  # decorative one, and the direction matters: it reports a discriminating
+  # test as non-discriminating, which invites deleting or weakening a test
+  # that was working.
+  if ! grep -F -- "$EXPECT" "$OUTPUT" | grep -qE '(×|✕|✗|FAILED|FAIL[ :]|AssertionError|not ok)'; then
     echo "red-on-revert: THE CHECK WENT RED ON SOMETHING ELSE." >&2
     echo "red-on-revert: exit ${code}, but no failing line mentions:" >&2
     echo "red-on-revert:   ${EXPECT}" >&2

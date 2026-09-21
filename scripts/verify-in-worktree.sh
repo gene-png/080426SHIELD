@@ -110,20 +110,71 @@ fi
 # a second opinion.
 is_known_mode() {
   case "$1" in
-    --self-test|--self-test-bound|tsc|vitest|eslint|--all) return 0 ;;
+    --self-test|--self-test-bound|--check-mounts|tsc|vitest|eslint|--all) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 if ! is_known_mode "${1:---all}"; then
   echo "FAIL: unknown mode '${1:-}'." >&2
-  echo "usage: $0 [tsc|vitest|eslint|--all|--self-test|--self-test-bound]" >&2
+  echo "usage: $0 [tsc|vitest|eslint|--all|--check-mounts|--self-test|--self-test-bound]" >&2
   exit 2
 fi
 
-PRIMARY_TREE="${SHIELD_PRIMARY_TREE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# The PRIMARY TREE is the one `pnpm install` ran in, because that is the only
+# tree holding `packages/*/node_modules`. Derive it from git's COMMON dir.
+#
+# It used to be derived from THIS SCRIPT'S OWN LOCATION:
+#
+#     PRIMARY_TREE="${SHIELD_PRIMARY_TREE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+#
+# Every worktree carries its own copy of the script, so from a worktree that
+# resolved to the WORKTREE -- precisely the tree that lacks the node_modules
+# this mount exists to supply. The mount then named a host path that does not
+# exist, and Docker CREATES a missing bind source as an empty directory and
+# mounts it, SHADOWING the real `packages/design-system/node_modules` the line
+# above had just provided.
+#
+# Measured 2026-09-21, `wt-353` vs the primary tree, same commit content:
+#
+#   primary tree   tsc 0 errors      vitest 53/53 files, 575 tests, exit 0
+#   worktree       tsc 139 errors    vitest 33/53 files, 414 tests, exit 2
+#                  (138 in packages/*)   20 files never collected
+#
+# So the one line the header calls "the line that makes this work" was correct
+# only in the tree that does not need it. The script's own bound-printing is
+# what kept this from being silent -- it reported COULD NOT FULLY LOOK and
+# exited 2 rather than reporting 414 passed -- but a reader taking the test
+# count instead of the exit code got a floor of unknown depth.
+PRIMARY_TREE="${SHIELD_PRIMARY_TREE:-$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")}"
 WORKTREE="$(git rev-parse --show-toplevel)"
 IMAGE="${SHIELD_VERIFY_IMAGE:-node:22-bookworm}"
+
+# REFUSE rather than mount a missing directory.
+#
+# Docker does not fail on a bind source that does not exist; it creates it
+# empty. So a wrong PRIMARY_TREE cannot announce itself at mount time -- it
+# announces itself as errors in `packages/*`, 150 lines later, attributed to
+# the branch under test. That is the shape this whole script exists to
+# prevent, reached through the script itself.
+#
+# Named for the CAUSE, not for the check: the most plausible misreading of a
+# bare "mount check failed" is that Docker is unwell.
+require_primary_tree() {
+  if [ -d "$PRIMARY_TREE/packages/design-system/node_modules" ]; then
+    return 0
+  fi
+  echo "verify-in-worktree: REFUSING -- no packages/design-system/node_modules under" >&2
+  echo "    $PRIMARY_TREE" >&2
+  echo "  That path is the PRIMARY TREE, the one \`pnpm install\` ran in. Docker would" >&2
+  echo "  mount the missing directory as an EMPTY one, shadowing the real modules, and" >&2
+  echo "  every \`packages/*\` import would fail to resolve -- reported against YOUR" >&2
+  echo "  branch, which is not where the fault is." >&2
+  echo "  Fix: run \`pnpm install\` in the primary tree, or set SHIELD_PRIMARY_TREE to" >&2
+  echo "  a tree that has one." >&2
+  exit 2
+}
+require_primary_tree
 
 # MSYS rewrites any argument beginning with `/` when it crosses into a native
 # Windows executable, and `docker.exe` is one. Without this, `-w /app` arrives
@@ -319,6 +370,15 @@ self_test_bound() {
 }
 
 case "${1:---all}" in
+  # Validates the mount preconditions and stops. `require_primary_tree` has
+  # already run by the time the dispatch is reached, so arriving here at all
+  # means the mounts are sound; this mode exists so that fact is assertable
+  # without starting a container.
+  --check-mounts)
+    echo "verify-in-worktree: primary tree   $PRIMARY_TREE"
+    echo "verify-in-worktree: worktree       $WORKTREE"
+    echo "verify-in-worktree: mounts OK -- packages/design-system/node_modules resolves"
+    ;;
   --self-test) self_test ;;
   --self-test-bound) self_test_bound ;;
   tsc)         tsc ;;
