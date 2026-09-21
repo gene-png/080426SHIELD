@@ -108,7 +108,24 @@ DISCLOSURE_SUBSTRINGS = ("withheld", "provenance")
 #: EMPTY ON LANDING, and that is a measurement rather than luck -- every
 #: disclosure field on this tree already reaches a screen or a deliverable.
 #: An entry here is a claim someone can check by opening the file.
-EXEMPT_FIELDS: dict[str, str] = {}
+#: Keyed on `"<origin>::<Model>.<field>"` -- the SAME string a violation is
+#: reported as -- and NOT on the bare field name. `source_rows_total` exists on
+#: three models, `unusable_target_codes` on two, `batches_total` on two, so a
+#: name-keyed exemption written for one would silently cover every twin. That
+#: is the unstated-exemption shape, and keying it on the triple removes the
+#: possibility rather than documenting it.
+EXEMPT_FIELDS: dict[str, str] = {
+    "risk.py::RiskRegisterResponse.batches_total": (
+        "TEMPORARY, tracked in #372. This is a REAL unconsumed disclosure, not "
+        "an API-only field: a partial Risk synthesis keeps what succeeded, and "
+        "nothing tells the consultant the draft is short. It is exempt only so "
+        "this gate can land detecting it -- ATT&CK fixed the identical defect "
+        "as #115. DELETE THIS when the Risk banner renders."
+    ),
+    "risk.py::RiskRegisterResponse.batches_failed": (
+        "TEMPORARY, tracked in #372. The other half of the pair above."
+    ),
+}
 
 #: Arm 2's exemption, and it is temporary BY CONSTRUCTION.
 #:
@@ -181,45 +198,108 @@ def response_disclosure_fields(schemas: Path) -> tuple[list[tuple[str, str, str]
     return fields, problems
 
 
-def reader_text(repo: Path) -> tuple[str, list[str]]:
-    """Everything a person can read, as one blob: screens and deliverables.
+def reader_text(repo: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """Everything a person can read, as (path, text) PAIRS: screens and deliverables.
 
-    Returns (text, problems). An unreadable file is a problem rather than a
+    Returns (readers, problems). An unreadable file is a problem rather than a
     skip, for the same reason a schema is.
+
+    Pairs rather than one concatenated blob, and that is the whole of this
+    gate's F1 fix: a blob cannot say WHICH surface matched, so a field on one
+    model passed on a different model's renderer. The path is what carries
+    that information, so it has to survive to the comparison.
     """
     problems: list[str] = []
-    chunks: list[str] = []
+    readers: list[tuple[str, str]] = []
     web = repo / "apps" / "web" / "src"
     for path in sorted(web.rglob("*")):
         if path.suffix in WEB_SUFFIXES and path.is_file():
             try:
-                chunks.append(path.read_text(encoding="utf-8"))
+                readers.append((str(path), path.read_text(encoding="utf-8")))
             except (OSError, UnicodeDecodeError) as exc:
                 problems.append(f"{path}: unreadable ({type(exc).__name__})")
     for path in sorted((repo / "apps" / "api" / "app").rglob("*.py")):
         if "exporters" in path.name or path.name == "docx_export.py":
             try:
-                chunks.append(path.read_text(encoding="utf-8"))
+                readers.append((str(path), path.read_text(encoding="utf-8")))
             except (OSError, UnicodeDecodeError) as exc:
                 problems.append(f"{path}: unreadable ({type(exc).__name__})")
-    return "\n".join(chunks), problems
+    return readers, problems
 
 
-def unconsumed(fields: list[tuple[str, str, str]], text: str) -> list[tuple[str, str, str]]:
-    """Fields whose NAME appears nowhere a person reads.
+#: A model name's role nouns, stripped to leave the SERVICE it belongs to.
+#: `TechDebtDashboardResponse` -> `techdebt`; `RiskRegisterResponse` -> `risk`.
+_ROLE = re.compile(
+    r"(Dashboard|Response|Register|RunAi|Coverage|Summary|AiInput|List|Entry|Analysis)"
+)
 
-    A bare word-boundary match. It OVER-MATCHES -- a field named after a common
-    word is satisfied by any prose containing it -- and that is stated rather
-    than dressed up, because the over-match direction is the quiet one. The
+
+def service_tokens(origin: str, model: str) -> set[str]:
+    """The service a field belongs to, DERIVED from two independent places.
+
+    The union of the schema file's stem and the model name's role-stripped
+    prefix, because neither alone is enough: `clients.py` holds a model for
+    every service (so the file stem says only "clients"), and a model like
+    `GapAnalysisResponse` names no service at all (so the prefix says only
+    "gapanalysis", while its file says `zt`). Taking both means a field is
+    attributed correctly whenever EITHER source knows.
+
+    Derived rather than a model->surface table, which would be an enumeration
+    going stale on the next model.
+    """
+    out = {origin[:-3].replace("_", "")}
+    role = _ROLE.search(model)
+    if role and role.start() > 0:
+        out.add(model[: role.start()].lower())
+    lead = re.match(r"[A-Z][a-z]+", model)
+    if lead:
+        out.add(lead.group(0).lower())
+    return {t for t in out if t}
+
+
+def _norm(path: str) -> str:
+    return path.lower().replace("_", "").replace("-", "").replace("\\", "/")
+
+
+def unconsumed(
+    fields: list[tuple[str, str, str]], readers: list[tuple[str, str]]
+) -> list[tuple[str, str, str]]:
+    """Fields whose NAME appears in no reader BELONGING TO THEIR OWN SERVICE.
+
+    ## Why not one pooled blob, which is what this did first
+
+    A blob match asks "does this name appear anywhere a person reads". Field
+    names are NOT unique across models -- `batches_total` is declared on both
+    `AttackRunAiResponse` and `RiskRegisterResponse` -- so the Risk fields
+    matched ATT&CK's renderer and passed. They reach no screen and no
+    exporter. **The gate ran green over a live instance of the defect it
+    exists to catch**, and would have gone red only if someone deleted the
+    ATT&CK panel.
+
+    So a reader counts for a field only when its PATH carries one of that
+    field's service tokens. MEASURED on this tree: 2 of 18 fields flagged, and
+    both are the Risk pair -- no false positive among the other 16, including
+    every cross-file case (`clients.py` models rendered under
+    `components/dashboards/techDebt/`, `GapAnalysisResponse` in
+    `app/zt/exporters.py`).
+
+    ## What it still over-matches, stated because the direction is the quiet one
+
+    Within a service, this is still a bare word-boundary match: a field named
+    after a common word is satisfied by any prose in that service's files. The
     alternative is parsing TSX for property access, which is a second
     implementation of a TypeScript compiler and is how a gate stops being
     maintained.
     """
     out = []
     for origin, model, field in fields:
-        if field in EXEMPT_FIELDS:
+        if f"{origin}::{model}.{field}" in EXEMPT_FIELDS:
             continue
-        if not re.search(rf"(?<!\w){re.escape(field)}(?!\w)", text):
+        tokens = service_tokens(origin, model)
+        pattern = re.compile(rf"(?<!\w){re.escape(field)}(?!\w)")
+        if not any(
+            pattern.search(body) and any(t in _norm(path) for t in tokens) for path, body in readers
+        ):
             out.append((origin, model, field))
     return out
 
@@ -243,6 +323,25 @@ def audit_payload_has_a_generic_reader(repo: Path) -> bool:
 
 
 def main(argv: list[str]) -> int:
+    # A FLAG IS NOT A PATH, and this gate's root-walk is what made that
+    # dangerous. `--bogus` resolved to `<cwd>/--bogus`, whose first PARENT is
+    # the repo root, so `repo_root_for` rescued it and the run proceeded to a
+    # normal verdict, exit 0. The arity check below fires only on a THIRD
+    # argument, so `check_disclosure_consumers.py --bogus` was accepted.
+    #
+    # Latent rather than live -- `ci.yml` passes no argument -- and the same
+    # shape as #343, reached by the opposite mechanism: there the bad path
+    # failed to resolve, here the walk repaired it.
+    if len(argv) > 1 and argv[1].startswith("-"):
+        print(
+            f"check-disclosure-consumers: could not look -- {argv[1]!r} is a "
+            "flag, and this script implements none. It takes an optional PATH "
+            "to start the repo-root search from, and nothing else. Refusing "
+            "rather than treating it as a path, which resolves and then runs "
+            "a check nobody asked for.",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_LOOK
     start = Path(argv[1]).resolve() if len(argv) > 1 else Path(__file__).resolve()
     if len(argv) > 2:
         print(f"check-disclosure-consumers: too many arguments; got: {argv[1:]}", file=sys.stderr)
@@ -294,14 +393,14 @@ def main(argv: list[str]) -> int:
         )
         return EXIT_COULD_NOT_LOOK
 
-    text, read_problems = reader_text(repo)
+    readers, read_problems = reader_text(repo)
     if read_problems:
         print("check-disclosure-consumers: could not look --", file=sys.stderr)
         for p in read_problems:
             print(f"  {p}", file=sys.stderr)
         return EXIT_COULD_NOT_LOOK
 
-    violations = unconsumed(fields, text)
+    violations = unconsumed(fields, readers)
     failed = False
 
     if violations:
@@ -310,8 +409,14 @@ def main(argv: list[str]) -> int:
         for origin, model, field in violations:
             print(
                 f"  {origin}::{model}.{field} -- records what was withheld or "
-                f"dropped, and its name appears nowhere under `apps/web/src` "
-                f"nor in any exporter. The endpoint is not the surface."
+                f"dropped, and no screen or exporter BELONGING TO "
+                f"{sorted(service_tokens(origin, model))} reads it. The "
+                f"endpoint is not the surface."
+            )
+            print(
+                "      (The name may well appear elsewhere. A field declared "
+                "on two models is read for one and not the other, which is "
+                "exactly what a pooled search cannot see.)"
             )
         print(
             "  Either render it, or add it to EXEMPT_FIELDS with the reason it "
