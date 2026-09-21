@@ -135,3 +135,87 @@ def test_commit_collection_uses_two_dots_not_three() -> None:
         "picks up every commit the base has and this branch does not -- and the "
         "gate then judges this PR on the base's prose. Use `..`."
     )
+
+
+def _step_names_in_order() -> list[str]:
+    """Step names from `audit-gate.yml`, in file order.
+
+    Read from the file rather than parsed with a YAML library, to match the
+    rest of this module and to avoid adding a dependency for one assertion.
+    Folded scalars (`- name: >-`) put the text on the FOLLOWING lines, so the
+    continuation is joined -- the D-number step uses exactly that form and a
+    naive `- name:` scrape would record it as empty.
+    """
+    assert WORKFLOW.is_file(), f"workflow not found at {WORKFLOW}"
+    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+    names: list[str] = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if stripped.startswith("- name:"):
+            value = stripped[len("- name:") :].strip()
+            if value in (">-", ">", "|", "|-"):
+                parts = []
+                i += 1
+                while i < len(lines) and lines[i].strip() and not lines[i].strip().startswith("#"):
+                    nxt = lines[i].strip()
+                    if nxt.startswith("- ") or nxt.endswith(":"):
+                        break
+                    parts.append(nxt)
+                    i += 1
+                names.append(" ".join(parts))
+                continue
+            names.append(value)
+        i += 1
+    return names
+
+
+@pytest.mark.unit
+def test_the_dnumber_step_runs_after_the_close_guard() -> None:
+    """#318's assurance was held up by ORDER and by nothing else.
+
+    The D-number step's comment says "Running last makes the assurance true by
+    construction rather than by wording: if this step is reached, the close
+    guard has already passed." That is correct, and until this test it rested
+    entirely on the step's ordinal position in a file nobody diffs for order.
+
+    Neither later step carries an `if:` or `continue-on-error`, so a D-number
+    failure ABOVE the close guard aborts the job before the close guard runs --
+    and the banner then tells the reader their closing keywords are fine about
+    a check that never executed. "I could not look" wearing "nothing to
+    complain about", emitted by the fix for a reporting defect.
+
+    A fail-fast reorder, or a new step inserted between them, reopens that
+    silently. This turns the reopening into a red.
+
+    Asserted as an ORDER relation rather than "is last", deliberately: a step
+    appended after the D-number one is harmless, and a test demanding lastness
+    would fail on a change that breaks nothing. What must hold is that the
+    close guard precedes it.
+    """
+    names = _step_names_in_order()
+    assert names, (
+        f"{WORKFLOW.name} yielded no step names. The scrape broke or the file "
+        "moved; either way this test cannot look and must not report clean."
+    )
+
+    close_guard = [i for i, n in enumerate(names) if n.startswith("Reject undeclared issue closes")]
+    dnumber = [i for i, n in enumerate(names) if n.startswith("D-NUMBERS:")]
+
+    assert close_guard, (
+        "no step named 'Reject undeclared issue closes' in "
+        f"{WORKFLOW.name}. It was renamed or removed -- if renamed, this test "
+        "must follow it, because the ordering guarantee is about that step."
+    )
+    assert dnumber, (
+        f"no step whose name starts 'D-NUMBERS:' in {WORKFLOW.name}. Same "
+        "reasoning: the guarantee is about this step's position."
+    )
+    assert close_guard[0] < dnumber[0], (
+        "the D-number step now runs BEFORE 'Reject undeclared issue closes'. "
+        "Its own comment claims the close guard has already passed by the time "
+        "it is reached, and that is false as ordered: a D-number failure "
+        "aborts the job and the close guard never runs, while the banner tells "
+        "the reader their closing keywords are fine. Move it back below, or "
+        "give the close guard `if: always()` and rewrite the comment."
+    )
