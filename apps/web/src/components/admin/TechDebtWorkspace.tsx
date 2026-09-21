@@ -51,6 +51,7 @@ import type { JSX } from "react";
 import { ProgressStages } from "./ProgressStages";
 import { SecurityClassificationQueue } from "./SecurityClassificationQueue";
 import { useServiceStages } from "@/lib/stages/client";
+import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 
 export interface TechDebtWorkspaceProps {
   serviceId: string;
@@ -77,16 +78,25 @@ export function TechDebtWorkspace({
   );
   const [loadError, setLoadError] = React.useState<string | null>(null);
   /**
-   * A SUPPLEMENTARY fetch that failed (#292). Distinct from `loadError`: that
-   * one blocks and says the workspace could not load; these are side panels
-   * that failed while the workspace itself is fine.
+   * SUPPLEMENTARY fetches that failed, keyed by source (#292). Distinct from
+   * `loadError`: that one blocks and says the workspace could not load; these
+   * are side panels that failed while the workspace itself is fine.
    *
    * `null` was doing two jobs. The panels are `T | null`, and a bare
    * `} catch {}` left them null on failure -- byte-identical to
    * still-loading. `CLAUDE.md`: a value that is `null` for BOTH "still
    * loading" and "request failed" makes its callers conflate the two.
+   *
+   * Keyed rather than a single string because one slot was wrong in two
+   * opposite directions; see `useRefreshFailures`. This file never cleared,
+   * and its plan-refresh write was also the one unguarded write in a function
+   * whose every other write is sequence-guarded -- see `refreshOverlap`.
    */
-  const [refreshError, setRefreshError] = React.useState<string | null>(null);
+  const {
+    messages: refreshMessages,
+    note: noteRefreshFailure,
+    clear: clearRefreshFailure,
+  } = useRefreshFailures();
   const { status: aiStatus } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);
@@ -126,16 +136,30 @@ export function TechDebtWorkspace({
     }
     try {
       const nextPlan = await fetchConsolidationPlan(serviceId);
-      if (seq === overlapSeq.current) setPlan(nextPlan);
+      if (seq === overlapSeq.current) {
+        setPlan(nextPlan);
+        clearRefreshFailure("overlap-plan");
+      }
     } catch {
       // NON-BLOCKING IS NOT SILENT. The old comment was true and is
       // why this survived: a panel's own loading state cannot be told
       // apart from a slow network.
-      setRefreshError(
-        "Couldn't refresh the overlap figures. What is shown may be out of date.",
-      );
+      //
+      // SEQUENCE-GUARDED like every other write in this function, and the
+      // first version of this fix was the one exception to that. An edit
+      // fires refresh #1; a second edit ~200ms later fires #2, which
+      // completes, so `plan` is current and correct; #1 then rejects. An
+      // unguarded write put a permanent "may be out of date" warning over
+      // figures that were up to date -- a superseded request describing the
+      // state of a newer one.
+      if (seq === overlapSeq.current) {
+        noteRefreshFailure(
+          "overlap-plan",
+          "Couldn't refresh the overlap figures. What is shown may be out of date.",
+        );
+      }
     }
-  }, [serviceId]);
+  }, [serviceId, noteRefreshFailure, clearRefreshFailure]);
 
   const refresh = React.useCallback(async () => {
     const seq = ++listSeq.current;
@@ -156,6 +180,7 @@ export function TechDebtWorkspace({
     try {
       const deliv = await fetchLatestDeliverable(serviceId);
       setDeliverable(deliv);
+      clearRefreshFailure("deliverable");
     } catch {
       // A FALSE NEGATIVE, not an ambiguity: the old comment stated
       // the defect as if it were the mitigation. "Not finalized yet"
@@ -163,11 +188,12 @@ export function TechDebtWorkspace({
       // that failed, and a consultant can act on it by finalizing a
       // second time. Missing data defaults to UNCONFIRMED, never to a
       // known negative.
-      setRefreshError(
+      noteRefreshFailure(
+        "deliverable",
         "Couldn't check for a finalized deliverable. The section below is not a statement about whether one exists.",
       );
     }
-  }, [serviceId, refreshOverlap]);
+  }, [serviceId, refreshOverlap, noteRefreshFailure, clearRefreshFailure]);
 
   React.useEffect(() => {
     void (async () => {
@@ -481,14 +507,16 @@ Components carry no cost of their own — this licence keeps its full value.`,
         />
       </WorkflowStep>
 
-      {refreshError ? (
-        <p
-          className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+      {refreshMessages.length > 0 ? (
+        <div
+          className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
           role="status"
           data-testid="techdebt-refresh-error"
         >
-          {refreshError}
-        </p>
+          {refreshMessages.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
+        </div>
       ) : null}
 
       {loadError ? (

@@ -38,6 +38,7 @@ import { MessageThread } from "@/components/messages/MessageThread";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
+import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 
 import { CsfDeliverableCard } from "./CsfDeliverableCard";
 import { CsfGapList } from "./CsfGapList";
@@ -116,17 +117,27 @@ export function CsfWorkspace({
   );
   const [loadError, setLoadError] = React.useState<string | null>(null);
   /**
-   * A SUPPLEMENTARY fetch that failed (#292). Distinct from `loadError`, which
-   * renders "Couldn't load the assessment" -- a blocking card that would
-   * misdescribe these: the assessment loaded, a side panel did not.
+   * SUPPLEMENTARY fetches that failed, keyed by source (#292). Distinct from
+   * `loadError`, which renders "Couldn't load the assessment" -- a blocking
+   * card that would misdescribe these: the assessment loaded, a side panel did
+   * not.
    *
    * It exists because `null` was doing two jobs. `score`, `gap`, `deliverable`
    * and the interview map are all `T | null`, and a bare `} catch {}` left
    * them null on failure -- byte-identical to still-loading. `CLAUDE.md`: a
    * value that is `null` for BOTH "still loading" and "request failed" makes
    * its callers conflate the two.
+   *
+   * Keyed rather than a single string because a single slot was wrong in two
+   * opposite directions; see `useRefreshFailures`. Here it was the eager half:
+   * `initialLoad` notes a failed interview fetch and then, three statements
+   * later, a SUCCESSFUL score/gap refresh cleared it.
    */
-  const [refreshError, setRefreshError] = React.useState<string | null>(null);
+  const {
+    messages: refreshMessages,
+    note: noteRefreshFailure,
+    clear: clearRefreshFailure,
+  } = useRefreshFailures();
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
   >(null);
@@ -162,19 +173,20 @@ export function CsfWorkspace({
         ]);
         setScore(s);
         setGap(g);
-        setRefreshError(null);
+        clearRefreshFailure("score-gap");
       } catch {
         // NON-BLOCKING IS NOT THE SAME AS SILENT. The old comment here said
         // "the score/gap panels show their own loading state" -- true, and the
         // reason the defect survived: that state is indistinguishable from a
         // slow network, so a consultant watching a permanently-spinning score
         // card cannot tell in-flight from failed from never-attempted.
-        setRefreshError(
+        noteRefreshFailure(
+          "score-gap",
           "Couldn't refresh the score and gap panels. The figures shown may be out of date; reload to try again.",
         );
       }
     },
-    [serviceId],
+    [serviceId, noteRefreshFailure, clearRefreshFailure],
   );
 
   const initialLoad = React.useCallback(async () => {
@@ -197,11 +209,13 @@ export function CsfWorkspace({
         }
         setInterviewByCode(map);
       }
+      clearRefreshFailure("interview");
     } catch {
       // Supplemental, and still not silent: the prompts simply do not appear,
       // which reads as "this subcategory has none" rather than "we could not
       // fetch them".
-      setRefreshError(
+      noteRefreshFailure(
+        "interview",
         "Couldn't load the interview prompts. Subcategories will show none, which is not the same as having none.",
       );
     }
@@ -222,6 +236,7 @@ export function CsfWorkspace({
         try {
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
+          clearRefreshFailure("deliverable");
         } catch {
           // THE SHARPEST OF THE THREE, and the old comment states the defect
           // as if it were the mitigation: "deliverable card shows 'not
@@ -231,7 +246,8 @@ export function CsfWorkspace({
           // finalizing a second time.
           //
           // Missing data defaults to UNCONFIRMED, never to a known negative.
-          setRefreshError(
+          noteRefreshFailure(
+            "deliverable",
             "Couldn't check for a finalized deliverable. The deliverable card below is not a statement about whether one exists.",
           );
         }
@@ -239,7 +255,7 @@ export function CsfWorkspace({
     } catch (err) {
       setLoadError(describeError(err));
     }
-  }, [serviceId, refreshScoreAndGap]);
+  }, [serviceId, refreshScoreAndGap, noteRefreshFailure, clearRefreshFailure]);
 
   React.useEffect(() => {
     void (async () => {
@@ -447,14 +463,16 @@ export function CsfWorkspace({
         </div>
       ) : null}
 
-      {refreshError ? (
-        <p
-          className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
+      {refreshMessages.length > 0 ? (
+        <div
+          className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
           role="status"
           data-testid="csf-refresh-error"
         >
-          {refreshError}
-        </p>
+          {refreshMessages.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
+        </div>
       ) : null}
 
       {loadError ? (
