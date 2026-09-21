@@ -254,8 +254,9 @@ specs are listed above. After ANY `apps/web` edit:
 
 **Note on committing:** the local pre-commit hook reads its prettier version
 from `pnpm-lock.yaml`, so it runs whatever CI runs and reformats nothing. That
-was NOT true until PR #311 landed issue #168, when it was pinned at 3.1.0 and
-rewrote every commit into a state CI then rejected. **If `git commit` still
+was NOT true until PR #311 landed issue #168: before that the hook was pinned
+at 3.1.0, eight minors behind CI, and rewrote commits into a state CI then
+rejected. **If `git commit` still
 reformats files you did not touch, the old hook is installed in your checkout**
 — re-run `pre-commit install`, and report it.
 

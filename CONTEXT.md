@@ -82,7 +82,9 @@ have on 2026-08-26, when four were orphaned. By item:
 - **12 (new)** — `#168`, the pre-commit hook set running three tools at versions
   no gate uses
 
-Both of those have since landed, and the mapping above is kept rather than
+**#165 and #168** have since closed — naming them rather than saying "both of
+those", whose nearest antecedent is the item-11 and item-12 bullets directly
+above, and item 11 is still open. The mapping above is kept rather than
 pruned because that is what this list is for: `#165` and `#168` are CLOSED
 (the prettier-pin PR #311, merged 2026-09-19, which took item 12 with it), and
 `#159` has lost the label as planned — it is developer tooling and does not

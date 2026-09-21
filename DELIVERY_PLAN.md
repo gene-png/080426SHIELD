@@ -84,7 +84,8 @@ what happened between 2026-08-26 and 2026-08-30.
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
 | 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). <!-- counted: historical --> Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
 | 11 | **The two redaction leaks item 10 filed rather than fixed — #152 + #153** | Not started. Filed by item 10 and **orphaned when it closed**: both are labelled `client-data-egress` on a FedRAMP Moderate/High target, so client identifiers reach a third-party provider. #152 — a signature block whose signatory line ends in punctuation or exceeds four words is not cut. #153 — bare UK national, E.164 without the plus, and the US international prefix all leak. One PR, batched by file per the item-10 rule: both live in `app/ai/redact.py` and are decided by the same corpus | Nothing | **On start** — see below | — |
-| 12 | **The pre-commit hook set diverges from every pinned tool version — #168** | **DONE** (PR #311, merged 2026-09-19) — all three tools, in one commit `ee819f2`: prettier moved from the archived `mirrors-prettier` `v3.1.0` to a local hook reading the version out of `pnpm-lock.yaml` (the file CI installs from), ruff `v0.6.9` → `v0.16.3`, black `24.8.0` → `26.5.1`, matching `ruff==0.16.3` / `black==26.5.1` in `apps/api/pyproject.toml` exactly. Found by the adversarial reviewer during the #165 sweep, **pre-existing on `main`**. A mandatory step (`SECURITY.md`, `docs/development.md` forbids `--no-verify`) that REWROTE every commit into a state CI then rejected. `mypy` and `bandit` are ranges (`>=1.11`, `>=1.7`) rather than exact pins, so they have no version for the hook to diverge FROM and are not the same defect. **This row read "Not started" for a day after the fix merged** — condition 3 requires the status to move in the landing commit, and #311 did not move it | **Nothing — and the constraint this cell used to carry was backwards.** It said the fix "reformats 46 files, so it collides with every other item's working tree" and to land it between items. Measured on `main` at a421e37, 2026-09-20: `prettier@3.9.6 --check` over the repo glob reports every file clean; `prettier@3.1.0 --check` reports 49. The disagreeing files were what the OLD hook rewrote on every commit, not work the fix creates. The count was real; its owner was wrong | **On start** — see below | — |
+<!-- counted: "one commit" below is a cardinality claim about a landed PR (ee819f2), not a tally of a growing population -->
+| 12 | **The pre-commit hook set diverges from every pinned tool version — #168** | **DONE** (PR #311, merged 2026-09-19) — all three tools, in one commit `ee819f2`: prettier moved from the archived `mirrors-prettier` `v3.1.0` to a local hook reading the version out of `pnpm-lock.yaml` (the file CI installs from), ruff `v0.6.9` → `v0.16.3`, black `24.8.0` → `26.5.1`, matching `ruff==0.16.3` / `black==26.5.1` in `apps/api/pyproject.toml` exactly. Found by the adversarial reviewer during the #165 sweep, **pre-existing on `main`**. A mandatory step (`SECURITY.md`, `docs/development.md` forbids `--no-verify`) that REWROTE every commit into a state CI then rejected. `mypy` and `bandit` are not the same defect — and NOT for the reason first written here, which was that a range gives nothing to diverge from. They do have a counterpart: whatever CI resolves at install time, and `ci.yml` runs an unpinned `pip install bandit` against the hook's `rev: 1.7.10`, so those are already different versions. What separates them from #168 is that neither hook REWRITES files — a skew there produces a red CI, which is loud and recoverable, not a silent rewrite into a state CI rejects. **This row read "Not started" for a day after the fix merged** — condition 3 requires the status to move in the landing commit, and #311 did not move it | **Nothing — and the constraint this cell used to carry was backwards.** It said the fix "reformats 46 files, so it collides with every other item's working tree" and to land it between items. Measured on `main` at a421e37, 2026-09-20: `prettier@3.9.6 --check` over the repo glob reports every file clean; `prettier@3.1.0 --check` reports 49. The disagreeing files are what the OLD hook would rewrite on any of them it was handed — pre-commit passes only STAGED filenames, so it rewrote whichever a given commit touched, not all 49 every time. Capability, not occurrence; CI enforcing 3.9.6 is what makes the direction asymmetric. Either way they are not work the fix creates. The count was real; its owner was wrong | **On start** was the estimate; the sizing note now treats this row as its worked example | — |
 
 
 ### Total remaining: 12–18 sessions across the FOUR SIZED items, and the parts sum to it
@@ -145,23 +146,36 @@ load. A schedule quoted as "12–18 sessions" with that excluded answers a
 question nobody asked; budget governance beside it at the rate the branches
 actually show, and re-measure it rather than assuming it decays.
 
-**Items 11 and 12 are NOT in that table and NOT in that total, on purpose.**
-Both are sized **on start**, so the total above covers four of the six remaining
-items and says so rather than implying otherwise. They are excluded from the
-summing table rather than given a placeholder because `check_plan_totals.py`
-fails loud on an estimate it cannot parse — that is the fix for the bug where an
-annotated cell was dropped from the sum in silence, and putting "on start" in
-the table would either trip the gate or force the placeholder that caused it.
+**ITEM 12 IS DONE — PR #311, merged 2026-09-19 — so this paragraph now
+concerns item 11 alone.** Left standing rather than rewritten, because the
+sizing argument below is the durable half and item 12 is now its worked
+example rather than its subject.
+
+**Item 11 is NOT in that table and NOT in that total, on purpose.** It is
+sized **on start**, so the total above covers the sized items and says so
+rather than implying otherwise. It is excluded from the summing table rather
+than given a placeholder because `check_plan_totals.py` fails loud on an
+estimate it cannot parse — that is the fix for the bug where an annotated cell
+was dropped from the sum in silence, and putting "on start" in the table would
+either trip the gate or force the placeholder that caused it.
 
 **Why unsized rather than guessed.** Item 10 was sized 2–3 and landed at ~5–6;
 issue 165 was sized "two characters" and landed at 15 files, four review rounds
-and new issues of its own. Both are redaction/tooling work, which is exactly what items
-11 and 12 are, and neither sized from the outside. Item 7 got the same treatment
-on 2026-08-27 for the same reason. A forecast written the week the last one was
-found wrong is how a third gets written.
+and new issues of its own. Both are redaction/tooling work, which is exactly
+what item 11 is, and neither sized from the outside. Item 7 got the same
+treatment on 2026-08-27 for the same reason. A forecast written the week the
+last one was found wrong is how a third gets written.
 
-At 4–8 hours a session the four sized items are roughly **52–156 hours**, or
-**2–6 working weeks** at 5–6 productive hours a day — plus items 11 and 12.
+**Item 12 is the evidence FOR that rule, not against it.** It was excluded here
+as unsizable and also carried a sequencing constraint built on a backwards
+claim — that its fix "reformats 46 files, so it collides with every other
+item's working tree". It reformatted nothing. Both the refusal to guess and
+the refusal to inherit the constraint would have been right; only the second
+was applied.
+
+At 4–8 hours a session the sized items are roughly **52–156 hours**, or
+**2–6 working weeks** at 5–6 productive hours a day — plus item 11, unsized.
+(Item 12 was in this "plus" until PR #311 landed it on 2026-09-19.)
 The width of that is the point, not a
 hedge; see below. **Nothing is blocked by anything at the ITEM level** — but
 several units inside items 8 and 9 are blocked at the FILE level, all in
@@ -764,8 +778,8 @@ item row: the total is a sizing judgement and is Gene's to move.
 Track C carried **631 insertions across 5 files** of `CLAUDE.md`, the reviewer
 brief, `context/gene.md` and `CONTEXT.md`. **That is not item 9 work.** Charging
 it to item 9 distorts the estimate; dropping it hides an overhead that recurred
-on every branch this week. It is recorded here, outside the four sized items and
-outside the 12–18, in the same way items 11 and 12 sit outside it.
+on every branch this week. It is recorded here, outside the sized items and
+outside the 12–18, in the same way item 11 sits outside it.
 
 **A measurement trap worth keeping.** Sizing that overhead against *current*
 `main` undercounts it by exactly the amount pushed directly to `main` during the
@@ -1019,7 +1033,7 @@ are idle time, not work — do not read commit timestamps as effort.
 
 **8–10.5 sessions ≈ 32–84 hours ≈ 7–15 working days** at 5–6 productive hours a
 day. **[SUPERSEDED — the 8–10.5 above is an old total.]** The current figure
-is 12–18 across the four sized items, plus items 11 and 12 unsized, which the
+is 12–18 across the sized items, plus item 11 unsized, which the
 "Total remaining" section states as **2–6 working weeks**. This paragraph is kept
 for its hours-per-session derivation, which is measured and still holds; its
 "two to three weeks" conclusion is not current and is superseded by that section.
