@@ -19,15 +19,24 @@ critic.
 ## What a CONSUMER is, and why it is two surfaces and not one
 
 `CLAUDE.md` says **"on a screen OR in a delivered artifact"**, and the widening
-is load-bearing rather than tidy. `unusable_target_codes` has no reference
-anywhere under `apps/web/src` and is rendered by `zt/exporters.py` into the
-client's deliverable -- so a web-only search reports a defect over a field that
-already reaches the reader who matters most.
+is load-bearing rather than tidy. `zt.py::GapAnalysisResponse.unusable_target_codes`
+has no reference anywhere under `apps/web/src` and is rendered by
+`zt/exporters.py` into the client's deliverable -- so a web-only search reports
+a defect over a field that already reaches the reader who matters most.
 
 That was nearly shipped. The issue's own sketch said "referenced anywhere under
 `apps/web/src`", which was the right shape for #316's `excluded_inputs` and the
 wrong one here. A known-good shape carries no marker saying what made it right;
 what made it right there was that the reader was a consultant at a screen.
+
+**And the widening then paid for itself in the other direction.** The SIBLING
+field `clients.py::ZtDashboardResponse.unusable_target_codes` -- same name,
+different model, same service -- reaches no screen either, and the deliverable
+evidence above is not its evidence: it exists precisely so the client's screen
+does not disagree with the client's PDF. Crediting the PDF for it cleared the
+one field whose whole reason is that the PDF is not enough. Which is why a
+reader is attributed by the MODEL'S SUBJECT rather than by a service token --
+see `unconsumed` -- and why #387 is filed rather than quietly passing.
 
 ## THE TWO ARMS, and the second is not the one the issue asked for
 
@@ -98,21 +107,34 @@ DISCLOSURE_PREFIXES = (
 )
 DISCLOSURE_SUBSTRINGS = ("withheld", "provenance")
 
-#: Fields that are genuinely API-only, each with its reason.
+#: Fields this gate does not currently require a reader for, each with its
+#: reason and -- for every entry standing today -- an issue that deletes it.
 #:
 #: The `DEFERRED` shape from `check_gate_fixtures.py`, and for the same reason:
 #: "no consumer" and "deliberately no consumer" must be different states, or
 #: the gate's first red is cleared by deleting the check.
 #:
-#: EMPTY ON LANDING, and that is a measurement rather than luck -- every
-#: disclosure field on this tree already reaches a screen or a deliverable.
-#: An entry here is a claim someone can check by opening the file.
+#: NOT EMPTY ON LANDING, and the header used to say it was. That sentence
+#: ("EMPTY ON LANDING ... every disclosure field on this tree already reaches a
+#: screen or a deliverable") stood directly above two entries contradicting it,
+#: and the entries were the honest half: a reader who believed the header would
+#: conclude the tree is clean and never scroll four lines. Every entry below is
+#: a REAL unconsumed disclosure, exempt only so the gate can land detecting the
+#: rest -- which is the opposite claim from "genuinely API-only", and the
+#: distinction is what tells the next person whether there is work here.
+#:
 #: Keyed on `"<origin>::<Model>.<field>"` -- the SAME string a violation is
 #: reported as -- and NOT on the bare field name. `source_rows_total` exists on
 #: three models, `unusable_target_codes` on two, `batches_total` on two, so a
 #: name-keyed exemption written for one would silently cover every twin. That
 #: is the unstated-exemption shape, and keying it on the triple removes the
 #: possibility rather than documenting it.
+#:
+#: An entry here EXPIRES: `expired_field_exemptions` below turns the gate red
+#: when the field acquires a reader, or when the model or field it names is
+#: gone. Without that, the first person to render one of these gets no signal,
+#: the entry stays forever, and a future twin inherits an exemption written for
+#: a defect somebody already fixed.
 EXEMPT_FIELDS: dict[str, str] = {
     "risk.py::RiskRegisterResponse.batches_total": (
         "TEMPORARY, tracked in #372. This is a REAL unconsumed disclosure, not "
@@ -123,6 +145,16 @@ EXEMPT_FIELDS: dict[str, str] = {
     ),
     "risk.py::RiskRegisterResponse.batches_failed": (
         "TEMPORARY, tracked in #372. The other half of the pair above."
+    ),
+    "clients.py::ZtDashboardResponse.unusable_target_codes": (
+        "TEMPORARY, tracked in #387. The field this gate shipped BLIND to, and "
+        "the reason the attribution below is keyed on the model's subject "
+        "rather than on a path token. Nothing under `apps/web/src` mentions it; "
+        "the evidence that cleared it was `app/zt/exporters.py` reading the "
+        "identically-named field of the OTHER ZT model. Its own comment says it "
+        "exists so the client's screen does not disagree with the client's PDF, "
+        "so clearing it with the PDF is the one reading that cannot be right. "
+        "DELETE THIS when the ZT dashboard renders the codes."
     ),
 }
 
@@ -226,81 +258,150 @@ def reader_text(repo: Path) -> tuple[list[tuple[str, str]], list[str]]:
     return readers, problems
 
 
-#: A model name's role nouns, stripped to leave the SERVICE it belongs to.
-#: `TechDebtDashboardResponse` -> `techdebt`; `RiskRegisterResponse` -> `risk`.
-_ROLE = re.compile(
-    r"(Dashboard|Response|Register|RunAi|Coverage|Summary|AiInput|List|Entry|Analysis)"
-)
+def model_subject(model: str) -> str:
+    """The model name with its `Response` suffix removed.
 
-
-def service_tokens(origin: str, model: str) -> set[str]:
-    """The service a field belongs to, DERIVED from two independent places.
-
-    The union of the schema file's stem and the model name's role-stripped
-    prefix, because neither alone is enough: `clients.py` holds a model for
-    every service (so the file stem says only "clients"), and a model like
-    `GapAnalysisResponse` names no service at all (so the prefix says only
-    "gapanalysis", while its file says `zt`). Taking both means a field is
-    attributed correctly whenever EITHER source knows.
-
-    Derived rather than a model->surface table, which would be an enumeration
-    going stale on the next model.
+    `ZtDashboardResponse` -> `ZtDashboard`; `GapAnalysisResponse` ->
+    `GapAnalysis`. One transformation, derived from the model itself, with no
+    vocabulary of role nouns to keep in sync.
     """
-    out = {origin[:-3].replace("_", "")}
-    role = _ROLE.search(model)
-    if role and role.start() > 0:
-        out.add(model[: role.start()].lower())
-    lead = re.match(r"[A-Z][a-z]+", model)
-    if lead:
-        out.add(lead.group(0).lower())
-    return {t for t in out if t}
+    return model[: -len("Response")] if model.endswith("Response") else model
 
 
-def _norm(path: str) -> str:
-    return path.lower().replace("_", "").replace("-", "").replace("\\", "/")
+def readers_for(field: str, subject: str, readers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Readers that mention the field AND name the model's subject, same file.
+
+    Both conditions in ONE file is the whole of the attribution. A file that
+    names the subject is handling that model; a field name inside it is that
+    model's field.
+    """
+    pattern = re.compile(rf"(?<!\w){re.escape(field)}(?!\w)")
+    return [(p, b) for p, b in readers if pattern.search(b) and subject in b]
 
 
 def unconsumed(
     fields: list[tuple[str, str, str]], readers: list[tuple[str, str]]
 ) -> list[tuple[str, str, str]]:
-    """Fields whose NAME appears in no reader BELONGING TO THEIR OWN SERVICE.
+    """Fields whose name appears in no reader THAT NAMES THEIR OWN MODEL.
 
-    ## Why not one pooled blob, which is what this did first
+    ## Two false-pass mechanisms, and the second survived the fix for the first
 
-    A blob match asks "does this name appear anywhere a person reads". Field
-    names are NOT unique across models -- `batches_total` is declared on both
-    `AttackRunAiResponse` and `RiskRegisterResponse` -- so the Risk fields
-    matched ATT&CK's renderer and passed. They reach no screen and no
-    exporter. **The gate ran green over a live instance of the defect it
-    exists to catch**, and would have gone red only if someone deleted the
-    ATT&CK panel.
+    A pooled blob match asks "does this name appear anywhere a person reads".
+    Field names are NOT unique across models -- `batches_total` is declared on
+    both `AttackRunAiResponse` and `RiskRegisterResponse` -- so the Risk fields
+    matched ATT&CK's renderer and passed. **The gate ran green over a live
+    instance of the defect it exists to catch.**
 
-    So a reader counts for a field only when its PATH carries one of that
-    field's service tokens. MEASURED on this tree: 2 of 18 fields flagged, and
-    both are the Risk pair -- no false positive among the other 16, including
-    every cross-file case (`clients.py` models rendered under
-    `components/dashboards/techDebt/`, `GapAnalysisResponse` in
-    `app/zt/exporters.py`).
+    Scoping the match to the field's SERVICE, by path token, fixed that pair
+    and left the shape alive one level down: two models of the SAME service
+    still share every token. `clients.py::ZtDashboardResponse` and
+    `zt.py::GapAnalysisResponse` both declare `unusable_target_codes`, both
+    carry the token `zt`, and `app/zt/exporters.py` reads the second one -- so
+    the first passed on the second's evidence, reaching no screen at all
+    (#387). The file-stem token widened it further: every model in
+    `clients.py` carried `clients`, a token shared by five services.
+
+    ## What replaced it: the reader must name the MODEL'S SUBJECT
+
+    A reader counts for `<Model>.<field>` only when ONE file contains both the
+    field name (word-bounded) and `model_subject(Model)` as a substring. The
+    signal is content rather than path, and it exists because this repo's
+    readers name what they read: `lib/risk/types.ts` declares `RiskRegister`,
+    `lib/dashboards/techDebt.ts` declares `TechDebtDashboardData`,
+    `lib/attack/types.ts` declares `AttackRunAiResponse`, and
+    `app/zt/exporters.py` imports `GapAnalysis`. Only one reader has to carry
+    both, so a component that destructures fields without naming the type is
+    covered by the types file it imports from.
+
+    MEASURED on this tree, all eighteen fields: fifteen attributed to a reader
+    that names their own model, and three flagged -- the Risk `batches_*` pair
+    (#372) and the ZT dashboard field (#387). Every one of the fifteen is a
+    true positive read by hand, including both cross-file cases
+    (`clients.py` models under `components/dashboards/techDebt/`,
+    `GapAnalysisResponse` in `app/zt/exporters.py`) and both remaining
+    duplicate names, which now resolve to different files.
+
+    It fails CLOSED in the direction that matters: a reader this cannot
+    attribute produces a violation someone must answer, never a pass.
 
     ## What it still over-matches, stated because the direction is the quiet one
 
-    Within a service, this is still a bare word-boundary match: a field named
-    after a common word is satisfied by any prose in that service's files. The
-    alternative is parsing TSX for property access, which is a second
-    implementation of a TypeScript compiler and is how a gate stops being
-    maintained.
+    Within one model's files this is still a bare word-boundary match: a field
+    named after a common word is satisfied by any prose in the file that names
+    the model. The alternative is parsing TSX for property access, which is a
+    second implementation of a TypeScript compiler and is how a gate stops
+    being maintained.
     """
     out = []
     for origin, model, field in fields:
         if f"{origin}::{model}.{field}" in EXEMPT_FIELDS:
             continue
-        tokens = service_tokens(origin, model)
-        pattern = re.compile(rf"(?<!\w){re.escape(field)}(?!\w)")
-        if not any(
-            pattern.search(body) and any(t in _norm(path) for t in tokens) for path, body in readers
-        ):
+        if not readers_for(field, model_subject(model), readers):
             out.append((origin, model, field))
     return out
+
+
+def expired_field_exemptions(
+    fields: list[tuple[str, str, str]],
+    readers: list[tuple[str, str]],
+    origins: set[str],
+) -> list[tuple[str, str]]:
+    """Entries in `EXEMPT_FIELDS` that have stopped standing for anything.
+
+    Two ways an exemption expires, and both must be LOUD:
+
+      * the field now HAS a reader. Somebody did the work. Without this check
+        they get no signal, the entry survives, and the gate is permanently
+        blind to a field it could now be enforcing -- which is the state
+        `AUDIT_RENDERER_EXEMPT` was written to avoid and could not detect.
+      * the field is GONE from a schema file that IS present -- the model was
+        renamed or the field deleted. The entry then exempts nothing, and the
+        next field to land under that triple inherits a reason written about a
+        different defect.
+
+    `check_gate_fixtures.py`'s `DEFERRED` has both halves ("names gates that do
+    not exist", "has fixtures AND is in DEFERRED -- pick one"). This file was
+    modelled on that table and shipped with neither.
+
+    ## `origins` is the scope, and leaving it out made the check WRONG
+
+    The first version judged every key against whatever tree `main` was pointed
+    at. `main` is pointed at a fixture tree by every test in this gate's suite,
+    and a fixture tree has no `risk.py` -- so all three real exemptions were
+    reported stale, in eight tests at once, and the "expired" verdict was
+    really "you are looking at a different repository". Caught by running it,
+    which is the only thing that catches it: the code reads correctly and the
+    message it prints is a confident, specific lie.
+
+    So an exemption is judged only where its ORIGIN FILE is present. The
+    residual is deliberate and covered elsewhere rather than silently: an
+    exemption naming a schema file that has been DELETED outright is invisible
+    here, because from inside this function that is indistinguishable from a
+    fixture. `test_every_exemption_names_a_field_that_EXISTS` asserts it
+    against the real tree, where the question is answerable.
+    """
+    declared = {f"{origin}::{model}.{field}" for origin, model, field in fields}
+    by_key = {f"{origin}::{model}.{field}": (model, field) for origin, model, field in fields}
+    expired: list[tuple[str, str]] = []
+    for key in EXEMPT_FIELDS:
+        origin = key.split("::", 1)[0]
+        if origin not in origins:
+            continue
+        if key not in declared:
+            expired.append(
+                (
+                    key,
+                    f"{origin} is present and declares no such disclosure field "
+                    f"-- the model or the field was renamed, so the exemption is stale",
+                )
+            )
+            continue
+        model, field = by_key[key]
+        hits = readers_for(field, model_subject(model), readers)
+        if hits:
+            where = ", ".join(sorted(p for p, _ in hits)[:3])
+            expired.append((key, f"now read by {where} -- delete the exemption"))
+    return expired
 
 
 def audit_payload_has_a_generic_reader(repo: Path) -> bool:
@@ -408,14 +509,15 @@ def main(argv: list[str]) -> int:
         for origin, model, field in violations:
             print(
                 f"  {origin}::{model}.{field} -- records what was withheld or "
-                f"dropped, and no screen or exporter BELONGING TO "
-                f"{sorted(service_tokens(origin, model))} reads it. The "
-                f"endpoint is not the surface."
+                f"dropped, and no screen or exporter that names "
+                f"`{model_subject(model)}` reads it. The endpoint is not the "
+                f"surface."
             )
             print(
-                "      (The name may well appear elsewhere. A field declared "
-                "on two models is read for one and not the other, which is "
-                "exactly what a pooled search cannot see.)"
+                "      (The name may well appear elsewhere, including in this "
+                "service's own files. A field declared on two models is read "
+                "for one and not the other, which is exactly what a pooled -- "
+                "or a per-service -- search cannot see.)"
             )
         print(
             "  Either render it, or add it to EXEMPT_FIELDS with the reason it "
@@ -423,7 +525,21 @@ def main(argv: list[str]) -> int:
             "consumer' must not be the same state."
         )
 
-    if not audit_payload_has_a_generic_reader(repo):
+    expired = expired_field_exemptions(fields, readers, {p.name for p in schemas.glob("*.py")})
+    if expired:
+        failed = True
+        print("check-disclosure-consumers: FAILED -- EXPIRED exemptions in EXEMPT_FIELDS:")
+        for key, why in expired:
+            print(f"  {key} -- {why}")
+        print(
+            "  An exemption that has stopped standing for anything is worse "
+            "than none: it reads as a decision somebody made about a state "
+            "that no longer exists, and it silently covers the next field to "
+            "arrive under the same key."
+        )
+
+    has_generic_reader = audit_payload_has_a_generic_reader(repo)
+    if not has_generic_reader:
         if AUDIT_RENDERER_EXEMPT is None:
             failed = True
             print(
@@ -437,14 +553,56 @@ def main(argv: list[str]) -> int:
             )
         else:
             print(f"check-disclosure-consumers: EXEMPT -- {AUDIT_RENDERER_EXEMPT}")
+    elif AUDIT_RENDERER_EXEMPT is not None:
+        # THE EXPIRY. Without it, `AUDIT_RENDERER_EXEMPT` is read exactly once
+        # -- on the runs where arm 2 fails -- and is never read again after
+        # #351 lands. The exemption would then sit in this file forever, and
+        # arm 2 would be held open by a string describing a defect somebody
+        # already fixed: the gate could not go red if the renderer were later
+        # deleted, because the exemption would catch it.
+        #
+        # A DEFERRAL THAT CANNOT DETECT ITS OWN DISCHARGE IS A PERMANENT
+        # EXEMPTION WEARING AN EXPIRY DATE. `check_gate_fixtures`'s `DEFERRED`
+        # -- the table this one was modelled on -- refuses an entry that has
+        # fixtures ("pick one"); this is that check, for this exemption.
+        failed = True
+        print(
+            "check-disclosure-consumers: FAILED -- EXPIRED exemption: "
+            "`AUDIT_RENDERER_EXEMPT` is set, and a generic `details` renderer "
+            "now exists."
+        )
+        print(
+            "  The exemption's own text says it is deleted when #351 merges. "
+            "It has. Set `AUDIT_RENDERER_EXEMPT = None` -- arm 2 then passes "
+            "for real rather than by exemption, and goes red if the renderer "
+            "is ever removed, which it cannot do while this string is set."
+        )
 
     if failed:
         return EXIT_VIOLATION
 
+    # The count and the caveat in one sentence, because "all reachable ... (3
+    # exempt with reasons)" is the EXEMPT_FIELDS header's own defect in the
+    # line a reader actually sees: it states a clean verdict and then names, in
+    # a parenthesis, the fields it is not a verdict about. Every exemption here
+    # is a REAL unconsumed disclosure, so the clean line has to say so.
+    # Exemptions that apply to the tree ACTUALLY inspected, not `len(EXEMPT_FIELDS)`.
+    # The global count produced "-2 of 1 disclosure fields" on a fixture tree,
+    # which is the arithmetic saying out loud that it is describing a different
+    # repository -- the same scope error `expired_field_exemptions` had, in the
+    # summary line rather than the verdict. Found by reading the output of a
+    # red-on-revert run, not by a test: every test here asserts an exit code,
+    # and a nonsense count does not change one.
+    applied = sorted(k for k in EXEMPT_FIELDS if k in {f"{o}::{m}.{f}" for o, m, f in fields})
     print(
-        f"check-disclosure-consumers: {len(fields)} disclosure fields, all "
-        f"reachable on a screen or in a deliverable"
-        + (f" ({len(EXEMPT_FIELDS)} exempt with reasons)" if EXEMPT_FIELDS else "")
+        f"check-disclosure-consumers: {len(fields) - len(applied)} of "
+        f"{len(fields)} disclosure fields reach a screen or a deliverable"
+        + (
+            f"; {len(applied)} do NOT and are exempt with a tracked reason -- "
+            f"{', '.join(applied)}"
+            if applied
+            else ""
+        )
     )
     return EXIT_OK
 
