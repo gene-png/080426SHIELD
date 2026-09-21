@@ -72,7 +72,103 @@ def test_both_spellings_are_read(tmp_path: pathlib.Path) -> None:
     (tmp_path / "0001_a.py").write_text('revision: str = "0001"\n', encoding="utf-8")
     (tmp_path / "0002_b.py").write_text('revision = "0002"\n', encoding="utf-8")
     (tmp_path / "0003_c.py").write_text("down_revision = None\n", encoding="utf-8")
-    assert tree_revisions(tmp_path) == {"0001", "0002"}
+    # A MAPPING, revision id -> the files claiming it. It returned `set[str]`
+    # until #318: a set collapses two files declaring the same revision before
+    # anything can look at them, so the gate could not report a collision it
+    # had already discarded.
+    assert tree_revisions(tmp_path) == {"0001": ["0001_a.py"], "0002": ["0002_b.py"]}
+
+
+@pytest.mark.unit
+def test_two_files_claiming_one_revision_are_both_reported(tmp_path: pathlib.Path) -> None:
+    """The collision the set was hiding (#318).
+
+    Migrations here are numbered sequentially, so two branches each adding
+    "the next one" both add `0047`, and merging them puts two files with the
+    same id in one tree.
+    """
+    (tmp_path / "0047_from_branch_a.py").write_text('revision = "0047"\n', encoding="utf-8")
+    (tmp_path / "0047_from_branch_b.py").write_text('revision: str = "0047"\n', encoding="utf-8")
+
+    found = tree_revisions(tmp_path)
+
+    # BOTH filenames, and sorted, so the report does not depend on the order
+    # the filesystem happens to yield.
+    assert found == {"0047": ["0047_from_branch_a.py", "0047_from_branch_b.py"]}
+
+
+@pytest.mark.unit
+def test_a_collision_in_the_mounted_tree_is_a_mismatch(monkeypatch, tmp_path, capsys) -> None:
+    """...and the gate FIRES on it rather than proceeding to the database.
+
+    Checked before the database is consulted, because it is true of the mounted
+    tree alone.
+    """
+    import check_mount_matches_database as mod
+
+    versions = tmp_path / "alembic" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "0047_a.py").write_text('revision = "0047"\n', encoding="utf-8")
+    (versions / "0047_b.py").write_text('revision = "0047"\n', encoding="utf-8")
+
+    monkeypatch.setattr(mod.pathlib.Path, "resolve", lambda self: self, raising=False)
+    monkeypatch.setattr(mod, "__file__", str(tmp_path / "scripts" / "x.py"))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unreachable/never-used")
+    # If the database WERE consulted this would raise; it must not be reached.
+    monkeypatch.setattr(
+        mod,
+        "database_revision",
+        lambda url: (_ for _ in ()).throw(AssertionError("the database must not be consulted")),
+    )
+
+    assert mod.main() == EXIT_MISMATCH
+    err = capsys.readouterr().err
+    assert "SAME REVISION ID" in err
+    # Both files named. A message naming one of them sends the reader to
+    # renumber the wrong file.
+    assert "0047_a.py" in err and "0047_b.py" in err
+    # And it says what the database cannot settle, so nobody goes looking there.
+    assert "stores a version string" in err
+
+
+@pytest.mark.unit
+def test_the_passing_message_does_not_claim_the_pair_was_verified(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """The half of #318 that is NOT detectable, kept honest in the copy.
+
+    The old message was "tree and database agree on revision 0047". All that
+    was checked is that the id is PRESENT here. Two worktrees numbering the
+    next migration identically produce a matching id over different files, and
+    `alembic_version` stores nothing that could tell them apart -- so the
+    sentence asserted something this check cannot know, in the log a reader
+    reaches a minute later when the first request 500s on UndefinedColumn.
+
+    This pins the ABSENCE of the over-claim, which is the only thing a test can
+    do about a limit that cannot be closed.
+    """
+    import check_mount_matches_database as mod
+
+    versions = tmp_path / "alembic" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "0047_only.py").write_text('revision = "0047"\n', encoding="utf-8")
+
+    monkeypatch.setattr(mod.pathlib.Path, "resolve", lambda self: self, raising=False)
+    monkeypatch.setattr(mod, "__file__", str(tmp_path / "scripts" / "x.py"))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+    monkeypatch.setattr(mod, "database_revision", lambda url: "0047")
+
+    assert mod.main() == EXIT_OK
+    out = capsys.readouterr().out
+    assert "agree" not in out, (
+        "the passing message claims the tree and database AGREE. It only "
+        "established that the stamped id is present here, which is a weaker "
+        "claim and the gap between them is a whole failure mode."
+    )
+    # What it must say instead: what was compared, and where it read.
+    assert "0047" in out
+    assert "0047_only.py" in out
+    assert str(versions) in out
 
 
 @pytest.mark.unit
