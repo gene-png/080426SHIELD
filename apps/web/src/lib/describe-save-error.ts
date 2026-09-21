@@ -47,6 +47,75 @@ function hasPayload(
   return typeof err === "object" && err !== null && "payload" in err;
 }
 
+/**
+ * The server's machine CODE for this refusal, or null when it sent none.
+ *
+ * ## Why this exists beside `serverReason`, which is the message
+ *
+ * A caller choosing between the server's sentence and its own copy must make
+ * that choice on the CODE, never on whether a message arrived. Testing the
+ * message's presence is a PRESENCE test on an optional field, and this repo
+ * has already paid for one: #317 put the internal string
+ * "Request validation failed." under the Email field of the public sign-up
+ * page, because `SignUpForm.tsx` chose between typed copy and a friendly
+ * fallback by testing that `reason` was present.
+ *
+ * The dashboards did the same thing one surface over, in the opposite
+ * direction: `{reason ?? ourCopy}` renders the server's sentence whenever one
+ * exists, and the ordinary not-released 404 always carries one. So the copy
+ * written for a client was unreachable in the most common state of the page.
+ *
+ * `error.reason` is the field the API's own handler promises -- a dict detail
+ * `{reason, message}` is rewrapped into `{error: {code, correlation_id,
+ * message, reason}}` by `_handle_http_exception`, which is why this reads the
+ * enveloped form and not `detail`.
+ */
+export function serverReasonCode(err: unknown): string | null {
+  if (!hasPayload(err)) return null;
+  const payload = err.payload as ErrorPayload | undefined;
+  const code = payload?.error?.reason;
+  return typeof code === "string" && code.trim() ? code.trim() : null;
+}
+
+/**
+ * The codes whose MESSAGE a dashboard must not show in place of its own copy.
+ *
+ * Exactly one, and it is the ordinary case: a report that has not been
+ * released yet. The API says "No released Tech Debt report for this service
+ * yet." The page says "This Technical Debt report hasn't been released to your
+ * organization yet. It will appear here once your SHIELD analyst releases it."
+ *
+ * The second sentence is the one a client needs -- it uses the product's name
+ * rather than the internal shorthand, says whose organization, and names the
+ * next thing that happens. The first is a correct statement of fact written
+ * for a developer reading a 404.
+ *
+ * ## The error direction is deliberate: unknown codes PREFER the server
+ *
+ * This is a deny-list of one, not an allow-list, so a code nobody has seen
+ * before renders the server's message. That is the safe direction: a new code
+ * means a situation the generic copy was not written for, and #244 exists
+ * because a page printed "no released report yet" over a refusal that meant
+ * something else entirely. Silence toward the specific message is the failure
+ * that issue records; verbosity toward it is recoverable.
+ */
+const GENERIC_COPY_IS_BETTER = new Set(["dashboard_not_released"]);
+
+/**
+ * The sentence a dashboard should render for a failed load, or null to mean
+ * "use your own copy".
+ *
+ * Callers pass the error and get back the server's message ONLY where the
+ * server is saying something their copy does not cover. Derived in one place
+ * rather than repeated across five dashboards, so the five cannot drift --
+ * and so the decision has somewhere to be tested that is not a page.
+ */
+export function dashboardLoadReason(err: unknown): string | null {
+  const code = serverReasonCode(err);
+  if (code !== null && GENERIC_COPY_IS_BETTER.has(code)) return null;
+  return serverReason(err);
+}
+
 /** The server's own sentence, or null when it did not send a usable one. */
 export function serverReason(err: unknown): string | null {
   if (!hasPayload(err)) return null;
