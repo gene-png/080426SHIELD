@@ -345,6 +345,38 @@ a real exit code and a real date, and was the minority outcome (D-071).
   created so a failed `cd` read as a clean result. When a check passes locally
   and fails on the runner, suspect the interpreter before the code.
 
+- **RUFF'S FIRST-PARTY RESOLUTION DEPENDS ON THE LAYOUT IT IS RUN IN, so the
+  in-container lint gate is STRUCTURALLY BLIND to one class of import error
+  that CI catches.** Not "scoped narrower" -- blind. No invocation fixes it.
+
+  ruff decides first-party by asking whether the dotted module path exists
+  under `src`, which defaults to the config's directory. This repo has a
+  top-level `scripts/` that is unrelated to `apps/api/scripts/`, and the api
+  container mounts `apps/api` at `/app` with the root `pyproject.toml` at `/`
+  -- so NEITHER `scripts/` path exists in the container.
+
+  A bare `from scripts import x` is therefore third-party in the container and
+  first-party in a full checkout. Measured 2026-09-21:
+
+      | import form                  | CI layout | container |
+      | bare + blank line            | PASS      | I001      |
+      | dotted (`from scripts.y ...`)| PASS      | PASS      |
+
+  **Two consequences, and the second is the one that bites.**
+
+  `ruff check --no-cache .` inside the container -- CI's exact command --
+  exits 0 on a file CI rejects. The MANDATORY pre-commit lint this file
+  prescribes cannot see this, however it is invoked.
+
+  And **`ruff --fix` MOVES the red rather than removing it**: the blank line it
+  inserts satisfies the full-checkout layout and breaks the container one. The
+  stable answer is the DOTTED form, because it fails to resolve in both, which
+  is what the rest of `tests/unit/` already uses.
+
+  To reproduce a CI lint red locally, mount the FULL worktree and run ruff from
+  `apps/api` so `src` resolves to the repo root. That is a different layout, not
+  a different flag.
+
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
