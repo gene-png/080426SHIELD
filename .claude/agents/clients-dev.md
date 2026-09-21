@@ -252,9 +252,12 @@ e2e is host-run: `cd e2e && npx playwright test <file>`. Your three dashboard
 specs are listed above. After ANY `apps/web` edit:
 `docker compose up -d --force-recreate api web`, then re-check `SHIELD_LLM_MODE`.
 
-**Note on committing:** a local pre-commit hook, if installed, runs prettier
-3.1.0 against CI's 3.9.6 (issue #168) and would reformat ~46 files. If `git
-commit` reformats files you did not touch, that is why — report it.
+**Note on committing:** the local pre-commit hook reads its prettier version
+from `pnpm-lock.yaml`, so it runs whatever CI runs and reformats nothing. That
+was NOT true until PR #311 landed issue #168, when it was pinned at 3.1.0 and
+rewrote every commit into a state CI then rejected. **If `git commit` still
+reformats files you did not touch, the old hook is installed in your checkout**
+— re-run `pre-commit install`, and report it.
 
 ## Before you open a PR
 

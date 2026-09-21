@@ -84,7 +84,7 @@ what happened between 2026-08-26 and 2026-08-30.
 | 9a | **Docs-truth pass — `docs/security.md`** | **DONE** (PR for `docs/security-honesty-pass`, 2026-08-25). The doc stated TLS, KMS at rest, signed CI artifacts, a server-side MIME sniff, an HIBP top-100k check, a payload hash on the audit row, and a 15-minute access token. None existed. Split into implemented-with-evidence vs planned-not-implemented on `docs/operations.md`'s model; `operations.md`'s own false "(idempotent)" claim about `seed_demo.py` fixed too | Nothing | **0.5–1 session** | **~1.5–2 sessions** (3 review rounds, ~30 findings; 2 code defects filed as #142/#144, 1 tooling as #143, plus #145 and a new CI gate) |
 | 10 | **The redaction boundary — eight filed defects (#135–#140, #142, #144)** | **DONE** (PR #155, merged 2026-08-26). <!-- counted: historical --> Sixteen blockers surfaced over four review rounds; thirteen closed here, two filed as #152/#153, one as #151. Five were introduced by the fix for a different defect — two of those inside this branch (B3→B12, B11→B16) — and one, the name dictionary destroying the word `client` for any tenant with a generic mailbox, was **pre-existing on `main`** and found only because the reviewer was pointed at the hint construction rather than the rules. Two derived corpora ship with it and are permanent: `test_redact_real_identifiers.py` (848 shipped ATT&CK/CSF/ZT identifiers in three contexts) and `scripts/leave_row_oracle.py` (disables one narrowing guard at a time and reports which exemption rows still pass). Both found defects no truth-table cell could. CI green on all seven checks including E2E and Demo, which had never run on the branch | Nothing | **2–3** | **~5–6** |
 | 11 | **The two redaction leaks item 10 filed rather than fixed — #152 + #153** | Not started. Filed by item 10 and **orphaned when it closed**: both are labelled `client-data-egress` on a FedRAMP Moderate/High target, so client identifiers reach a third-party provider. #152 — a signature block whose signatory line ends in punctuation or exceeds four words is not cut. #153 — bare UK national, E.164 without the plus, and the US international prefix all leak. One PR, batched by file per the item-10 rule: both live in `app/ai/redact.py` and are decided by the same corpus | Nothing | **On start** — see below | — |
-| 12 | **The pre-commit hook set diverges from every pinned tool version — #168** | Not started. Found by the adversarial reviewer during the #165 sweep, **pre-existing on `main`**. `.pre-commit-config.yaml` runs prettier `v3.1.0` (46 files disagree, measured 2026-08-30), ruff `v0.6.9` against `ruff==0.16.3`, and black `24.8.0` against `black==26.5.1` — all three REWRITE, while `SECURITY.md:44` makes the hook mandatory and `docs/development.md:65` forbids `--no-verify`. A mandatory step producing the failure it exists to prevent. The prettier half needs a local hook (`mirrors-prettier` is archived and `v3.1.0` is its newest tag); the ruff/black half is a `rev` bump whose **effect is unmeasured** — black crosses two stable-style years | **Nothing logically; land it BETWEEN items** — its fix reformats 46 files, so it collides with every other item's working tree | **On start** — see below | — |
+| 12 | **The pre-commit hook set diverges from every pinned tool version — #168** | **DONE** (PR #311, merged 2026-09-19) — all three tools, in one commit `ee819f2`: prettier moved from the archived `mirrors-prettier` `v3.1.0` to a local hook reading the version out of `pnpm-lock.yaml` (the file CI installs from), ruff `v0.6.9` → `v0.16.3`, black `24.8.0` → `26.5.1`, matching `ruff==0.16.3` / `black==26.5.1` in `apps/api/pyproject.toml` exactly. Found by the adversarial reviewer during the #165 sweep, **pre-existing on `main`**. A mandatory step (`SECURITY.md`, `docs/development.md` forbids `--no-verify`) that REWROTE every commit into a state CI then rejected. `mypy` and `bandit` are ranges (`>=1.11`, `>=1.7`) rather than exact pins, so they have no version for the hook to diverge FROM and are not the same defect. **This row read "Not started" for a day after the fix merged** — condition 3 requires the status to move in the landing commit, and #311 did not move it | **Nothing — and the constraint this cell used to carry was backwards.** It said the fix "reformats 46 files, so it collides with every other item's working tree" and to land it between items. Measured on `main` at a421e37, 2026-09-20: `prettier@3.9.6 --check` over the repo glob reports every file clean; `prettier@3.1.0 --check` reports 49. The disagreeing files were what the OLD hook rewrote on every commit, not work the fix creates. The count was real; its owner was wrong | **On start** — see below | — |
 
 
 ### Total remaining: 12–18 sessions across the FOUR SIZED items, and the parts sum to it
@@ -166,12 +166,26 @@ The width of that is the point, not a
 hedge; see below. **Nothing is blocked by anything at the ITEM level** — but
 several units inside items 8 and 9 are blocked at the FILE level, all in
 `routes/clients.py` — the block below is the list; see "File-contention dependencies". At the item level: 5a was the last link in the W3 → W2 → W1-ATT&CK chain. Order is
-10 → 7 → 9 → 6 → 8, with 11 and 12 unsequenced against them — but **item 12
-is the LEAST independent item here, not an independent one.** Fixing #168
-reformats 46 files, so it touches every other item's working tree and
-changes what `check_recalled_counts` can see (`CLAUDE.md`, "limits of the
-mechanism"). Land it between items, never alongside one. Item 11 is
-genuinely independent: `app/ai/redact.py` and its own tests.
+10 → 7 → 9 → 6 → 8, with 11 unsequenced against them. Item 11 is genuinely
+independent: `app/ai/redact.py` and its own tests.
+
+**Item 12 is done — landed as PR #311 — and the sequencing constraint this
+paragraph carried for it was built on a claim that was backwards.** It read:
+item 12 "is the LEAST independent item here", because fixing #168 "reformats 46
+files, so it touches every other item's working tree"; land it between items,
+never alongside one.
+
+The fix reformatted nothing. Measured on `main` at a421e37, 2026-09-20:
+`prettier@3.9.6 --check` over the repo glob reports every file clean, while
+`prettier@3.1.0 --check` — the version the old hook ran — reports 49. Those
+files are what a version eight minors behind says about a tree CI already keeps
+correct, i.e. the rewrite the OLD hook performed on every commit. Pinning the
+hook to the lockfile REMOVED that, so item 12 was the most independent item
+here rather than the least, and could have landed alongside anything.
+
+Recorded rather than deleted because the wrong direction is what a reader would
+reproduce: the number 46 was real and measured, and only its OWNER was wrong.
+A count can be correct and still license the opposite decision.
 
 **The arithmetic is written out because the previous total was asserted rather
 than added.** A schedule whose parts do not sum to its total is the same defect

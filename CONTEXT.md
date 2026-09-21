@@ -82,9 +82,15 @@ have on 2026-08-26, when four were orphaned. By item:
 - **12 (new)** — `#168`, the pre-commit hook set running three tools at versions
   no gate uses
 
-In flight: `#165` closes with the prettier-pin PR. `#159` loses the label — it
-is developer tooling and does not meet "the MVP cannot ship while this is open",
-the definition now written into `DELIVERY_PLAN.md`.
+Both of those have since landed, and the mapping above is kept rather than
+pruned because that is what this list is for: `#165` and `#168` are CLOSED
+(the prettier-pin PR #311, merged 2026-09-19, which took item 12 with it), and
+`#159` has lost the label as planned — it is developer tooling and does not
+meet "the MVP cannot ship while this is open", the definition now written into
+`DELIVERY_PLAN.md`. `#159` itself is still open, correctly and off the board.
+
+Run the command above for what is open now; an issue's owning ITEM is the
+durable half and does not change when the issue closes.
 
 `#125` and `#126` closed with Track C's first PR (`#197`, merged 2026-09-05).
 **`#124` deliberately did NOT ship with them**, which departed from the "must
