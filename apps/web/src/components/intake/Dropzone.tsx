@@ -10,6 +10,7 @@ import {
 } from "@/lib/intake/artifacts";
 
 import type { JSX } from "react";
+import { clientFacingError } from "@/lib/describe-save-error";
 
 export interface DropzoneProps {
   /** Called after each successful upload with the API's artifact row. */
@@ -83,9 +84,7 @@ export function Dropzone({
                   `Upload failed (${err.status})`
                 );
               })()
-            : err instanceof Error
-              ? err.message
-              : "Upload failed.";
+            : clientFacingError(err, "Upload failed.");
         setItem(id, { status: "error", message: msg });
       }
     }

@@ -29,6 +29,7 @@ import { Step6Review } from "./steps/Step6Review";
 import { useIntakeAutoSave } from "./useIntakeAutoSave";
 
 import type { JSX } from "react";
+import { clientFacingError } from "@/lib/describe-save-error";
 
 const STEP_INDEX: Record<WizardStepKey, number> = WIZARD_STEPS.reduce(
   (acc, step, i) => {
@@ -89,9 +90,7 @@ export function IntakeWizard(): JSX.Element {
           setNeedsClient(true);
           return;
         }
-        setLoadError(
-          err instanceof Error ? err.message : "Failed to load intake.",
-        );
+        setLoadError(clientFacingError(err, "Failed to load intake."));
       });
     return () => {
       cancelled = true;
@@ -164,9 +163,7 @@ export function IntakeWizard(): JSX.Element {
       setState(next);
       setSubmitted(true);
     } catch (err) {
-      setSubmitError(
-        err instanceof Error ? err.message : "Failed to submit intake.",
-      );
+      setSubmitError(clientFacingError(err, "Failed to submit intake."));
     } finally {
       setSubmitting(false);
     }

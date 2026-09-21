@@ -147,6 +147,52 @@ export function serverReason(err: unknown): string | null {
 }
 
 /**
+ * What to show a CLIENT when a call failed and there is no richer local copy.
+ *
+ * Returns the server's own typed sentence where it sent one, and `fallback`
+ * otherwise. **It never returns `err.message`**, which is the whole point.
+ *
+ * ## The defect this exists to end
+ *
+ * Every proxy error class throws its own reason away in its constructor:
+ *
+ *     super(`ZT proxy ${status}`)      super(`CSF proxy ${status}`)
+ *     super(`Intake proxy ${status}`)  super(`ATT&CK proxy ${status}`)
+ *
+ * ...nine of them, `grep -rn "super(\`" src/lib/*\/client.ts`. So
+ * `err instanceof Error ? err.message : "Failed to load."` renders
+ * **"ZT proxy 409"** to a client -- a raw internal string in client-facing
+ * copy, which core principle 2 forbids.
+ *
+ * `describeSaveError` below was written for exactly this (#283) and was
+ * applied to the SAVE path only. The LOAD and SUBMIT paths in the same
+ * components kept the old shape, twelve lines away.
+ *
+ * ## Why preferring the server UNCONDITIONALLY is right here
+ *
+ * It is not right everywhere, and the difference is the only thing worth
+ * knowing about this function.
+ *
+ * The client dashboards face the same choice and must answer it the other way
+ * -- their own not-released copy names the product, whose organization and the
+ * next step, so the API's "No released X report for this service yet." is a
+ * downgrade. That half is PR #362.
+ *
+ * The callers here pass a bare generic: "Failed to load.", "Submit failed.",
+ * "Network error.". No server sentence is worse than those, so there is
+ * nothing to protect.
+ *
+ * **The property that decides it is whether the local copy carries
+ * information the server's does not** -- never which module the caller lives
+ * in. Written down because the two situations look like one shape, differ in
+ * the one thing that matters, and moving either answer into the other's
+ * position would be a regression that reads as consistency.
+ */
+export function clientFacingError(err: unknown, fallback: string): string {
+  return serverReason(err) ?? fallback;
+}
+
+/**
  * The full sentence shown to the client.
  *
  * **No "try again" imperative.** The most likely failure here is a 409 — the

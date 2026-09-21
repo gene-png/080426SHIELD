@@ -18,6 +18,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
+import { clientFacingError } from "@/lib/describe-save-error";
 
 export interface Step5NotesProps {
   state: IntakeStateResponse;
@@ -64,9 +65,7 @@ export function Step5Notes({
       setArtifacts(res.items);
       setListError(null);
     } catch (err) {
-      setListError(
-        err instanceof Error ? err.message : "Failed to load uploads.",
-      );
+      setListError(clientFacingError(err, "Failed to load uploads."));
     }
   }, []);
 

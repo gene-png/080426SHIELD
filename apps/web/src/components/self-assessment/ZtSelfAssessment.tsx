@@ -18,7 +18,10 @@ import {
   patchSelfAssessmentAnswer,
   submitSelfAssessment,
 } from "@/lib/zt/client";
-import { describeSaveError } from "@/lib/describe-save-error";
+import {
+  clientFacingError,
+  describeSaveError,
+} from "@/lib/describe-save-error";
 import type {
   CatalogPillar,
   ZtAnswer,
@@ -68,7 +71,7 @@ export function ZtSelfAssessment({
       })
       .catch((err) => {
         if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : "Failed to load.");
+          setLoadError(clientFacingError(err, "Failed to load."));
         }
       });
     return () => {
@@ -181,7 +184,7 @@ export function ZtSelfAssessment({
       setAssessment(next);
       setSubmitted(true);
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Submit failed.");
+      setSubmitError(clientFacingError(err, "Submit failed."));
     } finally {
       setSubmitting(false);
     }

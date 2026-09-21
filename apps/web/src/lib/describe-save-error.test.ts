@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clientFacingError,
   dashboardLoadReason,
   describeSaveError,
   serverReason,
@@ -251,5 +252,71 @@ describe("dashboardLoadReason", () => {
 
   it("returns null when the server sent nothing usable", () => {
     expect(dashboardLoadReason({ status: 500, payload: {} })).toBeNull();
+  });
+
+// #318, from the #295 review: the internal-string defect's twins.
+//
+// `ZtProxyError` is `super(`ZT proxy ${status}`)`. `describeSaveError` was
+// written for that in #283 and applied to the SAVE path only, so the LOAD and
+// SUBMIT paths in the same components still rendered `err.message`.
+// ---------------------------------------------------------------------------
+
+class ZtProxyErrorLike extends Error {
+  // The production shape, copied off `lib/zt/client.ts` rather than invented:
+  // the constructor discards the reason into a label and keeps the real thing
+  // on `payload`. A fixture that carried the reason in `message` would agree
+  // with a broken implementation by construction.
+  constructor(
+    public readonly status: number,
+    public readonly payload: unknown,
+  ) {
+    super(`ZT proxy ${status}`);
+  }
+}
+
+describe("clientFacingError", () => {
+  it("never shows the internal proxy label", () => {
+    const err = new ZtProxyErrorLike(409, {
+      error: {
+        reason: "assessment_not_draft",
+        message: "This assessment is no longer editable.",
+      },
+    });
+    const text = clientFacingError(err, "Submit failed.");
+
+    expect(text).toBe("This assessment is no longer editable.");
+    // Both halves of the label, because "409" alone also appears in plenty of
+    // legitimate copy and "ZT proxy" alone would miss a reworded prefix.
+    expect(text).not.toContain("ZT proxy");
+    expect(text).not.toContain("409");
+  });
+
+  it("falls back to the caller's generic when the server sent nothing", () => {
+    // The fallback is reached on ABSENCE of a server sentence -- never by
+    // showing `err.message`, which is what the old code did here.
+    const err = new ZtProxyErrorLike(500, {});
+    expect(clientFacingError(err, "Failed to load.")).toBe("Failed to load.");
+  });
+
+  it("falls back for a plain Error, whose message is also internal", () => {
+    // A TypeError from fetch reads "Failed to fetch" / "fetch failed". Not a
+    // proxy label, and still not client copy.
+    expect(
+      clientFacingError(new TypeError("fetch failed"), "Network error."),
+    ).toBe("Network error.");
+  });
+
+  it("prefers the server sentence over the generic, which is the point", () => {
+    // THE OTHER HALF. A helper that always returned the fallback would pass
+    // every assertion above while discarding exactly what #244 fought for.
+    const err = new ZtProxyErrorLike(422, {
+      error: {
+        reason: "target_stage_out_of_range",
+        message: "DoD ZTRA has stages 1-3.",
+      },
+    });
+    expect(clientFacingError(err, "Submit failed.")).toBe(
+      "DoD ZTRA has stages 1-3.",
+    );
   });
 });

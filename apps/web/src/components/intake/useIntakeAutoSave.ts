@@ -9,6 +9,7 @@ import type {
 } from "@/lib/intake/types";
 
 import type { SaveState } from "./SaveStatus";
+import { clientFacingError } from "@/lib/describe-save-error";
 
 export interface AutoSaveHandle {
   saveState: SaveState;
@@ -36,7 +37,7 @@ export function useIntakeAutoSave(
         onUpdate?.(next);
         return next;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Network error.";
+        const message = clientFacingError(err, "Network error.");
         setSaveState({ kind: "error", message });
         return null;
       }
