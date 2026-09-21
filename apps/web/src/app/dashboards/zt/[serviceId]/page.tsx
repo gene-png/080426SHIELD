@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { ZtDashboard } from "@/components/dashboards/zt/ZtDashboard";
 import { ApiError, apiFetch } from "@/lib/api";
-import { serverReason } from "@/lib/describe-save-error";
+import { dashboardLoadReason } from "@/lib/describe-save-error";
 import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
 import { SkipToContent } from "@/components/site/SkipToContent";
@@ -50,7 +50,14 @@ export default async function ZtDashboardPage({
         // saying which assessment it was built from. Keying the copy on the
         // STATUS discarded that and printed the very sentence the typed
         // message was written to avoid.
-        reason = serverReason(err);
+        // #318: the server's sentence only where it says something this page's
+        // copy does not. `serverReason` here rendered the API's
+        // developer-facing 'No released X report for this service yet.'
+        // over the client copy below, in the page's MOST COMMON state --
+        // the typed reason overriding the normal case instead of the
+        // exceptional one. The decision lives in one place so the five
+        // dashboards cannot drift.
+        reason = dashboardLoadReason(err);
       } else {
         throw err;
       }

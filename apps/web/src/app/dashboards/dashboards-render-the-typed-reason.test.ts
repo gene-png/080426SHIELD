@@ -68,21 +68,63 @@ describe("client dashboards render the server's typed reason", () => {
     expect(PAGES.length).toBeGreaterThanOrEqual(5);
   });
 
+  it("every dashboard page handles an API error", () => {
+    // THE EXEMPTION THIS REPLACES, and why it had to go (#318, from the #295
+    // review). The per-page assertion below used to open with
+    //
+    //     if (!src.includes("ApiError")) return;
+    //
+    // "only pages that actually handle an API error are in scope". True, and
+    // it is a SILENT EXEMPTION that vitest reports as a pass -- in a file whose
+    // docstring promises the page set is derived so "a sixth dashboard is
+    // covered the day it is added". A sixth dashboard that forgot to catch was
+    // covered by nothing, and the report said it was covered.
+    //
+    // The population is not "pages that catch"; it is "pages that show a client
+    // a failed load". A dashboard that does not catch is not out of scope -- it
+    // is a dashboard with no error surface at all, which is its own defect and
+    // must be stated here rather than skipped. So the predicate is asserted
+    // instead of branched on.
+    const silent = PAGES.filter(
+      (p) => !readFileSync(p, "utf8").includes("ApiError"),
+    );
+    expect(
+      silent,
+      `these dashboard pages do not handle an ApiError at all. A failed load on
+one of them is an unhandled throw rather than a sentence a client can read, and
+the typed-reason assertions below would have SKIPPED them in silence.`,
+    ).toEqual([]);
+  });
+
   it.each(PAGES.map((p) => [p.slice(p.indexOf("dashboards")), p] as const))(
     "%s consults the typed reason before falling back to its own copy",
     (_label, path) => {
       const src = readFileSync(path, "utf8");
 
-      // Only pages that actually handle an API error are in scope; one that
-      // never catches has no reason to discard.
-      if (!src.includes("ApiError")) return;
-
+      // `dashboardLoadReason`, NOT `serverReason` -- and the distinction is the
+      // whole of #318's first finding. `serverReason` returns the server's
+      // sentence whenever one arrived, and the ordinary not-released 404 always
+      // carries one, so `{reason ?? ourCopy}` rendered the API's
+      // developer-facing wording in the page's MOST COMMON state and the copy
+      // written for a client was unreachable. The typed reason was overriding
+      // the normal case instead of the exceptional one.
+      //
+      // Asserted as an EXCLUSION as well as an inclusion, because a page that
+      // called both would satisfy a bare `includes` while still doing the wrong
+      // thing on whichever line ran.
       expect(
-        src.includes("serverReason("),
-        `this page catches an ApiError and never reads the server's reason, so a
-typed explanation the API took care to write is discarded and the hardcoded
+        src.includes("dashboardLoadReason("),
+        `this page catches an ApiError and never consults the server's reason, so
+a typed explanation the API took care to write is discarded and the hardcoded
 sentence is printed in its place. That is #244.`,
       ).toBe(true);
+
+      expect(
+        /reason = serverReason\(/.test(src),
+        `this page assigns its rendered copy straight from serverReason(). That
+renders the server's developer-facing sentence over this page's client copy in
+the ordinary not-released case, which is #318. Use dashboardLoadReason().`,
+      ).toBe(false);
 
       // And the reason must WIN. Capturing it and then rendering the hardcoded
       // string regardless would satisfy the check above while changing nothing

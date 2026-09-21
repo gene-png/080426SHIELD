@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { describeSaveError, serverReason } from "./describe-save-error";
+import {
+  dashboardLoadReason,
+  describeSaveError,
+  serverReason,
+  serverReasonCode,
+} from "./describe-save-error";
 
 /**
  * The half of #283 that CAN be run locally.
@@ -106,5 +111,128 @@ describe("describeSaveError", () => {
     // must name a control that exists and works TODAY.
     const text = describeSaveError({ payload: {} }, "CISA.ID.01");
     expect(text.toLowerCase()).not.toContain("try again");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #318, from the #295 review: the typed reason overrode the client copy in the
+// NORMAL case rather than the exceptional one.
+//
+// THE PAYLOADS BELOW ARE NOT INVENTED. They are what
+// `app/exceptions.py::_handle_http_exception` produces from the dict details
+// raised in `routes/clients.py` -- it rewraps `{"reason": ..., "message": ...}`
+// into `{error: {code, correlation_id, message, reason}}`. Authoring a fixture
+// from what the consumer expects is the shape `CLAUDE.md` forbids, so these
+// were copied off the producer.
+//
+// `grep -oE '"reason": "[a-z_]+"' apps/api/app/routes/clients.py | sort -u`
+// returns exactly two codes as of 2026-09-20, and both appear here.
+// ---------------------------------------------------------------------------
+
+function notReleased(): unknown {
+  return {
+    status: 404,
+    payload: {
+      error: {
+        code: 404,
+        correlation_id: "c-1",
+        reason: "dashboard_not_released",
+        message: "No released Tech Debt report for this service yet.",
+      },
+    },
+  };
+}
+
+function versionUnresolved(): unknown {
+  return {
+    status: 404,
+    payload: {
+      error: {
+        code: 404,
+        correlation_id: "c-2",
+        reason: "dashboard_version_unresolved",
+        message:
+          "This report cannot be shown yet: we cannot establish which " +
+          "assessment version it was built from. Please contact your " +
+          "consultant.",
+      },
+    },
+  };
+}
+
+describe("serverReasonCode", () => {
+  it("reads the enveloped reason", () => {
+    expect(serverReasonCode(notReleased())).toBe("dashboard_not_released");
+    expect(serverReasonCode(versionUnresolved())).toBe(
+      "dashboard_version_unresolved",
+    );
+  });
+
+  it("is null when the server sent no code, rather than guessing one", () => {
+    expect(serverReasonCode({ status: 404, payload: {} })).toBeNull();
+    expect(
+      serverReasonCode({ status: 500, payload: { detail: "boom" } }),
+    ).toBeNull();
+    expect(serverReasonCode(new Error("plain"))).toBeNull();
+  });
+
+  it("does not accept a blank code as a code", () => {
+    // Whitespace is not a machine token. Returning "  " would put the caller
+    // into the "the server said something specific" branch on nothing.
+    expect(
+      serverReasonCode({ status: 404, payload: { error: { reason: "   " } } }),
+    ).toBeNull();
+  });
+});
+
+describe("dashboardLoadReason", () => {
+  it("withholds the server sentence for an ordinary not-released 404", () => {
+    // THE DEFECT. `serverReason` returns a sentence here, and the page's
+    // `{reason ?? ourCopy}` therefore never reached `ourCopy` -- in the most
+    // common state of the page. Asserting BOTH halves, because a helper that
+    // returned null for everything would pass the first line alone.
+    expect(serverReason(notReleased())).toBe(
+      "No released Tech Debt report for this service yet.",
+    );
+    expect(dashboardLoadReason(notReleased())).toBeNull();
+  });
+
+  it("keeps the server sentence for an unresolved parent version", () => {
+    // THE OTHER HALF, and the reason #244 was filed: this refusal is NOT "no
+    // released report yet" -- there is one, and what is missing is the link
+    // saying which assessment it was built from. A page that prints its own
+    // not-released copy here tells the client something false.
+    const text = dashboardLoadReason(versionUnresolved());
+    expect(text).toContain("which assessment version");
+    expect(text).not.toContain("hasn't been released");
+  });
+
+  it("prefers the server for a code it has never seen", () => {
+    // The error direction, asserted rather than described. This is a deny-list
+    // of one: an unknown code means a situation the generic copy was not
+    // written for, so the specific message wins.
+    const unknown = {
+      status: 409,
+      payload: {
+        error: { reason: "dashboard_wedged_somehow", message: "Specifics." },
+      },
+    };
+    expect(dashboardLoadReason(unknown)).toBe("Specifics.");
+  });
+
+  it("prefers the server when there is a message but no code at all", () => {
+    // A refusal from outside these routes carries no `reason`. Falling back to
+    // the page's not-released copy would manufacture a diagnosis out of the
+    // ABSENCE of one -- the shape `CLAUDE.md` records as missing data
+    // defaulting to a positive claim.
+    const nocode = {
+      status: 502,
+      payload: { error: { message: "Upstream call failed." } },
+    };
+    expect(dashboardLoadReason(nocode)).toBe("Upstream call failed.");
+  });
+
+  it("returns null when the server sent nothing usable", () => {
+    expect(dashboardLoadReason({ status: 500, payload: {} })).toBeNull();
   });
 });
