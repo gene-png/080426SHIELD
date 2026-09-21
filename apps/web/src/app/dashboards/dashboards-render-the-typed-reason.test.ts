@@ -119,11 +119,23 @@ a typed explanation the API took care to write is discarded and the hardcoded
 sentence is printed in its place. That is #244.`,
       ).toBe(true);
 
+      // THE BARE TOKEN, not `reason = serverReason(`. The narrower form was
+      // the first version and it did not deliver what this comment claims: a
+      // page that called BOTH -- `const r = serverReason(err); ... reason = r;`
+      // -- satisfies the inclusion, misses that regex, and still renders the
+      // wrong sentence on whichever line runs. Extra whitespace or a prettier
+      // wrap on a long assignment miss it too.
+      //
+      // Safe as an exclusion because no dashboard page has a legitimate call:
+      // `serverReason(` -- with the paren -- appears in none of the five, and
+      // the explanatory comments in those files write `serverReason` without
+      // one, so they do not trip it. `dashboardLoadReason(` does not contain
+      // `serverReason(`, so the inclusion above is unaffected.
       expect(
-        /reason = serverReason\(/.test(src),
-        `this page assigns its rendered copy straight from serverReason(). That
-renders the server's developer-facing sentence over this page's client copy in
-the ordinary not-released case, which is #318. Use dashboardLoadReason().`,
+        src.includes("serverReason("),
+        `this page assigns its rendered copy from serverReason(). That renders
+the server's developer-facing sentence over this page's client copy in the
+ordinary not-released case, which is #318. Use dashboardLoadReason().`,
       ).toBe(false);
 
       // And the reason must WIN. Capturing it and then rendering the hardcoded
@@ -142,10 +154,25 @@ outcome as never reading it.`,
     // The inverse assertion, and the one that would catch a future edit that
     // "simplifies" the ternary back. A page whose fallback is not guarded by
     // `reason ??` is printing it whatever the server said.
-    const offenders = PAGES.filter((p) => {
-      const src = readFileSync(p, "utf8");
-      return src.includes("We couldn't load") && !/\{reason \?\?/.test(src);
-    });
+    // ASSERT THE COUNT THE FILTER SELECTED, BEFORE READING ITS RESULT. The
+    // population is built from a literal, so a page that rewords that sentence
+    // leaves it silently and `offenders` stays empty over a page nobody
+    // checked -- "I could not look" sharing an exit with "nothing to complain
+    // about", which the first `it` in this file prevents for the directory
+    // scan and did not do here.
+    const candidates = PAGES.filter((p) =>
+      /We couldn't load|couldn't load/.test(readFileSync(p, "utf8")),
+    );
+    expect(
+      candidates.length,
+      `only ${candidates.length} of ${PAGES.length} dashboard pages carry a
+generic load-failure sentence, so the assertion below examined fewer pages than
+exist. A page that reworded it left this check in silence.`,
+    ).toBe(PAGES.length);
+
+    const offenders = candidates.filter(
+      (p) => !/\{reason \?\?/.test(readFileSync(p, "utf8")),
+    );
     expect(offenders).toEqual([]);
   });
 });

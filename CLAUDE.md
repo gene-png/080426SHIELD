@@ -633,11 +633,20 @@ a real exit code and a real date, and was the minority outcome (D-071).
 
   The grep was honest and its output was real. **It proved that the STRING
   exists. The claim needed was that the typed reason is IGNORED**, which is a
-  different proposition and was false — all FIVE pages (not four; `risk` was
-  missed as well) do `reason = serverReason(err)` and render
-  `{reason ?? fallback}`, so a typed reason always wins and the hardcoded
-  sentence is the 404 fallback. #295 had shipped it, and the same document's
-  own merged-PR table said so two hundred lines further down.
+  different proposition and was false — **as of 2026-09-19** all FIVE pages
+  (not four; `risk` was missed as well) did `reason = serverReason(err)` and
+  rendered `{reason ?? fallback}`, so a typed reason always won and the
+  hardcoded sentence was the 404 fallback. #295 had shipped it, and the same
+  document's own merged-PR table said so two hundred lines further down.
+
+  **Date-qualified rather than rewritten, because the lesson is about the
+  GREP and the code has since moved under it.** #318 changed both halves: the
+  pages now call `dashboardLoadReason`, and a typed reason deliberately no
+  longer always wins — the ordinary not-released 404 carries a message, so
+  preferring it made the client copy unreachable in the page's most common
+  state. Restating the new behaviour here would go stale in turn, which is the
+  correction-paragraph-outlives-the-number defect recorded elsewhere in this
+  section; what the example needs is the tense it was true in.
 
   Someone acting on that sentence would have opened a PR to rebuild what
   already ships. It was caught by an adversarial review that had been pointed

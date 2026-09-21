@@ -976,6 +976,26 @@ def attack_dashboard(
         # Typed 404 (D-016): the dashboard exists only once a deliverable is
         # released (or, for an admin, finalized). 404 (not 403) keeps parity
         # with the tenant-not-found path.
+        #
+        # THE STRING `dashboard_not_released` IS DUPLICATED IN THE WEB BUNDLE,
+        # in `apps/web/src/lib/describe-save-error.ts` as the sole member of
+        # `GENERIC_COPY_IS_BETTER`. There is no build step between these two
+        # trees, so nothing derives one from the other.
+        #
+        # The pointer lives HERE, at the side that closes the window, rather
+        # than only there -- whoever renames this code is the person who would
+        # otherwise have no way to know the copy exists. Same placement, and
+        # the same reason, as `SCHEMA_REASON_PREFIX` in `app/exceptions.py`.
+        #
+        # THE WIDTH OF THE GAP, stated so it is not rediscovered: rename this
+        # code without editing that Set and the Set stops matching. The web
+        # layer then takes its unknown-code branch, prefers the server's
+        # sentence, and renders "No released X report for this service yet."
+        # over the client copy again -- which is #318, in the page's most
+        # common state, with nothing red. The five `test_*_dashboard.py`
+        # suites assert this literal over HTTP and would go red, but a rename
+        # refactor edits those in the same pass and nothing in that pass
+        # mentions a web-layer Set.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={

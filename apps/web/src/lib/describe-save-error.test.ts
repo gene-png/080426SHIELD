@@ -221,10 +221,27 @@ describe("dashboardLoadReason", () => {
   });
 
   it("prefers the server when there is a message but no code at all", () => {
-    // A refusal from outside these routes carries no `reason`. Falling back to
-    // the page's not-released copy would manufacture a diagnosis out of the
-    // ABSENCE of one -- the shape `CLAUDE.md` records as missing data
-    // defaulting to a positive claim.
+    // A refusal carrying no `reason` at all. Falling back to the page's
+    // not-released copy would manufacture a diagnosis out of the ABSENCE of
+    // one -- the shape `CLAUDE.md` records as missing data defaulting to a
+    // positive claim.
+    //
+    // THIS CLASS IS RAISED INSIDE THE DASHBOARD ROUTES THEMSELVES, and an
+    // earlier version of this comment said it came from "outside these
+    // routes" -- false, and positioned exactly where the next person would
+    // check, so it would have stopped them looking in the right file.
+    // `routes/clients.py` raises `detail="Client not found."` at the top of
+    // all five dashboard routes; `dependencies.py::current_client` and
+    // `tenant.py` raise their own string-detail 404s on the same request.
+    // `_handle_http_exception` puts a string detail straight into
+    // `error["message"]` with no `reason` key.
+    //
+    // So this branch renders the raw string: an admin whose active-client
+    // cookie names a deleted client reads "No client with that id." under
+    // "Dashboard not available yet". PRE-EXISTING -- `serverReason` did the
+    // same before #318 -- and filed rather than fixed here. Preferring the
+    // server is still right for these: the page's not-released copy would be
+    // FALSE over a wrong-tenant refusal.
     const nocode = {
       status: 502,
       payload: { error: { message: "Upstream call failed." } },
