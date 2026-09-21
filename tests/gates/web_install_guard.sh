@@ -200,57 +200,119 @@ echo "ok   [both scripts are LF, so the container's sh can read them]"
 # running a real install, and a gate that installs the world is a gate nobody
 # runs.
 # ---------------------------------------------------------------------------
-DEV_WEB="$(cd "$(dirname "$0")/../.." && pwd)/scripts/dev-web.sh"
-if [ ! -f "$DEV_WEB" ]; then
-  echo "FAIL: $DEV_WEB is missing; this check cannot look, which is not a pass."
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# THE ENTRY POINTS ARE NAMED; THE BYPASS SWEEP IS DERIVED. Both, because
+# neither is enough on its own.
+#
+# This section asserted `dev-web.sh` ALONE while the branch adding it also
+# converted `.devcontainer/post-create.sh`, which `devcontainer.json` runs as
+# `postCreateCommand` -- Quick-start Option A's FIRST install, reached before
+# `dev-web.sh` exists in the flow. Restore that file's
+# `pnpm install --prefer-offline || echo "...non-fatal"` and every gate in this
+# repo still printed its certificate, under a change whose own title says BOTH
+# documented paths. A gate covering half of a two-path claim is the
+# false-coverage shape this file already shipped once.
+#
+# `CLAUDE.md`: fix from the SHAPE, not from the list you were handed. So the
+# list below is the two paths a human is DOCUMENTED to run, which get the
+# strong positive assertion that they CALL the guard, and the sweep after it is
+# the derived half: no shell script in this repo may carry an install of its
+# own, whether or not anyone thought to name it here.
+entry_point_delegates() { # <path-relative-to-repo> <label>
+  rel="$1"; label="$2"
+  f="$REPO/$rel"
+  if [ ! -f "$f" ]; then
+    echo "FAIL: $rel is missing; this check cannot look, which is not a pass."
+    exit 2
+  fi
+
+  # COMMENT LINES STRIPPED FIRST, and that is not tidiness.
+  #
+  # The first version of this check was `grep -q 'web-install-if-stale.sh'` over
+  # the whole file. `dev-web.sh` NAMES that script five times in its own header,
+  # explaining why it calls it -- so deleting the actual call left the check
+  # green. MEASURED: removing the invocation and running this gate returned
+  # `ok   [dev-web.sh calls the guard...]`, exit 0.
+  #
+  # An assertion satisfied by a COMMENT is the #308 shape (a 204 needle matched
+  # by the sentence three lines above it) and the reason `check_test_integrity`
+  # exists. It was caught here by red-on-revert and by nothing else: the check
+  # was correct-looking, correctly motivated, and could not fail.
+  code_only="$(mktemp)"
+  sed 's/[[:space:]]*#.*$//' "$f" > "$code_only"
+
+  if ! grep -q 'web-install-if-stale' "$code_only"; then
+    rm -f "$code_only"
+    echo "FAIL: $rel does not name web-install-if-stale.sh in CODE."
+    echo "      It is documented as a Quick-start path, so an install it performs"
+    echo "      itself bypasses the guard that decides whether a patch is applied."
+    echo "      (Mentioning it in a comment is not calling it.)"
+    exit 1
+  fi
+
+  # Naming it is not running it. Require an actual invocation -- `sh <something>`
+  # where the something is the guard or the variable holding it.
+  if ! grep -qE '(^|[[:space:]])(sh|bash)[[:space:]]+.*(\$GUARD|\$\{GUARD\}|web-install-if-stale)' "$code_only"; then
+    rm -f "$code_only"
+    echo "FAIL: $rel references the guard but never executes it."
+    echo "      Assigning its path and not running it installs nothing, and the"
+    echo "      dev server then starts against whatever is in the volume."
+    exit 1
+  fi
+  rm -f "$code_only"
+  echo "ok   [$label calls the guard]"
+}
+
+entry_point_delegates scripts/dev-web.sh "dev-web.sh"
+# Quick-start Option A's postCreateCommand. Its install ran BEFORE dev-web.sh
+# was ever reached, so "both documented paths go through the guard" was false
+# while this file was unchecked.
+entry_point_delegates .devcontainer/post-create.sh "post-create.sh"
+
+# THE DERIVED HALF, stated as what must NOT exist anywhere. A script that calls
+# the guard AND keeps its own install is not fixed -- whichever runs last wins,
+# and the unfrozen one is the one that drifts. Swept over every tracked shell
+# script rather than over the two named above, because the next bypass will be
+# written by someone who never read this file.
+#
+# TWO EXEMPTIONS, both stated so an unexplained hit is a real finding:
+#   * `scripts/web-install-if-stale.sh` IS the guard, and its install is the
+#     one legitimate one in the repo.
+#   * `tests/gates/` holds the gates themselves, which quote `pnpm install` as
+#     a pattern to search for and stub the binary. A gate installs nothing.
+#
+# QUOTED STRINGS ARE STRIPPED AS WELL AS COMMENTS, and that is not tidiness
+# either. Stripping comments alone reported `scripts/prettier-hook.sh` and
+# `scripts/verify-in-worktree.sh` as bypasses over two `echo` lines -- one of
+# which says `pnpm installs`, a verb. That is this file's own recorded defect
+# facing the other way: a check on CODE satisfied by PROSE. An over-reporting
+# gate is not the safe direction, because the cheapest route to green is to
+# exempt the file.
+bypass_hits="$(
+  cd "$REPO" || exit 2
+  git ls-files '*.sh'     | grep -v '^scripts/web-install-if-stale\.sh$'     | grep -v '^tests/gates/'     | while IFS= read -r f; do
+        if sed -e "s/'[^']*'//g" -e 's/\"[^\"]*\"//g' -e 's/[[:space:]]*#.*$//' "$f"              | grep -qE '(^|[[:space:]]|;|&&)[[:space:]]*pnpm install([[:space:]]|$)'; then
+          echo "$f"
+        fi
+      done
+)"
+# `git ls-files` returning NOTHING is not a clean sweep -- it is a sweep that
+# could not look, which D-051 says must never share a branch with a pass.
+tracked_sh="$(cd "$REPO" && git ls-files '*.sh' | wc -l)"
+if [ "$tracked_sh" -eq 0 ]; then
+  echo "FAIL: git ls-files '*.sh' found no shell scripts; this sweep could not look."
   exit 2
 fi
-
-# COMMENT LINES STRIPPED FIRST, and that is not tidiness.
-#
-# The first version of this check was `grep -q 'web-install-if-stale.sh'` over
-# the whole file. `dev-web.sh` NAMES that script five times in its own header,
-# explaining why it calls it -- so deleting the actual call left the check
-# green. MEASURED: removing the invocation and running this gate returned
-# `ok   [dev-web.sh calls the guard...]`, exit 0.
-#
-# An assertion satisfied by a COMMENT is the #308 shape (a 204 needle matched
-# by the sentence three lines above it) and the reason `check_test_integrity`
-# exists. It was caught here by red-on-revert and by nothing else: the check
-# was correct-looking, correctly motivated, and could not fail.
-code_only="$(mktemp)"
-sed 's/[[:space:]]*#.*$//' "$DEV_WEB" > "$code_only"
-
-if ! grep -q 'web-install-if-stale' "$code_only"; then
-  rm -f "$code_only"
-  echo "FAIL: scripts/dev-web.sh does not name web-install-if-stale.sh in CODE."
-  echo "      It is documented as a Quick-start path, so an install it performs"
-  echo "      itself bypasses the guard that decides whether a patch is applied."
-  echo "      (Mentioning it in a comment is not calling it.)"
+if [ -n "$bypass_hits" ]; then
+  echo "FAIL: these shell scripts run an install of their own, bypassing the guard:"
+  echo "$bypass_hits" | sed 's/^/        /'
+  echo "      The guard installs with --frozen-lockfile and keys on the lockfile"
+  echo "      hash; a second, unguarded install beside it re-opens #226 whichever"
+  echo "      order they run in. Call scripts/web-install-if-stale.sh instead."
   exit 1
 fi
-
-# Naming it is not running it. Require an actual invocation -- `sh <something>`
-# where the something is the guard or the variable holding it.
-if ! grep -qE '(^|[[:space:]])(sh|bash)[[:space:]]+.*(\$GUARD|\$\{GUARD\}|web-install-if-stale)' "$code_only"; then
-  rm -f "$code_only"
-  echo "FAIL: scripts/dev-web.sh references the guard but never executes it."
-  echo "      Assigning its path and not running it installs nothing, and the"
-  echo "      dev server then starts against whatever is in the volume."
-  exit 1
-fi
-rm -f "$code_only"
-
-# The second copy, stated as what must NOT be there. A script that calls the
-# guard AND keeps its own install is not fixed -- whichever runs last wins, and
-# the unfrozen one is the one that drifts.
-if sed 's/[[:space:]]*#.*$//' "$DEV_WEB" | grep -qE '^[[:space:]]*pnpm install'; then
-  echo "FAIL: scripts/dev-web.sh still runs its own \`pnpm install\`."
-  echo "      The guard installs with --frozen-lockfile; a second, unguarded"
-  echo "      install beside it re-opens #226 whichever order they run in."
-  exit 1
-fi
-echo "ok   [dev-web.sh calls the guard and carries no install of its own]"
+echo "ok   [no shell script outside the guard carries an install of its own]"
 
 # ---------------------------------------------------------------------------
 # THE INSTALL HALF. Every case above passes `--check`, which returns at
