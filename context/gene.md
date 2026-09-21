@@ -1,5 +1,186 @@
 # Gene's Context: 080426SHIELD
-## PICK UP HERE — 2026-09-19
+
+## PICK UP HERE — 2026-09-20
+
+**Maintained by the agent since D-063; Gene owns it by review.** Every claim
+about state outside the working tree carries the command that produced it.
+
+**Assume the reader has none of the previous session's context.**
+
+### The one thing that needs you
+
+**The PRs opened this session are listed below, and none can merge under the
+standing rule, for a reason that has nothing to do with their contents.** Each carries
+`Findings: dispatched, UNDELIVERED` in its audit block, which is the honest
+word, and the rule says no PR merges with a dispatched-and-undelivered review.
+
+The reviews are probably fine and probably coming. `idle` is not a delivery
+signal and the recorded lag is about an hour — the previous session made
+exactly this mistake, called the channel broken, and then every report arrived
+at once. **I repeated it tonight**, wrote on #318 that the retrieval workaround
+had stopped working, and withdrew that in a second comment once I read this
+file. What survives is the durable half: an agent cannot tell a slow reviewer
+from a dead one, and that is the argument for W8b (the reviewer as a CI job)
+rather than for another retry protocol.
+
+**What I need from you is the decision #318 already asks for**: whether a PR
+may merge while its dispatched review is outstanding. It is not a decision an
+agent should take, because it is the rule that stops an agent merging its own
+unreviewed work.
+
+### Tonight's PRs, in the order I would read them
+
+| PR | What it is | CI | Merge state |
+| --- | --- | --- | --- |
+| **#362** | **Read first.** Live client-facing regression on all five dashboards | 7/7 green | MERGEABLE |
+| **#366** | An internal proxy string ("ZT proxy 409") reaching clients, nine sites | running | MERGEABLE |
+| #364 | `apiFetch` — the choke point six proxies share — had no test | running | MERGEABLE |
+| #363 | A test that asked a question with no answer | running | MERGEABLE |
+| #360 | Item 12 is done, and the claim that sequenced it was backwards | 7/7 green | MERGEABLE |
+| #359 | Why the typed-reason guard stops at `dashboards/` | 7/7 green | MERGEABLE |
+
+Still open from before tonight: **#343, #349, #351, #353, #358**.
+
+### #362 is the one with a client consequence
+
+On all five client dashboards, since 2026-09-11, a client reading a
+not-yet-released report saw
+
+    Dashboard not available yet
+    No released Tech Debt report for this service yet.
+
+instead of the copy written for them:
+
+    Dashboard not available yet
+    This Technical Debt report hasn't been released to your organization yet.
+    It will appear here once your SHIELD analyst releases it.
+
+A correct fix caused it. #244 was right that keying error copy on an HTTP
+status throws away a typed explanation, and the fix rendered
+`{reason ?? ourCopy}` — but `serverReason` returns the server's sentence
+whenever one ARRIVED, and the ordinary not-released 404 always carries one. So
+`ourCopy` became unreachable in the page's most common state. **The typed
+reason overrode the normal case instead of the exceptional one.**
+
+It is a PRESENCE test where a VALUE test was needed — #317's shape exactly,
+and the first time that shape was introduced BY a fix for a related defect.
+
+**Corroborated rather than reconstructed**:
+`e2e/artifacts/engagement-2026-09-09_*/step-log.json` records the CSF dashboard
+rendering the client copy. Those runs are 2026-09-09; #295 merged 2026-09-11.
+
+**Why nothing caught it**, and this is the reusable part:
+
+    grep -rn "Dashboard not available yet" e2e/smoke/*.spec.ts   -> 4
+    grep -rn "hasn't been released"        e2e/smoke/*.spec.ts   -> 0
+
+Four assertions cover that state and all four assert the HEADING, which renders
+identically in every branch. Filed as **#361** with the shape rather than the
+four line numbers: an assertion on an element that renders in every state of a
+page is not an assertion about that page's state.
+
+### What else was done, and the two things I got wrong
+
+**#244 is verified and stays open.** Every claim in it was re-measured on `main`
+and posted to the issue: all three instances are closed (#316, #295, and the
+false all-clear), ownership is decided in `CLAUDE.md`, and the convention has a
+mechanism rather than a convention. It closes when **#358** lands, because the
+disclosure consumer gate is the structural half.
+
+While sweeping for live instances I grepped `err.status ===`, found
+`results/page.tsx`, and wrote it up as one. Then I read it: that 404 is an
+**existence probe** — it sets `hasRiskDashboard`, re-throws everything else and
+renders no copy. Keying on a status to decide WHETHER A RESOURCE EXISTS is
+correct; keying on one to decide WHAT SENTENCE TO SHOW is #244. A grep cannot
+tell them apart. #359 writes that distinction into the guard so the next person
+does not repeat the search or "fix" the probe.
+
+**#360 — a number that was right and licensed the opposite decision.** The plan
+said fixing #168 "reformats 46 files", and used it to make item 12 "the LEAST
+independent item here — land it between items, never alongside one". Measured:
+
+    npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"  -> clean
+    npx -y prettier@3.1.0 --list-different (same glob) | wc -l             -> 49
+
+The tree is a fixpoint of 3.9.6 because CI enforces it. Those files are what
+the OLD hook rewrote on every commit, under a step `SECURITY.md` makes
+mandatory. The fix REMOVED a reformat; item 12 was the most independent item on
+the board. The count was real — only its owner was wrong. Six sites, found by
+sweeping the subject rather than the three the review named, and
+`.pre-commit-config.yaml` already carried the correct framing, so the repo
+asserted a claim and its negation at once.
+
+**#363 — a finding whose diagnosis and remedy were both wrong.** A test posted
+to `/zt/self-assessment/submit`, a URL that does not exist (measured: 404, no
+`reason` key), so its only assertion never ran. My own annotation of the limit
+was wrong about why, and the proposed remedy would not have fired either —
+because a hand-written D-016 refusal CAN be a 422, so the status cannot
+separate "schema rejection" from "hand-written refusal" at all. Replaced with a
+reachable case plus a derived sweep over every hand-written reason code.
+
+**Two mistakes of mine, both caught before they cost anything:**
+
+1. **I closed #244 by writing that I was not closing it.** "This PR does **not**
+   close #244" matches `close #N`; the negation is invisible to the parser.
+   Then the paragraph correcting it did it again, by QUOTING the sentence.
+   Caught by checking `closingIssuesReferences` rather than the approval
+   marker, before CI ran. Both recorded in #359's body rather than overwritten.
+2. **I invalidated a running test suite by switching branches under it.** The
+   api container bind-mounts `./apps/api`, so the suite's own source changed
+   mid-run. I had printed `tree under test: ... clean=no` before launching —
+   the remedy the rule prescribes — and then moved the tree four commands
+   later. Discarded rather than read, recorded on #363, and CI is the authority
+   for that PR's full suite.
+
+### Issues filed tonight, all labelled at creation
+
+- **#361** (tier-3) — e2e asserts the dashboard failure heading, never its body.
+- **#365** (tier-3) — ten ADMIN surfaces render "CSF proxy 409" as error copy.
+  The client-facing half is #366; the fix is a one-line change per site plus
+  adding one directory to the guard's `ROOTS`.
+
+### Where #318 stands
+
+#318 carries findings from six reviews that landed after their PRs merged.
+Addressed tonight: the #295 client-copy regression (#362), its silent-exemption
+guard (#362), the #295 internal-string twins (#366), the #307 unfailable test
+(#363), the #308 `apiFetch` gap (#364), and both #311 prose findings (#360).
+
+**Several were already fixed by #339** and I verified that rather than assuming:
+the shell gates are wired in CI, `check_decision_numbers.py` and
+`check_mount_matches_database.py` carry the marker, and
+`test_check_decision_numbers.py` exists.
+
+**Two findings I declined, with reasons on the PRs:** the #308 claim that "no
+route emits a 204 today" is false — the comment is explicitly bounded to the
+six proxied routers, and admin/auth are not among them; and I checked the two
+proxies that do reach a 204 endpoint, neither is broken.
+
+**Still open in #318**, roughly in value order: the #296 mount check printing
+agreement over a two-worktree 0047 collision; the D-number gate reporting under
+the check name "No accidental issue closes" (a guard naming the check instead of
+the cause — the fix needs a new job, which changes the required-check count in
+the merge rule and needs a branch-protection change only you can make); #309's
+`dev-web.sh` being the documented Quick-start path while the new guard runs on
+neither documented path; and the #311 hook assertions that all expect 3.9.6,
+which is also the real pin, so a hardcoded version passes three of five.
+
+### Process notes worth keeping
+
+- **Every review this session was dispatched against
+  `git worktree add --detach ../review-<sha> <sha>`**, with the tree named in
+  the audit block and a stop-and-say-so instruction. The "ran, but not against
+  this change" hazard is now impossible rather than merely detectable.
+- **`black --check` reported a file would be reformatted and the shell reported
+  exit 0** — `tail`'s status, not black's. Re-run unpiped before believing a
+  lint result. A live instance of the hazard `CLAUDE.md` opens with.
+- **A mutation guard earned its keep on first use.** `assert s.count(old) == 1`
+  refused a red-on-revert mutation because the string appeared TWICE; a partial
+  mutation would have produced a misleading half-red.
+
+---
+
+## Earlier — 2026-09-19
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every claim
 about state outside the working tree carries the command that produced it.
