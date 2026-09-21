@@ -187,6 +187,101 @@ never the problem. Treating everything you found as blocking was.
    missing, and it is the one file it will never think to check. A disagreement
    is a finding about the run and belongs in your report.
 
+   **"RE-READ `CLAUDE.md`" CANNOT BE DONE BY READING IT, AND PRETENDING
+   OTHERWISE IS THE WORST OF THE THREE OPTIONS.** It is ~2900 lines against a
+   read cap near 930. A reviewer who opens it gets the first third and then
+   relies on injected context for the rest — which is the stale copy this step
+   exists to distrust, now trusted for two thirds of the file and believed to
+   have been checked.
+
+   **INDEX IT INSTEAD. A search works at any size; a read does not.** Search
+   rather than read, using whichever search tool your `tools:` line grants --
+   do NOT infer your capability set from this sentence.
+
+   That is not pedantry. An earlier draft said "your tools are Read/Grep/Glob",
+   which was true when written and is a NARROWER-THAN-ACTUAL enumeration
+   sitting in the step you execute FIRST and are told to trust over injected
+   context. #384 adds `SendMessage` to that line in the same file. A reviewer
+   whose injected prompt also predates it would read this sentence as
+   confirming it has no delivery channel, emit plain text, and deliver
+   nothing -- the measured non-delivery failure #384 exists to end, caused by
+   the step meant to catch stale context.
+
+   Read your own frontmatter for the list. Concretely, the search is
+
+       pattern:  ^(#{2,3} |[0-9]+\. \*\*|- \*\*|\*\*)
+       path:     <the ABSOLUTE worktree path you were handed>/CLAUDE.md
+       output:   content, with line numbers
+
+   **THE PATH IS THE ABSOLUTE ONE FROM YOUR DISPATCH. A relative `CLAUDE.md`
+   here re-opens the exact hazard this step exists to close.** Your working
+   directory is the PRIMARY tree, not the detached worktree you were sent to,
+   so a relative path silently resolves there: you index `main`'s file,
+   range-read `main`'s line numbers, and report on prose the branch does not
+   contain — under a `Scope:` line that is TRUE, because it names where you
+   were SENT rather than what you READ.
+
+   Measured 2026-09-21, and it is why this paragraph exists: a reviewer
+   dispatched against `../review-1441f37` searched `path:
+   .claude/agents/adversarial-reviewer.md` and got **zero matches** for a
+   string that is in that worktree's copy of this very file. The search had
+   gone to the primary tree. It reported the miss rather than concluding from
+   it, which is the only reason it cost nothing.
+
+   **The absolute path's loudness is in its FAILURE, not in its output — both
+   measured on 2026-09-21, and assuming otherwise is how this gets trusted for
+   the wrong reason.** A successful search prints a BARE label (`CLAUDE.md:120`)
+   whichever path you passed, so **the result never discloses which tree it
+   read**, and on a day when both trees agree the wrong answer and the right one
+   are byte-identical. What an absolute path buys you is that a wrong one is an
+   ERROR naming your working directory, where a relative one cannot fail at all.
+   So the disclosure has to come from you: name the absolute path you read, in
+   your report.
+
+   It returns each rule's lead line with its line number — the section
+   headings, the six numbered core principles, the `**`-led paragraphs and
+   every top-level `- **` bullet — and it is DERIVED from the file's own
+   structure rather than a list someone maintains. Then read the blocks that
+   bear on your diff, by line number, with a RANGED read (`offset` and
+   `limit`). If it ever stops fitting in one result, narrow to `^- \*\*` and
+   ranged-read the head separately rather than dropping the index.
+
+   **`^- \*\*` ALONE IS NOT ENOUGH, and the first draft of this step used it.**
+   Its first hit is line 125. Above that sit the task-routing table that
+   decides which rows apply to you, `VERIFY BY RUNNING` — which the file itself
+   calls the one rule outranking the rest — and all six core principles, none
+   of them written as bullets. A bullets-only pattern indexes the exceptions
+   and misses what they are exceptions to.
+
+   **You will have an INDEX, not a READ, and the gap is real rather than
+   formal.** You will know which rules exist and where. You will not have read
+   their bodies, and a rule's body is where its SCOPE lives — the defect this
+   file records most often is a rule whose lead sentence is true and whose
+   scope is narrower than the reader assumes. Ranged-read anything you are
+   about to apply or cite. Citing an index entry as though you had read the
+   rule is this repo's certificate-over-the-wrong-proposition shape, produced
+   by the tool built to prevent it.
+
+   **AND A RULE NAMED IN YOUR DISPATCH IS A CLAIM, NOT A PREMISE. Check it
+   against the index before applying it, and report it if it is absent.**
+   Measured 2026-09-20: a dispatcher named five "recently added" rules inline,
+   as the interim for exactly this staleness problem. One of them was not in
+   the file at all — it had been asked for and the PR meant to carry it merged
+   without it. **Four reviewers independently reported it missing, and all four
+   reports were dismissed as detached-worktree staleness**, which is a real
+   mechanism, documented here, and the first explanation that fits.
+
+   That is the interim failing in the direction it was built to prevent: the
+   inline naming was supposed to compensate for a stale file, and instead it
+   injected a rule that existed nowhere. So an absence you find is a finding
+   about the RUN — worth as much as anything you find in the diff — and
+   "presumably it postdates this worktree" is a hypothesis to test with one
+   grep, never a conclusion.
+
+   Before reporting an absence, confirm your search could have found it. A
+   case-sensitive pattern against an UPPERCASE heading reports a present rule
+   missing, and that near-miss happened in the same minute as the check above.
+
    **If either file cannot be read at all, STOP and report that as your first
    and BLOCKING finding before reviewing anything.** Do not proceed on injected
    context alone. Staleness and absence are different failures and this step
