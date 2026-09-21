@@ -43,6 +43,52 @@ import { describe, expect, it } from "vitest";
  * day it is added rather than the day someone remembers this file. That is the
  * point: #244 is about the boundary, and a new page written to the old pattern
  * is the boundary failing again.
+ *
+ * ## WHY THE SCOPE IS `dashboards/` AND NOT `app/**`
+ *
+ * The ownership rule in `CLAUDE.md` quantifies over `apps/web/src/app/**`, so
+ * a reader will reasonably ask why this guard stops at one directory. The
+ * answer is measured, and it is written here so the next person does not
+ * repeat the search -- and so that they do not repeat the MISREADING, which
+ * is the part that cost time.
+ *
+ * ### The predicate is "renders error COPY", not "reads `err.status`"
+ *
+ * Keying on a status to decide WHETHER A RESOURCE EXISTS is correct: there is
+ * no sentence to prefer a typed reason for. Keying on one to decide WHAT
+ * SENTENCE TO SHOW is #244, because the server sent a sentence and the page
+ * threw it away. A grep for the status check cannot tell those apart, and
+ * reading one as the other is how `results/page.tsx` was briefly written up
+ * as a live instance of this issue. It is not one.
+ *
+ * ### What the broad grep returns, and why it is not a contradiction
+ *
+ *     grep -rl ApiError apps/web/src/app --include=*.ts --include=*.tsx  *       | grep -v /dashboards/        # -> 36 files, 2026-09-20
+ *
+ * All but two of those are `app/api/proxy/**` route handlers -- the two are
+ * the pages below. They are not a
+ * counterexample and they are not an unswept remainder -- they are the layer
+ * that makes this guard possible. Each catches `ApiError` to FORWARD
+ * `err.payload` at `err.status`, so the typed `{reason, message}` survives the
+ * hop to the browser. A proxy that synthesised copy here would be the defect;
+ * none does. (`_proxy.ts`'s non-`ApiError` 502 is the transport-failed case,
+ * where there is no upstream payload to forward.)
+ *
+ * ### The two PAGES outside `dashboards/`, both checked by reading them
+ *
+ *     grep -rl ApiError apps/web/src/app --include=page.tsx
+ *     # -> the five dashboards, plus the two below, 2026-09-20
+ *
+ * - `account/page.tsx` keys on no status at all.
+ * - `results/page.tsx` does
+ *   `if (!(err instanceof ApiError && err.status === 404)) throw err;` around
+ *   a probe for whether a Risk Register exists. It sets `hasRiskDashboard`,
+ *   re-throws everything else, and renders no error copy.
+ *
+ * So the pages that render error copy are exactly the five dashboards, which
+ * is why the directory is the right scope. If a page outside it starts
+ * rendering error copy, widening this guard is the fix -- not a second guard,
+ * which would be two places for the convention to drift.
  */
 
 const DASHBOARDS = join(process.cwd(), "src/app/dashboards");
