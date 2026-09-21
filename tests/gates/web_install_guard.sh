@@ -252,6 +252,135 @@ if sed 's/[[:space:]]*#.*$//' "$DEV_WEB" | grep -qE '^[[:space:]]*pnpm install';
 fi
 echo "ok   [dev-web.sh calls the guard and carries no install of its own]"
 
+# ---------------------------------------------------------------------------
+# THE INSTALL HALF. Every case above passes `--check`, which returns at
+#
+#     [ "$CHECK_ONLY" -eq 1 ] && exit "$verdict"
+#
+# BEFORE `pnpm install --frozen-lockfile` and before the stamp write. So this
+# file certified "all states exercised" while covering `decide()` alone, and
+# the half that decides whether a security patch is actually APPLIED was
+# asserted by nothing: delete `--frozen-lockfile`, move the stamp above the
+# install, or drop the refuse->exit-1 remapping, and every case above stayed
+# green.
+#
+# `pnpm` is STUBBED rather than run. A gate that installs the world is a gate
+# nobody runs, and the properties worth pinning are about what the script does
+# with the installer, not about npm. The stub records its argv and can be made
+# to fail on demand, which is what makes the ordering property testable at all.
+# ---------------------------------------------------------------------------
+STUB_DIR="$(mktemp -d)"
+trap 'rm -rf "$ROOT" "$STUB_DIR"' EXIT
+# APPENDS, one line per invocation, and that is not a detail.
+#
+# It overwrote (`>`), so only the LAST call was visible. MEASURED with
+# red-on-revert: adding a bare `pnpm install` BEFORE the frozen one left this
+# gate GREEN -- the second call overwrote the first, the recorded argv still
+# read `install --frozen-lockfile`, and a script running an unguarded install
+# alongside the guarded one passed a check written to forbid exactly that.
+# A one-character bug in a gate asserting that another script has no
+# one-character bug.
+cat > "$STUB_DIR/pnpm" <<'STUB'
+#!/bin/sh
+echo "$@" >> "$PNPM_ARGV"
+[ -n "${PNPM_MUST_FAIL:-}" ] && exit 1
+exit 0
+STUB
+chmod +x "$STUB_DIR/pnpm"
+PNPM_ARGV="$STUB_DIR/argv"
+export PNPM_ARGV
+
+# `$1` expected exit, `$2` the label. Runs WITHOUT `--check`, so the install
+# path is reached.
+install_run() {
+  want_code="$1"; label="$2"
+  set +e
+  install_out="$(PATH="$STUB_DIR:$PATH" SHIELD_WEB_APP_DIR="$ROOT" sh "$SCRIPT" 2>&1)"
+  install_code=$?
+  set -e
+  if [ "$install_code" -ne "$want_code" ]; then
+    echo "FAIL [$label]: exit $install_code, wanted $want_code"
+    echo "$install_out"
+    exit 1
+  fi
+}
+
+# --- The installer is invoked with --frozen-lockfile. -----------------------
+# This is the whole reason the guard exists: CI installs what the lockfile
+# pins, and a range-resolved install in the container means the two can differ
+# with nothing saying so.
+fresh
+rm -f "$PNPM_ARGV"
+install_run 0 "stale volume -> install"
+if [ ! -f "$PNPM_ARGV" ]; then
+  echo "FAIL [install] the guard reported an install and never ran the installer."
+  exit 1
+fi
+# EVERY invocation, not "an" invocation. A check reading only one of them is
+# satisfied by a guarded install standing beside an unguarded one, which is the
+# state `dev-web.sh` was actually in.
+unfrozen="$(grep -c -v -- '--frozen-lockfile' "$PNPM_ARGV" || true)"
+if [ "$unfrozen" -ne 0 ]; then
+  echo "FAIL [install] $unfrozen pnpm invocation(s) ran WITHOUT --frozen-lockfile:"
+  grep -v -- '--frozen-lockfile' "$PNPM_ARGV"
+  echo "      An unfrozen install resolves package.json RANGES while CI installs"
+  echo "      what the lockfile pins, which is the drift this script exists to"
+  echo "      end. One beside a frozen one is not better -- whichever runs last"
+  echo "      decides what is on disk."
+  exit 1
+fi
+if [ "$(wc -l < "$PNPM_ARGV")" -ne 1 ]; then
+  echo "FAIL [install] expected exactly one pnpm invocation, got $(wc -l < "$PNPM_ARGV"):"
+  cat "$PNPM_ARGV"
+  exit 1
+fi
+echo "ok   [exactly one pnpm invocation, and it uses --frozen-lockfile]"
+
+# --- The stamp is written AFTER the install, and only if it SUCCEEDED. ------
+# `CLAUDE.md`: a success record must be written where the success is. A stamp
+# written above the install claims currency for a run that may not have
+# finished -- and the next boot reads that stamp, sees a match, and skips.
+# A failed install that leaves a stamp is therefore not a failed install; it is
+# a permanently wrong container.
+fresh
+rm -f "$PNPM_ARGV"
+PNPM_MUST_FAIL=1 install_run 1 "a failing install is fatal"
+if [ -f "$ROOT/node_modules/.shield-installed-lock" ]; then
+  echo "FAIL [stamp] the install FAILED and a stamp was written anyway."
+  echo "      The next boot will read it, match, and skip -- so the failure"
+  echo "      becomes permanent and silent."
+  exit 1
+fi
+echo "ok   [a failed install exits non-zero and leaves NO stamp]"
+
+# --- And a successful one stamps the lockfile's own hash. -------------------
+fresh
+install_run 0 "successful install stamps"
+if [ ! -f "$ROOT/node_modules/.shield-installed-lock" ]; then
+  echo "FAIL [stamp] the install succeeded and wrote no stamp, so every boot reinstalls."
+  exit 1
+fi
+if [ "$(cat "$ROOT/node_modules/.shield-installed-lock")" != "$(sha256sum "$ROOT/pnpm-lock.yaml" | cut -d' ' -f1)" ]; then
+  echo "FAIL [stamp] the stamp does not hold the lockfile's hash, so it can never match."
+  exit 1
+fi
+echo "ok   [a successful install stamps the lockfile hash]"
+
+# --- A REFUSAL in install mode exits 1, not 2. ------------------------------
+# `--check` returns the raw verdict; without it, 2 is remapped to 1 so the
+# compose command and `dev-web.sh` treat a refusal as fatal. Nothing above
+# reached that remapping.
+fresh
+stamp_from_lock
+rm -f "$ROOT/pnpm-lock.yaml"
+rm -f "$PNPM_ARGV"
+install_run 1 "no lockfile -> refuse, fatal"
+if [ -f "$PNPM_ARGV" ]; then
+  echo "FAIL [refusal] the guard refused and ran the installer anyway."
+  exit 1
+fi
+echo "ok   [a refusal is fatal and installs nothing]"
+
 echo
 # --- ARGUMENT HANDLING. Added because this file claimed "EVERY state it can
 # --- reach" while every case it ran passed `--check`, so the script's
@@ -278,3 +407,11 @@ expect_args 2 "too many arguments" "a second argument is refused" --check --chec
 echo "web-install-guard: every check above printed ok. There is no tally here on"
 echo "purpose -- the labelled lines are the list, and a hand-written count in"
 echo "this position has already gone stale twice."
+
+# The RESIDUAL, stated rather than left to be assumed. `pnpm` is a stub above,
+# so nothing in this file says a real install succeeds -- only what this script
+# does with the installer. Written with no tally for the same reason as the
+# certificate above.
+echo
+echo "NOT covered: pnpm is stubbed, so nothing here says a real install"
+echo "succeeds. That is npm's job, not this guard's."
