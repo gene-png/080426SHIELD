@@ -29,13 +29,35 @@ import { ApiError, apiFetch } from "./api";
  * A hand-rolled `{ok, status, json, text}` mock has no single-use body. Under
  * one, a naive `res.json()`-then-`res.text()` implementation PASSES -- so the
  * test would be green against the exact defect it exists to catch, because the
- * fixture cannot express the property the fix is about. `CLAUDE.md`: a test
- * input the system cannot generate is not a test of the system. `Response` is
- * the producer's own type and enforces the real semantics.
+ * fixture cannot express the property the fix is about.
+ *
+ * That is `CLAUDE.md`'s selector rule at the INPUT end, which it states as
+ * "a fixture that builds an unreachable state is the same defect at the input
+ * end" -- here inverted: this fixture would build a state the runtime cannot
+ * produce (a body readable twice) and would therefore prove nothing about the
+ * runtime. Quoted by its actual wording rather than a paraphrase of mine: an
+ * earlier version of this comment attributed a sentence to that file which is
+ * not in it, and a correct constraint with a false citation is worse than an
+ * unexplained one -- a reader told to verify what they read checks the quote,
+ * fails to find it, and may discard the rule.
+ *
+ * `Response` is the producer's own type and enforces the real semantics.
  */
 
+// A COOKIE IS PRESENT, and that is what makes the `clientId: ""` test mean
+// anything. With the cookie mocked absent, "no X-Client-Id header" was true
+// whether or not `""` was handled correctly -- so the ONE mutation that test
+// exists to catch survived it green:
+//
+//     if (opts.clientId !== undefined)   ->   if (opts.clientId)
+//
+// which is precisely the implementation its own comment names. Under the
+// mutation `clientId: ""` falls through to the cookie, finds nothing, sets no
+// header, and the assertion passes. Three admin proxies pass `clientId: ""`
+// for exactly this reason ("cross-tenant by design"), so the live consequence
+// is an admin's active-tenant cookie re-scoping a cross-tenant DELETE.
 vi.mock("next/headers", () => ({
-  cookies: async () => ({ get: () => undefined }),
+  cookies: async () => ({ get: () => ({ value: "cookie-tenant" }) }),
 }));
 
 function mockFetch(response: Response): ReturnType<typeof vi.fn> {
@@ -155,6 +177,37 @@ describe("apiFetch", () => {
       string
     >;
     expect(Object.keys(headers)).not.toContain("X-Client-Id");
+  });
+
+  it("falls back to the cookie when no clientId is given", async () => {
+    // The branch the absent-cookie mock made untestable. This is the tenant
+    // scoping the whole multi-tenant product rests on, and nothing exercised
+    // it.
+    const f = mockFetch(new Response(JSON.stringify({}), { status: 200 }));
+    await apiFetch("/clients/me/dashboard");
+
+    const headers = (f.mock.calls[0][1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    expect(headers["X-Client-Id"]).toBe("cookie-tenant");
+  });
+
+  it("rejects an unparseable 200 rather than returning undefined", async () => {
+    // THE THIRD EXIT, and the one the proxies' safety argument rests on.
+    // Each `_proxy.ts` reasons: "`apiFetch` has exactly three exits ... an
+    // unparseable 200 throws in `res.json()` before reaching here. That makes
+    // the swallow LATENT rather than live." Nothing asserted the third.
+    //
+    // The mutation that survived: wrapping the success parse in
+    // `try { ... } catch { return undefined }` as a plausible hardening. Then
+    // every proxy reads `result === undefined` as 204 and answers the browser
+    // 204 No Content over a broken 200 -- #173 resurrected through the door
+    // #308 closed, with `proxies-never-synthesise-an-empty-result.test.ts`
+    // still green because it only reads proxy SOURCE TEXT.
+    mockFetch(new Response("<html>not json</html>", { status: 200 }));
+
+    await expect(apiFetch("/csf/catalog")).rejects.toThrow();
   });
 
   it("sends the bearer and an explicit client id when given", async () => {
