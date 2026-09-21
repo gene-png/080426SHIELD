@@ -816,6 +816,25 @@ def generate(
     # Copy-then-reassign. In-place mutation of a plain JSON column does not
     # dirty it and the write is silently lost -- the same trap `entries_intended`
     # documents one field over.
+    # AND `or {}` NORMALISES NULL PROVENANCE HERE, WHICH IS A FACT ANY LATER
+    # GUARD ON THIS COLUMN INHERITS.
+    #
+    # After this line `register.provenance` is a dict on every path out of
+    # `generate`. So a downstream `if register.provenance is not None:` is
+    # always true from here on, and its else-branch is unreachable by
+    # construction rather than by luck. That is fine as long as it is SAID:
+    # #353 adds exactly such a guard further down, whose else-branch logs
+    # `risk_register_intended_count_not_persisted` as a deliberate fail-loud
+    # ratchet, and whose own blast-radius note certifies that nothing
+    # reassigns this column between the register's construction and the guard.
+    # This line is that reassignment.
+    #
+    # Found by a PAIRS review -- two branches that merge clean and are each
+    # correct alone. Neither diff shows it; `CLAUDE.md` records that a per-PR
+    # review structurally cannot. Whoever rebases #353 onto this owns the
+    # reconciliation, and the choice is theirs: drop the now-vacuous None
+    # check, or keep it as a ratchet and say here what would make it reachable
+    # again. What is not acceptable is leaving the certificate standing.
     _prov_with_batches = dict(register.provenance or {})
     _prov_with_batches["batches"] = {
         "total": batches_total,
