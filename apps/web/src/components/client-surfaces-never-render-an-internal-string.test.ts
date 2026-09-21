@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * No CLIENT-facing surface renders a caught error's `.message` (#318).
+ * No CLIENT-facing surface renders an internal string (#318).
+ *
+ * Two shapes, and they are the same rule: a caught error's own `.message`,
+ * and an HTTP status interpolated into a sentence. Neither was written for a
+ * person to read.
  *
  * ## What the string actually is
  *
@@ -27,11 +31,13 @@ import { describe, expect, it } from "vitest";
  * off disk, so a new intake step or self-assessment panel is covered the day
  * it is added.
  *
- * `components/admin/**` is DELIBERATELY out of scope and it is not clean: ten
- * sites there have the same shape. A Kentro consultant reading "CSF proxy 409"
- * is a real defect and a different tier from a client reading it, so it is
- * filed rather than swept in here -- and named here so the exemption reads as
- * a decision rather than an oversight.
+ * `components/admin/**` is DELIBERATELY out of scope and it is NOT clean --
+ * delete the exclusions below and this file reports the admin sites, which is
+ * a better statement of the fact than a number that goes stale the next time
+ * one is added or fixed. A Kentro consultant reading "CSF proxy 409" is a real
+ * defect and a different tier from a client reading it, so it is filed as #365
+ * rather than swept in here -- and named here so the exemption reads as a
+ * decision rather than an oversight.
  *
  * ## No silent skip
  *
@@ -55,9 +61,12 @@ import { describe, expect, it } from "vitest";
 // tier and are filed as #365.
 const SEARCH_ROOTS = ["src/components", "src/lib"];
 
-//: Each exclusion named with its reason. The two lib helpers are admin-only
-//: by their CONSUMERS, which a path does not say, so they are listed rather
-//: than gestured at.
+//: Each exclusion named with its reason. The `lib/` entries are admin-only by
+//: their CONSUMERS, which a path does not say, so each one carries the grep
+//: that establishes it rather than being gestured at. (This comment used to
+//: say "the two lib helpers" and there are now three -- a count sitting two
+//: lines above the list it counts, which is the form `CLAUDE.md`'s first rule
+//: for numbers says to delete rather than update.)
 const EXCLUDED: Array<[RegExp, string]> = [
   [
     /[\/]components[\/]admin[\/]/,
