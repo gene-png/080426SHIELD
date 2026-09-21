@@ -1194,6 +1194,46 @@ a real exit code and a real date, and was the minority outcome (D-071).
   have and write beside each one what the input looked like. Any entry whose
   answer is "I don't know" or "there was nothing there" is the bug, and it is
   cheaper to find on that list than in review.
+- **A PATTERN THAT WAS CORRECT IN ITS ORIGINAL CONTEXT CARRIES NO MARKER
+  SAYING WHAT MADE IT CORRECT. When you reach for a known-good shape, state
+  what PROPERTY of the original made it right, and check that the property
+  holds here.**
+
+  Copying a shape that works is the cheapest way to be wrong while looking
+  careful, because the reviewer sees a form this repo already endorses and the
+  author has an honest reason for choosing it. The failure is not the copy. It
+  is that the ORIGINAL had a precondition nobody wrote down, so nobody checked
+  whether the new site has it.
+
+  The instances, and the second is the sharper one:
+
+  - **A pointer at a duplicated cross-language literal.** `SCHEMA_REASON_PREFIX`
+    in `app/exceptions.py` carries one and says why it is on THAT side: *"the
+    pointer lives HERE, rather than only there, because the window is closed by
+    whoever edits THIS constant, who would otherwise have no way to know the
+    copy exists."* The property is **the pointer sits where the change
+    originates**. A later duplicate — a reason code in `routes/clients.py`
+    mirrored by a Set in the web bundle — got its pointer on the CONSUMING
+    side, which reads as the same shape and closes nothing: the person
+    renaming the API literal never opens the web file.
+  - **Two helpers that choose between a server's sentence and local copy.**
+    One withholds the server's message, one always prefers it, and both are
+    right. The property that decides it is whether the LOCAL copy carries
+    information the server's does not — not which module the caller lives in,
+    which is the thing that looks like the difference. Written into both, so
+    that moving either answer into the other's position reads as the
+    regression it would be rather than as consistency.
+
+  **The test is one sentence, and it goes in the code rather than the PR:** name
+  the property, then say why it holds here. If you cannot name it, you have
+  copied a form rather than a decision, and the next person to copy it inherits
+  whatever was unstated.
+
+  This is the twin-sweep rule reflected: that one says a defect found in one
+  place exists in its twins until checked, and this one says a SOLUTION found
+  in one place does not transfer until checked. Both fail the same way — by
+  reasoning from resemblance instead of from the mechanism.
+
 - **A SELECTOR THAT SELECTS NOTHING PASSES. ASSERT THE COUNT IT SELECTED
   BEFORE READING ITS RESULT.** Same family as the silent-success branch above,
   one layer out: there the checker looked and had nothing to say; here the
