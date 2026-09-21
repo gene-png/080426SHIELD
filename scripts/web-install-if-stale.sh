@@ -77,7 +77,42 @@ BIN="$APP/apps/web/node_modules/next/dist/bin/next"
 STAMP="$APP/node_modules/.shield-installed-lock"
 
 CHECK_ONLY=0
-[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+
+# An UNRECOGNISED ARGUMENT is exit 2, not a clean run.
+#
+# A flag a script does not implement must not SUCCEED. Silent
+# argument-ignoring makes every future `--self-test`, `--dry-run` and
+# `--check` a coin flip where both faces read as heads: the reader gets the
+# success banner they were hoping for and no signal that nothing happened.
+#
+# Found on `prettier_hook.sh`, which printed its success banner and exited 0
+# for `--self-test` -- a flag it does not have, reached for because the gate
+# beside it DOES have one. The trap is aimed at careful people: the instinct
+# to verify was correct and the reward was a false pass.
+# Here the silent path had a SIDE EFFECT: a typo'd `--checks` left
+# CHECK_ONLY at 0 and performed a real install where a check was asked
+# for. Strictly worse than a false green.
+# Arity is judged on `$#`, NOT on `${1:-}`.
+#
+# `case "${1:-}"` cannot tell an ABSENT argument from an EMPTY one: an
+# explicit `""` expands to the same thing as no argument at all and took the
+# `""` arm, so `web-install-if-stale.sh ""` ran as though nothing had been
+# passed. Two of the four scripts this commit touched rejected `""` and two
+# accepted it, and nothing said why -- an unstated carve-out inside the change
+# whose thesis is that a script must not accept what it does not implement.
+if [ "$#" -gt 1 ]; then
+  echo "FAIL: too many arguments; got: $*" >&2
+  exit 2
+fi
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    --check) CHECK_ONLY=1 ;;
+    *)
+      echo "FAIL: unknown argument '$1'. This script accepts only --check." >&2
+      exit 2 ;;
+  esac
+fi
+
 
 decide() {
   if [ ! -f "$LOCK" ]; then

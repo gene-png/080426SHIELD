@@ -122,8 +122,14 @@ What CAN be gated is whatever fails on input nobody configured, and there is
 MORE THAN ONE such property. This paragraph said "exactly one" until #221, which
 was true when written and then became the sentence that stopped anyone looking
 for a second -- the narrower-rule-where-the-reader-is-standing shape, in the
-file a reader opens to find out what is checked. Both are behind
-`--check-registry`:
+file a reader opens to find out what is checked.
+
+That correction was made and then repeated in the same paragraph. "Both are
+behind `--check-registry`" was true of the two bullets below and became false
+the moment `--check-anchors` landed, in the sentence whose whole job is to say
+what is gated. So the list is written as an open one: the first two are behind
+`--check-registry`, the third is behind `--check-anchors`, and a fourth goes
+here.
 
   * a LEAVE table with no registered guards. Without it, adding a table nobody
     wired up reports clean -- "I could not look" and "nothing to complain
@@ -134,25 +140,43 @@ file a reader opens to find out what is checked. Both are behind
     `NOT_LEAVE_TABLES` was a set of LABELS and nothing checked them, so a
     mislabelled table was invisible twice over: its rows never scored, and the
     registry reporting COMPLETE because the name was accounted for.
+  * an anchor that no longer RESOLVES in `redact.py`, behind `--check-anchors`
+    (#299). Two had drifted out, so the whole oracle had been exiting 2 for an
+    unknown length of time and CI could not see it: `--check-registry` returns
+    before `build_mutations` is ever called. Note what this does and does not
+    establish -- every anchor matching exactly one line is RESOLUTION, not
+    correctness, and a re-anchor can land on a different unique line and
+    measure a different rule. `check_anchors` says so in its own output.
 
-EXIT CODES, per this repo's fail-closed convention (D-051). Note that
-`--check-registry` runs BOTH checks and returns the worse code, so a 1 or a 2
-from it can come from either:
-  0 - ran; or, with --check-registry, every LEAVE table has guards registered
-      AND every not-LEAVE label is true
+EXIT CODES, per this repo's fail-closed convention (D-051). EVERY flag given
+runs and the WORST code is returned -- `--check-registry` runs the registry and
+label checks, `--check-anchors` runs the anchor check, and passing both runs
+all three. So a 1 or a 2 can come from any check that was asked for, and the
+output names which:
+  0 - ran; or every check named on the command line passed
   1 - --check-registry: a LEAVE table has no registered guards, OR a table
       declared not-LEAVE holds rows the redactor leaves alone
-  2 - could not look. Either the oracle could not run (baseline not green, a
-      mutation would not compile, the source could not be restored), or the
-      label check could not classify a table (an undeclared unreadable table, a
-      stale UNREADABLE_NOT_LEAVE declaration, or a declaration pointing at a
-      table that no longer exists). An unreadable input is NOT a pass.
+  2 - could not look. The oracle could not run (baseline not green, a mutation
+      would not compile, the source could not be restored); the label check
+      could not classify a table (an undeclared unreadable table, a stale
+      UNREADABLE_NOT_LEAVE declaration, or a declaration pointing at a table
+      that no longer exists); an ANCHOR IS STALE OR AMBIGUOUS under
+      --check-anchors; or an ARGUMENT WAS NOT UNDERSTOOD, which is decided
+      before anything is read. An unreadable input is NOT a pass.
+
+      Written as an open list on purpose. It was a closed one ("Either ... or
+      ...") and causes were twice added below it without the list moving,
+      which is worse than no list: a reader debugging an exit 2 checks the
+      documented causes, finds none of them, and concludes the tool is broken.
+      If a fifth is added, this sentence is the reminder to come back here --
+      or to stop enumerating and point at `main`.
 """
 
 from __future__ import annotations
 
 import importlib
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_APP = Path(__file__).resolve().parents[1]
@@ -837,21 +861,188 @@ def check_registry(rows) -> int:
     return 0
 
 
-def main(argv: list[str]) -> int:
-    rows = leave_rows()
-    if "--check-registry" in argv:
-        # Both, always, and the WORSE code wins. The registry asks whether every
-        # table is classified; the labels ask whether the classification is
-        # true. A complete registry over a wrong label is the failure #221
-        # records, so reporting only the first would keep producing it.
-        #
-        # 2 beats 1 deliberately: "I could not look" is the more urgent of the
-        # two, because a violation is a fact about the code and a 2 is a fact
-        # about the instrument.
-        registry = check_registry(rows)
-        labels = check_labels()
-        return max(registry, labels)
+def check_anchors() -> int:
+    """CAN THIS TOOL STILL RESOLVE ITS ANCHORS? (#299)
 
+    A yes/no needing no judgement, which is why it is gateable when the oracle
+    itself is not.
+
+    The anchors are lines LIFTED from `redact.py`, and that file keeps being
+    edited. Two had drifted out of it -- `+ r"){1,3}"` became `+ r"+){1,3}"`,
+    and a `words` local was renamed `substantive` -- so the whole oracle had
+    been exiting 2 for an unknown length of time. It said so, loudly and
+    correctly, to nobody: CI's only step was `--check-registry`, which returns
+    before `build_mutations` is ever called. The one property CI watched was
+    the one that could not see this, while `CLAUDE.md` named the oracle as
+    what keeps LEAVE tables from pinning nothing.
+
+    Writes nothing and evaluates no row. Builds the mutations -- which raises
+    on a missing anchor or a no-op -- and repeats the uniqueness check `main`
+    does per mutation, because an anchor matching TWO lines is equally
+    unmeasurable and is not caught by construction.
+
+    ## WHAT A PASS DOES NOT MEAN, and the first draft claimed otherwise
+
+    It printed "The instrument can measure." That is a claim about the
+    OUTCOME. What is proved is that every anchor resolves to exactly ONE LINE
+    -- a claim about RESOLUTION -- and the two come apart in a case this very
+    file records: a re-anchor can move a mutation onto a different line that
+    is still unique, so uniqueness passes while the mutation now measures a
+    DIFFERENT RULE. The oracle then scores rows against a guard nobody meant
+    to disable, reports a number, and nothing is wrong with the anchors.
+
+    A certificate over the adjacent proposition is worse than none, because it
+    ends the check that would have caught it. So the pass now says what it
+    checked rather than what a reader would like it to mean.
+    """
+    original = _original()
+    try:
+        muts = build_mutations(original)
+    except CannotMeasure as exc:
+        print(f"leave-row-oracle: ANCHORS STALE -- {exc}")
+        print("The guard list and redact.py have drifted apart, so the")
+        print("oracle cannot measure and any earlier run is evidence about")
+        print("a tree that no longer exists. Re-anchor the mutation.")
+        return 2
+    ambiguous = [
+        (name, original.count(old)) for name, old, _new in muts if original.count(old) != 1
+    ]
+    if ambiguous:
+        print("leave-row-oracle: ANCHORS AMBIGUOUS -- cannot measure:")
+        for name, n in ambiguous:
+            print(f"  {name}: anchor appears {n} times, not 1")
+        return 2
+    print(f"leave-row-oracle: {len(muts)} anchors resolve, each on exactly one line.")
+    print("That is RESOLUTION, not correctness. It does NOT say an anchor sits")
+    print("on the line it was written for: a re-anchor can land on a different")
+    print("unique line and go on to measure a different rule, which this file")
+    print("records happening. Nor does it say any LEAVE row pins anything --")
+    print("that is the oracle's own run, deliberately not automated.")
+    return 0
+
+
+def check_registry_and_labels() -> int:
+    """`--check-registry`: the registry check AND the label check.
+
+    Both, always, and the WORSE code wins. The registry asks whether every
+    table is classified; the labels ask whether the classification is true. A
+    complete registry over a wrong label is the failure #221 records, so
+    reporting only the first would keep producing it.
+
+    2 beats 1 deliberately: "I could not look" is the more urgent of the two,
+    because a violation is a fact about the code and a 2 is a fact about the
+    instrument.
+
+    Lifted out of `main` so it can be a VALUE in `_FLAGS` below. The flag has
+    always run two checks; the name says so now.
+    """
+    rows = leave_rows()
+    return max(check_registry(rows), check_labels())
+
+
+#: EVERY FLAG THIS SCRIPT IMPLEMENTS, mapped to what it runs.
+#:
+#: ONE STRUCTURE SERVING BOTH ROLES, and that is the whole point of it existing
+#: for two entries. It is the dispatch, so a flag cannot be listed here without
+#: a handler; and anything reading it for an allow-list gets a set that is true
+#: by construction rather than kept in step by hand.
+#:
+#: `CLAUDE.md`: prefer a derivation over a synchronization. A derived value
+#: cannot be out of sync; a synchronized one merely is not, right now, for
+#: reasons that have to keep holding.
+#:
+#: WRITTEN THIS WAY BECAUSE OF #343, WHICH THIS BRANCH CANNOT SEE. That branch
+#: adds an unknown-argument guard to this same function, refusing anything not
+#: in its allow-list. It was written against a tree with one flag, so its
+#: allow-list was that one literal -- and this branch adds a second flag and
+#: wires it into `ci.yml`. The two touch different hunks, so a first draft of
+#: both MERGED CLEAN and `main` went red: measured on a combined tree,
+#: `leave_row_oracle.py --check-anchors` exits 2, refused by a guard that does
+#: not know the flag exists, on the step whose job is to say whether the oracle
+#: can still measure.
+#:
+#: Registering a flag is therefore adding its entry HERE, in either branch, in
+#: any merge order -- because the entry is also the implementation. A guard
+#: reading these keys accepts a flag if and only if this tree implements it.
+#: The alternative considered and rejected was listing `--check-anchors` in the
+#: other branch's allow-list: that tree does not implement it, so the argument
+#: would be ACCEPTED and then fall through to the default path, which is the
+#: full oracle, which WRITES `redact.py`. A silent write to the redactor is not
+#: a fix for a red CI.
+_FLAGS: dict[str, Callable[[], int]] = {
+    "--check-registry": check_registry_and_labels,
+    "--check-anchors": check_anchors,
+}
+
+
+def main(argv: list[str]) -> int:
+    # An UNRECOGNISED ARGUMENT is exit 2, not the default report.
+    #
+    # `if "--check-registry" in argv` was a MEMBERSHIP TEST, so any other flag
+    # fell through to the report path and exited 0. A typo'd
+    # `--check-registy` in `ci.yml`'s "LEAVE-row oracle registry and labels"
+    # step would have run the REPORT and passed the step -- the registry check
+    # that step exists for never running, with nothing to see.
+    #
+    # A flag a script does not implement must not SUCCEED. Found on
+    # `prettier_hook.sh`, which printed its success banner and exited 0 for a
+    # `--self-test` it does not have; this is the same shape on a CI-wired
+    # gate, where the cost is a step that certifies nothing.
+    #
+    # argv[0] is the program name; anything after it must be understood.
+    #
+    # THE ALLOW-LIST IS `_FLAGS`, WHICH IS ALSO THE DISPATCH, and that is what
+    # keeps this guard correct as flags are added. A guard carrying its own
+    # list of accepted flags is a second fact that has to be kept in step with
+    # the first, and the failure when it is not is not a syntax error: the
+    # guard refuses a flag the script implements, with a confident message
+    # naming the only flag it believes in.
+    #
+    # That is not hypothetical, and it is why this branch now sits on top of
+    # #299 rather than beside it. A first draft had this guard reading its own
+    # literal; #299 adds `--check-anchors` and wires it into `ci.yml`; the two
+    # touch different hunks of this function, so both MERGED CLEAN and `main`
+    # went red on the step whose job is to report whether the oracle can still
+    # measure. Reading the dispatch means a flag is accepted if and only if
+    # something handles it.
+    unknown = [a for a in argv[1:] if a not in _FLAGS]
+    if unknown:
+        print(
+            f"leave-row-oracle: could not look -- unrecognised argument(s) "
+            f"{', '.join(unknown)}. This script accepts only "
+            f"{', '.join(_FLAGS)}.",
+            file=sys.stderr,
+        )
+        return 2
+    # EVERY FLAG NAMED ON THE COMMAND LINE RUNS, and the WORST code wins.
+    #
+    # Written first as two `if <flag> in argv: ... return` blocks in sequence,
+    # which is not a dispatch -- it is a priority list wearing one. Passing
+    # BOTH flags returned from the registry block having never called
+    # `build_mutations`, so the invocation asking for both properties reported
+    # on one and reinstated the exact #299 blind spot this flag exists to
+    # close: the anchors could be stale, the run exits 0, and the output says
+    # the registry is complete, which is true.
+    #
+    # Nothing in `ci.yml` passes both today. That is the argument for fixing it
+    # rather than against: the shape is a silent success that appears the
+    # moment someone combines two steps, and it appears with no error, in the
+    # form of a clean report about a different question.
+    #
+    # `max` for the same reason the registry and label codes are combined that
+    # way -- 2 beats 1 because "I could not look" is a fact about the
+    # instrument and a violation is a fact about the code.
+    selected = [flag for flag in _FLAGS if flag in argv]
+    if selected:
+        return max(_FLAGS[flag]() for flag in selected)
+
+    # THE DEFAULT PATH: the full oracle, which WRITES `redact.py`.
+    #
+    # `rows` is collected HERE rather than at the top of `main`, where it
+    # used to be. Every flagged path above returns without needing it, and
+    # collecting it first meant an invocation that only asks whether the
+    # anchors resolve still imported and walked every truth table.
+    rows = leave_rows()
     original = _original()
     REDACT.write_text(original, encoding="utf-8")
     if _evaluate(rows):

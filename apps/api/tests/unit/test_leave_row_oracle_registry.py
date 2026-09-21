@@ -114,3 +114,161 @@ def test_a_missing_anchor_is_cannot_measure_and_not_a_system_exit() -> None:
 
     with pytest.raises(CannotMeasure, match="anchor not found"):
         _line_containing(source, "gamma")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["leave_row_oracle.py", "--check-registy"],
+        ["leave_row_oracle.py", "--check-registry", "--extra"],
+        ["leave_row_oracle.py", "tests"],
+    ],
+    ids=["typo", "trailing-unknown", "bare-word"],
+)
+def test_an_unrecognised_argument_cannot_look(argv) -> None:
+    """A flag this script does not implement must not SUCCEED.
+
+    `main` selected its mode with `if "--check-registry" in argv` -- a
+    MEMBERSHIP test, so every other argument fell through to the report path
+    and returned 0. A typo in `ci.yml`'s "LEAVE-row oracle registry and
+    labels" step would have run the REPORT and passed the step, with the
+    registry check that step exists for never executing and nothing to see.
+
+    Exit 2 rather than 1, deliberately: an argument the script cannot
+    interpret means it did not look, which is a fact about the instrument and
+    not about the code.
+
+    The `--check-registry --extra` case is the one a single membership test
+    cannot catch at all, and the bare word is the shape that reads most like a
+    path argument the script might accept.
+    """
+    from scripts.leave_row_oracle import main
+
+    assert main(argv) == 2
+
+
+@pytest.mark.unit
+def test_the_guard_reads_the_FLAGS_TABLE_and_not_a_literal(monkeypatch, capsys) -> None:
+    """The allow-list must BE the dispatch, not a second list beside it.
+
+    A guard carrying its own list of accepted flags is a second fact that has
+    to be kept in step with the first, and the failure when it is not is not a
+    syntax error: the guard refuses a flag the script implements, with a
+    confident message naming the only flag it believes in.
+
+    That is not hypothetical, and it is why this branch sits on top of #299.
+    A first draft had this guard reading its own literal while #299 added
+    `--check-anchors` and wired it into `ci.yml`; the two touch different hunks
+    of `main`, so both MERGED CLEAN and `main` went red -- measured on a
+    combined tree, `--check-anchors` exited 2, refused by a guard that did not
+    know the flag existed, on the step whose job is to report whether the
+    oracle can still measure.
+
+    Emptying `_FLAGS` must make a flag that exists today be REFUSED. If it is
+    not, the guard is reading a literal and the table is decoration.
+
+    Safe to run: every assertion lands on the exit-2 path, which returns before
+    `leave_rows()` and therefore before the default path that REWRITES
+    `redact.py` on disk -- the hazard the test above documents.
+    """
+    import scripts.leave_row_oracle as oracle
+
+    # Every registered flag has a handler. A key with none is precisely the
+    # accepted-but-undispatched state: the argument gets past the guard and
+    # then falls through to the full oracle, which writes `redact.py`.
+    assert oracle._FLAGS, "the dispatch table is empty"
+    for flag, handler in oracle._FLAGS.items():
+        assert callable(handler), f"{flag} is registered with no handler"
+
+    monkeypatch.setattr(oracle, "_FLAGS", {})
+    assert oracle.main(["leave_row_oracle.py", "--check-registry"]) == 2
+
+    # And the message enumerates from the same table, so it cannot advertise a
+    # set the guard is not enforcing.
+    monkeypatch.setattr(oracle, "_FLAGS", {"--alpha": lambda: 0, "--beta": lambda: 0})
+    assert oracle.main(["leave_row_oracle.py", "--gamma"]) == 2
+    err = capsys.readouterr().err
+    assert "--alpha, --beta" in err
+    assert "--gamma" in err
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "argv",
+    [["leave_row_oracle.py"], ["leave_row_oracle.py", "--check-registry"]],
+    ids=["report", "check-registry"],
+)
+def test_both_real_arguments_are_accepted(argv, monkeypatch) -> None:
+    """THE PASSING HALF. A guard observed only firing is not observed.
+
+    RENAMED from "both real modes reach the work", which was wider than what
+    this establishes. The two modes diverge at the dispatch, which is AFTER
+    `leave_rows()` -- so the stub raises before the branch is evaluated and
+    the two parametrizations execute byte-identical code. Two names over one
+    path. What it proves is ACCEPTANCE; routing is the next test's job.
+
+    Proves the argument is RECOGNISED without letting either mode run: the
+    first thing `main` does after the dispatch is call `leave_rows()`, so
+    stubbing that to raise a sentinel means reaching it proves the dispatch
+    let the argument through, and a `2` would prove it did not.
+
+    THE STUB IS NOT A CONVENIENCE. A first draft called `main` for real and
+    turned three tests in `test_leave_row_oracle_labels.py` red -- measured,
+    and only when the two files ran TOGETHER, which is why running this file
+    alone looked clean. The report path does
+    `REDACT.write_text(original, ...)`: it REWRITES `redact.py` on disk, and
+    the labels tests read what it wrote. A test that rewrites a source file
+    mid-suite is the escaped-listener shape `test_a_row_dropped_between_add_
+    and_flush_is_recorded` guards against in the risk suite, arriving from the
+    other direction.
+
+    Asserting recognition rather than the exit code also keeps this test out
+    of the business of whether the registry currently passes, which is
+    `test_the_real_registry_is_currently_complete`'s job.
+    """
+    import scripts.leave_row_oracle as oracle
+
+    class _Reached(Exception):
+        pass
+
+    def _boom():
+        raise _Reached
+
+    monkeypatch.setattr(oracle, "leave_rows", _boom)
+    with pytest.raises(_Reached):
+        oracle.main(argv)
+
+
+@pytest.mark.unit
+def test_the_registry_argument_actually_routes_to_the_registry_checks(monkeypatch) -> None:
+    """THE ROUTING, which nothing covered.
+
+    `test_the_real_registry_is_currently_complete` calls `check_registry(rows)`
+    DIRECTLY and never touches `main`, so no test asserted that
+    `--check-registry` reaches it. `CLAUDE.md`: the tell is that a test imports
+    the thing it is defending rather than calling what reaches it.
+
+    Why it matters concretely: the flag was TWO independent literals for one
+    round -- the guard's allow-list and the dispatch. Rename the dispatch alone
+    and `--check-registry` is accepted by the guard, matches nothing, falls to
+    the REPORT path and returns 0, with CI's registry step green having run
+    neither check. Every other test in this file stays green through that.
+
+    Both checks are asserted, not just one: `main` returns `max(registry,
+    labels)`, so stubbing only the first would let the second be dropped.
+    """
+    import scripts.leave_row_oracle as oracle
+
+    called = []
+    monkeypatch.setattr(oracle, "leave_rows", lambda: ["a-row"])
+    monkeypatch.setattr(
+        oracle, "check_registry", lambda rows: called.append(("registry", rows)) or 0
+    )
+    monkeypatch.setattr(oracle, "check_labels", lambda: called.append(("labels",)) or 0)
+
+    assert oracle.main(["leave_row_oracle.py", "--check-registry"]) == 0
+    assert [c[0] for c in called] == ["registry", "labels"], (
+        "the registry argument must route to BOTH checks; got " f"{called}"
+    )
+    assert called[0][1] == ["a-row"], "check_registry must receive the rows main read"

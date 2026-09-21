@@ -201,3 +201,96 @@ def test_the_violation_report_names_file_and_line(
     out = capsys.readouterr().out
     assert code == 1
     assert "a.md:2" in out, out
+
+
+@pytest.mark.unit
+def test_a_TRAILING_unknown_argument_cannot_look(tmp_path, capsys) -> None:
+    """The slot that was actually live, and the sweep that said otherwise.
+
+    This gate read `argv[1]` and ignored `argv[2:]`. A LEADING unknown flag was
+    already refused by accident -- it resolves as a path and the path does not
+    exist -- but `ci.yml` PASSES A PATH here, so the first slot is occupied in
+    exactly the invocation that matters and anything after it was dropped in
+    silence.
+
+    A sweep recorded: "MEASURED, not assumed, for the six other raw-argv Python
+    gates: they already fail closed on an unknown flag, because they read it as
+    a path and the path does not exist. Checked and left alone." True of a
+    leading flag. False of a trailing one, in the sentence whose words closed
+    the question for every later reader.
+    """
+    from scripts.check_no_control_chars import main as gate_main
+
+    assert gate_main(["x", str(tmp_path), "--bogus"]) == 2
+    assert "too many arguments" in capsys.readouterr().err
+
+
+@pytest.mark.unit
+def test_a_LEADING_unknown_flag_cannot_look(capsys) -> None:
+    """Refused for a STATED reason, not by accidentally failing to resolve.
+
+    It already exited 2, because `--bogus` is not a directory. That is the
+    right answer reached by a mechanism that says nothing, and it changes the
+    day someone creates a file with that name or the gate grows a default.
+    """
+    from scripts.check_no_control_chars import main as gate_main
+
+    assert gate_main(["x", "--bogus"]) == 2
+    assert "is a flag, and this script implements none" in capsys.readouterr().err
+
+
+@pytest.mark.unit
+def test_its_own_fixtures_are_skipped_FROM_ANY_CWD(tmp_path, monkeypatch) -> None:
+    """The gate's correctness must not live in `ci.yml`'s argument.
+
+    `_SKIP_PATHS` names `apps/api/tests/gates/check_no_control_chars`, relative
+    to the REPO ROOT. That prunes correctly for `ci.yml`'s
+    `check_no_control_chars.py .` run from the root, and for nothing else: run
+    from `apps/api` with no argument, as anyone debugging it would, the
+    relative path is `tests/gates/...`, the prune misses, and the gate scans
+    its own corpus of deliberate control bytes and exits 1.
+
+    That is this repo's recorded shape -- a gate whose correctness lives in an
+    argument in a different file that nothing checks, like
+    `check_test_integrity`'s `working-directory:` and `fetch-depth: 0`.
+
+    THE ASSERTION IS CWD-INDEPENDENCE, reached by RELOADING the module from a
+    different directory. A first version asserted `is_absolute()` and did not
+    discriminate: `.resolve()` turns ANY relative path absolute, so the
+    mutation `Path("tests/gates/...").resolve()` stayed green -- it resolved
+    against the container's cwd, which happens to be the right place. Caught by
+    red-on-revert, which is the only thing that could have caught it.
+
+    NOT a test that the fixtures are harmless: they must stay full of control
+    bytes, because that is how `check_gate_fixtures.py` proves this gate can
+    fail at all.
+    """
+    import importlib
+
+    import scripts.check_no_control_chars as gate
+
+    here = importlib.reload(gate)._OWN_FIXTURES
+    monkeypatch.chdir(tmp_path)
+    there = importlib.reload(gate)._OWN_FIXTURES
+
+    assert here == there, (
+        f"the fixture skip moved when the cwd did ({here} -> {there}), so it "
+        f"is relative to the caller rather than to this file. That is the "
+        f"defect: the prune then works only for the one invocation `ci.yml` "
+        f"happens to make."
+    )
+    assert here.is_dir(), f"{here} does not exist"
+    # And it really is this gate's corpus: a directory with no control bytes
+    # would mean the derivation points somewhere harmless and the prune is
+    # doing nothing.
+    blobs = b"".join(f.read_bytes() for f in here.rglob("*") if f.is_file())
+    # Byte VALUES, never escapes. Writing them as escapes put literal
+    # control bytes in this file when a shell heredoc collapsed the
+    # backslashes -- which `check_no_control_chars` would then have
+    # flagged in `tests/unit/`, in the test asserting it skips only its
+    # own fixtures. CLAUDE.md records that exact trap.
+    forbidden = bytes([8, 11, 12, 28, 0x85])
+    assert any(bytes([b]) in blobs for b in forbidden), (
+        f"{here} holds no control bytes, so either the derivation points at "
+        f"the wrong directory or the fixtures have stopped being fixtures."
+    )

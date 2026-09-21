@@ -237,3 +237,39 @@ def test_finding_is_comparable_by_value() -> None:
     a = Finding(path="p", line=1, code="TI001", message="m")
     b = Finding(path="p", line=1, code="TI001", message="m")
     assert a == b
+
+
+@pytest.mark.unit
+def test_a_TRAILING_unknown_argument_cannot_look(tmp_path, capsys) -> None:
+    """The slot that was actually live, and the sweep that said otherwise.
+
+    This gate read `argv[1]` and ignored `argv[2:]`. A LEADING unknown flag was
+    already refused by accident -- it resolves as a path and the path does not
+    exist -- but `ci.yml` PASSES A PATH here, so the first slot is occupied in
+    exactly the invocation that matters and anything after it was dropped in
+    silence.
+
+    A sweep recorded: "MEASURED, not assumed, for the six other raw-argv Python
+    gates: they already fail closed on an unknown flag, because they read it as
+    a path and the path does not exist. Checked and left alone." True of a
+    leading flag. False of a trailing one, in the sentence whose words closed
+    the question for every later reader.
+    """
+    from scripts.check_test_integrity import main as gate_main
+
+    assert gate_main(["x", str(tmp_path), "--bogus"]) == 2
+    assert "too many arguments" in capsys.readouterr().err
+
+
+@pytest.mark.unit
+def test_a_LEADING_unknown_flag_cannot_look(capsys) -> None:
+    """Refused for a STATED reason, not by accidentally failing to resolve.
+
+    It already exited 2, because `--bogus` is not a directory. That is the
+    right answer reached by a mechanism that says nothing, and it changes the
+    day someone creates a file with that name or the gate grows a default.
+    """
+    from scripts.check_test_integrity import main as gate_main
+
+    assert gate_main(["x", "--bogus"]) == 2
+    assert "is a flag, and this script implements none" in capsys.readouterr().err

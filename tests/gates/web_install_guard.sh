@@ -20,6 +20,18 @@
 
 set -eu
 
+# An UNRECOGNISED ARGUMENT is exit 2, not a clean run.
+#
+# This script takes none. Ignoring whatever it is given makes a mistyped or
+# imagined flag read as a successful run -- `prettier_hook.sh` printed its
+# success banner and exited 0 for a `--self-test` it does not have, reached
+# for because the gate beside it DOES have one.
+if [ "$#" -gt 0 ]; then
+  echo "FAIL: this script takes no arguments; got: $*" >&2
+  exit 2
+fi
+
+
 SCRIPT="${SCRIPT:-$(cd "$(dirname "$0")/../.." && pwd)/scripts/web-install-if-stale.sh}"
 [ -f "$SCRIPT" ] || { echo "FAIL: cannot find $SCRIPT"; exit 2; }
 
@@ -35,6 +47,26 @@ fresh() {
 
 stamp_from_lock() {
   sha256sum "$ROOT/pnpm-lock.yaml" | cut -d' ' -f1 > "$ROOT/node_modules/.shield-installed-lock"
+}
+
+# `$1` expected exit, `$2` a fragment the output must contain, `$3` the label,
+# and `$4...` the ARGUMENTS to pass. `expect` below fixes them at `--check`;
+# this is what lets the argument-handling states be exercised at all.
+expect_args() {
+  want_code="$1"; want_text="$2"; label="$3"; shift 3
+  set +e
+  out="$(SHIELD_WEB_APP_DIR="$ROOT" sh "$SCRIPT" "$@" 2>&1)"
+  code=$?
+  set -e
+  if [ "$code" -ne "$want_code" ]; then
+    echo "FAIL [$label]: exit $code, wanted $want_code"
+    echo "$out"
+    exit 1
+  fi
+  case "$out" in
+    *"$want_text"*) echo "ok   [$label]" ;;
+    *) echo "FAIL [$label]: output did not contain '$want_text'"; echo "$out"; exit 1 ;;
+  esac
 }
 
 # `$1` expected exit, `$2` a fragment the output must contain, `$3` the label.
@@ -142,5 +174,28 @@ rm -f "$probe"
 echo "ok   [both scripts are LF, so the container's sh can read them]"
 
 echo
-echo "web-install-guard: all states exercised -- 1 skip, 3 installs, 1 refusal,"
-echo "plus the line-ending check that makes the others readable at all."
+# --- ARGUMENT HANDLING. Added because this file claimed "EVERY state it can
+# --- reach" while every case it ran passed `--check`, so the script's
+# --- unknown-argument arm was exercised by nothing in the repo: delete that
+# --- guard and this gate still printed its certificate. The claim was the
+# --- thing a reader checks INSTEAD of reading the gate.
+expect_args 2 "unknown argument" "an unknown flag is refused, not ignored" --checks
+expect_args 2 "unknown argument" "an EMPTY argument is not 'no argument'" ""
+expect_args 2 "too many arguments" "a second argument is refused" --check --check
+
+# THE CERTIFICATE CARRIES NO TALLY, deliberately.
+#
+# It said "all states exercised -- 1 skip, 3 installs, 1 refusal" and then this
+# branch appended three argument cases without touching it, so the sentence
+# certifying coverage undercounted the file it was certifying. #318 appended an
+# install-half section to the same file and rewrote only ITS own version of this
+# line -- so whichever won the merge would have named neither the other's cases
+# nor the true count, which is a false-coverage certificate of exactly the kind
+# this file already shipped once.
+#
+# `CLAUDE.md`: don't write the count -- if a number describes a list in the same
+# document, delete the number and let the list be the count. The `ok [...]` lines
+# printed immediately above ARE the list, and they cannot go stale.
+echo "web-install-guard: every check above printed ok. There is no tally here on"
+echo "purpose -- the labelled lines are the list, and a hand-written count in"
+echo "this position has already gone stale twice."
