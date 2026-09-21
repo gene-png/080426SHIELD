@@ -253,7 +253,9 @@ describe("dashboardLoadReason", () => {
   it("returns null when the server sent nothing usable", () => {
     expect(dashboardLoadReason({ status: 500, payload: {} })).toBeNull();
   });
+});
 
+// ---------------------------------------------------------------------------
 // #318, from the #295 review: the internal-string defect's twins.
 //
 // `ZtProxyError` is `super(`ZT proxy ${status}`)`. `describeSaveError` was

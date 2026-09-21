@@ -40,7 +40,35 @@ import { describe, expect, it } from "vitest";
  * own guard came to report a pass over a page it never examined.
  */
 
-const ROOTS = ["src/components/self-assessment", "src/components/intake"];
+// DERIVED, not a list of directories. The first version named
+// `components/self-assessment` and `components/intake` and stated ONE
+// exclusion, so a reader concluded client-facing = everything minus admin.
+// It is not: `components/assessments/` rendered "Intake proxy 409" to a
+// client on /assessments, and `lib/messages/client.ts` put "Messages proxy
+// 500" in front of a client messaging their consultant -- through
+// `MessageThread` on `app/self-assessment/[serviceId]/page.tsx`, THE PAGE
+// THE FIRST VERSION OF THIS GUARD WAS WRITTEN FOR. A two-directory list
+// reported clean over both.
+//
+// The predicate is stated and then applied: every `.ts`/`.tsx` under
+// `components/` or `lib/`, MINUS the admin surfaces, which are a different
+// tier and are filed as #365.
+const SEARCH_ROOTS = ["src/components", "src/lib"];
+
+//: Each exclusion named with its reason. The two lib helpers are admin-only
+//: by their CONSUMERS, which a path does not say, so they are listed rather
+//: than gestured at.
+const EXCLUDED: Array<[RegExp, string]> = [
+  [
+    /[\/]components[\/]admin[\/]/,
+    "admin surfaces: a consultant, not a client (#365)",
+  ],
+  [/[\/]lib[\/]admin[\/]/, "admin API helpers (#365)"],
+  [
+    /[\/]lib[\/]risk[\/]client\.ts$/,
+    "describeRiskError is consumed only by components/admin/risk/RiskRegisterDashboard.tsx (#365)",
+  ],
+];
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -53,7 +81,21 @@ function walk(dir: string): string[] {
   return out;
 }
 
-const FILES = ROOTS.flatMap((r) => walk(join(process.cwd(), r)));
+const FILES = SEARCH_ROOTS.flatMap((r) => walk(join(process.cwd(), r))).filter(
+  (f) => !EXCLUDED.some(([rx]) => rx.test(f)),
+);
+
+// COMMENTS STRIPPED BEFORE MATCHING, and this guard needed it for itself.
+// `lib/describe-save-error.ts`'s docstring QUOTES the defect verbatim while
+// explaining it, so widening the roots made the helper that FIXES this report
+// as an offender. An assertion satisfied by a comment is the shape this repo
+// keeps paying for; here it fires the other way, flagging correct code, which
+// is how a gate gets weakened to shut it up.
+function code(path: string): string {
+  return readFileSync(path, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
 
 // `err instanceof Error ? err.message` and its spellings, plus a bare
 // `<ident>.message` fed to a state setter. Deliberately NOT anchored to `err`:
@@ -65,12 +107,12 @@ describe("client-facing surfaces never render an internal error string", () => {
   it("finds the client surfaces at all", () => {
     // Fail closed. An empty sweep is "I could not look", and vitest reports a
     // zero-case `it.each` as a pass.
-    expect(FILES.length).toBeGreaterThanOrEqual(10);
+    expect(FILES.length).toBeGreaterThanOrEqual(30);
   });
 
   it("no file renders a caught error's own message", () => {
     const offenders = FILES.filter((f) =>
-      RENDERS_INTERNAL_MESSAGE.test(readFileSync(f, "utf8")),
+      RENDERS_INTERNAL_MESSAGE.test(code(f)),
     ).map((f) => f.slice(f.indexOf("src")));
 
     expect(
@@ -82,26 +124,30 @@ returns the server's typed sentence when there is one.`,
     ).toEqual([]);
   });
 
-  it("the surfaces that report an error use the shared helper", () => {
-    // The inverse. Deleting the offending expression without replacing it
-    // would satisfy the assertion above by showing the client nothing at all.
-    const reportsErrors = FILES.filter((f) =>
-      /set\w*Error\(|setSaveState\(/.test(readFileSync(f, "utf8")),
-    );
-    expect(reportsErrors.length).toBeGreaterThanOrEqual(4);
-
-    const withoutHelper = reportsErrors
-      .filter((f) => {
-        const src = readFileSync(f, "utf8");
-        return !/clientFacingError\(|describeSaveError\(/.test(src);
-      })
-      .map((f) => f.slice(f.indexOf("src")));
+  it("no surface sets its error copy straight from the caught value", () => {
+    // THE INVERSE, and the predicate took two tries to state honestly.
+    //
+    // Deleting the offending expression without replacing it would satisfy
+    // the assertion above by showing the client nothing at all. But the first
+    // version of this demanded a call to `clientFacingError` or
+    // `describeSaveError` BY NAME, and flagged four files that are correct:
+    // `SignInForm` maps a refusal code through a `REFUSALS[...]` lookup --
+    // the ideal pattern -- and `MessageThread` calls `describeMessagesError`,
+    // a named helper that routes through `clientFacingError` one layer down.
+    //
+    // A gate that reports correct code is worse than one that reports
+    // nothing: it gets weakened to shut it up. So the predicate is the actual
+    // rule rather than a list of blessed function names -- copy must never be
+    // the caught value itself.
+    const offenders = FILES.filter((f) =>
+      /set\w*(Error|State)\s*\(\s*(err|e|error)\s*[),]/.test(code(f)),
+    ).map((f) => f.slice(f.indexOf("src")));
 
     expect(
-      withoutHelper,
-      `these client-facing files set an error state without going through a
-copy helper, so whatever they show was not checked against the internal-string
-rule.`,
+      offenders,
+      `these client-facing files set error state directly from the caught
+value. Even where it renders as "[object Object]" rather than an internal
+string, nothing there was written for a person to read.`,
     ).toEqual([]);
   });
 });

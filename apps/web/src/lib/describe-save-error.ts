@@ -173,10 +173,23 @@ export function serverReason(err: unknown): string | null {
  * It is not right everywhere, and the difference is the only thing worth
  * knowing about this function.
  *
- * The client dashboards face the same choice and must answer it the other way
- * -- their own not-released copy names the product, whose organization and the
- * next step, so the API's "No released X report for this service yet." is a
- * downgrade. That half is PR #362.
+ * The client dashboards face the same choice and answer it PER REASON CODE,
+ * not wholesale -- and the distinction is load-bearing, because a sentence
+ * saying they "answer it the other way" would license destroying a fix.
+ *
+ * Their 404 has more than one cause. For `dashboard_not_released` the page's
+ * own copy is richer -- it names the product, whose organization and the next
+ * step -- so the API's "No released X report for this service yet." is a
+ * downgrade. For `dashboard_version_unresolved` the server's sentence is the
+ * whole point: `_unresolved_parent` is written specifically NOT to say "no
+ * released report yet", because there IS one and what is missing is the link
+ * saying which assessment it came from. Printing the not-released copy there
+ * is exactly the #244 defect.
+ *
+ * So the deciding property is a fact about the PAIR (server message, local
+ * copy) for a given refusal -- not about the call site, and not about which
+ * module the caller lives in. PR #362 withholds for the first code only and
+ * keeps the second; anything that withholds wholesale reinstates #244.
  *
  * The callers here pass a bare generic: "Failed to load.", "Submit failed.",
  * "Network error.". No server sentence is worse than those, so there is
