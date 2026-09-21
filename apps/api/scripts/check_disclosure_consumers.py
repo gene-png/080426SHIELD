@@ -77,7 +77,6 @@ import re
 import sys
 from pathlib import Path
 
-#: crash != verdict -- the marker `check_gate_fixtures.discover_gates` reads.
 EXIT_OK = 0
 EXIT_VIOLATION = 1
 EXIT_COULD_NOT_LOOK = 2
@@ -451,4 +450,30 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    # A crash must not share an exit code with "found something": Python exits 1
+    # on an unhandled exception, which is this gate's violation code.
+    #
+    # THIS BLOCK WAS MISSING, and the gate was registered anyway. The marker
+    # `discover_gates` keys on -- `crash != verdict` -- sat in a standalone
+    # comment near the top of the file, so the registry listed a gate with no
+    # handler at all: a crash here exited 1 and read as "a disclosure reaches
+    # nobody". `test_gate_crash_exit_code` caught it the moment the gate was
+    # added to its list, which is that harness doing its job on the first gate
+    # added after it existed.
+    #
+    # The marker now lives ONLY here, on the `noqa` of the handler it
+    # describes, so registration and the handler cannot come apart again. An
+    # assertion satisfied by a comment is the defect; so is a registration.
+    #
+    # Duplicated verbatim in every gate rather than shared -- an import is one
+    # more thing that can fail BEFORE the handler is installed, which is the
+    # defect this block exists to close.
+    try:
+        raise SystemExit(main(sys.argv))
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
+        nl = chr(10)
+        sys.stderr.write(f"check-disclosure-consumers: CRASHED: {type(exc).__name__}: {exc}{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        raise SystemExit(2) from exc
