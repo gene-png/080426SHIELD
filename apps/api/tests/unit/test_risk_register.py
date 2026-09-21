@@ -2355,8 +2355,7 @@ def test_the_batch_tally_survives_a_reload_and_an_export(app_client) -> None:
     r = c.get(f"/risk/clients/{cid}/register/latest", headers=bh)
     assert r.status_code == 200, r.text
     assert (r.json()["batches_total"], r.json()["batches_failed"]) == (17, 5), (
-        "the reload lost the tally -- `_serialize` is not reading "
-        "`provenance['batches']` back"
+        "the reload lost the tally -- `_serialize` is not reading " "`provenance['batches']` back"
     )
 
     e = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
