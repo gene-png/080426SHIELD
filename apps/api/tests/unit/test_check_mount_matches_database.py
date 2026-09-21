@@ -167,12 +167,30 @@ def test_the_passing_message_does_not_claim_the_pair_was_verified(
     )
     # What it must say instead: what was compared, and where it read.
     #
-    # ANCHORED. A bare `"0047" in out` was the first version of this line and
-    # `check_test_integrity` rejected it (TI002) -- correctly, and for a reason
-    # specific to this output: the message also names the FILE, `0047_only.py`,
-    # so the bare needle is satisfied by the filename even if the revision were
-    # wrong. The gate caught a weak assertion inside a change about a check
-    # that claimed more than it had established.
+    # ANCHORED, and the ATTRIBUTION matters more than the anchoring.
+    #
+    # A bare `"0047" in out` is weak for a reason specific to this output: the
+    # message also names the FILE, `0047_only.py`, so the needle is satisfied
+    # by the filename even if the revision were wrong.
+    #
+    # **`check_test_integrity` did NOT catch that, and cannot.** TI002 fires
+    # only where the needle is an explicit `str(...)` call or an f-string --
+    # `_is_explicitly_stringified` returns False for an `ast.Constant`, and the
+    # gate's own `test_accepts_a_plain_string_literal_needle` pins that a plain
+    # literal is accepted. MEASURED on this branch: restoring `"0047" in out`
+    # and running the gate returns `test-integrity: clean`, exit 0.
+    #
+    # An earlier version of this comment credited the gate with the catch. That
+    # is a false assurance about a gate's COVERAGE, written into the material a
+    # reader calibrates against -- someone would leave the next bare-literal
+    # needle unanchored believing TI002 covers it, and TI002 deliberately does
+    # not (widening it to bare names was measured at 36 false positives against
+    # 2 real ones).
+    #
+    # What the gate DID catch is one line below: `assert str(versions) in out`,
+    # an explicit `str(...)` with no literal anchor. One finding, reported twice
+    # at shifted line numbers as the comment above grew -- which is how it came
+    # to be read as two.
     assert "revision 0047 is stamped in the database" in out
     assert "present in the mounted tree (0047_only.py)" in out
     # Anchored to its CLAUSE, not just present somewhere: the path has to be
