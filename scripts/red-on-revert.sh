@@ -76,22 +76,22 @@ gamma
   # NOTE the explicit file argument. `grep -q gamma` with no file reads STDIN
   # and blocks forever, which is how the first draft of this self-test hung --
   # a harness that cannot finish is no better than one that cannot fail.
-  got="$(run "$probe" beta BETA -- grep -q gamma "$probe")"
+  got="$(run --any-red "$probe" beta BETA -- grep -q gamma "$probe")"
   [ "$got" = "1" ] || { echo "self-test: a check that STAYS GREEN must exit 1, got $got" >&2; fail=1; }
 
-  got="$(run "$probe" beta BETA -- grep -q beta "$probe")"
+  got="$(run --any-red "$probe" beta BETA -- grep -q beta "$probe")"
   [ "$got" = "0" ] || { echo "self-test: a check that GOES RED must exit 0, got $got" >&2; fail=1; }
 
-  got="$(run "$probe" nowhere X -- true)"
+  got="$(run --any-red "$probe" nowhere X -- true)"
   [ "$got" = "2" ] || { echo "self-test: an absent search string must exit 2, got $got" >&2; fail=1; }
 
   printf 'dup
 dup
 ' > "$self_dir/dup.txt"
-  got="$(run "$self_dir/dup.txt" dup X -- true)"
+  got="$(run --any-red "$self_dir/dup.txt" dup X -- true)"
   [ "$got" = "2" ] || { echo "self-test: a search string matching twice must exit 2, got $got" >&2; fail=1; }
 
-  got="$(run "$self_dir/absent.txt" a b -- true)"
+  got="$(run --any-red "$self_dir/absent.txt" a b -- true)"
   [ "$got" = "2" ] || { echo "self-test: a missing file must exit 2, got $got" >&2; fail=1; }
 
   # TWO pairs applied together. The check requires BOTH originals to still be
@@ -109,7 +109,7 @@ two
 three
 ' > "$multi"
   before_multi="$(cksum < "$multi")"
-  got="$(run "$multi" one ONE three THREE -- sh -c "grep -qx one '$multi' && grep -qx three '$multi'")"
+  got="$(run --any-red "$multi" one ONE three THREE -- sh -c "grep -qx one '$multi' && grep -qx three '$multi'")"
   [ "$got" = "0" ] || { echo "self-test: both pairs must land and the check go red, got $got" >&2; fail=1; }
   [ "$(cksum < "$multi")" = "$before_multi" ] || { echo "self-test: multi-pair left the file MUTATED" >&2; fail=1; }
 
@@ -119,13 +119,38 @@ three
 two
 ' > "$multi"
   before_multi="$(cksum < "$multi")"
-  got="$(run "$multi" one ONE nowhere X -- true)"
+  got="$(run --any-red "$multi" one ONE nowhere X -- true)"
   [ "$got" = "2" ] || { echo "self-test: one bad pair must refuse everything with 2, got $got" >&2; fail=1; }
   [ "$(cksum < "$multi")" = "$before_multi" ] || { echo "self-test: a refused multi-pair still wrote to the file" >&2; fail=1; }
 
   # An odd number of pair arguments is a usage error, not a silent drop.
-  got="$(run "$multi" one ONE dangling -- true)"
+  got="$(run --any-red "$multi" one ONE dangling -- true)"
   [ "$got" = "2" ] || { echo "self-test: an unpaired search must exit 2, got $got" >&2; fail=1; }
+
+  # --- WHICH RED. The named test must be the one that failed. ---
+  #
+  # THE CASE THAT WOULD HAVE CAUGHT THE const-in-try MUTATION. That mutation
+  # broke the build, reddened an UNRELATED test, and left the named one
+  # passing -- and the script said "Good", which reads as "the new test does
+  # not discriminate". It was caught by a human reading the diff.
+  named="$self_dir/named.txt"
+  printf 'x
+' > "$named"
+
+  got="$(run --expect test_alpha "$named" x X -- sh -c 'echo "FAILED test_alpha"; exit 1')"
+  [ "$got" = "0" ] || { echo "self-test: the NAMED test going red must exit 0, got $got" >&2; fail=1; }
+
+  got="$(run --expect test_alpha "$named" x X -- sh -c 'echo "FAILED test_beta"; exit 1')"
+  [ "$got" = "1" ] || { echo "self-test: red on a DIFFERENT test must exit 1, got $got" >&2; fail=1; }
+
+  # The name appearing in PASSING output must not count. Matching it anywhere
+  # in the log is the mistake this case exists to forbid.
+  got="$(run --expect test_alpha "$named" x X -- sh -c 'echo "ok test_alpha"; echo "FAILED test_beta"; exit 1')"
+  [ "$got" = "1" ] || { echo "self-test: a passing mention of the name must not count, got $got" >&2; fail=1; }
+
+  # Neither flag is a usage error, not a silent downgrade to the weak form.
+  got="$(run "$named" x X -- true)"
+  [ "$got" = "2" ] || { echo "self-test: omitting --expect and --any-red must exit 2, got $got" >&2; fail=1; }
 
   # The restore actually happened -- asserted on the bytes, not inferred from
   # the exit codes above.
@@ -135,7 +160,7 @@ two
     echo "red-on-revert: SELF-TEST FAILED -- do not trust this harness." >&2
     exit 2
   fi
-  echo "red-on-revert: self-test passed -- 1 (stayed green), 0 (went red), 2 (could not look) x5, multi-pair applied and refused atomically, and every probe is byte-identical."
+  echo "red-on-revert: self-test passed -- 1 (stayed green), 0 (named test went red), 1 (red on a DIFFERENT test), 2 (could not look) x6, multi-pair applied and refused atomically, and every probe is byte-identical."
   exit 0
 fi
 
@@ -150,6 +175,37 @@ usage: scripts/red-on-revert.sh <file> <search> <replace> -- <command...>
 
 exit 0 = the check went red (good)   1 = it stayed green   2 = could not look
 USAGE
+  exit 2
+fi
+
+# --expect <needle> names the test that MUST be the one to go red.
+#
+# Without it, "the command failed" is all this script knows, and that is not
+# what red-on-revert is for. A mutation can break the BUILD, or redden an
+# unrelated test, and the exit code is identical to the one you wanted.
+# Measured 2026-09-21: a mutation intended to move a token below an await
+# instead put a `const` inside a `try`, out of scope for its `catch`. A
+# DIFFERENT test went red, the named one passed, and the script reported
+# success -- which reads as "the new test does not discriminate" when the
+# truth was "the mutation was invalid". It was caught by reading the diff.
+#
+# --any-red is the explicit opt-out, and it has to be typed. An accidental
+# omission must not silently buy the weaker guarantee.
+EXPECT=""
+ANY_RED=0
+while [ "$#" -gt 0 ]; do
+  case "${1:-}" in
+    --expect) [ "$#" -ge 2 ] || { echo "red-on-revert: --expect needs a value" >&2; exit 2; }
+              EXPECT="$2"; shift 2 ;;
+    --any-red) ANY_RED=1; shift ;;
+    *) break ;;
+  esac
+done
+if [ -z "$EXPECT" ] && [ "$ANY_RED" -eq 0 ]; then
+  echo "red-on-revert: name the test that must go red with --expect <substring>," >&2
+  echo "red-on-revert: or pass --any-red to accept 'something failed' as the result." >&2
+  echo "red-on-revert: a bare non-zero exit does not prove the assertion under test" >&2
+  echo "red-on-revert: can see the change, which is the only thing this script is for." >&2
   exit 2
 fi
 
@@ -227,9 +283,10 @@ while [ "$i" -lt "${#PAIRS[@]}" ]; do
 done
 echo "red-on-revert: mutated ${FILE} -- $(( ${#PAIRS[@]} / 2 )) replacement(s), all verified present. Running the check..."
 
+OUTPUT="$(mktemp)"
 set +e
-"$@"
-code=$?
+"$@" 2>&1 | tee "$OUTPUT"
+code=${PIPESTATUS[0]}
 set -e
 
 # `restore` runs on EXIT, but do it here too so the verification below reads the
@@ -258,11 +315,33 @@ fi
 echo "red-on-revert: restored ${FILE} (verified byte-identical to the original)"
 
 if [ "$code" -eq 0 ]; then
+  rm -f -- "$OUTPUT"
   echo "red-on-revert: THE CHECK STAYED GREEN under mutation." >&2
   echo "red-on-revert: it does not discriminate on this change -- treat that as a" >&2
   echo "red-on-revert: finding about the check, not about the code." >&2
   exit 1
 fi
 
-echo "red-on-revert: the check went red (exit ${code}) and the file is restored. Good."
+# WHICH red. A failure marker and the named test on the SAME LINE: the name
+# alone appears in passing output too, so matching it anywhere proves nothing.
+if [ -n "$EXPECT" ]; then
+  if ! grep -F -- "$EXPECT" "$OUTPUT" | grep -qE '(×|✕|✗|FAILED|FAIL |AssertionError|not ok)'; then
+    echo "red-on-revert: THE CHECK WENT RED ON SOMETHING ELSE." >&2
+    echo "red-on-revert: exit ${code}, but no failing line mentions:" >&2
+    echo "red-on-revert:   ${EXPECT}" >&2
+    echo "red-on-revert: so this run says nothing about whether that assertion can" >&2
+    echo "red-on-revert: see the change. The usual cause is a mutation that broke" >&2
+    echo "red-on-revert: the build or reddened an unrelated test -- read the output" >&2
+    echo "red-on-revert: before concluding the test does not discriminate." >&2
+    rm -f -- "$OUTPUT"
+    exit 1
+  fi
+  rm -f -- "$OUTPUT"
+  echo "red-on-revert: '${EXPECT}' went red (exit ${code}) and the file is restored. Good."
+  exit 0
+fi
+
+rm -f -- "$OUTPUT"
+echo "red-on-revert: the check went red (exit ${code}) and the file is restored."
+echo "red-on-revert: --any-red was used, so WHICH test failed is unverified."
 exit 0
