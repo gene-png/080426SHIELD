@@ -1077,8 +1077,17 @@ a real exit code and a real date, and was the minority outcome (D-071).
   `literal.pattern` from inside pytest. A stale `.pyc`, a wrong root directory
   and a duplicate pattern were each ruled out first, all wrong.
 
-  Nothing short of red-on-revert speaks here, because every other signal is
-  reading the SOURCE and the defect is in the COMPILED value.
+  Red-on-revert is what speaks about the BEHAVIOUR here, because every other
+  behavioural signal is reading the SOURCE while the defect is in the COMPILED
+  value.
+
+  **It is not the cheapest signal, and an earlier draft of this sentence said
+  it was the only one — directly above its own counterexample.**
+  `check_no_control_chars.py` reads `path.read_bytes()` and scans `.py`, so it
+  reads the source and finds this exact byte in two seconds. A reader who took
+  the stronger claim would spend a mutation cycle to learn what the gate beside
+  them already prints. **Run the gate first; reach for red-on-revert to prove
+  the fix holds.**
 
   **And a gate caught it, correctly, on the first run — and was not read.**
   `check_no_control_chars.py` reported `U+0008` at that line, which is the
@@ -1738,13 +1747,29 @@ Rules of the road:
   **When the reviewer cannot run.** "Use judgement" is the gap this rule exists to
   close, so the cases are named and so is the person who may decide.
 
-  **A reviewer that has not delivered yet is not a reviewer that failed, and
-  the threshold is 90 MINUTES.** The measured lag from `idle` to a delivered
-  report is about an hour; `idle` is not a delivery signal, and an agent cannot
-  tell a slow reviewer from a dead one. Under 90 minutes, keep working and do
-  not report it — a session that called the channel broken at 43 minutes was
-  wrong, and so was the session before it that made the same call and then
-  received every report at once.
+  **A reviewer that has not delivered yet is not a reviewer that failed. ASK
+  IT, IMMEDIATELY AND EVERY TIME.** `idle` is not a delivery signal. Asking an
+  agent for its report costs nothing, needs no threshold, and is the only thing
+  that distinguishes the states below.
+
+  **Never declare the channel broken without evidence.** That is a different
+  act from asking, and only it deserves a bar: a tool error, a refusal, a named
+  absence. "It has been a while" is not evidence.
+
+  **A draft of this bullet set a 90-MINUTE WAIT before either act, and it was
+  wrong in a way worth keeping.** It rested on "an agent cannot tell a slow
+  reviewer from a dead one" — falsified by the list six lines below, where
+  *Absent* says "nothing to retry" and *Erroring* says "retry once". It also
+  carried an action-licensing number ("the measured lag is about an hour") with
+  no command and no date, in the file whose rule 2 forbids exactly that. And
+  its consequence ran the wrong way: on 2026-09-21 a round of reviewers went
+  idle having delivered nothing, and **asking each one directly is what
+  recovered every report**. The rule would have bought ninety minutes of
+  silence instead.
+
+  The conflation was between declaring a channel broken, which needs evidence,
+  and asking whether a report arrived, which costs nothing. Only the first ever
+  deserved a threshold.
 
   Kinds of unavailable — **an open list, not an enumeration**, because the fourth
   one below is the case this repo has actually hit and the first draft omitted it:
