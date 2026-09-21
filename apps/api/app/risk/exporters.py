@@ -168,6 +168,22 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
     acts = action_counts(actions)
     crit_high = tc["critical"] + tc["high"]
     return [
+        # #330 TWIN, DELIBERATELY NOT FOLLOWED HERE -- and the reason is the ranking,
+        # not the effort.
+        #
+        # `RiskRegisterDashboard` (admin) now discloses when the generate loop intended
+        # more rows than reached storage, dividing by the INTENDED tally. This surface
+        # still divides by the post-loss count and says nothing.
+        #
+        # Unreachable today, re-measured rather than inherited: `RiskEntry` is
+        # constructed in exactly one place (`generate` in routes/risk.py) and deleted
+        # nowhere under `apps/api/app`, so no writer can produce the divergent state.
+        # No client is misled.
+        #
+        # Recorded because the ratchet went to the CONSULTANT and not to the CLIENT,
+        # which inverts this repo's stated priority -- a false assurance delivered to a
+        # client is the unrecoverable one. Tracked in #355; an unstated exemption reads
+        # as an oversight to whoever runs the twin sweep next.
         f"Total entries: {len(ctx.entries)}",
         f"Critical + High: {crit_high}",
         f"By axis — detection {ac['detection']}, prevention "

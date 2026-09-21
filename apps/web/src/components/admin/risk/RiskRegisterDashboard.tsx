@@ -517,6 +517,29 @@ export function RiskRegisterDashboard(): JSX.Element {
               come back.
             </div>
           ) : null}
+          {/* `!= null` catches BOTH null and undefined. `!== undefined` did
+              not: no `exclude_none` exists in `apps/api`, so the wire sends
+              `null` for every register predating this field -- that clause
+              never discriminated, and the silence rested entirely on `null > n`
+              coercing to false. An implicit coercion nobody wrote down was
+              carrying the whole pre-#330 disclosure. */}
+          {register.entries_intended != null &&
+          register.entries_intended > register.entries_total ? (
+            <div
+              className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"
+              role="alert"
+              data-testid="risk-entries-lost"
+            >
+              <span className="font-semibold">
+                {register.entries_intended - register.entries_total} of{" "}
+                {register.entries_intended} entries did not reach storage
+              </span>
+              , so every count below describes the {register.entries_total} that
+              were stored, not the {register.entries_intended} the run intended.
+              Regenerate before exporting: the deliverable reports the stored
+              count with no note that anything is missing.
+            </div>
+          ) : null}
           {register.entries_without_tier > 0 ? (
             <div
               className="rounded-md border border-status-danger-border bg-status-danger-bg p-3 text-sm text-status-danger-fg"

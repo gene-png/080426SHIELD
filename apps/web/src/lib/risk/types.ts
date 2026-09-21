@@ -136,6 +136,28 @@ export interface RiskRegister {
   batches_total: number | null;
   batches_failed: number | null;
 
+  /**
+   * #330. The generate loop's INTENDED tally.
+   *
+   * `entries_total` is the TABLE read-back. The two shared a name for a while
+   * and are not the same quantity -- they agree on every run any current
+   * writer can produce, and diverge where a row is lost between `db.add` and
+   * the flush.
+   *
+   * `| null`, NOT `?: number`, because that is what the wire carries. No
+   * `exclude_none` exists anywhere in `apps/api` -- measured -- so FastAPI
+   * serialises `"entries_intended": null` for every register predating the
+   * field. The optional form declared a value that cannot arrive, and the
+   * guard reading it (`!== undefined`) therefore never discriminated: the
+   * banner stayed silent only because `null > n` coerces to false, an
+   * implicit coercion nobody wrote down carrying the whole pre-#330
+   * disclosure. Every sibling nullable on this interface is `| null`.
+   *
+   * `null` is "nobody counted" and renders no banner; a value ABOVE
+   * `entries_total` is the loss. A value BELOW is impossible -- one writer
+   * creates `RiskEntry` rows and nothing deletes them.
+   */
+  entries_intended: number | null;
   entries_without_tier: number;
   /**
    * #132, the same instrument pointed at the LINKS, and three counters because

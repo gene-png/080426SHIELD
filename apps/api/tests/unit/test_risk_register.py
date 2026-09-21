@@ -242,7 +242,7 @@ def test_an_unresolvable_enum_value_is_reported_not_dropped(app_client) -> None:
     assert details["rejected_enum_values"] == {"likelihood": ["severe"]}, details
     # And the outcome, which is what the client would see.
     assert details["entries_without_tier"] == 1, details
-    assert details["entries_total"] == 1, details
+    assert details["entries_intended"] == 1, details
 
 
 @pytest.mark.unit
@@ -334,7 +334,7 @@ def test_a_clean_run_records_zero_rather_than_nothing(app_client) -> None:
     details = _generated_audit(c, bearer)
     assert details["rejected_enum_values"] == {}
     assert details["entries_without_tier"] == 0
-    assert details["entries_total"] == 1
+    assert details["entries_intended"] == 1
 
 
 @pytest.mark.unit
@@ -1495,14 +1495,44 @@ def test_a_row_dropped_between_add_and_flush_is_recorded(app_client) -> None:
 
     event.listen(OrmSession, "before_flush", _drop_one_before_flush)
     try:
-        _generate(c, provider, bearer, cid, payload)
+        body = _generate(c, provider, bearer, cid, payload)
     finally:
         event.remove(OrmSession, "before_flush", _drop_one_before_flush)
 
     assert dropped, "the listener never fired; this test proved nothing"
 
+    # #330, THROUGH THE SURFACE. The assertions below read the AUDIT ROW, which
+    # is fed from the local `entries_total` variable and never touches
+    # provenance -- so deleting the provenance write and the `_serialize`
+    # read-back left every one of them GREEN. Measured, not argued.
+    #
+    # That is #244 instance 1 verbatim, and this file documents it twenty lines
+    # down: "the only assertion touching `excluded_inputs` was on the POST
+    # /generate response -- the one path that passes the value in explicitly
+    # and never reaches the new code."
+    #
+    # The RESPONSE is the only thing the persistence exists to produce, so it
+    # is what gets asserted.
+    assert body["entries_total"] == 1, body
+    assert body["entries_intended"] == 2, (
+        "the generate response must carry the INTENDED tally; it is the "
+        "operand the client-facing banner divides by, and without it a "
+        "register that lost a row reads as complete"
+    )
+
+    # AND ON RELOAD, because the value is persisted precisely so a register
+    # read back next week says the same thing. A generate-response assertion
+    # alone would pass over a value that never reached storage.
+    latest = c.get(
+        f"/risk/clients/{cid}/register/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["entries_intended"] == 2, latest.json()
+    assert latest.json()["entries_total"] == 1, latest.json()
+
     details = _generated_audit(c, bearer)
-    assert details["entries_total"] == 2, "the loop intended two rows"
+    assert details["entries_intended"] == 2, "the loop intended two rows"
     assert details["entries_written"] == 1, (
         "entries_written must come from the TABLE. It reports "
         f"{details['entries_written']} for a run where one of two adds was "
@@ -1535,7 +1565,7 @@ def test_a_run_where_nothing_was_lost_says_so_rather_than_staying_silent(
     details = _generated_audit(c, bearer)
 
     assert details["entries_write_check"] == "agreed"
-    assert details["entries_total"] == details["entries_written"] == 1
+    assert details["entries_intended"] == details["entries_written"] == 1
 
 
 # ---------------------------------------------------------------------------
