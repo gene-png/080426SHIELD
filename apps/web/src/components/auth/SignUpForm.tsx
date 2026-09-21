@@ -89,8 +89,30 @@ export function SignUpForm(): JSX.Element {
     //
     // The enumeration was made twice, carefully, and still missed it: both
     // passes read the handler body, and this one is raised on the line above
-    // it. That is why the sweep below is now by STATUS rather than by a list of
-    // reasons -- any typed envelope this endpoint can produce is read.
+    // it. That is why the dispatch below is by STATUS rather than by a list of
+    // reasons.
+    //
+    // BUT THIS IS STILL AN ENUMERATION, and "any typed envelope this endpoint
+    // can produce is read" -- what this comment said -- is the failed claim in
+    // a new costume: a present-tense completeness claim over a population that
+    // keeps acquiring members. Re-derived 2026-09-21 by reading
+    // `routes/auth.py::register` and everything it calls, the typed reasons
+    // reachable here are `rate_limited` (429, from
+    // `security/rate_limit.py::RateLimiter.check`), `email_exists` (409),
+    // `password_policy` (422), `email_invalid` (422) and
+    // `email_domain_unavailable` (409, both from
+    // `_resolve_registration_tenant`), and `schema_*` (422, from
+    // `_handle_validation_error`). Three statuses cover all six TODAY. Nothing
+    // makes that keep being true.
+    //
+    // The trigger, stated so it is mechanical rather than remembered: adding a
+    // typed refusal to `/auth/register` -- or to anything it calls, which is
+    // where the 429 came from -- at a status outside this list reinstates the
+    // defect silently. `SignUpForm.test.tsx` pins the 429 and would not notice
+    // a fourth status. The structural fix is to gate on `!res.ok` and keep a
+    // 5xx-specific fallback in the final `else`; not done here because it
+    // changes the copy a 500 shows, which is wider than the review this came
+    // from.
     if (res.status === 409 || res.status === 422 || res.status === 429) {
       // The API returns a typed error envelope: error.reason is a stable
       // machine code, error.message is human-friendly copy. Map each reason to
