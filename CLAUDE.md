@@ -311,6 +311,40 @@ a real exit code and a real date, and was the minority outcome (D-071).
   Do not add a row per tool. That is how the table above got to its current
   size, and a row per tool is an enumeration of what its author happened to hit.
 
+- **ON WINDOWS, `sh` IS BASH, so a shell script "tested under `sh`" was never
+  tested under `sh` at all.** Every bashism passes locally and the first
+  environment that refuses it is the runner.
+
+  Measured 2026-09-21:
+
+      Git Bash   sh --version               -> GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)
+                 sh -c 'set -o pipefail'    -> accepted
+      Debian     /bin/sh                    -> dash
+                 sh -c 'set -o pipefail'    -> sh: 1: set: Illegal option -o pipefail
+
+  What it cost: a gate that runs the repo's shell scripts under `sh` passed all
+  seven subjects on Windows and failed three on the runner --
+  `close_guard_linked_file.sh`, `dev-web.sh` and `verify-in-worktree.sh`, each
+  dying at `set -o pipefail` before reaching any argument handling. Exit 2, no
+  message, which is also what a crash looks like.
+
+  **The remedy is NOT "make everything bash" and NOT "make everything POSIX".**
+  Both were proposed and both are wrong, because the shebang is the contract and
+  it legitimately VARIES: `docker-compose.yml` runs
+  `sh /app/web-install-if-stale.sh`, so POSIX compatibility is a real
+  requirement for that one, and forcing bash would stop checking the single case
+  where it matters. A harness that runs these scripts reads each file's shebang
+  and honours it; a subject with no recognisable shebang is a could-not-look,
+  not a guess.
+
+  **The transferable part is not about shells.** It is that a local run can
+  exercise a different interpreter, library or resolver than CI under the same
+  command name, and nothing in the output says so. Three separate verification
+  wrappers failed this way in one evening -- a shell that was not the shell, a
+  pipe that returned `tail`'s status, and a scratch worktree that was never
+  created so a failed `cd` read as a clean result. When a check passes locally
+  and fails on the runner, suspect the interpreter before the code.
+
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
