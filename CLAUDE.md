@@ -1730,6 +1730,20 @@ Rules of the road:
     unprompted' and §14 silently, in favour of not running it."* Say which
     instruction conflicted. Writing "absent" here is false and sends the next
     reader hunting an environment problem that never existed.
+  - **Ran, and reported to nobody** — it completed, it found things, and its
+    report never reached you. Measured 2026-09-21: a reviewer's PLAIN-TEXT
+    output is not transmitted to the dispatcher at all, so a complete report
+    can be written and lost, and the idle notification that does arrive carries
+    a separately truncated result field. **The dispatcher sees silence or a
+    fragment, which is what an absent reviewer and a crashed one also look
+    like** — so the natural move is to write `not run — reviewer absent` over a
+    review that ran and found defects, which is a false status word about
+    someone else's work. **Ask the agent for its report before concluding
+    anything about it.** Asking costs nothing and is a different act from
+    declaring the channel broken, which needs evidence; only the second
+    deserves a threshold. The fix on the reviewer's side is in its definition:
+    deliver via `SendMessage`, and end with a terminator so a cut report is
+    detectably cut.
   - **Ran, but not against this change** — a stale tree, the wrong branch, a
     subset of the diff, or a run that exhausted its own context and returned a
     complete-looking report on the first few files. None of these times out,
@@ -2737,7 +2751,25 @@ Rules of the road:
   the web test globs were added, per the trigger below — the figure is
   unchanged, because no PR in that window touched a web test file. The hole was
   real and simply unexercised by the window, which is the measurement's limit
-  rather than a reason to doubt it: a window can only show what it contains. It is written here so nobody
+  rather than a reason to doubt it: a window can only show what it contains.
+
+  **Re-derived again 2026-09-21, because adding `tests/gates/**` to condition 5
+  fires this rule's own standing trigger.** Over the fifteen most recent PR
+  merges on `main` at that date: **two cleared, thirteen came back**, and
+  **one of the thirteen came back ONLY via the new `tests/gates/**` glob** —
+  it tripped nothing else on the list, so under the previous wording it would
+  have merged unattended while editing a gate `ci.yml` executes. The glob is
+  load-bearing on real traffic rather than theoretically.
+  <!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21 -->
+
+  **The first attempt at this re-derivation selected the wrong population and
+  is recorded rather than quietly replaced.** It used `git log --merges`, which
+  on a repo that squash-merges finds only the true merge commits from early
+  history — it returned fifteen 2026-era merges and reported **fifteen cleared,
+  zero came back**, a clean-looking number about commits nobody asked about.
+  Nothing in the output said so; the count was plausible and the command was
+  real. A PR merge on this repo is a first-parent commit whose subject ends
+  `(#N)`, and that is what the window must select. It is written here so nobody
   has to derive the scope from the conditions and arrive somewhere more generous
   — an earlier framing promised more than four in fifteen, and the conditions
   below had grown past it.
@@ -2849,13 +2881,28 @@ Rules of the road:
          present, so the list did not read as Python-only.
 
          **Derive the set; do not extend the list.** The membership test is
-         "does CI execute it as a gate", answerable from `ci.yml` alone:
+         "does any WORKFLOW execute it as a gate" -- all of them, not `ci.yml`:
 
-             grep -nE '^\s+(run:.*|bash )(tests/gates|scripts)/' .github/workflows/ci.yml
+             grep -rnE "(bash|python( -m)?) +[A-Za-z0-9_./-]*(check_|leave_row_oracle|tests[/.]gates|scripts[/.])" .github/workflows/
 
-         Reach for that before adding a path here, and if it returns something
-         this list does not name, the list is wrong again rather than the
-         command being wrong.
+         **The first version of this command was published here wrong, and the
+         way it was wrong is the lesson.** It read `ci.yml` alone and required a
+         literal `scripts/` or `tests/gates/` path, so it missed
+         `audit-gate.yml`'s `bash tests/gates/close_guard_linked_file.sh`
+         entirely and missed `run: python -m scripts.check_test_integrity tests`
+         -- a dotted module with no slash -- inside the very file it did read.
+         It was RUN before publishing, returned ten real invocations, and that
+         is exactly what made it credible: **running a command proves what it
+         returns, never what it cannot see.** Both misses were found by a
+         reviewer reading it, not by anyone re-running it.
+
+         The sentence that stood here is deleted rather than repaired: it said
+         that if the command returns something this list does not name, *the
+         list* is wrong rather than the command. That forecloses the only doubt
+         that would have caught this, and it is why the correction had to come
+         from outside. **Doubt the command first.** If a gate is wired in a
+         spelling neither the command nor this list knows, both are wrong and
+         the command is the one that will go on reporting clean.
   6. Nothing that changes deliverable content, exporter output, or client
      dashboard numbers.
 
