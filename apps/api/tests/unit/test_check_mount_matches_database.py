@@ -166,9 +166,18 @@ def test_the_passing_message_does_not_claim_the_pair_was_verified(
         "claim and the gap between them is a whole failure mode."
     )
     # What it must say instead: what was compared, and where it read.
-    assert "0047" in out
-    assert "0047_only.py" in out
-    assert str(versions) in out
+    #
+    # ANCHORED. A bare `"0047" in out` was the first version of this line and
+    # `check_test_integrity` rejected it (TI002) -- correctly, and for a reason
+    # specific to this output: the message also names the FILE, `0047_only.py`,
+    # so the bare needle is satisfied by the filename even if the revision were
+    # wrong. The gate caught a weak assertion inside a change about a check
+    # that claimed more than it had established.
+    assert "revision 0047 is stamped in the database" in out
+    assert "present in the mounted tree (0047_only.py)" in out
+    # Anchored to its CLAUSE, not just present somewhere: the path has to be
+    # what the message says it read from.
+    assert f"read from {versions}" in out
 
 
 @pytest.mark.unit
