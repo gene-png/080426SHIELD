@@ -183,6 +183,15 @@ export function AttackWorkspace({
 
   const initialLoad = React.useCallback(async () => {
     const seq = ++assessmentSeq.current;
+    // EVERY token this function will use is minted HERE, before any await.
+    // See `useRefreshFailures`: mint below an await and the tokens are ordered
+    // by RESOLUTION, so an initialLoad started FIRST whose earlier fetch is
+    // slow issues the LATER token and overwrites a newer load's record.
+    //
+    // The `seq` early-return below does NOT close this. It narrows the window:
+    // a load that PASSES that check can still be overtaken while it awaits
+    // `refreshScoreAndGap`, and would then mint after the newer load did.
+    const deliverableAttempt = beginRefresh("deliverable");
     try {
       const cat = await fetchCatalog();
       setCatalog(cat);
@@ -201,7 +210,6 @@ export function AttackWorkspace({
       setAssessment(a);
       if (a) {
         await refreshHeatmap();
-        const deliverableAttempt = beginRefresh("deliverable");
         try {
           const d = await fetchLatestDeliverable(serviceId);
           setDeliverable(d);
