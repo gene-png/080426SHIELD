@@ -361,8 +361,15 @@ guess.
 
 - **#361** (tier-3) — e2e asserts the dashboard failure heading, never its body.
 - **#365** (tier-3) — ten ADMIN surfaces render "CSF proxy 409" as error copy.
-- **#368** (tier-3) — `.devcontainer/post-create.sh` is a third install path:
-  resolves ranges and swallows its own failure.
+- **#368** (tier-3) — filed for `.devcontainer/post-create.sh`, which resolved
+  `package.json` ranges and swallowed its own failed install. Retitled on
+  2026-09-21 to cover `scripts/dev-web.sh` too, which guarded its install on
+  `node_modules` existing rather than on lockfile currency — so this entry
+  paraphrases the original title and understates the issue. **PR #369 converts
+  both**: each now executes `scripts/web-install-if-stale.sh` and carries no
+  install of its own. Left open deliberately — whether that discharges the
+  issue is the owner's call rather than a side effect of a merge. It carries
+  `tier-3`/`post-mvp` and no `mvp-blocking`, so it is on no board query.
 - **#371** (tier-2) — the restored-value claim above, sequenced.
 
 ### Cleanup owed, and why I did not do it
