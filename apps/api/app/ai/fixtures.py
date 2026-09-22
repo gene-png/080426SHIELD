@@ -348,8 +348,19 @@ def _fixture_risk_synthesize(payload: dict[str, Any]) -> LLMResponse:
                 continue
             source_id = finding.get("source_id")
             kind = finding.get("kind")
-            # Only cite techniques/controls that appear in the supplied
-            # assessments; the route re-validates against the same catalogs.
+            # Only cite codes present in the supplied
+            # valid_techniques / valid_controls lists, which since #403 are the
+            # codes the client's assessments SCORED -- not the catalogs, and not
+            # every row the assessment holds. The route re-validates against the
+            # same lists.
+            #
+            # SO FIXTURE MODE CANNOT PRODUCE A DROP AT ALL: this filters its own
+            # output by the very lists `_resolve_links` will check it against, so
+            # it agrees with the validator by construction. Every drop counter,
+            # and the #403 disclosure that explains them, is unreachable from a
+            # fixture-mode run and needs a synthetic unit test or a live call --
+            # which is why the tests for them build the response by hand rather
+            # than going through this function.
             linked_techniques = (
                 [source_id] if kind == "attack" and source_id in valid_techniques else []
             )

@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
-from app.attack.catalog import all_codes as attack_all_codes
 from app.audit import audit
 from app.csf.gap import resolve_target_tier
 from app.db.session import get_db
@@ -48,6 +47,7 @@ from app.risk.engine import (
     tier_counts,
     tier_for,
 )
+from app.risk.link_scope import LinkScope, scope_for
 from app.routes.artifacts import _storage_dep
 
 # IMPORTED, not copied -- and `routes/clients.py` carries a comment saying the
@@ -62,6 +62,7 @@ from app.routes.artifacts import _storage_dep
 from app.routes.csf import _client_target_tier
 from app.routes.zt import _client_target_stage
 from app.schemas.risk import (
+    LinkScopeDisclosure,
     RiskEntryResponse,
     RiskGateStatus,
     RiskRegisterResponse,
@@ -401,13 +402,45 @@ def _resolve_links(offered: object, universe: set[str]) -> tuple[list[str], list
 
 def _gather_findings(
     db: Session, client_id: uuid.UUID
-) -> tuple[list[dict], set[str], set[str], dict[str, dict]]:
+) -> tuple[list[dict], set[str], set[str], dict[str, dict], dict[str, LinkScope]]:
     """Findings (one per gap) + the valid link universes + the TARGETS USED.
 
-    valid_techniques = every technique in the client's ATT&CK assessment.
-    valid_controls   = CSF subcategory codes + ZT capability codes present.
+    valid_techniques = ATT&CK technique codes this client's assessment SCORED.
+    valid_controls   = CSF subcategory + ZT capability codes it SCORED.
     target_sources   = per service, the target this run compared against and
                        WHERE IT CAME FROM (#84).
+    link_scopes      = per service, those codes plus how many rows were left
+                       out for carrying no judgement -- the operand the
+                       disclosure renders (#403).
+
+    **SCORED, not present, and the difference was the whole of #403.** All
+    three allow-lists were built from every row, and every row is pre-seeded:
+    `provisioning.py` creates a `CsfAnswer` per `SUBCATEGORIES` entry and a
+    `ZtAnswer` per capability with no tier or stage, `routes/attack.py` creates
+    an `AttackCoverage` per technique with `status=None`, and nothing under
+    `apps/api/app` deletes a row from any of the three. So "present" was true of
+    the whole catalog and the allow-list meant every code that exists -- while
+    `_run_batches` told the reader it meant the opposite.
+
+    The predicate lives in `app/risk/link_scope.py`, ONE table for three
+    services, for the reason the `resolve_target_tier` import below already
+    gives: a second copy is how two services come to disagree about one client.
+
+    **The `or set(attack_all_codes())` fallback is GONE, and deleting it is what
+    makes the narrowing safe rather than a separate tidy.** It fired when `rows`
+    was empty, which the pre-seed made nearly unreachable. Against a SCORED
+    predicate it would have fired whenever the client scored nothing -- handing
+    the model the entire catalog in precisely the case where no citation is
+    supportable, which is the defect inverted and amplified.
+
+    An empty allow-list is therefore a legitimate answer, not an error:
+    `approve_assessment` in `routes/attack.py` has no scoring precondition, so
+    an APPROVED assessment with every `status` NULL is reachable today. Nothing
+    is raised for it. Every finding this function emits already requires a
+    judgement (`status in ("gap", "partial")`, `maturity_tier is not None`), so
+    a scored-nothing service contributes no findings either -- the model is
+    asked to link nothing and drops nothing. What must never happen is that
+    state passing SILENTLY, which is what `link_scopes` is returned for.
 
     The fourth return value is not bookkeeping. Every finding here is "current
     is below target", so the target is the operand that decides whether a row
@@ -431,6 +464,7 @@ def _gather_findings(
     valid_techniques: set[str] = set()
     valid_controls: set[str] = set()
     target_sources: dict[str, dict] = {}
+    link_scopes: dict[str, LinkScope] = {}
 
     attack = _finalized_for_synthesis(db, AttackAssessment, client_id)
     if attack is not None:
@@ -439,7 +473,28 @@ def _gather_findings(
             .scalars()
             .all()
         )
-        valid_techniques = {r.technique_code for r in rows} or set(attack_all_codes())
+        # PENDING-REVIEW ROWS ARE CITABLE HERE, AND THAT IS AN OPEN QUESTION
+        # RATHER THAN AN OVERSIGHT -- stated at the site because an unstated
+        # exemption reads as one to whoever runs this sweep next.
+        #
+        # #102 says a status backed by no CONFIRMED citation must not score:
+        # `attack/pending.py::pending_codes` is the authoritative set the
+        # heatmap withholds. This scope does NOT subtract it, so a technique
+        # whose coverage status is withheld from the score can still appear in
+        # the register's `linked_techniques` and in the client's export.
+        #
+        # Arguable both ways, which is why it is filed rather than decided
+        # here. A link says "this risk relates to T1003", not "T1003 is
+        # covered", so citing a pending row may be perfectly honest -- or it may
+        # propagate an unreviewed model inference into a deliverable, which is
+        # the harm #102 exists to prevent.
+        #
+        # NOT INTRODUCED and strictly improved by this change: before #403 every
+        # technique in the catalog was citable, pending or not. Narrowing to
+        # scored rows is a subset of that, so nothing got worse. Tracked in #415.
+        attack_scope = scope_for(AttackCoverage, rows)
+        valid_techniques = set(attack_scope.codes)
+        link_scopes["attack"] = attack_scope
         for r in rows:
             if r.status in ("gap", "partial"):
                 findings.append(
@@ -468,10 +523,13 @@ def _gather_findings(
         # "the client's choice could not be used" stay separate facts.
         csf_target, csf_target_source = resolve_target_tier(_client_target_tier(db, csf.service_id))
         target_sources["csf"] = {"target": csf_target, "source": csf_target_source}
-        for r in (
+        csf_rows = (
             db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == csf.id)).scalars().all()
-        ):
-            valid_controls.add(r.subcategory_code)
+        )
+        csf_scope = scope_for(CsfAnswer, csf_rows)
+        valid_controls |= csf_scope.codes
+        link_scopes["csf"] = csf_scope
+        for r in csf_rows:
             if r.maturity_tier is not None and r.maturity_tier < csf_target:
                 findings.append(
                     {
@@ -510,10 +568,13 @@ def _gather_findings(
             _client_target_stage(db, zt.service_id),
         )
         target_sources["zt"] = {"target": zt_target, "source": zt_target_source}
-        for r in (
+        zt_rows = (
             db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == zt.id)).scalars().all()
-        ):
-            valid_controls.add(r.capability_code)
+        )
+        zt_scope = scope_for(ZtAnswer, zt_rows)
+        valid_controls |= zt_scope.codes
+        link_scopes["zt"] = zt_scope
+        for r in zt_rows:
             # Per-capability target first, then the ENGAGEMENT target. The
             # fallback was a hardcoded 3 (#84); it is now the client's
             # resolved stage.
@@ -545,7 +606,7 @@ def _gather_findings(
                     }
                 )
 
-    return findings, valid_techniques, valid_controls, target_sources
+    return findings, valid_techniques, valid_controls, target_sources, link_scopes
 
 
 def _coerce_enum(enum_cls, value) -> tuple[object | None, str | None]:
@@ -626,8 +687,16 @@ def _run_risk_synthesize_batched(
 
     The allow-lists go to EVERY batch. `valid_techniques` / `valid_controls` are
     what stop the model citing a technique or control the client's assessments
-    never contained, so a batch that did not receive them would be unguarded.
+    never SCORED, so a batch that did not receive them would be unguarded.
     They cost input tokens, which is the cheap side of this trade.
+
+    **"never contained" is what this said until #403, and it was the sentence
+    that made the defect invisible.** It described the guard correctly as
+    designed and incorrectly as built: the lists were every row of each
+    assessment, and every row is pre-seeded, so "contained" admitted the whole
+    catalog. The claim read as a guarantee, sat exactly where a reader would
+    check, and was true of a narrower thing than anyone would assume. See
+    `_gather_findings` and `app/risk/link_scope.py`.
 
     Each worker gets its OWN Session bound to the REQUEST session's engine. A
     Session is not thread-safe, and reaching for the module-level SessionLocal
@@ -767,7 +836,9 @@ def generate(
             ),
         )
 
-    findings, valid_techniques, valid_controls, target_sources = _gather_findings(db, cid)
+    findings, valid_techniques, valid_controls, target_sources, link_scopes = _gather_findings(
+        db, cid
+    )
     client_org = None if client.legal_name == "(pending intake)" else client.legal_name
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
     # total failure still raises typed, through ai_call_boundary.
@@ -1114,6 +1185,19 @@ def generate(
     if register.provenance is not None:
         _prov_with_count = dict(register.provenance)
         _prov_with_count["entries_intended"] = entries_total
+        # #403. The scored share of each assessment, persisted for the same two
+        # reasons as the tally above: it is a GENERATE-TIME fact, and the
+        # provenance blob costs no migration.
+        #
+        # Written HERE, below the flush and beside the count it belongs with,
+        # because a record saying "this is what the run was allowed to cite"
+        # must sit after the run rather than beside the intention. It is read
+        # back by `_serialize`, so the register's own disclosure survives a
+        # reload -- the half #316 shipped without.
+        _prov_with_count["link_scope"] = {
+            service: {"scored": len(sc.codes), "total": sc.total}
+            for service, sc in link_scopes.items()
+        }
         register.provenance = _prov_with_count
         db.add(register)
     else:
@@ -1121,6 +1205,14 @@ def generate(
             "risk_register_intended_count_not_persisted",
             register_id=str(register.id),
             entries_intended=entries_total,
+            # #403 rides in the same blob, so a NULL provenance loses the
+            # scored-share disclosure too. Named here rather than left to the
+            # field name above, or the log would report one of two losses and
+            # read as complete.
+            link_scope={
+                service: {"scored": len(sc.codes), "total": sc.total}
+                for service, sc in link_scopes.items()
+            },
             reason="provenance is NULL, which no current writer produces",
         )
     if entries_written != entries_total:
@@ -1176,6 +1268,15 @@ def generate(
             # The two names will outlive the measurements that make them safe.
             "entries_intended": entries_total,
             "entries_without_tier": entries_without_tier,
+            # #403. What the run was ALLOWED to cite, per service, and out of
+            # how many rows. Beside the drop counters deliberately: together
+            # they separate "the model named something wrong" from "the
+            # assessment scored almost nothing", which are the two ways a
+            # register comes out sparsely linked and have opposite remedies.
+            "link_scope": {
+                service: {"scored": len(sc.codes), "total": sc.total}
+                for service, sc in link_scopes.items()
+            },
             # #132, and the same pairing: the map names what to fix, the count
             # names what the consultant sees. `entries_offered_links` is the
             # denominator -- "3 entries lost every link" means something
@@ -1417,7 +1518,19 @@ def export(
         .all()
     )
     org = None if client.legal_name == "(pending intake)" else client.legal_name
-    ctx = risk_exporters.build_context(client_legal_name=org, version=reg.version, entries=entries)
+    # #403. The scored share reaches the client's DELIVERABLE, not only the
+    # consultant's screen -- read from the same persisted provenance the
+    # response reads, so the PDF and the dashboard cannot disagree about one
+    # register. `_link_scope_fields` is the single reader of that blob, for the
+    # reason this file already gives at its `resolve_target_tier` import: a
+    # second parser is how two surfaces come to disagree about one client.
+    _scope_rows = _link_scope_fields(reg.provenance)["excluded_unscored_links"]
+    ctx = risk_exporters.build_context(
+        client_legal_name=org,
+        version=reg.version,
+        entries=entries,
+        link_scope=[(r.service, r.scored, r.total) for r in _scope_rows],
+    )
     today = utcnow().date()
 
     def _rr_name(extension: str) -> str:
@@ -1491,6 +1604,214 @@ def latest(
             detail="No Risk Register generated yet.",
         )
     return _serialize(db, reg)
+
+
+def _dropped_citations(entries: list) -> int | None:
+    """#403. How many CITATION VALUES a register's run discarded, three-state.
+
+    `None` means nobody counted; a number -- including a legitimate `0` -- means
+    somebody did. `schemas/risk.py`'s field comment carries the argument for why
+    the third state is not `0`.
+
+    ## The empty register is its own branch, deliberately
+
+    `all(e.dropped_links is None for e in entries)` is vacuously TRUE for an
+    empty list, so writing this as a one-line conditional would report a
+    zero-entry register as "nobody counted". That is false: `_resolve_links` runs
+    per entry, so a register with no entries had no citation offered and dropped
+    none -- an OBSERVED zero, not an absence. Reporting it as `None` would
+    understate what the run actually established.
+
+    The distinction is written as a branch rather than left to `all()`'s vacuous
+    truth because a vacuous-truth branch is a decision nobody made, and this file
+    already records the cost of those.
+
+    ## Partial coverage is summed, and the gap is disclosed elsewhere
+
+    Where some entries carry a record and some do not (a register generated
+    before 0048 and since partly regenerated), this sums the ones that do.
+    `entries_links_not_recorded` is the count this could not see, and the two
+    render together -- a scalar that silently summed a subset with nothing naming
+    the population would be the partial-read-as-whole-answer defect.
+    """
+    if entries and all(e.dropped_links is None for e in entries):
+        return None
+    return sum(
+        len(values)
+        for e in entries
+        for values in (e.dropped_links or {}).values()
+        # A persisted `dropped_links` value is a list of discarded strings. A
+        # non-list would be a blob no writer produces; skipping it here rather
+        # than raising keeps a malformed row from 500-ing a read, and the entry
+        # counters beside this one still report the row as having drops.
+        if isinstance(values, list)
+    )
+
+
+def _link_scope_row_fault(counts: object) -> str | None:
+    """Why one persisted `link_scope` row is unusable, or None if it is fine.
+
+    Separated from `_link_scope_fields` so the CALLER's response to a fault is a
+    single line -- see the comment at that line. A validator whose every failure
+    branch is inline is a validator whose failure POLICY cannot be changed, or
+    mutated, in one edit.
+
+    Returns a reason string rather than a bool, because the log line that
+    records this is the only place a malformed blob is ever visible: nothing
+    user-facing can say "the provenance is malformed", and "invalid" without a
+    reason is the empty-reason defect `check_test_integrity` exists to reject.
+    """
+    if not isinstance(counts, dict):
+        return "service entry is not an object"
+    scored, total = counts.get("scored"), counts.get("total")
+    for name, value in (("scored", scored), ("total", total)):
+        # `bool` is an `int` in Python, so excluding it is load-bearing rather
+        # than defensive: `isinstance(True, int)` is True and `True` would render
+        # as a scored count of 1. `CLAUDE.md`: `int()` is not a validator.
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{name} is not a plain integer"
+    # NO NARROWING `assert` HERE, and the absence is deliberate rather than an
+    # oversight: bandit flags every `assert` as B101, `B101` is not in
+    # `pyproject.toml`'s `skips`, and `CLAUDE.md` records that ruff's
+    # suppression comment for S101 does NOT suppress bandit.
+    #
+    # THE DIRECTIVE IS NAMED IN WORDS RATHER THAN SPELLED, and that is not
+    # squeamishness: ruff parses its own suppression token out of ANY comment,
+    # including a sentence about the token, and two drafts of this paragraph
+    # each emitted an invalid-directive warning for quoting it. A marker means
+    # something wherever it appears -- which is the same class of defect as the
+    # asserts below it, one layer down.
+    #
+    # Both asserts this function briefly carried turned CI's Python job red,
+    # caught here rather than there. The comparison below is
+    # reached only after the loop above has proved both operands are plain
+    # ints, so nothing is lost by dropping them.
+    if not isinstance(scored, int) or not isinstance(total, int):  # pragma: no cover
+        return "counts are not plain integers"
+    if scored < 0 or total < 0 or scored > total:
+        return "counts are not a scored-subset-of-total pair"
+    return None
+
+
+_NOT_RECORDED = {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
+
+
+def _link_scope_unreadable(reason: str, **fields: object) -> dict:
+    """The #403 disclosure withheld because this blob could not be read.
+
+    HOISTED TO MODULE LEVEL, and that is the fix rather than a tidy. It was a
+    closure defined BELOW `_link_scope_fields`' first return, so the two inputs
+    that return earliest -- a NULL provenance and a non-dict -- could not reach
+    it however the code was written. The docstring above promised all four
+    unreadable shapes "plus a loud log" and two of them were silent: the only
+    visibility a malformed blob has, absent for the two cases a real writer is
+    likeliest to produce.
+
+    Same shape as everything else this change is about -- "I could not look"
+    sharing a branch, and here a RETURN STATEMENT, with "nothing to report" --
+    committed inside the function written to close it.
+    """
+    _log.error("risk_register_link_scope_unreadable", reason=reason, **fields)
+    return dict(_NOT_RECORDED)
+
+
+def _link_scope_fields(stored: object) -> dict:
+    """The #403 disclosure fields, read out of a register's provenance blob.
+
+    Returns the two keys `_serialize` splats, and the two keys are one decision:
+    WHAT was scored, and whether this function was able to answer at all.
+
+    ## Four states, and the split between the first two is the point
+
+      * NO `link_scope` KEY -- this register predates the recording. Nothing on
+        file says how much was scored, which is NOT "everything was scored".
+        `recorded=False`, empty list, and SILENT: there is no fault to report,
+        every register generated before this shipped is in this state, and
+        logging an error per read would be noise that teaches readers to ignore
+        the log.
+      * A NULL OR NON-DICT `provenance` -- `recorded=False` AND A LOUD LOG. This
+        is not "predates the recording", it is a blob this function cannot read,
+        and the two must not share a branch. They did: the condition was
+        `not isinstance(stored, dict) or "link_scope" not in stored`, one `or`
+        and one return covering both, with the logging helper defined below it
+        and therefore unreachable from it.
+      * A key holding per-service counts, EVERY ONE READABLE and AT LEAST ONE
+        PRESENT -- `recorded=True`, one row each.
+      * A key this function cannot fully read -- a non-dict, an EMPTY object, or
+        ANY malformed row -- `recorded=False` and a loud log.
+
+    ## Why an empty object is unreadable rather than "recorded, zero services"
+
+    `{}` used to fall through the loop to `recorded=True` with no rows, and the
+    dashboard -- gated on `recorded` alone at the time -- rendered the heading
+    "Links can only cite what each assessment has scored" over an empty list.
+    `render_xlsx`' own comment calls that state "a false claim rather than an
+    absence" and refuses it; the screen took the option the exporter refuses.
+
+    UNREACHABLE from the one writer, measured: `_gate` sets
+    `unlocked = has_attack and (has_csf or has_zt)` from `_finalized_for_synthesis`
+    for all three services, and `generate` 409s unless `synthesizable_missing` is
+    empty, so `link_scopes` always carries at least two services. So this is a
+    ratchet -- and it is the one sibling of a hardened class that was left
+    unhandled, which is the unstated-exemption shape rather than a judgement.
+
+    ## The partial read is the trap, and the first version of this walked into it
+
+    It validated each row and `continue`d past a bad one, then returned
+    `recorded=True`. So a blob carrying one good service and one malformed one
+    reported a COMPLETE answer over a PARTIAL read -- a consultant would see
+    "ATT&CK 12 of 700" and no CSF line, indistinguishable from a register that
+    genuinely had no CSF assessment.
+
+    ## Reachability, measured rather than assumed
+
+    NO CURRENT WRITER CAN PRODUCE ANY UNREADABLE SHAPE. `generate` builds
+    `{"scored": len(sc.codes), "total": sc.total}` -- two `int`s by construction
+    -- and `_provenance_snapshot` ends `return {"inputs": ..., "excluded": ...}`
+    unconditionally, so `generate` cannot write a NULL or non-dict provenance
+    either. `seed_demo.py` writes no `link_scope` key at all, which is state one.
+
+    So every validation here is a RATCHET. What would make it reachable is
+    ordinary: a hand-edited blob, a migration backfilling the key, a future
+    writer persisting a float or a string, or a second writer recording only some
+    services. The `bool` exclusion is part of the same ratchet -- NOT
+    "load-bearing", which an earlier draft of its comment claimed and which
+    asserts a reachability no writer has.
+    """
+    if not isinstance(stored, dict):
+        return _link_scope_unreadable("provenance is not an object", got=type(stored).__name__)
+    if "link_scope" not in stored:
+        # STATE ONE, and the only silent return in this function. Not a fault:
+        # every register generated before #403 shipped is here.
+        return dict(_NOT_RECORDED)
+    raw = stored.get("link_scope")
+    if not isinstance(raw, dict):
+        return _link_scope_unreadable("link_scope is not an object", got=type(raw).__name__)
+    if not raw:
+        return _link_scope_unreadable("link_scope names no service")
+    rows: list[LinkScopeDisclosure] = []
+    for service, counts in raw.items():
+        fault = _link_scope_row_fault(counts)
+        if fault is not None:
+            # ONE LINE, and it is the line that decides the whole behaviour of
+            # this function. The first version `continue`d here and still
+            # returned `recorded=True`; mutating this back to `continue` is what
+            # `test_an_unreadable_scope_reports_NOT_RECORDED_rather_than_a_partial_answer`
+            # is verified red against.
+            return _link_scope_unreadable(fault, service=str(service), counts=repr(counts))
+        # `counts` is a dict carrying two plain ints: `_link_scope_row_fault`
+        # returned None, which it can only do after proving both.
+        rows.append(
+            LinkScopeDisclosure(
+                service=str(service),
+                scored=counts["scored"],  # type: ignore[index]
+                total=counts["total"],  # type: ignore[index]
+            )
+        )
+    return {
+        "excluded_unscored_links": sorted(rows, key=lambda r: r.service),
+        "excluded_unscored_links_recorded": True,
+    }
 
 
 def _serialize(
@@ -1629,6 +1950,34 @@ def _serialize(
             and any(e.dropped_links.get(f) for f in ("linked_techniques", "linked_controls"))
         ),
         entries_links_not_recorded=sum(1 for e in entries if e.dropped_links is None),
+        # #403, the three-state VALUE tally, derived here for the same reason the
+        # three entry counters above are: it describes the REGISTER, so it is
+        # correct whenever the register is read rather than only on the generate
+        # response. Possible only because the drop is PERSISTED (0048).
+        #
+        # `None` when NO entry carries a record -- nobody counted -- and a number
+        # otherwise, including a legitimate 0. See the field's own comment in
+        # `schemas/risk.py` for why `int = 0` would be a false positive claim.
+        #
+        # `sum(len(v) ...)` over the persisted lists counts VALUES, not entries;
+        # `source_id` is included because a discarded provenance claim is a
+        # discarded citation, and the consultant-facing copy names it separately.
+        dropped_citations=_dropped_citations(entries),
+        # #403, read back from provenance rather than recomputed, because it is
+        # a GENERATE-TIME fact. Recomputing from today's assessments would
+        # render a present-tense claim beside entries drafted earlier: a
+        # register generated against version 1 and read after version 2 was
+        # approved would publish version 2's scored share as the reason
+        # version 1's links are sparse. That is a certificate over an adjacent
+        # proposition, which this repo treats as worse than no certificate.
+        #
+        # `_recorded` is derived from the KEY's presence, not from the list
+        # being non-empty. An assessment that scored everything records
+        # `{"csf": {"scored": 106, "total": 106}}`, and a register predating
+        # this records no key at all -- if emptiness were the test those two
+        # would be one state, which is the trap `excluded_inputs_recorded`
+        # exists for.
+        **_link_scope_fields(stored),
         id=register.id,
         client_id=register.client_id,
         version=register.version,

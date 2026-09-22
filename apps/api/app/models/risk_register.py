@@ -43,7 +43,22 @@ class RiskRegister(UUIDPKMixin, TimestampMixin, Base):
     # Shape:
     #   {"inputs": [{"kind": "attack"|"csf"|"zt",
     #                "assessment_id": str, "version": int, "status": str}],
-    #    "excluded": [str]}
+    #    "excluded": [str],
+    #    "link_scope": {"attack"|"csf"|"zt": {"scored": int, "total": int}}}
+    #
+    # THIS LIST IS KNOWN INCOMPLETE AND #397 TRACKS IT. Writers in
+    # `routes/risk.py` also add "batches" (#372/#376) and "entries_intended"
+    # (#330), which are absent above. `link_scope` (#403) is added here rather
+    # than left to be discovered, because a reader who trusts this block is the
+    # person who breaks the next key -- but the two missing entries are NOT
+    # filled in as a drive-by: this comment is the defect #397 is about, and
+    # quietly completing it would close the issue's evidence while leaving the
+    # mechanism (a hand-maintained shape list beside a JSON column, with nothing
+    # asserting the two agree) exactly as it is.
+    #
+    # `link_scope` is per SERVICE, and its `total` is that assessment's ROW
+    # COUNT rather than the catalog size, so a catalog that grows later does not
+    # retroactively change what a released register claims.
     #
     # Written at GENERATE and never revised, because the guarantee is about what
     # the inputs WERE. Recomputing it at export would read today's statuses, so

@@ -39,6 +39,29 @@ import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 
 import type { JSX } from "react";
 
+/**
+ * #403. Service tokens as the API spells them, for the scored-coverage banner.
+ *
+ * `?? s.service` at the call site rather than a lookup that can return
+ * undefined: a service added on the API side must render as its raw token —
+ * which is ugly and legible — instead of vanishing from a disclosure or
+ * printing "undefined" beside a real count. A missing label is a cosmetic
+ * defect; a missing ROW is the disclosure failing silently, which is the
+ * failure this banner exists to prevent.
+ *
+ * DUPLICATED, unavoidably: `_SERVICE_LABELS` in `app/risk/exporters.py` holds
+ * the same three strings for the client's deliverable. No shared label map
+ * exists in this repo to reuse, and a Python dict cannot be shared with TSX, so
+ * this is a synchronization whose window is named rather than a derivation.
+ * Change both, or the client's PDF and this screen disagree about which
+ * assessment a count belongs to.
+ */
+const SERVICE_LABELS: Record<string, string> = {
+  attack: "ATT&CK coverage",
+  csf: "NIST CSF",
+  zt: "Zero Trust",
+};
+
 function TierChip({ tier }: { tier: string | null }): JSX.Element {
   const t = (tier ?? "negligible") as RiskTier;
   const color = TIER_COLOR[t] ?? TIER_COLOR.negligible;
@@ -585,21 +608,31 @@ export function RiskRegisterDashboard(): JSX.Element {
                 links and kept none
               </span>
               , so they show no linkage at all — the same as an entry nobody
-              linked. Every value the model sent named something that is not in
-              this client&apos;s assessments. A dropped source shows as{" "}
-              <em>not recognised</em> in the Source column; the full values are
-              on the <code>risk_register.generated</code> audit row. Regenerate
-              before exporting: a client reading this register sees those rows
+              linked. Every value the model sent was either misnamed or names a
+              control this client&apos;s assessments have not scored. A dropped
+              source shows as <em>not recognised</em> in the Source column; the
+              full values are on the <code>risk_register.generated</code> audit
+              row. Where the cause is unscored assessment work rather than a
+              misnamed value, regenerating returns the same rows and spends
+              another model call. A client reading this register sees those rows
               as unlinked.
             </div>
           ) : null}
           {/* #132 review. Three counters exist because there are three
               states; one was rendered. These are the other two.
 
-              `entries_with_dropped_links` is the spelling problem -- entries
-              that lost a value and still show linkage. Lower severity than the
-              banner above and not nothing: it is what a consultant fixes to
-              stop the next run losing more.
+              `entries_with_dropped_links` is entries that lost a value and
+              still show linkage. Lower severity than the banner above and not
+              nothing: it is what a consultant fixes to stop the next run
+              losing more.
+
+              #403 CHANGED WHAT A DROP MEANS, and this comment said "the
+              spelling problem" -- true when the allow-lists held every code
+              that exists, so the only way to miss was to misname one. They now
+              hold the codes an assessment SCORED, so a perfectly spelled,
+              catalog-valid code is dropped when nobody has judged it. The two
+              causes are not separable per value here; the scored-coverage
+              banner below is what tells them apart at the assessment level.
 
               `entries_links_not_recorded` is pre-0048 rows, where "nothing was
               dropped" and "nobody was counting" are different facts. NOT
@@ -620,7 +653,60 @@ export function RiskRegisterDashboard(): JSX.Element {
               — the rest of each still resolved, so they show linkage. The
               values are on each entry and on the{" "}
               <code>risk_register.generated</code> audit row. Worth a look
-              before the next run: they are what the model keeps getting wrong.
+              before the next run: each is either a value the model misnamed or
+              a control nobody has scored yet.
+            </div>
+          ) : null}
+          {/* #403, the owner's three-state requirement. The VALUE tally, beside
+              the ENTRY tallies above.
+
+              THREE STATES, AND THE THIRD IS WHY THIS IS NOT A PLAIN NUMBER:
+              `> 0` is a real count; `0` is a real count that happens to be
+              zero, rendered so a consultant can read "nothing was discarded" as
+              an OBSERVED fact; `null` is nobody counted, and renders NOTHING.
+
+              A `null` must never render as "0 dropped". That is the UNCONFIRMED
+              rule: a derived surface that cannot confirm its value never shows a
+              plausible default, and "0 citations dropped" over a register nobody
+              counted is a false assurance about the one population that cannot
+              be re-checked (#372, #376).
+
+              Rendering the zero rather than staying silent is deliberate and is
+              the opposite decision from `null`: a counted zero is information a
+              consultant wants before exporting, and it is the state that makes
+              the silence of `null` legible by contrast.
+
+              THE POPULATION TRAVELS WITH THE COUNT where part of the register
+              could not be counted -- `entries_links_not_recorded` is what this
+              tally could not see, and a scalar summed over a subset with nothing
+              naming the subset is the partial-read-as-whole-answer defect. */}
+          {register.dropped_citations !== null ? (
+            <div
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-citations-dropped"
+            >
+              <span className="font-semibold">
+                {register.dropped_citations === 0
+                  ? "No citation values were discarded"
+                  : `${register.dropped_citations} citation value${
+                      register.dropped_citations === 1 ? " was" : "s were"
+                    } discarded`}
+              </span>
+              {register.entries_links_not_recorded > 0 ? (
+                <>
+                  {" "}
+                  across the{" "}
+                  {register.entries_total -
+                    register.entries_links_not_recorded}{" "}
+                  of {register.entries_total} entries that carry a link record —{" "}
+                  {register.entries_links_not_recorded} predate link recording
+                  and are not in this count.
+                </>
+              ) : (
+                <> across all {register.entries_total} entries.</>
+              )}{" "}
+              This counts VALUES; the entry tallies above count ROWS, so one
+              entry that lost three techniques is 1 there and 3 here.
             </div>
           ) : null}
           {register.entries_links_not_recorded > 0 ? (
@@ -635,6 +721,68 @@ export function RiskRegisterDashboard(): JSX.Element {
               , so nothing on file says whether the model proposed linkage for
               them. That is not the same as nothing having been dropped.
               Regenerate to find out.
+            </div>
+          ) : null}
+          {/* #403. WHY the links are sparse, which none of the counters above
+              can say.
+
+              Those describe what the MODEL got wrong. This describes what the
+              ASSESSMENT does not contain. The synthesis allow-lists are the
+              codes a client's assessments actually SCORED, so a client who
+              scored 12 of 700 techniques gets links drawn from 12 -- sparse
+              linkage is CORRECT and reads as a regression.
+
+              WITHOUT THIS THE FIX IS A REGRESSION IN DISGUISE: a silently
+              wrong citation would have been traded for a silently missing one,
+              which is the worse of the two. That is the whole reason this
+              renders.
+
+              RENDERED WHENEVER RECORDED, not only when something was excluded.
+              A run that scored everything is a real answer a consultant should
+              be able to read off the page, and gating on `excluded > 0` would
+              make "fully scored" and "predates the recording" the same blank --
+              the two-state trap the `_recorded` flag exists to end.
+
+              The denominator travels with the count deliberately: a withheld
+              number over an undisclosed population is not self-describing.
+
+              THE LENGTH CHECK IS NOT THE TWO-STATE COLLAPSE IT LOOKS LIKE, and
+              the distinction is worth reading before anyone "simplifies" it. The
+              states that must stay apart are "fully scored" and "never
+              recorded" -- and a fully scored assessment still produces a ROW
+              (`{scored: 106, total: 106}`), so it is `recorded` AND non-empty.
+              An empty array under `recorded: true` means the run recorded a
+              scope naming no assessment at all, which `generate` cannot produce
+              (it 409s on `synthesizable_missing`, so at least one assessment is
+              always finalized). Rendering it would put this panel's heading and
+              its "links can only cite what each assessment has scored" claim
+              over nothing. */}
+          {register.excluded_unscored_links_recorded &&
+          register.excluded_unscored_links.length > 0 ? (
+            <div
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-link-scope"
+            >
+              <span className="font-semibold">
+                Links can only cite what each assessment has scored
+              </span>
+              <ul className="mt-1 list-disc pl-5">
+                {register.excluded_unscored_links.map((s) => (
+                  <li key={s.service}>
+                    {SERVICE_LABELS[s.service] ?? s.service}: {s.scored} of{" "}
+                    {s.total} scored
+                    {s.total > s.scored
+                      ? `, ${s.total - s.scored} not yet judged and therefore not citable`
+                      : " — every row judged"}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1">
+                An unscored control is unfinished assessment work, not a model
+                error: regenerating cannot add links for rows nobody has judged.
+                Score the outstanding rows first if this register should link
+                more widely.
+              </p>
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">

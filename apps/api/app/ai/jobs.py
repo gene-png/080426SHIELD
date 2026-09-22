@@ -202,8 +202,8 @@ Register by synthesizing gaps and findings from a client's completed assessments
 
 For each finding draft one candidate entry: weakness title + description; SHIELD
 axis (detection, prevention, or response); the linked ATT&CK techniques and
-control references (you may ONLY cite techniques/controls that appear in the
-supplied assessments); likelihood (very_low, low, medium, high, very_high);
+control references (you may ONLY cite codes that appear in the supplied
+valid_techniques and valid_controls lists); likelihood (very_low, low, medium, high, very_high);
 impact (negligible, minor, moderate, major, catastrophic);
 compensating controls; residual risk; and a
 recommended action (remediate, mitigate, accept, transfer, avoid) with rationale.

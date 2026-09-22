@@ -254,7 +254,7 @@ Remaining: C5 (dashboards) + C2 (rerun safeguards). Extraction/versioned lists/o
 
 - Generation gate: enabled only when client has ATT&CK coverage AND ≥1 of CSF/ZT; uses both if both exist; locked otherwise with "what is missing".
 - Migration: versioned register; per entry — id, title, description, axis, source(+source_id), linked techniques+controls, likelihood, impact, code-derived tier, compensating, residual, recommended_action+rationale, provenance (origin/trust). Blank export columns: decision-maker, approval date, expiry, next review, status.
-- `risk_synthesize` job: one candidate entry per finding; may only cite techniques/controls present in the client's assessments; code validates links against catalogs, rejects invented IDs.
+- `risk_synthesize` job: one candidate entry per finding; may only cite techniques/controls the client's assessments have SCORED (#403 — a pre-seeded but unjudged row is not citable, and the allow-list is narrower than the catalog); code validates links against those lists and rejects anything outside them, invented or merely unscored; every discarded value is counted and disclosed.
 - Deterministic tier engine: likelihood/impact orders; score=(li+1)·(ii+1); High/VeryHigh+Catastrophic→Critical; VeryHigh+Major+→Critical; ≥15→High; ≥9→Medium; ≥4→Low; else Negligible. Tier never AI-set.
 - Dashboard + exports modeled on Atlas Risk Register (KPI cards, inherent-risk-by-axis, 5×5 matrix, tier legend, table with required Linked Source per row); XLSX + PDF/Word; each generate = new version.
 - **Acceptance:** gate works; every entry traces to a source; tiers match matrix; AI can't invent IDs; each generation = clean new version.

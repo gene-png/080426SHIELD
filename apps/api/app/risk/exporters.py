@@ -44,6 +44,22 @@ class RiskExportContext:
     client_legal_name: str
     version: int
     entries: list[Any]  # RiskEntry rows
+    #: #403. `(service, scored, total)` per assessment feeding this register --
+    #: how much of each was scored, and therefore how much the synthesis model
+    #: was permitted to cite.
+    #:
+    #: THE CLIENT'S COPY IS WHY THIS IS HERE. The consultant's screen carries
+    #: the same disclosure, and it is the deliverable that leaves the building:
+    #: after #403 the Linked Techniques and Linked Controls columns go sparse
+    #: wherever an assessment is largely unscored, which is CORRECT and reads
+    #: as missing work. A register whose links thinned with no statement of why
+    #: trades a silently wrong citation for a silently missing one.
+    #:
+    #: DEFAULTED EMPTY so every existing `build_context` caller keeps working,
+    #: and empty renders NOTHING rather than a zero -- "0 of 0 scored" would be
+    #: a concrete false claim about a client's assessments, where silence is
+    #: merely an absence. `CLAUDE.md`: missing data defaults to UNCONFIRMED.
+    link_scope: tuple[tuple[str, int, int], ...] = ()
 
 
 def _enum_list(values, enum_cls):
@@ -59,12 +75,17 @@ def _enum_list(values, enum_cls):
 
 
 def build_context(
-    *, client_legal_name: str | None, version: int, entries: Sequence[Any]
+    *,
+    client_legal_name: str | None,
+    version: int,
+    entries: Sequence[Any],
+    link_scope: Sequence[tuple[str, int, int]] = (),
 ) -> RiskExportContext:
     return RiskExportContext(
         client_legal_name=client_legal_name or "Client",
         version=version,
         entries=list(entries),
+        link_scope=tuple(link_scope),
     )
 
 
@@ -149,6 +170,35 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
             ]
         )
 
+    # #403, the XLSX half. The PDF and Word carry this in `_summary_lines`;
+    # the spreadsheet has no summary block, so it goes in a sheet of its own
+    # rather than being squeezed into a header row.
+    #
+    # A SEPARATE SHEET, not extra columns: the disclosure is per ASSESSMENT and
+    # the table is per ENTRY, so a column would repeat one assessment-level fact
+    # on every row and invite reading it as a property of the entry beside it.
+    #
+    # Omitted entirely when nothing was recorded -- an empty sheet headed
+    # "Scored coverage" with no rows reads as "nothing was scored", which is a
+    # false claim rather than an absence.
+    if ctx.link_scope:
+        sheet = wb.create_sheet("Scored coverage")
+        sheet.append(["Assessment", "Rows scored", "Rows total", "Not citable"])
+        for col in range(1, 5):
+            cell = sheet.cell(row=1, column=col)
+            cell.font = Font(bold=True)
+            cell.fill = fill
+        for service, scored, total in sorted(ctx.link_scope):
+            sheet.append([_SERVICE_LABELS.get(service, service), scored, total, total - scored])
+        sheet.append([])
+        sheet.append(
+            [
+                "Technique and control links are drawn only from rows an "
+                "assessment has scored, so unscored rows cannot appear in the "
+                "Linked Techniques or Linked Controls columns."
+            ]
+        )
+
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -157,6 +207,58 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 # ---------------------------------------------------------------------------
 # Shared summary used by PDF + DOCX
 # ---------------------------------------------------------------------------
+
+
+#: Service tokens as the API spells them, for the #403 scored-coverage
+#: disclosure.
+#:
+#: DUPLICATED, unavoidably: `SERVICE_LABELS` in
+#: `apps/web/src/components/admin/risk/RiskRegisterDashboard.tsx` holds the same
+#: three strings for the consultant's screen. There is no shared label map in
+#: this repo to reuse (searched) and no way to share a Python dict with TSX, so
+#: this is a synchronization rather than a derivation -- which `CLAUDE.md` says
+#: to avoid where possible and otherwise to NAME, with the window stated.
+#:
+#: The window: a label changed in one place and not the other makes the client's
+#: PDF and the consultant's screen disagree about which assessment a count
+#: belongs to. Cosmetic rather than numeric -- the counts themselves come from
+#: one parser -- but it is the kind of drift nobody notices. Change both.
+_SERVICE_LABELS = {
+    "attack": "ATT&CK coverage",
+    "csf": "NIST CSF",
+    "zt": "Zero Trust",
+}
+
+
+def _link_scope_lines(ctx: RiskExportContext) -> list[str]:
+    """The #403 disclosure, for the client's PDF and Word deliverable.
+
+    Reads as prose beside the other summary lines rather than as a table: the
+    reader is a client executive, and "23 of 106 subcategories scored" is the
+    sentence that explains why the Linked Controls column is mostly empty.
+
+    An unknown service token renders as itself. The alternative -- skipping a
+    row this dict has no label for -- would drop a whole assessment out of a
+    disclosure, which is the failure the disclosure exists to prevent; an ugly
+    token is merely ugly. Same call as the web banner makes.
+
+    Returns `[]` for an empty scope, so a register built before this was
+    recorded prints nothing instead of a fabricated zero.
+    """
+    if not ctx.link_scope:
+        return []
+    parts = [
+        f"{_SERVICE_LABELS.get(service, service)} {scored} of {total}"
+        for service, scored, total in sorted(ctx.link_scope)
+    ]
+    return [
+        "Scored coverage available to link — " + ", ".join(parts),
+        (
+            "Technique and control links are drawn only from rows an assessment "
+            "has scored, so unscored rows cannot appear in the two Linked "
+            "columns."
+        ),
+    ]
 
 
 def _summary_lines(ctx: RiskExportContext) -> list[str]:
@@ -189,6 +291,7 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         f"By axis — detection {ac['detection']}, prevention "
         f"{ac['prevention']}, response {ac['response']}",
         "By recommended action — " + ", ".join(f"{k} {v}" for k, v in acts.items() if v),
+        *_link_scope_lines(ctx),
     ]
 
 
