@@ -13,6 +13,31 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**#236 and #389 fixed: two client-reaching surfaces that failed silently.**
+
+**#236** — `app/home/page.tsx` fetched four endpoints in one `Promise.all` with
+no `catch`, and there is no `error.tsx` anywhere under `apps/web/src/app`, so
+any one rejection took the whole page down — including the client's released
+reports, which have nothing to do with the endpoint that failed. Now
+`Promise.allSettled`, with each failure recorded per panel.
+
+**The half that was the actual work**, and why the site comment said this was
+"considered and left": `allSettled` alone is not the fix. Passing `[]` / `0` /
+`null` for a panel that ERRORED makes the page assert "you have no
+engagements", "no unread messages" — claims about the client's account made
+from a failure. `HomeDashboard` now takes `unavailable: HomePanel[]` and
+renders "could not be loaded" for those, so a degraded panel is distinguishable
+from an empty one.
+
+**#389** — `SignUpForm`'s `await res.json()` was unguarded inside the typed-422
+branch, so a non-JSON body (proxy HTML, empty 429, gateway timeout) rejected the
+submit handler and `setPending(false)` never ran: the Create account button
+stayed disabled forever with nothing on screen, on the **public** sign-up page.
+Now parsed inside a `try`, falling through to the existing plain-language copy.
+
+Both verified RED-ON-REVERT individually. Web gates from the worktree:
+`tsc` 0 errors, `eslint` clean, `vitest` 694 passed.
+
 **#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
 it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut
 silently — and the cut landed on the merge rule. `An agent merges on green` sat

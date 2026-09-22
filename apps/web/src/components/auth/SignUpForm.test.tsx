@@ -84,6 +84,46 @@ describe("SignUpForm — open self-registration (D-034)", () => {
     await waitFor(() => expect(assignMock).toHaveBeenCalledWith("/intake"));
   });
 
+  it("re-enables Create account when the error body is not JSON (#389)", async () => {
+    /**
+     * The submit handler read `await res.json()` unguarded inside the typed
+     * branch. A non-JSON body -- a proxy HTML page, an empty 429, a gateway
+     * timeout -- threw, the handler's promise rejected, and `setPending(false)`
+     * never ran: the button stayed disabled forever with nothing on screen, on
+     * the PUBLIC sign-up page, and the user could not retry without reloading.
+     *
+     * RED ON REVERT: remove the try/catch around the parse and this hangs --
+     * the button stays disabled and the copy never appears.
+     */
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => {
+        throw new SyntaxError("Unexpected token < in JSON at position 0");
+      },
+    });
+
+    render(<SignUpForm />);
+    fill();
+    clickCreate();
+
+    // Something is said, and it is the RIGHT something: a 429 whose body is
+    // unusable is still a throttle. This asserted the input-advice copy
+    // ("double-check your name ... then try again") until the adversarial
+    // review pointed out that it pins the violation -- advice to retry now
+    // re-trips the limiter, and it blames the user's input for an error that
+    // is not about their input.
+    expect(await screen.findByText(/too many attempts/i)).toBeInTheDocument();
+    expect(screen.queryByText(/double-check your name/i)).toBeNull();
+    // ...and the user can try again, which is the half that was broken.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /create account/i }),
+      ).toBeEnabled(),
+    );
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
   it("shows friendly copy on the email field for a duplicate email and never signs in", async () => {
     fetchMock.mockResolvedValue({
       ok: false,

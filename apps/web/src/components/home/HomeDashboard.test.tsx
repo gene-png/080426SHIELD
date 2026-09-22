@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { HomeDashboard } from "./HomeDashboard";
+import { HomeDashboard, type HomePanel } from "./HomeDashboard";
 
 import type { ClientDeliverable } from "@/components/results/ResultsList";
 import type { AssessmentResponse } from "@/lib/intake/types";
@@ -122,6 +122,7 @@ describe("HomeDashboard — service card links (issue 1)", () => {
         ]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     const card = serviceCard(SVC_RELEASED);
@@ -147,6 +148,7 @@ describe("HomeDashboard — service card links (issue 1)", () => {
         ]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     const card = serviceCard(SVC_DRAFT);
@@ -177,6 +179,7 @@ describe("HomeDashboard — service card links (issue 1)", () => {
         ]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     const grid = screen.getByRole("heading", { name: "Your services" })
@@ -235,6 +238,7 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
         engagements={threeServices}
         unreadMessages={unreadMessages}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
   }
@@ -269,6 +273,7 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
         engagements={[engagement({ service_id: SVC_DRAFT })]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     expect(
@@ -337,6 +342,7 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
         engagements={[]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     expect(screen.getByText("No services yet")).toBeInTheDocument();
@@ -345,5 +351,184 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
         screen.queryByRole("heading", { name: headingName(b) }),
       ).toBeNull();
     }
+  });
+});
+
+describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
+  /**
+   * The page used to fetch four endpoints in one `Promise.all` with no `catch`,
+   * and there is no `error.tsx` anywhere under `apps/web/src/app` — so any one
+   * rejection took the WHOLE page down, including the client's released
+   * reports, which have nothing to do with the endpoint that failed.
+   *
+   * `allSettled` alone is only half the fix. Passing `[]` / `0` / `null` for a
+   * panel that ERRORED makes the page assert "you have no engagements" and
+   * "no unread messages" — claims about the client's account, made from a
+   * failure. Missing data defaults to UNCONFIRMED, never to confirmed.
+   */
+  it("says engagements could not be loaded instead of claiming there are none", () => {
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={[deliverable({})]}
+        engagements={[]}
+        unreadMessages={0}
+        valueSummary={null}
+        unavailable={["engagements"]}
+      />,
+    );
+
+    expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+    // The EMPTY-state copy must NOT also be on screen, or "failed" and "empty"
+    // are still indistinguishable. The needle is the component's actual string:
+    // an earlier version of this line looked for "no engagements yet", which
+    // appears nowhere in the component under any input, so it passed in the
+    // fixed and the unfixed world alike -- the #72 shape, inside the test whose
+    // whole purpose is to prove these two states are distinguishable.
+    expect(screen.queryByText(/no services yet/i)).toBeNull();
+  });
+
+  // DERIVED, AND THE FIRST VERSION OF THIS WAS NOT.
+  //
+  // It was `const ALL_PANELS: HomePanel[] = [...]` with a comment claiming a
+  // fifth union member would be a type error. That is false: `HomePanel[]` is
+  // satisfied by any SUBSET, so adding "notifications" to the union left the
+  // array assignable, tsc green, and this test green over four panels with the
+  // fifth unwired. It re-enumerated exactly what it claimed to derive, and I
+  // had cited it as the countermeasure against that class of mistake.
+  //
+  // A TOTAL RECORD is the derived form: omit a key and `Record<HomePanel, true>`
+  // is TS2741 before any test runs.
+  const PANEL_COVERAGE: Record<HomePanel, true> = {
+    deliverables: true,
+    engagements: true,
+    messages: true,
+    value: true,
+  };
+  const ALL_PANELS = Object.keys(PANEL_COVERAGE) as HomePanel[];
+
+  it.each(ALL_PANELS)(
+    "says %s could not be loaded rather than rendering it as absent",
+    (panel) => {
+      render(
+        <HomeDashboard
+          greetingName="Ada"
+          deliverables={[]}
+          engagements={[]}
+          unreadMessages={0}
+          valueSummary={null}
+          unavailable={[panel]}
+        />,
+      );
+      // getAllByText, not getByText: a panel may disclose on MORE THAN ONE
+      // surface -- deliverables says so in both the hero and Recent activity --
+      // and `getByText` throws on multiple matches, so the single-match form
+      // goes red the moment a SECOND surface starts telling the truth.
+      expect(
+        screen.getAllByText(/could not be loaded/i).length,
+      ).toBeGreaterThan(0);
+    },
+  );
+
+  it("discloses a deliverables failure on BOTH surfaces that would otherwise claim absence", () => {
+    /**
+     * The `it.each` above asserts one disclosure per panel, so it is blind to a
+     * SECOND surface still lying — which is exactly what happened: the hero was
+     * guarded and "Recent activity" was not, so the page said "Your reports
+     * could not be loaded" and, directly beneath it, "Released reports will
+     * show up here as your engagement progresses." to a client with three.
+     *
+     * Disabling the Recent-activity guard left all 699 tests green until this
+     * existed. Both needles are asserted separately because the whole defect
+     * was one surface disclosing and the other not.
+     */
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={[]}
+        engagements={[]}
+        unreadMessages={0}
+        valueSummary={null}
+        unavailable={["deliverables"]}
+      />,
+    );
+
+    // The hero.
+    expect(
+      screen.getByText(/your reports could not be loaded/i),
+    ).toBeInTheDocument();
+    // Recent activity, which is the one that was missing.
+    expect(
+      screen.getByText(/your released reports could not be loaded/i),
+    ).toBeInTheDocument();
+    // And neither surface claims the client has none.
+    expect(
+      screen.queryByText(/released reports will show up here/i),
+    ).toBeNull();
+  });
+
+  it("still renders the value card when the summary loaded fine", () => {
+    // The other half of the `value` branch. The it.each above covers its
+    // FAILURE state; without this, deleting the whole `down.has("value")`
+    // block -- or rendering the could-not-load copy unconditionally -- stays
+    // green while the card never appears.
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={[]}
+        engagements={[]}
+        unreadMessages={0}
+        valueSummary={{
+          tech_debt_savings_usd: null,
+          tech_debt_savings_cost_known: true,
+          tech_debt_savings_unresolved: false,
+          zt_gap_count: null,
+          zt_gap_unresolved: false,
+          zt_services: 0,
+          zt_targets_defaulted: null,
+          zt_targets_unusable: null,
+          attack_uncovered_count: null,
+          attack_uncovered_unresolved: false,
+          csf_gap_count: null,
+          csf_gap_unresolved: false,
+          csf_services: 0,
+          csf_targets_defaulted: null,
+          csf_targets_unusable: null,
+          has_any_data: true,
+          has_unresolved: false,
+        }}
+        unavailable={[]}
+      />,
+    );
+    // ASSERT THE CARD, not just the absence of the error copy. The first
+    // version used a fixture with `has_any_data: false`, and `ValueLoopCard`
+    // opens `if (!summary.has_any_data && !summary.has_unresolved) return null`
+    // -- so the card rendered NOTHING and the test could not fail for the
+    // reason its name gives, while its comment said "without this the card
+    // never appears" about a case in which the card never appears.
+    expect(
+      // The card's TITLE specifically -- the same phrase also appears in the
+      // page subtitle, so a bare text match is ambiguous.
+      screen.getByRole("heading", { name: /your engagement at a glance/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/could not be loaded/i)).toBeNull();
+  });
+
+  it("still claims nothing when engagements are genuinely empty", () => {
+    // The other half of the branch. Without this, a "fix" that renders the
+    // could-not-load copy unconditionally passes the test above and lies in
+    // the ordinary empty case.
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={[deliverable({})]}
+        engagements={[]}
+        unreadMessages={0}
+        valueSummary={null}
+        unavailable={[]}
+      />,
+    );
+
+    expect(screen.queryByText(/could not be loaded/i)).toBeNull();
   });
 });
