@@ -50,7 +50,11 @@ non-empty line. The reader limit is a property of the READER — one session's
 <!-- counted: "one session" names a single observed reader, not a tally of a population -->
 copy carried all 210,958 bytes while another's was cut — so two agents can apply
 the merge rule sincerely and reach opposite verdicts with neither able to tell
-which it is. The canary makes that variance declared instead of invisible. A
+which it is. The canary makes that variance declared instead of invisible —
+**but only because the instruction to check for it is at the TOP of `CLAUDE.md`
+and in every agent definition**, files small enough that they cannot be cut. The
+first version stated it only beside the marker at the end, where a truncated
+reader never reaches it; caught by the adversarial reviewer. A
 SOFT line at 135,000 bytes warns and names the next cut, so the alarm arrives
 with a remedy already chosen.
 

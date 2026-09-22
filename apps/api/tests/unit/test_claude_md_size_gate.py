@@ -183,19 +183,24 @@ def test_the_real_file_carries_the_canary_as_its_last_line() -> None:
     marker protects nothing, and that gap is invisible from inside the fixture
     tree, whose files are also named CLAUDE.md.
 
-    THIS IS THE CONVENIENCE COPY, NOT THE ENFORCEMENT. It SKIPS in the api
-    container, which mounts only `apps/api`, so a skip here proves nothing --
-    and `CLAUDE.md` records that a spec self-skipping on a precondition is
-    UNTESTED rather than passing. The enforcing surface is `ci.yml`'s
-    "governance file fits in a reader" step, which runs
-    `--require-canary CLAUDE.md` on a full checkout and exits 2 if the marker
-    is missing or not last.
+    THIS RUNS IN CI AND DOES NOT SKIP THERE, which an earlier version of this
+    docstring got backwards. `ci.yml`'s python job is `runs-on: ubuntu-latest`
+    with `actions/checkout@v7`, and runs `pytest -m unit tests/unit` from
+    `apps/api` on that full checkout -- so `repo_root()` resolves and this
+    assertion fires. It is therefore a SECOND, INDEPENDENT enforcing surface
+    alongside the `--require-canary` workflow step, and a stronger one, because
+    it does not depend on a flag being passed.
 
-    RESIDUAL, stated rather than left to be discovered: if someone drops
-    `--require-canary` from that step, this test skips in-container and the
-    check silently stops happening. That is the same shape as
-    `check_test_integrity`'s correctness living in a `working-directory:` line
-    nothing verifies. Not closed here.
+    It skips only in the api container, which mounts `apps/api` at `/app` and
+    so has no repo root to find (#314).
+
+    RESIDUAL, and it is narrower than the one this docstring used to claim:
+    nothing asserts the test did not SKIP in CI. That is precisely the shape
+    `ci.yml` already carries a dedicated step for on the audit-gate module
+    ("the audit-gate tests must not skip on a full checkout"), and the same
+    guard now covers this file. The earlier claim -- that dropping
+    `--require-canary` would silently stop the check -- was false, and someone
+    acting on it would have built a guard for a hole that was not open.
     """
     mod = _load()
     try:
@@ -232,3 +237,37 @@ def test_require_canary_is_not_a_no_op(tmp_path: Path) -> None:
     f.write_text("# x\n\nno marker\n", encoding="utf-8")
     assert _run("--require-canary", str(f)).returncode == 2
     assert _run(str(f)).returncode == 0  # and it is OFF by default
+
+
+@pytest.mark.unit
+def test_an_empty_file_is_a_could_not_look_under_require_canary(tmp_path: Path) -> None:
+    """The empty-file rule REVERSES under the flag, and CI runs only that mode.
+
+    Without `--require-canary` an empty file passes: the proposition is "small
+    enough to be read whole" and a zero-byte file satisfies it. The flag asserts
+    a SECOND proposition -- "this file carries a terminal marker" -- which it
+    plainly does not. Pinned because the unqualified rule in the docstring
+    describes the mode CI never invokes, and an unstated carve-out inside a
+    fail-closed section is what this repo keeps finding.
+    """
+    f = tmp_path / "CLAUDE.md"
+    f.write_bytes(b"")
+    assert _run(str(f)).returncode == 0
+    done = _run("--require-canary", str(f))
+    assert done.returncode == 2
+    assert "carries no canary" in done.stdout
+
+
+@pytest.mark.unit
+def test_trailing_whitespace_on_the_marker_is_not_a_missing_marker(tmp_path: Path) -> None:
+    """A guard must name the CAUSE, not the check.
+
+    The comparison was exact, so `"<!-- CLAUDE-MD-CANARY: v1 --> "` was reported
+    as "has NO canary marker" and then printed the marker it claimed was absent.
+    A developer opens the file, sees exactly that string on exactly that line,
+    and debugs in the wrong direction. Found by the adversarial reviewer.
+    """
+    mod = _load()
+    f = tmp_path / "CLAUDE.md"
+    f.write_text(f"# x\n\n{mod.CANARY} \n", encoding="utf-8")
+    assert _run("--require-canary", str(f)).returncode == 0

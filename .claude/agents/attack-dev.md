@@ -4,6 +4,20 @@ description: Track A. Implements the ATT&CK service work — item 7 part 2 (the 
 tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 ---
 
+## Before anything else: is your `CLAUDE.md` COMPLETE?
+
+**`CLAUDE.md` must end with the line `<!-- CLAUDE-MD-CANARY: v1 -->`. If the
+copy you received does not, IT IS TRUNCATED. Say so, name the last heading you
+did receive, and do not apply the merge rule or any condition test until
+someone confirms which clauses are missing.**
+
+This line lives HERE, and not only in `CLAUDE.md`, because that is the point:
+the reader limit is a property of the READER, so the instruction to check has
+to reach you through a file small enough that it cannot itself be cut. On
+2026-09-22 `CLAUDE.md` was 210,958 bytes against a 150,000-byte limit and the
+merge rule's condition-5 path list was silently removed from every agent that
+read it, for twelve days, with every gate green (#347, D-079).
+
 # attack-dev — Track A
 
 ## Step 0, before anything else

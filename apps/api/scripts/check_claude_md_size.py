@@ -78,12 +78,18 @@ They must never share a branch -- `check_audit_evidence`'s `is_code_change([])`
 printing "documentation-only change, exempt" and exiting 0 is the recorded
 reason this convention exists.
 
-An empty file is a PASS and not a could-not-look. That is deliberate and it is
-the case most likely to be argued: this gate's proposition is "small enough to
-be read whole", and a zero-byte file satisfies it. Whether the file has any
-CONTENT is a different proposition, and a gate answering a question adjacent to
-the one in its name is the failure `CLAUDE.md` records as a certificate over the
-wrong proposition.
+An empty file is a PASS **without** `--require-canary`, deliberately: this
+gate's proposition is "small enough to be read whole", and a zero-byte file
+satisfies it. Answering the adjacent question -- whether the file has any
+CONTENT -- is the certificate-over-the-wrong-proposition shape.
+
+**Under `--require-canary` the same file is a could-not-look (exit 2), and that
+reversal is deliberate too.** The flag asserts a SECOND, independent
+proposition -- "this file carries a terminal marker" -- which an empty file
+plainly does not satisfy. Stated because CI runs ONLY the `--require-canary`
+mode, so the unqualified rule above describes a mode CI never invokes, and an
+unstated carve-out inside a fail-closed section is exactly what this repo keeps
+finding.
 
 ## What it does NOT do
 
@@ -138,9 +144,11 @@ the reader now has a POSITIVE signal that its copy is whole.
 
 It is a FLAG rather than always-on because this gate is reusable for any
 governance file, and the fixture files are themselves named `CLAUDE.md` without
-carrying canaries. `ci.yml` passes it for the real file. Both refusal branches
-exit 2 -- a missing marker and a mispositioned one are could-not-looks, not
-findings about size.
+carrying canaries. `ci.yml` passes it for the real file. All THREE refusal
+branches exit 2 -- an empty file, a missing marker and a mispositioned one are
+could-not-looks, not findings about size. (An earlier version of this sentence
+said "both" and named two, omitting the empty case, which was the one no
+sentence mentioned.)
 
 ## `--limit N` can only LOWER the bar, never raise it
 
@@ -204,8 +212,12 @@ def repo_root(start: Path | None = None) -> Path:
     already record. This raises rather than guessing, and the message says to
     pass an explicit path.
 
-    Cost is capped because the failure is LOUD (exit 2) and CI passes
-    `CLAUDE.md` explicitly, so this function is never called there. An earlier
+    Cost is capped because the failure is LOUD (exit 2) and the message says to
+    pass an explicit path. It is NOT capped by "CI never calls it" -- an earlier
+    version of this docstring said so and was wrong: `tests/unit/
+    test_claude_md_size_gate.py` calls `repo_root()` on CI's full checkout,
+    where it resolves. The workflow STEP passes `CLAUDE.md` explicitly; the
+    unit test does not. An earlier
     version of this docstring claimed it "works in both", which is the
     narrower-scope-than-the-reader-assumes shape sited exactly where a reader
     checks. Found by the adversarial reviewer on #438.
@@ -334,12 +346,13 @@ def main(argv: list[str]) -> int:
             if not tail:
                 print(f"check-claude-md-size: {target} is empty, so it carries no canary.")
                 return 2
-            if CANARY not in tail:
+            stripped = [ln.strip() for ln in tail]
+            if CANARY not in stripped:
                 print(f"check-claude-md-size: {target} has NO canary marker.")
                 print(f"  expected the last non-empty line to be: {CANARY}")
                 print("  A reader cannot tell a truncated copy from a whole one without it.")
                 return 2
-            if tail[-1] != CANARY:
+            if stripped[-1] != CANARY:
                 print(f"check-claude-md-size: {target}'s canary is NOT the last line.")
                 print(f"  last non-empty line is: {tail[-1][:70]}")
                 print("  Something was appended past the marker, so a reader can see the")

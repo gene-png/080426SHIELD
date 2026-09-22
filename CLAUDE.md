@@ -1,5 +1,20 @@
 # CLAUDE.md — SHIELD
 
+## Before anything else: is your copy of this file COMPLETE?
+
+**This file must end with the line `<!-- CLAUDE-MD-CANARY: v1 -->`. If you
+cannot see that marker at the end of what you received, YOUR COPY IS
+TRUNCATED. Stop.** Say so, name the last heading you did receive, and do not
+apply the merge rule or any condition test until someone confirms which clauses
+you are missing. A truncated governance file is a control that does not exist.
+
+**This notice is at the TOP because that is the only part a truncated reader
+gets.** The marker and the fuller explanation are at the very end, which is
+exactly the region a cut removes — so stating the rule only there would tell
+the whole population it exists to protect precisely nothing. (Found by the
+adversarial reviewer on #347, against the first version of this canary, which
+did exactly that.)
+
 ## Where to start, by task
 
 **Read the rows that apply and stop.** The parts that matter to you are a small
@@ -722,26 +737,23 @@ recorded with a real exit code and a real date, and was the minority outcome
   *not thinking about*. Only the second kind needs a machine.
 - **A defect found in one service exists in its twins until you have checked.**
   CSF, ZT, ATT&CK, Tech Debt and Risk are five copies of the same shapes, so a
-  fix filed against one is a fix owed by all of them. #75 was filed against ZT
-  and fixed there; CSF truncated identically, through the same
-  `DEFAULT_TOP_N = 20`, in the same three renderers — inside the PR that was
-  also fixing #79, which exists *because* an earlier change fixed one surface
-  and not its twin. Half-fixes are worse than none here: raising CSF's target to
-  the client's tier increases its gap count, so leaving the disclosure out hid
-  MORE than before the "fix".
+  fix filed against one is a fix owed by all of them. #75 was fixed in ZT while
+  CSF truncated identically through the same `DEFAULT_TOP_N = 20` in the same
+  three renderers — inside the PR that was also fixing #79, which exists
+  *because* an earlier change fixed one surface and not its twin. Half-fixes are
+  worse than none: raising CSF's target to the client's tier increases its gap
+  count, so leaving the disclosure out hid MORE than before the "fix".
 
-  Before opening a PR, grep the sibling services for the function you just
-  changed, and **when you deliberately leave a twin alone, say so in the code**.
+  Grep the sibling services for the function you just changed, and **when you
+  deliberately leave a twin alone, say so in the code.**
 
   **FIX FROM THE SHAPE, NOT FROM THE LIST YOU WERE HANDED — a reviewer's site
   list is evidence that twins exist, never the set of them.** One branch
   produced three consecutive half-fixes, each round correcting every twin it was
-  shown and none it was not; each round worked from the previous review's list,
-  which is a sample. Take the list as proof the shape exists, derive the set
-  yourself, and say in the PR what you derived it from. **Expect the last twin
-  to be the one a USER reads** — a hover title gets corrected while the
-  paragraph beside it does not, because the reviewer quoted the hover (D-074,
-  D-072).
+  shown and none it was not, because each worked from the previous review's
+  list, which is a sample. **Expect the last twin to be the one a USER reads** —
+  a hover title gets corrected while the paragraph beside it does not, because
+  the reviewer quoted the hover (D-074, D-072).
 - **These gates check whether a test can fail at all (#72, D-051).**
   `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
   is a two-second static pass and **runs in CI before pytest** — it flags a test
@@ -778,23 +790,22 @@ recorded with a real exit code and a real date, and was the minority outcome
 
   **The check is one question, asked before you cite anything: what proposition
   does this command actually prove, and is it the one in my sentence?** Where
-  they differ, change the command or change the sentence. Do not publish the
-  pair. It generalises well past grep: a **test** proves its assertions hold,
-  not that they can fail (#72); an **exit code** proves the last command's
-  status, not the one you meant; a **CI certificate** proves a head passed, not
-  that a branch is ready; a **`--collect-only`** proves collection, not that
-  anything ran; a **reviewer's clean report** proves nothing was found in what
-  it read, which is why the `Scope:` line exists.
+  they differ, change the command or change the sentence; do not publish the
+  pair. It generalises past grep: a **test** proves its assertions hold, not
+  that they can fail (#72); an **exit code** proves the last command's status,
+  not the one you meant; a **CI certificate** proves a head passed, not that a
+  branch is ready; a **`--collect-only`** proves collection, not that anything
+  ran; a **reviewer's clean report** proves nothing was found in what it read,
+  which is why the `Scope:` line exists.
 
-  **AND THE SENTENCE THAT NAMES ITS OWN VERIFICATION IS THE ONE TO RE-RUN,
-  because the phrase is doing the work the measurement should.** "Checked and
-  left alone", "measured, not assumed", "verified", "confirmed" — each reads as
-  evidence and is only ever a claim ABOUT evidence. **When you write a word
-  asserting you verified something, that is the sentence to go back and run.**
-  Not because you are careless — in the recorded instances the author had run
-  the commands and read the output — but because the phrase closes the question
-  for every later reader, and it closed it around a property nobody had tested.
-  **D-079** carries the instances.
+  **AND THE SENTENCE THAT NAMES ITS OWN VERIFICATION IS THE ONE TO RE-RUN**,
+  because the phrase is doing the work the measurement should. "Checked and left
+  alone", "measured, not assumed", "verified" — each reads as evidence and is
+  only ever a claim ABOUT evidence. **When you write a word asserting you
+  verified something, that is the sentence to go back and run.** Not because you
+  are careless — in the recorded instances the author had run the commands and
+  read the output — but because the phrase closes the question for every later
+  reader, and it closed it around a property nobody had tested (D-079).
 
 - **Before reporting a sweep complete, name the SHAPE you searched for and one
   place it could hide that shares no vocabulary with the original.** Keyword
@@ -841,40 +852,34 @@ recorded with a real exit code and a real date, and was the minority outcome
 - **A FIELD IS ADDITIVE ONLY IF NO CONSUMER BRANCHES ON ITS PRESENCE.** Adding
   a key to a shared envelope reads as the safest change there is, and the PR
   that does it says so: #307 added a typed `reason` to every schema 422 and
-  promised "additive, deliberately — a consumer that wants the typed reason opts
-  in". That sentence was false at merge time. `SignUpForm.tsx` chose between
-  typed copy and a friendly fallback by testing `reason`'s PRESENCE, so the new
-  key made the fallback unreachable and put the internal string "Request
-  validation failed." under the Email field of the **public** sign-up page
-  (#317, tier-1, live on `main` until PR #320).
+  promised "additive, deliberately". That was false at merge time.
+  `SignUpForm.tsx` chose between typed copy and a friendly fallback by testing
+  `reason`'s PRESENCE, so the new key made the fallback unreachable and put the
+  internal string "Request validation failed." under the Email field of the
+  **public** sign-up page (#317, tier-1, live on `main` until PR #320).
 
   A consumer never has to opt in to be broken by a new key. It only has to have
-  branched on the key's ABSENCE — which is what a careful consumer does when the
-  key is optional, **so the more defensively it was written the more likely it
-  is to break.**
+  branched on the key's ABSENCE — what a careful consumer does when the key is
+  optional — **so the more defensively it was written the more likely it is to
+  break.**
 
   **The check is mechanical: before adding a field to a shared envelope, grep
   the consumers for a PRESENCE test rather than a value test.** For the D-016
   envelope that is `error.reason` and `error.message` across `apps/web/src`;
-  `reason === "..."` is safe, and a bare `reason &&` is the defect **unless
-  something else already excludes the new key** — `lib/auth/options.ts` tests
-  presence and is safe only because it sits inside `err.status === 403`. A
-  status gate is not a value test, so say so at the site: an unstated exemption
-  sends the next person who runs this grep to investigate a non-defect. Nothing
-  about the new field's own correctness reveals this, so no review of the
-  producing diff can find it — the evidence is entirely in files the PR does not
-  touch.
+  `reason === "..."` is safe, a bare `reason &&` is the defect **unless
+  something else already excludes the new key** — `lib/auth/options.ts` is safe
+  only because it sits inside `err.status === 403`. A status gate is not a value
+  test, so say so at the site. Nothing about the new field's own correctness
+  reveals this: the evidence is entirely in files the PR does not touch.
 
-  Two corollaries, both paid for here:
-
-  - **The comment stating the precondition is what hides the breakage.** The
-    fallback carried "raw schema validation carries no typed reason", which was
-    true when written, was deleted as a fact by #307, and survived as a sentence
-    telling the next reader the branch was sound. Not a scope that is too
-    narrow — a precondition that has expired.
-  - **Test both halves of the branch you changed.** A fix keyed on the value can
-    be "repaired" into discarding every friendly message the API does send, and
-    the fallback tests stay green through it. Pin the typed case too.
+  Two corollaries, both paid for here. **The comment stating the precondition is
+  what hides the breakage** — the fallback carried "raw schema validation
+  carries no typed reason", true when written, deleted as a fact by #307, and
+  surviving as a sentence telling the next reader the branch was sound: a
+  precondition that has EXPIRED, not a scope that is too narrow. And **test both
+  halves of the branch you changed** — a fix keyed on the value can be
+  "repaired" into discarding every friendly message the API does send, with the
+  fallback tests green throughout.
 
 - **"Uses the same X as the Y path" is a claim to enforce by CALLING X, never by
   reimplementing it.** `_redacted_form` said in its docstring that it used "the
@@ -1163,30 +1168,23 @@ recorded with a real exit code and a real date, and was the minority outcome
   is that the ORIGINAL had a precondition nobody wrote down.
 
   - **A pointer at a duplicated cross-language literal.** `SCHEMA_REASON_PREFIX`
-    in `app/exceptions.py` says why it is on THAT side: *"the pointer lives
-    HERE, rather than only there, because the window is closed by whoever edits
-    THIS constant, who would otherwise have no way to know the copy exists."*
-    The property is **the pointer sits where the change originates**. A pointer
-    on the consuming side closes nothing, because the person renaming the API
-    literal never opens the web file.
+    says why it is on THAT side: the window is closed by whoever edits THIS
+    constant, who would otherwise have no way to know the copy exists. The
+    property is **the pointer sits where the change originates** — one on the
+    consuming side closes nothing, because the person renaming the API literal
+    never opens the web file.
   - **Two helpers that choose between a server's sentence and local copy.** One
-    withholds the server's message, one always prefers it, and both are right.
-    The property that decides it is whether the LOCAL copy carries information
-    the server's does not — not which module the caller lives in, which is the
-    thing that looks like the difference. Only the withholding side carries that
-    reasoning (`GENERIC_COPY_IS_BETTER` in `lib/describe-save-error.ts`); the
-    always-prefers side documents its copy rules and never says why. **Write it
+    withholds it, one prefers it, and both are right. The deciding property is
+    whether the LOCAL copy carries information the server's does not — not which
+    module the caller lives in, which is the thing that looks like the
+    difference. Only the withholding side records that reasoning; **write it
     into the side that lacks it.**
 
   **The test is one sentence, and it goes in the code rather than the PR:** name
   the property, then say why it holds here. If you cannot name it, you have
-  copied a form rather than a decision, and the next person to copy it inherits
-  whatever was unstated.
-
-  This is the twin-sweep rule reflected: that one says a defect found in one
-  place exists in its twins until checked, and this one says a SOLUTION found in
-  one place does not transfer until checked. Both fail by reasoning from
-  resemblance instead of from the mechanism.
+  copied a form rather than a decision. This is the twin-sweep rule reflected —
+  that one says a defect found in one place exists in its twins until checked,
+  this one says a SOLUTION does not transfer until checked.
 
 - **A SELECTOR THAT SELECTS NOTHING PASSES. ASSERT THE COUNT IT SELECTED
   BEFORE READING ITS RESULT.** Same family as the silent-success branch, one
@@ -2297,9 +2295,13 @@ checked and it passes" versus "I could not look" — missing from the governance
 layer itself, in the one artifact that defines what checking means.
 `check_claude_md_size.py` fixes today's instance; it cannot fix the mechanism,
 because the file goes over budget again eventually, or some reader arrives with
-a limit below 150,000, and it recurs silently. The canary below converts an
-invisible variance into a declared one, which is the same move as making a gate
-exit 2 instead of 0.
+a limit below 150,000, and it recurs silently. The canary converts an invisible
+variance into a declared one — the same move as making a gate exit 2 instead
+of 0 — **but only because the instruction to check for it is stated at the TOP
+of this file and in every `.claude/agents/*.md`.** Stated only here, at the end,
+it would address nobody: a truncated reader never receives this paragraph. The
+first version of the canary did exactly that, and the adversarial reviewer
+called it a necessary precondition that was not yet load-bearing.
 
 **`check_claude_md_size.py --require-canary` asserts the marker is the LAST
 non-empty line**, so a later edit cannot append past it and quietly push it out

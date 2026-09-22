@@ -4822,12 +4822,25 @@ apply no condition test until someone confirms which clauses are missing.
 is the **last non-empty line**, because the marker only answers "did I receive
 the whole file" while nothing follows it. An append below it leaves the canary
 readable and everything after it invisible — **strictly worse than no canary**,
-since the reader now holds a positive signal that its copy is whole. Both
-refusal branches exit 2: a missing marker and a mispositioned one are
-could-not-looks, not findings about size.
+since the reader now holds a positive signal that its copy is whole. All three
+refusal branches exit 2: an empty file, a missing marker and a mispositioned one
+are could-not-looks, not findings about size.
 
-This converts an invisible variance into a declared one, which is the same move
-as making a gate exit 2 instead of 0.
+This converts an invisible variance into a declared one, the same move as making
+a gate exit 2 instead of 0 — **and it does so only because the instruction to
+check lives where a truncated reader can still receive it**: the top of
+`CLAUDE.md` (byte ~125) and every `.claude/agents/*.md`, all of which are small
+enough that they cannot themselves be cut.
+
+**The first version stated the rule ONLY beside the marker at the end of the
+file**, under a heading addressed to someone who by construction cannot read it,
+with nothing in the first 20,000 bytes and nothing in any agent definition
+mentioning a marker at all. The adversarial reviewer's verdict was exact: not
+decorative — a fixed known string is what makes the check possible — but **a
+necessary precondition that was not yet load-bearing, because the check had no
+reader who knew to run it.** An agent dispatched with a 120,000-byte limit would
+have seen a file that simply ends, and reported condition 5 clear. That is
+byte-for-byte the #347 failure, with the control shipped and green.
 
 ### The soft line, and why a hard gate alone was not enough
 

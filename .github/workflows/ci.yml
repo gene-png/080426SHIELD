@@ -85,6 +85,38 @@ jobs:
           print(f"ok: workflows resolved to {found}")
           PY
 
+      # Same shape, same reason, for #347's size gate. Its real-file assertion
+      # (`test_the_real_file_carries_the_canary_as_its_last_line`) SKIPS when
+      # the repo root is unreachable -- correct in the api container, which
+      # mounts only `apps/api`. But a skip and a pass are the same green, so
+      # nothing would notice if it began skipping HERE, on a full checkout,
+      # and the canary's position would stop being checked by the stronger of
+      # its two surfaces. A spec that self-skips on a precondition is UNTESTED,
+      # not passing, and that cannot be asserted from inside the tree -- a test
+      # that skips takes its own assertion with it.
+      - name: the size-gate real-file test must not skip on a full checkout
+        working-directory: apps/api
+        run: |
+          python - <<'PY'
+          import subprocess, sys
+          done = subprocess.run(
+              [sys.executable, "-m", "pytest", "-q",
+               "tests/unit/test_claude_md_size_gate.py"
+               "::test_the_real_file_carries_the_canary_as_its_last_line",
+               "-rs"],
+              capture_output=True, text=True,
+          )
+          print(done.stdout[-2000:])
+          if done.returncode != 0:
+              print("FAIL: the real-file canary assertion did not pass.")
+              sys.exit(1)
+          if "skipped" in done.stdout:
+              print("FAIL: it SKIPPED on a full checkout, so the canary's")
+              print("      position is no longer checked by this surface.")
+              sys.exit(1)
+          print("ok: the real-file canary assertion ran and passed")
+          PY
+
       # Stray control characters, repo-wide. Runs from the ROOT, not apps/api,
       # because the files this defect actually lands in are DECISIONS.md and
       # CONTEXT.md -- prose about regexes, where an interpolated `\b` becomes an
