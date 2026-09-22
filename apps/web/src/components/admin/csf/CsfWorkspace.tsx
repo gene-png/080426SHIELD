@@ -40,6 +40,7 @@ import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { serverReason } from "@/lib/describe-save-error";
+import { MIN_TARGET_TIER } from "@/lib/assessment-targets";
 
 import { CsfDeliverableCard } from "./CsfDeliverableCard";
 import { CsfGapList } from "./CsfGapList";
@@ -81,7 +82,30 @@ export interface CsfWorkspaceProps {
  * is its own hazard.
  */
 function normalizeTarget(value: number | null | undefined): number {
-  return value === 2 || value === 3 || value === 4 ? value : 3;
+  // THE FLOOR COMES FROM `MIN_TARGET_TIER`; THE CEILING IS STILL HARDCODED,
+  // and the asymmetry is deliberate rather than half-finished (#194).
+  //
+  // The floor is the same product rule the four other pickers use, so it has
+  // one home. The ceiling is a property of the CSF ladder, which the docstring
+  // above deliberately does not derive from the catalog -- deriving from a
+  // catalog with exactly one shape adds a moving part with no case to answer.
+  // That exemption is unchanged and is tracked against #184.
+  //
+  // Behaviour is IDENTICAL to the membership test this replaces: `Number.
+  // isInteger` plus the two bounds admits exactly 2, 3 and 4, so `2.5` is
+  // still refused and `3.0` still accepted. Checked against the old predicate
+  // over 15 inputs including null, NaN, "3" and true.
+  //
+  // Written as a range because `value === 2 || value === 3 || value === 4`
+  // states the floor with NO comparison operator beside a ladder noun, which is
+  // why #194's sweep -- a grep for exactly that -- walked past this file while
+  // wiring its ZT twin in the same commit.
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_TARGET_TIER &&
+    value <= 4
+    ? value
+    : 3;
 }
 
 function describeError(err: unknown): string {

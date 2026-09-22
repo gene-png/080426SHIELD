@@ -30,10 +30,40 @@ import { MIN_TARGET_STAGE, MIN_TARGET_TIER } from "./assessment-targets";
  * out: a test that supplies its own precondition from the thing under test
  * cannot fail.
  *
- * The cost of a source scan is that it is a grep and can only see the
- * spellings it knows. Stated rather than left implicit: `stage > 1` and
- * `stage >= MIN` where `MIN` is a fresh local constant both escape it. It is
- * a floor, not a census.
+ * ## The residual, corrected -- it was wrong in BOTH directions
+ *
+ * This said: "`stage > 1` and `stage >= MIN` where `MIN` is a fresh local
+ * constant both escape it." Both halves were wrong, and an inaccurate residual
+ * is worse than none, because it is the sentence the next reader checks instead
+ * of the regex.
+ *
+ * `stage > 1` IS caught -- the pattern allows `>` as well as `>=`, and the
+ * evidence test below asserts exactly that, three lines from the sentence
+ * denying it. The residual was understated in its own favour.
+ *
+ * What genuinely escapes, measured by running the pattern:
+ *
+ *     .filter((s) => s >= 2)                      no ladder noun beside the operator
+ *     const MIN_TARGET_STAGE = 2;                 a local re-declaration
+ *     value === 2 || value === 3 || value === 4    a membership test
+ *     { value: 2, label: "Tier 2" }                a floor by OMISSION from a list
+ *
+ * The first is the sharp one: `normalizeTarget` in `ZtWorkspace.tsx` really is
+ * written `.filter((s) => s >= MIN_TARGET_STAGE)`, mapping to numbers before
+ * filtering, so the noun is gone by the time the comparison happens. That file
+ * is in `CONSUMERS` below, which IMPLIES a coverage the comparison scan cannot
+ * deliver for it. Two assertions now close that: a re-declaration detector, and
+ * a positive check that every consumer still imports from this module -- the
+ * second is what catches a site that re-hardcodes and drops the import, whatever
+ * spelling it uses.
+ *
+ * The last two are the shapes that hid the other homes of this rule entirely:
+ * `CsfWorkspace`'s membership test, and the three option lists in
+ * `lib/intake/types.ts` that express the floor by starting at 2. Neither
+ * contains a comparison, so no widening of a comparison pattern reaches them.
+ * Those are #406; this file does not pretend to cover them.
+ *
+ * It is a floor, not a census -- but now an accurately described one.
  */
 
 const WEB_SRC = join(process.cwd(), "src");
@@ -53,7 +83,25 @@ const CONSUMERS = [
   "components/admin/zt/ZtGapList.tsx",
   "components/self-assessment/ZtSelfAssessment.tsx",
   "components/self-assessment/CsfSelfAssessment.tsx",
+  // The fifth, added after review: `CsfWorkspace.normalizeTarget` stated the
+  // floor as `value === 2 || value === 3 || value === 4` -- an operator, but
+  // `===`, and no ladder noun beside it, so the comparison scan walked past it
+  // while its ZT twin was wired in the same commit.
+  "components/admin/csf/CsfWorkspace.tsx",
 ];
+
+/** A local re-declaration of a floor this module owns: `MIN_TARGET_TIER = 2`. */
+const REDECLARES_FLOOR = /\b(?:MIN_TARGET_STAGE|MIN_TARGET_TIER)\s*=\s*\d/;
+
+/**
+ * A floor stated as a MEMBERSHIP TEST, with no comparison operator beside a
+ * ladder noun: `value === 2 || value === 3 || value === 4`. This is the shape
+ * that hid `CsfWorkspace` from the original sweep entirely.
+ */
+const MEMBERSHIP_FLOOR = /===\s*\d+\s*\|\|\s*[\w.]+\s*===\s*\d+/;
+
+/** The import that makes a consumer a consumer. */
+const IMPORTS_FLOOR = /from\s+"@\/lib\/assessment-targets"/;
 
 /** A bare numeric floor on a ladder: `stage >= 2`, `tier > 1`, `s.stage >= 3`. */
 const BARE_NUMERIC_FLOOR = /\b(?:stage|tier)\s*>=?\s*\d/i;
@@ -102,6 +150,62 @@ options renders blank, with no error.`,
     ).toEqual([]);
   });
 
+  it("every consumer still imports the floor from this module", () => {
+    // THE POSITIVE CHECK, and it is what covers the spelling the comparison
+    // scan cannot see. `ZtWorkspace.normalizeTarget` maps to numbers before
+    // filtering -- `.filter((s) => s >= MIN_TARGET_STAGE)` -- so a revert to
+    // `>= 2` there carries no ladder noun and matches nothing above.
+    //
+    // A site that re-hardcodes the floor has to stop importing it, or keep a
+    // dead import. This catches the first case whatever spelling it uses, which
+    // is strictly more than widening the comparison regex could achieve.
+    const missing = CONSUMERS.filter((rel) => !IMPORTS_FLOOR.test(source(rel)));
+
+    expect(
+      missing,
+      `these files are listed as consumers of the target floor but no longer
+import it from "@/lib/assessment-targets". Either they re-hardcoded the floor --
+which the comparison scan cannot always see, because a filter over mapped
+numbers carries no stage/tier token -- or they are no longer consumers and this
+list is stale. Both need a human.`,
+    ).toEqual([]);
+  });
+
+  it("no file re-declares a floor this module owns", () => {
+    // The other escape the comparison scan misses: `const MIN_TARGET_STAGE = 2`
+    // put back locally. The import line carries no `=`, so this cannot fire on
+    // a legitimate consumer.
+    const offenders = CONSUMERS.filter((rel) =>
+      REDECLARES_FLOOR.test(source(rel)),
+    );
+
+    expect(
+      offenders,
+      `these files re-declare MIN_TARGET_STAGE or MIN_TARGET_TIER locally. That
+is the duplication #194 removed, reintroduced under the same name -- which reads
+as correct at every call site while disagreeing with every other consumer.`,
+    ).toEqual([]);
+  });
+
+  it("no picker states the floor as a membership test", () => {
+    // THE SHAPE THAT HID `CsfWorkspace` ENTIRELY. `value === 2 || value === 3
+    // || value === 4` has an operator but it is `===`, with no ladder noun
+    // beside it, so the comparison scan above cannot see it -- which is why
+    // that file's floor stayed hardcoded while its ZT twin was wired in the
+    // same commit.
+    const offenders = CONSUMERS.filter((rel) =>
+      MEMBERSHIP_FLOOR.test(source(rel)),
+    );
+
+    expect(
+      offenders,
+      `these files enumerate the allowed levels instead of comparing against the
+floor. Use >= MIN_TARGET_STAGE / MIN_TARGET_TIER: a membership test states the
+floor in a form no comparison sweep can find, and it has to be edited in full
+every time the ladder changes.`,
+    ).toEqual([]);
+  });
+
   it("detects the shape it is scanning for", () => {
     // THE DETECTOR'S OWN EVIDENCE. Without this, a regex that matched nothing
     // would report every file clean forever -- the guard reporting success
@@ -116,6 +220,34 @@ options renders blank, with no error.`,
       false,
     );
     expect(BARE_NUMERIC_FLOOR.test("(t) => t.tier >= MIN_TARGET_TIER")).toBe(
+      false,
+    );
+
+    // AND THE TWO NEW DETECTORS' OWN EVIDENCE. Each must fire on the shape it
+    // exists for and stay silent on the legitimate form, or it is a detector
+    // that reports every file clean forever.
+    expect(REDECLARES_FLOOR.test("const MIN_TARGET_STAGE = 2;")).toBe(true);
+    expect(REDECLARES_FLOOR.test("const MIN_TARGET_TIER = 2;")).toBe(true);
+    expect(
+      REDECLARES_FLOOR.test(
+        'import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";',
+      ),
+    ).toBe(false);
+
+    expect(
+      IMPORTS_FLOOR.test(
+        'import { MIN_TARGET_TIER } from "@/lib/assessment-targets";',
+      ),
+    ).toBe(true);
+    expect(IMPORTS_FLOOR.test('import { x } from "@/lib/zt/types";')).toBe(
+      false,
+    );
+
+    expect(
+      MEMBERSHIP_FLOOR.test("value === 2 || value === 3 || value === 4"),
+    ).toBe(true);
+    // Two unrelated equality checks in one file are not a membership test.
+    expect(MEMBERSHIP_FLOOR.test("if (a === 1) {} if (b === 2) {}")).toBe(
       false,
     );
   });

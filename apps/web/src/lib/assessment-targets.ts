@@ -9,40 +9,83 @@
  * and CSF counts in *tiers*. They are declared side by side, under one
  * docstring, so that the next person to change one is looking at the other.
  *
- * ## Why these are HERE and not next to the pickers
+ * ## What this module is, and what it is NOT
+ *
+ * **It is one home for the five web sites that COMPARE against the floor.** It
+ * is not the only place the rule is written down, and an earlier version of
+ * this docstring claimed it was — "a single home is the whole of its
+ * enforcement", which was false when written. The remaining spellings are
+ * enumerated below rather than glossed, because an overstated scope here is
+ * the sentence a reader checks instead of grepping.
+ *
+ * Wired to this module:
+ *
+ *     ZtWorkspace.normalizeTarget        .filter((s) => s >= MIN_TARGET_STAGE)
+ *     ZtGapList                          .filter((s) => s.stage >= …)
+ *     ZtSelfAssessment                   catalog.stages.filter(…)
+ *     CsfSelfAssessment                  catalog.tiers.filter(…)
+ *     CsfWorkspace.normalizeTarget       the floor half of its range check
+ *
+ * **NOT wired, and these are where the client FIRST chooses a target** —
+ * `lib/intake/types.ts` states the rule in prose ("Tier/Stage 1 is the floor,
+ * so a client only ever targets 2-4") and then encodes it three more times as
+ * DATA: `CSF_TARGET_TIERS` opens at `{ value: 2 }`, and both
+ * `ZT_TARGET_STAGES` variants do the same. Tracked in **#406**.
+ *
+ * Those escaped the sweep that produced this module because that sweep grepped
+ * for a COMPARISON against a ladder noun, and **a floor expressed by omission
+ * from an option list contains no comparison at all**. Worth knowing before
+ * trusting any future sweep of this rule: it has to look for the number 2 used
+ * as a lower bound however expressed, including by absence.
+ *
+ * ## The API mirrors this floor, in four places
+ *
+ * **Stated because this docstring previously claimed the opposite**, and the
+ * false claim was the load-bearing one: it read "nothing on the Python side
+ * mirrors these values, so there is no cross-language window to keep closed".
+ * Measured — `grep -rn 'ge=2' apps/api/app/schemas/intake.py`:
+ *
+ *     :76   csf_target_tier: … Field(default=None, ge=2, le=4)
+ *     :78   zt_target_stage: … Field(default=None, ge=2, le=4)
+ *     :175  csf_target_tier: … ge=2, le=4
+ *     :177  zt_target_stage: … ge=2, le=4
+ *
+ * How that claim was produced is the useful part: `routes/zt.py` and
+ * `app/zt/scoring.py` were both read, and both are individually accurate —
+ * the route validates only against the framework's ladder and accepts stage 1,
+ * and the scoring module exports a default with no minimum. **A per-file check
+ * was then published as a system-wide negative**, which is the
+ * certificate-over-the-wrong-proposition shape: the commands proved something
+ * true and adjacent to the sentence they were cited for.
+ *
+ * So there IS a cross-language window, it is four bounds wide, and lowering
+ * the floor here without the other side is refused as a raw `schema_*` 422 —
+ * message `"Request validation failed."`, no client copy behind it — on the
+ * PUBLIC intake wizard. Tracked in **#406** with both halves.
+ *
+ * ## Why the constants live HERE rather than in a component
  *
  * `MIN_TARGET_STAGE` was declared in `components/admin/zt/ZtWorkspace.tsx`
- * and honoured there, while three sibling filters spelled the same floor as a
- * bare `2` (#194):
+ * and honoured there, while sibling filters spelled the same floor as a bare
+ * `2` (#194). All of them agreed, so there was no live defect — and the hazard
+ * was not the disagreement, it was that nothing could ever cause one to be
+ * noticed. Raise the floor at the picker without the constant and
+ * `normalizeTarget` can return a stage the dropdown no longer contains: a
+ * controlled `<select>` whose `selectedIndex` is `-1` renders BLANK, with no
+ * error, no refusal and nothing in a log.
  *
- *     ZtGapList.tsx          .filter((s) => s.stage >= 2)
- *     ZtSelfAssessment.tsx   catalog.stages.filter((s) => s.stage >= 2)
- *     CsfSelfAssessment.tsx  catalog.tiers.filter((t) => t.tier >= 2)
+ * **The reason is bundle shape, NOT an import-direction rule**, and the first
+ * version of this docstring got that wrong in a way worth recording: it said a
+ * client surface must not import from an admin component, so the pickers "had
+ * no honest way to reach the existing constant". Both of them already do —
+ * `ZtSelfAssessment.tsx` imports `@/components/admin/zt/ZtStagePicker` and
+ * `CsfSelfAssessment.tsx` imports `@/components/admin/csf/CsfQuestionnaire`.
+ * A reader enforcing the stated convention would have filed work to unpick two
+ * existing, working imports.
  *
- * **All four agreed, so there was no live defect** -- and the hazard was not
- * the disagreement, it was that nothing could ever cause one to be noticed.
- * Raise the floor at the picker without the constant and `normalizeTarget`
- * can return a stage the dropdown no longer contains: a controlled `<select>`
- * whose `selectedIndex` is `-1` renders BLANK, with no error, no refusal and
- * nothing in a log. The failure is silent by construction.
- *
- * A client surface must not import from an admin component either, so
- * `ZtSelfAssessment` and `CsfSelfAssessment` had no honest way to reach the
- * existing constant. This module is the shared home that gives them one.
- *
- * ## This floor is the WEB's, not the API's
- *
- * Stated because the obvious assumption is wrong and would be load-bearing.
- * `routes/zt.py` validates a target only against the framework's own ladder
- * -- `{framework} has stages 1-{max}; target_stage={n} is not one of them.`
- * -- so the API ACCEPTS stage 1, and `app/zt/scoring.py` exports
- * `DEFAULT_TARGET_STAGE` but no minimum at all. Nothing on the Python side
- * mirrors these values, so there is no cross-language window to keep closed
- * and no server-side test that could go red if they changed.
- *
- * That cuts both ways, and it is the reason this file exists rather than a
- * comment: the web layer is the ONLY place this rule is written down, so a
- * single home is the whole of its enforcement.
+ * The real reason is narrower and survives: importing a constant out of a
+ * component module drags that whole component — and its own imports — into
+ * every bundle that wants the number. A two-line module does not.
  */
 
 /** ZT (CISA ZTMM 2.0 and DoD ZTRA). Stage 1 is a starting point, not a goal. */
