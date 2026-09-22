@@ -1,0 +1,12 @@
+{
+ "incident": "The is_code_change([]) shape, refused. An empty diff is not a clean diff -- it is a checkout that did not fetch enough history. check_audit_evidence.py once printed 'documentation-only change, exempt' and exited 0 over exactly this input.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "the changed-file list is EMPTY",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}

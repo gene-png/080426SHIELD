@@ -228,6 +228,54 @@ jobs:
         working-directory: apps/api
         run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
 
+  # A SEPARATE JOB, for the reason the one below already gives: a merge-rule
+  # failure must not report as "Adversarial audit recorded" failing. Two
+  # different questions, two different checks.
+  #
+  # DELIBERATELY NOT REGISTERED AS A REQUIRED CHECK, and that is a decision
+  # rather than an omission. Branch protection is a GitHub setting, not a file
+  # here, so adding this to the required set is not something a PR can do -- and
+  # doing it would make condition 1's "all seven CI checks green" read eight,
+  # which the merge rule says to re-derive rather than let drift. So this
+  # reports, visibly, on every PR, and registering it is a separate decision
+  # with a separate cost. Filed rather than assumed.
+  #
+  # `CLAUDE.md` is right that "a finding nobody reads is a check that does not
+  # exist" -- the mitigation is that this one fails loudly with the paths named,
+  # on the PR, where the person deciding to merge is already looking.
+  merge-rule-conditions:
+    name: Merge-rule conditions are declared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed for `origin/<base>` to exist so the three-dot diff resolves.
+          # A shallow clone makes `git diff` fail, and `bash -e` turns that into
+          # a red step -- never an empty list, which this gate refuses anyway.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect the changed paths
+        run: |
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt
+          echo "changed paths:"; cat /tmp/changed.txt
+
+      - name: Read the PR body
+        env:
+          # Via env, not inline: a PR body is untrusted text, and interpolating
+          # it into a shell line is a script-injection hole. Same reasoning the
+          # audit-gate job above documents.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > /tmp/body.md
+
+      - name: Conditions 4 and 5 must be named in the body when the diff trips them
+        working-directory: apps/api
+        run: |
+          python scripts/check_merge_rule_conditions.py             --changed-files /tmp/changed.txt --body /tmp/body.md
+
   # A SEPARATE job, so it reports as its own check rather than folding a
   # different failure into "Adversarial audit recorded". It shares this
   # workflow's `edited` trigger, which this check needs more than the audit gate

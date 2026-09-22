@@ -1,0 +1,3 @@
+## Merge rule
+
+Trips nothing.

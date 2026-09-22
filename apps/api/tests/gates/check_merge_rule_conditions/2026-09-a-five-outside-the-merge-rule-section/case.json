@@ -1,0 +1,1 @@
+{"incident": "The scoping. Without it a body carrying 'prettier@3.9.5' or 'fixes 5 sites' acknowledges condition 5 by accident -- a check satisfied by an unrelated digit, which is #72's containment defect in a different costume.", "expect": 1, "adversarial": true, "stdout_contains": "config.py", "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md"]}
