@@ -258,7 +258,23 @@ export function HomeDashboard({
       </header>
 
       {/* Band 2: hero (report ready) or next-step guidance. */}
-      {latest ? (
+      {down.has("deliverables") ? (
+        <section
+          aria-labelledby="hero-heading"
+          className="rounded-xl border border-border bg-surface-card px-6 py-6"
+        >
+          <h2
+            id="hero-heading"
+            className="text-lg font-semibold text-ink-primary"
+          >
+            Your reports could not be loaded
+          </h2>
+          <p className="mt-2 max-w-prose text-sm text-ink-secondary">
+            Nothing is wrong with your account — refresh to try again. This is a
+            loading problem, not a statement that you have no reports.
+          </p>
+        </section>
+      ) : latest ? (
         <section
           aria-labelledby="hero-heading"
           className="rounded-xl border border-status-success-border bg-status-success-bg px-6 py-6"
@@ -373,8 +389,15 @@ export function HomeDashboard({
           // Unread messages need the client too, but have no service card of
           // their own — they belong under the same heading rather than in a
           // second "what needs me" list somewhere else on the page.
-          const showMessages = key === "action" && unreadMessages > 0;
-          if (items.length === 0 && !showMessages) return null;
+          // A failed inbox fetch arrives here as 0, which would render as
+          // "no unread messages" -- a claim about the client's account made
+          // from an error. Suppress the count and say so instead (#236).
+          const messagesDown = down.has("messages");
+          const showMessages =
+            key === "action" && !messagesDown && unreadMessages > 0;
+          const showMessagesError = key === "action" && messagesDown;
+          if (items.length === 0 && !showMessages && !showMessagesError)
+            return null;
           const count = items.length + (showMessages ? 1 : 0);
           return (
             <section
@@ -394,6 +417,19 @@ export function HomeDashboard({
                 </h3>
                 <p className="text-xs text-ink-secondary">{blurb}</p>
               </div>
+              {showMessagesError ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface-card px-4 py-3 text-sm">
+                  <span className="text-ink-secondary">
+                    Your messages could not be loaded — refresh to try again.
+                  </span>
+                  <Link
+                    href="/messages"
+                    className="font-semibold text-brand-600 hover:text-brand-500"
+                  >
+                    Open messages →
+                  </Link>
+                </div>
+              ) : null}
               {showMessages ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface-card px-4 py-3 text-sm">
                   <span className="text-ink-secondary">

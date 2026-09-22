@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { HomeDashboard } from "./HomeDashboard";
+import { HomeDashboard, type HomePanel } from "./HomeDashboard";
 
 import type { ClientDeliverable } from "@/components/results/ResultsList";
 import type { AssessmentResponse } from "@/lib/intake/types";
@@ -376,6 +376,40 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
     // The surviving panel still renders — the whole point of allSettled here.
     expect(screen.queryByText(/no engagements yet/i)).toBeNull();
   });
+
+  // DERIVED, NOT ENUMERATED. The first version of this fix pushed four panel
+  // keys from the page and gave only TWO of them a rendering branch, so a
+  // failed deliverables fetch silently rendered as "no report ready" and a
+  // failed inbox as "no unread messages" -- the exact false-claim-from-error
+  // this change exists to stop, surviving in half the panels.
+  //
+  // Listing the four here would repeat that mistake. `ALL_PANELS` is typed as
+  // HomePanel[], so adding a fifth member to the union without adding it here
+  // is a type error, and adding it here without a rendering branch fails this
+  // test.
+  const ALL_PANELS: HomePanel[] = [
+    "deliverables",
+    "engagements",
+    "messages",
+    "value",
+  ];
+
+  it.each(ALL_PANELS)(
+    "says %s could not be loaded rather than rendering it as absent",
+    (panel) => {
+      render(
+        <HomeDashboard
+          greetingName="Ada"
+          deliverables={[]}
+          engagements={[]}
+          unreadMessages={0}
+          valueSummary={null}
+          unavailable={[panel]}
+        />,
+      );
+      expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+    },
+  );
 
   it("still claims nothing when engagements are genuinely empty", () => {
     // The other half of the branch. Without this, a "fix" that renders the
