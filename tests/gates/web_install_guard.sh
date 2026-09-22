@@ -276,62 +276,168 @@ entry_point_delegates .devcontainer/post-create.sh "post-create.sh"
 # script rather than over the two named above, because the next bypass will be
 # written by someone who never read this file.
 #
-# TWO EXEMPTIONS, both stated so an unexplained hit is a real finding:
-#   * `scripts/web-install-if-stale.sh` IS the guard, and its install is the
-#     one legitimate one in the repo.
-#   * `tests/gates/` holds the gates themselves, which quote `pnpm install` as
-#     a pattern to search for and stub the binary. A gate installs nothing.
+# THE EXCLUSIONS, and there are THREE, not two. An earlier version of this
+# comment said "TWO EXEMPTIONS, both stated so an unexplained hit is a real
+# finding" and then listed two further exclusion classes fourteen lines below
+# itself -- a heading false inside its own file, which is worse than no heading
+# because it is what a reader checks instead of counting:
 #
-# QUOTED STRINGS ARE STRIPPED AS WELL AS COMMENTS, and that is not tidiness
-# either. Stripping comments alone reported `scripts/prettier-hook.sh` and
-# `scripts/verify-in-worktree.sh` as bypasses over two `echo` lines -- one of
-# which says `pnpm installs`, a verb. That is this file's own recorded defect
-# facing the other way: a check on CODE satisfied by PROSE. An over-reporting
-# gate is not the safe direction, because the cheapest route to green is to
-# exempt the file.
+#   1. POPULATION: `git ls-files '*.sh'`. Tracked, and `.sh` only. An install in
+#      `apps/web/Dockerfile`, `.github/workflows/ci.yml`, `devcontainer.json`, a
+#      `package.json` script or a `.ps1` is INVISIBLE here. This is the largest
+#      of the three and the one worth naming a live case for:
+#      `docker-compose.yml`'s web `command:` is a folded YAML scalar and is the
+#      artifact #226 was actually born in, so the one file with the worst
+#      history for this defect is outside the population. Filed, with a number,
+#      rather than papered over -- see the issue referenced in PR #369.
+#   2. `scripts/web-install-if-stale.sh` IS the guard. Its install is the one
+#      legitimate install in the repo.
+#   3. `tests/gates/` holds the gates themselves, which quote the pattern in
+#      order to search for it and stub the binary. A gate installs nothing.
 #
-# THE RESIDUALS, MEASURED rather than reasoned about, by running the stripper
-# and the pattern over one probe string per form. Stated because a sweep whose
-# blind spots are unwritten is a sweep whose next reader assumes it has none:
+# QUOTED STRINGS ARE STRIPPED AS WELL AS COMMENTS. Stripping comments alone
+# reported two files, and THEY ARE NOT THE SAME CASE -- the earlier version of
+# this comment classified both as prose, which was true of one of them:
 #
-#   caught: a bare line; `(cd "$X" && pnpm install ...) || echo "..."` (the
-#           exact form this branch removes from post-create.sh); a heredoc
-#           body; `npx pnpm install`; the four other subcommands that write
-#           node_modules (`i`, `add`, `up`, `update`).
-#   NOT caught, and each needs a different mechanism:
-#     * an install inside a QUOTED command argument -- `sh -c "pnpm install"`.
-#       Stripping quoted strings is what stops the prose false positives above,
-#       so this is the price of that, not an oversight.
-#     * variable indirection -- `CMD="pnpm install"; $CMD`.
-#     * a non-`.sh` writer: `Dockerfile`, `docker-compose.yml`,
-#       `devcontainer.json`, a `package.json` script, a `.ps1`. `git ls-files
-#       '*.sh'` is the stated population and nothing here claims more.
-#   correctly NOT caught: `echo "run pnpm install first"`, and the verb in
-#           `the entry pnpm installs for the workspace`.
-bypass_hits="$(
-  cd "$REPO" || exit 2
-  git ls-files '*.sh'     | grep -v '^scripts/web-install-if-stale\.sh$'     | grep -v '^tests/gates/'     | while IFS= read -r f; do
-        if sed -e "s/'[^']*'//g" -e 's/\"[^\"]*\"//g' -e 's/[[:space:]]*#.*$//' "$f"              | grep -qE '(^|[[:space:]]|;|&&)[[:space:]]*pnpm[[:space:]]+(install|i|add|up|update)([[:space:]]|$)'; then
-          echo "$f"
-        fi
-      done
-)"
+#   * `scripts/prettier-hook.sh` says `the entry pnpm installs for the
+#     workspace`. A VERB. Prose, correctly excluded.
+#   * `scripts/verify-in-worktree.sh` prints `Fix: run `pnpm install` in the
+#     primary tree`. An IMPERATIVE in a user-facing refusal, with no
+#     `--frozen-lockfile`, and #175 records that a host `pnpm install` breaks
+#     the container. That is a real instruction to do the thing this gate
+#     forbids, and stripping quotes is what hides it.
+#
+# So the strip is a TRADE, not a free win, and the live instance inside it is
+# filed rather than justified away. `terr-A-gates` owns `verify-in-worktree.sh`
+# and takes the remedy string on a clean base. Saying "the price of that, not an
+# oversight" -- which this comment previously did -- is exactly what stops the
+# next reader checking whether anything is in the gap.
+#
+# ---------------------------------------------------------------------------
+# THE PROBE TABLE, and it is the POSITIVE CONTROL the sweep did not have.
+#
+# The per-file test below sits inside an `if` condition, which `set -eu` cannot
+# see. So a broken `sed` or a broken `grep` yields no hit and prints
+# `ok   [no shell script outside the guard carries an install of its own]`:
+# "the pipeline is broken" and "no bypass exists" were the same line. This
+# file already establishes that this is the dangerous direction -- the CR probe
+# above exists because `tr -d ""` deletes nothing and passes always.
+#
+# It also makes the residual list SELF-VERIFYING. Those forms were derived by
+# running probe strings by hand once; a hand measurement recorded as prose is
+# not re-run when the pattern next moves, so the list would go stale silently
+# in the file whose job is to say what the sweep cannot see. Here the list IS
+# the test: change the pattern and whichever row no longer holds goes red.
+# ---------------------------------------------------------------------------
+strip_code() { sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g' -e 's/[[:space:]]*#.*$//' "$1"; }
+matches_install() {
+  strip_code "$1" | grep -qE '(^|[[:space:]]|;|&&)[[:space:]]*pnpm[[:space:]]+(install|i|add|up|update)([[:space:]]|$)'
+}
+
+probe_dir="$(mktemp -d)"
+probe() { # <expect: catch|miss> <label> <line...>
+  want="$1"; label="$2"; shift 2
+  printf '%s\n' "$@" > "$probe_dir/probe.sh"
+  if matches_install "$probe_dir/probe.sh"; then got=catch; else got=miss; fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL [probe] expected to $want, but the pattern said $got: $label"
+    echo "      The sweep below reports by NOT matching, so a pattern or a"
+    echo "      stripper that has stopped working prints its ok line. This"
+    echo "      table is the only thing standing between that and a silent"
+    echo "      green. Fix the pattern, or move this row and say why."
+    rm -rf "$probe_dir"
+    exit 1
+  fi
+}
+
+# MUST be caught. Row 2 is the exact form this branch removes from
+# post-create.sh, so if that row ever stops holding the gate has stopped being
+# able to see the defect it was written for.
+probe catch "a bare install line"            '    pnpm install'
+probe catch "post-create.sh original form"   '(cd "${REPO}" && pnpm install --prefer-offline) || echo "x"'
+probe catch "a heredoc body"                 'cat <<EOF' 'pnpm install' 'EOF'
+probe catch "npx pnpm install"               '    npx pnpm install'
+probe catch "pnpm i"                         '    pnpm i'
+probe catch "pnpm add"                       '    pnpm add react'
+probe catch "pnpm up"                        '    pnpm up'
+probe catch "pnpm update"                    '    pnpm update'
+probe catch "a frozen install of its own"    '    pnpm install --frozen-lockfile'
+
+# MUST NOT be caught, and these are the RESIDUALS -- pinned here so the list
+# cannot go stale. Each needs a different mechanism and none is closed by
+# widening this pattern.
+probe miss  "install in a quoted argument"   'docker compose exec web sh -c "pnpm install"'
+probe miss  "the sh -lc idiom CLAUDE.md prescribes" 'docker compose exec -T web sh -lc "cd /app && pnpm install"'
+probe miss  "variable indirection"           'CMD="pnpm install"; $CMD'
+probe miss  "pnpm -C <dir> install"          '    pnpm -C apps/web install'
+probe miss  "pnpm --filter web add"          '    pnpm --filter web add foo'
+probe miss  "pnpm --dir <dir> install"       '    pnpm --dir apps/web install'
+probe miss  "a line-continued pnpm"          '    pnpm \' '      install'
+probe miss  "npm rather than pnpm"           '    npm install'
+
+# MUST NOT be caught, and these are CORRECT misses rather than residuals --
+# prose about an install is not an install.
+probe miss  "an echo naming the command"     '  echo "run pnpm install first" >&2'
+probe miss  "the verb, in prose"             '  echo "the entry pnpm installs for the workspace"'
+rm -rf "$probe_dir"
+echo "ok   [the pattern still catches what it claims and misses what it admits]"
+
+# THE SWEEP CALLS `matches_install`, the SAME function the probe table above
+# exercises. It used to inline its own copy of the stripper and the pattern, and
+# that is two facts to keep in step: the probe table would have gone on
+# certifying a pattern the sweep no longer used, which is a positive control
+# over the wrong subject and worse than none. `CLAUDE.md`: "uses the same X as
+# the Y path" is a claim to enforce by CALLING X.
+#
+# NOT a subshell for the loop. `bypass_hits="$(...)"` discarded the exit status
+# of everything inside it, including the `cd "$REPO" || exit 2` that was
+# supposed to fail closed -- `exit 2` inside a command substitution ends the
+# SUBSHELL and the assignment happily succeeds with an empty value, which is
+# the pass-shaped answer. The cd is now unconditional and checked.
+cd "$REPO" || {
+  echo "FAIL: cannot cd to $REPO; this sweep could not look, which is not a pass."
+  exit 2
+}
 # `git ls-files` returning NOTHING is not a clean sweep -- it is a sweep that
 # could not look, which D-051 says must never share a branch with a pass.
-tracked_sh="$(cd "$REPO" && git ls-files '*.sh' | wc -l)"
-if [ "$tracked_sh" -eq 0 ]; then
+# Checked BEFORE the loop, so an empty list cannot reach the report path.
+sh_list="$(mktemp)"
+git ls-files '*.sh' > "$sh_list" || {
+  echo "FAIL: git ls-files failed; this sweep could not look."
+  rm -f "$sh_list"; exit 2
+}
+if [ ! -s "$sh_list" ]; then
   echo "FAIL: git ls-files '*.sh' found no shell scripts; this sweep could not look."
-  exit 2
+  rm -f "$sh_list"; exit 2
 fi
+
+bypass_hits=""
+while IFS= read -r f; do
+  case "$f" in
+    scripts/web-install-if-stale.sh) continue ;;
+    tests/gates/*)                   continue ;;
+  esac
+  if matches_install "$f"; then
+    bypass_hits="$bypass_hits$f
+"
+  fi
+done < "$sh_list"
+swept="$(wc -l < "$sh_list")"
+rm -f "$sh_list"
+
 if [ -n "$bypass_hits" ]; then
   echo "FAIL: these shell scripts run an install of their own, bypassing the guard:"
-  echo "$bypass_hits" | sed 's/^/        /'
+  printf '%s' "$bypass_hits" | sed 's/^/        /'
   echo "      The guard installs with --frozen-lockfile and keys on the lockfile"
   echo "      hash; a second, unguarded install beside it re-opens #226 whichever"
   echo "      order they run in. Call scripts/web-install-if-stale.sh instead."
   exit 1
 fi
-echo "ok   [no shell script outside the guard carries an install of its own]"
+# The COUNT is printed, not asserted against a hardcoded number. A tally in this
+# position goes stale the next time a script is added; a printed count is
+# evidence that the loop ran over something, which is the property at issue.
+echo "ok   [no install of its own in any of the $swept tracked *.sh files swept]"
+
 
 # ---------------------------------------------------------------------------
 # THE INSTALL HALF. Every case above passes `--check`, which returns at
