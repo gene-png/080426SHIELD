@@ -87,6 +87,12 @@ vi.mock("@/components/admin/StaleDocsNudge", () => ({
 // real guard fetches an AI status of its own; that decision is `RunAiGuard`'s
 // own tests' business, and stubbing it is what makes the invariant test below
 // able to fire `refreshScoreAndGap` the way a consultant does.
+//
+// WHAT THIS SUBSTITUTION REMOVES, said plainly: in production a consultant
+// may meet the no-key warning modal before `onRunAi` runs. So "the surface
+// the consultant reaches" is true of the BUTTON and not of the whole path.
+// It changes nothing these tests assert -- which target a refresh asks for --
+// but an unstated stub is how a seam becomes a hidden assumption.
 vi.mock("@/components/admin/RunAiGuard", () => ({
   RunAiGuard: ({
     onProceed,
@@ -123,6 +129,12 @@ const SCORE = {} as unknown as ZtScoreSummary;
  *
  * `target_stage` is what the component derives the control from, and the row
  * name is what a human reads, so a disagreeing cell is visible in both.
+ *
+ * STATED LIMIT: both are built from the same argument, so these fixtures
+ * cannot express a gap whose header disagrees with its own rows. That is the
+ * right shape here -- `analyze_gaps` echoes the requested target verbatim, so
+ * the pairing is the server's guarantee -- but it means these cells prove the
+ * COMPONENT never breaks the pairing, not that the pairing holds.
  */
 function gapAt(stage: number): GapAnalysis {
   return {

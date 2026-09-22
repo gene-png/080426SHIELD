@@ -492,6 +492,13 @@ export function CsfWorkspace({
       setPendingTarget(null);
       return;
     }
+    // NOTHING BETWEEN `setPendingTarget` AND THE `try` MAY THROW. Both
+    // statements below are a ref bump and an object construction, so neither
+    // can -- and that is load-bearing rather than incidental: a throw here
+    // skips the `finally`, and `pendingTarget` then sticks on a target whose
+    // fetch is gone, with no message and no way back except another pick.
+    // Flagged by review while this window held one statement; it now holds
+    // two, so it is written down rather than re-derived.
     const attempt = beginRefresh("gap-target");
     const gapWrite = ++gapWriteSeq.current;
     try {

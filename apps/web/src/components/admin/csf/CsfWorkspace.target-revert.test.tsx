@@ -87,7 +87,13 @@ const fetchGapAnalysis = vi.mocked(csfClient.fetchGapAnalysis);
 const CATALOG = {} as unknown as CsfCatalog;
 const SCORE = {} as unknown as CsfScoreSummary;
 
-/** Rows that NAME their own target, so a disagreeing cell is visible. */
+/**
+ * Rows that NAME their own target, so a disagreeing cell is visible.
+ *
+ * STATED LIMIT, as in the ZT twin: header and rows come from one argument, so
+ * these fixtures prove the component never breaks the pairing, not that the
+ * pairing holds. The server echoing the request is what makes it hold.
+ */
 function gapAt(tier: number): GapAnalysis {
   return {
     assessment_id: "csf-assess-385",
