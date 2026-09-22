@@ -628,6 +628,21 @@ def create_engagement(
         )
     # D-080: NULL means self-serve provisioning never named this org, which
     # is exactly the state the intake wizard exists to leave.
+    #
+    # NO `.strip()` HERE, unlike the submit guard above, and that asymmetry is
+    # deliberate rather than a missed twin. This reads a STORED name, and every
+    # writer of the column normalises before it lands:
+    #
+    #   routes/admin.py      `body.legal_name.strip()`, and refuses the empty
+    #   routes/auth.py       writes None (self-serve names nothing)
+    #   _apply_patch_to_client   `raw.strip() or None`
+    #
+    # So the stored value is NULL or a non-empty trimmed string, and `not` is
+    # the whole test. `submit_intake` strips because it validates the INCOMING
+    # body, before `_apply_patch_to_client` has normalised anything.
+    #
+    # What would reopen this: a fourth writer that sets `legal_name` without
+    # going through one of those three. Add the strip there, not here.
     if not client.legal_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
