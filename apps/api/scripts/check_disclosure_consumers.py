@@ -236,6 +236,12 @@ WEB_SUFFIXES = {".ts", ".tsx"}
 #: closes was empty until someone wrote the fixture first. Written down
 #: because nothing will announce it.
 #:
+#: THE SCOPE OF THAT ABSENCE CLAIM IS `apps/web/src`, AND SAYING SO IS THE
+#: POINT. `vitest.setup.ts` DOES exist -- at `apps/web/vitest.setup.ts`, one
+#: level above `src`, therefore outside `reader_text`'s glob entirely and not
+#: a counterexample. A reader who greps the repo for setup-file-class names
+#: finds it and would otherwise conclude this note is wrong.
+#:
 #: The exporter arm of `reader_text` has no filter at all, and is empty by
 #: directory layout rather than by check: api tests live in `apps/api/tests/`
 #: and that glob is under `app/`.

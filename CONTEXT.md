@@ -409,6 +409,37 @@ catch them. The caption's exact TAIL is now asserted on the Python side with
 the same literal, so a reword on either surface reddens; verified by applying
 that exact reword and watching the Python test fail.
 
+A sixth pass then found the SAME shape a third time, and that is what makes it
+worth recording as a rule rather than as three mistakes. The Python tail
+assertion added in the fifth round used a ONE-CODE fixture, so `", ".join`
+never executed: changing the separator to `"; "` left the whole Python side
+green — measured, not reasoned. The mutant class was already written down ten
+lines away, in `zt.test.ts`'s comment naming "a different `join` separator" as
+one of three natural mutants of this exact sentence. It was not tried, because
+the reword that WAS tried came from the reviewer's example rather than from the
+class.
+
+**The shape, and it is checkable rather than a disposition: a comment
+addressed to a future reader has to GENERALISE, while the fix that prompted it
+was validated against a SINGLE WITNESS.** Nobody writes "a reword, given
+exactly one discarded code, reddens this test" — the useful phrasing quantifies
+over the class. So the generalisation happens in prose, where nothing executes,
+in the same commit as the fix, while the author is holding the one concrete
+case they just made pass. Three of this branch's blocking findings are that,
+and all three were in prose written to explain a CORRECT change.
+
+This is `CLAUDE.md`'s "fix from the SHAPE, not the list you were handed" and
+"name the shape you searched for" — both stated about twin SITES and about
+SWEEPS, neither about assurance comments or about mutants. One existing rule
+recurring in a domain it does not name.
+
+The step the reviewer proposed, adopted here: **a comment claiming a test
+catches a change names the MUTANT CLASS it covers and one mutant in that class
+it does NOT.** At the site that would have read "asserts the exact tail at
+arity 1; the `join` separator and a repeated append are not pinned" — a
+sentence you cannot write without noticing the defect. It costs nothing when
+there is no gap, because then the second clause is "none I can construct".
+
 Writing them turned up a second thing, in the fixture rather than the code.
 `ZtDashboard.wiring.test.tsx` set `target_stage_source: "engagement"`, and
 `resolve_target_stage` returns exactly four values — `client`, `default`,

@@ -35,6 +35,7 @@ def _tree(
     schema: str,
     web: str = "",
     web_test: str = "",
+    web_spec: str = "",
     exporter: str = "",
     audit_renderer: bool = True,
 ) -> pathlib.Path:
@@ -74,6 +75,14 @@ def _tree(
     if web_test:
         (tmp_path / "apps" / "web" / "src" / "thing" / "LatestPanel.test.tsx").write_text(
             web_test, encoding="utf-8"
+        )
+    if web_spec:
+        # `.spec.` is the OTHER member of TEST_FILE_MARKERS, and it had no
+        # fixture at all until the sixth review pass: a filter implementing
+        # only `.test.` passed the whole suite. Two markers, one exercised, is
+        # the half-sweep shape this repo keeps recording.
+        (tmp_path / "apps" / "web" / "src" / "thing" / "InspectorPanel.spec.tsx").write_text(
+            web_spec, encoding="utf-8"
         )
     if exporter:
         (tmp_path / "apps" / "api" / "app" / "thing").mkdir(parents=True, exist_ok=True)
@@ -216,6 +225,26 @@ def test_a_TEST_FILE_is_not_a_reader(tmp_path) -> None:
     assert main(["x", str(seed)]) == 1
 
 
+def test_a_SPEC_FILE_is_not_a_reader_either(tmp_path) -> None:
+    """The other member of `TEST_FILE_MARKERS`, which had no case at all.
+
+    Added by the sixth review pass. `.test.` had a fixture and `.spec.`
+    did not, so a filter implementing only `.test.` passed this entire
+    suite -- two markers, one exercised. This repo's own half-sweep
+    shape, inside the tests written to close a half-sweep.
+
+    The production file names the field nowhere, so only the exclusion
+    can decide the verdict.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        web="export const unrelated = 1;",
+        web_spec="const t: Thing = d;\nexpect(t.excluded_inputs).toEqual([]);",
+    )
+    assert main(["x", str(seed)]) == 1
+
+
 def test_a_PRODUCTION_file_beside_a_test_file_still_passes(tmp_path) -> None:
     """The other half, so the exclusion is a filter and not a blanket refusal.
 
@@ -237,7 +266,7 @@ def test_a_PRODUCTION_file_beside_a_test_file_still_passes(tmp_path) -> None:
     assert main(["x", str(seed)]) == 0
 
 
-def test_main_PASSES_THE_LIVE_DICT_to_the_expiry_check(tmp_path, monkeypatch) -> None:
+def test_main_PASSES_THE_LIVE_DICT_to_the_expiry_check(tmp_path, monkeypatch, capsys) -> None:
     """The WIRING, which the two expiry tests above cannot see.
 
     They call `expired_field_exemptions` directly, so they prove the rule
@@ -265,6 +294,12 @@ def test_main_PASSES_THE_LIVE_DICT_to_the_expiry_check(tmp_path, monkeypatch) ->
         gate.EXEMPT_FIELDS, "thing.py::ThingResponse.excluded_inputs", "a synthetic reason"
     )
     assert main(["x", str(seed)]) == 1
+    # The MESSAGE as well as the code, because `main` has other ways to reach
+    # exit 1 and this test's name claims a specific one. The sibling
+    # could-not-look cases argue the same thing in their own comments: an exit
+    # code alone lets a branch be rewired to any other cause with the file
+    # green.
+    assert "EXPIRED exemptions" in capsys.readouterr().out
 
 
 def test_main_is_GREEN_on_the_same_tree_with_no_exemption(tmp_path) -> None:
