@@ -2902,11 +2902,30 @@ Rules of the road:
   that **the gate must be run AFTER the formatter, never before**, and that a
   green run recorded before a reformat says nothing about the tree after it.
 
-  This has a live consequence in #168: fixing the pre-commit hook reformats 46
-  files, so any recalled-count finding currently hidden by a line break in them
-  becomes visible the moment it lands. That PR re-runs the gate after the
-  reformat or it ships a green that means "clean before the change" while
-  reading as "clean after".
+  **The worked example this paragraph used to carry was backwards, and it is
+  kept as a correction rather than deleted, because the instruction above is
+  right and the reasoning offered for it was not.** It said fixing the
+  pre-commit hook (#168) "reformats 46 files", so any recalled-count finding
+  hidden by a line break in them would become visible when it landed.
+
+  It landed as PR #311 and reformatted nothing. Measured on `main` at a421e37,
+  2026-09-20: `prettier@3.9.6 --check` over the repo glob reports every file
+  clean, and `prettier@3.1.0 --check` — the version the OLD hook ran — reports
+  49.
+  <!-- counted: npx -y prettier@3.1.0 --list-different "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}" | wc -l, at a421e37, 2026-09-20 -->
+  So those files were never work the fix creates; they are what a
+  version eight minors behind says about a tree CI already keeps correct. The
+  fix REMOVED a reformat that the mandatory pre-commit step was performing on
+  every commit. `.pre-commit-config.yaml` states it correctly and always did
+  ("NO REFORMAT LANDS WITH THIS"); this file said the opposite, and the
+  `DELIVERY_PLAN.md` entry built a sequencing constraint on top of it.
+
+  **The instruction is unchanged and does not depend on that example**: run the
+  gate AFTER the formatter, because a green recorded before a reformat says
+  nothing about the tree after it. Any PR that does reflow prose — a
+  `--write` over changed files, a heading edit above a flagged line — has
+  exactly the consequence described, and the gate's own limits bullet above is
+  the reason.
 
   More importantly, the pattern requires
   the cardinal to sit NEXT TO the noun, so `thirteen recorded instances` is
