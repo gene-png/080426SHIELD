@@ -397,6 +397,18 @@ assertions (now `toBe` on the whole string, plus a parity pin transcribed from
 the Python); and the one-element grammar wart, which is inherited from the PDF
 and is filed as **#452** rather than fixed on one surface.
 
+A fifth review pass then found the correction itself carrying a false
+assurance. The pointer moved to the origin side closed with "`zt.test.ts` ...
+fails if the two drift" — and it does not, in the origin-to-web direction,
+which is the only direction a pointer sited at the origin serves. The Python
+side was pinned by containment (`code in disclosed`), so rewording the caption
+to "...but could not be used; the engagement target was applied instead."
+passed every test on both surfaces and shipped the divergence. The person
+rewording it stands exactly where that comment is and reads that a test will
+catch them. The caption's exact TAIL is now asserted on the Python side with
+the same literal, so a reword on either surface reddens; verified by applying
+that exact reword and watching the Python test fail.
+
 Writing them turned up a second thing, in the fixture rather than the code.
 `ZtDashboard.wiring.test.tsx` set `target_stage_source: "engagement"`, and
 `resolve_target_stage` returns exactly four values — `client`, `default`,

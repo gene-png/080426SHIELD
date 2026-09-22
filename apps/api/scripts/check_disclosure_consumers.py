@@ -217,6 +217,28 @@ WEB_SUFFIXES = {".ts", ".tsx"}
 #: distinction `check_test_integrity`'s `working-directory:` note draws -- a
 #: hole nothing has fallen into yet is still a hole, and it opens on the next
 #: PR that writes the fixture before the renderer, which is the normal order.
+#: THE TWO ERROR DIRECTIONS HAVE OPPOSITE OBSERVABILITY, and only one of them
+#: will ever tell you.
+#:
+#: OVER-exclusion is safe by construction. Dropping a reader can only SHRINK
+#: the set that clears fields, so it can only move a verdict toward violation.
+#: If this ever eats a production file -- an `api.spec.ts` that is really an
+#: OpenAPI module -- the result is a red someone must answer, never a silent
+#: pass. That is also why the substring form is right rather than merely
+#: currently-harmless: `foo.test.helper.ts` being dropped costs nothing.
+#:
+#: UNDER-exclusion is the silent one, and it is the direction to watch. These
+#: match `path.name`, NOT the path, so test scaffolding that does not carry
+#: the marker in its FILENAME is still counted as a screen: a `__tests__/` or
+#: `__mocks__/` directory, `setupTests.ts`, `mocks/handlers.ts`, a
+#: `*.stories.tsx`. Globbed for all of those under `apps/web/src` on
+#: 2026-09-22: NONE EXIST, so it is empty -- exactly as the hole this constant
+#: closes was empty until someone wrote the fixture first. Written down
+#: because nothing will announce it.
+#:
+#: The exporter arm of `reader_text` has no filter at all, and is empty by
+#: directory layout rather than by check: api tests live in `apps/api/tests/`
+#: and that glob is under `app/`.
 TEST_FILE_MARKERS = (".test.", ".spec.")
 
 

@@ -63,9 +63,16 @@ def _tree(
     # path-token matching would still be exercised against a realistic shape
     # rather than a flat directory that satisfies it trivially.
     (tmp_path / "apps" / "web" / "src" / "thing").mkdir(parents=True)
-    (tmp_path / "apps" / "web" / "src" / "thing" / "Page.tsx").write_text(web, encoding="utf-8")
+    # `LatestPanel.tsx`, not `Page.tsx`, and the name is load-bearing: it
+    # CONTAINS the substring "test". A naive `if "test" in path.name` filter
+    # -- the obvious wrong way to write the exclusion below -- would eat this
+    # production file, and with a neutral name no test in this file would say
+    # so. "latest" is the realistic instance of the word this class swallows.
+    (tmp_path / "apps" / "web" / "src" / "thing" / "LatestPanel.tsx").write_text(
+        web, encoding="utf-8"
+    )
     if web_test:
-        (tmp_path / "apps" / "web" / "src" / "thing" / "Page.test.tsx").write_text(
+        (tmp_path / "apps" / "web" / "src" / "thing" / "LatestPanel.test.tsx").write_text(
             web_test, encoding="utf-8"
         )
     if exporter:
@@ -215,12 +222,61 @@ def test_a_PRODUCTION_file_beside_a_test_file_still_passes(tmp_path) -> None:
     Without this, an exclusion that dropped the whole directory -- or every
     file whose name merely contains `test` -- would pass the case above while
     breaking every real reader that happens to sit beside a spec.
+
+    The second half is why `_tree` names the production file `LatestPanel.tsx`.
+    It first wrote `Page.tsx`, which contains neither `test` nor `spec`, so a
+    naive `"test" in path.name` filter dropped only the test file and this case
+    still passed -- the docstring claimed a class the fixture could not reach.
     """
     seed = _tree(
         tmp_path,
         schema=_SCHEMA,
         web="const t: Thing = d;\nt.excluded_inputs;",
         web_test="const t: Thing = d;\nexpect(t.excluded_inputs).toEqual([]);",
+    )
+    assert main(["x", str(seed)]) == 0
+
+
+def test_main_PASSES_THE_LIVE_DICT_to_the_expiry_check(tmp_path, monkeypatch) -> None:
+    """The WIRING, which the two expiry tests above cannot see.
+
+    They call `expired_field_exemptions` directly, so they prove the rule
+    works given an exemption -- not that `main` ever hands it the real one.
+    Change the call site to `exemptions={}` and both stay green while the arm
+    is dead in production. That is `CLAUDE.md`'s "the test imports the thing
+    it is defending rather than calling the endpoint that reaches it", and it
+    is PRE-EXISTING: the older `next(iter(EXEMPT_FIELDS))` tests called the
+    function directly too. Found by the #387 review, closed here.
+
+    Monkeypatching the module dict rather than passing an argument is the
+    point: the only way this can pass is if `main` reads that dict.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        # A reader exists, so the field is NOT unconsumed and arm 1 is silent.
+        # The only thing that can fail this run is the expiry check.
+        web="const t: Thing = d;\nt.excluded_inputs;",
+    )
+    import scripts.check_disclosure_consumers as gate
+
+    # An exemption for a field that HAS a reader -- expired by definition.
+    monkeypatch.setitem(
+        gate.EXEMPT_FIELDS, "thing.py::ThingResponse.excluded_inputs", "a synthetic reason"
+    )
+    assert main(["x", str(seed)]) == 1
+
+
+def test_main_is_GREEN_on_the_same_tree_with_no_exemption(tmp_path) -> None:
+    """The control, so the case above fails for the expiry and not the tree.
+
+    Without it, any defect in the fixture -- a missing audit renderer, an
+    unreadable schema -- produces the same exit 1 and the test still "passes".
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        web="const t: Thing = d;\nt.excluded_inputs;",
     )
     assert main(["x", str(seed)]) == 0
 
@@ -437,7 +493,14 @@ def test_an_exemption_for_a_field_that_NOW_HAS_A_READER_is_expired() -> None:
     #
     # `CLAUDE.md`: derive the world the test needs; never let the setup depend
     # on the thing under test happening to be in some state.
-    key = "app/zt/exporters.py::SyntheticExemptResponse.dropped_synthetic"
+    #
+    # The origin is a SCHEMA FILENAME (`clients.py`), which is the shape every
+    # real key and `main`'s own `origins` set use. It first read
+    # `app/zt/exporters.py` -- a PATH, and a key shape nothing can produce.
+    # Inert, because this function only splits on `::` and tests set
+    # membership; corrected anyway, in the file that had just fixed a fixture
+    # for building an unreachable state.
+    key = "clients.py::SyntheticExemptResponse.dropped_synthetic"
     origin, rest = key.split("::", 1)
     model, field = rest.rsplit(".", 1)
     # Every exemption sharing this schema file must be declared, or it is
@@ -473,7 +536,7 @@ def test_an_exemption_whose_FIELD_WAS_RENAMED_is_expired() -> None:
     triple inherits a reason written about a different defect entirely.
     """
     # Synthetic, for the reason given in the test above.
-    key = "app/zt/exporters.py::SyntheticExemptResponse.dropped_synthetic"
+    key = "clients.py::SyntheticExemptResponse.dropped_synthetic"
     origin = key.split("::", 1)[0]
     expired = expired_field_exemptions(
         [(origin, "SomethingElseResponse", "dropped_x")],

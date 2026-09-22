@@ -229,6 +229,27 @@ def test_the_client_document_says_the_stored_target_was_not_used() -> None:
     assert code in disclosed, f"the caption does not name the row: {disclosed!r}"
     assert "could not be used" in disclosed, disclosed
 
+    # THE EXACT TAIL, not containment, and this half exists for a reader who is
+    # not in this file: the identical sentence is duplicated in the web bundle
+    # (`apps/web/src/lib/dashboards/zt.ts::targetNote`, #387), so the screen and
+    # the deliverable must not drift.
+    #
+    # Containment alone does not pin that. Both assertions above survive
+    # `"... but could not be used; the engagement target was applied instead."`
+    # -- a reword that keeps the code and the phrase, changes the sentence, and
+    # ships the two surfaces disagreeing. The comment at `_gap_plan_caption`
+    # tells whoever rewords it that a test will catch them; WITHOUT THIS LINE
+    # that comment is a false assurance, and a false assurance sited exactly
+    # where the reader checks is worse than no comment at all.
+    #
+    # The literal is written out rather than imported from the module under
+    # test: a test that derives its expected value from the thing it tests
+    # agrees by construction and cannot fail.
+    assert disclosed.endswith(
+        f" A per-capability target was recorded for {code} but could not be used,"
+        f" so the engagement target was applied to those rows instead."
+    ), f"the caption's wording has drifted from the web copy: {disclosed!r}"
+
 
 @pytest.mark.unit
 def test_an_ordinary_engagement_carries_no_disclosure() -> None:

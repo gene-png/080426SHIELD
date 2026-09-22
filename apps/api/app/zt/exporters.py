@@ -77,8 +77,19 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
     # duplicated cross-language literals: the window is closed by whoever edits
     # the origin, and a pointer sitting only in the TypeScript closes nothing,
     # because the person rewording this caption never opens that file.
-    # `zt.test.ts`'s "says it exactly as the client's PDF says it" transcribes
-    # the string from here and fails if the two drift.
+    # TWO tests pin this, one per surface, and BOTH are needed -- a pointer
+    # sited here serves the origin->web direction, and until #387's review
+    # that direction had nothing behind it:
+    #
+    #   this file  `test_the_client_document_says_the_stored_target_was_not_used`
+    #              asserts the exact TAIL of this caption. Containment alone
+    #              (`code in disclosed`) survived a reword and shipped the
+    #              divergence, which is what that test used to be.
+    #   the web    `zt.test.ts`'s "says it exactly as the client's PDF says it"
+    #              transcribes this string and asserts `targetNote` ends with it.
+    #
+    # So a reword HERE reddens the Python test, and a drift THERE reddens the
+    # TypeScript one. Change this sentence and you must change both literals.
     if gap.unusable_target_codes:
         listed = ", ".join(gap.unusable_target_codes)
         target += (
