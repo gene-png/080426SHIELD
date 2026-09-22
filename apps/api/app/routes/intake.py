@@ -379,6 +379,11 @@ def submit_intake(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Organization legal name is required to submit intake.",
         )
+    # The guard tested the STRIPPED value; everything below uses it, so a
+    # legacy "  Acme  " does not reach a workspace title or an admin
+    # notification with its padding. Guarding on one form and using another is
+    # the same split this branch just closed at the exporters.
+    org_name = (body.client.legal_name or "").strip()
 
     _apply_patch_to_client(
         client,
@@ -428,7 +433,7 @@ def submit_intake(
         kind = ServiceKind(sr.service_type.value)
         if kind in existing_kinds:
             continue
-        provision_self_assessment_service(db, sr, org_name=client.legal_name, actor_user_id=user.id)
+        provision_self_assessment_service(db, sr, org_name=org_name, actor_user_id=user.id)
         existing_kinds.add(kind)
 
     client.intake_completed_at = utcnow()
@@ -454,7 +459,7 @@ def submit_intake(
         role=UserRole.ADMIN,
         event_type="intake.submitted",
         title="New intake submitted",
-        body=(f"{client.legal_name} requested: {services_label}. " "Review in the admin queue."),
+        body=(f"{org_name} requested: {services_label}. " "Review in the admin queue."),
         link="/admin/queue",
     )
 
@@ -685,6 +690,8 @@ def create_engagement(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Complete your organization profile in intake before starting an engagement.",
         )
+    # Stripped, for the same reason as `submit_intake` above.
+    org_name = (client.legal_name or "").strip()
 
     # Reuse the submit-time target validation (CSF needs tier+profile, ZT a stage).
     _validate_targets(
@@ -712,7 +719,7 @@ def create_engagement(
     svc = provision_self_assessment_service(
         db,
         sr,
-        org_name=client.legal_name,
+        org_name=org_name,
         actor_user_id=user.id,
         title=body.name,
     )
@@ -730,7 +737,7 @@ def create_engagement(
         role=UserRole.ADMIN,
         event_type="engagement.created",
         title="New engagement started",
-        body=f"{client.legal_name} started: {svc.title}. Review in the admin queue.",
+        body=f"{org_name} started: {svc.title}. Review in the admin queue.",
         link="/admin/queue",
     )
 

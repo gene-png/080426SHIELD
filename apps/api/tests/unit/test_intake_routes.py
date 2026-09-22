@@ -509,3 +509,39 @@ def test_engagement_refuses_a_legacy_blank_name_with_422_not_500(app_client) -> 
     assert (
         "Complete your organization profile" in r.text
     ), f"422 came from something other than the unnamed-org guard: {r.text}"
+
+
+@pytest.mark.unit
+def test_engagement_title_uses_the_trimmed_name(app_client) -> None:
+    """A padded legacy name reaches the workspace title TRIMMED.
+
+    Both routes guarded on `(legal_name or "").strip()` and then passed the RAW
+    column onward, so a pre-D-080 `"  Acme  "` titled a consultant's workspace
+    `"  Acme   - NIST CSF 2.0 Assessment"` and worded the admin notification the
+    same way. Guarding on one form and using another is the split this branch
+    closed at the exporters; this is the same split one module over.
+
+    The setup writes the padded name by direct SQL on purpose: that row is the
+    WORLD (pre-D-080 `PATCH /intake` had no validator, and migration 0049 does
+    not NULL whitespace), not the step under test.
+    """
+    client, TestSession = app_client
+    bearer = _register_and_bearer(client)
+
+    with TestSession() as db:
+        row = db.execute(select(Client)).scalar_one()
+        row.legal_name = "  Acme Holdings  "
+        db.commit()
+
+    r = client.post(
+        "/intake/engagements",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"service_type": "nist_csf", "csf_target_tier": 2, "csf_profile": "MOD"},
+    )
+    assert r.status_code == 201, r.text
+    title = r.json()["title"]
+    assert title.startswith("Acme Holdings"), (
+        f"workspace title {title!r} carries the stored padding; the guard tested "
+        f"the stripped name and the title must use the same value"
+    )
+    assert "  Acme" not in title
