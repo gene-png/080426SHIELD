@@ -305,8 +305,36 @@ export function clientFacingError(err: unknown, fallback: string): string {
  * works TODAY. So this says what happened and who to ask, and does not
  * instruct.
  */
-export function describeSaveError(err: unknown, subject: string): string {
+export function describeSaveError(
+  err: unknown,
+  subject: string,
+  opts: { restored?: boolean } = {},
+): string {
   const reason = serverReason(err);
   const because = reason ? ` ${reason}` : "";
-  return `${subject} was not saved.${because} The value on screen has been restored to what the server has. Your consultant can help if this keeps happening.`;
+
+  // THE RESTORATION CLAIM IS OPT-IN, because it was being made BEFORE the
+  // restoration happened -- and stayed on screen when it never happened.
+  //
+  // Both self-assessment surfaces called this, then re-fetched server truth,
+  // and their `catch` said "the message above still stands and is the honest
+  // one: we cannot show what the server has". The message said the opposite:
+  // that the value HAD BEEN restored. So on a failed re-fetch the client sat
+  // looking at the refused value under a sentence telling them it had been
+  // replaced -- a lie that something succeeded, which core principle 2 forbids
+  // in as many words (#371).
+  //
+  // `CLAUDE.md`: a success record must be written where the success is, not
+  // before it. Recorded after N-019, #47 and W1's accounting log; this was the
+  // fourth, and the first where the false record is read by a CLIENT rather
+  // than by a developer.
+  //
+  // Callers show the bare message immediately -- nobody should wait on a
+  // re-fetch to learn their edit failed -- and replace it with
+  // `{ restored: true }` only once the re-fetch has resolved. Each sentence is
+  // then true at the moment it is on screen.
+  const restored = opts.restored
+    ? " The value on screen has been restored to what the server has."
+    : "";
+  return `${subject} was not saved.${because}${restored} Your consultant can help if this keeps happening.`;
 }

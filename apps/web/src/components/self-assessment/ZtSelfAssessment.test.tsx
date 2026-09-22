@@ -147,6 +147,45 @@ describe("ZtSelfAssessment — a save that fails", () => {
     expect(alert).toHaveTextContent("no longer editable");
   });
 
+  it("does not claim the value was restored when the re-fetch ALSO fails", async () => {
+    /**
+     * #371, and the path the issue names as having no test today -- the only
+     * one where the old copy was actually false.
+     *
+     * The restoration sentence was printed unconditionally, BEFORE the
+     * re-fetch. When that re-fetch failed, the client was left looking at the
+     * refused value under a sentence saying it had been replaced by server
+     * truth. The `catch` block's own comment claimed the message was "the
+     * honest one: we cannot show what the server has" while the message said
+     * the opposite.
+     *
+     * RED ON REVERT: make the restoration sentence unconditional again and
+     * this fails -- the alert claims a restore that never happened.
+     */
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
+      proxyError(409, {
+        detail: "Your self-assessment is no longer editable.",
+      }),
+    );
+    // The re-fetch fails too: the value on screen stays the refused one.
+    // FIRST call is the component's initial mount load and must SUCCEED.
+    // Queueing the rejection alone consumed THAT one, so the page never
+    // rendered and the failure read "cannot find the Notes label" -- which
+    // says nothing about the defect. The SECOND call is the re-fetch after the
+    // refused save, and that is the one that fails here.
+    vi.mocked(ztClient.fetchSelfAssessment)
+      .mockResolvedValueOnce(assessment("original"))
+      .mockRejectedValueOnce(new Error("network"));
+
+    await editNotes("a note the server will refuse");
+
+    const alert = await screen.findByRole("alert");
+    // The client is still told, immediately, that the edit failed.
+    expect(alert).toHaveTextContent("was not saved");
+    // And is NOT told something that did not happen.
+    expect(alert).not.toHaveTextContent("has been restored");
+  });
+
   it("puts the SERVER'S value back on screen, not a remembered one", async () => {
     // THE ASSERTION THE FIRST DRAFT LACKED. It checked only the alert text, so
     // deleting the entire revert left every test green — the #72 shape in the

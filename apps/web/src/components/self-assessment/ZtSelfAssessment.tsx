@@ -170,15 +170,26 @@ export function ZtSelfAssessment({
       // guarded re-fetch, which is a DERIVATION of server truth rather
       // than a synchronisation with a stale copy. Using theirs rather
       // than inventing a weaker one three files away.
+      // Say the edit failed IMMEDIATELY -- nobody should wait on a re-fetch
+      // to learn that. But say only that: the restoration sentence is opt-in
+      // now, because it used to be printed here, before the restoration had
+      // happened, and it stayed on screen when it never happened (#371).
       setSaveError(describeSaveError(err, subject));
       const seq = ++saveSeq.current;
       try {
         const truth = await fetchSelfAssessment(serviceId);
-        if (seq === saveSeq.current) setAssessment(truth);
+        if (seq === saveSeq.current) {
+          setAssessment(truth);
+          // NOW the claim is true, so now it is made.
+          setSaveError(describeSaveError(err, subject, { restored: true }));
+        }
       } catch {
-        // The re-fetch failed too. The message above still stands and is
-        // the honest one: we cannot show what the server has. Silence
-        // here would put us back where #283 started.
+        // The re-fetch failed too, so the value on screen is still the
+        // refused one. The message already shown does NOT claim otherwise,
+        // which is the whole of #371: previously this comment said the
+        // message was "the honest one: we cannot show what the server has"
+        // while the message said the value HAD BEEN restored. Silence here
+        // would put us back where #283 started.
       }
     }
   }

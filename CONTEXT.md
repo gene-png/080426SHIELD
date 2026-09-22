@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-22 (landing with THIS PR and not yet on `main`: #254 — `Client.legal_name` is nullable, self-serve provisioning names no org, D-080, migration 0049; earlier 2026-09-21: status correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 9, 11 and 12 — item 9 included, because its "Remaining from the original seven" line named #115, #46 and #109, every one of which had landed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and the export/publish half it is NAMED after has shipped nothing and owns no issue; item 6 has F10 left, which owns no issue; item 9 has #185 and #194, neither with a live client-facing defect. Those rows — and only those — now cite landed code rather than issue state: rows 0 through 5a, 9a and 10 still rest on a PR number and a merge date, which is said here because a sentence quantifying over the table would tell the next reader the check has been done everywhere. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged; the live `mvp-blocking` blockers own no item; F10 needs filing; and #185's label should move to `post-mvp` to match the row. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-22 (landing with THIS PR and not yet on `main`: #371 — the restoration clause is opt-in, so a client is not told the value was restored before it has been. Earlier the same day, now ON `main` at `d5f97eb`: #254 — `Client.legal_name` is nullable, self-serve provisioning names no org, D-080, migration 0049; earlier 2026-09-21: status correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 9, 11 and 12 — item 9 included, because its "Remaining from the original seven" line named #115, #46 and #109, every one of which had landed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and the export/publish half it is NAMED after has shipped nothing and owns no issue; item 6 has F10 left, which owns no issue; item 9 has #185 and #194, neither with a live client-facing defect. Those rows — and only those — now cite landed code rather than issue state: rows 0 through 5a, 9a and 10 still rest on a PR number and a merge date, which is said here because a sentence quantifying over the table would tell the next reader the check has been done everywhere. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged; the live `mvp-blocking` blockers own no item; F10 needs filing; and #185's label should move to `post-mvp` to match the row. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -42,6 +42,13 @@ main user-input writer, which goes through `setattr`.
 
 **Landing with THIS PR, not yet on `main`: #254 — a self-serve client's email
 was its organisation's legal name.** `"(pending intake)"` was the codebase's
+
+**#254 fixed and ON `main` at `d5f97eb` — a self-serve client's email was its
+organisation's legal name.** (This paragraph arrived saying "landing with THIS
+PR, not yet on `main`", which was true while #444 was open and false the moment
+it merged. Corrected here because this PR is resolving a conflict in the same
+paragraph and leaving a known-false claim beside the resolution is worse than
+the small scope increase.) `"(pending intake)"` was the codebase's
 marker for "nobody has named this client yet", READ in 17 production sites (13
 in `apps/api/app`, 4 in `apps/web`) and **written in none** — the only
 assignments were four unit-test fixtures.
@@ -94,6 +101,29 @@ Now parsed inside a `try`, falling through to the existing plain-language copy.
 
 Both verified RED-ON-REVERT individually. Web gates from the worktree:
 `tsc` 0 errors, `eslint` clean, `vitest` 694 passed.
+
+**#371 fixed: the client is no longer told the value was restored when it was
+not.** `describeSaveError` printed "The value on screen has been restored to
+what the server has" unconditionally, and both self-assessment surfaces called
+it BEFORE the re-fetch that does the restoring. When that re-fetch also failed,
+the client sat looking at the refused value under a sentence saying it had been
+replaced by server truth — and the `catch` block's own comment claimed the
+message was "the honest one: we cannot show what the server has", which is the
+opposite of what the message said.
+
+The restoration clause is now opt-in. Callers show the bare failure message
+immediately — nobody should wait on a re-fetch to learn their edit failed — and
+replace it with `{ restored: true }` only once the re-fetch resolves, so each
+sentence is true at the moment it is on screen.
+
+`CLAUDE.md`: a success record must be written where the success is, not before
+it. Recorded after N-019, #47 and W1's accounting log — the list is the count,
+and this one is the first where the false record is read by a CLIENT rather
+than by a developer.
+
+**The deferral reason had expired:** the issue was filed rather than fixed
+because `describe-save-error.ts` had two open PRs against it (#362, #366).
+Both merged, so it was unblocked.
 
 **#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
 it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut
