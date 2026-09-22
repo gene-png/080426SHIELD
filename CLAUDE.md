@@ -13,7 +13,7 @@ fraction of this file.
 | Writing a test | Core principle 3, and the bullets on tests that cannot fail (#72, D-051) |
 | Touching the redactor or any AI path | Core principle 1, the redaction bullets, and D-058 |
 | Adding or changing a gate | The silent-success bullet, and the fail-closed bullet |
-| Opening a PR | Rules of the road: the reviewer, the audit block, the closing-keyword check |
+| Opening a PR | Rules of the road: the reviewer, the audit block, the closing-keyword check, and the merge rule above |
 | Writing a number into any document | The rules for numbers in prose |
 | Debugging something that "should work" | Environment gotchas. Start there, not in the code. |
 | Editing this file, `DECISIONS.md`, or any `context/*.md` | The size ratchet, the file-ownership table, and the branch-vs-direct rule |
@@ -472,7 +472,9 @@ recorded with a real exit code and a real date, and was the minority outcome
   the container — CI's exact command — exits 0 on a file CI rejects. And
   **`ruff --fix` MOVES the red rather than removing it**: the blank line it
   inserts satisfies the full-checkout layout and breaks the container one. The
-  stable answer is the DOTTED form, because it resolves in both.
+  stable answer is the DOTTED form, because it **fails to resolve in both**
+  — so it is classified the same way in both — which is what the rest of
+  `tests/unit/` already uses.
 
   To reproduce a CI lint red locally, mount the FULL worktree and run ruff from
   `apps/api` so `src` resolves to the repo root. A different layout, not a
@@ -1452,7 +1454,9 @@ every reader pays for it on every read and the instruction it supports is
 usually one sentence.
 
 **How the trim happens: incrementally, in whatever PR next touches this file.**
-Never as its own project, except when the gate is red.
+Never as its own project — except when the gate is red, an exemption added by
+the PR that did exactly that (#347). Read it as a decision that was taken, not
+as a principle that was followed.
 
 **What the budget does NOT license.** It is not a reason to delete a rule
 because it is long. Load-bearing rules stay at any length:
@@ -2088,7 +2092,8 @@ Rules of the road:
 
      If you cannot paste the command, you do not know the number and must not
      write it. A measurement over a fixed window is a claim about history and
-     does not rot, but carries its window and date for the same reason.
+     does not rot, but carries its window and date for the same reason, **and it
+     is re-derived when its inputs change**.
   3. **Correct at the instruction, not at the discussion.** Every miss landed
      where the topic was DISCUSSED while the line telling someone what to DO was
      left standing. A correction is UNVERIFIED until you have grepped the doc
@@ -2181,8 +2186,9 @@ Rules of the road:
 
   A ref existing proves only that a ref was written, and a diffstat proves only
   the tracked half. **Drop highest-numbered first**; dropping `stash@{0}`
-  renumbers every higher entry. Do none of this **while an agent holds the
-  shared tree**.
+  renumbers every higher entry. **Assert the SHA immediately before each drop**
+  — that is what catches an index that moved between archiving and dropping.
+  Do none of this **while an agent holds the shared tree**.
 - **Branch + PR for anything that changes behaviour or states a rule. Two
   exceptions go direct to `main`, and they are exceptions because practice
   already worked this way.**

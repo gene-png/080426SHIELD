@@ -8,7 +8,7 @@ is recorded below so it is not re-done. Neither is fixed.
 
 **#347, done this round.** `CLAUDE.md` at 210,958 bytes against a 150,000-byte
 reader limit — the last 29% cut silently, and the cut landed on the merge rule.
-Merge rule moved to the top (bytes 6,437–14,800), file trimmed to 148,814, and
+Merge rule moved to the top of the file, trimmed to under the limit, and
 `check_claude_md_size.py` wired into `ci.yml`. D-079.
 
 **The diagnosis that was wrong, and it was mine to inherit:** `tn-gates`'
@@ -19,8 +19,10 @@ one is useless against the other. Re-opened on #170; the issue is not closed.
 **The window, measured rather than estimated.** Condition 5's test glob crossed
 the cut on 2026-09-10 (`f7c7c6ed`), not 2026-09-19. `tests/gates/**` was added
 2026-09-21 and was past the boundary in the commit that introduced it, so no
-truncating reader has ever seen it. 70 PR merges in the window, 51 tripping
-condition 5 only via a path past the cut.
+truncating reader has ever seen it. 70 PR merges in the window, **39** tripping
+condition 5 only via a path past the cut — recomputed per commit after the
+reviewer caught that an earlier figure of 51 applied one static path list to a
+window in which the rule set itself changed.
 
 **What I did NOT establish, and it is the honest half:** that any PR merged
 wrongly. Whether an agent merged unattended or Gene decided is not in git. The
@@ -29,7 +31,8 @@ claim is that the control was unavailable.
 **Three CLAUDE.md additions HELD at Dave's instruction** (red-on-revert's limit,
 the decorative conditional, "all seven green means seven reported") — every
 addition pushes more rules past the limit. They go in near the top once there is
-headroom; there is 1,186 bytes today.
+headroom; run `check_claude_md_size.py CLAUDE.md` for what is left rather than
+trusting a figure written here, which went stale three times in one commit.
 
 **#254 survey, measured on 318ce1d so it is not re-done.** The sentinel
 `"(pending intake)"` has 17 production read sites (13 in `apps/api/app`, 4 in

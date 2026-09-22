@@ -16,9 +16,9 @@ and none of them could read WHICH PATHS trip it. The merge rule -- the most
 consequential rule in the repo, and the one this file's own ratchet marks as
 never to be weakened -- was a heading with its body removed.
 
-**It arrived as a tool error, not as a red build.** Eleven gates ran on every
-PR and not one of them measured the file all eleven are described in. That is
-the gap this closes.
+**It arrived as a tool error, not as a red build.** Every gate in this repo
+ran on every PR, and not one of them measured the file they are all described
+in. That is the gap this closes.
 
 ## Why it was misdiagnosed, which is the part worth keeping
 
@@ -124,8 +124,15 @@ silently.
 
 `CLAUDE.md` therefore ends with a canary marker and an instruction to stop if
 you cannot read it. `--require-canary` asserts the marker is the **last
-non-empty line**, because the marker only answers "did I receive the whole
-file" while nothing follows it -- an append below it leaves the canary readable
+non-empty line**.
+
+**BE PRECISE ABOUT WHAT THAT PROVES, BECAUSE IT IS NOT TRUNCATION DETECTION.**
+This gate reads the file from DISK, where truncation never happens, so it
+cannot and does not check what any reader received. Only the reader can do
+that, by noticing the marker is missing and saying so. What the gate protects
+is the marker's POSITION, which is the precondition for the reader's check
+meaning anything: the marker only answers "did I receive the whole file" while
+nothing follows it -- an append below it leaves the canary readable
 and everything after it invisible, which is strictly worse than no canary, since
 the reader now has a POSITIVE signal that its copy is whole.
 
@@ -186,10 +193,22 @@ DEFAULT_TARGETS = ["CLAUDE.md"]
 def repo_root(start: Path | None = None) -> Path:
     """The repo root, found by searching UPWARD for a marker.
 
-    `parents[N]` is wrong here for the same reason `_common.py` records: this
-    script runs from the host checkout (three parents to the root) and from the
-    api container, which mounts `./apps/api` at `/app`. Searching for the marker
-    works in both and raises rather than guessing.
+    `parents[N]` is wrong here for the same reason `_common.py` records: the
+    depth is not fixed. From the host checkout this file has FOUR parents to the
+    root (`scripts`, `api`, `apps`, root), and searching finds it.
+
+    **IT DOES NOT WORK IN THE API CONTAINER, AND SAYING SO IS THE POINT.** That
+    container mounts `apps/api` at `/app`, so the parents are `/app/scripts`,
+    `/app` and `/`, none of which holds `.github/` — the repo root is genuinely
+    out of reach there (#314), exactly as `check_gate_fixtures.py` and `ci.yml`
+    already record. This raises rather than guessing, and the message says to
+    pass an explicit path.
+
+    Cost is capped because the failure is LOUD (exit 2) and CI passes
+    `CLAUDE.md` explicitly, so this function is never called there. An earlier
+    version of this docstring claimed it "works in both", which is the
+    narrower-scope-than-the-reader-assumes shape sited exactly where a reader
+    checks. Found by the adversarial reviewer on #438.
 
     Takes `start` so BOTH directions are testable -- the find and the raise. A
     guard observed only in the state that fires is not a guard that has been
@@ -363,7 +382,7 @@ def main(argv: list[str]) -> int:
     print("Everything past the limit is removed SILENTLY. There is no error, no")
     print("marker, and no way for a reader to tell a rule was dropped -- which is")
     print("how the merge rule's condition-5 path list went unreadable for days")
-    print("while eleven gates stayed green.")
+    print("while every other gate stayed green.")
     print()
     print("Fix it the way the file's own ratchet says, in preference order:")
     print()

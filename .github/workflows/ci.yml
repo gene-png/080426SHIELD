@@ -104,8 +104,8 @@ jobs:
 
       # CLAUDE.md reached 210,958 bytes against a 150,000-byte reader limit, so
       # the last 29% was cut before any agent read it -- and the cut landed on
-      # the merge rule's condition-5 path list. Eleven gates ran on every PR and
-      # not one measured the file all eleven are described in; it surfaced as a
+      # the merge rule's condition-5 path list. Every gate ran on every PR and
+      # not one measured the file they are all described in; it surfaced as a
       # tool error rather than a red build. Same argument as the two sweeps
       # above: the rule existed and only a machine keeps it.
       - name: governance file fits in a reader

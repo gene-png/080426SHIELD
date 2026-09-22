@@ -4693,7 +4693,7 @@ rule` section with conditions 1–6 and the whole condition-5 path list. It now
    occupies bytes 6,437–14,800 rather than 192,494 onward. **Position is part of
    the rule**, because truncation cuts from the end and what a partial reader
    loses is decided by order.
-2. **`CLAUDE.md` is trimmed to fit**, 210,958 → 148,602 bytes (−30%), by moving
+2. **`CLAUDE.md` is trimmed to fit**, from 210,958 bytes to under the limit, by moving
    incident narrative out and keeping the instruction. No rule was deleted.
 3. **`apps/api/scripts/check_claude_md_size.py`** refuses the file above
    150,000 bytes, wired into `ci.yml` as "governance file fits in a reader".
@@ -4743,23 +4743,37 @@ deterministic surfaces, and the `check_*.py` / workflows / template line.
 
 ### What merged while it was unreadable
 
-**70 PR merges**, not the nine estimated. Applying condition 5's path list to
-each:
+**70 PR merges**, not the nine estimated. Condition 5's path list applied to
+each, **with the rule set and the 150,000 boundary recomputed PER COMMIT** from
+the `CLAUDE.md` an agent reviewing that PR would actually have read (`sha^`):
 
 |                                                      | PRs    |
 | ---------------------------------------------------- | ------ |
-| tripped condition 5 **only** via a path past the cut | **51** |
-| also tripped a still-readable path                   | 7      |
-| tripped condition 5 not at all                       | 12     |
+| tripped condition 5 **only** via a path past the cut | **39** |
+| also tripped a still-readable path                   | 5      |
+| tripped only a path not yet IN the rule              | 2      |
+| tripped condition 5 not at all                       | 24     |
 
-<!-- counted: condition 5's path list applied to every first-parent commit on origin/main since 2026-09-10 whose subject ends `(#N)`, 2026-09-22 -->
+<!-- counted: condition 5's token set located by byte offset in `git show <sha>^:CLAUDE.md` against a 150,000 boundary, per first-parent commit on origin/main since 2026-09-10 whose subject ends `(#N)`, 2026-09-22 -->
 
-Of the 51, two also carried a migration (condition 4, readable, would have
-brought them back anyway), leaving **49**; of those, 41 touched no dashboard or
-exporter surface, so condition 6 was likely silent too. **Twenty of them edited
-the gate harness itself** — `apps/api/scripts/`, `.github/workflows/`,
-`tests/gates/` — which is the category condition 5 singles out as satisfying
-condition 1 _by construction_.
+**The first version of this table said 51, and the correction is the useful
+part.** It applied ONE static path list — the final one — to every commit in the
+window. But `tests/gates/**` only entered condition 5 on 2026-09-21, so a PR
+merging before that date which tripped condition 5 _only_ through
+`tests/gates/**` was counted as exposed **under a rule that did not yet exist**.
+The error direction was toward MORE exposure, which is the direction that
+flatters the finding. The adversarial reviewer marked it SUSPECTED and named the
+mechanism; recomputing confirmed it and moved the figure from 51 to 39.
+
+That is this file's own rule arriving from the other side: **a measurement over
+a window carries its window AND the rule set it was taken under, and is
+re-derived when its inputs change.** The rule set was one of the inputs, and it
+changed inside the window being measured.
+
+Of the 39, one also carried a migration (condition 4, readable, would have
+brought it back anyway), and **15 edited the gate harness itself** —
+`apps/api/scripts/`, `.github/workflows/`, `tests/gates/` — the category
+condition 5 singles out as satisfying condition 1 _by construction_.
 
 **What this does and does not establish.** It establishes EXPOSURE: for those
 PRs an agent reading a truncated file had no way to evaluate condition 5,
@@ -4832,12 +4846,14 @@ worked as a remedy rather than as documentation.
 
 ### Re-reading the 20 harness PRs: no weakened assertion found
 
-Of the 51 exposed PRs, twenty edited the gate harness itself — the category
-condition 5 singles out as satisfying condition 1 _by construction_, and
-therefore the one where the rule was least available exactly where it was most
-load-bearing. Those twenty were re-read specifically for a weakened or deleted
-assertion, which is the failure the rule exists to catch and which no gate can
-see.
+The harness PRs are the category condition 5 singles out as satisfying
+condition 1 _by construction_, so the rule was least available exactly where it
+was most load-bearing. **Twenty were re-read** specifically for a weakened or
+deleted assertion — the failure the rule exists to catch and which no gate can
+see. The corrected per-commit count of exposed harness PRs is **15**, a SUBSET
+of the twenty read, so the conclusion below covers the corrected set with room
+to spare; the re-read was scoped before the recomputation and is left wider
+rather than trimmed to match.
 
 **Result: none.** Every one is strongly net-additive, and all six carrying
 deletions were adjudicated individually:
@@ -4858,17 +4874,23 @@ mattered most.
 
 ### Residuals, stated
 
-- **`DECISIONS.md` is itself 287,144 bytes**, nearly twice the limit, and is not
+- **`DECISIONS.md` is itself well over the limit** — run
+  `check_claude_md_size.py DECISIONS.md` for today's figure — and is not
   gated. Deliberate, and the reason is the access pattern: it is the RECORD,
   read by grepping a D-number, and is not injected into every agent's context.
   `CLAUDE.md` is. Saying so here rather than leaving the exemption to look like
   an oversight.
 - **`DELIVERY_PLAN.md` is 140,438 bytes** — 9,562 from the same cliff, at the
   rate this repo writes. Not gated yet; the next file to cross.
-- **`CLAUDE.md` has ~1,600 bytes of hard headroom and is 13,384 bytes past the
-  SOFT line.** The soft warning fires on every clean run and names the next cut,
-  which is the point — the next substantive addition is paid for by a trim, with
-  the candidate already chosen.
+- **The headroom is NOT written down here, deliberately.** Three documents
+  carried three different figures for it within one commit — 148,602/1,398 in
+  this entry against 148,814/1,186 elsewhere — because each was measured at a
+  different moment of the same PR, and the later trimming invalidated both.
+  A headroom number LICENSES AN ACTION (how much the next author may add before
+  CI reddens), so a stale one is the correction-paragraph shape pointed at a
+  budget. **The gate prints it on every clean run.** Run it; do not restate it.
+  That is this file's own rule — put the value where a gate can read it and let
+  the sentence point at the gate. Found by the adversarial reviewer on #438.
 - **The limit is one reader's, measured once.** This session's own injected copy
   carried the full 210,958 bytes, so the cut is not universal — which makes it
   worse, not better: the rule set an agent operates under varies by which agent

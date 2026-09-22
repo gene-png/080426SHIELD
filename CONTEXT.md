@@ -22,7 +22,7 @@ the human and could not read which paths trip it. All four occurrences each of
 
 Three things changed. The **merge rule moved to the top** of `CLAUDE.md` (now
 bytes 6,437–14,800), because position is part of a rule when truncation cuts
-from the end. The file was **trimmed 210,958 → 148,814 bytes** by moving
+from the end. The file was **trimmed from 210,958 bytes to under the limit** by moving
 incident narrative to D-079 and keeping the instruction; no rule was deleted.
 And **`apps/api/scripts/check_claude_md_size.py`** now refuses the file above
 150,000 bytes, wired as the CI step "governance file fits in a reader".
@@ -34,8 +34,12 @@ real — but the `tn-gates` report is withdrawn from it.
 **Measured window, which corrects the estimate:** condition 5's test glob
 crossed the cut on **2026-09-10** (`f7c7c6ed`), not 2026-09-19, and
 `tests/gates/**` was born past it on 2026-09-21. Of **70** PR merges in that
-window, **51 tripped condition 5 only through a path past the cut**; 49 of those
-carried no migration, and 20 edited the gate harness itself. That establishes
+window, **39 tripped condition 5 only through a path past the cut** — with the
+rule set and the boundary recomputed per commit; 38 of those carried no
+migration, and 15 edited the gate harness itself. (An earlier figure of 51
+applied one static path list across a window in which the rule set itself
+changed, so it counted PRs against a rule that did not yet exist. Caught by the
+adversarial reviewer.) That establishes
 the control was unavailable, not that any PR merged wrongly — whether an agent
 merged unattended is not recorded anywhere git can answer.
 
@@ -50,8 +54,13 @@ which it is. The canary makes that variance declared instead of invisible. A
 SOFT line at 135,000 bytes warns and names the next cut, so the alarm arrives
 with a remedy already chosen.
 
-**Residual: ~1,600 bytes of hard headroom.** The next substantive addition to
-`CLAUDE.md` is paid for by a trim. `DECISIONS.md` (293,879 bytes) is
+**Residual: the headroom is thin and is deliberately not written down here** —
+`check_claude_md_size.py` prints it on every clean run, and three documents
+carried three different figures for it inside one commit before this rule was
+<!-- counted: "one commit" names the single PR in question, not a tally of a population -->
+applied. The next substantive addition to `CLAUDE.md` is paid for by a trim,
+with the candidate already named in the file. `DECISIONS.md`, also well over the
+limit, is
 deliberately not gated — it is the RECORD, grepped by D-number, not injected
 into every agent's context. `DELIVERY_PLAN.md` at 140,438 bytes is the next file
 to cross.
