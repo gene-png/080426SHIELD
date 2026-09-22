@@ -768,3 +768,68 @@ def test_dropped_citations_is_NONE_when_no_entry_carries_a_record(app_client) ->
     ).json()
     assert body["dropped_citations"] is None, "a register nobody counted must not report 0"
     assert body["entries_links_not_recorded"] == len(rows)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "stored,reason",
+    [
+        pytest.param(None, "provenance is not an object", id="null-provenance"),
+        pytest.param(["inputs"], "provenance is not an object", id="non-dict-provenance"),
+        pytest.param({"link_scope": "x"}, "link_scope is not an object", id="non-dict-scope"),
+        pytest.param({"link_scope": {}}, "link_scope names no service", id="empty-scope"),
+    ],
+)
+def test_an_unreadable_provenance_LOGS_rather_than_failing_quietly(
+    capsys, stored: object, reason: str
+) -> None:
+    """The log is the finding, so the log is what this pins.
+
+    `_link_scope_fields` returned `recorded=False` for a NULL or non-dict
+    provenance with NO log, while its docstring promised "plus a loud log" for
+    exactly those inputs — `_unreadable` was a closure defined BELOW the early
+    return and therefore unreachable from it, and one `or` put "I could not look"
+    on the same branch and the same return statement as "nothing was recorded".
+
+    WHY THIS TEST EXISTS SEPARATELY, and it is worth reading before deleting it:
+    the response contract cannot distinguish the fix from the defect. Both return
+    `recorded=False`. A red-on-revert mutation that swapped the loud return for
+    the silent one left the response tests GREEN, which is the harness correctly
+    reporting that nothing discriminated. The log is the ONLY observable, so an
+    assertion on the response would have certified a fix it cannot see.
+
+    Nothing user-facing can say "the provenance blob is malformed", so this log
+    line is the entire visibility a malformed blob has.
+
+    `capsys`, NOT `caplog`: structlog renders to stdout through
+    `PrintLoggerFactory`, so stdlib log capture sees nothing. `test_rate_limit.py`
+    records the same lesson at its own stdout assertion. The first version of
+    this test used `caplog` and failed against a log that was being emitted
+    correctly -- a false negative from the capture mechanism rather than the code.
+    """
+    from app.routes.risk import _link_scope_fields
+
+    out = _link_scope_fields(stored)
+    captured = capsys.readouterr().out
+
+    assert out["excluded_unscored_links_recorded"] is False
+    assert out["excluded_unscored_links"] == []
+    assert "risk_register_link_scope_unreadable" in captured
+    assert reason in captured, f"no log naming {reason!r}; got {captured!r}"
+
+
+@pytest.mark.unit
+def test_a_register_that_PREDATES_the_recording_is_silent_not_an_error(capsys) -> None:
+    """The other half of the branch that was split, and the reason for splitting.
+
+    "No `link_scope` key" is every register generated before this shipped. It is
+    not a fault and must NOT log: an error per read would be noise that teaches
+    readers to skip the log, which is where the real faults land. Merging it back
+    into the unreadable branch would produce exactly that.
+    """
+    from app.routes.risk import _link_scope_fields
+
+    out = _link_scope_fields({"inputs": [], "excluded": []})
+
+    assert out["excluded_unscored_links_recorded"] is False
+    assert "risk_register_link_scope_unreadable" not in capsys.readouterr().out
