@@ -56,6 +56,7 @@ describe("zt dashboard transforms", () => {
 function data(p: Partial<ZtDashboardData>): ZtDashboardData {
   return {
     service_id: "s",
+    unusable_target_codes: [],
     service_title: "Atlas — Zero Trust",
     released_at: "2026-09-06T00:00:00Z",
     deliverable_version: 1,
@@ -173,5 +174,95 @@ describe("zt target provenance", () => {
         }),
       ),
     ).toBe("Your target, chosen at intake");
+  });
+});
+
+describe("targetNote — a discarded per-capability target reaches the screen (#387)", () => {
+  /**
+   * `unusable_target_codes` has been served since #188 and rendered by nothing,
+   * while the client's PDF said it in `_gap_plan_caption`. A fact in the
+   * deliverable and absent from the screen is two surfaces reading one
+   * assessment and disagreeing.
+   */
+  it("names the rows whose per-capability target could not be used", () => {
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: ["CISA.ID.01", "CISA.DE.02"],
+      }),
+    );
+    // THE WHOLE STRING, not `toContain`. Containment left three natural
+    // mutants alive, and the adversarial review found all three: a different
+    // `join` separator, the two sentences concatenated in REVERSE order
+    // (`discarded.concat(base)` -- which every exact-`toBe` provenance test
+    // above still passes, because the empty case is `"".concat(base) ===
+    // base`), and a doubled append. One equality kills all three, and it is
+    // also the only assertion that can see a stray space or a missing one.
+    expect(note).toBe(
+      "Your target, chosen at intake A per-capability target was recorded for" +
+        " CISA.ID.01, CISA.DE.02 but could not be used, so the engagement" +
+        " target was applied to those rows instead.",
+    );
+  });
+
+  it("says nothing when every per-capability target was usable", () => {
+    // The other half. A fix that appends unconditionally passes the test above
+    // and puts a fault sentence on every ordinary engagement.
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: [],
+      }),
+    );
+    expect(note).not.toContain("could not be used");
+    expect(note).toContain("Your target, chosen at intake");
+  });
+
+  it("appends it in the fully-overridden branch too, rather than returning early", () => {
+    // `engagement_target_capability_count === 0` returns early for the SUBJECT
+    // of the sentence. An earlier draft of this function swallowed
+    // `client_out_of_range` exactly that way; the disclosure must not go the
+    // same route.
+    const note = targetNote(
+      data({
+        target_stage_source: "default",
+        engagement_target_capability_count: 0,
+        unusable_target_codes: ["CISA.ID.01"],
+      }),
+    );
+    expect(note).toBe(
+      "Per-capability targets from your assessment A per-capability target was" +
+        " recorded for CISA.ID.01 but could not be used, so the engagement" +
+        " target was applied to those rows instead.",
+    );
+  });
+
+  it("says it exactly as the client's PDF says it", () => {
+    // THE CROSS-SURFACE PARITY PIN, and it is the point of the whole change.
+    //
+    // `zt/exporters.py::_gap_plan_caption` builds this sentence for the Gap
+    // Plan caption. Until this assertion existed, nothing anywhere failed if
+    // the two drifted -- which is precisely the defect #387 was filed about,
+    // one surface saying something the other does not.
+    //
+    // The expected value is TRANSCRIBED FROM THE PYTHON, not derived from
+    // `targetNote`, so the two sides of this equality have independent
+    // origins. `_gap_plan_caption` carries the pointer back to this test, on
+    // the ORIGIN side, because whoever rewords the caption never opens a
+    // TypeScript file.
+    const fromTheDeliverable =
+      " A per-capability target was recorded for CISA.ID.01, CISA.DE.02 but" +
+      " could not be used, so the engagement target was applied to those rows" +
+      " instead.";
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: ["CISA.ID.01", "CISA.DE.02"],
+      }),
+    );
+    expect(note.endsWith(fromTheDeliverable)).toBe(true);
   });
 });

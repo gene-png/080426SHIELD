@@ -38,9 +38,14 @@ const dodPillar = {
   weakest: [],
 };
 
-function dashboard(framework: string): ZtDashboardData {
+function dashboard(
+  framework: string,
+  unusable: string[] = [],
+  source = "client",
+): ZtDashboardData {
   return {
     service_id: "11111111-1111-4111-8111-111111111111",
+    unusable_target_codes: unusable,
     service_title: "Zero Trust Assessment",
     released_at: "2026-09-09T00:00:00Z",
     deliverable_version: 1,
@@ -51,7 +56,14 @@ function dashboard(framework: string): ZtDashboardData {
     target_label: "Advanced",
     target_pct: 70,
     target_stage: 2,
-    target_stage_source: "engagement",
+    // "client", not "engagement". `resolve_target_stage` returns exactly four
+    // values -- "client", "default", "client_out_of_range",
+    // "client_unparseable" -- so the previous fixture built a state no writer
+    // can produce, and `targetNote` rendered it through its unrecognised-value
+    // fallback ("Default target -- the stage on file was not usable"). Inert
+    // for the legend tests below, which read the axis and not the note; the
+    // disclosure tests read the note, so they need a reachable state.
+    target_stage_source: source,
     engagement_target_capability_count: 4,
     total_gap_count: 1,
     largest_gap_pillar: "Device",
@@ -98,5 +110,96 @@ describe("ZtDashboard maturity legend (wiring)", () => {
     ]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
+  });
+});
+
+describe("ZtDashboard discarded-target disclosure (wiring)", () => {
+  /**
+   * #387 at the SAME SEAM, and added because the fix shipped without it.
+   *
+   * `targetNote` is a pure function with tests of its own. `CLAUDE.md` is
+   * explicit that a pure function is not the surface a client reaches:
+   * replace `sub={targetNote(data)}` in `ZtDashboard.tsx` with a constant and
+   * every one of those stays green while the card prints a sentence the
+   * assessment does not support. That is the defect the legend tests above
+   * were written for, one card over.
+   *
+   * DELETING the prop is NOT that defect, and an earlier draft of this
+   * docstring said it was. `KpiCard`'s props are
+   * `{ label, value, sub, accent? }` with `sub` REQUIRED, so a deletion is a
+   * tsc error and the loop gate catches it loudly. Only the SUBSTITUTION is
+   * silent -- which matters, because a reader told the type system gives no
+   * protection here would go looking for the wrong class of mutant.
+   */
+  const SENTENCE = /A per-capability target was recorded for/;
+
+  it("prints the discarded capabilities on the rendered card", () => {
+    render(
+      <ZtDashboard
+        data={dashboard("cisa_ztmm_2_0", ["CISA.ID.01", "CISA.ID.02"])}
+      />,
+    );
+    // The codes themselves, not just the lead-in: a sentence that named the
+    // fault and dropped the rows would satisfy a looser assertion and tell
+    // the client nothing actionable.
+    expect(screen.getByText(SENTENCE)).toHaveTextContent(
+      "CISA.ID.01, CISA.ID.02",
+    );
+  });
+
+  it("says nothing on a card with no discarded targets", () => {
+    // The negative control. Without it, a component that printed the sentence
+    // unconditionally would pass the case above.
+    render(<ZtDashboard data={dashboard("cisa_ztmm_2_0")} />);
+    // Assert what must APPEAR before what must not -- but for a NARROWER
+    // reason than the repo rule gives, and the narrow one is the true one.
+    //
+    // A card that THREW does not need this line: there is no error boundary
+    // around `render()`, so React re-throws and the test fails either way.
+    // The repo rule's original case is an async page asserting absence
+    // mid-fetch, and `render()` here is synchronous, so that cannot happen
+    // either. What this line uniquely catches is the render that SUCCEEDS and
+    // produces nothing to read -- `sub={""}`, `targetNote` returning empty,
+    // the KpiCard or the whole KpiRow removed. That class is real and nothing
+    // else here covers it.
+    //
+    // `toBeVisible` over `toBeInTheDocument` because it also catches
+    // `display: none`. In jsdom it is a style check and not a layout one, so
+    // it is NOT evidence about clipping; that was settled by reading
+    // `KpiCard`'s styles instead.
+    expect(screen.getByText("Your target, chosen at intake")).toBeVisible();
+    expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();
+  });
+
+  it("renders the FAULT wording at the seam, not just the no-fault one", () => {
+    // The gap the review found in the first draft: every case above renders
+    // the no-fault card, so nothing exercised the sentence a consultant acts
+    // on. #125 went to trouble to keep "the client chose nothing" apart from
+    // "the client's choice could not be used" -- only the second is
+    // answerable by re-asking -- and that distinction had never been rendered
+    // by any test, only returned by a pure function.
+    //
+    // `client_out_of_range` rather than `default`, because it is the arm that
+    // carries the actionable fact.
+    render(
+      <ZtDashboard
+        data={dashboard("dod_ztra", ["DOD.DEV.02"], "client_out_of_range")}
+      />,
+    );
+    expect(
+      screen.getByText(
+        /Default target . the stage on file is not one this framework has/,
+      ),
+    ).toBeVisible();
+    // And the disclosure rides alongside it rather than replacing it -- the
+    // two facts are independent, which is the whole design of `targetNote`.
+    expect(screen.getByText(SENTENCE)).toHaveTextContent("DOD.DEV.02");
+  });
+
+  it("prints it under a DoD engagement too", () => {
+    // The disclosure is about rows, not about which ladder the engagement
+    // uses, so it must not ride on the framework branch.
+    render(<ZtDashboard data={dashboard("dod_ztra", ["DOD.DEV.02"])} />);
+    expect(screen.getByText(SENTENCE)).toHaveTextContent("DOD.DEV.02");
   });
 });

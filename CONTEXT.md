@@ -188,28 +188,32 @@ withheld, dropped or rejected must have its name referenced under
 `apps/web/src` OR in an exporter -- "a screen or a delivered artifact", per the
 definition-of-done rule.
 
-**18 such fields today: 15 reach a reader, 3 do not and are exempt with a
-tracked reason.** An earlier draft of this line said "all reachable", which was
-false on both halves -- it stated a count as a clean bill of health over a set
-the gate's own exemption text calls "a REAL unconsumed disclosure". The gate
-prints the split on every clean run, so the number here is a summary of a
-measurement rather than a claim of its own:
+**Do not read a count here. Run the gate** --
+`python apps/api/scripts/check_disclosure_consumers.py` -- which prints the
+split on every clean run. This paragraph used to state one, and the number and
+the verbatim output block quoted beneath it both went stale inside a month: the
+population grew from 18 to 25, every exemption has since been discharged, and
+the `; N do NOT ... are exempt` clause the quote showed **cannot be emitted at
+all** with `EXEMPT_FIELDS` empty. A count under a sentence calling it "a
+summary of a measurement rather than a claim of its own" is the
+correction-paragraph-outlives-the-number shape, in the paragraph arguing it is
+safe.
 
-    check-disclosure-consumers: 15 of 18 disclosure fields reach a screen or a
-    deliverable; 3 do NOT and are exempt with a tracked reason
+**HISTORICAL, and kept because it is the reason the gate is shaped as it is.**
+When that count was written there were three exemptions. Two -- `batches_total`
+and `batches_failed` -- were unconsumed only until #376 landed the banner that
+renders them. The third, `unusable_target_codes`, was a live client-facing
+defect rather than a timing artifact: it reached no screen at all. That is
+**#387**, fixed 2026-09-22.
 
-**Every exemption has an expiry, and two of the three expire on a PR that is
-already open.** `batches_total` and `batches_failed` are unconsumed only because
-the banner that renders them is in #376; the moment it lands they are ordinary
-reachable fields and their entries must go. `unusable_target_codes` is the third
-and is a live client-facing defect rather than a timing artifact -- it reaches no
-screen at all, and it is **#387**.
-
-That matters more than the count. The gate was passing over
-`unusable_target_codes` before this branch, because per-service scoping did not
-separate two models of the same service: `zt/exporters.py` carries the token
-`zt` and reads a DIFFERENT model's field on a different route. A gate green over
-a live instance of the defect it exists to catch.
+Also historical: the gate passed over `unusable_target_codes` under the
+*per-service* scoping, because a service token could not separate two models of
+one service -- `zt/exporters.py` carries `zt` and reads a DIFFERENT model's
+field. #372 replaced that with the model's SUBJECT, and `zt/exporters.py`
+contains no `ZtDashboard`, so the sentence above describes a rule the gate no
+longer has. It is spelled out rather than deleted because #387's own branch
+re-published it as the CURRENT mechanism and had to be corrected -- the same
+stale explanation, believed twice.
 
 Two design calls worth knowing. The consumer surface is TWO surfaces, not the
 web alone: `unusable_target_codes` reaches the client only through
@@ -349,6 +353,131 @@ computed glue-alphabet sweep, filed with its reasoning and measured as searching
 an empty space), **#156** (ruff isort classifying `apps/api/scripts` by whether
 an unrelated top-level `scripts/` exists), **#143** (the pre-push hook's
 fail-open).
+
+### 2026-09-22 — a ZT fault disclosure the deliverable made and the screen did not (#387)
+
+`ZtDashboardResponse.unusable_target_codes` has been served by `zt_dashboard`
+since #188 and was read by nothing under `apps/web`. (An earlier draft said
+"both return paths of `zt_dashboard`". The route has ONE
+`return ZtDashboardResponse(`; every other exit raises. The two returns belong
+to `targetNote`, which is a different claim about a different function.)
+The client's PDF said it: `zt/exporters.py::_gap_plan_caption` names the
+capabilities whose per-capability target could not be used. So the two surfaces
+reading one assessment disagreed about whether anything had been discarded, and
+the surface that stayed quiet is the one a client looks at first.
+
+`lib/dashboards/zt.ts::targetNote` now appends the deliverable's own sentence,
+worded the same way, on **both** returns rather than in place of either — a
+discarded per-capability target is a fact about specific rows and is
+independent of how the headline target was chosen, so an early return anywhere
+would swallow it. The codes are listed, never truncated or counted: this is a
+fault disclosure, and abbreviating one is what #75/#79 were filed about.
+
+**What the consumer gate could not tell us — and the first version of this
+paragraph named the wrong mechanism, so the correction is the record.**
+`check_disclosure_consumers.py` carried an exemption for this field. Removing
+it, the gate still reported `25 of 25`. This section said that was because the
+gate "attributes a consumer by the model's SERVICE token", so the ZT exporter
+reading the identically-named field of the OTHER ZT model cleared the dashboard
+one. That was false — `readers_for` requires the model's SUBJECT in the
+reader's own text, `zt/exporters.py` contains no `ZtDashboard`, and the
+service-token scheme had already been replaced by the subject rule in #372. It
+was reasoned about instead of executed, and the adversarial review caught it.
+
+Re-run in stages, each deletion asserted to land first:
+
+    field removed from `lib/dashboards/zt.ts` (production)  -> 25 of 25, exit 0
+    ALSO removed from the two ZT test files                 -> violation, exit 1
+
+**The production reader was not what cleared it. The test files were.**
+`reader_text` globbed every `.ts`/`.tsx` under `apps/web/src` with no test
+exclusion, so a fixture satisfied "reaches a screen" — and a fixture is the
+first thing a PR adding a disclosure field writes. The gate would have reported
+a field consumed on the strength of the test asserting it is not.
+
+LATENT rather than live: measured over all 25 fields, none was cleared ONLY by
+a test file, so the exclusion changed no verdict the day it landed. It is
+closed here (`TEST_FILE_MARKERS`), pinned by two tests — one requiring the red,
+one requiring a production reader beside a test file to still pass, so the
+filter cannot degrade into a blanket refusal — and tracked in #448.
+
+Both halves of the new branch were mutated: **at 32d5bea**, forcing the
+disclosure off reddened the two tests named for it, and forcing it on reddened
+the empty case plus four existing provenance assertions. Date-qualified rather
+than re-counted, because the tests added below move the figure again and a
+correction paragraph that carries a live number goes stale in turn. A test that only ever sees one side of a
+conditional is the shape this repo keeps finding.
+
+**The first draft shipped without a test at the seam, and the file that needed
+one already said so.** `targetNote` is a pure function; `CLAUDE.md` is explicit
+that a pure function is not the surface a client reaches. Replacing
+`sub={targetNote(data)}` in `ZtDashboard.tsx` with a constant left all three
+`targetNote` tests green while the client saw nothing — the same revert
+`ZtDashboard.wiring.test.tsx` was created for, on the card next to the one it
+already guards. Three rendering tests now cover it, and that mutation reddens
+two of them.
+
+The review that cleared this branch found four blocking items, and the one
+worth carrying forward is that **the first write-up of the gate finding named
+the wrong mechanism** — corrected in place above. The others: `EXEMPT_FIELDS =
+{}` broke two pytest tests that drew a live key out of the dict, a test of the
+expiry RULE broken by data the rule is not about (now a synthetic injected
+exemption); three natural mutants of the new sentence survived containment-only
+assertions (now `toBe` on the whole string, plus a parity pin transcribed from
+the Python); and the one-element grammar wart, which is inherited from the PDF
+and is filed as **#452** rather than fixed on one surface.
+
+A fifth review pass then found the correction itself carrying a false
+assurance. The pointer moved to the origin side closed with "`zt.test.ts` ...
+fails if the two drift" — and it does not, in the origin-to-web direction,
+which is the only direction a pointer sited at the origin serves. The Python
+side was pinned by containment (`code in disclosed`), so rewording the caption
+to "...but could not be used; the engagement target was applied instead."
+passed every test on both surfaces and shipped the divergence. The person
+rewording it stands exactly where that comment is and reads that a test will
+catch them. The caption's exact TAIL is now asserted on the Python side with
+the same literal, so a reword on either surface reddens; verified by applying
+that exact reword and watching the Python test fail.
+
+A sixth pass then found the SAME shape a third time, and that is what makes it
+worth recording as a rule rather than as three mistakes. The Python tail
+assertion added in the fifth round used a ONE-CODE fixture, so `", ".join`
+never executed: changing the separator to `"; "` left the whole Python side
+green — measured, not reasoned. The mutant class was already written down ten
+lines away, in `zt.test.ts`'s comment naming "a different `join` separator" as
+one of three natural mutants of this exact sentence. It was not tried, because
+the reword that WAS tried came from the reviewer's example rather than from the
+class.
+
+**The shape, and it is checkable rather than a disposition: a comment
+addressed to a future reader has to GENERALISE, while the fix that prompted it
+was validated against a SINGLE WITNESS.** Nobody writes "a reword, given
+exactly one discarded code, reddens this test" — the useful phrasing quantifies
+over the class. So the generalisation happens in prose, where nothing executes,
+in the same commit as the fix, while the author is holding the one concrete
+case they just made pass. Three of this branch's blocking findings are that,
+and all three were in prose written to explain a CORRECT change.
+
+This is `CLAUDE.md`'s "fix from the SHAPE, not the list you were handed" and
+"name the shape you searched for" — both stated about twin SITES and about
+SWEEPS, neither about assurance comments or about mutants. One existing rule
+recurring in a domain it does not name.
+
+The step the reviewer proposed, adopted here: **a comment claiming a test
+catches a change names the MUTANT CLASS it covers and one mutant in that class
+it does NOT.** At the site that would have read "asserts the exact tail at
+arity 1; the `join` separator and a repeated append are not pinned" — a
+sentence you cannot write without noticing the defect. It costs nothing when
+there is no gap, because then the second clause is "none I can construct".
+
+Writing them turned up a second thing, in the fixture rather than the code.
+`ZtDashboard.wiring.test.tsx` set `target_stage_source: "engagement"`, and
+`resolve_target_stage` returns exactly four values — `client`, `default`,
+`client_out_of_range`, `client_unparseable`. No writer produces `engagement`,
+so the fixture built an unreachable state and `targetNote` rendered it through
+its unrecognised-value fallback. Inert for the legend tests, which read the
+axis and not the note; not inert for a test of the note. The fixture is now
+`client` with the reason written beside it.
 
 ### 2026-09-08 — the client dashboards labelled one record's numbers with another's (#114, D-073)
 
