@@ -277,7 +277,7 @@ def test_submit_requires_csf_and_zt_targets(app_client) -> None:
 def test_submit_refuses_a_zt_target_the_framework_does_not_have(app_client) -> None:
     """DoD ZTRA ends at Stage 3. Intake must refuse 4 rather than store it.
 
-    The front half of #125. `ServiceRequestInput.zt_target_stage` is bound
+    The front half of #125. `ServiceRequestInput.zt_target_stage` WAS bound
     `ge=2, le=4` for BOTH frameworks -- a pydantic field constraint cannot see
     `service_type` -- and `_validate_targets` checked PRESENCE only. So a DoD
     engagement stored a 4, `analyze_gaps` clamped it to 3, and the finalize
@@ -293,6 +293,13 @@ def test_submit_refuses_a_zt_target_the_framework_does_not_have(app_client) -> N
     The positive controls are the point. A guard that refused every target
     would satisfy the 422 assertion alone, so this also pins that DoD 2 and 3
     still submit, and that CISA 4 -- a stage CISA really has -- is untouched.
+
+    **The tense above is deliberate: that bound is GONE as of #406**, and both
+    ends of the range now live in `_validate_targets`. Corrected here because
+    the identical sentence was corrected in `lib/intake/types.ts` in the same
+    change and this twin was left standing -- a reader greps `ge=2`, finds
+    nothing, and concludes this docstring or the fix is wrong. The history is
+    kept rather than deleted: it is why the guard exists.
     """
     client, _ = app_client
     bearer = _register_and_bearer(client)
@@ -316,7 +323,15 @@ def test_submit_refuses_a_zt_target_the_framework_does_not_have(app_client) -> N
     err = r.json()["error"]
     assert err["reason"] == "zt_target_stage_out_of_range", err
     assert "stages 1-3" in err["message"], err["message"]
-    assert "zero_trust_dod" in err["message"], err["message"]
+    # The PRODUCT NAME, not the StrEnum value. This assertion used to read
+    # `"zero_trust_dod" in err["message"]` and so PINNED a database identifier
+    # inside client-facing copy -- the sentence is rendered verbatim by
+    # `clientFacingError` in `IntakeWizard.tsx`. Changed because the behaviour
+    # changed, not to reach green: `_refuse_zt_stage_out_of_range` now reads
+    # `provisioning.SERVICE_TITLES`. Both halves are pinned, so a revert to the
+    # enum fails here rather than passing on a substring.
+    assert "Zero Trust (DoD ZTRA)" in err["message"], err["message"]
+    assert "zero_trust_dod" not in err["message"], err["message"]
 
     # POSITIVE CONTROLS -- every stage each framework really has still submits.
     for stage in (2, 3):

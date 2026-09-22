@@ -5,6 +5,8 @@
  * Components without dragging a separate package import path.
  */
 
+import { MIN_TARGET_STAGE, MIN_TARGET_TIER } from "@/lib/assessment-targets";
+
 export type ServiceType =
   | "tech_debt"
   | "zero_trust_cisa"
@@ -187,16 +189,37 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
 };
 
 /**
- * Client-set assessment targets. Labels mirror the backend source of truth
- * (apps/api/app/csf/maturity.py, apps/api/app/zt/maturity.py). Tier/Stage 1 is
- * the floor, so a client only ever targets 2-4.
+ * Every CSF tier, in order. Labels mirror the backend source of truth
+ * (`apps/api/app/csf/maturity.py::TIER_DEFINITIONS`).
+ *
+ * Module-private on purpose. What the pickers offer is the DERIVED array
+ * below; exporting this one would give a caller a second, laxer list to reach
+ * for, and the label lookups in `IntakeQueue` and `Step6Review` deliberately
+ * resolve a below-floor legacy value to no label rather than to "Tier 1".
+ */
+const CSF_TIERS: ReadonlyArray<{ value: number; label: string }> = [
+  { value: 1, label: "Tier 1 · Partial" },
+  { value: 2, label: "Tier 2 · Risk Informed" },
+  { value: 3, label: "Tier 3 · Repeatable" },
+  { value: 4, label: "Tier 4 · Adaptive" },
+];
+
+/**
+ * The tiers a client may TARGET.
+ *
+ * DERIVED from `MIN_TARGET_TIER` rather than listed (#406). The floor used to
+ * be expressed here by OMISSION -- the array simply opened at `{ value: 2 }` --
+ * which is why the sweep that produced `lib/assessment-targets.ts` missed it:
+ * that sweep grepped for a COMPARISON against a ladder noun, and a floor
+ * expressed by absence contains no comparison at all.
+ *
+ * A derived value cannot be out of sync. Raise `MIN_TARGET_TIER` and the
+ * picker follows in the same render, so it can no longer offer a tier
+ * `CsfWorkspace.normalizeTarget` would refuse -- a controlled `<select>` whose
+ * `selectedIndex` is `-1` renders BLANK, with no error and nothing in a log.
  */
 export const CSF_TARGET_TIERS: ReadonlyArray<{ value: number; label: string }> =
-  [
-    { value: 2, label: "Tier 2 · Risk Informed" },
-    { value: 3, label: "Tier 3 · Repeatable" },
-    { value: 4, label: "Tier 4 · Adaptive" },
-  ];
+  CSF_TIERS.filter((t) => t.value >= MIN_TARGET_TIER);
 
 export const CSF_PROFILES: ReadonlyArray<{ value: CsfProfile; label: string }> =
   [
@@ -205,28 +228,42 @@ export const CSF_PROFILES: ReadonlyArray<{ value: CsfProfile; label: string }> =
     { value: "HIGH", label: "High impact" },
   ];
 
-export const ZT_TARGET_STAGES: Record<
+/**
+ * Every stage each ZT framework has, in order. Labels mirror the backend
+ * source of truth (`apps/api/app/zt/maturity.py`: `CISA_STAGES`, `DOD_STAGES`).
+ *
+ * Module-private, for the same reason `CSF_TIERS` is.
+ */
+const ZT_STAGES: Record<
   "zero_trust_cisa" | "zero_trust_dod",
   ReadonlyArray<{ value: number; label: string }>
 > = {
   zero_trust_cisa: [
+    { value: 1, label: "Stage 1 · Traditional" },
     { value: 2, label: "Stage 2 · Initial" },
     { value: 3, label: "Stage 3 · Advanced" },
     { value: 4, label: "Stage 4 · Optimal" },
   ],
   // DoD ZTRA has THREE stages. `app/zt/maturity.py`'s `DOD_STAGES` is the
-  // authority and yields [1, 2, 3]; `level_count` returns 3. A fourth option
-  // here offered a stage the framework does not have, under "Optimal" -- CISA's
-  // label for ITS fourth stage, borrowed for a ladder that ends at three.
+  // authority and yields [1, 2, 3]; `level_count` returns 3. This array ends
+  // at 3 for that reason, and the CEILING is the half `MIN_TARGET_STAGE` below
+  // does not touch -- a floor derives, a per-framework ladder length does not.
   //
-  // That option is the front half of #125. A consultant picked Stage 4, intake
-  // stored it (the schema bound is `ge=2, le=4` with no framework
-  // discrimination), `analyze_gaps` clamped it to 3, and the finalize audit row
-  // reported `target_stage: 3, target_stage_source: "client"` -- the false value
-  // and the false attribution of it, side by side.
+  // A fourth option here offered a stage the framework does not have, under
+  // "Optimal" -- CISA's label for ITS fourth stage, borrowed for a ladder that
+  // ends at three. That option is the front half of #125. A consultant picked
+  // Stage 4, intake stored it (the schema bound was `ge=2, le=4` with no
+  // framework discrimination), `analyze_gaps` clamped it to 3, and the
+  // finalize audit row reported `target_stage: 3, target_stage_source:
+  // "client"` -- the false value and the false attribution of it, side by side.
   //
-  // Removing it stops NEW invalid values. Values already stored are handled at
-  // the other end: `resolve_target_stage` reports them as
+  // That schema bound is gone as of #406 and `_validate_targets` now owns both
+  // ends of the range, per framework, with a typed refusal. Stating it because
+  // the sentence above named the bound as the mechanism, and a reader who
+  // greps `ge=2` to confirm it now finds nothing.
+  //
+  // Removing the option stops NEW invalid values. Values already stored are
+  // handled at the other end: `resolve_target_stage` reports them as
   // `client_out_of_range` rather than silently as the client's choice, and
   // `normalizeTarget` in `ZtWorkspace.tsx` clamps to the framework's own ladder
   // so the workspace never requests a stage the API will refuse. The label
@@ -235,9 +272,33 @@ export const ZT_TARGET_STAGES: Record<
   // `AssessmentsView` is NOT in that population -- it maps this array into
   // <option>s in a creation form and never looks up a stored value's label.
   zero_trust_dod: [
+    { value: 1, label: "Stage 1 · Not Started" },
     { value: 2, label: "Stage 2 · Target" },
     { value: 3, label: "Stage 3 · Advanced" },
   ],
+};
+
+/**
+ * The stages a client may TARGET, per framework.
+ *
+ * DERIVED from `MIN_TARGET_STAGE` (#406) — see `CSF_TARGET_TIERS` above for
+ * why a floor expressed by omission escaped the sweep that was meant to find
+ * every spelling of this rule.
+ *
+ * Both variants are filtered by the SAME constant, deliberately: the floor is
+ * one product decision and does not vary with the framework. Only the ceiling
+ * does, and the ceiling is the length of each array above.
+ */
+export const ZT_TARGET_STAGES: Record<
+  "zero_trust_cisa" | "zero_trust_dod",
+  ReadonlyArray<{ value: number; label: string }>
+> = {
+  zero_trust_cisa: ZT_STAGES.zero_trust_cisa.filter(
+    (s) => s.value >= MIN_TARGET_STAGE,
+  ),
+  zero_trust_dod: ZT_STAGES.zero_trust_dod.filter(
+    (s) => s.value >= MIN_TARGET_STAGE,
+  ),
 };
 
 /** True when `svc` needs client targets that `input` hasn't supplied yet. */

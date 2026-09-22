@@ -915,6 +915,35 @@ are required for the item to be complete:
   The structural cause behind both #185 and #188. Three literals is three places
   to be wrong and **two already were**.
 
+  **CLOSED by PR #398** (`1281cbd`), which extracted
+  `apps/web/src/lib/assessment-targets.ts` and wired five comparison sites to it.
+
+  **Its successor #406 is the same rule in the two halves #398 did not reach**,
+  and it is the more instructive half: those sites encoded the floor **by
+  OMISSION** — `CSF_TARGET_TIERS` and both `ZT_TARGET_STAGES` variants simply
+  opened at `{ value: 2 }` — and `#398`'s sweep grepped for a COMPARISON against
+  a ladder noun, which a floor expressed by absence does not contain. The other
+  half was four `Field(..., ge=2, le=4)` Pydantic bounds, invisible to a sweep
+  of `apps/web` entirely. **Any future sweep of this rule has to look for the
+  number 2 used as a lower bound however expressed, including by absence and in
+  the other language.**
+
+  #406 also removed those bounds rather than aligning them, because a
+  declarative bound is refused as a `schema_*` 422 that
+  `describe-save-error.ts` withholds by design — so the intake wizard showed a
+  bare generic fallback naming neither the field nor the range. Both ends now
+  live in `_validate_targets` as a typed `{reason, message}` refusal.
+
+  **What is still open after #406: #85**, the two self-assessment submit routes,
+  which write the same columns and accept a target of 1 —
+  `routes/csf.py::submit_self_assessment` with no range check at all. Left
+  deliberately, because reversing ZT's written floor of 1 is a product
+  question. Also filed from that work: **#422** (no cross-language parity gate;
+  buildable, deferred on scope), **#425** (a raw `ServiceType` enum in client
+  copy — fixed in the #406 PR after review), **#428** (the range spelled
+  `(2-4)` in three API docstrings, and WRONG for DoD), **#429**
+  (`clients-dev.md` briefs #125 as unfixed), **#430**, **#431**.
+
 **Outside the total, fixed in passing (2)** — false comments no document depends
 on, both in files #188/#189 already open, so batch-by-file applies:
 
@@ -1397,11 +1426,27 @@ So, as a strict order:
   - the framework-blind `normalizeTarget` in `ZtWorkspace.tsx`.
 
   Two pydantic bounds — `ServiceRequestInput.zt_target_stage` and
-  `ZtSelfAssessmentSubmit.target_stage` — are deliberately **left at
+  `ZtSelfAssessmentSubmit.target_stage` — were deliberately **left at
   `le=4`**. A field constraint cannot see the service, so the framework check
   belongs in the route, and both routes now carry one. Stated rather than left
   silent, because an unexplained `le=4` reads as the defect to whoever greps
   next.
+
+  **The FIRST of those two no longer carries any bound, as of #406 (2026-09-22),
+  and the tense above is corrected rather than the sentence deleted.**
+  `ServiceRequestInput` and `EngagementCreateRequest` lost `ge=2, le=4` on both
+  target fields: a declarative bound is refused by FastAPI as
+  `"Request validation failed."` under a `schema_*` reason that
+  `describe-save-error.ts` withholds by design, so the public-facing intake
+  wizard rendered a bare generic fallback. Both ends now live in
+  `_validate_targets` as a typed `{reason, message}` refusal. Left as written,
+  this paragraph would have told the next person who greps that the missing
+  bound is the defect and invited them to restore it — reinstating #406 out of
+  the note whose whole purpose was to stop exactly that.
+
+  `ZtSelfAssessmentSubmit.target_stage` still carries `ge=1, le=4`, and its
+  floor of 1 is the open half: see **#85**, which #406 deliberately did not
+  close.
 
   **The cost of the deviation, stated so it is not discovered later:** #124
   remains open, so the ZT client dashboard still ignores the engagement target,

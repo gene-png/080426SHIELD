@@ -126,6 +126,16 @@ all four workspaces; what survives is the `Promise.all` coupling in
 `csf/CsfWorkspace.tsx` and `zt/ZtWorkspace.tsx` and a generic message in place
 of the typed reason, both admin-surface and both disclosed. #194's duplication
 is real and current but all three sites agree, so nothing renders wrongly.
+**#194 has since CLOSED** (PR #398, `1281cbd`, `lib/assessment-targets.ts`),
+and its successor **#406** — the intake option lists, which expressed the same
+floor by OMISSION, plus four Pydantic bounds on the API side — is on
+`fix/406-target-floor-derivation`, PR #427, unmerged. That branch derives both
+option lists from the constants and replaces the bounds with a typed
+`{reason, message}` refusal in `_validate_targets`, so a client who picks an
+impossible target is told which control to change instead of reading "Failed
+to submit intake." **#85 is the half it deliberately leaves open**: the two
+self-assessment submit routes write the same columns and still accept a
+target of 1, `routes/csf.py` with no range check at all.
 **The row now judges #185 out of item 9's completion bar, so its `mvp-blocking`
 label should move to `post-mvp`** — the row and the label must agree, and the
 row is what moved. The reasoning is in the `DELIVERY_PLAN.md` item 9 row so the

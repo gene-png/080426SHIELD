@@ -11,7 +11,7 @@
  *
  * ## What this module is, and what it is NOT
  *
- * **It is one home for the five web sites that COMPARE against the floor.** It
+ * **It is one home for the web sites that COMPARE against the floor.** It
  * is not the only place the rule is written down, and an earlier version of
  * this docstring claimed it was — "a single home is the whole of its
  * enforcement", which was false when written. The remaining spellings are
@@ -26,42 +26,63 @@
  *     CsfSelfAssessment                  catalog.tiers.filter(…)
  *     CsfWorkspace.normalizeTarget       the floor half of its range check
  *
- * **NOT wired, and these are where the client FIRST chooses a target** —
- * `lib/intake/types.ts` states the rule in prose ("Tier/Stage 1 is the floor,
- * so a client only ever targets 2-4") and then encodes it three more times as
- * DATA: `CSF_TARGET_TIERS` opens at `{ value: 2 }`, and both
- * `ZT_TARGET_STAGES` variants do the same. Tracked in **#406**.
+ * Also wired, since #406 — and these are where the client FIRST chooses a
+ * target, so they are the sites that matter most:
  *
- * Those escaped the sweep that produced this module because that sweep grepped
- * for a COMPARISON against a ladder noun, and **a floor expressed by omission
- * from an option list contains no comparison at all**. Worth knowing before
- * trusting any future sweep of this rule: it has to look for the number 2 used
- * as a lower bound however expressed, including by absence.
+ *     lib/intake/types.ts CSF_TARGET_TIERS   CSF_TIERS.filter(t => t.value >= …)
+ *     lib/intake/types.ts ZT_TARGET_STAGES   both variants, same filter
  *
- * ## The API mirrors this floor, in four places
+ * They encoded the floor by OMISSION — the arrays simply opened at
+ * `{ value: 2 }` — and escaped the sweep that produced this module because
+ * that sweep grepped for a COMPARISON against a ladder noun, and **a floor
+ * expressed by omission from an option list contains no comparison at all**.
+ * Worth knowing before trusting any future sweep of this rule: it has to look
+ * for the number 2 used as a lower bound however expressed, including by
+ * absence.
  *
- * **Stated because this docstring previously claimed the opposite**, and the
- * false claim was the load-bearing one: it read "nothing on the Python side
- * mirrors these values, so there is no cross-language window to keep closed".
- * Measured — `grep -rn 'ge=2' apps/api/app/schemas/intake.py`:
+ * ## The API carries its own copy of this floor
  *
- *     :76   csf_target_tier: … Field(default=None, ge=2, le=4)
- *     :78   zt_target_stage: … Field(default=None, ge=2, le=4)
- *     :175  csf_target_tier: … ge=2, le=4
- *     :177  zt_target_stage: … ge=2, le=4
+ * **Stated because this docstring once claimed the opposite**, and the false
+ * claim was the load-bearing one: it read "nothing on the Python side mirrors
+ * these values, so there is no cross-language window to keep closed". How that
+ * claim was produced is the useful part: `routes/zt.py` and `app/zt/scoring.py`
+ * were both read, and both are individually accurate — the route validates only
+ * against the framework's ladder and accepts stage 1, and the scoring module
+ * exports a default with no minimum. **A per-file check was then published as a
+ * system-wide negative**, which is the certificate-over-the-wrong-proposition
+ * shape: the commands proved something true and adjacent to the sentence they
+ * were cited for.
  *
- * How that claim was produced is the useful part: `routes/zt.py` and
- * `app/zt/scoring.py` were both read, and both are individually accurate —
- * the route validates only against the framework's ladder and accepts stage 1,
- * and the scoring module exports a default with no minimum. **A per-file check
- * was then published as a system-wide negative**, which is the
- * certificate-over-the-wrong-proposition shape: the commands proved something
- * true and adjacent to the sentence they were cited for.
+ * The window is real. As of #406 it is **one declaration wide** rather than
+ * four bounds wide: `apps/api/app/assessment_targets.py` is this file's Python
+ * mirror, and `routes/intake.py::_validate_targets` compares against it. The
+ * four `Field(..., ge=2, le=4)` bounds that used to carry the rule are gone —
+ * they were refused as a raw `schema_*` 422, message
+ * `"Request validation failed."`, with no client copy behind it, on the surface
+ * where a client first picks a target.
  *
- * So there IS a cross-language window, it is four bounds wide, and lowering
- * the floor here without the other side is refused as a raw `schema_*` 422 —
- * message `"Request validation failed."`, no client copy behind it — on the
- * PUBLIC intake wizard. Tracked in **#406** with both halves.
+ * **`_validate_targets` is NOT the only comparison, and this docstring said it
+ * was** — "the single place that compares against it", which is the kind of
+ * true-sounding sentence that ends the next reader's search exactly where it
+ * should have started. Two other routes write the same two columns and neither
+ * enforces the FLOOR: `routes/csf.py::submit_self_assessment` has no range
+ * check at all, and `routes/zt.py::submit_self_assessment` guards the ceiling
+ * from a floor of 1. Both resolvers then report a stored Tier/Stage 1 as the
+ * client's own choice. That is **#85**, deliberately out of scope for #406;
+ * `assessment_targets.py` carries the reasoning.
+ *
+ * **What closes that window, and what it does not do.** Each language's own
+ * suite spells the number and names the other file in its failure message —
+ * `test_intake_target_floor.py` and `target-options-are-derived.test.ts`. So a
+ * unilateral change goes RED on the side that made it. It does NOT prove the
+ * two agree. `SCHEMA_REASON_PREFIX` in `lib/describe-save-error.ts` settled the
+ * identical problem the same way.
+ *
+ * A real parity check is **buildable** — this paragraph used to say the
+ * containers cannot read across, which is false: `docker-compose.yml` already
+ * mounts `./packages/zt-data:/packages/zt-data:ro` on the api service so a
+ * contract test can read a tree outside the app. It is deferred on scope, not
+ * possibility, and tracked in **#422**.
  *
  * ## Why the constants live HERE rather than in a component
  *
