@@ -21,7 +21,11 @@ interface FieldErrors {
  * the TS-side site — which is why this note sits here rather than only at the
  * new home. A reader sent here by the Python comment is one hop from the
  * constant, and the hop is the import at the top of this file. (Repointing the
- * Python docstring is filed; `exceptions.py` is not this PR's file to edit.)
+ * Python docstring is NOT DONE and NOT FILED: `exceptions.py` is outside this
+ * PR's territory, so the pointer goes to that file's owner. Said plainly
+ * because this sentence read "is filed" — a status word with no output behind
+ * it. `gh issue list --search SCHEMA_REASON_PREFIX` returns nothing, so a
+ * reader could not have followed it.)
  *
  * It moved because the same prefix decides the same question for every
  * client-facing surface that goes through `serverReason`, which had no guard at
@@ -30,13 +34,23 @@ interface FieldErrors {
  * Across the LANGUAGE boundary it is still duplicated, because there is no
  * build step shared by the FastAPI app and this bundle.
  *
- * The width of that remaining gap, stated rather than left to be discovered: a
- * Python-side edit reddens NOTHING. `test_schema_422_typed_reason.py` imports
- * the constant from the module under test, so it follows any change silently. A
- * TS-side edit does redden, because `schemaReasonFallback` in
- * `SignUpForm.test.tsx` spells the literal out instead of importing it. One
- * direction is covered and the other is a comment; if this prefix ever changes,
- * #317 returns on the public sign-up page.
+ * BOTH DIRECTIONS ARE COVERED, and this paragraph said the opposite. It read
+ * "a Python-side edit reddens NOTHING. `test_schema_422_typed_reason.py`
+ * imports the constant from the module under test, so it follows any change
+ * silently." That file holds
+ * `test_the_schema_namespace_is_the_literal_the_web_layer_spells_out`, whose
+ * body is `assert exceptions.SCHEMA_REASON_PREFIX == "schema_"` — an
+ * independently spelled literal, not the imported value — and whose own
+ * docstring says the gap existed "until this test existed". So a Python-side
+ * edit DOES go red, in the file cited three lines earlier as proof that it does
+ * not.
+ *
+ * Recorded rather than quietly swapped, because the sentence arrived under
+ * "stated rather than left to be discovered" and that phrasing ends the check:
+ * a reader who believed it would open a PR to add a cross-language pin that
+ * already ships. The TS side is pinned too — `schemaReasonFallback` in
+ * `SignUpForm.test.tsx` spells the literal out instead of importing it, and
+ * `describe-save-error.test.ts` does the same.
  */
 
 /**

@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -31,13 +31,22 @@ import { describe, expect, it } from "vitest";
  * off disk, so a new intake step or self-assessment panel is covered the day
  * it is added.
  *
- * `components/admin/**` is DELIBERATELY out of scope and it is NOT clean --
- * delete the exclusions below and this file reports the admin sites, which is
- * a better statement of the fact than a number that goes stale the next time
- * one is added or fixed. A Kentro consultant reading "CSF proxy 409" is a real
- * defect and a different tier from a client reading it, so it is filed as #365
- * rather than swept in here -- and named here so the exemption reads as a
- * decision rather than an oversight.
+ * `components/admin/**` is DELIBERATELY out of scope and it is NOT clean. A
+ * Kentro consultant reading "CSF proxy 409" is a real defect and a different
+ * tier from a client reading it, so it is filed as #365 (open, tier-3,
+ * post-mvp) rather than swept in here -- and named here so the exemption reads
+ * as a decision rather than an oversight.
+ *
+ * **Deleting the exclusions gives you CANDIDATES, not a defect list**, and this
+ * paragraph used to call that "a better statement of the fact than a number
+ * that goes stale". It is better than a stale number and it is not a fact:
+ * measured over `src` in node, the status assertion alone reported six correct
+ * admin lines before the narrowing beside `STATUS_AS_COPY` dropped them.
+ * Whoever sizes #365 from the raw list will investigate non-defects, so read
+ * the output as a starting set and check each one.
+ *
+ * The narrowing is the reason the number is no longer written here: it changed
+ * the answer, which is what a count in prose cannot survive.
  *
  * ## No silent skip
  *
@@ -118,9 +127,92 @@ function walk(dir: string): string[] {
   return out;
 }
 
-const FILES = SEARCH_ROOTS.flatMap((r) => walk(join(process.cwd(), r))).filter(
-  (f) => !EXCLUDED.some(([rx]) => rx.test(f)),
+const ALL = SEARCH_ROOTS.flatMap((r) => walk(join(process.cwd(), r)));
+const NOT_EXCLUDED = ALL.filter((f) => !EXCLUDED.some(([rx]) => rx.test(f)));
+
+// A PATH DOES NOT DECIDE WHO RENDERS A COMPONENT, so the `admin/` exclusion is
+// re-opened for anything a client surface actually imports.
+//
+// The exclusion above says "a consultant, not a client". That reason is FALSE
+// for three files under `components/admin/`:
+//
+//     components/self-assessment/CsfSelfAssessment.tsx
+//       -> @/components/admin/csf/CsfQuestionnaire  -> ./TierPicker
+//     components/self-assessment/ZtSelfAssessment.tsx
+//       -> @/components/admin/zt/ZtStagePicker
+//
+// All of them render on `app/self-assessment/[serviceId]/page.tsx`, which
+// gates on `if (!session)` and nothing else -- so a CLIENT's browser renders
+// them. They are clean today (no `.message`, no `catch`, no `throw`, no
+// status), which is why nothing failed; the hole is that the first
+// `setError(err.message)` added to `CsfQuestionnaire.tsx` reaches a client and
+// this guard reports clean. That is the same two-directory-list failure the
+// comment above records, one level up: the first version narrowed by DIRECTORY
+// and this one narrowed by directory again, under a reason about AUDIENCE.
+//
+// Derived, not listed. `ADMIN_RENDERED_BY_CLIENT_SURFACES` follows imports
+// transitively from the non-admin in-scope files, so moving a component into
+// `admin/` -- or adding a fourth -- is covered on the day it happens rather
+// than the day someone remembers this file. The three names above are in a
+// comment as the worked example; nothing reads them.
+const SRC = join(process.cwd(), "src");
+
+function importTargets(file: string): string[] {
+  const body = readFileSync(file, "utf8");
+  const out: string[] = [];
+  // `from "..."` covers static imports and re-exports; `import("...")` covers
+  // the dynamic form, which `next/dynamic` call sites use.
+  for (const m of body.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
+    const spec = m[1];
+    if (spec.startsWith("@/")) out.push(join(SRC, spec.slice(2)));
+    else if (spec.startsWith(".")) out.push(join(dirname(file), spec));
+  }
+  return out;
+}
+
+function resolveModule(base: string): string | null {
+  for (const cand of [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+    join(base, "index.tsx"),
+  ]) {
+    try {
+      if (statSync(cand).isFile()) return cand;
+    } catch {
+      // Not a file on disk: a package import, a type-only path alias, or an
+      // extension this guard does not read. Skipped rather than thrown -- but
+      // NOT silently, because the reachable-set assertion below fails loudly
+      // if resolution stops working altogether.
+    }
+  }
+  return null;
+}
+
+function reachableFrom(seeds: string[]): Set<string> {
+  const seen = new Set<string>();
+  const queue = [...seeds];
+  while (queue.length) {
+    const file = queue.pop() as string;
+    for (const target of importTargets(file)) {
+      const resolved = resolveModule(target);
+      if (resolved === null || seen.has(resolved)) continue;
+      seen.add(resolved);
+      queue.push(resolved);
+    }
+  }
+  return seen;
+}
+
+const REACHABLE_FROM_CLIENT_SURFACES = reachableFrom(NOT_EXCLUDED);
+const ADMIN_RENDERED_BY_CLIENT_SURFACES = ALL.filter(
+  (f) =>
+    EXCLUDED.some(([rx]) => rx.test(f)) &&
+    REACHABLE_FROM_CLIENT_SURFACES.has(f),
 );
+
+const FILES = [...NOT_EXCLUDED, ...ADMIN_RENDERED_BY_CLIENT_SURFACES];
 
 // COMMENTS STRIPPED BEFORE MATCHING, and this guard needed it for itself.
 // `lib/describe-save-error.ts`'s docstring QUOTES the defect verbatim while
@@ -158,7 +250,20 @@ function code(path: string): string {
 //
 // Deliberately NOT anchored to `err`: the variable is named `e` and `error`
 // elsewhere in this codebase.
-const RENDERS_INTERNAL_MESSAGE = /(?<![.\w$])(err|e|error)\s*\??\.message\b/;
+//
+// THE SECOND ALTERNATIVE EXISTS BECAUSE THE LOOKBEHIND CANNOT SEE PAST A CAST.
+// In `(err as Error).message` the character before `.message` is `)`, so the
+// first alternative never fires -- the identifier it needs is inside the
+// parentheses. That is the TypeScript idiom for exactly this operation, so the
+// gap was the likeliest way in.
+//
+// Added while NOTHING has to change: `(err|e|error) as` returns no matches
+// anywhere under `src`, so this widens the net over an empty population and
+// cannot be flagging correct code today. The cast of a non-caught value --
+// `(payload as Envelope).message` -- stays clear, because the alternative
+// anchors on the three caught-value identifiers rather than on the parenthesis.
+const RENDERS_INTERNAL_MESSAGE =
+  /(?<![.\w$])(err|e|error)\s*\??\.message\b|\((?:err|e|error)\s+as\s+[^)]*\)\s*\??\.message\b/;
 
 // AN HTTP STATUS INTERPOLATED INTO A SENTENCE. The second half of the same
 // rule: "Upload failed (413)" tells a client nothing they can act on, and
@@ -175,7 +280,62 @@ const RENDERS_INTERNAL_MESSAGE = /(?<![.\w$])(err|e|error)\s*\??\.message\b/;
 // neither a template literal nor an HTTP status. A gate that reports correct
 // code is worse than one that reports nothing, because it gets weakened to
 // shut it up. Found by running it, not by reading it.
-const STATUS_AS_COPY = /`[^`\n]*\$\{[^}\n]*status[^}\n]*\}[^`\n]*`/;
+//
+// TWO NARROWINGS, DERIVED FROM THE TWO SHAPES THAT SLIPPED THROUGH, not from a
+// list of files to skip. `[^}\n]*status[^}\n]*` matched any identifier
+// CONTAINING the word and any template at all, so over `src` it reported six
+// correct lines: four React keys (`` `${assessment?.status ?? ""}:${...}` ``
+// in three workspaces and `list?.status` in a fourth) and two in
+// `attack/StatusBadge.tsx` -- a `className` and a `title`, both built from
+// `TONE[status]` / `LABEL[status]`.
+//
+//  1. the interpolation must read a `.status` PROPERTY, which drops
+//     `${TONE[status]}` -- a lookup keyed by a variable that happens to be
+//     called `status`;
+//  2. the literal must carry a letter OUTSIDE its interpolations, i.e. be
+//     prose, which drops `` `${a}:${b}` `` React keys. `hasProseOutsideHoles`
+//     is that half, because a regex cannot express "outside every `${}`".
+//
+// Measured over `src/components` and `src/lib` with the real JS regex in node:
+// 28 lines before, 22 after, and the six dropped are exactly the six above.
+// **The first attempt to check this used `grep -rnE` and was worthless**: in
+// POSIX ERE `[^`\n]` excludes the LETTER n, not a newline, so the grep silently
+// disagreed with the JavaScript this file actually runs and "disproved" a real
+// finding. Test a JS regex with JS.
+//
+// RESIDUAL, stated because narrowing 1 bought the false-positive fix with a
+// false negative: a status held in a LOCAL whose name contains the word --
+// `` `Upload failed (${statusCode})` `` -- was caught by the old pattern and is
+// not caught by this one. No site spells it that way today. The error direction
+// is the acceptable one: this can only under-report, and a gate that reports
+// correct code is the failure that gets it deleted. The `${st}` form escaped
+// both versions, so it is not a regression, just a limit.
+//
+// Also a limit of the regex rather than a decision: `[^}\n]*` cannot cross a
+// `}`, so a hole containing an inline type literal --
+// `${(err as { status?: number }).status}` -- does not match. Found by writing
+// exactly that as a red-on-revert mutation and watching the check stay green,
+// which read as "the pattern regressed" until the mutation was read back.
+const STATUS_AS_COPY = /`[^`\n]*\$\{[^}\n]*\??\.status[^}\n]*\}[^`\n]*`/;
+
+function hasProseOutsideHoles(literal: string): boolean {
+  return /[A-Za-z]/.test(literal.replace(/\$\{[^}\n]*\}/g, ""));
+}
+
+// EVERY match, not the first. A `source.match(...)` here would return only the
+// leading hit, so a file whose first status template is a React key and whose
+// second is real copy would report clean -- the narrowing above quietly
+// becoming a way to hide the thing it exists to find. `\n` cannot appear inside
+// a match, so scanning line by line is equivalent and is what the measurement
+// in the comment above counted.
+const STATUS_AS_COPY_ALL = new RegExp(STATUS_AS_COPY.source, "g");
+
+function statusAsCopy(source: string): boolean {
+  for (const m of source.matchAll(STATUS_AS_COPY_ALL)) {
+    if (hasProseOutsideHoles(m[0])) return true;
+  }
+  return false;
+}
 
 // The one legitimate interpolation of a status, and it is legitimate BY
 // CONSTRUCTION rather than by judgement: `super(\`ZT proxy ${status}\`)` is
@@ -206,6 +366,12 @@ describe("the offending-shape pattern", () => {
     "return err instanceof Error && err.message ? err.message : fallback;",
     // The bare setter, claimed by the old comment and implemented by nothing.
     "setError(err.message);",
+    // The CAST spelling, which the lookbehind alone cannot reach: the
+    // character before `.message` is `)`. No site uses it today, which is why
+    // it is safe to pin now.
+    "setError((err as Error).message);",
+    "return (e as Error).message;",
+    "const m = (error as ApiError)?.message;",
     // The other two identifiers this codebase uses for a caught value.
     'return e instanceof Error ? e.message : "Readiness probe failed.";',
     "setLoadError(error.message);",
@@ -223,6 +389,10 @@ describe("the offending-shape pattern", () => {
     // Not the caught value at all: an upload row, and a save-status union.
     "{it.message}",
     "Couldn&apos;t save: {state.message}",
+    // A cast of something that is NOT a caught value. The cast alternative
+    // anchors on the three identifiers, not on the parenthesis, so this stays
+    // clear -- pinned because anchoring on `)` was the tempting shortcut.
+    "const m = (payload as Envelope).message;",
   ])("leaves %j alone", (line) => {
     expect(RENDERS_INTERNAL_MESSAGE.test(line)).toBe(false);
   });
@@ -234,7 +404,7 @@ describe("the offending-shape pattern", () => {
     "`Request failed (${res.status}).`",
     "`Could not read the active client (${res.status}).`",
   ])("flags %j as a status in copy", (line) => {
-    expect(STATUS_AS_COPY.test(line)).toBe(true);
+    expect(statusAsCopy(line)).toBe(true);
   });
 
   it.each([
@@ -244,17 +414,55 @@ describe("the offending-shape pattern", () => {
     '? "border-status-danger-fg bg-surface-card"',
     // A status compared, not rendered.
     "if (err.status === 404) return null;",
+    // THE SIX REAL LINES THE SECOND VERSION FLAGGED, all correct code, all
+    // found by running the pattern over `src` in node rather than by reading
+    // it. Without these the narrowing is a claim; with them it is pinned, and
+    // a future widening that reinstates any of them goes red here first.
+    //
+    // A lookup keyed by a variable called `status` -- attack/StatusBadge.tsx.
+    "      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${TONE[status]}`}",
+    "      title={`Assigned ${LABEL[status].toLowerCase()}, held out of the coverage score`}",
+    // React keys: a `.status` READ, but no prose outside the holes. Three
+    // workspaces spell it with `assessment`, TechDebtWorkspace with `list`.
+    '    `${assessment?.status ?? ""}:${assessment?.version ?? ""}`,',
+    '    `${list?.status ?? ""}:${list?.version ?? ""}`,',
   ])("leaves %j alone as a status in copy", (line) => {
-    expect(STATUS_AS_COPY.test(line)).toBe(false);
+    expect(statusAsCopy(line)).toBe(false);
+  });
+
+  it("reads EVERY status template in a file, not just the first", () => {
+    // The narrowing introduced a way to hide a defect: if the scan stopped at
+    // the first match, a file whose leading status template is a React key
+    // would report clean over real copy below it. That is the exact ordering
+    // in three of the four workspaces, so it is not hypothetical.
+    const keyThenCopy =
+      '    `${assessment?.status ?? ""}:${assessment?.version ?? ""}`,\n' +
+      "      `Request failed (${err.status}).`";
+    expect(statusAsCopy(keyThenCopy)).toBe(true);
+    // And the reverse order, so this pins the scan rather than the ordering.
+    const copyThenKey =
+      "      `Request failed (${err.status}).`\n" +
+      '    `${assessment?.status ?? ""}:${assessment?.version ?? ""}`,';
+    expect(statusAsCopy(copyThenKey)).toBe(true);
   });
 
   it("does not flag a proxy class's own constructor label", () => {
-    // Stripped by `codeWithoutErrorLabels`, not by the pattern -- so this
-    // asserts the STRIPPER, which is the part that could silently stop
-    // working and leave nine `lib/*/client.ts` files reporting as offenders.
-    const label = "    super(`ZT proxy ${status}`);";
-    expect(STATUS_AS_COPY.test(label)).toBe(true);
-    expect(STATUS_AS_COPY.test(label.replace(/super\(`[^`]*`\)/g, ""))).toBe(
+    // WHICH MECHANISM EXCLUDES IT CHANGED, and this test asserted the wrong one
+    // until it went red. Every one of the nine labels is
+    // `super(\`X proxy ${status}\`)` -- a bare CONSTRUCTOR PARAMETER named
+    // `status`, not a `.status` read -- so narrowing 1 excludes them and
+    // `codeWithoutErrorLabels` is no longer what does it. The old version
+    // asserted the label matched and that the stripper removed it; the first
+    // half is now false.
+    expect(statusAsCopy("    super(`ZT proxy ${status}`);")).toBe(false);
+
+    // THE STRIPPER IS STILL LOAD-BEARING, for the spelling nobody has written
+    // yet. Kept rather than deleted, and pinned here so "unused" is a
+    // measurement instead of a guess: a label built from a response object
+    // would match the narrowed pattern, and only the stripper stops it.
+    const propertyLabel = "    super(`ZT proxy ${res.status}`);";
+    expect(statusAsCopy(propertyLabel)).toBe(true);
+    expect(statusAsCopy(propertyLabel.replace(/super\(`[^`]*`\)/g, ""))).toBe(
       false,
     );
   });
@@ -265,6 +473,21 @@ describe("client-facing surfaces never render an internal error string", () => {
     // Fail closed. An empty sweep is "I could not look", and vitest reports a
     // zero-case `it.each` as a pass.
     expect(FILES.length).toBeGreaterThanOrEqual(30);
+  });
+
+  it("resolves imports at all, so the admin re-inclusion is not vacuous", () => {
+    // THE SELECTOR'S OWN COUNT. `resolveModule` returns null for anything it
+    // cannot find on disk, so a broken alias, a moved `src/`, or a change to
+    // the import syntax it matches would make `reachableFrom` return an empty
+    // set -- and every admin file would drop back out of scope with the suite
+    // still green. Indistinguishable from "no admin file is client-rendered",
+    // which is the answer a reader wants to be true.
+    //
+    // Asserted on the REACHABLE set rather than on the admin subset, on
+    // purpose: moving those components out of `admin/` is a legitimate fix
+    // that empties the subset, and a test that went red for it would punish
+    // the repair.
+    expect(REACHABLE_FROM_CLIENT_SURFACES.size).toBeGreaterThanOrEqual(20);
   });
 
   it("no file renders a caught error's own message", () => {
@@ -310,7 +533,7 @@ string, nothing there was written for a person to read.`,
 
   it("no surface puts an HTTP status in a sentence", () => {
     const offenders = FILES.filter((f) =>
-      STATUS_AS_COPY.test(codeWithoutErrorLabels(f)),
+      statusAsCopy(codeWithoutErrorLabels(f)),
     ).map((f) => f.slice(f.indexOf("src")));
 
     expect(

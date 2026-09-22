@@ -16,20 +16,38 @@
  * forbids. It passed its test only because the test fabricated a plain
  * `Error`, a shape the production code cannot produce.
  *
- * ## Three payload shapes, and the third is REFUSED rather than rendered
+ * ## Three payload shapes, and ONLY THE FIRST IS WHAT THIS API SENDS
  *
- * `{error: {message}}`  the house envelope, from `app/exceptions.py`
- * `{detail: "..."}`     FastAPI's default for a plain `HTTPException`
- * `{detail: [...]}`     a SCHEMA rejection — `detail` is an ARRAY of error
- *                       objects, which is what `extra="forbid"` and any
- *                       `max_length` violation produce
+ * `{error: {…}}`        the house envelope, from `app/exceptions.py`. The live
+ *                       wire format for BOTH handlers: a string `detail`
+ *                       becomes `error.message`, and a schema rejection's array
+ *                       lands on `error.details` — plural, inside the envelope.
+ * `{detail: "..."}`     FastAPI's default for a plain `HTTPException`,
+ *                       DEFENSIVE ONLY here
+ * `{detail: [...]}`     FastAPI's default for a schema rejection, also
+ *                       DEFENSIVE ONLY, and refused rather than rendered
  *
- * The `describeError` copies in the three admin workspaces read
- * `payload?.detail` and would hand React an array of objects for the third,
- * which renders as `[object Object]` or throws. Handled here — by returning
- * null, not by rendering it. `serverReason` carries the reason: a Pydantic
- * `msg` is the raw validation dump core principle 2 names as what a
- * user-facing error must not be.
+ * **The "defensive only" is measured, and this table used to assert the
+ * opposite** — it said the array form is "what `extra="forbid"` and any
+ * `max_length` violation produce", present tense, as the live format.
+ * `register_exception_handlers` registers handlers for both `HTTPException` and
+ * `RequestValidationError` and both return `content={"error": {...}}`;
+ * `grep -rn 'content={"detail\|"detail":' apps/api/app` and
+ * `grep -rn "detail=\[" apps/api` both return nothing. So no route can emit a
+ * bare top-level `detail`, and the two branches below are a harmless superset
+ * kept for an upstream that is not this API.
+ *
+ * The correction matters because `describe-save-error.test.ts` already says
+ * this, in the test for the array branch — so the truth was written where the
+ * subject was DISCUSSED and the false version left standing where a reader
+ * looks it up. That is the correct-at-the-instruction rule failing inside one
+ * commit.
+ *
+ * The array is still HANDLED rather than ignored: the `describeError` copies in
+ * the three admin workspaces read `payload?.detail` and would hand React an
+ * array of objects, which renders as `[object Object]` or throws. Here it
+ * returns null, because a Pydantic `msg` is the raw validation dump core
+ * principle 2 names as what a user-facing error must not be.
  *
  * ## Duck-typed, not `instanceof`
  *
@@ -133,16 +151,27 @@ export function dashboardLoadReason(err: unknown): string | null {
  * names `SignUpForm.tsx` in its docstring as the TS-side site — which is one
  * hop from here rather than wrong, because that import is the first thing a
  * reader arriving there sees. Repointing the Python docstring at this file is
- * filed; it is not this PR's to edit.
+ * NOT DONE and NOT FILED — `exceptions.py` is outside this PR's territory, so
+ * the pointer goes to its owner. Stated that way because this read "is filed",
+ * and `gh issue list --search SCHEMA_REASON_PREFIX` returns nothing.
  *
- * The width of the gap, stated rather than left to be discovered: a Python-side
- * edit reddens NOTHING. `test_schema_422_typed_reason.py` imports the constant
- * from the module under test, so it follows any change silently. A TS-side edit
- * does redden, because `schemaReasonFallback` in `SignUpForm.test.tsx` spells
- * the literal out instead of importing it, and `describe-save-error.test.ts`
- * does the same. One direction is covered and the other is a comment; if this
- * prefix ever changes, #317 returns on the public sign-up page and
- * "Request validation failed." returns to every surface below.
+ * BOTH DIRECTIONS ARE PINNED, and this paragraph asserted that one was not. It
+ * read "a Python-side edit reddens NOTHING. `test_schema_422_typed_reason.py`
+ * imports the constant from the module under test, so it follows any change
+ * silently." That file holds
+ * `test_the_schema_namespace_is_the_literal_the_web_layer_spells_out`, whose
+ * body is `assert exceptions.SCHEMA_REASON_PREFIX == "schema_"` — spelled out,
+ * not imported — so a Python-side edit goes red there. The TS side is pinned by
+ * `schemaReasonFallback` in `SignUpForm.test.tsx` and again in
+ * `describe-save-error.test.ts`, both of which spell the literal rather than
+ * import it. If this prefix changes in one language and not the other, #317
+ * returns on the public sign-up page — but a test now says so.
+ *
+ * The sentence was INHERITED from `SignUpForm.tsx` when the constant moved, and
+ * copying it turned one wrong claim into two. Corrected in place at both sites
+ * rather than deleted: it arrived under "stated rather than left to be
+ * discovered", which is the phrasing that stops the next reader checking, and a
+ * reader who believed it would build a cross-language pin that already ships.
  */
 export const SCHEMA_REASON_PREFIX = "schema_";
 

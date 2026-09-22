@@ -330,9 +330,16 @@ describe("dashboardLoadReason", () => {
     // So this branch renders the raw string: an admin whose active-client
     // cookie names a deleted client reads "No client with that id." under
     // "Dashboard not available yet". PRE-EXISTING -- `serverReason` did the
-    // same before #318 -- and filed rather than fixed here. Preferring the
-    // server is still right for these: the page's not-released copy would be
-    // FALSE over a wrong-tenant refusal.
+    // same before #318. Preferring the server is still right for these: the
+    // page's not-released copy would be FALSE over a wrong-tenant refusal.
+    //
+    // NOT FIXED HERE AND NOT FILED, said that way because this read "filed
+    // rather than fixed here" and no issue covers it: searching the board for
+    // the string-detail dashboard case returns nothing, and #365 is about
+    // proxy LABELS on admin components rather than a raw server sentence on a
+    // dashboard. "Filed" is a status word and it was carrying no output, which
+    // is how an unfixed defect comes to read as tracked work. Handed to the
+    // board owner with the rest.
     const nocode = {
       status: 502,
       payload: { error: { message: "Upstream call failed." } },
