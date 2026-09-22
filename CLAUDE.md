@@ -311,6 +311,89 @@ a real exit code and a real date, and was the minority outcome (D-071).
   Do not add a row per tool. That is how the table above got to its current
   size, and a row per tool is an enumeration of what its author happened to hit.
 
+- **ON WINDOWS, `sh` IS BASH, so a shell script "tested under `sh`" was never
+  tested under `sh` at all.** Every bashism passes locally and the first
+  environment that refuses it is the runner.
+
+  Measured 2026-09-21:
+
+      Git Bash   sh --version               -> GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)
+                 sh -c 'set -o pipefail'    -> accepted
+      Debian     /bin/sh                    -> dash
+                 sh -c 'set -o pipefail'    -> sh: 1: set: Illegal option -o pipefail
+
+  What it cost: a gate that runs the repo's shell scripts under `sh` passed all
+  seven subjects on Windows and failed three on the runner --
+  `close_guard_linked_file.sh`, `dev-web.sh` and `verify-in-worktree.sh`, each
+  dying at `set -o pipefail` before reaching any argument handling. Exit 2, no
+  message, which is also what a crash looks like.
+
+  **The remedy is NOT "make everything bash" and NOT "make everything POSIX".**
+  Both were proposed and both are wrong, because the shebang is the contract and
+  it legitimately VARIES: `docker-compose.yml` runs
+  `sh /app/web-install-if-stale.sh`, so POSIX compatibility is a real
+  requirement for that one, and forcing bash would stop checking the single case
+  where it matters. A harness that runs these scripts reads each file's shebang
+  and honours it; a subject with no recognisable shebang is a could-not-look,
+  not a guess.
+
+  **The transferable part is not about shells.** It is that a local run can
+  exercise a different interpreter, library or resolver than CI under the same
+  command name, and nothing in the output says so. When a check passes locally
+  and fails on the runner, suspect the interpreter before the code.
+
+  **A WRAPPER WRITTEN TO VERIFY SOMETHING IS WHERE THIS KEEPS LANDING**, and
+  the list is left as a list on purpose -- an earlier draft of this paragraph
+  said "three", which was stale within the hour. The instances from one
+  evening, by three different authors:
+
+  - `sh` that was bash, so every bashism passed locally;
+  - `pytest ... | tail` inside `sh -lc`, which has no `pipefail`, so the
+    harness read `tail`'s status and reported STAYED GREEN over two failures;
+  - the same pipe again, independently, in a second author's check helper;
+  - `git worktree add` failing so the following `cd` failed, and `sed` ran in
+    the wrong directory -- empty output, read as "no conflict";
+  - `mktemp -d` giving an MSYS path Docker could not mount, reporting PASS for
+    both variants of a comparison having scanned ZERO files, with
+    `warning: No Python files found` sitting in the output;
+  - `gh pr edit ... | tail` from a directory that was not a repo: `gh` failed,
+    `tail` returned 0, and the empty output read as success.
+
+  **Most of them produced the answer the author was hoping for.** That is the
+  property worth remembering: the failure mode is not noise, it is agreement.
+
+- **RUFF'S FIRST-PARTY RESOLUTION DEPENDS ON THE LAYOUT IT IS RUN IN, so the
+  in-container lint gate is STRUCTURALLY BLIND to one class of import error
+  that CI catches.** Not "scoped narrower" -- blind. No invocation fixes it.
+
+  ruff decides first-party by asking whether the dotted module path exists
+  under `src`, which defaults to the config's directory. This repo has a
+  top-level `scripts/` that is unrelated to `apps/api/scripts/`, and the api
+  container mounts `apps/api` at `/app` with the root `pyproject.toml` at `/`
+  -- so NEITHER `scripts/` path exists in the container.
+
+  A bare `from scripts import x` is therefore third-party in the container and
+  first-party in a full checkout. Measured 2026-09-21:
+
+      | import form                  | CI layout | container |
+      | bare + blank line            | PASS      | I001      |
+      | dotted (`from scripts.y ...`)| PASS      | PASS      |
+
+  **Two consequences, and the second is the one that bites.**
+
+  `ruff check --no-cache .` inside the container -- CI's exact command --
+  exits 0 on a file CI rejects. The MANDATORY pre-commit lint this file
+  prescribes cannot see this, however it is invoked.
+
+  And **`ruff --fix` MOVES the red rather than removing it**: the blank line it
+  inserts satisfies the full-checkout layout and breaks the container one. The
+  stable answer is the DOTTED form, because it fails to resolve in both, which
+  is what the rest of `tests/unit/` already uses.
+
+  To reproduce a CI lint red locally, mount the FULL worktree and run ruff from
+  `apps/api` so `src` resolves to the repo root. That is a different layout, not
+  a different flag.
+
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
@@ -1063,6 +1146,40 @@ a real exit code and a real date, and was the minority outcome (D-071).
   treat "the revert produced no failures" as a claim about your tooling until
   proven otherwise — the first hypothesis is that the mutation did not land, not
   that the assertion is weak.
+
+  **THE STRONGEST RECORDED CASE FOR THIS IS ONE WHERE EVERY OTHER SIGNAL
+  AGREED, INCLUDING THE AUTHOR'S OWN EYES.** A sweep's regex was widened to
+  match a second form; `\b` was written for the boundary and reached the file
+  as a literal BACKSPACE byte (U+0008) inside a raw string, so the alternation
+  read `<BS>reason\s*=` and matched nothing.
+
+  What agreed that the fix had landed: `grep` printed a correct-looking line,
+  because a backspace renders as nothing. The module's tests passed. The same
+  regex typed inline in a shell found the codes. The diff looked right.
+  **Only the mutation disagreed** — and finding out why took a probe printing
+  `literal.pattern` from inside pytest. A stale `.pyc`, a wrong root directory
+  and a duplicate pattern were each ruled out first, all wrong.
+
+  Red-on-revert is what speaks about the BEHAVIOUR here, because every other
+  behavioural signal is reading the SOURCE while the defect is in the COMPILED
+  value.
+
+  **It is not the cheapest signal, and an earlier draft of this sentence said
+  it was the only one — directly above its own counterexample.**
+  `check_no_control_chars.py` reads `path.read_bytes()` and scans `.py`, so it
+  reads the source and finds this exact byte in two seconds. A reader who took
+  the stronger claim would spend a mutation cycle to learn what the gate beside
+  them already prints. **Run the gate first; reach for red-on-revert to prove
+  the fix holds.**
+
+  **And a gate caught it, correctly, on the first run — and was not read.**
+  `check_no_control_chars.py` reported `U+0008` at that line, which is the
+  entire reason it exists. A gate that fires correctly and is ignored is worse
+  than one that is missing: the missing gate leaves you knowing you have no
+  cover, and the ignored one leaves a green-looking wall of output with the
+  answer inside it. **When a gate reports something you did not expect, read it
+  before deciding what it is about** — it is the cheapest signal in the repo and
+  the one most easily skimmed past on the way to the thing you were doing.
 - **Replacing a character class with an enumerated one is a subtraction you must
   COMPUTE, not guess.** `\s` matches 19 horizontal characters. Narrowing it to
   "space, tab, non-breaking space" to stop a rule crossing newlines therefore
@@ -1789,6 +1906,30 @@ Rules of the road:
   **When the reviewer cannot run.** "Use judgement" is the gap this rule exists to
   close, so the cases are named and so is the person who may decide.
 
+  **A reviewer that has not delivered yet is not a reviewer that failed. ASK
+  IT, IMMEDIATELY AND EVERY TIME.** `idle` is not a delivery signal. Asking an
+  agent for its report costs nothing, needs no threshold, and is the only thing
+  that distinguishes the states below.
+
+  **Never declare the channel broken without evidence.** That is a different
+  act from asking, and only it deserves a bar: a tool error, a refusal, a named
+  absence. "It has been a while" is not evidence.
+
+  **A draft of this bullet set a 90-MINUTE WAIT before either act, and it was
+  wrong in a way worth keeping.** It rested on "an agent cannot tell a slow
+  reviewer from a dead one" — falsified by the list six lines below, where
+  *Absent* says "nothing to retry" and *Erroring* says "retry once". It also
+  carried an action-licensing number ("the measured lag is about an hour") with
+  no command and no date, in the file whose rule 2 forbids exactly that. And
+  its consequence ran the wrong way: on 2026-09-21 a round of reviewers went
+  idle having delivered nothing, and **asking each one directly is what
+  recovered every report**. The rule would have bought ninety minutes of
+  silence instead.
+
+  The conflation was between declaring a channel broken, which needs evidence,
+  and asking whether a report arrived, which costs nothing. Only the first ever
+  deserved a threshold.
+
   Kinds of unavailable — **an open list, not an enumeration**, because the fourth
   one below is the case this repo has actually hit and the first draft omitted it:
 
@@ -2091,6 +2232,41 @@ Rules of the road:
   code under test that day.** That is not an argument for more checking
   machinery. Every fix went toward a more primitive signal, not a cleverer one.
 
+- **"IS THIS ALREADY LANDED?" HAS EXACTLY ONE SOUND TEST HERE, AND IT IS NOT
+  ANCESTRY AND NOT A DIFF.** Merge it and count what it stages:
+
+      git worktree add --detach ../landed-check origin/main
+      cd ../landed-check
+      git merge --no-commit --no-ff origin/<branch>
+      git diff --cached --name-only | wc -l     # 0 = the content is already on main
+      git merge --abort
+
+  **Run it against a branch you KNOW is unlanded in the same pass.** A test that
+  returns 0 for everything answers the question you wanted and means nothing;
+  this one discriminates, and confirming that costs one extra invocation.
+
+  **Why `git merge-base --is-ancestor` is the wrong tool: THIS REPO
+  <!-- counted: the cardinality of a squash merge by definition, not a tally of a population; it cannot grow -->
+  SQUASH-MERGES.** A squash creates one new commit whose parent is `main`'s, so
+  a branch's own commits never become ancestors of `main` however completely its
+  content landed. `--is-ancestor` therefore answers NO for every PR this repo
+  has ever merged. It is not a weak signal, it is a constant.
+
+  **Why a file count is the wrong tool, and this one is subtler.**
+  `git diff main <branch>` answers "how do these two trees differ";
+  `git diff main...<branch>` answers "what did this branch ADD". Read the first
+  as the second and a branch whose base is behind looks like it contributes
+  every file `main` has moved on since. Measured 2026-09-21: a branch reported
+  as "21 files differ" was 131 insertions against 3169 deletions -- the
+  deletions being `main`'s own work, which merging can never remove.
+
+  Both mistakes were made on the same question within an hour, by two people,
+  with two different instruments, and both answers were shaped like the right
+  one. A third reading -- pointing the CORRECT test at a different branch than
+  the one being asked about -- produced a confident "already landed" for a
+  branch contributing nineteen files. **Name the branch the test ran against in
+  the same breath as the result.**
+
 - **"READY" IS TWO CLAIMS. GREEN AND MERGEABLE ARE DIFFERENT, AND A CI
   CERTIFICATE IS ABOUT A HEAD, NOT A BRANCH.** Before reporting a PR ready,
   run the merge and report both:
@@ -2117,6 +2293,28 @@ Rules of the road:
   unless you go and generate one. "Green" carries its check list; "ready"
   carried nothing, because merge state is not printed by anything you were
   already running.
+
+  **AND `MERGEABLE` IS A CLAIM ABOUT A BRANCH AND `main`. IT SAYS NOTHING
+  ABOUT THAT BRANCH AND ITS SIBLING.** GitHub computes mergeability against the
+  base and nothing else, so two PRs that each merge cleanly and conflict WITH
+  EACH OTHER are both reported `MERGEABLE`, both green, and invisible. Whichever
+  merges first turns the other red — after the decision, not before it.
+
+  Measured: two PRs on one evening, each `MERGEABLE`, colliding in a test file
+  both appended to. Same class as two individually-green merges taking `main`
+  red forty minutes apart, which is the second occurrence of this shape.
+
+  **So: whenever two or more open PRs touch the same file, run the pairwise
+  merge and say WHICH PAIRS you checked.** The ready report carries that line
+  the way it carries the merge state, and for the same reason — nothing else
+  generates it:
+
+      git worktree add --detach ../pairtest origin/<branch-a>
+      git -C ../pairtest merge --no-commit --no-ff origin/<branch-b>
+
+  Naming the pairs matters as much as the verdict: "they merge cleanly" over an
+  unstated set is the certificate-over-the-wrong-proposition shape, and the set
+  is what makes it checkable.
 
   **AND A THIRD CLAIM RIDES WITH THEM: WHAT THE PR WILL CLOSE, VERIFIED
   AGAINST `closingIssuesReferences` AND NEVER AGAINST THE APPROVAL MARKER.**
@@ -2379,6 +2577,27 @@ Rules of the road:
   A no-match is a claim about the world. **Before reporting an absence, confirm
   the tool could have found it** — re-search a fragment that cannot wrap. This
   nearly produced an accusation of fabrication against correctly-quoted text.
+
+  **AND WHEN N INDEPENDENT SOURCES REPORT THE SAME ABSENCE, RUN THE SEARCH
+  BEFORE NAMING A MECHANISM.** Four reviewers, in four separate runs against
+  four different trees, each reported the same rule missing from this file.
+  Each report was dismissed as detached-worktree staleness — a real mechanism,
+  documented here, and the first explanation that fits. The rule was simply not
+  in the file: it had been asked for, and the PR that was meant to carry it
+  merged without it.
+
+  The failure is not credulity about worktrees. It is that **four independent
+  observations of one fact are data, and a mechanism that explains them away
+  costs one command to test.** The more familiar the explanation, the faster it
+  arrives and the less it is checked — and "your context is stale" explains any
+  disagreement whatsoever, which is what should make it suspect rather than
+  comfortable.
+
+  **The verification itself then nearly produced a SECOND false absence in the
+  same file.** The first search was case-sensitive against an UPPERCASE
+  heading, so it reported a rule missing that is present. Both halves of this
+  bullet in one minute: confirm the tool could have found it, then believe the
+  result.
 
   **And prefer a MEASUREMENT to a citation wherever one exists.** Reading
   `audit-gate.yml`'s `on:` block settles what triggers it; citing a document
