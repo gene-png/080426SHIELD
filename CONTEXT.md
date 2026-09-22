@@ -192,7 +192,12 @@ which is NOT the gate. **There is no `_latest` in `routes/risk.py` any more**, s
 this paragraph used to name will not resolve. **A SECOND residual sits in `routes/clients.py` itself** —
 `risk_dashboard` takes the highest-`version` register with no finalized filter,
 so generating v2 hides a finalized v1 the client already has. Tracked in #123,
-which queues behind this PR on the same file.
+which queues behind this PR on the same file. **FIXED 2026-09-10 in PR #272
+(`6199c79`); recorded here 2026-09-21.** `risk_dashboard` now filters
+`RiskRegister.finalized_at.is_not(None)`. The paragraph is left standing as the
+record of the residual this track filed rather than fixed, but the present-tense
+description above was a live claim about code that no longer reads that way —
+someone acting on it would have rebuilt what already ships.
 
 Two consequences of the refusal are filed rather than fixed, both outside this
 track's territory: the dashboard pages key their error copy on HTTP status
@@ -441,6 +446,10 @@ must surface the divergence) is a required follow-up, not optional.
 
 **W1 is two services of four.** CSF (#54) and ZT (#66) are on `main`; Risk
 and ATT&CK are outstanding, in that order, and ATT&CK is gated on W2 landing.
+**SUPERSEDED 2026-09-21: W1 ATT&CK is item 7 and is complete; W1 Risk's
+counters are persisted and read back. See the MVP path table in
+`DELIVERY_PLAN.md`, which is authoritative for item status — this sentence is
+the record of where W1 stood when it was written.**
 ZT removed its narrative fields rather than counting them — nothing consumed
 them (#64) — and corrected D-045's false claim that ZT persisted them.
 

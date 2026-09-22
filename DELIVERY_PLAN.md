@@ -1112,7 +1112,10 @@ W6      ──> export/publish half independent; its #123 half queues
 - **#29 must not merge** until a clean adversarial audit. (W2 landed as PR #103 on 2026-08-20; the resolver half of #29 is superseded, the `/ai-inputs` panel half is item 7.)
 - Items 1 and 6 depend on nothing and can run in parallel with the chain.
   **Item 8 is HALF independent**: its export/publish half depends on nothing,
-  its #123 half queues behind #114 on `routes/clients.py`. This line said
+  its #123 half queues behind #114 on `routes/clients.py`. **SPENT 2026-09-21:
+  #114 landed 2026-09-08 and #123 itself landed 2026-09-10, so the queue is
+  empty and only the export/publish half is left — which depended on nothing
+  and still does.** This line said
   "1, 6 and 8" for one draft of the very commit that added the dependency
   two lines below it — see the note there.
 
