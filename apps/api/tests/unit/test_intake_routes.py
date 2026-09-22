@@ -197,7 +197,19 @@ def test_submit_rejects_empty_service_requests(app_client) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("payload", [{"legal_name": ""}, {"legal_name": None}, {}])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"legal_name": ""},
+        {"legal_name": None},
+        {},
+        # The whitespace case, added after the adversarial review: `"   "`
+        # is TRUTHY, so it is the one arm a bare `not` lets through, and
+        # the three arms above all pass with the guard's `.strip()`
+        # deleted. Without this row the guard cannot go red on revert.
+        {"legal_name": "   "},
+    ],
+)
 def test_submit_rejects_an_unnamed_organization(app_client, payload: dict) -> None:
     """You cannot submit an intake without naming the organisation.
 
@@ -419,3 +431,68 @@ def test_intake_state_returns_the_contact_for_review(app_client) -> None:
     assert contact["timezone"] == "America/Chicago"
     # The email is the account's own and is shown read-only on the wizard.
     assert contact["email"]
+
+
+@pytest.mark.unit
+def test_patch_normalises_a_whitespace_only_name_to_null(app_client) -> None:
+    """A blank name is stored as NULL, not as blanks.
+
+    This is the WRITE half of D-080's "one representation of unnamed". Without
+    it `"   "` survives in the column: every exporter's `client_legal_name or
+    "Client"` sees a truthy value and renders a BLANK organisation line on the
+    client's DOCX/PDF/XLSX, while the admin UI calls the same row unnamed.
+
+    Asserts the stored column rather than the response, because the response
+    would echo whatever the normaliser produced and could agree with a broken
+    one by construction.
+    """
+    client, TestSession = app_client
+    bearer = _register_and_bearer(client)
+
+    r = client.patch(
+        "/intake",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"client": {"legal_name": "   "}},
+    )
+    assert r.status_code == 200, r.text
+
+    with TestSession() as db:
+        row = db.execute(select(Client)).scalar_one()
+        assert row.legal_name is None, (
+            f"a whitespace-only name was stored as {row.legal_name!r}; it must "
+            f"normalise to NULL so there is one representation of 'unnamed'"
+        )
+
+
+@pytest.mark.unit
+def test_engagement_refuses_a_legacy_blank_name_with_422_not_500(app_client) -> None:
+    """A row that predates the write-time normalisation must still be REFUSED.
+
+    The setup writes `"   "` by direct SQL on purpose. That is not the step
+    under test -- it is the WORLD: `ClientProfilePatch` carries no validator, so
+    any pre-D-080 `PATCH /intake` could store it, and migration 0049 does not
+    NULL it (its predicates match a domain, a display name, or the old
+    sentinel). The invariant is enforced at every writer and does not reach
+    backwards, so the read side has to cope.
+
+    Before the guard stripped, `"   "` was truthy: this guard passed and
+    `provision_self_assessment_service` raised `ValueError` on the next call --
+    an untyped 500 six lines below a typed 422, against core principle 2.
+    """
+    client, TestSession = app_client
+    bearer = _register_and_bearer(client)
+
+    with TestSession() as db:
+        row = db.execute(select(Client)).scalar_one()
+        row.legal_name = "   "
+        db.commit()
+
+    r = client.post(
+        "/intake/engagements",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"service_type": "nist_csf", "csf_target_tier": 2, "csf_profile": "current"},
+    )
+    assert r.status_code == 422, (
+        f"expected a typed 422 refusal, got {r.status_code}. A 500 here is the "
+        f"ValueError from provision_self_assessment_service escaping untyped."
+    )

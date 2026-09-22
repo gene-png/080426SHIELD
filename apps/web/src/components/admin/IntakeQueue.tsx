@@ -473,17 +473,42 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   // `hasName` decides what to CALL the org; `hasIntakeData` decides whether
   // there is anything to SHOW.
   const hasName = c !== null && isNamedOrg(c.legal_name);
+  // DERIVED from what the card renders, not enumerated beside it. The first
+  // version of this predicate listed eight fields while the card's Address row
+  // renders six of its own, and `address_line2`, `state` and `postal_code` were
+  // in the row and not in the list -- so a client who typed only a postal code
+  // still got "No client intake yet" printed over it. `Step2Organization` saves
+  // every one of these independently on blur, so each is reachable alone.
+  //
+  // `addressParts` is the single source both use: the predicate asks whether
+  // any part is present, the row joins the same array. They cannot diverge
+  // again, which listing the names a second time is exactly how they did.
+  //
+  // `.trim()` rather than `Boolean`, matching `hasContext` below: a
+  // whitespace-only website is not intake data, and the bare-truthy version
+  // showed "In progress -- not yet submitted" over nothing.
+  const addressParts = c
+    ? [
+        c.address_line1,
+        c.address_line2,
+        c.city,
+        c.state,
+        c.postal_code,
+        c.country,
+      ]
+    : [];
+  const filled = (v: string | null | undefined): boolean =>
+    typeof v === "string" && v.trim().length > 0;
   const hasIntakeData =
     c !== null &&
     (isNamedOrg(c.legal_name) ||
-      Boolean(c.dba_name) ||
-      Boolean(c.website) ||
-      Boolean(c.size_band) ||
-      Boolean(c.industry) ||
-      Boolean(c.address_line1) ||
-      Boolean(c.city) ||
-      Boolean(c.country) ||
-      Boolean(c.prompting_context));
+      filled(c.dba_name) ||
+      filled(c.website) ||
+      filled(c.size_band) ||
+      filled(c.industry) ||
+      filled(c.prompting_context) ||
+      (c.service_interests?.length ?? 0) > 0 ||
+      addressParts.some(filled));
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
@@ -566,16 +591,8 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
               {row("Industry", c.industry)}
               {row(
                 "Address",
-                [
-                  c.address_line1,
-                  c.address_line2,
-                  c.city,
-                  c.state,
-                  c.postal_code,
-                  c.country,
-                ]
-                  .filter(Boolean)
-                  .join(", ") || null,
+                // Same `addressParts` the predicate above tests -- one list.
+                addressParts.filter(filled).join(", ") || null,
               )}
               {row("Systems and context", c.prompting_context)}
             </dl>

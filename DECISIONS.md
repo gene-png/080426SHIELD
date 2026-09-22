@@ -5010,7 +5010,12 @@ different reasons, which is what makes the predicate discriminating rather than
 merely narrow.
 
 Error direction: a false positive surfaces immediately as "(pending intake)" on
-an admin screen and is cleared by retyping the name; a false negative leaves the
+an admin screen -- but **CORRECTED: there is nowhere to retype it.** No route in
+`routes/admin.py` updates an existing client's `legal_name`; the only writers are
+admin CREATE, `auth.py`'s NULL, and the tenant's own intake wizard. A wrongly
+NULLed row is recoverable only by that tenant running the wizard, and the
+sentence that said otherwise was what licensed accepting the risk. The missing
+admin edit path is filed, not built here. A false negative leaves the
 pre-existing defect for that one tenant and is not made worse. Only the second
 is silent, and it is the status quo.
 

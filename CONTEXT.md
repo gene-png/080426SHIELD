@@ -41,7 +41,7 @@ Migration 0049 backfills only rows that reconstruct exactly what the two
 self-serve paths wrote. Measured against the dev Postgres before applying: 4
 client rows, 1 matching, 0 matching the display-name predicate — and the one
 match is a live instance of the defect.
-<!-- counted: docker compose exec -T db psql -U shield -d shield -At, the two backfill predicates in alembic/versions/0049 run as SELECT count(*), 2026-09-22 -->
+<!-- counted: docker compose exec -T db psql -U shield -d shield -At, the four SELECT count(*) statements written out in alembic/versions/0049's MEASURED block, 2026-09-22 -->
 
 **#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
 it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut

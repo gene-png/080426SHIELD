@@ -629,29 +629,31 @@ def create_engagement(
     # D-080: NULL means self-serve provisioning never named this org, which
     # is exactly the state the intake wizard exists to leave.
     #
-    # NO `.strip()` HERE, unlike the submit guard above, and that asymmetry is
-    # deliberate rather than a missed twin. This reads a STORED name, and the
-    # invariant is that a stored `legal_name` is NULL or a non-empty TRIMMED
-    # string -- so `not` is the whole test. `submit_intake` strips because it
-    # validates the INCOMING body, before `_apply_patch_to_client` has
-    # normalised anything.
+    # `.strip()` HERE TOO, matching the submit guard, and the earlier version of
+    # this comment argued the opposite. It said a stored name is always NULL or
+    # non-empty-and-trimmed, so a bare `not` was the whole test. That is true of
+    # every row written from this branch onward and FALSE of rows already in the
+    # database: `ClientProfilePatch` carries no validator, so any pre-branch
+    # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
+    # its three predicates are domain-match, display-name-match, and the literal
+    # sentinel. The branch introduces a write-time invariant and ships nothing
+    # that establishes it for existing data.
     #
-    # THE INVARIANT IS OVER EVERY WRITER OF THE COLUMN, so check the predicate
-    # rather than trusting a list here:
+    # What that cost, before the strip: `"   "` is truthy, so this guard passed
+    # and `provision_self_assessment_service` raised `ValueError` on the very
+    # next call -- an untyped 500 six lines below a typed 422, against core
+    # principle 2. The strip turns that back into the 422 the client should get.
+    #
+    # THE WRITER SET IS A GREP, NOT A LIST -- it was enumerated here twice and
+    # was wrong both times (it missed `scripts/seed_demo.py`):
     #
     #     grep -rn "legal_name\s*=" --include=*.py apps/api scripts | grep -v ==
     #
-    # Stated as a grep because the list WAS written out here and was wrong on
-    # the first attempt: it named the two routes and `_apply_patch_to_client`
-    # and missed `scripts/seed_demo.py`, which also constructs a `Client`. That
-    # writer happens to pass a trimmed literal, so the invariant held and the
-    # enumeration did not -- which is the failure worth designing against, not
-    # the one that would have broken the guard.
-    #
-    # What reopens this: any writer that stores a name it has not trimmed, or
-    # stores `""` rather than NULL. Add the normalisation AT THAT WRITER, not
-    # here -- one representation of "unnamed" is the whole of D-080.
-    if not client.legal_name:
+    # The general shape, which is the part worth keeping: an invariant enforced
+    # at every WRITER still does not hold for rows that predate the enforcement.
+    # Either backfill them or keep reading defensively. This does the second,
+    # because the first cannot distinguish `"   "` from a name someone meant.
+    if not (client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Complete your organization profile in intake before starting an engagement.",

@@ -39,9 +39,14 @@ class Client(UUIDPKMixin, TimestampMixin, Base):
     #
     #     grep -rn "legal_name\s*=" --include=*.py apps/api scripts | grep -v ==
     #
-    # A stored name is NULL or a non-empty TRIMMED string; every writer that
-    # takes user input normalises before it lands, which is why the read-side
-    # guards are a bare `not` rather than a `.strip()`.
+    # Every writer that takes user input normalises before it lands, so a name
+    # stored FROM D-080 ONWARD is NULL or non-empty and trimmed. That is a
+    # write-time invariant and it does not reach backwards: `ClientProfilePatch`
+    # has no validator, so a pre-D-080 `PATCH /intake` could store `"   "`, and
+    # migration 0049 does not NULL it (its predicates match a domain, a display
+    # name, or the old sentinel -- not whitespace). Read-side guards therefore
+    # still `.strip()`; an invariant enforced at every writer says nothing about
+    # rows that predate the enforcement.
     #
     # The column is the condition. Every guard that needs "has this org been
     # named" tests `legal_name` itself rather than a sentinel string or a second

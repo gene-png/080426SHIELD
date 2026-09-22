@@ -44,10 +44,13 @@ no read path gains a value it could not already receive (`legal_name` was
 always a `str`; it can now also be `None`, which MOST consumers were already
 written to handle because the sentinel produced the same `None` downstream).
 
-CORRECTED: two consumers were NOT, and both render the literal string `None`.
-`provision_self_assessment_service` builds `f"{org_name} - {SERVICE_TITLES[..]}"`,
-and `submit_intake`'s notification builds `f"{client.legal_name} requested: .."`.
-Both are guarded by their callers today, so neither can fire -- but the original
+CORRECTED TWICE: two consumers were NOT, then a third was found in the sentence
+that corrected the first two -- a half-sweep inside the certificate of a sweep.
+All three render the literal string `None`: `provision_self_assessment_service`
+builds `f"{org_name} - {SERVICE_TITLES[..]}"`; `submit_intake`'s notification
+builds `f"{client.legal_name} requested: .."`; and `create_engagement`'s builds
+`f"{client.legal_name} started: .."`. All three are guarded by their callers
+today, so none can fire -- but the original
 sentence licensed skipping exactly the sweep that finds them. The helper now
 refuses an unnamed org outright rather than resting on two callers' `if not`
 lines in another module.
@@ -66,14 +69,33 @@ rather than guessing at it. A row an admin named is untouched unless the admin
 typed a name identical to the tenant's own mapped domain or to its primary
 contact's display name.
 
-MEASURED against the dev Postgres, 2026-09-22, before this revision was applied
-(`docker compose exec -T db psql -U shield -d shield`, the two predicates below
-run verbatim as `SELECT count(*)`):
+MEASURED against the dev Postgres, 2026-09-22, before this revision was applied,
+via `docker compose exec -T db psql -U shield -d shield -At`. The statements are
+written out because the earlier version of this block said the predicates "run
+verbatim as `SELECT count(*)`" while showing three `UPDATE`s -- nobody could
+re-run the cited measurement (#441):
 
-    total client rows                        -> 4
-    matching the domain predicate            -> 1
-    matching the display-name predicate      -> 0
-    rows already holding "(pending intake)"  -> 0
+    SELECT count(*) FROM client;
+      -> 4
+
+    SELECT count(*) FROM client c
+     WHERE c.intake_completed_at IS NULL AND c.legal_name IS NOT NULL
+       AND c.legal_name IN (SELECT cd.domain FROM client_domain cd
+                             WHERE cd.client_id = c.id);
+      -> 1
+
+    SELECT count(*) FROM client c
+     WHERE c.intake_completed_at IS NULL AND c.legal_name IS NOT NULL
+       AND c.primary_poc_user_id IS NOT NULL
+       AND c.legal_name = (SELECT u.display_name FROM users u
+                            WHERE u.id = c.primary_poc_user_id);
+      -> 0
+
+    SELECT count(*) FROM client WHERE legal_name = '(pending intake)';
+      -> 0
+
+The third `_BACKFILL` statement was added AFTER this measurement, to close the
+downgrade round trip; its count here is the fourth query above.
 
 The one match is a live instance of the defect rather than a hypothetical:
 
@@ -108,12 +130,29 @@ statement a re-upgrade would strand the row holding a marker no code reads any
 more. The log naming a DIFFERENT predicate on each upgrade is what shows the
 three are not redundant.
 
-ERROR DIRECTION, stated so it is examined rather than assumed: a false positive
-(an admin-named row wrongly NULLed) shows up immediately as "(pending intake)"
-on an admin screen and is cleared by retyping the name. A false negative (a
-self-serve row left named) leaves the pre-existing defect in place for that one
-tenant and is not made worse by this migration. Only the second is silent, and
-it is the status quo rather than something introduced here.
+ERROR DIRECTION, stated so it is examined rather than assumed -- and CORRECTED,
+because the first version of this paragraph named a recovery control that does
+not exist. It said a wrongly-NULLed row "is cleared by retyping the name". There
+is NOWHERE to retype it. Measured against `routes/admin.py`: the routes are
+`POST /clients`, `POST /clients/{cid}/domains`, `PATCH /users/{user_id}`,
+`POST /service-requests/{id}/fulfill` and `POST /llm-key` -- **no route updates
+an existing client's `legal_name`**. The only writers are admin CREATE,
+`Client(legal_name=None)` in `routes/auth.py`, and `_apply_patch_to_client`,
+which is the tenant's OWN intake wizard.
+
+So a false positive -- an admin-named row whose typed name equalled its mapped
+domain, with no intake -- is NULLed by this upgrade and **no admin can put it
+back**. Recovery requires a user inside that tenant to run the intake wizard.
+Until then five exporters print "Client" on the organisation line and
+`POST /intake/engagements` refuses with a 422.
+
+That correction matters more than the risk it describes: the sentence was what
+licensed accepting the backfill's false-positive risk, and it was false. A
+missing admin edit path is a product gap and is filed rather than built here.
+
+A false negative (a self-serve row left named) leaves the pre-existing defect in
+place for that one tenant and is not made worse by this migration. Both
+directions are now stated with what actually recovers them.
 
 ## Downgrade
 

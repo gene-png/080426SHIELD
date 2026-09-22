@@ -256,3 +256,66 @@ def test_admin_created_client_keeps_its_name(
         assert row.legal_name == "Northwind Grid Cooperative"
         assert row.intake_completed_at is None
         assert client_org_name_for_tenant(db, cid) == "Northwind Grid Cooperative"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("org_name", [None, "", "   "])
+def test_provisioning_refuses_an_unnamed_org_rather_than_titling_it_none(
+    org_name: str | None,
+) -> None:
+    """The ratchet in `provision_self_assessment_service`, pinned.
+
+    It builds `f"{org_name} - {SERVICE_TITLES[...]}"`, so an unnamed org would
+    title a consultant's workspace `"None - NIST CSF 2.0 Assessment"` -- or,
+    for a blank name, put a leading space where the client's name belongs -- and
+    NOTHING would error. Both live callers guard first, so this cannot fire
+    today; it exists so that a third caller fails loudly instead.
+
+    A ratchet with no test is indistinguishable from a ratchet that was deleted,
+    which is why this is here rather than left to the callers' guards. The
+    `sr` is a bare object: the raise happens before any attribute but `id` is
+    read, so a real `ServiceRequest` row would test the same line through more
+    setup.
+    """
+    from app.provisioning import provision_self_assessment_service
+
+    class _Sr:
+        id = "11111111-1111-4111-8111-111111111111"
+
+    with pytest.raises(ValueError, match="named organisation"):
+        provision_self_assessment_service(
+            None,  # db is never touched -- the guard is the first statement
+            _Sr(),  # type: ignore[arg-type]
+            org_name=org_name,
+            actor_user_id=uuid.uuid4(),
+        )
+
+
+@pytest.mark.unit
+def test_provisioning_accepts_an_explicit_title_without_an_org_name() -> None:
+    """The other half of the branch, so the guard cannot be 'fixed' into refusing everything.
+
+    `create_engagement` passes a user-supplied `title`, and a named engagement
+    does not need the org name to build one. A guard that refused this would
+    break the self-service engagement flow, and a test of only the raising half
+    would stay green through it.
+    """
+    from app.provisioning import provision_self_assessment_service
+
+    class _Sr:
+        id = "11111111-1111-4111-8111-111111111111"
+
+    # Reaching the NEXT statement is the assertion: the guard did not fire.
+    # It raises AttributeError on the bare stub, never ValueError.
+    with pytest.raises(Exception) as excinfo:
+        provision_self_assessment_service(
+            None,
+            _Sr(),  # type: ignore[arg-type]
+            org_name=None,
+            actor_user_id=uuid.uuid4(),
+            title="Q3 Zero Trust review",
+        )
+    assert not isinstance(excinfo.value, ValueError), (
+        "the guard fired despite an explicit title; a named engagement does not "
+        "need an org name to build its title"
+    )

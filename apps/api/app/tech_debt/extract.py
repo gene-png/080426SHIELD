@@ -386,11 +386,23 @@ def client_org_name_for_tenant(db: Session, client_id) -> str | None:
     row = db.get(Client, client_id)
     if row is None:
         return None
-    # D-080: NULL is the store's own record that nobody has named this org,
-    # so there is no name to hint the redactor with. The empty-string arm is
-    # kept because a wizard that clears the field writes "" rather than NULL.
+    # D-080: NULL is the store's own record that nobody has named this org, so
+    # there is no name to hint the redactor with.
+    #
+    # `not name` rather than `is None`, and the REASON here was wrong when first
+    # written. It said the empty-string arm covers "a wizard that clears the
+    # field, which writes `""` rather than NULL". Both halves are false: the
+    # wizard sends `undefined` (`saveField(..., e.target.value || undefined)`,
+    # which `exclude_unset` then drops), and `_apply_patch_to_client` maps `""`
+    # and `"   "` to NULL anyway.
+    #
+    # The arm stays, with the reason it actually has: rows written BEFORE D-080
+    # can hold `""` or `"   "`, because `ClientProfilePatch` carries no
+    # validator and migration 0049 does not NULL whitespace. Blank is not a
+    # name to hint with, and handing one to the redactor would ask it to
+    # redact nothing while reporting that it had a name.
     name = row.legal_name
-    if not name:
+    if not (name or "").strip():
         return None
     return name
 
