@@ -88,6 +88,22 @@ class LinkScope:
 
     @property
     def excluded(self) -> int:
+        """Rows carrying no judgement.
+
+        `total - len(codes)` is EXACT rather than approximate, and it rests on a
+        constraint in another file: all three tables carry
+        `UniqueConstraint(assessment_id, <code column>)` and all three code
+        columns are `nullable=False`, while every caller filters by a single
+        `assessment_id`. So one row yields one distinct non-null code and the
+        subtraction counts exactly the unscored rows.
+
+        WHAT WOULD MAKE THIS LIE, stated because the dependency is invisible from
+        here: drop either uniqueness constraint, or let a code column go NULL,
+        and two rows collapse into one set member -- `excluded` would then report
+        rows as unjudged that were judged, understating the scored share in a
+        number a client reads. The remedy would be to count judged ROWS
+        separately rather than to infer them from the set size.
+        """
         return self.total - len(self.codes)
 
 

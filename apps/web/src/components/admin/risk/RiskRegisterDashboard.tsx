@@ -685,8 +685,21 @@ export function RiskRegisterDashboard(): JSX.Element {
               the two-state trap the `_recorded` flag exists to end.
 
               The denominator travels with the count deliberately: a withheld
-              number over an undisclosed population is not self-describing. */}
-          {register.excluded_unscored_links_recorded ? (
+              number over an undisclosed population is not self-describing.
+
+              THE LENGTH CHECK IS NOT THE TWO-STATE COLLAPSE IT LOOKS LIKE, and
+              the distinction is worth reading before anyone "simplifies" it. The
+              states that must stay apart are "fully scored" and "never
+              recorded" -- and a fully scored assessment still produces a ROW
+              (`{scored: 106, total: 106}`), so it is `recorded` AND non-empty.
+              An empty array under `recorded: true` means the run recorded a
+              scope naming no assessment at all, which `generate` cannot produce
+              (it 409s on `synthesizable_missing`, so at least one assessment is
+              always finalized). Rendering it would put this panel's heading and
+              its "links can only cite what each assessment has scored" claim
+              over nothing. */}
+          {register.excluded_unscored_links_recorded &&
+          register.excluded_unscored_links.length > 0 ? (
             <div
               className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
               data-testid="risk-link-scope"

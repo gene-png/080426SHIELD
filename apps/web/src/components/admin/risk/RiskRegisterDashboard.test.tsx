@@ -707,4 +707,25 @@ describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
     expect(text).toContain("misnamed or names a control");
     expect(text).toContain("have not scored");
   });
+
+  it("renders no panel for a recorded scope that names no assessment", async () => {
+    // `generate` cannot produce this -- it 409s on `synthesizable_missing`, so
+    // at least one assessment is always finalized and the array always has a
+    // row. Pinned anyway, because the panel's heading and its "links can only
+    // cite what each assessment has scored" claim would otherwise render over
+    // nothing.
+    //
+    // NOT the two-state collapse this field's `_recorded` flag exists to
+    // prevent: a FULLY SCORED assessment still yields a row (106 of 106), which
+    // the test above asserts renders. Only the no-assessment case is empty.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 1,
+        excluded_unscored_links_recorded: true,
+        excluded_unscored_links: [],
+      }),
+    );
+    await loaded();
+    expect(screen.queryByTestId("risk-link-scope")).not.toBeInTheDocument();
+  });
 });
