@@ -473,6 +473,25 @@ def _gather_findings(
             .scalars()
             .all()
         )
+        # PENDING-REVIEW ROWS ARE CITABLE HERE, AND THAT IS AN OPEN QUESTION
+        # RATHER THAN AN OVERSIGHT -- stated at the site because an unstated
+        # exemption reads as one to whoever runs this sweep next.
+        #
+        # #102 says a status backed by no CONFIRMED citation must not score:
+        # `attack/pending.py::pending_codes` is the authoritative set the
+        # heatmap withholds. This scope does NOT subtract it, so a technique
+        # whose coverage status is withheld from the score can still appear in
+        # the register's `linked_techniques` and in the client's export.
+        #
+        # Arguable both ways, which is why it is filed rather than decided
+        # here. A link says "this risk relates to T1003", not "T1003 is
+        # covered", so citing a pending row may be perfectly honest -- or it may
+        # propagate an unreviewed model inference into a deliverable, which is
+        # the harm #102 exists to prevent.
+        #
+        # NOT INTRODUCED and strictly improved by this change: before #403 every
+        # technique in the catalog was citable, pending or not. Narrowing to
+        # scored rows is a subset of that, so nothing got worse. Tracked in #415.
         attack_scope = scope_for(AttackCoverage, rows)
         valid_techniques = set(attack_scope.codes)
         link_scopes["attack"] = attack_scope
