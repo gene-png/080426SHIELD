@@ -5033,3 +5033,97 @@ deletes.
 It is replaced by `test_submit_rejects_an_unnamed_organization`, parametrised
 over `""`, `null` and an absent key — what the guard always MEANT, and wider
 coverage than it replaces, since the old test exercised none of those three.
+
+## D-081 — A landing entry is its OWN FILE, because `CONTEXT.md` conflicts on every PR
+
+**Decision:** new dated narrative entries go in `context/entries/<date>-<slug>.md`,
+one file per landing PR. Nothing appends to `CONTEXT.md`'s dated region any more.
+The stable sections of `CONTEXT.md` — current state, the `mvp-blocking` mapping,
+machine-local facts, deferred items, test coverage, lessons learned — stay where
+they are and are still edited in place.
+
+**Merge-rule condition 3 is unchanged and was not weakened.** The record is still
+updated in the LANDING COMMIT; a fragment satisfies it. The alternative that WAS
+rejected is deferring the update to a later PR, because a record written after
+the fact is written by someone who no longer holds the measurement.
+
+### The measurement
+
+<!-- counted: for N in 10 25 50, count first-parent commits on origin/main whose --name-only lists CONTEXT.md, at 4a7e08f, 2026-09-22 -->
+
+| window               | commits touching `CONTEXT.md` |
+| -------------------- | ----------------------------- |
+| last 10 first-parent | 8                             |
+| last 25              | 8                             |
+| last 50              | 10                            |
+
+**THE FIRST VERSION OF THIS RECORD SAID "25 of the last 25", AND THE COMMAND
+UNDER IT COULD NOT HAVE RETURNED ANYTHING ELSE.** It was
+`git log -25 --format=%h --first-parent origin/main -- CONTEXT.md | wc -l`,
+where `-25` caps the OUTPUT at twenty-five rather than selecting the last
+twenty-five commits — so with a pathspec it returns 25 for any file touched 25
+or more times in all of history. The same shape against `README.md` returns 4,
+which is what it looks like when the file is not volatile. A number in the
+right units answering a different question, which `CLAUDE.md` records as the
+hardest kind to catch. Kept rather than overwritten because the wrong figure
+was published in a commit body and a PR, and a reader who saw it needs to know
+which number to discard.
+
+**The corrected figures do not carry the argument, and the argument does not
+need them.** Eight of the last ten is heavy but it is not "every branch", and
+over fifty commits it is a fifth. What settles this is not a ratio: **three
+consecutive PRs conflicted on that file and on nothing else**, each costing a
+hand resolution whose only possible outcome was "keep both" — a conflict raised
+over two paragraphs that do not interact. That is three for three on the PRs
+that actually overlapped, and it is independent of how the denominator is
+drawn.
+
+### Why the two cheaper options were rejected
+
+**Append-only with a dated section per entry does not work**, and this is the
+one worth writing down because it is the obvious fix. Git conflicts on two
+branches adding lines at the same anchor whether or not the additions are
+appends — that is precisely what all three conflicts were. The convention was
+already being followed; it is not a convention problem.
+
+**Moving the narrative into the PR body loses the record.** A PR body is not in
+the tree, is not gated by `check_recalled_counts`, and is not where anyone looks
+six months later. It is the right home for the argument and the wrong home for
+the fact.
+
+### Why there is NO index file
+
+An index is a second shared mutable file that every branch must touch, so it
+would inherit the entire defect one level down — and it would do so while
+looking like the fix. **The directory listing IS the index**: filenames carry
+the date and the subject, and they sort. That is derivation over
+synchronization, applied to a document: a value that cannot be out of sync beats
+one that merely is not, right now.
+
+### The gate follows the same rule
+
+`check_recalled_counts.py` GLOBS `context/entries/*.md` into its enforced set
+rather than listing them. A hand list there would have reintroduced the defect
+in the gate: every PR adding a fragment would also edit one shared constant.
+
+Four cases pin it, and the two controls matter as much as the two positives: a
+fragment with a bad count exits 1; a fragment the gate has never heard of exits
+1 (so the set is derived, not listed); a MISSING `context/entries/` is exit 0
+rather than the exit 2 a missing enforced target takes, because a tree with no
+fragments yet is normal rather than unreadable; and an explicit `--porcelain
+one.md` does not silently widen to the glob. Red-on-revert: deleting the
+two-line wiring reddens the two positives and neither control.
+
+### What is NOT done here
+
+The dated sections already in `CONTEXT.md` stay. They are history, nothing
+appends to them, and migrating them is the large self-referential pass with no
+green state that this repo has a rule against. They move only if some other PR
+is editing that region anyway.
+
+### Residual, stated rather than discovered later
+
+A reader now has two places to look for narrative — `CONTEXT.md` for anything
+before this decision, `context/entries/` for anything after. That is a real
+cost and it is the price of the conflicts stopping. It shrinks as the old
+sections age out of relevance and it never grows.
