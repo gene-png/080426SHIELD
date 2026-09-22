@@ -630,19 +630,27 @@ def create_engagement(
     # is exactly the state the intake wizard exists to leave.
     #
     # NO `.strip()` HERE, unlike the submit guard above, and that asymmetry is
-    # deliberate rather than a missed twin. This reads a STORED name, and every
-    # writer of the column normalises before it lands:
+    # deliberate rather than a missed twin. This reads a STORED name, and the
+    # invariant is that a stored `legal_name` is NULL or a non-empty TRIMMED
+    # string -- so `not` is the whole test. `submit_intake` strips because it
+    # validates the INCOMING body, before `_apply_patch_to_client` has
+    # normalised anything.
     #
-    #   routes/admin.py      `body.legal_name.strip()`, and refuses the empty
-    #   routes/auth.py       writes None (self-serve names nothing)
-    #   _apply_patch_to_client   `raw.strip() or None`
+    # THE INVARIANT IS OVER EVERY WRITER OF THE COLUMN, so check the predicate
+    # rather than trusting a list here:
     #
-    # So the stored value is NULL or a non-empty trimmed string, and `not` is
-    # the whole test. `submit_intake` strips because it validates the INCOMING
-    # body, before `_apply_patch_to_client` has normalised anything.
+    #     grep -rn "legal_name\s*=" --include=*.py apps/api scripts | grep -v ==
     #
-    # What would reopen this: a fourth writer that sets `legal_name` without
-    # going through one of those three. Add the strip there, not here.
+    # Stated as a grep because the list WAS written out here and was wrong on
+    # the first attempt: it named the two routes and `_apply_patch_to_client`
+    # and missed `scripts/seed_demo.py`, which also constructs a `Client`. That
+    # writer happens to pass a trimmed literal, so the invariant held and the
+    # enumeration did not -- which is the failure worth designing against, not
+    # the one that would have broken the guard.
+    #
+    # What reopens this: any writer that stores a name it has not trimmed, or
+    # stores `""` rather than NULL. Add the normalisation AT THAT WRITER, not
+    # here -- one representation of "unnamed" is the whole of D-080.
     if not client.legal_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
