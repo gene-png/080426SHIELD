@@ -602,3 +602,34 @@ def test_an_unreadable_scope_reports_NOT_RECORDED_rather_than_a_partial_answer(
     body = _latest(c, bearer, cid)
     assert body["excluded_unscored_links_recorded"] is False, why
     assert body["excluded_unscored_links"] == [], why
+
+
+@pytest.mark.unit
+def test_every_findings_source_id_stays_inside_the_allow_list(app_client) -> None:  # noqa: F811
+    """The narrowing must not orphan a finding from its own citation.
+
+    Every finding already requires a judgement -- `status in ("gap","partial")`,
+    `maturity_tier is not None`, `maturity_stage is not None` -- and the
+    allow-lists are now exactly the judged rows, so findings are a SUBSET by
+    construction. That is a new invariant this change creates, and it is worth
+    pinning rather than reasoning about: loosening any findings predicate (say,
+    emitting a finding for an unscored row so the consultant sees it) would
+    silently start handing the model a `source_id` its own allow-list rejects,
+    and `_resolve_links` would drop the provenance of every such entry.
+
+    Asserted over the payload the model actually received, so it covers the
+    real relationship rather than a restatement of the two predicates.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    _seed_csf_answer_at_tier(c, bearer, cid, tier=1)
+    seen = _capture(provider)
+    _generate(c, bearer, cid)
+
+    payload = seen[0]
+    universe = set(payload["valid_techniques"]) | set(payload["valid_controls"])
+    findings = payload["findings"]
+    assert findings, "no findings, so a subset assertion would hold vacuously"
+    orphans = [f["source_id"] for f in findings if f.get("source_id") not in universe]
+    assert orphans == [], f"findings cite codes their own allow-list rejects: {orphans}"
