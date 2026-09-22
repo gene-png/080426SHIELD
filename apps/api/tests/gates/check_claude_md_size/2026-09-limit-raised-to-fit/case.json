@@ -1,0 +1,4 @@
+{"incident": "ADVERSARIAL, and the reason --limit exists at all. The obvious way to clear a red size gate is to pass the number that makes your file legal, and a reasonable person would expect a --limit flag to accept it. If it did, the flag would BE the hole and this gate would join the list of checks whose pass state its subject can choose. The docstring says DO NOT RAISE THE LIMIT; this case is what makes that a property of the code rather than a sentence.",
+ "expect": 2, "adversarial": true,
+ "stdout_contains": "may only lower the bar",
+ "argv": ["--limit", "999999", "{dir}/CLAUDE.md"]}

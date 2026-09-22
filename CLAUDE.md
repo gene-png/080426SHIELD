@@ -2,28 +2,31 @@
 
 ## Where to start, by task
 
-**Read the rows that apply and stop.** This file is long enough that reading it
-end to end costs more than most tasks are worth, and the parts that matter to
-you are a small fraction of it.
+**Read the rows that apply and stop.** The parts that matter to you are a small
+fraction of this file.
 
 | If you are… | Read |
 | --- | --- |
 | Picking up after a break | `context/<your-name>.md`, then `DELIVERY_PLAN.md`'s MVP completion path |
+| Deciding whether an agent may merge | **The merge rule**, immediately below the core principles. Do not grow it. |
 | Writing or changing code | Core principles, then Real commands, then the gotcha bullets for the subsystem you are touching |
 | Writing a test | Core principle 3, and the bullets on tests that cannot fail (#72, D-051) |
 | Touching the redactor or any AI path | Core principle 1, the redaction bullets, and D-058 |
 | Adding or changing a gate | The silent-success bullet, and the fail-closed bullet |
-| Opening a PR | Rules of the road: the reviewer, the audit block, the closing-keyword check, the merge rule |
-| Deciding whether an agent may merge | The merge rule alone. Do not grow it. |
+| Opening a PR | Rules of the road: the reviewer, the audit block, the closing-keyword check |
 | Writing a number into any document | The rules for numbers in prose |
 | Debugging something that "should work" | Environment gotchas. Start there, not in the code. |
 | Editing this file, `DECISIONS.md`, or any `context/*.md` | The size ratchet, the file-ownership table, and the branch-vs-direct rule |
 | Anything not listed above | Read on. "Stop" applies to a row that matches, never to the absence of one. |
 
-**One rule outranks the rest and is worth reading even if nothing above applies:
-VERIFY BY RUNNING.** Nearly every expensive failure recorded in this file traces
-to a premise someone reasoned about instead of executing. It is the cheapest
-habit here and the highest-yield.
+**This file has a SIZE GATE** (`check_claude_md_size.py`), because at 210,958
+bytes a reader silently cut the last 29% and took the merge rule's path list
+with it. Anything you add here is paid for by trimming something, and the most
+consequential rules stay at the TOP where a partial read still reaches them.
+
+**One rule outranks the rest: VERIFY BY RUNNING.** Nearly every expensive
+failure recorded in this file traces to a premise someone reasoned about instead
+of executing.
 
 **Its unstated precondition: verify that what you are measuring is the thing you
 think you are measuring.** An exit status is set by whichever step ran LAST, not
@@ -40,42 +43,34 @@ Three shapes, one property, all three hit on 2026-09-09 alone:
 `${PIPESTATUS[0]}` only where a pipeline's non-final status is genuinely wanted.
 Where the OUTPUT is what you rely on, do not pipe at all.
 
-That is the crash-versus-verdict shape one layer down, in the shell instead of
-in Python: one program's verdict silently substituted for another's, and the
-substitution looks like success.
-
 **The detection is worth as much as the remedy, because the status tells you
 nothing by construction.** The third row was caught by `git diff --stat` showing
 ONE changed file where five were expected — an independent signal about the
-work, not about the exit code. When a command's status cannot be trusted, check
-the artifact it was supposed to produce.
+work, not about the exit code. **When a command's status cannot be trusted,
+check the artifact it was supposed to produce.**
 
-**That remedy is BASH-ONLY, and its failure in PowerShell is silent.** There is no
-`PIPESTATUS` in PowerShell 5.1: `${PIPESTATUS[0]}` parses as a variable named
-`PIPESTATUS[0]` and evaluates to `$null` with no error. Use `$LASTEXITCODE` — but
-note it holds the last **native** command's code, so `python x.py | findstr .`
+**That remedy is BASH-ONLY, and its failure in PowerShell is silent.** There is
+no `PIPESTATUS` in PowerShell 5.1: `${PIPESTATUS[0]}` parses as a variable named
+`PIPESTATUS[0]` and evaluates to `$null` with no error. Use `$LASTEXITCODE` —
+but it holds the last **native** command's code, so `python x.py | findstr .`
 reports findstr's 0 and loses python's 2, exactly as bash does. **The hazard is
-not bash's. Only the remedy is**, and in neither shell should you pipe when you
-need the exit code. Measured 2026-09-08 (D-071, which also records how the first
-draft of this paragraph got it backwards).
+not bash's. Only the remedy is.** Measured 2026-09-08 (D-071).
 
-**And it is not only pipes — an exit code can be wrong with nothing piped at
-all.** Lines fed to PowerShell 5.1 statement-at-a-time, one of which contains a
-`&&`, run every line above the bad one, print a parser error, and exit **0**.
-Measured on stdin (`-Command -`); the table is under **Real commands**, and an
-interactive console paste is a different, unmeasured case stated there. Nothing is
-substituted here and nothing is swallowed — the status simply does not describe
-what happened, which is the harder version of the same lesson: a green exit is
-evidence about the last thing the shell finished, not about the work you asked
-for.
+**And it is not only pipes.** Lines fed to PowerShell 5.1 statement-at-a-time,
+one containing a `&&`, run every line above the bad one, print a parser error,
+and exit **0**. Measured on stdin (`-Command -`); an interactive console paste
+is a different, unmeasured case. Nothing is substituted and nothing is
+swallowed — the status simply does not describe what happened, which is the
+harder version of the same lesson: **a green exit is evidence about the last
+thing the shell finished, not about the work you asked for.**
 
-## What this is
+## What this file is
 
 Durable project knowledge for every Claude session, every developer. If it's a
 fact that outlives the current sprint, it belongs here. Session status belongs
 in `context/<your-name>.md`; state-of-main belongs in `CONTEXT.md`.
 
-## What this is
+## What SHIELD is
 
 SHIELD is Kentro's multi-tenant cybersecurity assessment platform for
 consultant-led client engagements (FedRAMP Moderate/High targets). Four
@@ -112,39 +107,171 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
    prod runs Postgres. New persisted analysis fields are additive/optional so
    older rows parse unchanged (the C0 pattern).
 
+## The merge rule: when an agent may merge without checking back
+
+**This sits at the top of the file because everything past a reader's size
+limit is cut away silently.** For at least three days it sat at byte 192,494 of
+a 210,958-byte file, so agents read that a PR "tripping condition 5" comes back
+and could not read WHICH PATHS trip it. Keep it here; D-079 records how that
+happened.
+
+**An agent merges on green WITHOUT checking back, when all six hold.**
+
+1. **All seven CI checks green.** Five jobs in `ci.yml` — python, web,
+   secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
+   is schedule-only and excluded. **Re-derive this count if a job is added**;
+   it is a hardcoded number in prose, which this file has a rule about.
+2. **The adversarial reviewer ran against the FINAL state of the branch**, and
+   whatever it found is fixed or filed, recorded with `Findings:` /
+   `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
+   first. The gate checks only that `Findings:` and `Disposition:` exist; it
+   does not read `Scope:` and cannot tell whether the reviewer ran at all.
+3. **`DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated in the
+   landing commit**, with any counts read live rather than carried forward.
+4. **No migration.**
+5. **None of the paths listed below**, which are the ones where a green suite
+   proves least.
+6. **Nothing that changes deliverable content, exporter output, or client
+   dashboard numbers.**
+
+**Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
+
+**Conditions 1 and 4 are mechanical; 5 is mostly a path match, but its
+live-prompt clause needs a diff read. Conditions 2, 3 and 6 are self-attested
+by the agent that wants to merge** — three checkable conditions and three
+honest ones, not "a file-path check plus two facts". Condition 6 is a
+judgement call an agent can talk itself out of; when it is arguable, it has
+been tripped.
+
+### Condition 5: the paths
+
+- `apps/api/app/ai/` — the single egress path for all five services.
+- `apps/api/app/csf/playbook.py`, `app/risk/engine.py`, `app/zt/scoring.py` —
+  the deterministic scoring engines. Core principle 1 is "AI suggests, code
+  computes", and naming only the suggesting half would let a refactor of the
+  5x5 risk mapping merge unattended. #84 is on record as `risk.py` hiding
+  exactly that.
+- the deterministic surfaces the first draft of this list missed:
+  `app/attack/coverage.py`, `app/csf/scoring.py`, `app/zt/maturity.py`,
+  `app/tech_debt/security_scope.py`, `app/risk/exporters.py`. Naming one file
+  for three of five services and none for ATT&CK or Tech Debt was a half-sweep.
+- any live LLM **prompt**, which is not confined to `app/ai/` —
+  `app/tech_debt/extract.py` holds one, and fixture mode echoes payload keys
+  back verbatim, so a prompt drift cannot turn CI red.
+- `apps/api/app/config.py` — the switch deciding whether the redactor may be
+  disabled, and its default. **#142 lived here, not in `app/ai/`.** A PR
+  widening `is_development()` reintroduces it while tripping nothing else here.
+- `apps/api/app/models/**` and `apps/api/alembic/env.py` — "no migration"
+  (condition 4) is not "nothing under `alembic/`". A cascade rule or a column
+  default changes stored behaviour without one.
+- `apps/api/tests/**`, `e2e/**`, and `apps/web/**/*.test.ts`,
+  `apps/web/**/*.test.tsx`, `apps/web/**/*.spec.ts`, `apps/web/**/*.spec.tsx` —
+  weakening a test satisfies condition 1 more directly than editing a workflow
+  does, and this repo keeps finding tests that could not fail (#72, D-051). Web
+  **test globs only**, deliberately: the `apps/web` product code that matters is
+  already caught by condition 6's dashboard clause, and widening to
+  `apps/web/**` would expand scope on an argument nobody has made.
+- `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both drive CI
+  jobs, and seed data being clean is why #130 survived months of green.
+- `docker-compose.yml` and `docker-compose.demo.yml` — CI's E2E and Demo jobs
+  ARE this file: it defines the api bind mounts every containerised gate reads,
+  the web install guard, the api boot chain, and every healthcheck. Listing
+  only `scripts/demo-reset.sh`, a WRAPPER around `docker compose`, left a
+  compose-only PR clearing all six conditions.
+- `apps/api/scripts/check_*.py`, `apps/api/scripts/leave_row_oracle.py` (a CI
+  gate whose name does not match `check_*`), `tests/gates/**`,
+  `.github/workflows/**`, and `.github/pull_request_template.md` — the gates and
+  the harness that enforce this rule. A change here satisfies condition 1 by
+  construction. `fetch-depth: 0` and one colon in the PR template are each the
+  single character deciding whether a gate means anything.
+
+**Derive the set; do not extend the list.** The membership test is "does any
+WORKFLOW execute it as a gate" — all of them, not `ci.yml`:
+
+    grep -rnE "(bash|python( -m)?) +[A-Za-z0-9_./-]*(check_|leave_row_oracle|tests[/.]gates|scripts[/.])" .github/workflows/
+
+**Doubt the command first.** The version published here before it read `ci.yml`
+alone and required a literal `scripts/` or `tests/gates/` path, so it missed
+`audit-gate.yml`'s `bash tests/gates/close_guard_linked_file.sh` entirely and
+missed `python -m scripts.check_test_integrity` — a dotted module with no slash
+— inside the very file it did read. It had been RUN before publishing and
+returned ten real invocations, which is exactly what made it credible:
+**running a command proves what it returns, never what it cannot see.** If a
+gate is wired in a spelling neither the command nor this list knows, both are
+wrong, and the command is the one that will go on reporting clean.
+
+### Re-derive the measurement whenever condition 5 changes
+
+What the rule actually clears is documentation PRs. Code comes back, and so does
+anything adding or changing a test — and this repo does not ship code without
+tests. Condition 5's path list applied to the fifteen most recent PR merges on
+`main`:
+
+| measured | cleared | came back |
+| --- | --- | --- |
+| 2026-08-26 | 4 | 11 |
+| 2026-09-21 | 2 | 13 |
+
+<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21 -->
+
+Each is a claim about a fixed window, so it does not rot the way a live count
+does — and each is true only of condition 5 as it stood that day. **Re-derive
+whenever condition 5 changes**, which is not a remote contingency: it changed
+twice in the three days before the first measurement, and again in September.
+On 2026-09-21 one of the thirteen came back ONLY through the new
+`tests/gates/**` glob, tripping nothing else, so that glob is load-bearing on
+real traffic rather than theoretically.
+
+Dropping the rule was weighed against the same evidence and loses: the four that
+clear are the PRs that recur every round. **D-059** carries the cleared SHAs and
+the two PRs on which a denylist and an allowlist construction disagree; **D-079**
+carries how the first attempt at the September re-derivation selected the wrong
+population and produced a clean-looking "fifteen cleared, zero came back" about
+commits nobody had asked about.
+
+### Worked examples
+
+A STALE worked example is worse than none, because it ends the check with the
+wrong answer in the place a reader looks first. These are phrased from the
+conditions rather than from an issue number for that reason.
+
+- **Anything shipping an endpoint or a panel comes back.** It ships with tests,
+  or condition 1 proves nothing about it, so it trips `apps/api/tests/**`.
+  Whether the surface is admin-only is not a question condition 5 asks.
+- **A PR that repairs the gates comes back**, tripping condition 5 on both
+  `check_*.py` and `apps/api/tests/**` at once. That such a commit is
+  *repairing* the harness this rule depends on argues for a human reading it,
+  not against.
+- **Anything whose fix changes what a client's dashboard or deliverable shows
+  comes back** under condition 6 — that is what condition 6 says, and it is
+  the clause most often talked past.
+
 ## Real commands (use these, not generic equivalents)
 
-**SCOPE: these are GIT BASH forms, and several do not run in PowerShell.** The
-ones carrying `&&` are a grep rather than a number, because a number goes stale
-the next time a command is added here:
+**SCOPE: these are GIT BASH forms, and several do not run in PowerShell.** This
+repo is developed on Windows, so the default shell in a fresh terminal is the
+one that cannot parse them. The commands carrying `&&` are a grep rather than a
+number, because a number goes stale the next time a command is added:
 
     sed -n '/^## Real commands/,/^## Environment gotchas/p' CLAUDE.md | grep -n '&&'
 
-Reading its output takes two corrections:
-
-- **It over-reports on purpose.** This block discusses `&&` in prose and matches
-  itself. The commands are the ones inside backticks under a `- ` bullet.
-- **Hit LINES are not commands.** The ruff/black bullet wraps across two source
-  lines and carries a `&&` on each. Count bullets, not lines.
+Two corrections when reading its output. **It over-reports on purpose** — this
+block discusses `&&` in prose and matches itself; the commands are the ones
+inside backticks under a `- ` bullet. And **hit LINES are not commands**: the
+ruff/black bullet wraps across two source lines and carries a `&&` on each.
+Count bullets, not lines.
 
 **Empty output means the anchors moved, NOT that the section is PowerShell-safe.**
 Both headings match by prefix and it must be run from the repo root. Reword the
 FIRST heading and `sed` prints nothing, `grep` exits 1, and silence reads as the
-reassuring answer — the branch collapse this file records in its own gates.
-Reword only the SECOND and the range never closes, running to EOF and dragging in
-JavaScript `&&` from the prose below; wrong, but visibly wrong. The two failures
-do not look alike, and only one of them announces itself.
+reassuring answer. Reword only the SECOND and the range never closes, running to
+EOF and dragging in JavaScript `&&` from the prose below — wrong, but visibly
+wrong. The two failures do not look alike, and only one announces itself.
 
-This matters here more than it would elsewhere: **this repo is developed on
-Windows, so the default shell in a fresh terminal is the one that cannot parse
-these commands.**
-
-**What breaks where.** The forms this repo has actually hit, a floor rather than
-a census. Every row run in **Git Bash and PowerShell 5.1 on 2026-09-08**. The
-cells are exit codes and the annotation covers those — it does not cover the row
-labels. A marker like this one has already certified a table whose row label was
-wrong — a different table, recorded in D-071 — because the label was never in
-what the marker claimed.
+**What breaks where.** A floor rather than a census. Every row run in **Git Bash
+and PowerShell 5.1 on 2026-09-08**. The cells are exit codes and the annotation
+covers those — it does not cover the row labels, and a marker like this one has
+already certified a table whose row label was wrong (D-071).
 
 | Form | Git Bash | PowerShell 5.1 |
 | --- | --- | --- |
@@ -154,70 +281,54 @@ what the marker claimed.
 | `sh -c "cd /app && ..."` — INNER `&&` | 0 | 0 |
 | single quotes inside double | 0 | 0 |
 
-**No shell shows you every breaking row** — two of them fail only in PowerShell,
-one only in Git Bash — so verifying in the shell you happen to use is
-structurally insufficient, and it clears the rows it cannot see by staying
-silent. Both directions have cost this repo a broken published block (**D-071**).
+**No shell shows you every breaking row** — two fail only in PowerShell, one only
+in Git Bash — so verifying in the shell you happen to use is structurally
+insufficient, and it clears the rows it cannot see by staying silent.
 
 **A PowerShell `&&` parse error can exit 0.** Submitted statement-at-a-time it
-runs every line above the offending one and then reports success; submitted as a
-script it runs none and exits 1. The error names the line it is on, but nothing
-tells you which lines RAN and the exit status does not either — so do not read it
-as one. D-071 carries the measurements, and the interactive-console-paste case
-that is deliberately unmeasured.
+runs every line above the offending one and reports success; submitted as a
+script it runs none and exits 1. Nothing tells you which lines RAN, and the exit
+status does not either.
 
-So, where a command's OUTPUT is what you rely on — a version read, a confirmation
-step — the prescription is only these: **no OUTER `&&` between two host commands
-(use separate lines); no backslash-escaped quotes inside a quoted argument (use
-single quotes inside double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is
-FINE and is the replacement for `-w` — its `&&` is inside a single quoted argument
-handed to the container's shell, which both host shells pass through untouched.
+So where a command's OUTPUT is what you rely on, the prescription is only these:
+**no OUTER `&&` between two host commands (use separate lines); no
+backslash-escaped quotes inside a quoted argument (use single quotes inside
+double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is FINE and is the
+replacement for `-w` — its `&&` is inside a single quoted argument handed to the
+container's shell, which both host shells pass through untouched.
 
 **Exactly one command in this section needs rewriting for PowerShell:**
-`cd e2e && npx playwright test [file]`, a host `cd` joined to a host command by an
-OUTER `&&`. Run it as two lines there. The other four use the `sh -lc` shape,
-including the MANDATORY pre-commit lint, and they work as written.
-
-The dependency-remediation block below is the worked example, and it is there
-because two versions of it shipped broken (D-071).
+`cd e2e && npx playwright test [file]`. Run it as two lines there. The others use
+the `sh -lc` shape, including the MANDATORY pre-commit lint, and work as written.
 
 **The rule, and it binds every command block in this file: a block that claims it
 runs anywhere carries the SHELLS it was actually run in and the DATE it was run.**
 What counts is a SHAPE, not a word list — any sentence asserting a block **runs,
-or does not run,** in more than one shell, however phrased. "Portable", "works in
-both", "fails in Git Bash", "cross-platform" are examples and explicitly not the
-set. **The negative direction is the more dangerous**, because nobody runs the
-thing they have been told is broken, so a false negative claim is never disproved
-by anyone who obeys it.
+or does not run,** in more than one shell, however phrased. **The negative
+direction is the more dangerous**, because nobody runs the thing they have been
+told is broken, so a false negative is never disproved by anyone who obeys it.
 
 **Absent an annotation, assume the block was written for Git Bash and verify
-before running it elsewhere.** That is a default for the READER: the file asserts
-nothing, most of these blocks have not been run anywhere else, and absence of a
-marker is absence of evidence rather than evidence of absence. It holds file-wide,
-not only in this section.
-
-No example is cited for that, on purpose. The obvious one — a block that is
-bash-only and unmarked — stops being an example the moment anyone marks it, which
-is what acting on this rule does. An illustration that decays when the rule is
-obeyed teaches the wrong thing on its second reading.
+before running it elsewhere.** That is a default for the READER, file-wide: the
+file asserts nothing, most blocks have not been run anywhere else, and absence
+of a marker is absence of evidence. No example is cited for it on purpose — a
+bash-only unmarked block stops being an example the moment anyone marks it,
+which is what acting on this rule does.
 
 Never put the marker on a block you did not run in the shells it names: a
 decorative one is worse than silence, because it is what the reader checks
 instead of running it. **State what it covers, not only where it ran** — a
-block-level marker over a table certifies every cell at once, offers no way to
-write "measured, except this row", and has twice certified something nobody ran
-(D-071).
+block-level marker over a table certifies every cell at once and offers no way
+to write "measured, except this row" (D-071).
 
 **And where the command involves early termination, concurrency or ordering, run
 it more than once and record the OBSERVED SET rather than a single value.** The
 trigger is a property of the command, visible before you run it —
-`Select-Object -First 1` stops a pipeline early and says so in its own name — not
-a judgement about how careful you are being. Record `-1 x14, 2 x1`, never "15
-runs": a count can be filled in ritually and still report the value you happened
-to see, while a distribution is self-announcing and no reader mistakes it for a
-property. This exists because a measurement of that kind was taken once, recorded with
-a real exit code and a real date, and was the minority outcome (D-071).
-
+`Select-Object -First 1` stops a pipeline early and says so in its own name.
+Record `-1 x14, 2 x1`, never "15 runs": a count can be filled in ritually, while
+a distribution is self-announcing. A measurement of that kind was taken once,
+recorded with a real exit code and a real date, and was the minority outcome
+(D-071).
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
 - Backend unit tests: `docker compose exec -T api pytest -m unit -q`
@@ -279,182 +390,133 @@ a real exit code and a real date, and was the minority outcome (D-071).
                                                     -> C:/Program Files/Git/admin/management
 
   Bash builtins are unaffected and MSYS-native binaries handle it themselves.
-  The load-bearing consequence: **the portability grep this file publishes
-  under "Real commands" — `sed -n '/^## Real commands/,...'` — still works**,
-  returning 19. A draft of this entry said "any command", which predicts that
-  grep broken; running it is what showed the mechanism was the exe boundary
-  rather than the shell.
-  Measured 2026-09-09, Git Bash: a bare `/admin/management` argument arrives as
-  `C:/Program Files/Git/admin/management`; with `MSYS_NO_PATHCONV=1` it arrives
-  intact. **The widely-recommended `//` escape is NOT a remedy here** — it
-  arrives as `//admin/management`, leading slash doubled rather than fixed.
+  The load-bearing consequence: **the portability grep this file publishes under
+  "Real commands" still works.** A draft of this entry said "any command", which
+  predicts that grep broken; running it is what showed the mechanism was the exe
+  boundary rather than the shell. **The widely-recommended `//` escape is NOT a
+  remedy** — it arrives as `//admin/management`, leading slash doubled.
 
   **Recorded as the MECHANISM because the enumeration already failed.** The
-  `-w /app` row in the shell-forms table above is this same rewrite, written
-  down as one tool's literal symptom, and it was no help at all the second
-  time: nothing in it says "any argument", so a `gh issue create --title
-  /admin/...` finds no prior art. The `//` escape widely recommended for this
-  is not a remedy — it arrives with the slash doubled, per the block above. `CLAUDE.md` carried zero occurrences of
-  `msys`; the only one in the repo is an aside inside D-071 about annotation
-  fields, which a search for a path-mangling problem hits and learns nothing
-  from.
+  `-w /app` row in the table above is this same rewrite written down as one
+  tool's literal symptom, and it was no help at all the second time: nothing in
+  it says "any argument", so a `gh issue create --title /admin/...` finds no
+  prior art.
 
-  **The observability difference is why the `-w /app` case got recorded and
-  the `gh` case did not, and it is the more useful half.** `-w /app` fails LOUDLY —
-  Docker rejects it, exit 128, `Cwd must be an absolute path`. The `gh` case
-  failed SILENTLY: the title was mangled, `gh` accepted it, exit 0, and printed
-  a cheerful confirmation containing the corrupted string that nobody read. Same
-  mechanism, opposite observability, and only the loud one made it into the
-  file. Assume every quiet instance of a known-loud failure exists and has not
-  been noticed.
+  **The observability difference is the more useful half.** `-w /app` fails
+  LOUDLY — Docker rejects it, exit 128, `Cwd must be an absolute path`. The `gh`
+  case failed SILENTLY: the title was mangled, `gh` accepted it, exit 0, and
+  printed a cheerful confirmation containing the corrupted string that nobody
+  read. Same mechanism, opposite observability, and only the loud one made it
+  into the file. **Assume every quiet instance of a known-loud failure exists
+  and has not been noticed.**
 
-  Do not add a row per tool. That is how the table above got to its current
-  size, and a row per tool is an enumeration of what its author happened to hit.
+  Do not add a row per tool. A row per tool is an enumeration of what its author
+  happened to hit.
 
 - **ON WINDOWS, `sh` IS BASH, so a shell script "tested under `sh`" was never
   tested under `sh` at all.** Every bashism passes locally and the first
-  environment that refuses it is the runner.
+  environment that refuses it is the runner. Measured 2026-09-21:
 
-  Measured 2026-09-21:
+      Git Bash   sh --version            -> GNU bash, version 5.2.37(1)-release
+                 sh -c 'set -o pipefail' -> accepted
+      Debian     /bin/sh                 -> dash
+                 sh -c 'set -o pipefail' -> sh: 1: set: Illegal option -o pipefail
 
-      Git Bash   sh --version               -> GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)
-                 sh -c 'set -o pipefail'    -> accepted
-      Debian     /bin/sh                    -> dash
-                 sh -c 'set -o pipefail'    -> sh: 1: set: Illegal option -o pipefail
-
-  What it cost: a gate that runs the repo's shell scripts under `sh` passed all
-  seven subjects on Windows and failed three on the runner --
-  `close_guard_linked_file.sh`, `dev-web.sh` and `verify-in-worktree.sh`, each
-  dying at `set -o pipefail` before reaching any argument handling. Exit 2, no
-  message, which is also what a crash looks like.
+  What it cost: a gate running the repo's shell scripts under `sh` passed all
+  seven subjects on Windows and failed three on the runner, each dying at
+  `set -o pipefail` before reaching any argument handling. Exit 2, no message,
+  which is also what a crash looks like.
 
   **The remedy is NOT "make everything bash" and NOT "make everything POSIX".**
-  Both were proposed and both are wrong, because the shebang is the contract and
-  it legitimately VARIES: `docker-compose.yml` runs
-  `sh /app/web-install-if-stale.sh`, so POSIX compatibility is a real
-  requirement for that one, and forcing bash would stop checking the single case
-  where it matters. A harness that runs these scripts reads each file's shebang
-  and honours it; a subject with no recognisable shebang is a could-not-look,
-  not a guess.
+  Both were proposed and both are wrong: the shebang is the contract and it
+  legitimately VARIES — `docker-compose.yml` runs `sh /app/web-install-if-stale.sh`,
+  so POSIX compatibility is a real requirement for that one, and forcing bash
+  would stop checking the single case where it matters. A harness reads each
+  file's shebang and honours it; a subject with no recognisable shebang is a
+  could-not-look, not a guess.
 
-  **The transferable part is not about shells.** It is that a local run can
-  exercise a different interpreter, library or resolver than CI under the same
-  command name, and nothing in the output says so. When a check passes locally
-  and fails on the runner, suspect the interpreter before the code.
+  **The transferable part is not about shells.** A local run can exercise a
+  different interpreter, library or resolver than CI under the same command
+  name, and nothing in the output says so. When a check passes locally and fails
+  on the runner, suspect the interpreter before the code.
 
-  **A WRAPPER WRITTEN TO VERIFY SOMETHING IS WHERE THIS KEEPS LANDING**, and
-  the list is left as a list on purpose -- an earlier draft of this paragraph
-  said "three", which was stale within the hour. The instances from one
-  evening, by three different authors:
-
-  - `sh` that was bash, so every bashism passed locally;
-  - `pytest ... | tail` inside `sh -lc`, which has no `pipefail`, so the
-    harness read `tail`'s status and reported STAYED GREEN over two failures;
-  - the same pipe again, independently, in a second author's check helper;
-  - `git worktree add` failing so the following `cd` failed, and `sed` ran in
-    the wrong directory -- empty output, read as "no conflict";
-  - `mktemp -d` giving an MSYS path Docker could not mount, reporting PASS for
-    both variants of a comparison having scanned ZERO files, with
-    `warning: No Python files found` sitting in the output;
-  - `gh pr edit ... | tail` from a directory that was not a repo: `gh` failed,
-    `tail` returned 0, and the empty output read as success.
-
-  **Most of them produced the answer the author was hoping for.** That is the
-  property worth remembering: the failure mode is not noise, it is agreement.
+  **A WRAPPER WRITTEN TO VERIFY SOMETHING IS WHERE THIS KEEPS LANDING.** From
+  one evening, by three authors: `sh` that was bash; `pytest ... | tail` inside
+  `sh -lc`, which has no `pipefail`, so the harness read `tail`'s status and
+  reported STAYED GREEN over two failures; the same pipe again in a second
+  author's helper; `git worktree add` failing so the following `cd` failed and
+  `sed` ran in the wrong directory, empty output read as "no conflict";
+  `mktemp -d` giving an MSYS path Docker could not mount, reporting PASS for
+  both variants of a comparison having scanned ZERO files; `gh pr edit ... |
+  tail` from a directory that was not a repo, where `gh` failed and `tail`
+  returned 0. **Most of them produced the answer the author was hoping for.**
+  The failure mode is not noise, it is agreement.
 
 - **RUFF'S FIRST-PARTY RESOLUTION DEPENDS ON THE LAYOUT IT IS RUN IN, so the
   in-container lint gate is STRUCTURALLY BLIND to one class of import error
-  that CI catches.** Not "scoped narrower" -- blind. No invocation fixes it.
+  that CI catches.** Not "scoped narrower" — blind. No invocation fixes it.
 
-  ruff decides first-party by asking whether the dotted module path exists
-  under `src`, which defaults to the config's directory. This repo has a
-  top-level `scripts/` that is unrelated to `apps/api/scripts/`, and the api
-  container mounts `apps/api` at `/app` with the root `pyproject.toml` at `/`
-  -- so NEITHER `scripts/` path exists in the container.
-
-  A bare `from scripts import x` is therefore third-party in the container and
-  first-party in a full checkout. Measured 2026-09-21:
+  ruff decides first-party by asking whether the dotted module path exists under
+  `src`, which defaults to the config's directory. This repo has a top-level
+  `scripts/` unrelated to `apps/api/scripts/`, and the api container mounts
+  `apps/api` at `/app` with the root `pyproject.toml` at `/` — so NEITHER
+  `scripts/` path exists in the container. A bare `from scripts import x` is
+  therefore third-party in the container and first-party in a full checkout.
+  Measured 2026-09-21:
 
       | import form                  | CI layout | container |
       | bare + blank line            | PASS      | I001      |
       | dotted (`from scripts.y ...`)| PASS      | PASS      |
 
-  **Two consequences, and the second is the one that bites.**
-
-  `ruff check --no-cache .` inside the container -- CI's exact command --
-  exits 0 on a file CI rejects. The MANDATORY pre-commit lint this file
-  prescribes cannot see this, however it is invoked.
-
-  And **`ruff --fix` MOVES the red rather than removing it**: the blank line it
+  **Two consequences, and the second bites.** `ruff check --no-cache .` inside
+  the container — CI's exact command — exits 0 on a file CI rejects. And
+  **`ruff --fix` MOVES the red rather than removing it**: the blank line it
   inserts satisfies the full-checkout layout and breaks the container one. The
-  stable answer is the DOTTED form, because it fails to resolve in both, which
-  is what the rest of `tests/unit/` already uses.
+  stable answer is the DOTTED form, because it resolves in both.
 
   To reproduce a CI lint red locally, mount the FULL worktree and run ruff from
-  `apps/api` so `src` resolves to the repo root. That is a different layout, not
-  a different flag.
+  `apps/api` so `src` resolves to the repo root. A different layout, not a
+  different flag.
 
 - **next dev hot-reload does NOT fire through the Windows bind mount.** After an
   `apps/web` SOURCE edit: `docker compose up -d --force-recreate web`
   (~10–20s) before e2e. In-container touch/restart does not help.
-- **A LOCKFILE change is picked up by a plain `docker compose restart web`.
-  It did NOT used to be, and the three-line remedy this bullet carried is now
-  wrong in a way that undoes itself.** `node_modules` lives in named volumes
-  (`node-modules-root`, `node-modules-web`), and `docker-compose.yml` once
-  guarded the install on the binary EXISTING rather than on its version:
+- **A LOCKFILE change is picked up by a plain `docker compose restart web`.**
+  `node_modules` lives in named volumes, and `docker-compose.yml` once guarded
+  the install on the binary EXISTING rather than on its version:
 
       [ -f apps/web/node_modules/next/dist/bin/next ] || pnpm install;
 
-  **That guard is GONE.** #226 / PR #309 replaced it with
-  `scripts/web-install-if-stale.sh`, which the web service runs
-  (`sh /app/web-install-if-stale.sh && exec pnpm -F web dev`) and which
+  **That guard is GONE** (#226 / PR #309). `scripts/web-install-if-stale.sh`
   compares a hash of `pnpm-lock.yaml` against a stamp in the volume. The quoted
-  line is kept as the SYMPTOM a reader arrives with; deleting it would leave
-  them matching their problem against nothing.
+  line is kept as the SYMPTOM a reader arrives with.
 
-  **So the current procedure is two lines, not three:**
+  **The procedure is two lines, not three:**
 
       docker compose restart web
       docker compose exec -T web node -p "require('/app/apps/web/node_modules/next/package.json').version"
 
   **The `pnpm install` line that used to come first is now actively harmful and
   is removed rather than reordered.** It has no `--frozen-lockfile`, so it
-  resolves `package.json` RANGES -- the drift the mount exists to end -- and it
-  writes no stamp, so the `restart` on the next line re-runs the guard, finds
-  the hash still mismatched, and reinstalls with `--frozen-lockfile` over the
-  top. The documented step 1 was undone by the documented step 2, and the
-  version you then read back came from the guard rather than from the command
-  you were told was the fix. `pnpm-lock.yaml` is also mounted `:ro`
-  deliberately, so a non-frozen install that needed to rewrite it cannot.
+  resolves `package.json` RANGES — the drift the mount exists to end — and it
+  writes no stamp, so the `restart` on the next line re-runs the guard and
+  reinstalls over the top. The documented step 1 was undone by the documented
+  step 2, and the version you then read back came from the guard rather than
+  from the command you were told was the fix.
 
   **It is the LOCKFILE that is watched, not `package.json`.** A `package.json`
-  edit with no `pnpm install` to regenerate the lockfile changes no hash and
-  triggers no reinstall -- correctly, because the lockfile is what CI installs
-  from.
+  edit with no `pnpm install` changes no hash and triggers no reinstall —
+  correctly, because the lockfile is what CI installs from.
 
-  **Three separate lines, no OUTER `&&`, no backslash escaping, and no `-w`.**
-  Each of those is fixed by a different thing, and mixing them up is how the
-  SECOND version of this block also shipped broken. The measurements are in the
-  table under **Real commands**; the incident is D-071.
+  **The confirmation read is not optional.** On a security bump, "the container
+  started" and "the patch is applied" read identically without it. Measured on
+  the `next` 15.5.24 RCE patch before #226: `package.json` said 15.5.24 and the
+  running container said 15.5.23.
 
-  **The confirmation read is not optional**, and it is the line whose job is to
-  tell you whether you are still unpatched -- on a security bump "the container
-  started" and "the patch is applied" read identically without it. Its error
-  also reads as a Docker problem rather than as "you are on the old version".
-
-  Historically, before #226: a recreate brought the stack up green on the
-  previous version, with the manifest and the lockfile both reading the new
-  one. Measured on the `next` 15.5.24 RCE patch: `package.json` said 15.5.24
-  and the running container said 15.5.23.
-
-  **Run in Git Bash and PowerShell 5.1 on 2026-09-08**, in both before the claim
-  was written, and re-run in both since.
-
-  **The second line is the confirmation step, and it is not optional.** The
-  version string is the only thing that distinguishes "the patch is applied" from
-  "the container started" — and on a security patch those read identically. A
-  guard keyed on a file being PRESENT rather than CURRENT will do this again for
-  every dependency bump, not just this one; tracked separately.
+  **Three separate lines, no OUTER `&&`, no backslash escaping, and no `-w`** —
+  each fixed by a different thing, and mixing them up is how the SECOND version
+  of this block also shipped broken (D-071). **Run in Git Bash and PowerShell
+  5.1 on 2026-09-08**, in both before the claim was written, and re-run since.
 - **`up -d --force-recreate web` silently recreates `api` too**, because `web`
   `depends_on` it and compose reconciles the dependency — so api picks up
   whatever the root `.env` says *at that moment*. This bit during W4: api had
@@ -504,19 +566,21 @@ a real exit code and a real date, and was the minority outcome (D-071).
   DRAFT, so the spec "passed" while proving nothing about the guard.
 - **Author AI fixtures from what the PROMPT says, never from what the parser
   expects.** A fixture hand-written against the parser's own field names agrees
-  with the parser *by construction*, so it can never express the one failure that
-  matters — the model and the code disagreeing about a key. Whoever writes it
-  already knows the answer the parser wants, and encodes that answer. Copy the
-  keys out of the prompt text (and out of a real logged response where one
+  with the parser *by construction*, so it can never express the one failure
+  that matters — the model and the code disagreeing about a key. Whoever writes
+  it already knows the answer the parser wants, and encodes that answer. Copy
+  the keys out of the prompt text (and out of a real logged response where one
   exists); if the prompt says "Policy and Process" while the example JSON says
   `policy`, that discrepancy is the test case, not a detail to normalise away.
-  This shape has now surfaced independently several times — the Sprint 3 T0
-  drift, `mitre_map`'s fixture, the Risk Register enum mismatch, and W1's
+  This shape has surfaced independently several times — the Sprint 3 T0 drift,
+  `mitre_map`'s fixture, the Risk Register enum mismatch, and W1's
   `unknown_field` (2026-08-09), where a green suite certified "3 of 3 applied,
-  nothing dropped" over three lost scores per row. Corollary: **fixture mode
-  cannot exercise drop/rejection counters at all** — the fixtures echo the
-  payload keys back verbatim, so those paths need synthetic unit tests and a
-  live run, and a green e2e proves nothing about them.
+  nothing dropped" over three lost scores per row.
+
+  **Corollary: fixture mode cannot exercise drop/rejection counters at all** —
+  the fixtures echo the payload keys back verbatim, so those paths need
+  synthetic unit tests and a live run, and a green e2e proves nothing about
+  them.
 - **A guard against DOUBLE-counting will quietly become a guard against counting
   at all.** Twice in W1's CSF step, a conditional added so a value would not be
   charged on both sides of an invariant turned into a path that recorded
@@ -535,29 +599,34 @@ a real exit code and a real date, and was the minority outcome (D-071).
   case nobody had listed: round 3 made a total loss alert and thereby shouted
   over an all-by-design-skip run; round 4 fixed that and thereby marked a
   wholly-lost response "done"; each round's tests covered the state it had just
-  fixed. The tell is not the defect count, it is that the same predicate keeps
-  changing shape — `applied === 0`, then `applied === 0 && failed.length === 0`,
+  fixed.
+
+  **The tell is not the defect count, it is that the same predicate keeps
+  changing shape** — `applied === 0`, then `applied === 0 && failed.length === 0`,
   then `applied === 0 && lostValues > 0`. When you see that, stop adding
   conditionals and write the truth table: the inputs here were four booleans, so
   the whole space was thirteen renderable states and fits in one table-driven
-  test. Do the matrix FIRST, then change the logic — a matrix written after the
-  fix only pins the fix.
+  test. **Do the matrix FIRST, then change the logic** — a matrix written after
+  the fix only pins the fix.
 - **A test that supplies its own expected value — or its own precondition — from
-  the thing under test cannot fail.** The AI-fixture rule above is an instance <!-- counted: "one instance" here means "an instance" - it counts nothing that can grow. -->
+  the thing under test cannot fail.** The AI-fixture rule above is an instance
+  <!-- counted: "an instance" counts nothing that can grow. -->
   of this; this is the general shape, and it turned up twice on 2026-08-18 in
-  code that had already passed review. `tests/unit/test_csf_ai_contract.py`
-  builds its "prompt-compliant" response out of `_PARSER_ROW_KEYS` — the
-  parser's own constants — so it agrees with the parser by construction and
-  cannot see the prose/JSON drift the `csf_score` prompt actually carries, which
-  is the one thing a contract test exists to catch. `test_deliverable_release.py`
-  writes `parent_version = 1` by direct SQL and *then* re-releases, so it proves
-  the flip works given a link while the production claim under test — that
+  code that had already passed review. `test_csf_ai_contract.py` builds its
+  "prompt-compliant" response out of `_PARSER_ROW_KEYS` — the parser's own
+  constants — so it agrees with the parser by construction and cannot see the
+  prose/JSON drift the `csf_score` prompt actually carries, which is the one
+  thing a contract test exists to catch. `test_deliverable_release.py` writes
+  `parent_version = 1` by direct SQL and *then* re-releases, so it proves the
+  flip works given a link while the production claim under test — that
   re-releasing establishes the link — is false for every multi-version service
-  (#59). Both were green; neither could ever have been red. The tell: the test
-  and the code read from the same constant, or the test's setup performs the very
-  step the code is supposed to perform. Derive the expected value from the SPEC —
-  the prompt text, a real logged response, the documented behaviour — and let the
-  setup build only the world, never the outcome.
+  (#59). Both were green; neither could ever have been red.
+
+  **The tell: the test and the code read from the same constant, or the test's
+  setup performs the very step the code is supposed to perform.** Derive the
+  expected value from the SPEC — the prompt text, a real logged response, the
+  documented behaviour — and let the setup build only the world, never the
+  outcome.
 - **Changing user-facing copy for precision silently breaks whatever asserts it.**
   W1's panel line went from "suggested values" to "suggested **score** values"
   because the counts cover scoring rows only. The vitest was updated in the same
@@ -587,35 +656,39 @@ a real exit code and a real date, and was the minority outcome (D-071).
   the record below it.
 - **Withholding a value from a RATIO can raise it. Check which side of the
   fraction you took it out of.** #102 withholds a technique whose evidence is
-  unconfirmed, and the obvious reading — "it is uncertain, so leave it out of
-  both numerator and denominator, exactly as `unscored` already works" — shipped
-  `gap` as withholdable. But `coverage_pct` is
+  unconfirmed, and the obvious reading — leave it out of both numerator and
+  denominator, exactly as `unscored` already works — shipped `gap` as
+  withholdable. But `coverage_pct` is
   `(covered + 0.5·partial) / (covered + partial + gap)`, so a gap contributes to
   the DENOMINATOR only: ten covered beside ten gaps reported 50%, and flagging
-  every gap reported **100%** with ten findings deleted. A run in which more <!-- counted: A hypothetical worked example (ten covered beside ten gaps). The number is fixed by construction, not recalled from a population. -->
-  evidence was doubted claimed twice the coverage. Only values that carry
-  numerator weight can be withheld conservatively; withholding a pure-denominator
-  value is a strictly optimistic move wearing a cautious one's clothes. And even
-  for the rest it is not unconditional — withholding one `partial` from nine
-  confirmed `covered` takes 95% to 100%, because narrowing a denominator changes
-  what the ratio is a ratio OF. **A percentage over a withheld population is not
-  self-describing: render the withheld count beside it, everywhere, and test that
-  you did.** CSF, ZT and Risk all compute the same shape of fraction.
+  every gap reported **100%** with ten findings deleted.
+  <!-- counted: A hypothetical worked example. The number is fixed by construction, not recalled from a population. -->
+  A run in which more evidence was doubted claimed twice the coverage.
+
+  Only values that carry numerator weight can be withheld conservatively;
+  withholding a pure-denominator value is a strictly optimistic move wearing a
+  cautious one's clothes. And even for the rest it is not unconditional —
+  withholding one `partial` from nine confirmed `covered` takes 95% to 100%,
+  because narrowing a denominator changes what the ratio is a ratio OF. **A
+  percentage over a withheld population is not self-describing: render the
+  withheld count beside it, everywhere, and test that you did.** CSF, ZT and
+  Risk all compute the same shape of fraction.
 - **A rule that withholds a claim must separate "the evidence failed" from "no
   evidence was offered" — and if the store cannot tell them apart, fix the
   store.** #102's first predicate was "pending unless a confirmed citation backs
   the status", which is right for every AI-authored row and withheld every
   hand-curated one: a consultant typing `covered` into the matrix has made no
-  inference, and the rule was about inferences. The heatmap reported zero covered
-  over ten curated techniques with nothing in the product able to clear it, and
-  the test that caught it (`test_heatmap_reflects_coverage_after_patches`)
-  predated the feature by months. The fix was not a special case but a missing
-  state: outcomes that resolve to NOTHING — a rejected citation, and a status the
-  model cited nothing for at all — now get persisted rows of their own, because otherwise
-  "we dropped the model's evidence" and "nobody ever cited anything" are the same
-  stored bytes. **Before writing a withholding rule, ask what the absence of a
-  record means, and make sure the writer records absence on purpose rather than
-  by not writing.**
+  inference, and the rule was about inferences. The heatmap reported zero
+  covered over ten curated techniques with nothing in the product able to clear
+  it, and the test that caught it predated the feature by months.
+
+  The fix was not a special case but a missing state: outcomes that resolve to
+  NOTHING — a rejected citation, and a status the model cited nothing for at all
+  — now get persisted rows of their own, because otherwise "we dropped the
+  model's evidence" and "nobody ever cited anything" are the same stored bytes.
+  **Before writing a withholding rule, ask what the absence of a record means,
+  and make sure the writer records absence on purpose rather than by not
+  writing.**
 - **Missing data defaults to UNCONFIRMED, never to confirmed.** Standing rule,
   recorded after the third occurrence: D-054's nullable-vendor default, migration
   0044's NULL citations, and the fail-open draft of #102 that would have let an
@@ -626,54 +699,50 @@ a real exit code and a real date, and was the minority outcome (D-071).
   those is recoverable. When fail-closed looks unaffordable, check the blast
   radius rather than assuming — for 0044 it was zero RELEASED assessments.
 - **A guard that cannot read its input must FAIL CLOSED, and the tell is a
-  positive-sounding message on an empty read.** `check_audit_evidence.py` shipped
-  with `is_code_change([])` returning False, so an empty changed-file list printed
-  "documentation-only change, exempt" and exited **0** — a green gate, with an
-  encouraging sentence, from input that supported neither reading. Not reachable
-  through its own workflow (`fetch-depth: 0` plus `bash -e` turn a failed diff
-  into a red step), which is exactly why it survived review: the hole opens the
-  day someone changes the checkout depth or adds a `|| true`.
+  positive-sounding message on an empty read.** `check_audit_evidence.py`
+  shipped with `is_code_change([])` returning False, so an empty changed-file
+  list printed "documentation-only change, exempt" and exited **0** — a green
+  gate, with an encouraging sentence, from input that supported neither reading.
+  Not reachable through its own workflow, which is exactly why it survived
+  review: the hole opens the day someone changes the checkout depth.
 
-  The general shape: a checker's "nothing to complain about" branch and its
-  "I could not look" branch must not be the same branch. Every gate in this repo
-  now returns a distinct non-zero (2) for unreadable input, separate from the 1 it
-  returns for a real violation.
+  **A checker's "nothing to complain about" branch and its "I could not look"
+  branch must not be the same branch.** Every gate in this repo returns a
+  distinct non-zero (2) for unreadable input, separate from the 1 it returns for
+  a real violation.
 
   **Recorded because this is the one case where writing it down demonstrably
   worked.** `check_issue_references.py` was written months later by someone who
   had read this entry, and its fail-closed path and the test pinning it were in
   the first committed version — the defect never existed in it. Set that against
-  the closing-keyword rule in *Rules of the road*, which was rewritten three times
-  and violated a fourth. The difference worth noticing is not diligence: the
-  fail-closed lesson is a rule about code you are *writing on purpose*, and the
-  closing-keyword one is a rule about prose you are *not thinking about*. Only the
-  second kind needs a machine.
+  the closing-keyword rule, rewritten three times and violated a fourth. The
+  difference is not diligence: the fail-closed lesson is a rule about code you
+  are *writing on purpose*, and the closing-keyword one is about prose you are
+  *not thinking about*. Only the second kind needs a machine.
 - **A defect found in one service exists in its twins until you have checked.**
   CSF, ZT, ATT&CK, Tech Debt and Risk are five copies of the same shapes, so a
   fix filed against one is a fix owed by all of them. #75 was filed against ZT
   and fixed there; CSF truncated identically, through the same
   `DEFAULT_TOP_N = 20`, in the same three renderers, and the first
   implementation left it — inside the PR that was also fixing #79, which exists
-  *because* an earlier change fixed one surface and not its twin. The same round
-  found `_zt_gap_total` untouched twelve lines below the `_csf_gap_total` that
-  was fixed. Half-fixes are worse than none here: raising CSF's target to the
-  client's tier increases its gap count, so leaving the disclosure out hid MORE
-  than before the "fix". Before opening a PR, grep the sibling services for the
-  function you just changed, and when you deliberately leave a twin alone, say
-  so in the code — an unstated exemption reads as an oversight to everyone who
-  finds it later, including you.
+  *because* an earlier change fixed one surface and not its twin. Half-fixes are
+  worse than none here: raising CSF's target to the client's tier increases its
+  gap count, so leaving the disclosure out hid MORE than before the "fix".
+
+  Before opening a PR, grep the sibling services for the function you just
+  changed, and **when you deliberately leave a twin alone, say so in the code** —
+  an unstated exemption reads as an oversight to everyone who finds it later.
 
   **FIX FROM THE SHAPE, NOT FROM THE LIST YOU WERE HANDED — a reviewer's site
-  list is evidence that twins exist, never the set of them.** One branch produced
-  three consecutive half-fixes, each round correcting every twin it was shown and
-  none it was not. Nobody was careless: each round worked from the previous
-  review's list, which is a sample. Take the list as proof the shape exists,
-  derive the set yourself, and say in the PR what you derived it from. Expect the
-  last twin to be the one a USER reads — a hover title gets corrected while the
-  paragraph beside it does not, because the reviewer quoted the hover.
-  (**D-074** carries the sweep-by-shape record, and its Placement section
-  asked for exactly this pointer; **D-072** carries the hover instance,
-  where the phrase survived only in a `title` attribute.)
+  list is evidence that twins exist, never the set of them.** One branch
+  produced three consecutive half-fixes, each round correcting every twin it was
+  shown and none it was not. Nobody was careless: each round worked from the
+  previous review's list, which is a sample. Take the list as proof the shape
+  exists, derive the set yourself, and say in the PR what you derived it from.
+  **Expect the last twin to be the one a USER reads** — a hover title gets
+  corrected while the paragraph beside it does not, because the reviewer quoted
+  the hover. (**D-074** carries the sweep-by-shape record; **D-072** the hover
+  instance, where the phrase survived only in a `title` attribute.)
 - **These gates check whether a test can fail at all (#72, D-051).**
   `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
   is a two-second static pass and **runs in CI before pytest** — it flags a test
@@ -681,11 +750,14 @@ a real exit code and a real date, and was the minority outcome (D-071).
   assertion whose needle carries no literal text (`str(n) in blob` rather than
   `f"of {n} gaps" in blob`). Neither is forbidden; both demand a written
   `# test-integrity: <reason>` on the line or in the comment block above it, and
-  an empty reason is not a reason. `scripts/mutation_sweep.py` is the other
-  half — `--paths <files> --tests <target>` applies one change at a time and
-  reports what no test noticed. Its `DropKeyword` operator exists because
-  instance 9 was a deletable `targets=` argument, which off-the-shelf mutation
-  tools do not model. Neither gate is enough to call #72 done: tier 1 cannot see a test whose
+  an empty reason is not a reason.
+
+  `scripts/mutation_sweep.py` is the other half — `--paths <files> --tests
+  <target>` applies one change at a time and reports what no test noticed. Its
+  `DropKeyword` operator exists because instance 9 was a deletable `targets=`
+  argument, which off-the-shelf mutation tools do not model.
+
+  **Neither gate is enough to call #72 done**: tier 1 cannot see a test whose
   SETUP performs the step under test, and a surviving mutant is a question
   rather than a verdict.
 - **A snapshot beats a lock when the workflow legitimately mutates.** Tech Debt's
@@ -705,91 +777,25 @@ a real exit code and a real date, and was the minority outcome (D-071).
   are making, and then citing it — a bare unsupported claim invites a check; a
   claim under a command and a date does not.
 
-  The instance, and it is recorded because the author was actively being
-  careful: `context/gene.md` said four dashboard pages *"still key not-released
-  copy on `err.status === 404` and print a hardcoded sentence, ignoring the
-  typed `reason`"*, under
-
-      Measured on `ee819f2`:
-      grep -rn "hasn't been released to your organization yet" apps/web/src
-      -> those four files.
-
-  The grep was honest and its output was real. **It proved that the STRING
-  exists. The claim needed was that the typed reason is IGNORED**, which is a
-  different proposition and was false — **as of 2026-09-19** all FIVE pages
-  (not four; `risk` was missed as well) did `reason = serverReason(err)` and
-  rendered `{reason ?? fallback}`, so a typed reason always won and the
-  hardcoded sentence was the 404 fallback. #295 had shipped it, and the same
-  document's own merged-PR table said so two hundred lines further down.
-
-  **Date-qualified rather than rewritten, because the lesson is about the
-  GREP and the code has since moved under it.** #318 changed both halves: the
-  pages now call `dashboardLoadReason`, and a typed reason deliberately no
-  longer always wins — the ordinary not-released 404 carries a message, so
-  preferring it made the client copy unreachable in the page's most common
-  state. Restating the new behaviour here would go stale in turn, which is the
-  correction-paragraph-outlives-the-number defect recorded elsewhere in this
-  section; what the example needs is the tense it was true in.
-
-  Someone acting on that sentence would have opened a PR to rebuild what
-  already ships. It was caught by an adversarial review that had been pointed
-  at the claim as a PREMISE — not by anyone re-reading the grep, because the
-  grep is correct.
-
-  **It generalises well past grep**, which is why it is stated as a shape:
-
-  - a **test** proves its assertions hold, not that they can fail — #72.
-  - an **exit code** proves the last command's status, not the one you meant —
-    this file's opening rule.
-  - a **CI certificate** proves a head passed, not that a branch is ready.
-  - a **`--collect-only`** proves collection, not that anything ran.
-  - a **reviewer's clean report** proves nothing was found in what it read,
-    which is not the same as nothing being there — hence the `Scope:` line.
-
-  Two of this session's adversarial findings were themselves this shape,
-  landing on the reviewer rather than the author: a proposed
-  `(?<![\w.])` word boundary was correct about over-matching and rejected
-  <!-- counted: historical -- the measured result of running that regex once -->
-  dotted module paths, reporting four live gates unwired; and a "this file does
-  not exist" was true of the branch under review and false of the repo, because
-  the file lived on another branch. Both were measured before being acted on,
-  which is the only reason they cost nothing.
-
-  **The check is one question, asked before you cite anything: what
-  proposition does this command actually prove, and is it the one in my
-  sentence?** Where they differ, either change the command or change the
-  sentence. Do not publish the pair.
+  **The check is one question, asked before you cite anything: what proposition
+  does this command actually prove, and is it the one in my sentence?** Where
+  they differ, change the command or change the sentence. Do not publish the
+  pair. It generalises well past grep: a **test** proves its assertions hold,
+  not that they can fail (#72); an **exit code** proves the last command's
+  status, not the one you meant; a **CI certificate** proves a head passed, not
+  that a branch is ready; a **`--collect-only`** proves collection, not that
+  anything ran; a **reviewer's clean report** proves nothing was found in what
+  it read, which is why the `Scope:` line exists.
 
   **AND THE SENTENCE THAT NAMES ITS OWN VERIFICATION IS THE ONE TO RE-RUN,
   because the phrase is doing the work the measurement should.** "Checked and
-  left alone", "measured, not assumed", "verified", "confirmed" -- each reads
-  as evidence and is only ever a claim ABOUT evidence. A bare assertion
-  invites a check; an assertion wearing the word `checked` ends it.
-
-  Measured on #343, and the instance is exact. A sweep closed the
-  ignore-unknown-arguments defect in five scripts and reported of the six it
-  did not touch:
-
-      MEASURED, not assumed, for the six other raw-argv Python gates: they
-      already fail closed on an unknown flag, because they read it as a path
-      and the path does not exist. Checked and left alone.
-
-  True of a LEADING flag. False of a TRAILING one -- five of the six ignore
-  `argv[2:]` entirely, and `ci.yml` passes a path to three of them, so the
-  first slot is already occupied in exactly the invocations that matter. The
-  <!-- counted: for g in the 7 raw-argv gates: python <g> <its ci.yml path arg> --bogus; echo $? -> six return 0, check_recalled_counts returns 2, 2026-09-20 at aecf3bf -->
-  one gate that does refuse uses an explicit allow-list, so the stated
-  MECHANISM described the only case that does not use it.
-
-  The sentence carrying the words *checked and left alone* was the sentence
-  covering the absence of a check. Nothing in it is a lie and every part of it
-  is wrong.
-
-  So the trigger is mechanical and it is about YOUR OWN prose: when you write
-  a word asserting you verified something, that is the sentence to go back and
-  run. Not because you are careless -- the author here had run six commands
-  and read the output -- but because the phrase closes the question for every
-  later reader, and it closed it around a property nobody had tested.
+  left alone", "measured, not assumed", "verified", "confirmed" — each reads as
+  evidence and is only ever a claim ABOUT evidence. **When you write a word
+  asserting you verified something, that is the sentence to go back and run.**
+  Not because you are careless — in the recorded instances the author had run
+  the commands and read the output — but because the phrase closes the question
+  for every later reader, and it closed it around a property nobody had tested.
+  **D-079** carries the instances.
 
 - **Before reporting a sweep complete, name the SHAPE you searched for and one
   place it could hide that shares no vocabulary with the original.** Keyword
@@ -797,51 +803,35 @@ a real exit code and a real date, and was the minority outcome (D-071).
   was written by someone using different words.
 
   **This binds PROSE sweeps identically, and prose is where it is skipped.** A
-  correction to a decision, a status or a claim gets applied to the sites
-  someone handed you, and the sentence that says the same thing in different
-  words survives. Measured: a commit titled "record the overturn where the
-  decision is looked up" corrected the three documents named in the finding and
-  left two present-tense claims standing elsewhere, because the author never
-  asked what ELSE asserted the same thing. Write the shape for prose the way you
-  would for code — "any sentence stating what happens when X fails, in the
-  present tense, or quantifying over surfaces whose behaviour now differs" — and
-  grep the bare nouns rather than the phrasing you were shown.
+  commit titled "record the overturn where the decision is looked up" corrected
+  the three documents named in the finding and left two present-tense claims
+  standing elsewhere, because the author never asked what ELSE asserted the same
+  thing. Write the shape for prose the way you would for code — "any sentence
+  stating what happens when X fails, in the present tense" — and grep the bare
+  nouns rather than the phrasing you were shown.
 
-  `risk.py` re-derived a
-  gap comparison instead of calling `analyze_gaps` (#84); it also reimplements
-  the ATT&CK citation drop as a two-line list comprehension with no counter
-  (#132), found only because the sweep asked "where else does a model's string
-  get compared to a stored value and the misses discarded?" rather than "where
-  else is `_validate_tools` called?". Write the shape down in the PR body next to
-  the grep you ran. If you cannot describe the defect without naming the function
-  it was found in, you have not generalised it yet and the sweep will miss.
+  `risk.py` re-derived a gap comparison instead of calling `analyze_gaps` (#84),
+  and reimplements the ATT&CK citation drop with no counter (#132), found only
+  because the sweep asked "where else does a model's string get compared to a
+  stored value and the misses discarded?" rather than "where else is
+  `_validate_tools` called?". **If you cannot describe the defect without naming
+  the function it was found in, you have not generalised it yet.**
 
-  **A worked example, because every entry above says to write a shape statement
-  and none of them shows a good one.** From the `docs/security.md` honesty pass
-  (PR #146):
+  **A worked example, because every rule above says to write a shape statement
+  and none shows a good one.** From the `docs/security.md` honesty pass (#146):
 
   > A control stated in the present tense whose implementation is a deferral
   > comment, a client-supplied value, a header with no transport to enforce it,
   > or a function with no callers.
 
-  What makes it work, itemised so the next one can be built the same way:
-
-  - **It names four distinct failure modes, not one.** A shape with a single
-    mode is usually just the found defect restated.
-  - **It names no file, function or symbol.** Nothing in it points back at
-    `security.md` or at the OWASP table that prompted the audit.
-  - **Each mode is checkable by reading the implementation**, not by knowing the
-    history — "a function with no callers" is a grep, "a deferral comment" is a
-    comment saying the real thing is deferred.
-  - **It found three defects outside the table it would have been natural to <!-- counted: historical -->
-    check**: the MIME sniff that trusts the client's `Content-Type`, the
-    "HIBP top-100k" that is a three-entry deny list, and the `signed_url`
-    credited as the artifact control with zero call sites. None of the three is
-    in the OWASP table; a sweep phrased as "check the OWASP rows" finds none of
-    them.
-
-  The test of a shape statement is whether it could have been written **before**
-  seeing the defect that prompted it. This one could.
+  It names four distinct failure modes rather than one (a shape with a single
+  mode is usually the found defect restated); it names no file, function or
+  symbol; each mode is checkable by reading the implementation rather than by
+  knowing the history; and it found three defects outside the table it would
+  <!-- counted: historical -->
+  have been natural to check, none of them in the OWASP rows a narrower sweep
+  would have read. **The test of a shape statement is whether it could have been
+  written BEFORE seeing the defect that prompted it.** This one could.
 - **A derived lookup key belongs in its OWN tier, below the authoritative one.**
   #33 finding 5 needed the resolver to recognise a tool under the placeholder the
   model was shown, so the redacted form was indexed as an alias — into the same
@@ -856,39 +846,38 @@ a real exit code and a real date, and was the minority outcome (D-071).
   first, so an alias can only decide what the real key could not.
 - **A FIELD IS ADDITIVE ONLY IF NO CONSUMER BRANCHES ON ITS PRESENCE.** Adding
   a key to a shared envelope reads as the safest change there is, and the PR
-  that does it says so: #307 added a typed `reason` to every schema 422 and its
-  docstring promised "additive, deliberately -- a consumer that wants the typed
-  reason opts in". That sentence was false at merge time. `SignUpForm.tsx` chose
-  between typed copy and a friendly fallback by testing `reason`'s PRESENCE, so
-  the new key made the fallback unreachable and put the internal string
-  "Request validation failed." under the Email field of the **public** sign-up
-  page (#317, tier-1, live on `main` until PR #320).
+  that does it says so: #307 added a typed `reason` to every schema 422 and
+  promised "additive, deliberately — a consumer that wants the typed reason opts
+  in". That sentence was false at merge time. `SignUpForm.tsx` chose between
+  typed copy and a friendly fallback by testing `reason`'s PRESENCE, so the new
+  key made the fallback unreachable and put the internal string "Request
+  validation failed." under the Email field of the **public** sign-up page
+  (#317, tier-1, live on `main` until PR #320).
 
   A consumer never has to opt in to be broken by a new key. It only has to have
   branched on the key's ABSENCE — which is what a careful consumer does when the
-  key is optional, so the more defensively it was written the more likely it is
-  to break.
+  key is optional, **so the more defensively it was written the more likely it
+  is to break.**
 
   **The check is mechanical: before adding a field to a shared envelope, grep
   the consumers for a PRESENCE test rather than a value test.** For the D-016
   envelope that is `error.reason` and `error.message` across `apps/web/src`;
   `reason === "..."` is safe, and a bare `reason &&` is the defect **unless
-  something else already excludes the new key** -- `lib/auth/options.ts` tests
-  presence and is safe only because it sits inside `err.status === 403`, and a
-  schema 422 cannot reach it. A status gate is not a value test, so say so at
-  the site: an unstated exemption sends the next person who runs this grep to
-  investigate a non-defect. Nothing about
-  the new field's own correctness reveals this, so no review of the producing
-  diff can find it — the evidence is entirely in files the PR does not touch.
+  something else already excludes the new key** — `lib/auth/options.ts` tests
+  presence and is safe only because it sits inside `err.status === 403`. A
+  status gate is not a value test, so say so at the site: an unstated exemption
+  sends the next person who runs this grep to investigate a non-defect. Nothing
+  about the new field's own correctness reveals this, so no review of the
+  producing diff can find it — the evidence is entirely in files the PR does not
+  touch.
 
   Two corollaries, both paid for here:
 
   - **The comment stating the precondition is what hides the breakage.** The
     fallback carried "raw schema validation carries no typed reason", which was
     true when written, was deleted as a fact by #307, and survived as a sentence
-    telling the next reader the branch was sound. This file's
-    narrower-rule-than-the-reader-assumes bullet, arriving from the other
-    direction: not a scope that is too narrow, a precondition that has expired.
+    telling the next reader the branch was sound. Not a scope that is too
+    narrow — a precondition that has expired.
   - **Test both halves of the branch you changed.** A fix keyed on the value can
     be "repaired" into discarding every friendly message the API does send, and
     the fallback tests stay green through it. Pin the typed case too.
@@ -908,49 +897,37 @@ a real exit code and a real date, and was the minority outcome (D-071).
   covers those too.
 
 - **A CORRECT CHANGE WHOSE STATED MOTIVATION DOES NOT SURVIVE CONTACT WITH THE
-  CODE. The change stays; the justification gets rewritten.** Recorded as a
-  named shape because it has now happened twice with the same resolution, so
-  the next instance is a category rather than a surprise.
+  CODE. The change stays; the justification gets rewritten.** The tell: a fix is
+  right on its own terms — it closes a real hole, its tests discriminate,
+  red-on-revert holds — and the sentence explaining WHY it matters turns out to
+  describe a path nothing can reach. The instinct is to withdraw the change.
+  That is usually wrong.
 
-  The tell: a fix is right on its own terms — it closes a real hole, its tests
-  discriminate, red-on-revert holds — and the sentence explaining WHY it
-  matters turns out to describe a path nothing can reach. The instinct is to
-  withdraw the change. That is usually wrong, and the instances below say
-  why.
+  - **#240's export guard**, written to catch a DRAFT-ATT&CK-sourced register
+    reaching export. Every input the snapshot can record is already approved or
+    released, so the guard cannot fire. Kept as a RATCHET against a future
+    loosening of the resolver, and the code now says so.
+  - **#188's per-capability target disclosure**, justified by "the same stored
+    integer is usable or not depending on which framework asks". Capability
+    codes are framework-namespaced and both read paths take the framework from
+    the assessment, so no row can be read under a different framework. The test
+    written to prove it used two DIFFERENT codes, which was the tell and was not
+    read as one.
 
-  - **#240's export guard.** Written to catch a DRAFT-ATT&CK-sourced register
-    reaching export. Every input the snapshot can record is already approved
-    or released, so the guard cannot fail; the register the narrative described
-    is a pre-#242 one with NULL provenance, caught by a different branch
-    entirely. Kept as a RATCHET against a future loosening of the resolver,
-    and the code now says so.
-  - **#188's per-capability target disclosure.** Justified by "Stage 4 is a
-    legitimate CISA target and does not exist in DoD ZTRA, so the same stored
-    integer is usable or not depending on which framework asks." Capability
-    codes are framework-namespaced, every answer is created from its own
-    assessment's catalog, and both read paths take the framework from the
-    assessment — so no row can ever be read under a different framework. The
-    test written to prove it used two DIFFERENT codes, which was the tell and
-    was not read as one.
+  **Both resolved to "a disclosure that should normally never fire", and that is
+  a legitimate thing to build.** What is not legitimate is leaving the original
+  motivation standing, because a reader then takes the defect as triggerable
+  today and sizes everything downstream against a hazard that does not exist.
 
-  **Both resolved to "a disclosure that should normally never fire", and that
-  is a legitimate thing to build.** What is not legitimate is leaving the
-  original motivation standing, because a reader then takes the defect as
-  triggerable today and sizes everything downstream against a hazard that does
-  not exist.
-
-  The procedure, and it is three lines: state the population the change
-  actually protects; say plainly that no current writer can produce one, where
-  that is true; and say what would make it reachable again. Migration 0047's
+  The procedure is three lines: state the population the change actually
+  protects; say plainly that no current writer can produce one, where that is
+  true; and say what would make it reachable again. Migration 0047's
   `## Blast radius, measured before choosing` and the ratchet note in
-  `routes/risk.py` are the worked examples — each carries its own reachability
-  verdict rather than inheriting the file's.
+  `routes/risk.py` are the worked examples.
 
   **Where the justification came from matters more than that it was wrong.**
-  Both were written from a plausible mechanism nobody executed. The check is
-  the one this file opens with: the claim "these two things can meet" is a
-  measurement, not a deduction — run it before it becomes the reason a change
-  exists.
+  Both were written from a plausible mechanism nobody executed: the claim "these
+  two things can meet" is a measurement, not a deduction.
 
 - **An over-match can be the ONLY thing covering a legitimate case. Before fixing
   one, check what it was accidentally catching.** `suite_pat`'s `\bFl` ate the
@@ -958,242 +935,173 @@ a real exit code and a real date, and was the minority outcome (D-071).
   redaction at all — the pattern has no branch for a value that PRECEDES its
   keyword, so tightening `Fl` silently removed coverage nobody knew existed.
   Nothing fails when this happens: no test knew the coverage was there, because
-  it was never intended. The tell is that the "wrong" behaviour and the only
-  correct behaviour for some input are produced by the same line. Cousin of the
-  twin-sweep rule below — that one asks where else the defect is, this one asks
-  what else the defect is doing. Concretely, on #130: `2nd Floor` → `2nd
-  [ADDRESS]` (number left behind) and `3rd Fl` → no match at all, so the honest
-  framing of the new branch was "adds coverage that never existed and closes a
-  live leak", not "preserves coverage through a fix". Say which one it is; this
-  repo has already been bitten by comments that were true only for the case they
-  were written for.
+  it was never intended. **The tell is that the "wrong" behaviour and the only
+  correct behaviour for some input are produced by the same line.**
+
+  Cousin of the twin-sweep rule — that one asks where else the defect is, this
+  one asks what else the defect is doing. Concretely, on #130: `2nd Floor` →
+  `2nd [ADDRESS]` (number left behind) and `3rd Fl` → no match at all, so the
+  honest framing of the new branch was "adds coverage that never existed and
+  closes a live leak", not "preserves coverage through a fix". Say which one it
+  is.
 - **A redaction/validation corpus drawn from your own assumptions cannot falsify
   them — and seed data is somebody's assumptions too.** #130 lived for months
   under a green suite because all 73 name-shaped strings in `seed_demo.py` and
   `fixtures.py` pass the address rule clean, so an address assertion built on
   seed data passes forever. Then, fixing it, a hand-written corpus of "real
-  product names" certified a pattern carrying **six leak regressions**, because <!-- counted: historical -->
-  the author writes addresses correctly spaced and the failing class was
+  product names" certified a pattern carrying **six leak regressions**,
+  <!-- counted: historical -->
+  because the author writes addresses correctly spaced and the failing class was
   malformed input (`PO Box99`, `Suite400`) that arrives from OCR and exported
-  spreadsheets. This is #72's shape pointed at test DATA rather than test code,
-  and the fix is the same as everywhere else here: enumerate the CLASSES and
-  require a row per class, rather than adding whichever example you thought of
-  last. The classes a hand-written corpus structurally cannot contain: malformed
-  strings, `name + version number`, non-US locale variants, and strings that have
-  already been through the pipeline once.
-- **A table written FIRST is an independent specification. A table written
-  AFTERWARDS is a transcript of what the rule does.** That single sentence
-  explains D-058's own caveat, why 376 green cells certified a rule carrying
-  nine live defects, and an 11x measured split. It is the enumeration rule above <!-- counted: historical -->
-  pointed at ORDER rather than at content: enumerating cases against a rule you
-  have already written cannot falsify that rule, because the rule is where the
-  cases came from.
+  spreadsheets.
 
-  **Measured, not asserted** (2026-08-25, `apps/api/scripts/leave_row_oracle.py`,
-  104 LEAVE rows, 22 guards). A LEAVE row asserts ordinary prose survives the
-  redactor untouched. Disable the guard it was written to pin: if the row still
-  passes, it was never testing that guard -- "the boundary held" and "no rule was
-  ever interested in this string" are the same green.
+  This is #72's shape pointed at test DATA rather than test code, and the fix is
+  the same: **enumerate the CLASSES and require a row per class**, rather than
+  adding whichever example you thought of last. The classes a hand-written
+  corpus structurally cannot contain: malformed strings, `name + version
+  number`, non-US locale variants, and strings that have already been through
+  the pipeline once.
+- **A table written FIRST is an independent specification. A table written
+  AFTERWARDS is a transcript of what the rule does.** Enumerating cases against
+  a rule you have already written cannot falsify that rule, because the rule is
+  where the cases came from.
+
+  **Measured** (2026-08-25, `apps/api/scripts/leave_row_oracle.py`, 104 LEAVE
+  rows, 22 guards). A LEAVE row asserts ordinary prose survives the redactor
+  untouched; disable the guard it was written to pin, and if the row still
+  passes it was never testing that guard.
 
   | Tables | In risk class | Pinning nothing |
   | --- | --- | --- |
-  | Written before their pattern (#130, PR #141) | 53 | **2 (3.8%)** |
-  | Written alongside/after their rule (item 10) | 38 | **16 (42.1%)** |
+  | Written before their pattern | 53 | **2 (3.8%)** |
+  | Written alongside/after their rule | 38 | **16 (42.1%)** |
 
   Same corpus, same author, same file, same week. The only variable is whether
   the table existed before the code did.
 
-  **The step, and it is a step rather than a gate**: any LEAVE table written or
-  extended after its rule exists gets an oracle run before the PR, and rows that
-  pin nothing are rewritten or reclassified. Scoring a row needs judgement about
-  what it was written for, so the tool reports and a human decides.
+  **The step**: any LEAVE table written or extended after its rule exists gets
+  an oracle run before the PR, and rows that pin nothing are rewritten or
+  reclassified. Scoring a row needs judgement, so the tool reports and a human
+  decides. What IS gated, behind `leave_row_oracle.py --check-registry`: a LEAVE
+  table with no registered guards, and a table DECLARED not-LEAVE whose rows the
+  redactor leaves untouched (#221). The remedy a finding names is to COLLECT the
+  rows, not to exempt them.
 
-  What can be gated is whatever fails on input nobody configured, and there is
-  more than one such property -- an earlier version of this paragraph said
-  "exactly one", which was true when written and became the sentence that
-  stopped anyone looking for a second. Both are behind
-  `leave_row_oracle.py --check-registry` (CI step "LEAVE-row oracle registry
-  and labels"):
-
-  - **a LEAVE table with no registered guards.** Without it a new table reports
-    clean and the tool acquires the silent-success shape it was built to find.
-  - **a table DECLARED not-LEAVE whose rows the redactor leaves untouched**
-    (#221). `NOT_LEAVE_TABLES` was a set of labels and nothing checked them, so
-    a mislabelled table was invisible twice over: its rows never scored, and the
-    registry reporting complete precisely BECAUSE the label existed. The check
-    runs the oracle's own classifier over the excluded rows; its first run found
-    three inside `IDEMPOTENCE_CASES`, two of them in the risk class. The remedy
-    a finding names is to COLLECT the rows, not to exempt them, so clearing it
-    adds coverage rather than removing a report.
-
-  **It is a floor, not a census**, with a stated error direction: a row whose
-  LEAVE-ness is invisible to that classifier -- built at test time, or asserted
-  to survive under a call the oracle does not make -- stays invisible, and the
-  check can only under-report.
-
-  **What is still ungated is whether the tool can RUN.** Two mutation anchors
-  had drifted out of `redact.py` and the whole oracle had been exiting 2 for an
-  unknown length of time; `--check-registry` returns before `build_mutations` is
-  called, so the one automated property could not see it. Tracked as **#299**.
-
-  Three classes, and the third is derived rather than listed: a row that
-  survives even with EVERY guard removed at once was never in the risk class
-  (`Splunk Enterprise` contains no designator substring), so it is a
-  **negative control by design** -- load-bearing against future change, and
-  simply the wrong question for this oracle. Deriving that class rather than
-  hand-listing it moved the headline from 29.8% to 19.8%; a hand-written
-  exclusion list would have been one more enumeration, and would have read as
-  special pleading around an inconvenient number.
-
-  **Budget it.** Items 6 and 9 both fix existing code, so their tables land in
-  the 42% regime by construction, not by bad luck. Forty seconds against that
-  prior is the cheapest thing on the remaining path -- schedule the run rather
-  than rediscover the need for it.
-
-  **Residual, stated so it is examined rather than assumed**: the guard list is
-  hand-built, so the tool is itself an enumeration of what its author thought of
-  -- this entire lesson one level up. `unrelated` is therefore an UPPER BOUND
-  with a known error direction: modelling more guards can only move rows out of
-  it. The way out is deriving mutations from the pattern's own structure
-  (alternations, named sub-patterns) instead of listing them by hand. Not built;
-  the hand list found an 11x signal on its first run.
+  **It is a floor, not a census**, and can only under-report. A row that
+  survives with EVERY guard removed was never in the risk class — a **negative
+  control by design**, derived rather than hand-listed. **Budget it**: any item
+  fixing existing code lands its tables in the 42% regime by construction.
+  **Residual**: the guard list is hand-built, so `unrelated` is an UPPER BOUND.
+  **Still ungated is whether the tool can RUN** (#299) — two mutation anchors
+  had drifted out of `redact.py` and the oracle had been exiting 2 for an
+  unknown length of time, because `--check-registry` returns before
+  `build_mutations` is called.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
   #73/#75/#79 sweep exactly that way: `risk.py` never calls `analyze_gaps`, it
   re-derives the comparison inline, so a complete call-site sweep reported clean
   over a file that computed client-facing risk findings against a hardcoded
-  target. Grep for what the defect LOOKS like — the literal default values, the
-  truncation constant, the magic number, the shape of the comparison. Concretely,
-  on the trio, **as `risk.py` read before #84 was fixed**:
+  target. **Grep for what the defect LOOKS like** — the literal default values,
+  the truncation constant, the magic number, the shape of the comparison.
+  Concretely, **as `risk.py` read before #84 was fixed**:
   `grep -rnE "(maturity_tier|maturity_stage) *< *[0-9]"` returned `risk.py:177`
   on the first try, and `grep -rnE "is not None else [0-9]"` returned
-  `risk.py:193`. Neither appeared in any list of `analyze_gaps` callers.
-  A reimplementation shares the symptom, never the symbol.
+  `risk.py:193`. Neither appeared in any list of `analyze_gaps` callers. A
+  reimplementation shares the symptom, never the symbol.
 
-  **The example is DATE-QUALIFIED rather than refreshed, and that is the
-  repair this file prescribes for itself.** #84's fix replaced both lines, so
-  both greps now return nothing -- and a reader who tries the technique on a
-  fixed tree gets silence and concludes the technique does not work. Swapping
-  in a fresh live instance would re-arm exactly that: the cited instance is the
-  first thing anyone fixes, and fixing it makes the sentence false again. Pin
-  the example to when it was true; the TECHNIQUE is what survives.
+  **The example is DATE-QUALIFIED rather than refreshed, and that is the repair
+  this file prescribes for itself.** #84's fix replaced both lines, so both
+  greps now return nothing — and a reader who tries the technique on a fixed
+  tree gets silence and concludes the technique does not work. Swapping in a
+  fresh live instance would re-arm exactly that: the cited instance is the first
+  thing anyone fixes. Pin the example to when it was true; the TECHNIQUE is what
+  survives.
 
-  **AND THE OBVIOUS FIX -- "so call `analyze_gaps`" -- IS REFUSED, deliberately,
-  so the next reader does not make it.** #84 was closed by sharing the TARGET
-  RESOLUTION (`resolve_target_tier` / `resolve_target_stage`, imported rather
-  than copied) and leaving the comparison local. Calling `analyze_gaps` here
-  would cap the risk-synthesis feed at `DEFAULT_TOP_N = 20`, because it returns
-  `gaps=tuple(rows[:top_n])` -- the truncation #75/#79 record in three
-  renderers, arriving in the client's register. Trading a wrong baseline for
-  silent data loss is not a trade. The full migration needs an explicit
-  `top_n` and its own red-on-revert for the truncation; until then this file is
-  a deliberate non-caller, and PR #348 carries the reason at the site.
+  **AND THE OBVIOUS FIX — "so call `analyze_gaps`" — IS REFUSED, deliberately.**
+  #84 was closed by sharing the TARGET RESOLUTION (`resolve_target_tier` /
+  `resolve_target_stage`, imported rather than copied) and leaving the
+  comparison local. Calling `analyze_gaps` here would cap the risk-synthesis
+  feed at `DEFAULT_TOP_N = 20`, because it returns `gaps=tuple(rows[:top_n])` —
+  the truncation #75/#79 record in three renderers, arriving in the client's
+  register. Trading a wrong baseline for silent data loss is not a trade. The
+  full migration needs an explicit `top_n` and its own red-on-revert; until then
+  this file is a deliberate non-caller, and PR #348 carries the reason at the
+  site.
 - **A CHANGE THAT REMOVES OR REPLACES A GUARD NEEDS AT LEAST ONE ASSERTION
   THAT GOES RED WHEN THE GUARD IS DELETED, EXERCISED THROUGH THE SURFACE THE
   CLIENT ACTUALLY REACHES.** A resolver and a pure function are not that
-  surface. Neither is a schema.
-
-  From one branch family on 2026-09-10, each found by red-on-revert and none
-  by review:
+  surface. Neither is a schema. From one branch family on 2026-09-10, each found
+  by red-on-revert and none by review:
 
   - The #195 schema tests stayed GREEN with the route pointed back at the wide
     admin schema. They pinned the shape of two Pydantic models; the defect was
     which model the handler names.
   - The 422-handler test stayed GREEN with the handler's call site reverted,
-    because it called the coercion helper directly. It proved the helper
-    worked, not that anything used it.
+    because it called the coercion helper directly.
   - #184's tests covered `resolve_target_tier` and `analyze`. The reachable
     defect was a query parameter, and deleting its guard would have left the
-    whole suite green while turning a 200 into an untyped 500 — strictly worse
-    than the clamp being removed.
+    whole suite green while turning a 200 into an untyped 500.
 
-  The tell is that the test imports the thing it is defending rather than
-  calling the endpoint that reaches it. That reads as more focused and is
+  **The tell is that the test imports the thing it is defending rather than
+  calling the endpoint that reaches it.** That reads as more focused and is
   strictly weaker: the wiring is where the guard is selected, and the wiring is
-  what a refactor changes.
-
-  **The check is mechanical and is the one this file already prescribes** —
-  delete the guard, run the suite, and require a specific named test to go red.
-  If the only red is in a file that imports the guard directly, the surface is
-  not covered.
+  what a refactor changes. **The check is mechanical** — delete the guard, run
+  the suite, require a specific named test to go red. If the only red is in a
+  file that imports the guard directly, the surface is not covered.
 
 - **Verify each assertion red-on-revert, one fix at a time.** A suite that goes
   green after a change proves the change did not break anything; it says nothing
   about whether the new tests can fail. Revert each fix individually and confirm
-  its own test fails with the message you wrote for it. In the export trio this
-  turned four green tests into four discriminating ones and caught two more
-  instances of the #72 pattern (the eighth and ninth) — one where `str(count) in summary` was satisfied
-  by an unrelated coverage fraction (`106/106 subcategories scored` contains
-  `106`), and one where an entire keyword argument was deletable with the whole
-  suite passing. Both were written by someone who had logged that pattern the
-  same day, which is the point: knowing the shape does not prevent producing it,
-  only checking does.
+  its own test fails with the message you wrote for it. In one export trio this
+  turned four green tests into four discriminating ones and caught two more #72
+  instances — one where `str(count) in summary` was satisfied by an unrelated
+  fraction, one where an entire keyword argument was deletable with the suite
+  passing. Both were written by someone who had logged that pattern the same
+  day: knowing the shape does not prevent producing it.
 
   **A revert that silently fails to apply reports the same green as a test that
-  cannot fail — so prove the revert LANDED before you read its result.** The
-  check produces the reassuring answer in both cases, and it is the answer you
-  are hoping for, which is the worst possible combination. Concretely, on #130:
-  a scripted `str.replace` of `_STREET_SEP` matched zero occurrences because the
-  search string carried a real tab where the file has a literal backslash-`t`;
-  `replace` does not raise on a miss, so the suite ran against the UNMODIFIED
-  file and came back 111 passed. Written up, that would have read "verified
-  red-on-revert" over a fix pinned by nothing.
+  cannot fail — so prove the revert LANDED before you read its result.** A
+  scripted `str.replace` matched zero occurrences because the search string
+  carried a real tab where the file has a literal backslash-`t`; `replace` does
+  not raise on a miss, so the suite ran against the UNMODIFIED file and came
+  back green. Written up, that would have read "verified red-on-revert" over a
+  fix pinned by nothing. Cheap guards, in preference order: `assert
+  s.count(old) == 1` before replacing; `grep` the mutated line and read it back;
+  or revert with `git` rather than a string edit. **Treat "the revert produced
+  no failures" as a claim about your tooling until proven otherwise.**
 
-  Cheap guards, in order of preference: `assert s.count(old) == 1` before
-  replacing (a miss and an unintended double-hit both raise); `grep` the mutated
-  line and read it back; or revert with `git` rather than a string edit. And
-  treat "the revert produced no failures" as a claim about your tooling until
-  proven otherwise — the first hypothesis is that the mutation did not land, not
-  that the assertion is weak.
-
-  **THE STRONGEST RECORDED CASE FOR THIS IS ONE WHERE EVERY OTHER SIGNAL
-  AGREED, INCLUDING THE AUTHOR'S OWN EYES.** A sweep's regex was widened to
-  match a second form; `\b` was written for the boundary and reached the file
-  as a literal BACKSPACE byte (U+0008) inside a raw string, so the alternation
-  read `<BS>reason\s*=` and matched nothing.
-
-  What agreed that the fix had landed: `grep` printed a correct-looking line,
-  because a backspace renders as nothing. The module's tests passed. The same
-  regex typed inline in a shell found the codes. The diff looked right.
-  **Only the mutation disagreed** — and finding out why took a probe printing
-  `literal.pattern` from inside pytest. A stale `.pyc`, a wrong root directory
-  and a duplicate pattern were each ruled out first, all wrong.
-
-  Red-on-revert is what speaks about the BEHAVIOUR here, because every other
-  behavioural signal is reading the SOURCE while the defect is in the COMPILED
+  **THE STRONGEST RECORDED CASE IS ONE WHERE EVERY OTHER SIGNAL AGREED,
+  INCLUDING THE AUTHOR'S OWN EYES.** A `\b` written for a boundary reached the
+  file as a literal BACKSPACE byte (U+0008) inside a raw string, so the
+  alternation matched nothing. `grep` printed a correct-looking line, because a
+  backspace renders as nothing. The tests passed. The same regex typed inline in
+  a shell found the codes. **Only the mutation disagreed** — every other
+  behavioural signal was reading the SOURCE while the defect was in the COMPILED
   value.
 
-  **It is not the cheapest signal, and an earlier draft of this sentence said
-  it was the only one — directly above its own counterexample.**
-  `check_no_control_chars.py` reads `path.read_bytes()` and scans `.py`, so it
-  reads the source and finds this exact byte in two seconds. A reader who took
-  the stronger claim would spend a mutation cycle to learn what the gate beside
-  them already prints. **Run the gate first; reach for red-on-revert to prove
-  the fix holds.**
-
-  **And a gate caught it, correctly, on the first run — and was not read.**
-  `check_no_control_chars.py` reported `U+0008` at that line, which is the
-  entire reason it exists. A gate that fires correctly and is ignored is worse
-  than one that is missing: the missing gate leaves you knowing you have no
-  cover, and the ignored one leaves a green-looking wall of output with the
-  answer inside it. **When a gate reports something you did not expect, read it
-  before deciding what it is about** — it is the cheapest signal in the repo and
-  the one most easily skimmed past on the way to the thing you were doing.
+  **It is not the cheapest signal, and a draft of this said it was the only one
+  — directly above its own counterexample.** `check_no_control_chars.py` reads
+  `path.read_bytes()` and finds that byte in two seconds. **Run the gate first;
+  reach for red-on-revert to prove the fix holds.** And that gate DID fire,
+  correctly, on the first run, and was not read. **When a gate reports something
+  you did not expect, read it before deciding what it is about.**
 - **Replacing a character class with an enumerated one is a subtraction you must
   COMPUTE, not guess.** `\s` matches 19 horizontal characters. Narrowing it to
   "space, tab, non-breaking space" to stop a rule crossing newlines therefore
-  dropped SIXTEEN more (U+2000-U+200A, U+202F, U+205F, U+3000, U+1680, U+001F) --
+  dropped SIXTEEN more (U+2000-U+200A, U+202F, U+205F, U+3000, U+1680, U+001F) —
   and in the redactor that is a LEAK, not a residual: a street address separated
-  by a narrow no-break space, which is exactly what PDF and Word extraction emit,
-  egressed verbatim with no `address` key in `removed_counts`. Strictly worse
-  than the over-match being fixed. The decision was framed as being about
-  NEWLINES, so the replacement was written to solve newlines and nobody
-  re-derived what else was in the class. Write it as the subtraction and let the
-  language define the set (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
+  by a narrow no-break space, which is exactly what PDF and Word extraction
+  emit, egressed verbatim with no `address` key in `removed_counts`. Strictly
+  worse than the over-match being fixed.
+
+  The decision was framed as being about NEWLINES, so the replacement was
+  written to solve newlines and nobody re-derived what else was in the class.
+  **Write it as the subtraction and let the language define the set**
+  (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
   parametrised sweeps whose parameters come from somewhere other than the thing
-  under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong -- it
-  still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
+  under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
+  it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
 - **An escape sequence written into prose becomes an invisible control byte, and
   CI now checks for it** (`apps/api/scripts/check_no_control_chars.py`, the
   "control-character sweep" step). `\b` in a non-raw string is a BACKSPACE; `\v`,
@@ -1210,68 +1118,32 @@ a real exit code and a real date, and was the minority outcome (D-071).
   count is usually in another file.** Narrower and more checkable than "re-check
   your numbers": the trigger is mechanical. PR #141 stated the address truth
   table had 153 cells. The fix for a review finding was to parametrise two
-  sweeps per separator as well as per character — 7 sites x 19 horizontal and
-  7 x 10 vertical — which multiplied the collected count several-fold. (The
-  number that stood here was 327; it was 376 within the week and 410 after
-  item 10, which is why it is no longer written down. Run the collector.)
-  The stale
-  153 shipped to `main` in `CONTEXT.md` and `DECISIONS.md` and was found a PR
-  later. What caught it was **re-counting**, not re-reading: the sentence still
-  parsed, still looked deliberate, and was wrong by a factor of two.
-  The number goes stale at the exact moment the change is most obviously
-  substantive, which is when attention is on the code and not on the prose two
-  files away. So: after touching any `@pytest.mark.parametrize` argument, grep
-  the repo for the old count before committing.
+  sweeps per separator as well as per character, which multiplied the collected
+  count several-fold. (The number that stood here was 327; it was 376 within the
+  week and 410 after item 10, which is why it is no longer written down. Run the
+  collector.) The stale 153 shipped to `main` in `CONTEXT.md` and `DECISIONS.md`
+  and was found a PR later.
+
+  What caught it was **re-counting**, not re-reading: the sentence still parsed,
+  still looked deliberate, and was wrong by a factor of two. The number goes
+  stale at the exact moment the change is most obviously substantive, which is
+  when attention is on the code and not on the prose two files away. **After
+  touching any `@pytest.mark.parametrize` argument, grep the repo for the old
+  count before committing.**
 - **A CORRECTION PARAGRAPH OUTLIVES THE NUMBER IT CORRECTED, and then certifies
-  a wrong one.** The re-count trigger above says a changed parametrisation
-  invalidates counts in other files. This is its nastier sibling: the prose
-  written to explain WHY a number is trustworthy goes stale with the number,
-  while still reading as a guarantee. A bare stale count invites a check. A stale
-  count under "read live from GitHub, not carried forward" ends the check.
+  a wrong one.** The prose written to explain WHY a number is trustworthy goes
+  stale with the number, while still reading as a guarantee. A bare stale count
+  invites a check; a stale count under "read live from GitHub, not carried
+  forward" ends it. It has happened repeatedly in one week, and most instances
+  are in the files documenting the rule — **D-079** carries the list, kept THERE
+  because a list here acquires a tally that goes stale in turn.
 
-  Instances in one week — **five**, of which three are in the files that
-  document the rule. An earlier draft said "four" and was left saying four
-  when two more were added, which is this bullet's own defect for the SECOND
-  time (it also shipped a wrong closure count). The number is written out
-  here only because the list is immediately below it; if it grows again,
-  delete the count rather than update it:
-
-  - `context/gene.md` — "Open mvp-blocking issues (20)" under a paragraph
-    certifying it freshly read. EIGHT issues closed in the merge that carried <!-- counted: historical -->
-    the file; the heading did not move and the certificate stayed.
-
-    An earlier draft of this very bullet said NINE -- the count of everything
-    closed since the heading was written, which silently included one closed
-    by a different PR. The lesson's own defect, in the paragraph introducing
-    the lesson, caught by review rather than by the author. Derive a closure
-    count from `gh pr view <n> --json closingIssuesReferences`, not from
-    memory of what happened.
-  - `DELIVERY_PLAN.md` — a paragraph explaining a corrected total said "today's
-    12-18" and went stale in the same commit that changed the total to 10-15,
-    written by the author applying the rule.
-  - `leave_row_oracle.py` — a docstring recording that its own counts must be
-    re-counted on every guard-list change, quoting counts that were two guard-list <!-- counted: historical -->
-    changes old.
-  - **`CLAUDE.md` itself, the re-count-trigger bullet above** — it said the
-    collected count was **327**. It was 376 by the time that
-    sentence shipped and is 410 now. A bullet about counts going stale in
-    another file, carrying a stale count.
-  - `tests/unit/test_redact_address_matrix.py` — "(The count is 327 now…)",
-    present tense, in the file that PRODUCES the number.
-
-  One further citation was drafted and withdrawn: `redact.py:82`, a note about an <!-- counted: "One further citation" narrates a single act, not a tally of a population. -->
-  earlier note about `\s`. It is a real defect and it is a DIFFERENT one — a
-  scope over-claim that was wrong on arrival rather than a number that went
-  stale — and it belongs under the narrower-rule bullet below. Filing it here to
-  pad the list would have mislabelled it, which is what makes the next sweep
-  miss.
-
-  The countermeasure is not more care, because in most of the instances above the
-  author was actively applying the rule. It is: **when you write a sentence certifying a
+  The countermeasure is not more care, because in most instances the author was
+  actively applying the rule. It is: **when you write a sentence certifying a
   derived value, put the value where a gate can read it, and let the sentence
   point at the gate rather than restate the number.** `check_plan_totals.py`
-  reads the table, not the prose, which is why the plan's total is the one figure
-  in this repo that has never shipped wrong.
+  reads the table, not the prose, which is why the plan's total is the one
+  figure in this repo that has never shipped wrong.
 
 - **When a guard keys on a predicate, sweep every call site of the predicate,
   not every caller of the guard.** `is_production()` has four call sites and all
@@ -1284,88 +1156,55 @@ a real exit code and a real date, and was the minority outcome (D-071).
   assert_safe_for_runtime" — true, and the reason the next reader stops looking.
   Filed as #142.
 - **Before writing a gate, enumerate its SILENT-SUCCESS branches — every path
-  that exits 0 without having looked — the way you enumerate a truth table before
-  a regex.** The fail-closed rule further up is about the branch you write on
-  purpose. This is about the branches you do not notice you wrote, and the
-  distinction matters because the second kind keeps happening in this repo's own
-  tooling — the list below is the count, and every entry but the last was found
-  in review rather than by the author:
+  that exits 0 without having looked — the way you enumerate a truth table
+  before a regex.** The fail-closed rule above is about the branch you write on
+  purpose. This is about the branches you do not notice you wrote:
 
   - `check_audit_evidence.py` — `is_code_change([])` returned False, so an empty
     changed-file list printed "documentation-only change, exempt" and exited 0.
   - `mutation_sweep.py` — `_run_tests` reports "killed" for any non-zero exit,
-    and pytest exits non-zero for collection errors too, so a suite that never
-    ran an assertion scored every mutant killed and printed "no surviving
-    mutants". A tool for certifying that tests can fail, unable to notice that it
-    could not itself fail. Fixed with a `BaselineNotGreen` check.
-  - `check_plan_totals.py` — a table row whose estimate did not parse hit the
-    same `continue` as the column-header row, so an annotated cell
-    (`2-3 (needs-David)` — the house style one table up) was dropped from the sum
-    in silence, and the cheapest route to green was to change the total to the
-    short sum. The gate steering the author into the defect it exists to catch.
-  - `check_test_integrity.py` — `rglob` on a path that does not exist yields
-    nothing, so `check_test_integrity /nope` printed "test-integrity: clean" and
-    exited **0**. LATENT rather than live, and the distinction is the useful
-    part: `ci.yml` carries `working-directory: apps/api` on that step, so the
-    relative `tests` it passes has always resolved. The gate's correctness lived
-    in a line in a DIFFERENT file that nothing checks — drop it, or reorder the
-    step, and the gate goes green and blind with no signal at all. Its four
-    anticipated failures are now decided and named, and all four exit 2.
+    and pytest exits non-zero for collection errors, so a suite that never ran
+    an assertion scored every mutant killed and printed "no surviving mutants".
+    A tool for certifying that tests can fail, unable to notice it could not
+    itself fail.
+  - `check_plan_totals.py` — an unparseable estimate hit the same `continue` as
+    the column-header row, so an annotated cell was dropped from the sum in
+    silence, and the cheapest route to green was to change the total.
+  - `check_test_integrity.py` — `rglob` on a nonexistent path yields nothing, so
+    `check_test_integrity /nope` printed "clean" and exited **0**. Latent, not
+    live: `ci.yml` carries `working-directory: apps/api`, so the gate's
+    correctness lived in a line in a DIFFERENT file that nothing checks.
 
-  One shape, and the list keeps growing: **"I could not look" sharing a branch with
-  "nothing to complain about".** The rule against it was already written down
-  when the second and third were produced, which is D-051's own finding — so the
-  countermeasure is not more resolve, it is a step in the procedure. Before the
-  first line of a new checker, list every `return 0` / `continue` / `pass` it will
-  have and write beside each one what the input looked like. Any entry whose
-  answer is "I don't know" or "there was nothing there" is the bug, and it is
-  cheaper to find on that list than in review.
+  One shape: **"I could not look" sharing a branch with "nothing to complain
+  about".** The rule against it was already written down when the second and
+  third were produced, which is D-051's own finding — so the countermeasure is a
+  step in the procedure, not more resolve. Before the first line of a new
+  checker, list every `return 0` / `continue` / `pass` it will have and write
+  beside each one what the input looked like. Any entry whose answer is "I don't
+  know" or "there was nothing there" is the bug.
 - **A PATTERN THAT WAS CORRECT IN ITS ORIGINAL CONTEXT CARRIES NO MARKER
-  SAYING WHAT MADE IT CORRECT. When you reach for a known-good shape, state
-  what PROPERTY of the original made it right, and check that the property
-  holds here.**
-
-  Copying a shape that works is the cheapest way to be wrong while looking
-  careful, because the reviewer sees a form this repo already endorses and the
-  author has an honest reason for choosing it. The failure is not the copy. It
-  is that the ORIGINAL had a precondition nobody wrote down, so nobody checked
-  whether the new site has it.
-
-  The instances, and the second is the sharper one:
+  SAYING WHAT MADE IT CORRECT. When you reach for a known-good shape, state what
+  PROPERTY of the original made it right, and check that the property holds
+  here.** Copying a shape that works is the cheapest way to be wrong while
+  looking careful: the reviewer sees a form this repo already endorses and the
+  author has an honest reason for choosing it. The failure is not the copy — it
+  is that the ORIGINAL had a precondition nobody wrote down.
 
   - **A pointer at a duplicated cross-language literal.** `SCHEMA_REASON_PREFIX`
-    in `app/exceptions.py` carries one and says why it is on THAT side: *"the
-    pointer lives HERE, rather than only there, because the window is closed by
-    whoever edits THIS constant, who would otherwise have no way to know the
-    copy exists."* The property is **the pointer sits where the change
-    originates**.
-
-    **The instance originally cited here was `dashboard_not_released` in
-    `routes/clients.py`, and by the time this shipped it was fixed.** #362
-    landed the producing-side pointer — the file now carries *"THE STRING
-    `dashboard_not_released` IS DUPLICATED IN THE WEB BUNDLE"* and a stated
-    width of the gap — so a reader acting on the old text would have opened a
-    PR to move a pointer already sitting where the rule wants it.
-
-    That is this file's own *an example of a rule being violated is falsified
-    by the rule being followed* shape, and the repair is the one it prescribes:
-    cite the PROPERTY, not a live breach. A pointer on the consuming side
-    closes nothing, because the person renaming the API literal never opens
-    the web file — true whether or not any instance of it survives today.
-  - **Two helpers that choose between a server's sentence and local copy.**
-    One withholds the server's message, one always prefers it, and both are
-    right. The property that decides it is whether the LOCAL copy carries
-    information the server's does not — not which module the caller lives in,
-    which is the thing that looks like the difference.
-
-    **A draft of this said the property was "written into both", and it was
-    not.** Only the withholding side carries it (`GENERIC_COPY_IS_BETTER` /
-    `dashboardLoadReason` in `apps/web/src/lib/describe-save-error.ts`); the
-    always-prefers side documents its copy rules and says nothing about why it
-    prefers the server's sentence. The sentence therefore told the one reader
-    who would otherwise have written it that it was already there — a
-    certificate over the wrong proposition, in the bullet about unstated
-    preconditions. **Write it into the side that lacks it.**
+    in `app/exceptions.py` says why it is on THAT side: *"the pointer lives
+    HERE, rather than only there, because the window is closed by whoever edits
+    THIS constant, who would otherwise have no way to know the copy exists."*
+    The property is **the pointer sits where the change originates**. A pointer
+    on the consuming side closes nothing, because the person renaming the API
+    literal never opens the web file.
+  - **Two helpers that choose between a server's sentence and local copy.** One
+    withholds the server's message, one always prefers it, and both are right.
+    The property that decides it is whether the LOCAL copy carries information
+    the server's does not — not which module the caller lives in, which is the
+    thing that looks like the difference. Only the withholding side carries that
+    reasoning (`GENERIC_COPY_IS_BETTER` in `lib/describe-save-error.ts`); the
+    always-prefers side documents its copy rules and never says why. **Write it
+    into the side that lacks it.**
 
   **The test is one sentence, and it goes in the code rather than the PR:** name
   the property, then say why it holds here. If you cannot name it, you have
@@ -1373,16 +1212,14 @@ a real exit code and a real date, and was the minority outcome (D-071).
   whatever was unstated.
 
   This is the twin-sweep rule reflected: that one says a defect found in one
-  place exists in its twins until checked, and this one says a SOLUTION found
-  in one place does not transfer until checked. Both fail the same way — by
-  reasoning from resemblance instead of from the mechanism.
+  place exists in its twins until checked, and this one says a SOLUTION found in
+  one place does not transfer until checked. Both fail by reasoning from
+  resemblance instead of from the mechanism.
 
 - **A SELECTOR THAT SELECTS NOTHING PASSES. ASSERT THE COUNT IT SELECTED
-  BEFORE READING ITS RESULT.** Same family as the silent-success branch above,
-  one layer out: there the checker looked and had nothing to say; here the
-  checker never looked, and the green is indistinguishable.
-
-  Measured, four shapes, one property:
+  BEFORE READING ITS RESULT.** Same family as the silent-success branch, one
+  layer out: there the checker looked and had nothing to say; here it never
+  looked, and the green is indistinguishable.
 
   | The selector | What it selected | What it reported |
   | --- | --- | --- |
@@ -1391,129 +1228,65 @@ a real exit code and a real date, and was the minority outcome (D-071).
   | `if "--check-registry" in argv` | nothing; fell through to the report path | exit 0 |
   | a flag the script does not implement | nothing; ignored | the success banner |
 
-  Every one reports success for having done nothing, and the output is the one
-  you were hoping for. **The remedy is the same in all four: make the count
-  part of the result.** `-k` prints how many it deselected — read it. A grep
-  for the SUBJECT beats a filter you believe in: on the renamed key, `-k` came
-  back green and `grep` found all four consumers.
+  **The remedy is the same in all four: make the count part of the result.**
+  `-k` prints how many it deselected — read it. A grep for the SUBJECT beats a
+  filter you believe in: on the renamed key, `-k` came back green and `grep`
+  found all four consumers.
 
   **AND A FIXTURE THAT BUILDS AN UNREACHABLE STATE IS THE SAME DEFECT AT THE
-  INPUT END.** A test whose setup constructs something the writer cannot
-  produce proves something about nothing — worse, it can make a correct claim
-  look false, or a false one look proven. The recorded instance: a dashboard
-  fixture set `tier = None` while leaving likelihood and impact intact, but the
-  writer computes `tier_for(lk, im) ... else None`, so a null tier ALWAYS
-  travels with null operands. The fixture built the one state the application
-  cannot reach, and it was the one state where the banner under test made a
-  false claim about its own data.
-
-  The check is one question, asked of the SETUP rather than the assertion:
-  **can the system under test produce this state?** If you cannot name the
-  writer that does it, the test is about a different system.
+  INPUT END.** A dashboard fixture set `tier = None` while leaving likelihood
+  and impact intact, but the writer computes `tier_for(lk, im) ... else None`,
+  so a null tier ALWAYS travels with null operands. The fixture built the one
+  state the application cannot reach, and it was the one state where the banner
+  under test made a false claim about its own data. Ask of the SETUP: **can the
+  system under test produce this state?** If you cannot name the writer that
+  does it, the test is about a different system.
 - **"THE DISCLOSURE REACHES A SCREEN" IS PART OF THE DEFINITION OF DONE FOR ANY
-  PR THAT ADDS A PROVENANCE FIELD.** Not a note about where it should
-  eventually surface — a condition on the PR that adds it. A field that records
-  what was withheld, dropped, rejected, unconfirmed or not-looked-at is only
-  finished when a person can see it without querying the API -- **on a screen
-  OR in a delivered artifact.**
+  PR THAT ADDS A PROVENANCE FIELD.** A field recording what was withheld,
+  dropped, rejected, unconfirmed or not-looked-at is finished only when a person
+  can see it without querying the API: **on a screen OR in a delivered
+  artifact.** The artifact half is not padding — the canonical instance lives in
+  an EXPORT (`source_rows_total` and `withheld` in `tech_debt/exporters.py` and
+  `attack/exporters.py`, including the exclusion disclosure that understated
+  spend by $240,000), so read as screens-only, a PR adding a withheld count
+  consumed solely by the XLSX exporter records no exemption.
 
-  The artifact half is not a widening for completeness. This repo's canonical
-  instance lives in an EXPORT: `source_rows_total` and `withheld` appear in
-  `app/tech_debt/exporters.py` and `app/attack/exporters.py`, and the
-  exclusion disclosure that understated spend by $240,000 is one of them. Read
-  as screens-only, a PR adding a withheld count consumed solely by the XLSX
-  exporter either builds a web surface nobody asked for, or decides the rule
-  does not apply and records no exemption.
-
-  **The ownership half, decided on #244 and recorded so it is not re-litigated:
-  the pages under `apps/web/src/app/**` AND THE COMPONENTS THEY RENDER belong
-  to whichever track owns the API surface the page reads. Dashboards go to the
-  service track that produces their numbers.**
-
-  **Where a page reads SEVERAL API surfaces, or NONE, it belongs to the track
-  that owns the numbers the page exists to show.** The five dashboards are the
-  unambiguous case and the rule was derived from them; the rest of the route
-  tree is not. Measured: nine pages under `apps/web/src/app/**` read no
-  service API at all (`sign-in`, `privacy`, `help`, the password flows), and
-  `results/page.tsx` makes five API calls spanning `/auth/me`,
-  `/clients/*/deliverables` and `/clients/*/risk/dashboard` in one handler.
-  Without this clause the rule yields NO owner for those, and two tracks each
-  reading it conclude the other owns the work -- the #244 outcome reproduced
-  under the rule written to end it.
-
-  "And the components they render" is not padding. The evidence below is
-  `apps/web/src/components/admin/AuditViewer.tsx`, which is not under
-  `app/**` at all -- it is rendered by `app/admin/audit/page.tsx`. A rule
-  quantifying over the route tree alone would have excluded its own lead
-  instance, and every other surface in this repo is built the same way: the
-  page is a thin shell and the component is where the copy lives.
+  **Ownership, decided on #244: the pages under `apps/web/src/app/**` AND THE
+  COMPONENTS THEY RENDER belong to whichever track owns the API surface the page
+  reads. Dashboards go to the service track that produces their numbers.**
+  Where a page reads SEVERAL API surfaces or NONE, it belongs to the track that
+  owns the numbers the page exists to show — without that clause the rule yields
+  NO owner for the nine pages reading no service API, and two tracks each
+  conclude the other owns the work, reproducing #244 under the rule written to
+  end it. "And the components they render" is load-bearing: the lead instance,
+  `components/admin/AuditViewer.tsx`, is not under `app/**` at all.
 
   The reason is the load-bearing part: **the person who writes the honesty
-  string is the one who knows what it means.** #244's instance 3 is what
-  happens when they are not the same person — a panel printing "Every source
-  row is accounted for" over a discarded list, because whoever wrote the copy
-  was not the person who knew the guard's operands. Shared ownership of that
-  surface is how it reached zero owners.
+  string is the one who knows what it means.** #244's instance 3 is a panel
+  printing "Every source row is accounted for" over a discarded list.
 
-  **Ownership alone only relocates the follow-up**, which is why the DoD clause
-  exists alongside it. The evidence that it is needed:
+  **Ownership alone only relocates the follow-up.** Every discard counter #122,
+  #132 and the enum work added goes into the audit `details` payload, and
+  nothing under `apps/web` reads it (#322) — the field is declared on
+  `AuditEntryRow`, so the data reaches the browser and is discarded THERE.
+  `entries_written`, `entries_received` and `discarded_entries` match nothing
+  under `apps/web`. #316's `excluded_inputs` reached one HTTP response and died
+  on reload. Each shipped with its record written where the success is, and
+  stopped one layer short of anyone seeing it.
 
-  - `grep -rnE "\.details|details:" apps/web/src` returns **one** hit, the
-    type declaration `details: Record<string, unknown> | null;` in
-    `lib/admin/audit.ts`. Every discard counter #122, #132 and the enum work
-    added goes into the audit `details` payload, and nothing under `apps/web`
-    reads it (#322). "Now visible" was true of the API and false of the UI.
+  **THE MECHANISM EXISTS**: `check_disclosure_consumers.py`, wired into
+  `ci.yml`. Two things were wrong in its first version: **it matches per
+  SERVICE, not across one pooled blob** (field names are not unique across
+  models, so a pooled search let Risk's fields pass on ATT&CK's renderer and the
+  gate ran green over a live instance of the defect it catches, #372); and
+  **both surfaces are checked, the exporter half being load-bearing** —
+  `unusable_target_codes` reaches no screen at all, so a web-only gate would
+  report a defect over a field that reaches the client's deliverable. Residuals
+  are in its docstring; the largest is that the predicate is prefix-anchored, so
+  `unconfirmed_citations` and a bare `dropped` are invisible (#373).
 
-    **The first version of this bullet ran `grep -c "details"` over
-    `AuditViewer.tsx` alone and got 0.** True, and a claim about one file
-    under a sentence quantifying over the console -- this bullet's own
-    neighbouring rule, in the evidence for it. The wider grep is also
-    STRICTLY BETTER evidence: it shows the field is declared on
-    `AuditEntryRow`, so the data reaches the browser and is discarded THERE,
-    which is a sharper statement than a count of zero in one component.
-  - `entries_write_check`, `entries_written`, `entries_received` and
-    `discarded_entries` return no matches anywhere under `apps/web`.
-  - #316's `excluded_inputs` reached exactly one HTTP response and died on
-    reload — the data was already persisted; only the read-back was missing.
-
-  Each of those shipped with its record written where the success is, correctly,
-  and stopped one layer short of anyone seeing it.
-
-  **THE MECHANISM NOW EXISTS**: `apps/api/scripts/check_disclosure_consumers.py`,
-  wired into `ci.yml`. It fails when a disclosure-shaped field lands on a
-  `*Response` model with no consumer on a screen OR in a deliverable.
-
-  Two things about it are worth knowing before you rely on it, because both
-  were wrong in its first version:
-
-  - **It matches per SERVICE, not across one pooled blob.** Field names are not
-    unique across models -- `batches_total` is declared on both
-    `AttackRunAiResponse` and `RiskRegisterResponse` -- so a pooled search let
-    the Risk fields pass on ATT&CK's renderer, and the gate ran green over a
-    live instance of the defect it exists to catch (#372). A reader now counts
-    for a field only when its path carries that field's service token.
-  - **Both surfaces are checked, and the exporter half is load-bearing.**
-    `unusable_target_codes` reaches no screen at all; `zt/exporters.py` is its
-    only reader. A web-only gate -- which is what this paragraph used to
-    describe -- would report a defect over a field that reaches the client's
-    deliverable.
-
-  Its residuals are stated in its own docstring rather than here. The largest:
-  the predicate is prefix-anchored, so `<noun>_<disposition>` names like
-  `unconfirmed_citations` and a bare `dropped` are invisible to it (#373), and
-  it does not recurse into nested models.
-
-  **This paragraph described the gate in the conditional for a day after it
-  shipped**, saying "filed and NOT BUILT" -- so a reader who grepped `#336`
-  would have built what already ships. Recorded rather than quietly swapped,
-  because the sentence it replaced was itself warning that the tense matters.
-  That is `CLAUDE.md`'s own finding arriving one more time: the reflex survives
-  the rule until the rule has a gate, and a rule ABOUT prose has none.
-
-  The gate is a floor, not a census. Before merging a PR that adds such a
-  field, still open the component the reader uses and confirm it renders.
-  **The endpoint is not the surface**, and a test that reads the endpoint
-  proves the write rather than the claim.
+  The gate is a floor, not a census. **The endpoint is not the surface** — open
+  the component the reader uses and confirm it renders.
 
 - **A USER-FACING string naming an action must name a control that exists and
   works TODAY — verified by opening the handler, not by knowing the domain.**
@@ -1527,66 +1300,67 @@ a real exit code and a real date, and was the minority outcome (D-071).
 - **A comment or message stating a rule NARROWER than the reader will assume,
   positioned exactly where they would go to check, is worse than no comment.**
   It is true, so nothing flags it; it is where you look, so it ends the search;
-  and it reads as a guarantee rather than as a scope. The instances, most of them
-  in the redaction subsystem within two days and the last added later:
+  and it reads as a guarantee rather than as a scope. The instances, most in the
+  redaction subsystem within two days:
 
   - `# noqa: S105 - dev placeholder, refused in prod via assert_safe_for_runtime`
     beside the JWT signing secret. True. The guard covered one of three
     environments, and this sentence is why nobody checked the other two (#142).
   - `"SHIELD_REDACTION_MODE=off is forbidden when ENVIRONMENT=production"` — the
-    runtime error the guard itself raises, naming a narrower rule than the one
-    that should exist, in the string a developer reads while debugging it.
+    runtime error the guard raises, naming a narrower rule than the one that
+    should exist, in the string a developer reads while debugging it.
   - `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
     path uses" while calling one rule out of ten. The docstring even argued
     correctly that a second copy would drift, directly above the second copy.
-  - `redact.py:82` -- "Every separator in the module is now built from
-    [`_HSPACE`]", itself written as a correction to an earlier note that HAD
-    gone stale. `_RE_CONTACT_HINT` uses bare `\s` twice, and
-    `check_separator_classes.py` cannot see it: that gate flags hand-ENUMERATED
-    classes, not `\s`. Wrong on arrival rather than stale, which is why it is
-    filed here -- it was withdrawn from the staleness bullet above and, for one
-    draft, recorded in neither list. Tracked as **#158**.
+  - `redact.py` — "Every separator in the module is now built from [`_HSPACE`]",
+    itself written as a correction to an earlier note that HAD gone stale.
+    `_RE_CONTACT_HINT` uses bare `\s` twice, and `check_separator_classes.py`
+    cannot see it: that gate flags hand-ENUMERATED classes, not `\s`. Wrong on
+    arrival rather than stale. Tracked as **#158**.
 
   Every one was found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
-  The countermeasure is mechanical, not attentional: when a comment states a
-  condition, read the condition it describes and check the two agree in SCOPE,
-  not just in truth. And when you fix such a guard, fix its message in the same
-  commit — an error string is documentation that a developer reads under
-  pressure, and a stale one costs more there than in a doc.
-- **Replacing a validator gives you a free ORACLE for exactly one round: the <!-- counted: "one round" is a duration in the claim itself, not a recalled figure. Rewording it to dodge the pattern would be gaming the gate. -->
-  thing you are replacing.** Enumeration depends on imagining cases, and the
-  cases you fail to imagine are precisely the ones that leak. Item 10 replaced a
-  phone regex; the truth table's LEAVE half was carefully enumerated and its
-  REDACT half was seven rows of one grouping, so four formats the OLD rule caught <!-- counted: historical -->
-  — `1-800-555-0199`, `1.555.867.5309`, `020 7946 0958`, and any number separated
-  by a non-ASCII space — leaked silently, and `CAGE1ABC2` regressed the same way.
-  Nobody imagined them; the adversarial reviewer found them by reading.
+  The countermeasure is mechanical: when a comment states a condition, read the
+  condition it describes and check the two agree in SCOPE, not just in truth.
+  And when you fix such a guard, fix its message in the same commit — an error
+  string is documentation a developer reads under pressure.
+- **Replacing a validator gives you a free ORACLE for exactly one round: the
+  thing you are replacing.**
+  <!-- counted: "one round" is a duration in the claim itself, not a recalled figure. -->
+  Enumeration depends on imagining cases, and the cases you fail to imagine are
+  precisely the ones that leak. Item 10 replaced a phone regex; the truth
+  table's LEAVE half was carefully enumerated and its REDACT half was seven rows
+  <!-- counted: historical -->
+  of one grouping, so four formats the OLD rule caught — `1-800-555-0199`,
+  `1.555.867.5309`, `020 7946 0958`, and any number separated by a non-ASCII
+  space — leaked silently, and `CAGE1ABC2` regressed the same way. Nobody
+  imagined them; the adversarial reviewer found them by reading.
+  <!-- counted: historical -->
 
   The mechanical version costs nothing: **run the old rule and the new rule over
-  the same corpus and diff their match sets.** Every input the old one caught and
-  the new one does not is either an intended false-positive fix or a new leak,
-  and you must classify each. It works for any validator, filter, guard or parser
-  being replaced — and only for one round, because after the old one is deleted <!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
-  the oracle is gone. Capture the diff while you still have both.
+  the same corpus and diff their match sets.** Every input the old one caught
+  and the new one does not is either an intended false-positive fix or a new
+  leak, and you must classify each. It works for any validator, filter, guard or
+  parser being replaced — and only for that one round, because after the old one
+  <!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
+  is deleted the oracle is gone. Capture the diff while you still have both.
 
   **Second example, same shape: a published standard is to a keyword list what
   the old rule is to a replacement pattern.** #139 asked which facility
   designators to add, and the honest answer to "which ones did I think of" is
-  always "the ones I thought of". USPS Publication 28 Appendix C2 is the approved
-  list of US secondary unit designators — 24 entries — so the question became a
-  lookup. Of those, 7 were already covered, 8 were added, and 9 were excluded as
+  always "the ones I thought of". USPS Publication 28 Appendix C2 is the
+  approved list of US secondary unit designators, so the question became a
+  lookup: some were already covered, some were added, and nine were excluded as
   ordinary English that takes a digit (`KEY`, `LOT`, `SIDE`, `REAR`, `FRNT`,
-  `SPC`, `PH`, `LOWR`, `UPPR`). The table asserts every "covered" row actually
-  redacts and every exclusion still does not, so the list is complete against a
-  standard rather than against recall.
+  `SPC`, `PH`, `LOWR`, `UPPR`). The table asserts every covered row redacts and
+  every exclusion still does not, so the list is complete against a standard
+  rather than against recall.
 
   It also gave the residual a better reason. `Level` is excluded not because
   "patch level 3 is inseparable from a floor" — a phrasing that invites the next
   person to attempt the separation and fail identically — but because **LEVEL is
-  not on Pub 28 C2 at all**. That is the same scope call as the non-US postcode
-  residual, with the same firing condition, so those residuals now share one
-  reason and one trigger instead of separate stories.
+  not on Pub 28 C2 at all**, the same scope call as the non-US postcode
+  residual, with the same firing condition.
 
   This covers the half enumeration structurally cannot: enumeration finds what
   you thought of, the oracle finds what the previous author — or the standards
@@ -1644,11 +1418,10 @@ a real exit code and a real date, and was the minority outcome (D-071).
   makes its callers conflate the two. Anything gating on that null fails open the
   moment the box is slow — expose an explicit phase instead.
 - A `fetch` Response body can be read ONCE. An error path that tries
-  `res.json()` and then falls back to `res.text()` throws "body stream
-  already read", and THAT TypeError propagates in place of the typed error the
-  block exists to build — destroying the status and the correlation id at the
-  moment they are needed. Read the body once with `res.text()`, then
-  `JSON.parse` it.
+  `res.json()` and then falls back to `res.text()` throws "body stream already
+  read", and THAT TypeError propagates in place of the typed error the block
+  exists to build — destroying the status and the correlation id at the moment
+  they are needed. Read the body once with `res.text()`, then `JSON.parse` it.
 
   **This entry used to say the 2026-08-04 pass fixed it "in all six
   `lib/*/client.ts` wrappers". That was true of the glob and false of the
@@ -1657,12 +1430,10 @@ a real exit code and a real date, and was the minority outcome (D-071).
   call — plus `lib/admin/audit.ts` and `lib/ai/preview.ts`, whose
   `AuditProxyError` and `AiPreviewError` were equally never constructed, and
   both `lib/intake/` helpers. Filed as #174, which itself named only
-  `lib/api.ts`.
-
-  The transferable part is the failure, not the count: **the sweep predicate
-  was a PATH instead of a defect.** A completed sweep over `lib/*/client.ts`
-  reads as a completed sweep, and the sentence recording it is what stops the
-  next reader checking.
+  `lib/api.ts`. **The transferable part is the failure, not the count: the sweep
+  predicate was a PATH instead of a defect.** A completed sweep over
+  `lib/*/client.ts` reads as a completed sweep, and the sentence recording it is
+  what stops the next reader checking.
 - Demo stack: web :3000, API docs :8000/docs, Keycloak :8080, MinIO :9001,
   MailHog :8025. Logins: `admin@kentro.example` / `DemoPass!2026` (Kentro
   consultant), `client@atlas.example` / `DemoPass!2026` (Atlas tenant).
@@ -1677,8 +1448,8 @@ a real exit code and a real date, and was the minority outcome (D-071).
 - Real auth flows exist since Sprint 6 but enforcement is flag-gated, default
   OFF: `SHIELD_AUTH_REQUIRE_MFA` (TOTP challenge, D-027) and
   `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` (typed 403 on unverified login, D-028).
-  `SHIELD_EMAIL_DELIVERY_ENABLED` turns on real SMTP sending (MailHog in dev,
-  UI :8025); enabling it without an SMTP host refuses to boot. Flipping
+  `SHIELD_EMAIL_DELIVERY_ENABLED` turns on real SMTP sending (MailHog in dev, UI
+  :8025); enabling it without an SMTP host refuses to boot. Flipping
   REQUIRE_EMAIL_VERIFY breaks every e2e sign-in (seeded/spec users are
   unverified) — enforcement is a deploy-time choice, not a dev default.
 
@@ -1703,368 +1474,172 @@ mechanism; docs carry only what git can't show.
 
 ### The size ratchet: this file is INSTRUCTIONS, `DECISIONS.md` is the RECORD
 
-**Budget: 600 lines.** Measured 2026-08-27 it is well over that, and the trend is
-the argument: 211 lines on 2026-08-15, 648 on 2026-08-24, 1,236 on 2026-08-27.
-Doubled in three days, six-fold in twelve, accelerating — governing the
-remaining MVP backlog, which `DELIVERY_PLAN.md` enumerates. Every entry was individually justified, which is the mechanism rather
-than a defence.
+**THIS IS NOW A GATE, not an aspiration.** `apps/api/scripts/check_claude_md_size.py`
+refuses this file above 150,000 bytes, which is the size at which a reader
+silently truncates it. It reached 210,958 bytes on 2026-09-22 and the merge
+rule's condition-5 path list was in the 29% that got cut — the most
+consequential rule in the repo, unreadable, with every gate green (**D-079**,
+#347). The file's own 600-line budget is reported by the gate and NOT enforced;
+enforcing it today would hold the repo permanently red, which teaches everyone
+to route around the gate.
 
-    <!-- counted: git show <sha>:CLAUDE.md | wc -l at each date, 2026-08-27 -->
-
-**The split, and it is the whole rule.** If a paragraph says what to DO, it
-belongs here. If it says what HAPPENED, it belongs in `DECISIONS.md` under a
-D-number, and this file cites it in one line. Most of the length here is
-incident narrative — *how* a defect was found, *who* found it, *how many* rounds
-it took. That is genuinely worth keeping. It is not worth keeping HERE, because
-every reader pays for it on every read, and the instruction it supports is
+**The split is the whole rule.** If a paragraph says what to DO, it belongs
+here. If it says what HAPPENED, it belongs in `DECISIONS.md` under a D-number,
+cited here in one line. Most of the length this file keeps acquiring is
+incident narrative — *how* a defect was found, *who* found it, *how many*
+rounds it took. That is worth keeping. It is not worth keeping HERE, because
+every reader pays for it on every read and the instruction it supports is
 usually one sentence.
 
 **How the trim happens: incrementally, in whatever PR next touches this file.**
-Never as its own project. A 1,236-line file cannot be trimmed to 600 in one
-session, and attempting it is the same move as the 73-site sweep that cost two
-days — a large, self-referential, judgement-heavy pass with no green state. The
-task map at the top makes the file usable tonight; the budget shrinks it over
-the next few PRs.
+Never as its own project, except when the gate is red.
 
 **What the budget does NOT license.** It is not a reason to delete a rule
-because it is long. Load-bearing rules stay at any length — see the list below.
-Move the narrative, keep the instruction.
+because it is long. Load-bearing rules stay at any length:
 
-**What does not move, recorded so a trim cannot take it:**
-
-- **Verify by running.** The highest-value rule in this file. Every failure this
-  week traced to violating it.
+- **Verify by running.** The highest-value rule in this file.
 - **"AI suggests, code computes"** and **FAIL LOUDLY** — core principles 1 and 2.
 - **The gate suite** and the reasons each gate exists.
 - **The merge rule.** Keeping it ACCURATE is mandatory and is not "growth":
-  condition 1 says to re-derive its check count when a job is added, D-059 says
-  to re-derive its measurement whenever condition 5 changes, and D-059a closed a
-  live fail-open hole on 2026-08-27 by adding four globs to condition 5. Never
-  leave a known gap in it because a budget said not to grow — that reinstates
-  the defect D-059a fixed.
+  condition 1 says to re-derive its check count when a job is added, and D-059
+  says to re-derive its measurement whenever condition 5 changes. Never leave a
+  known gap in it because a budget said not to grow. What to resist is growth
+  in KIND — another condition, another worked example. If it becomes
+  unholdable, restructure the presentation rather than freeze a rule whose own
+  conditions mandate re-derivation.
 
-  What to resist is growth in KIND: another condition, another paragraph of
-  narrative, another worked example. It has been repaired four times, each
-  repair correct, and the aggregate is a rule nobody can hold in their head. If
-  it becomes unholdable again, restructure the presentation — a table, or a path
-  list a script can read — rather than freezing a rule whose own conditions
-  mandate re-derivation.
+**And ORDER is now part of the rule, because truncation cuts from the end.**
+What a partial reader loses is decided by position, so the merge rule sits at
+the top of this file and stays there.
 
 Rules of the road:
 
 - **A closing keyword beside an issue number closes it — and CI now enforces
   this, so it is a check rather than a rule you have to remember.** GitHub's
   parser matches `fix(e[sd])?|close[sd]?|resolve[sd]?` followed by `#N` and does
-  not read the words around it. `does not fix #NNN`, `partially fixes #NNN`,
-  `Filed, not fixed: #NNN` and `not resolved: #NNN` all close the issue. Write
-  `filed as #NNN`, `see #NNN`, or `tracked in #NNN` instead.
+  not read the words around it. Write `filed as #NNN`, `see #NNN`, or `tracked
+  in #NNN` instead.
 
-  **It reads three places, not one: the PR title, the PR description, and every
-  commit message.** The description is parsed independently of the commits — the
-  third accidental close in this repo came from a PR body while every rule up to
-  then targeted commit bodies, and the squash commit contained no match at all.
-
-  **Quotes, code fences and HTML comments are not exempt**, and in examples use
-  `#NNN` — a placeholder with **no digits**. Not a made-up number: issue numbers
-  only go up, so a keyword beside an invented number is inert today and live the
-  day the repo reaches it. (This paragraph originally illustrated that with a
-  literal number and thereby became a fifth instance, caught by the check rather
-  than by a merge.)
+  **It reads three places: the PR title, the PR description, and every commit
+  message.** The description is parsed independently of the commits. **Quotes,
+  code fences and HTML comments are not exempt**, and in examples use `#NNN` — a
+  placeholder with **no digits**, never a made-up number, because issue numbers
+  only go up and a keyword beside an invented number is inert today and live the
+  day the repo reaches it.
 
   **THE NEGATION IS INVISIBLE TO THE MATCHER, so an HONEST SCOPE STATEMENT is
   the sentence most likely to close an issue by accident.** `does not fix #N`,
-  `will not close #N`, `this doesn't resolve #N` and `not fixed by this PR: #N`
-  all match. The parser reads `fix` and `#N`; it does not read the word in
-  front of them.
+  `partially fixes #N` and `not fixed by this PR: #N` all match. That is worse
+  than it sounds, because it is a sentence a careful author writes ON PURPOSE:
+  a PR that fixes a symptom and says the underlying defect is untouched is one
+  merge away from closing the issue it just disclaimed. **The more honest the
+  write-up, the likelier the trip.** Phrase it without a closing verb beside the
+  number. **Do NOT reach for `Auto-close-approved:`** to get past this red; that
+  line approves exactly the outcome the sentence exists to prevent.
 
-  That is worse than it sounds, because the sentence is one a careful author
-  writes ON PURPOSE. A PR that fixes a symptom and says so
-  — "the underlying
-  mount defect is untouched, it does not fix #N" — is being scrupulous about
-  scope, and is one merge away from closing the very issue it just disclaimed.
-  The more honest the write-up, the likelier the trip.
-
-  **The fix is to phrase it without a closing verb beside the number**, not to
-  authorise it: `#N stays open`, `see #N, which is untouched`, `tracked in #N`.
-  **Do NOT reach for `Auto-close-approved:`** here. That line approves the
-  close, so using it to get past this particular red approves exactly the
-  outcome the sentence exists to prevent.
-
-  Recorded from PR #270, whose only red was one true sentence about what it
-  deliberately did not do.
-
-  The mechanism is `apps/api/scripts/check_issue_references.py`, wired as the
-  required check **"No accidental issue closes"**. If a close is intended, say so
-  in the PR description — bare numbers, no `#`, because a marker containing the
-  word "close" beside `#N` would itself be an instance of the bug:
+  The mechanism is `check_issue_references.py`, wired as the required check **"No
+  accidental issue closes"**. If a close is intended, say so in the PR
+  description — bare numbers, no `#`, because a marker containing the word
+  "close" beside `#N` would itself be an instance of the bug:
 
       Auto-close-approved: <issue numbers, bare>
 
   **`Auto-close-approved:` authorises the guard; it does NOT close the issue.**
-  Two different mechanisms, and it is easy to assume the line does both. GitHub
-  closes an issue only on a real closing keyword beside the reference
-  (`Fixes #NNN`); the `Auto-close-approved:` line exists solely so this repo's
-  own check permits that keyword instead of rejecting it. A PR that has the
-  approval line and no keyword merges without closing anything — which is the
-  failure that leaves a fixed bug sitting open on the mvp-blocking list,
-  asserting a defect that no longer exists. When you intend a close, write both
-  and then confirm it took: `gh pr view <n> --json closingIssuesReferences`
-  should name the issue before you merge.
+  A PR with the approval line and no keyword merges without closing anything,
+  leaving a fixed bug on the mvp-blocking list asserting a defect that no longer
+  exists. Write both, then confirm with `gh pr view <n> --json
+  closingIssuesReferences` before you merge.
 
-  **Why this is mechanised rather than documented.** The same issue was closed by
-  accident three times. Each fix was a better-worded rule; the second incident
-  was the PR that documented the first, and the third was a sentence warning
-  about the second. Three rounds of documentation produced a fourth incident. <!-- counted: historical -->
-  That is #72's finding applied to prose: discipline against a known shape has
-  failed nine recorded times here, including instances written minutes after the
-  rule was logged.
+  **Why this is mechanised rather than documented.** The same issue was closed
+  by accident three times: each fix was a better-worded rule, the second
+  incident was the PR documenting the first, and the third was a sentence
+  warning about the second.
 - **Run the adversarial reviewer, and record the audit in the PR body.**
-  `.claude/agents/adversarial-reviewer.md` via the Agent tool.
+  `.claude/agents/adversarial-reviewer.md` via the Agent tool. Run it before you
+  open the PR, and **again after any substantive change** — a rule that fires
+  once at open misses the patch that looked done and was not. **Never a
+  self-audit instead**: D-054's gate proves an audit was *recorded*, not that it
+  happened.
 
   **It always runs, on every surface including prose. What changes is what
   BLOCKS.** Advisory findings are FILED with an issue number rather than fixed
-  before merge. **The labels and the test between them are defined in the agent
-  file and deliberately NOT restated here** — two copies of a rule are two places
-  for it to drift, and this file has a bullet about that. Read them there.
+  before merge. **The labels and the test between them live in the agent file
+  and are deliberately NOT restated here** — an abridged copy is how the
+  direct-to-`main` exception once shipped licensing a push for an item it
+  omitted.
 
-  This paragraph used to enumerate the labels inside the sentence promising not
-  to enumerate them, and went stale the day a fourth was added. The enumeration
-  is deleted rather than corrected; correcting it would only reset the clock.
- Run it before you
-  open the PR where you can, and **again after any substantive change to the
-  branch** — PR #29's plan records two consecutive patches that each looked done
-  and each were wrong, both caught only by re-auditing while CI stayed green. A
-  rule that fires once at open would have missed both.
-
-  **Never a self-audit instead.** D-054's gate cannot tell the difference: it
-  proves an audit was *recorded*, not that it happened. Three PRs and a
-  cross-service sweep passed a required check that way before anyone noticed.
-
-  **What the gate needs, so following this rule does not produce a red X.** The
-  required check is **"Adversarial audit recorded"**
-  (`apps/api/scripts/check_audit_evidence.py`), and it wants a literal section —
-  prose describing an audit is explicitly not enough
-  (`test_merely_mentioning_the_words_is_not_evidence`):
+  **The gate ("Adversarial audit recorded", `check_audit_evidence.py`) wants a
+  literal section.** Prose describing an audit is explicitly not enough:
 
       ## Adversarial audit
       Findings: none
       Disposition: nothing to act on
-
-  **State per finding whether it is INTRODUCED or PRE-EXISTING, and the claim
-  is checkable by `git blame`.** The reviewer runs read-only and often without
-  Bash, so it cannot run `git diff` and **cannot separate "you wrote this" from
-  "you touched a file that already had it"**. Every finding therefore arrives
-  attributed to the author by default, and some are inherited. The disposition
-  rule splits on CONSEQUENCE; fix-here-versus-file-it also turns on OWNERSHIP,
-  which the reviewer structurally cannot judge. Observed 2026-08-30, when a
-  finding about an item's estimate contradicting itself was reported against
-  the branch and the contradiction predated it — the branch had amplified it,
-  not created it. Costs one word per finding and turns an invisible gap into a
-  stated one.
-
-  **Docs-only PRs are exempt from the gate and NOT exempt from this rule**, and
-  the two are different things. The gate skips a pure-docs change deliberately —
-  its own comment calls that "the one defensible skip". This rule still asks for
-  the reviewer, because `CLAUDE.md`, `DELIVERY_PLAN.md` and `DECISIONS.md` are
-  where wrong claims do their damage, and the review that produced this very
-  bullet found eleven defects in two markdown files. Use judgement on a typo; <!-- counted: historical -->
-  do not use judgement on a document that states a number or a rule.
-
-  **This rule is unenforceable, and unobservable, and it is written down anyway.**
-  Nothing records whether the reviewer ran, or when. The gate reads a body and
-  cannot see who wrote the findings. W8b — the reviewer as a CI job — is the
-  mechanism that would bind it and is still deferred. So this is exactly the
-  "discipline against a known shape" that D-051 says has failed nine times here,
-  and it is weaker than the gate it supplements, because the gate at least
-  produces a red X. It is here because the alternative is nothing, and because
-  the cost of the last drift was measured rather than imagined. Do not read it as
-  a mechanism.
-
-  **What the drift cost.** Pointed at that sweep, the reviewer overturned **four
-  of its six** "clean" verdicts, including one reported as "no twin" over a defect
-  written up in `docs/plans/2026-08-08-cross-service-integrity.md` (F6) two weeks
-  earlier and still live. The diagnosis is the reusable part: the sweep had
-  generalised ATT&CK's *vocabulary* (`pending_review`, "withheld") instead of
-  ATT&CK's *shape* — an aggregate applying an exclusion the per-row rendering does
-  not. Grepping the word found nothing; the shape was in three services. A
-  self-audit cannot catch that, because the blind spot and the reviewer are the
-  same mind.
-
-  Three things that make the run worth its cost:
-
-  - **When the work is itself a review, a sweep or an audit, point the reviewer
-    at the VERDICTS and the METHOD, not at the code.** A sweep that finds nothing
-    is indistinguishable from a sweep that looked in the wrong places.
-  - **Re-verify every finding before acting on it.** It runs read-only and
-    executes nothing, so every claim is static reading, and it is confidently
-    wrong often enough to matter — the review of this bullet marked one finding <!-- counted: "one finding" narrates a single act. -->
-    CONFIRMED that was simply wrong, because it could not read a GitHub issue.
-  - **A finding it upholds is a result worth recording**, not a null. "The shape
-    guard holds for all five jobs" is what told us to pin an invariant rather
-    than fix it.
-
-  **When the reviewer cannot run.** "Use judgement" is the gap this rule exists to
-  close, so the cases are named and so is the person who may decide.
-
-  **A reviewer that has not delivered yet is not a reviewer that failed. ASK
-  IT, IMMEDIATELY AND EVERY TIME.** `idle` is not a delivery signal. Asking an
-  agent for its report costs nothing, needs no threshold, and is the only thing
-  that distinguishes the states below.
-
-  **Never declare the channel broken without evidence.** That is a different
-  act from asking, and only it deserves a bar: a tool error, a refusal, a named
-  absence. "It has been a while" is not evidence.
-
-  **A draft of this bullet set a 90-MINUTE WAIT before either act, and it was
-  wrong in a way worth keeping.** It rested on "an agent cannot tell a slow
-  reviewer from a dead one" — falsified by the list six lines below, where
-  *Absent* says "nothing to retry" and *Erroring* says "retry once". It also
-  carried an action-licensing number ("the measured lag is about an hour") with
-  no command and no date, in the file whose rule 2 forbids exactly that. And
-  its consequence ran the wrong way: on 2026-09-21 a round of reviewers went
-  idle having delivered nothing, and **asking each one directly is what
-  recovered every report**. The rule would have bought ninety minutes of
-  silence instead.
-
-  The conflation was between declaring a channel broken, which needs evidence,
-  and asking whether a report arrived, which costs nothing. Only the first ever
-  deserved a threshold.
-
-  Kinds of unavailable — **an open list, not an enumeration**, because the fourth
-  one below is the case this repo has actually hit and the first draft omitted it:
-
-  - **Absent** — the `adversarial-reviewer` agent type is not in the environment
-    at all. Nothing to retry.
-  - **Erroring** — it dispatches and fails, or returns nothing usable. Retry once.
-    If it fails again, treat as absent.
-  - **Timed out or killed mid-run** — retry once with a narrower scope (fewer
-    files, one question). If it produces partial findings, record them **as
-    partial**; a truncated run is evidence about the part it reached and says
-    nothing about the rest.
-  - **Not dispatched** — present and working, but you did not run it, because
-    running it conflicted with something else. This is D-054's own recorded root
-    cause: *"the agent resolved a conflict between 'do not invoke subagents
-    unprompted' and §14 silently, in favour of not running it."* Say which
-    instruction conflicted. Writing "absent" here is false and sends the next
-    reader hunting an environment problem that never existed.
-  - **Ran, and reported to nobody** — it completed, it found things, and its
-    report never reached you. Measured 2026-09-21: a reviewer's PLAIN-TEXT
-    output is not transmitted to the dispatcher at all, so a complete report
-    can be written and lost, and the idle notification that does arrive carries
-    a separately truncated result field. **The dispatcher sees silence or a
-    fragment, which is what an absent reviewer and a crashed one also look
-    like** — so the natural move is to write `not run — reviewer absent` over a
-    review that ran and found defects, which is a false status word about
-    someone else's work. **Ask the agent for its report before concluding
-    anything about it.** Asking costs nothing and is a different act from
-    declaring the channel broken, which needs evidence; only the second
-    deserves a threshold. The fix on the reviewer's side is in its definition:
-    deliver via `SendMessage`, and end with a terminator so a cut report is
-    detectably cut.
-  - **Ran, but not against this change** — a stale tree, the wrong branch, a
-    subset of the diff, or a run that exhausted its own context and returned a
-    complete-looking report on the first few files. None of these times out,
-    errors, or is absent; all of them produce a clean report that is true about
-    what the reviewer saw and false about this PR. This is why the audit block
-    carries a **`Scope:`** line — the reviewer is instructed to state what it
-    examined and what it could not reach, and without a field to put it in that
-    evidence is produced and then thrown away at the recording step.
-
-  Anything else: describe it. The list is illustrative.
-
-  **The audit section must not lie about which happened.** If the reviewer did not
-  run, write `Findings: not run — reviewer absent` (or `erroring`, `timed out`,
-  `not dispatched: <what conflicted>`). Never `Findings: none`. Those are different claims: "none" is a claim about the code,
-  "not run" is a claim about the process, and the gate accepts both because it
-  only checks that the lines exist. That asymmetry is precisely why the honesty
-  has to be a rule rather than a check.
-
-  **DISPATCH AGAINST A DETACHED WORKTREE, AND PUT THE TREE IT READ IN THE
-  AUDIT BLOCK.** This is a mechanism, not a courtesy, and it is the one that
-  makes "ran, but not against this change" impossible instead of merely
-  detectable:
-
-      git worktree add --detach ../review-<sha> <sha>
-
-  Give the reviewer that absolute path. It starts no containers, binds no
-  ports, needs no `.env`, and `--detach` takes no branch — so a checkout in the
-  shared tree cannot move underneath it. The reviewer-in-a-detached-worktree
-  case is already carved out of the shared-tree rule above, for exactly this.
-
-  **Measured, and the cost was a whole session's evidence.** A reviewer
-  dispatched against the shared tree reported: *"`.git/HEAD` reads
-  `ref: refs/heads/fix/330-...`; no worktree holds `75bddc2`. What I reviewed
-  is the BASE."* It had been asked about a branch the tree had since moved off,
-  and it read the pre-fix code. It said so — but nothing about the report's
-  SHAPE would have differed if it had not, and every other review dispatched
-  that session had the same exposure, including ones whose PRs had already
-  merged on the strength of them.
-
-  So the audit block carries the tree, not just the verdict:
-
       Scope: reviewed at <sha>, from `../review-<sha>` (detached worktree)
 
-  The reviewer's own `Scope:` line is where it states what it could not reach.
-  This line is where YOU state what it was pointed at, because "the reviewer
-  was honest about which tree it read" is a property of that reviewer and not
-  of the process.
+  **DISPATCH AGAINST A DETACHED WORKTREE** — `git worktree add --detach
+  ../review-<sha> <sha>` — and give the reviewer that absolute path. It starts
+  no containers, binds no ports, needs no `.env`, and `--detach` takes no
+  branch, so a checkout in the shared tree cannot move underneath it. That makes
+  "ran, but not against this change" impossible rather than merely detectable.
+  The reviewer's own `Scope:` line states what it could not reach; yours states
+  what it was POINTED at.
 
-  **A STATUS WORD FOR AN ACTION NEVER TAKEN IS NOT STALENESS, AND IT GETS ITS
-  OWN LINE.** Everything else in this file about prose going wrong is about a
-  claim that was TRUE WHEN WRITTEN — a count that grew, a citation that moved,
-  a deferral the fix itself discharged. This is the other kind:
+  **State per finding whether it is INTRODUCED or PRE-EXISTING.** The reviewer
+  cannot run `git diff`, so every finding arrives attributed to the author by
+  default. The claim is checkable by `git blame` and costs one word.
 
-      Findings: dispatched, UNDELIVERED at open
+  **Docs-only PRs are exempt from the GATE and not from this RULE.** Use
+  judgement on a typo; not on a document stating a number or a rule.
 
-  written into a PR body with **nothing dispatched**. Not stale; never true, in
-  the field that exists to be believed. It was written against a rule that
-  enumerates four states — absent, erroring, timed out, not dispatched — so
-  that a fifth could not be invented, and a fifth was invented anyway.
+  Three things that make the run worth its cost: **point it at the VERDICTS and
+  the METHOD** when the work is itself a review or sweep (a sweep that finds
+  nothing is indistinguishable from one that looked in the wrong places);
+  **re-verify every finding** before acting, since it executes nothing and is
+  confidently wrong often enough to matter; and **a finding it upholds is a
+  result worth recording**, not a null.
 
-  The enumeration does not stop this, because the failure is not choosing the
-  wrong member of a list; it is describing an action you did not perform. The
-  only thing that catches it is the status-word rule elsewhere in this file:
-  **a status word carries its output.** `Dispatched` carries the tool result.
-  Had that been written the claim could not have been made.
+  **A reviewer that has not delivered is not a reviewer that failed. ASK IT,
+  IMMEDIATELY AND EVERY TIME.** `idle` is not a delivery signal. Asking costs
+  nothing. **Declaring the channel broken is a different act and needs
+  evidence** — a tool error, a refusal, a named absence; "it has been a while"
+  is not. An open list of how it can be unavailable:
 
-  **Correct it IN PLACE, visibly, rather than overwriting it.** An audit block
-  quietly repaired reads exactly like one that was always right, and the next
-  reader learns nothing. The correction is what makes the field usable again.
+  | Kind | What to do |
+  | --- | --- |
+  | **Absent** — agent type not in the environment | nothing to retry |
+  | **Erroring** — dispatches and returns nothing usable | retry once, then treat as absent |
+  | **Timed out / killed mid-run** | retry once, narrower; record partial findings AS partial |
+  | **Not dispatched** — you did not run it | say which instruction conflicted; "absent" here is false |
+  | **Ran, reported to nobody** — plain-text output is not transmitted to the dispatcher at all | ask for the report; silence looks identical to absent and crashed |
+  | **Ran, not against this change** — stale tree, wrong branch, exhausted context | the detached worktree above prevents it |
 
-  **Who may decide a PR ships without it: the human dev at the keyboard, by name,
-  recorded in the PR body.** Never an agent, never by inference from silence, and
-  never the author of the code when the author is an agent — the same principle
-  as sprint loops being launched by a human and never by an agent.
+  **The audit section must not lie about which happened.** Write `Findings: not
+  run — reviewer absent` (or `erroring`, `timed out`, `not dispatched: <what
+  conflicted>`). Never `Findings: none`: "none" is a claim about the code and
+  "not run" is a claim about the process, and the gate accepts both because it
+  only checks the lines exist.
 
-  **That authorisation is prose, and nothing checks it.** No script reads the
-  line; nothing distinguishes a body where Gene approved from one where an agent
-  typed his name. It is weaker still than it looks, because `enforce_admins` is
-  false and both devs are admins — either of them can already merge past a red
-  gate without writing anything at all. It is written down so it can be pointed
-  at afterwards, not because it stops anything. **The checkable version, if this
-  ever needs to be real, is a GitHub review approval** (`gh pr review --approve`)
-  from the named human rather than a line of body text — that is attributable and
-  visible to the API.
+  **A STATUS WORD FOR AN ACTION NEVER TAKEN IS NOT STALENESS.** `Findings:
+  dispatched, UNDELIVERED at open`, written with nothing dispatched, was never
+  true. Enumerating states does not prevent it; the status-word rule does — **a
+  status word carries its output**, and `dispatched` carries the tool result.
+  **Correct it IN PLACE, visibly**: an audit block quietly repaired reads
+  exactly like one that was always right.
 
-  A blocked PR waits, and the issue it belongs to gets a comment saying it is
-  blocked on tooling rather than deprioritised, so it does not read as stalled.
-  **The exception is a change the gate itself exempts and that states no number
-  or rule** — a typo fix in prose. That is the "use judgement" case above, and it
-  does not become a hard block just because the reviewer is away.
+  **Who may decide a PR ships without it: the human dev at the keyboard, by
+  name, in the PR body.** Never an agent, never by inference from silence, never
+  the author when the author is an agent. That authorisation is prose and
+  nothing checks it — `enforce_admins` is false and both devs are admins, so
+  either can already merge past a red gate. **The checkable version is a GitHub
+  review approval** (`gh pr review --approve`) from the named human. A blocked
+  PR waits, and its issue gets a comment saying it is blocked on tooling.
 
-  This clause exists because the reviewer went absent for one turn immediately
-  after PR #128 merged the rule above, and the rule had nothing to say about
-  it. Dated by the PR rather than the clock on purpose: D-057 is dated the day
-  it was written and the rule merged the next, so a reader comparing two dates
-  sees a contradiction that neither file resolves.
-
-  If running it ever conflicts with another instruction, **say so out loud rather
-  than resolving it quietly** — that silent resolution is the exact failure D-054
-  was written about, and it has now happened twice.
-
-  (Decision recorded as **D-057**, which reverses part of D-054. Closes the
-  `CLAUDE.md` half of #108; the other half — the gate's own source still saying
-  it "only REPORTS" and citing D-051 — is untouched and still open.)
+  **This rule is unenforceable and unobservable, and is written down anyway.**
+  W8b — the reviewer as a CI job — would bind it and is deferred. Do not read it
+  as a mechanism. D-057 reverses part of D-054; **D-079** carries what the drift
+  cost. If running it conflicts with another instruction, **say so out loud
+  rather than resolving it quietly** — that silent resolution is the exact
+  failure D-054 was written about.
 - **When you cite a rule as the REASON for a constraint, the citation is a claim
   and gets checked like one.** Instances from 2026-08-30, all in agent
   definitions, all where the constraint was RIGHT and the reason was false:
@@ -2081,110 +1656,67 @@ Rules of the road:
   argues against itself.
 
 - **GIT WORKTREES ISOLATE FILES. THEY DO NOT ISOLATE A DOCKER-COMPOSE STACK.**
-  `docker-compose.yml:1` hardcodes `name: shield-v2` and `:195` binds
-  `./apps/api:/app`, so the project name is not derived from the directory:
-  `docker compose exec` from ANY tree attaches to the same container, mounted
-  from whichever tree last ran `up`. Two worktrees were created on 2026-08-31 to
-  give two agents structural isolation, and every containerised gate in both
-  would have run against a third tree — going green having seen none of the
-  agent's work, which is the shape this file exists to prevent.
+  `docker-compose.yml` hardcodes `name: shield-v2` and binds `./apps/api:/app`,
+  so `docker compose exec` from ANY tree attaches to the same container, mounted
+  from whichever tree last ran `up`. Two worktrees created to give two agents
+  structural isolation would have run every containerised gate against a third
+  tree.
 
-  **Withdrawn rather than fixed.** A second stack needs its own
+  **A second stack was weighed and WITHDRAWN** — it needs its own
   `COMPOSE_PROJECT_NAME`, ports, `.env` (gitignored, so `git worktree add` never
-  creates one) and duplicated Postgres/Redis/MinIO/Keycloak/MailHog, with
-  host-run e2e binding `:3000` from both. Repointing one shared mount per switch
-  is worse: "which tree is mounted right now" becomes invisible state deciding
-  whether any gate result means anything. **Agents take turns in one tree.**
+  creates one) and duplicated services, with host-run e2e binding `:3000` from
+  both. **Agents take turns in one tree.**
 
-  **For the WEB toolchain they no longer have to, and the remedy is a script
-  rather than a paragraph:** `scripts/verify-in-worktree.sh`. It runs tsc,
-  vitest or eslint against the worktree you are standing in, in a `--rm`
-  container that touches no running service, so any number of worktrees can
-  verify concurrently.
+  **For the WEB toolchain they no longer have to:** `scripts/verify-in-worktree.sh`
+  runs tsc, vitest or eslint against the worktree you are standing in, in a
+  `--rm` container touching no running service. It needs no `pnpm install` —
+  `node_modules` are named volumes. The one thing NOT in a volume is
+  `packages/*/node_modules`, gitignored and missing from every fresh worktree;
+  the script mounts it read-only from the primary tree, and that single line is
+  what makes it work.
 
-  It needs no `pnpm install`: `/app/node_modules` and `/app/apps/web/node_modules`
-  are named volumes and are mounted as the stack mounts them. The one thing that
-  is NOT in a volume is `packages/*/node_modules` — it lives in the host tree,
-  written through the bind mount, and is gitignored, so it is missing from every
-  fresh worktree. The script mounts it read-only from the primary tree, and that
-  single line is what makes the whole thing work.
+  **`--self-test` is the part that matters.** It appends a deliberate type
+  error, proves the write landed with `grep`, requires the run to go RED, and
+  removes it. A green from the wrong mount is indistinguishable from a green
+  from your own work — a typecheck once returned 0 while the container was
+  mounted from a tree containing none of that branch.
 
-  **`--self-test` is the part that matters.** It appends a deliberate type error,
-  proves the write landed with `grep` before reading any result, requires the
-  run to go RED, and removes it. A harness that cannot fail is the defect it
-  exists to prevent, and a green from the wrong mount is indistinguishable from
-  a green from your own work — which is not hypothetical: on 2026-09-09 a
-  typecheck for `fix/transport-silent-success` returned 0 while the container
-  was mounted from a tree containing none of that branch. Run `--self-test`
-  before trusting a clean result from a worktree you have not verified from
-  before.
-
-  **The shared stack is still required for e2e**, which binds `:3000` and drives
-  the real services. That is the residual, and it is the only one.
-
-  **The rule is bounded by its REASON, not by the word "worktree".** Everything
-  above is about the shared Docker stack, so: **a worktree that starts no
-  containers, runs no gates and writes nothing is outside this rule.** Stated
-  from the reason rather than as a carve-out, because a predicate broader than
-  its justification is the same over-broad-predicate defect this bullet exists to
-  record — and as it stood the rule forbade what its own argument could not
-  reach.
-
-  The case that matters: dispatching a READ-ONLY reviewer against
-  `git worktree add --detach ../review-<sha> <sha>` and giving it that absolute
-  path. It runs no `docker compose exec`, binds no ports, needs no `.env`, and
-  `--detach` takes no branch, so it can neither collide with a checkout elsewhere
-  nor create a ref for anyone to renumber. A branch switch in the main tree then
-  cannot reach it — the "ran, but not against this change" hazard becomes
-  impossible rather than detectable, which is a derivation rather than a window
-  someone has to remember to close.
-
-  Where one tree is kept anyway, the detection is `git reflog show HEAD | wc -l`
-  sampled before and after. **`git rev-parse HEAD` cannot do this** — a switch
-  away and back leaves it byte-identical, which is exactly the case being
-  checked. Both are tracked in #203.
-
-  <!-- counted: gh issue view 170 --json comments, 2026-09-01 -->
-  **This is another instance of a claim about state outside the working tree,
-  asserted rather than run** — the layer asserted an isolation it never verified.
-  It was found by measuring the container's mount source, and nothing in a file
-  review reaches it: the defect lives in the relationship between a compose file
-  and a directory, not in either one.
+  **The shared stack is still required for e2e**, the only residual. **The rule
+  is bounded by its REASON, not by the word "worktree"**: a worktree that starts
+  no containers, runs no gates and writes nothing is outside it — which is what
+  makes the read-only reviewer dispatch above safe. Where one tree is kept
+  anyway, detect a switch with `git reflog show HEAD | wc -l` sampled before and
+  after; **`git rev-parse HEAD` cannot do this**, because a switch away and back
+  leaves it byte-identical. Tracked in #203.
 
 - **While any agent holds the shared tree, the ORCHESTRATING SESSION changes
   nothing that agent's work or its gates depend on.** That sentence is the rule;
-  everything below is examples and NOT the set. "Agents take turns in one tree"
-  above, and the agent definitions' "only one runs at a time", bind the agents and
-  the gates
-  -- not the session driving them, which has no definition of its own to carry a
-  rule.
+  what follows is examples and NOT the set. "Agents take turns in one tree" and
+  the agent definitions' "only one runs at a time" bind the AGENTS — not the
+  session driving them, which has no definition of its own to carry a rule.
 
-  The dependency set is wider than the checkout, and each category below already
-  has an incident in this file: tracked files and the index; **untracked and
-  ignored** files (the root `.env` decides `SHIELD_LLM_MODE`;
-  `.claude/sprint-queue.json` is loop state); shared refs and the object store --
+  The dependency set is wider than the checkout: tracked files and the index;
+  **untracked and ignored** files (the root `.env` decides `SHIELD_LLM_MODE`;
+  `.claude/sprint-queue.json` is loop state); shared refs and the object store —
   `git stash drop`, `git branch -D`, `git tag -d` and `git gc --prune=now` write
   no tracked file and are the destructive ones, and `refs/stash` is shared by
-  every linked worktree (`git -C <wt> rev-parse --git-path refs/stash` resolves
-  into the main `.git`); and **the single Docker stack** every containerised gate
-  attaches to. Creating a ref nothing else reads is fine; deleting or renumbering
-  one is not.
+  every linked worktree; and **the single Docker stack** every containerised
+  gate attaches to. Creating a ref nothing else reads is fine; deleting or
+  renumbering one is not.
 
   **A worktree at another path is not an exemption, and "host-side" is not the
-  test.** Host-run Playwright e2e issues no `docker compose exec` and still drives
-  the shared containers on `:3000` -- which is why a second stack was withdrawn
-  above. The test is whether the work needs anything from the shared stack or the
-  shared refs: a prose edit gated by prettier and the `check_*` scripts does not,
-  e2e does. A worktree cut from an old branch also carries a stale `CLAUDE.md`.
-  Tracked in #203.
+  test.** Host-run Playwright e2e issues no `docker compose exec` and still
+  drives the shared containers on `:3000`. The test is whether the work needs
+  anything from the shared stack or the shared refs. A worktree cut from an old
+  branch also carries a stale `CLAUDE.md`. Tracked in #203.
 
 - **Two rules for reading a result, and they are one instinct against two
   failure modes.**
 
   **PREFER THE MOST PRIMITIVE AVAILABLE SIGNAL.** Every layer of presentation
   between you and the raw fact is somewhere a plausible wrong answer can live,
-  and the wrong answer arrives in the right format, in the place the real one
-  goes. Measured 2026-09-01, all the same shape:
+  and it arrives in the right format, in the place the real one goes. Measured
+  2026-09-01:
 
   | Read | Should have read |
   | --- | --- |
@@ -2194,43 +1726,32 @@ Rules of the road:
   | a detached run's marker EXISTS | the marker's AGE |
   | a suite's exit code | which TREE, at which REVISION, it ran against |
 
-  **The tree row is another instance of a green describing the wrong state, and
-  one of the few where the wrong state was one the reader had just created.**
-  (No tally here on purpose: it would be a count from outside this document
-  that nothing can re-derive, and the ordinal form slips the gate because it
-  matches cardinals.) A backgrounded suite returned exit 0 while the fix it was meant to
-  cover had been reverted seconds earlier by a careless `git checkout -- <file>`
-  — which restores from the INDEX, so unstaged work goes with the mutation being
-  undone. The remedy is one line: have the run print the revision and cleanliness
-  of the tree it is testing (`tree under test: <sha>, clean=yes`), so the answer
-  carries its own subject. Commit before mutating, for the same reason.
-
-  The last was a success record from a run **a week earlier**, read as the
+  The marker row was a success record from a run **a week earlier**, read as the
   current one: `test -f /tmp/x.exit` tests existence, not freshness. **The
   detached-run pattern in `context/gene.md` is unsafe as written** — `rm -f` the
-  marker before launching, or use a per-run filename. Polling for a file that a
-  previous run already created is a check whose "I found a result" branch and
-  its "this result is current" branch are the same branch.
+  marker before launching, or use a per-run filename. The tree row is the
+  sharpest: a backgrounded suite returned exit 0 while the fix it covered had
+  been reverted seconds earlier by a careless `git checkout -- <file>`, which
+  restores from the INDEX, so unstaged work goes with the mutation being undone.
+  **Have the run print the revision and cleanliness of the tree it is testing**
+  (`tree under test: <sha>, clean=yes`). Commit before mutating.
 
   **PREFER A CHECK WHOSE TWO SIDES CAN ONLY AGREE IF THE THING IS TRUE.** After
-  converting a file to LF, three signals were available: `file(1)`, a byte
-  count, and `git diff --numstat` raw versus `--ignore-cr-at-eol`. The third is
-  strongest, because its two numbers **converge only if the CRs are gone** — it
-  has an internal contradiction available to it and would have to fail loudly to
-  be wrong. The other two are single readings, each wrong in some way you have
-  not thought of. Same property as red-on-revert.
+  converting a file to LF, `git diff --numstat` raw versus `--ignore-cr-at-eol`
+  beats both `file(1)` and a byte count, because its two numbers **converge only
+  if the CRs are gone** — it has an internal contradiction available to it and
+  would have to fail loudly to be wrong. Same property as red-on-revert.
 
-  **And two readings agreeing does not validate a third that disagrees.** In
-  that same check `file` and the byte count agreed against `od | grep`, and
-  preferring the majority got the right answer for the wrong reason: `od -c`
-  renders `\r` inside multi-byte sequences as literal text, so grepping its
-  output counts RENDERED LINES, not carriage returns. It answered a different
-  question in the same units, which is the hardest kind to catch. Diagnose the
-  disagreement; do not vote on it.
+  **And two readings agreeing does not validate a third that disagrees.** There,
+  `file` and the byte count agreed against `od | grep`, and preferring the
+  majority got the right answer for the wrong reason: `od -c` renders `\r`
+  inside multi-byte sequences as literal text, so grepping its output counts
+  RENDERED LINES. It answered a different question in the same units, the
+  hardest kind to catch. **Diagnose the disagreement; do not vote on it.**
 
-  **Worth stating plainly: the verification layer produced more defects than the
-  code under test that day.** That is not an argument for more checking
-  machinery. Every fix went toward a more primitive signal, not a cleverer one.
+  **The verification layer produced more defects than the code under test that
+  day.** That is not an argument for more checking machinery — every fix went
+  toward a more primitive signal, not a cleverer one.
 
 - **"IS THIS ALREADY LANDED?" HAS EXACTLY ONE SOUND TEST HERE, AND IT IS NOT
   ANCESTRY AND NOT A DIFF.** Merge it and count what it stages:
@@ -2242,181 +1763,117 @@ Rules of the road:
       git merge --abort
 
   **Run it against a branch you KNOW is unlanded in the same pass.** A test that
-  returns 0 for everything answers the question you wanted and means nothing;
-  this one discriminates, and confirming that costs one extra invocation.
+  returns 0 for everything answers the question you wanted and means nothing.
 
   **Why `git merge-base --is-ancestor` is the wrong tool: THIS REPO
-  <!-- counted: the cardinality of a squash merge by definition, not a tally of a population; it cannot grow -->
-  SQUASH-MERGES.** A squash creates one new commit whose parent is `main`'s, so
-  a branch's own commits never become ancestors of `main` however completely its
-  content landed. `--is-ancestor` therefore answers NO for every PR this repo
-  has ever merged. It is not a weak signal, it is a constant.
+  SQUASH-MERGES.**
+  <!-- counted: the cardinality of a squash merge by definition, not a tally of a population -->
+  A squash creates one new commit whose parent is `main`'s, so a branch's own
+  commits never become ancestors of `main` however completely its content
+  landed. `--is-ancestor` answers NO for every PR this repo has ever merged. It
+  is not a weak signal, it is a constant.
 
   **Why a file count is the wrong tool, and this one is subtler.**
   `git diff main <branch>` answers "how do these two trees differ";
   `git diff main...<branch>` answers "what did this branch ADD". Read the first
   as the second and a branch whose base is behind looks like it contributes
   every file `main` has moved on since. Measured 2026-09-21: a branch reported
-  as "21 files differ" was 131 insertions against 3169 deletions -- the
-  deletions being `main`'s own work, which merging can never remove.
+  as "21 files differ" was 131 insertions against 3169 deletions, the deletions
+  being `main`'s own work, which merging can never remove.
 
   Both mistakes were made on the same question within an hour, by two people,
   with two different instruments, and both answers were shaped like the right
-  one. A third reading -- pointing the CORRECT test at a different branch than
-  the one being asked about -- produced a confident "already landed" for a
-  branch contributing nineteen files. **Name the branch the test ran against in
-  the same breath as the result.**
+  one. A third reading — pointing the CORRECT test at a different branch than
+  the one being asked about — produced a confident "already landed" for a branch
+  contributing nineteen files. **Name the branch the test ran against in the
+  same breath as the result.**
 
 - **"READY" IS TWO CLAIMS. GREEN AND MERGEABLE ARE DIFFERENT, AND A CI
-  CERTIFICATE IS ABOUT A HEAD, NOT A BRANCH.** Before reporting a PR ready,
-  run the merge and report both:
+  CERTIFICATE IS ABOUT A HEAD, NOT A BRANCH.** Before reporting a PR ready, run
+  the merge and report both:
 
-      git -C <main-tree> worktree add --detach ../mergecheck origin/<branch>
-      cd ../mergecheck
-      git merge --no-commit --no-ff origin/main    # 0 = mergeable
-      git merge --abort
+      git worktree add --detach ../mergecheck origin/<branch>
+      git -C ../mergecheck merge --no-commit --no-ff origin/main    # 0 = mergeable
 
   `gh pr view <n> --json mergeable,mergeStateStatus,headRefOid` gives the same
-  verdict in one call and also gives you the head the checks ran against.
-  **Compare that head to the branch tip and to `main`** — a green certificate
-  is evidence about the commit that was tested, and it survives, unchanged and
-  reassuring, after `main` has moved underneath it.
+  verdict in one call and also gives the head the checks ran against. **Compare
+  that head to the branch tip and to `main`** — a green certificate is evidence
+  about the commit that was tested, and it survives, unchanged and reassuring,
+  after `main` has moved underneath it. Measured 2026-09-10: three PRs reported
+  "green on all 7 — ready" on certificates older than `main`; the third was
+  `CONFLICTING`, and the conflict was in the one file carrying a warning that a
+  live bool guard is load-bearing. GitHub knew the whole time.
 
-  Measured 2026-09-10: three PRs were reported "green on all 7 — ready" on
-  certificates older than `main`. Twice that was a formality. The third time
-  the PR was `CONFLICTING`, and the conflict was in the one file carrying a
-  warning that a live bool guard is load-bearing — so the thing the stale
-  green concealed was a hand-merge decision about a guard, not a whitespace
-  hunk. GitHub knew the whole time and nobody asked it.
+  **AND `MERGEABLE` SAYS NOTHING ABOUT THAT BRANCH AND ITS SIBLING.** Two PRs
+  that each merge cleanly and conflict WITH EACH OTHER are both reported
+  `MERGEABLE`, both green, and invisible; whichever merges first turns the other
+  red, after the decision rather than before it. **Whenever two or more open PRs
+  touch the same file, run the pairwise merge and say WHICH PAIRS you checked** —
+  "they merge cleanly" over an unstated set is the
+  certificate-over-the-wrong-proposition shape.
 
-  This is the status-word rule above, pointed at a claim that HAS no output
-  unless you go and generate one. "Green" carries its check list; "ready"
-  carried nothing, because merge state is not printed by anything you were
-  already running.
-
-  **AND `MERGEABLE` IS A CLAIM ABOUT A BRANCH AND `main`. IT SAYS NOTHING
-  ABOUT THAT BRANCH AND ITS SIBLING.** GitHub computes mergeability against the
-  base and nothing else, so two PRs that each merge cleanly and conflict WITH
-  EACH OTHER are both reported `MERGEABLE`, both green, and invisible. Whichever
-  merges first turns the other red — after the decision, not before it.
-
-  Measured: two PRs on one evening, each `MERGEABLE`, colliding in a test file
-  both appended to. Same class as two individually-green merges taking `main`
-  red forty minutes apart, which is the second occurrence of this shape.
-
-  **So: whenever two or more open PRs touch the same file, run the pairwise
-  merge and say WHICH PAIRS you checked.** The ready report carries that line
-  the way it carries the merge state, and for the same reason — nothing else
-  generates it:
-
-      git worktree add --detach ../pairtest origin/<branch-a>
-      git -C ../pairtest merge --no-commit --no-ff origin/<branch-b>
-
-  Naming the pairs matters as much as the verdict: "they merge cleanly" over an
-  unstated set is the certificate-over-the-wrong-proposition shape, and the set
-  is what makes it checkable.
-
-  **AND A THIRD CLAIM RIDES WITH THEM: WHAT THE PR WILL CLOSE, VERIFIED
-  AGAINST `closingIssuesReferences` AND NEVER AGAINST THE APPROVAL MARKER.**
-
-      gh pr view <n> --json closingIssuesReferences
-
-  `Auto-close-approved: <n>` AUTHORISES this repo's own guard. It closes
-  nothing. A body carrying the marker and no closing keyword merges having
-  closed nothing, and the two are easy to conflate because the marker contains
-  the issue number and the word "close".
-
-  Measured on #348, the #84 fix: body carried `Auto-close-approved: 84`,
+  **AND A THIRD CLAIM RIDES WITH THEM: WHAT THE PR WILL CLOSE, VERIFIED AGAINST
+  `closingIssuesReferences` AND NEVER AGAINST THE APPROVAL MARKER.** Measured on
+  #348: the body carried `Auto-close-approved: 84` and
   `closingIssuesReferences` returned **`[]`**. Merging it would have left #84
-  FIXED AND OPEN on the mvp-blocking board.
-
-  **That is a REPORTING failure, not a bookkeeping one**, and it is why this
-  sits beside green-and-mergeable rather than in a filing convention. Every
-  <!-- counted: the MAGNITUDE of an off-by-one error, not a tally of a population; it cannot grow -->
-  status given after that merge would have been wrong by one issue, the board
-  would have shown a defect that no longer existed, and the next person
-  planning from it would have sized work against a lie. The check costs one
-  command and it is the same command the closing-keyword bullet already
-  prescribes -- what was missing is that nothing made it part of REPORTING
-  READY.
+  FIXED AND OPEN on the mvp-blocking board — **a REPORTING failure, not a
+  bookkeeping one**, because every status given afterwards would have been wrong
+  by one issue and the next person planning from the board would have sized work
+  <!-- counted: the MAGNITUDE of an off-by-one error, not a tally of a population -->
+  against a lie.
 
 - **A STATUS WORD CARRIES ITS OUTPUT, OR IT DOES NOT GO IN THE REPORT.**
   "Merged" carries the `git log --oneline -1 origin/main` line. "Pushed" carries
   the ref. "Dispatched" carries the tool result. "Green" carries the exit code.
 
   Measured 2026-09-01 — **false status claims, all in reports, none caught by
-  the report:** "Merge this, then I rebase" — about a PR
-  that had never been opened. "Merged" — with `main` unchanged, twice. "Running
-  the adversarial reviewer now" — nothing dispatched. Every one was caught by a
-  human checking the artifact in one command.
+  the report:** "Merge this, then I rebase", about a PR that had never been
+  opened; "Merged", with `main` unchanged, twice; "Running the adversarial
+  reviewer now", with nothing dispatched. Every one was caught by a human
+  checking the artifact in one command.
 
   **The asymmetry is the diagnosis.** Test output gets pasted without being
   asked; merges, pushes and dispatches do not — and that is exactly where all
-  three failures landed. The words that describe an ACTION TAKEN ELSEWHERE are
-  the ones with no evidence attached, because the evidence lives in a system you
-  have to go and ask.
-
-  A resolution not to do it again is worthless here: this is prose, and the
-  bullet below explains why prose fails at precisely this. **Putting the burden
-  on the SENTENCE is what makes it hold** — a status word without its output is
-  visibly incomplete to any reader in about a second, which is cheaper than a
-  gate and just as binding.
-
-  <!-- counted: "one finding from two directions" is a cardinality claim, not a tally -->
-  This and the bullet below are one finding from two directions: that one is
-  about what you WRITE, this one is about what you CLAIM, and both fail because
-  the discipline lived in your head at the moment you were thinking about
-  something else.
+  three failures landed. The words describing an ACTION TAKEN ELSEWHERE are the
+  ones with no evidence attached, because the evidence lives in a system you
+  have to go and ask. A resolution not to do it again is worthless here.
+  **Putting the burden on the SENTENCE is what makes it hold**: a status word
+  without its output is visibly incomplete to any reader in about a second.
 
 - **THE REFLEX SURVIVES THE RULE UNTIL THE RULE HAS A GATE. A rule that lives
   only in prose gets followed on the item you are thinking about and skipped on
-  the item next to it.**
-
-  Measured 2026-09-01, and the third instance is what makes it a rule rather than
-  an observation. In one batch of issue filings:
-
-  - **#175** was filed with the derived form, and its body argues the case
-    explicitly: naming five workspace packages goes stale on the sixth, so gate
-    it off `pnpm-workspace.yaml` instead.
-  - **#173** was filed in the same batch as a list of two sites. There are six.
-  - **#174** was filed in the same batch as a list of one site. There are three.
-
-  The author wrote the argument for derived sets and then, minutes later and
-  <!-- counted: "one issue away" is a distance in the idiom, not a tally of a population -->
-  twice, enumerated. The reasoning was one issue away and did not transfer —
-  because prose is consulted when you are already thinking about it, and the item
-  next to it never triggers the consultation.
+  the item next to it.** Measured 2026-09-01, in one batch of issue filings:
+  **#175** was filed with the derived form and its body argues the case —
+  naming five workspace packages goes stale on the sixth, so gate it off
+  `pnpm-workspace.yaml`. **#173** was filed in the same batch as a list of two
+  sites; there are six. **#174**, same batch, a list of one site; there are
+  three. The author wrote the argument for derived sets and then, minutes later
+  and twice, enumerated.
 
   **So the test of a rule is not whether it is written down, it is whether
   something fires.** When you find yourself writing a list of sites into an
   issue, a plan or a comment, write the PREDICATE and a one-line grep beside it,
-  and say that the enumeration was found incomplete — so the next reader knows
-  the gate exists because a list failed rather than as decoration.
-
-  This is the enumeration-versus-derived-set lesson pointed at the WRITER rather
-  than at the artifact, and it is why `check_recalled_counts`, `check_plan_totals`
-  and `check_separator_classes` exist as scripts rather than as paragraphs.
+  and say the enumeration was found incomplete. This is why
+  `check_recalled_counts`, `check_plan_totals`, `check_separator_classes` and
+  `check_claude_md_size` exist as scripts rather than as paragraphs.
 
 - **PREFER A DERIVATION OVER A SYNCHRONIZATION. When you cannot, say which
   update closes the window and how wide it is.** A derived value cannot be out
   of sync; a synchronized one merely is not, right now, for reasons that have to
   keep holding.
 
-  The instances here, and the last is what makes it a rule:
-
   - `_HSPACE` as a **computed subtraction** from `\s` rather than a hand-listed
     character class. The list was wrong by sixteen characters and nothing could
     see it.
-  - `_client_capability_inputs` as a **projection of** `_client_capability_membership`
-    rather than a second query answering the same question. The docstring is the
-    argument: one query, one set of membership rules, so the allow-list and the
-    payload cannot disagree.
-  - A React panel's phase as a **derivation of the current id** --
-    `loaded.serviceId === serviceId ? loaded.phase : {kind: "loading"}` -- rather
-    than a reset fired on change. The derivation evaluates in the render the prop
-    change triggers, so there is **no window**, rather than a window closed by a
-    later update. A `cancelled` flag alone fixes only the late-response half and
-    leaves the stale-data half live.
+  - `_client_capability_inputs` as a **projection of**
+    `_client_capability_membership` rather than a second query answering the
+    same question: one query, one set of membership rules, so the allow-list and
+    the payload cannot disagree.
+  - A React panel's phase as a **derivation of the current id** —
+    `loaded.serviceId === serviceId ? loaded.phase : {kind: "loading"}` — rather
+    than a reset fired on change. The derivation evaluates in the render the
+    prop change triggers, so there is **no window**. A `cancelled` flag alone
+    fixes only the late-response half and leaves the stale-data half live.
 
   Each replaced something that had to be **kept** in sync with something that
   **cannot** be out of sync. Where a derivation is genuinely unavailable, name
@@ -2424,32 +1881,31 @@ Rules of the road:
   is the one nobody tests.
 
 - **`Query(ge=..., le=...)` OPTS A ROUTE OUT OF THE TYPED-ERROR CONVENTION
-  WHILE LOOKING LIKE MORE VALIDATION.** Recorded as a decision rather than a
-  correction, because it will read as an improvement to whoever adds the next
-  query parameter.
+  WHILE LOOKING LIKE MORE VALIDATION.** FastAPI's own rejection of a bound
+  parameter goes through `_handle_validation_error`, which emits `"Request
+  validation failed."` with a `details` array and, since #307, a synthesised
+  `schema_*` **`reason`**. A `schema_*` code is a machine token with no client
+  copy behind it, so the web layer's D-016 mapping has nothing usable to key on
+  — and #317 is what happened to the one consumer that read the key's PRESENCE
+  as copy. Core principle 2 names a raw validation dump as what a user-facing
+  error must not be. **So adding the bound makes the route stricter and its
+  error less usable, in one edit, invisibly.**
 
-  FastAPI's own rejection of a bound parameter goes through
-  `_handle_validation_error`, which emits `"Request validation failed."` with a
-  `details` array — and, since #307, a synthesised `schema_*` **`reason`**. The
-  conclusion below is unchanged and its MECHANISM has expired once already: this
-  paragraph said "no `reason` key", which was true when written and false the
-  day #307 merged. A `schema_*` code is a machine token with no client copy
-  behind it, so the web layer's D-016 mapping still has nothing usable to key
-  on; #317 is what happened to the one consumer that read the key's PRESENCE as
-  copy. Core principle 2 names a raw validation dump as what a
-  user-facing error must not be. So adding the bound makes the route stricter
-  and its error less usable, in one edit, invisibly.
-
-  `routes/zt.py` decided this first and wrote down why; `routes/csf.py`
-  reached for the bound and had to be corrected to match. **Where a route
-  already refuses something with a typed `{reason, message}` detail, refuse the
-  new thing the same way.** A declarative bound is right where nothing typed
-  exists to be consistent with — a new endpoint, a parameter no client maps to
-  copy — and its OpenAPI visibility is a real benefit there.
+  `routes/zt.py` decided this first and wrote down why; `routes/csf.py` reached
+  for the bound and had to be corrected to match. **Where a route already
+  refuses something with a typed `{reason, message}` detail, refuse the new
+  thing the same way.** A declarative bound is right where nothing typed exists
+  to be consistent with — a new endpoint, a parameter no client maps to copy —
+  and its OpenAPI visibility is a real benefit there.
 
   The general form: a framework's built-in validation and this repo's error
   envelope are two different contracts, and moving a check from the second to
   the first is a silent downgrade for every consumer that reads `reason`.
+
+  (This paragraph's stated MECHANISM has expired once already — it said "no
+  `reason` key", true when written and false the day #307 merged. The
+  conclusion was unchanged by that, which is why the mechanism is spelled out
+  rather than asserted.)
 
 - **A guard's message must name the CAUSE, not the CHECK.** One line covering
   three branches tells a reader that a check failed. Three lines tell them what
@@ -2465,58 +1921,48 @@ Rules of the road:
 
 - **PUT THE DISCRIMINATOR WHERE THE CONFUSED READER IS STANDING, not where the
   explanation lives.** A correct explanation sited one paragraph away from the
-  symptom does not reach the person looking at the symptom — and it is worse than
-  silence when a *different*, reassuring explanation is sited closer.
+  symptom does not reach the person looking at the symptom — and it is worse
+  than silence when a *different*, reassuring explanation is sited closer.
 
   The instance: the stash-archive block explains name collisions as normal
   ("these archives already carry suffixed names because the bare name was
   taken"), four lines below a command that, run in the wrong shell, makes *every*
   archive collide on one name. A reader hitting the collision meets the
   reassuring reason first, and it is true — of a different cause. The tell is
-  disarmed before they reach anything that would distinguish the two. The fix was
-  one clause at the reassuring sentence, saying which observation means which
-  cause, rather than a better paragraph elsewhere.
+  disarmed before they reach anything that would distinguish the two. The fix
+  was one clause at the reassuring sentence, saying which observation means
+  which cause, rather than a better paragraph elsewhere.
 
-  Generalise it as: when you document a failure, find the sentence a confused
-  reader reaches FIRST and ask whether it sends them the wrong way.
+  **When you document a failure, find the sentence a confused reader reaches
+  FIRST and ask whether it sends them the wrong way.**
 
 - **AN EXAMPLE OF A RULE BEING VIOLATED IS FALSIFIED BY THE RULE BEING FOLLOWED.
   Cite the rule's SCOPE, never an instance of the breach.** Citing a specific
-  violation to illustrate a rule couples the citation's truth *inversely* to the
-  rule working: the cited instance is the first thing anyone fixes, and fixing it
-  makes your sentence false.
-
-  It happened inside a single commit here. A file-wide rule was supported by
-  naming one block that broke it; the same commit marked that block, leaving the
-  sentence citing its unmarked state standing. Picking a different instance
-  re-arms it rather than repairing it.
-
-  The durable form is structural — "command blocks appear under `## Environment
-  gotchas` and `Rules of the road` too, and the SCOPE line does not reach them" —
-  which survives every fix anyone makes. Recorded in D-071.
+  violation couples the citation's truth *inversely* to the rule working: the
+  cited instance is the first thing anyone fixes, and fixing it makes your
+  sentence false. It happened inside a single commit here — a file-wide rule was
+  supported by naming one block that broke it, and the same commit marked that
+  block. Picking a different instance re-arms it rather than repairing it. The
+  durable form is structural: "command blocks appear under `## Environment
+  gotchas` and `Rules of the road` too, and the SCOPE line does not reach them"
+  (D-071).
 
 - **A control that protects an agent from STALE STATE must be verifiable from
   INSIDE that state.** A rule written in a file the stale worktree does not have
   is a warning about stale state that is unreachable from the stale state —
   worse than no control, because it creates the belief the hazard is handled.
-
   Measured 2026-08-30: both agent definitions opened with "re-read `CLAUDE.md`
   and this file from disk", and neither file existed in either worktree, whose
-  branches predate them. `wt-attack/CLAUDE.md` still carried `prettier@3.9.5`
-  and none of that day's rules. An agent doing step 0 there finds a disagreement
-  it is told to report — and if it resolved it by preferring disk, it would run
-  the wrong formatter under a rule set it cannot see is missing.
+  branches predate them. An agent doing step 0 there finds a disagreement it is
+  told to report — and resolving it by preferring disk would run the wrong
+  formatter under a rule set it cannot see is missing.
 
   The fix is not a better-worded rule. It is **three greps the agent executes
-  first**, which halt it when its own worktree predates the layer. A documented
-  rule could never satisfy this; an executable check does.
-
-  **And a guard must be observed in BOTH states before it is trusted.** Watching
-  it fire proves it fires; it does not prove it passes. A typo that halts
-  unconditionally leaves every agent dead on arrival, and that symptom is
-  indistinguishable from the hazard the guard exists to catch. Same both-halves
-  discipline as a test contract, pointed at the guard: run it where it must HALT
-  and where it must PASS, and record both.
+  first**, which halt it when its own worktree predates the layer. **And a guard
+  must be observed in BOTH states before it is trusted**: watching it fire
+  proves it fires, not that it passes, and a typo that halts unconditionally
+  leaves every agent dead on arrival — indistinguishable from the hazard the
+  guard exists to catch.
 
 - **EVERY agent definition carries this line, written before the agent runs
   rather than after:** *"Re-read `CLAUDE.md` **and your own agent definition**
@@ -2524,42 +1970,31 @@ Rules of the road:
   a disagreement between the two; never silently prefer either."*
 
   **"And your own agent definition" is load-bearing, and the first draft of this
-  bullet omitted it** — it named `CLAUDE.md` only, which is narrower than the
-  problem it describes and is this file's own most-recorded shape. The reviewer
-  that caught the omission demonstrated it in the same run: its injected system
-  prompt carried the disposition list with three labels while
-  `.claude/agents/adversarial-reviewer.md` on disk had four, and it evaluated the
-  fourth **only because it had been told to read from disk** — an instruction
-  that named the wrong file and worked by accident. An agent whose own definition
-  is stale applies a rule set nobody can see is missing, and it is the one file
-  it will never think to check.
+  bullet omitted it.** The reviewer that caught the omission demonstrated it in
+  the same run: its injected prompt carried a three-label disposition list while
+  the file on disk had four, and it evaluated the fourth **only because it had
+  been told to read from disk** — an instruction that named the wrong file and
+  worked by accident. An agent whose own definition is stale applies a rule set
+  nobody can see is missing, and it is the one file it will never think to check.
 
-  **Injected context lags the file.** Instances accumulate on **#170** rather
-  than in a count here — three documents once carried three different numbers
-  for this one population, none of them marked. Observed repeatedly on
-  2026-08-30, e.g. the
-  `CLAUDE.md` in a subagent's context said "Three rules for numbers in prose"
-  while disk said "The rules" with five — the two rules added that morning
-  were absent from the copy the agent was reasoning with. It caught the
-  disagreement and re-read from disk; nothing about the output would have
-  looked wrong if it had not. Tracked as #170.
+  **Injected context lags the file, and TRUNCATION is a second mechanism with
+  the same signature.** A rule on disk and absent from context is produced by
+  both, and the prescribed remedy for one — re-read from disk — is useless
+  against the other. Distinguish them by measuring the file's SIZE before
+  reaching for the familiar explanation (D-079). Lag instances accumulate on
+  **#170** rather than in a count here.
 
-  The risk scales with the number of agents: two agents operating on a rule
-  set that predates the rules written FOR them produce work that passes every
-  gate and violates a rule neither ever saw. This binds `attack-dev` and
-  `clients-dev` at creation, not afterwards.
+  The risk scales with the number of agents: two agents operating on a rule set
+  that predates the rules written FOR them produce work that passes every gate
+  and violates a rule neither ever saw.
 
 - **CITE A QUOTED STRING AND A FILE, NEVER A LINE NUMBER — and check a citation
-  with `rg -U --multiline`, never bare `grep -n`.**
-  **A line number is a property of a tree, not of a document.**
-
-  Measured 2026-09-05: `DELIVERY_PLAN.md:980` and `:1078` are both correct for
-  the same `enforce_admins` sentence — on `main` and on
-  `fix/zt-targets-and-spend-floor` respectively, which inserts 111 lines above
-  it. <!-- counted: git diff --stat origin/main..HEAD -- DELIVERY_PLAN.md -> 111 insertions, 2026-09-05 -->
-  Two people each "verified" the other wrong, and both were right. Four
-  citation errors in one exchange, on the subject of citations being <!-- counted: historical -->
-  unreliable; the only durable element was a quoted string.
+  with `rg -U --multiline`, never bare `grep -n`. A line number is a property of
+  a tree, not of a document.** Measured 2026-09-05: `DELIVERY_PLAN.md:980` and
+  `:1078` are both correct for the same sentence, on `main` and on a branch
+  inserting 111 lines above it.
+  <!-- counted: git diff --stat origin/main..HEAD -- DELIVERY_PLAN.md -> 111 insertions, 2026-09-05 -->
+  Two people each "verified" the other wrong, and both were right.
 
   The wrapping half is the dangerous one. Prose here wraps at 80 columns, so a
   quoted phrase longer than a few words usually straddles a line break and a
@@ -2570,231 +2005,137 @@ Rules of the road:
 
   A multiline tool is necessary and NOT sufficient: a literal space in the
   pattern still will not cross the wrap, because what is there is a newline and
-  an indent. **Write every space in a quoted phrase as `\s+`.** Searching this
-  very rule for "property of a" returned nothing minutes after it was written;
-  `property\s+of a` found it on the line it wraps.
+  an indent. **Write every space in a quoted phrase as `\s+`.**
 
-  A no-match is a claim about the world. **Before reporting an absence, confirm
+  **A no-match is a claim about the world. Before reporting an absence, confirm
   the tool could have found it** — re-search a fragment that cannot wrap. This
-  nearly produced an accusation of fabrication against correctly-quoted text.
+  nearly produced an accusation of fabrication against correctly-quoted text,
+  and a case-sensitive search against an UPPERCASE heading nearly produced a
+  second false absence in the same minute.
 
   **AND WHEN N INDEPENDENT SOURCES REPORT THE SAME ABSENCE, RUN THE SEARCH
   BEFORE NAMING A MECHANISM.** Four reviewers, in four separate runs against
   four different trees, each reported the same rule missing from this file.
   Each report was dismissed as detached-worktree staleness — a real mechanism,
   documented here, and the first explanation that fits. The rule was simply not
-  in the file: it had been asked for, and the PR that was meant to carry it
-  merged without it.
-
-  The failure is not credulity about worktrees. It is that **four independent
-  observations of one fact are data, and a mechanism that explains them away
-  costs one command to test.** The more familiar the explanation, the faster it
-  arrives and the less it is checked — and "your context is stale" explains any
-  disagreement whatsoever, which is what should make it suspect rather than
-  comfortable.
-
-  **The verification itself then nearly produced a SECOND false absence in the
-  same file.** The first search was case-sensitive against an UPPERCASE
-  heading, so it reported a rule missing that is present. Both halves of this
-  bullet in one minute: confirm the tool could have found it, then believe the
-  result.
+  in the file. **Four independent observations of one fact are data, and a
+  mechanism that explains them away costs one command to test.** The more
+  familiar the explanation, the faster it arrives and the less it is checked;
+  "your context is stale" explains any disagreement whatsoever, which is what
+  should make it suspect rather than comfortable.
 
   **And prefer a MEASUREMENT to a citation wherever one exists.** Reading
   `audit-gate.yml`'s `on:` block settles what triggers it; citing a document
-  about that block inherits every drift problem above. A measurement has no line
-  number to drift.
+  about that block inherits every drift problem above.
 
 - **A CITATION'S WORTH IS WHETHER IT FAILS LOUDLY. Pin to an immutable object
   where you can; where you must cite something mutable, the citation has to be
-  MACHINE-CHECKED so the change trips something.** Derived on 2026-09-09 by
-  breaking three weaker forms in a row, each proposed as the durable one:
+  MACHINE-CHECKED so the change trips something.** Three weaker forms were each
+  proposed as the durable one and each broken: *"a claim about a completed
+  action cannot be falsified by later action"* (false — one that AGGREGATES OVER
+  AN OPEN POPULATION goes stale on the next member; `a3137d5..851348b`
+  reproduces forever, `a3137d5..HEAD` does not); *"cite something that cannot
+  change without someone having to edit it"* (false — deliberate edits are
+  routine, and a quoted phrase survived a correct edit that moved it into a
+  `title` attribute); and *a quoted string is safe because it survives a reflow*
+  (true of reflows and beside the point).
 
-  - *"A claim about a completed action cannot be falsified by later action."*
-    False. A completed-action claim that AGGREGATES OVER AN OPEN POPULATION
-    goes stale on the next member, because the population keeps acquiring
-    them. A diff range shows it without needing any record: `a3137d5..851348b`
-    reproduces forever, `a3137d5..HEAD` does not — and both are measurements
-    of completed diffs. This file already applies the remedy elsewhere, in the
-    bullet that says instances "accumulate on **#170** rather than in a count
-    here".
-  - *"Cite something that cannot change without someone having to edit it."*
-    False. Deliberate edits are routine. A phrase quoted from
-    `AttackAiInputsPanel.test.tsx` survived a correct edit that moved it into a
-    `title` attribute; the citation went vacuous in silence.
-  - *A quoted string is safe because it survives a reflow.* True of reflows and
-    beside the point. The failure mode that matters is not motion, it is
-    SILENCE.
+  **Rank the forms by how they fail.** A phrase quoted in prose just stops being
+  there — **silent**. A phrase quoted in an ASSERTION is worse: it keeps
+  reporting success, which is #72 reached from the citation rule.
 
-  Rank the forms by how they fail. A phrase quoted in prose just stops being
-  there — **silent**. A phrase quoted in an ASSERTION is worse than silent: it
-  keeps reporting success, which is the #72 shape reached from the citation
-  rule.
-
-  **A SHA is the loud form, and NOT for the reason a first draft of this bullet
-  gave.** It said a SHA "stops resolving". It does not. A rebase ORPHANS a
-  commit without deleting it, so the object answers `git cat-file -t` with
-  `commit` until garbage collection — which can be a fortnight. A citation
-  check asking "does this resolve?" therefore PASSES on a SHA that is no longer
-  on the branch, and pointing a reader at that check is worse than pointing
-  them at nothing.
-
+  **A SHA is the loud form, and NOT because it stops resolving.** A rebase
+  ORPHANS a commit without deleting it, so the object answers `git cat-file -t`
+  with `commit` until garbage collection — which can be a fortnight. A citation
+  check asking "does this resolve?" PASSES on a SHA no longer on the branch.
   **What fails loudly is ANCESTRY, and only if someone asks:**
 
       git merge-base --is-ancestor <sha> HEAD
 
-  Measured 2026-09-09 on `fix/ai-inputs-discarded-list` after it was rebased
-  from `a3137d5` onto `e3163f9`: `db85e79`, `e3ca777`, `e16eadc` and `f41c0c4`
-  all answered `cat-file -t` with `commit`, and none was an ancestor of the
-  rebased tip. Two CI certificates and a review-coverage claim in that PR's body
-  were pinned to one of them.
+  Measured 2026-09-09 after a rebase: four cited SHAs all answered `cat-file -t`
+  with `commit`, and none was an ancestor of the rebased tip. Two CI
+  certificates and a review-coverage claim were pinned to one of them.
 
-  This correction is itself the third time in one evening a rule here was
-  falsified by its own author within hours of writing it, by applying it. The
-  first two produced gates. **The gate this one wants, and the scope is
-  the whole decision:** every SHA cited gets `--is-ancestor` checked, so an
-  orphaned citation fails the gate rather than the reader.
+  **The gate this wants covers PR BODIES, not changed files** — both stale
+  citations that prompted this rule were in bodies, and a body is not a file, so
+  a tree-walking gate reaches neither. It runs `on: pull_request` and reads
+  `github.event.pull_request.body`. Not built.
 
-  **Built over changed FILES it would close the smaller half and read as
-  closing all of it.** Both stale citations that prompted this rule were in PR
-  BODIES — a test-count identity in one, four orphaned SHAs in another — and a
-  body is not a file, so a tree-walking gate reaches neither. The version that
-  covers both runs `on: pull_request` and reads
-  `github.event.pull_request.body`, which is the surface with no gate, the most
-  readers, and permanence under squash. Decide that before writing it; deciding
-  after is what this entry is a record of. Not built.
-
-  **A number carrying its command must also name its REF, and this is where the
-  rule pays for itself.** Re-deriving means choosing a tree, and the tree a
-  reader picks is `main`. `context/gene.md` reported a collected unit-test total of
-  **7128**, citing `pytest -m unit --collect-only -q` summed per file, and
-  named no tree. `main` later moved to 7128 itself, so re-running the command on
-  `main` REPRODUCED the written number while the branch was really 7137 — a
-  false confirmation manufactured by the one sentence whose purpose is to
-  license not checking. Write `7137 (<command>, at d1d927d)`: on the wrong tree
-  the ref fails to reproduce and the reader learns something instead of being
-  reassured.
+  **A number carrying its command must also name its REF.** Re-deriving means
+  choosing a tree, and the tree a reader picks is `main`. A unit-test total of
+  7128 was written with its command and no tree; `main` later moved to 7128
+  itself, so re-running on `main` REPRODUCED the number while the branch was
+  really 7137 — a false confirmation manufactured by the one sentence whose
+  purpose is to license not checking. Write `7137 (<command>, at d1d927d)`.
 
 - **SPOT-CHECK a subagent's `file:line` citations before they enter a document,
   and record the check. A sample, not all of them — what you need is the
   report's CALIBRATION.** This replaces "be skeptical of subagent output", which
   is a disposition, and dispositions lose to convenience under time pressure.
-  The rule was on record and read, and the numbers were propagated anyway.
 
-  Measured 2026-08-30, and it is a clean partition rather than a near-miss: of
-  fourteen `file:line` citations that entered `DELIVERY_PLAN.md` from an Explore
-  agent's report, **the eleven that were independently run were all correct and
-  the three that were only read were all wrong.**
+  Measured 2026-08-30, a clean partition rather than a near-miss: of fourteen
+  `file:line` citations that entered `DELIVERY_PLAN.md` from an Explore agent's
+  report, **the eleven that were independently run were all correct and the
+  three that were only read were all wrong.**
 
-  **How big a sample?** With that hit rate the arithmetic is worth doing once
-  rather than guessing, because the intuitive answer is too small: drawing 3
-  of 14 catches at least one bad citation only **55%** of the time, 4 gets
-  67%, 5 gets 77%, 6 gets 85%
+  **How big a sample?** At that hit rate, drawing 3 of 14 catches at least one
+  bad citation only **55%** of the time, 4 gets 67%, 5 gets 77%, 6 gets 85%
   <!-- counted: python -c "from math import comb; [print(k, 1-comb(11,k)/comb(14,k)) for k in (3,4,5,6)]", 2026-08-30 -->.
-  An earlier draft of this bullet asserted that three checks "would have
-  caught it" -- a 55% chance stated as a certainty, in the rule about not
-  writing numbers you have not derived. **Sample a third, and round up.**
+  An earlier draft asserted three checks "would have caught it" — a 55% chance
+  stated as a certainty, in the rule about not writing numbers you have not
+  derived. **Sample a third, and round up.**
 
-  **Those figures are conditional on THIS incident's error rate -- roughly 1
-  in 5, observed once -- and are not a detection guarantee.** At a lower rate
-  the same sample catches proportionally less: 1 bad in 20, sampled at a
-  third, is caught **35%** of the time
+  **Those figures are conditional on THIS incident's error rate and are not a
+  detection guarantee.** At 1 bad in 20, sampled at a third, the same sample
+  catches **35%**
   <!-- counted: python -c "from math import comb; print(1-comb(19,7)/comb(20,7))", 2026-08-30 -->.
-  Which is the point of the framing above rather than an exception to it: the
-  sample CALIBRATES the report, it does not CLEAR the citations. A clean
-  sample of five does not verify the other nine; it says the error rate is
-  probably low enough to trust them. Read the table as "how likely am I to
-  learn this report is unreliable", never as "what fraction of bad citations
-  do I catch".
+  The sample CALIBRATES the report; it does not CLEAR the citations. Read the
+  table as "how likely am I to learn this report is unreliable", never as "what
+  fraction of bad citations do I catch".
 
-  **And the arithmetic assumes the bad citations are EXCHANGEABLE with the
-  good ones, which in this incident they demonstrably were not.** The three
-  wrong citations were exactly the three nobody had executed; the eleven right
-  ones were exactly the eleven that had been run. Under a random-draw model,
-  drawing 11 and finding 0 bad has probability 1/364 — so the model is simply
-  the wrong one. **Sample the citations you have NOT executed**, and a sample
-  of three from that stratum would have been certain rather than 55%. The
-  table is a floor for the case where you cannot tell the strata apart; when
-  you can, stratify and the sample gets much cheaper and much stronger.
-
-  **The wrong ones do not look wrong**, which is why sampling beats reading:
-  `clients.py:741` is a bare closing paren and `:755` is a real line of code that
-  reads plausibly in context. As everywhere else in this file, the failure and
-  the success are indistinguishable at the point of reading.
+  **And the arithmetic assumes the bad citations are EXCHANGEABLE with the good
+  ones, which here they demonstrably were not.** The three wrong were exactly
+  the three nobody had executed; drawing 11 and finding 0 bad has probability
+  1/364 under a random-draw model, so the model is simply wrong. **Sample the
+  citations you have NOT executed**, and three from that stratum would have been
+  certain rather than 55%. **The wrong ones do not look wrong** — one was a bare
+  closing paren, another a real line of code that reads plausibly in context.
 
 - **A plan entry that carries only a LOCATION is a derived value with a second
   place to be wrong. Name the MECHANISM instead, or as well.** "`clients.py:741`"
-  goes stale the next time anyone reflows that function, silently and with
-  nothing to notice it. "`zt_dashboard` never calls `_zt_client_target_stage`,
-  though `_zt_gap_total` does" survives the reflow and is greppable back to a
-  line whenever one is needed. Line numbers are for finding the code today; the
-  mechanism is what the entry is actually for.
+  goes stale the next time anyone reflows that function, silently.
+  "`zt_dashboard` never calls `_zt_client_target_stage`, though `_zt_gap_total`
+  does" survives the reflow and is greppable back to a line whenever one is
+  needed. Line numbers are for finding the code today; the mechanism is what the
+  entry is for.
 
-  **Corollary, and it is the same rule pointed at a CITATION rather than a plan
-  entry: cite the FILE and the QUOTED STRING, never the line.** A line number is
-  a claim that expires without notice, and it expires fastest in exactly the
-  documents people cite most, because those are the ones being edited. Write
+  **Corollary: cite the FILE and the QUOTED STRING, never the line.** Write
   `DELIVERY_PLAN.md, the paragraph quoting "Total annual cost"` rather than
-  `DELIVERY_PLAN.md:737` -- the quoted string survives every reflow, is greppable
-  to a line in one command, and cannot silently point at the wrong paragraph.
+  `DELIVERY_PLAN.md:737` — the quoted string survives every reflow, is greppable
+  in one command, and cannot silently point at the wrong paragraph.
 
   <!-- counted: historical -->
-  Three instances on 2026-09-02, in one session, from three different causes:
-  a reviewer's clone was pinned to an older commit and its citations were all
-  shifted; two plan notes added that morning moved a `DELIVERY_PLAN.md` citation
-  from :737 to :780 between one message and the next; and
-  `check_issue_references.py`'s fail-closed branch moved :152 to :162 between
-  two people reading the same file. None was a mistake anyone made. Every one
-  was a correct number that had stopped being correct, and the failure is
-  invisible: the wrong line usually still contains plausible code, which is the
-  same thing that makes a stale citation worse than a missing one.
+  Three instances on 2026-09-02, from three different causes: a reviewer's clone
+  pinned to an older commit, so every citation was shifted; two plan notes added
+  that morning moving a citation from :737 to :780 between one message and the
+  next; and a gate's fail-closed branch moving :152 to :162 between two people
+  reading the same file. None was a mistake anyone made. Every one was a correct
+  number that had stopped being correct, and the wrong line usually still
+  contains plausible code — which is what makes a stale citation worse than a
+  missing one.
 
 - **The rules for numbers in prose, and a gate that enforces the first two on
   the shared documents.** Every miss behind them is one pattern: a value written
-  from memory instead of derived. This file has produced that defect repeatedly,
-  including inside the paragraphs correcting earlier instances of it, so the
-  rules are stated as procedure rather than as advice.
+  from memory instead of derived. **D-079** carries the instances, several of
+  which are inside the paragraphs correcting earlier instances.
 
   1. **Don't write the count.** If a number describes a list in the same
-     document, delete the number and let the list be the count. "The blockers:"
-     followed by the list cannot go stale; "The four blockers:" goes stale the
-     moment one closes.
-     <!-- counted: an illustration of the form being warned against, not a count of anything --> This is the cheapest of them and it applies far more
-     often than it looks — most spelled counts in this file sit within two lines
-     of the thing they count.
-
-     **When the list lives OUTSIDE the document, write the COMMAND, not the
-     number — and not a marker either.** Rule 2's `<!-- counted: … -->` is a
-     freshness CLAIM, and a claim can go stale between being written and being
-     read. On 2026-08-30 a marker certified 17 open blockers; a re-label in the
-     same session made it 16, with a green PR about to make it 15. The count
-     changed twice in an afternoon and the marker asserted the first one
-     throughout. A command cannot go stale, and whoever wants the number runs it.
-     Reach for rule 2 when a number must appear inline; reach for this when the
-     document's job is to point at the number rather than to state it.
-
-     **Delete the COUNT, never the MAPPING.** Read carelessly, "don't write the
-     <!-- counted: a quoted illustration of the volatile form, not a count of anything -->
-     count" takes the useful half with it. "Seventeen open blockers" is volatile —
-     one close invalidates it. "#123 belongs to item 8" is durable: an issue's
-     owning item does not change when a different issue closes. Same list, two
-     halves, opposite lifetimes. Keep the structure and drop the tally.
-
-     **The gate catches FORM. It cannot catch what a correct number
-     IMPLIES, and the two mechanisms are complementary by construction
-     rather than redundant.** `check_recalled_counts` matches a spelled
-     cardinal adjacent to a plural noun -- that is all it can ever do. On
-     <!-- counted: a verbatim quotation of the phrase the gate caught, not a count -->
-     2026-08-30 it caught "Three checks drawn at random would have caught
-     it"; the repair derived the real figure, 54.7%, and then stated that
-     TRUE figure so as to imply a detection guarantee it does not support.
-     A human caught the second. No pattern over text could have: the
-     sentence contains a cited, correct, derived number.
-
-     **Do not try to grow the gate into the second role.** Every attempt
-     widens the pattern until it fires on everything, which is the same
-     finding already recorded for TI001 and for the prose-total gate. Form
-     is mechanisable and implication is not; run both and expect neither to
-     cover the other.
+     document, delete it and let the list be the count. "The blockers:" cannot
+     go stale. **When the list lives OUTSIDE the document, write the COMMAND,
+     not the number — and not a marker either**: rule 2's marker is a freshness
+     CLAIM, and one certified 17 open blockers through an afternoon in which the
+     figure changed twice. **Delete the COUNT, never the MAPPING** — "seventeen
+     open blockers" is volatile, "#123 belongs to item 8" is durable.
   2. **Cite, don't recall.** A number from OUTSIDE the document carries the
      command that produced it and the date it was run:
 
@@ -2802,157 +2143,59 @@ Rules of the road:
               --json number | jq length, 2026-08-26 -->
 
      If you cannot paste the command, you do not know the number and must not
-     write it. A measurement over a fixed window (D-059's "four of the last
-     fifteen PR merges") is a claim about history and does not rot — but it
-     carries its window and its date for the same reason, and it is re-derived
-     when its inputs change.
-  3. **Correct at the instruction, not at the discussion.** Every miss so far
-     landed where the topic was DISCUSSED while the line telling someone what to
-     DO was left standing — a heading, a to-do list, a worked example. A
-     correction is UNVERIFIED until you have grepped the doc set for the claim's
-     SUBJECT rather than the line number you were handed, and the correcting
-     commit records the grep it ran. This is the highest-value of the numbering rules:
-     every adversarial pass over the branch that produced these rules needed it
-     independently, and the merge rule's worked example for item 7 part 2 — which
-     stayed
-     authoritative for a week after the condition beneath it changed — is the
-     canonical instance.
-
-     **PROXIMITY CATCHES NOTHING RELIABLY. The grep is the only mechanism, at
-     any distance, and there is no partial credit.** An earlier draft of this
-     paragraph said "a correction reaches roughly one screen unaided" and drew a
-     threshold. That was one incident stated as a property, and it was falsified
-     by the branch that wrote it: the same commit left a contradiction **two
-     lines above** the correction it had just recorded, through a first draft and
-     a full reviewer pass. Two other sites, 550 and 600 lines away, were also
-     missed. A third, two lines away, was caught. So proximity is not a
-     threshold, it is a coin toss — and writing a number on it invited exactly
-     the "I was close enough to be careful" reasoning that produced the miss.
-     The question is never "was I careful" but "did I run the grep". The
-     `Blocked by` column is the worst case: it is the field a reader consults to
-     answer exactly the question the correction answered.
-
+     write it. A measurement over a fixed window is a claim about history and
+     does not rot, but carries its window and date for the same reason.
+  3. **Correct at the instruction, not at the discussion.** Every miss landed
+     where the topic was DISCUSSED while the line telling someone what to DO was
+     left standing. A correction is UNVERIFIED until you have grepped the doc
+     set for the claim's SUBJECT, and the correcting commit records the grep.
+     **PROXIMITY CATCHES NOTHING RELIABLY — the grep is the only mechanism, at
+     any distance.** A draft that drew a one-screen threshold left a
+     contradiction two lines above its own correction, through a full reviewer
+     pass. The question is never "was I careful" but "did I run the grep".
   4. **A subject sweep enumerates how the subject can be WRITTEN before it
-     greps.** Rule 3 says grep the subject rather than the line you were handed.
-     This is its precondition, and skipping it produces a sweep that reports
-     clean while reporting on a fraction of the sites. **One literal is one
-     spelling; a sweep over one spelling is silent about every other.**
-
-     The instance that produced this rule: issue 165 named a stale
-     `prettier@3.9.5` in `CLAUDE.md`. Grepping `3\.9\.5` found seven sites and
-     was reported as complete — twice. The subject was "the prettier version",
-     written four ways: `prettier@3.9.5`, `prettier@3.9.4` (two more staged
-     queues), `rev: v3.1.0` (`.pre-commit-config.yaml`, running a `--write` hook
-     eight minors behind CI), and `"prettier": "^3.9.6"` (a range, not a pin).
-     Grepping `prettier` and reading every hit found all of them. The two
-     missed spellings were found by other people, and one was the largest defect
-     on the branch (#168).
-
-     This is the enumerate-the-class rule pointed at a SEARCH rather than at a
-     pattern or a table — the same shape as `_HSPACE` being written by listing
-     the characters someone thought of. **Derive the set; do not list it.** In
-     practice: grep the bare noun, read every hit, and classify each one, rather
-     than grepping any value the noun has ever had.
-
+     greps.** One literal is one spelling. Grep the bare noun, read every hit,
+     and classify each — a sweep for a stale `prettier@3.9.5` found seven sites
+     and was reported complete twice, while the subject was written four ways
+     and one missed spelling was the largest defect on the branch.
   5. **A de-duplication that points at the NON-AUTHORITATIVE source is worse
-     than the duplication it removes.** Two places to be wrong is a risk; one
-     place that is always wrong is a defect.
+     than the duplication it removes.** Three docs saying "the version the
+     lockfile pins" were repointed at `package.json` to give it one home — but
+     that holds a RANGE and CI installs `--frozen-lockfile`, so two had been
+     correct before the edit. **Establish which source the machine reads.**
 
-     Same PR: three docs said "the version the lockfile pins" and were repointed
-     at `package.json` to give the requirement "one home instead of two". Sound
-     reasoning, wrong operand — `package.json` holds a RANGE (`^3.9.6`) that
-     names no version and admits 3.10.x, while CI runs `pnpm install
-     --frozen-lockfile` and executes what `pnpm-lock.yaml` resolves. Two of the
-     three docs had been correct before the edit. **Before collapsing two
-     sources into one, establish which one the machine actually reads.**
+  **The gate is `apps/api/scripts/check_recalled_counts.py`**, blocking on
+  `ENFORCED_TARGETS` and report-only on `context/*.md`. **NOT "the shared
+  documents" — `DECISIONS.md` is in neither list**, and the gate prints the set
+  it read on every clean result. It matches SPELLED cardinals and deliberately
+  not digits, because "14 open" beside its command is the fixed form.
 
-  **The gate is `apps/api/scripts/check_recalled_counts.py`**, wired into
-  `ci.yml`: blocking on the documents named in `ENFORCED_TARGETS`, report-only
-  on `context/*.md`. **NOT "the shared documents" — `DECISIONS.md` is in
-  neither list**, and the gate now prints the set it actually read on every
-  clean result, so the covered documents are a measurement rather than a
-  claim in this file
-  (`dave.md` is owner-write-only, so a blocking gate there would hold Gene's PR
-  red on a line Gene may not edit; `gene.md` is agent-maintained since D-063 and
-  is advisory for the different reason that its churn is hourly). It matches SPELLED cardinals and
-  deliberately not digits, because "14 open" beside its command is the fixed form
-  and flagging it would punish the correction.
+  **Two markers, not the same claim.** `<!-- counted: <command>, <date> -->` is
+  rule 2 satisfied. `<!-- counted: historical -->` is for a count QUOTED as the
+  record of a past event, which cannot grow. Neither may be used to silence a
+  number you have not checked.
 
-  **Two markers, and they are not the same claim.** `<!-- counted: <command>,
-  <date> -->` is rule 2 satisfied. `<!-- counted: historical -->` is for a count
-  QUOTED as the record of a past event — it cannot grow, so it cannot go stale.
-  Do not reach for either to silence a number you simply have not checked; that
-  converts a finding into a lie with a marker on it, and nothing downstream can
-  tell the difference.
+  **Limits, all found by using it.** The provenance window is the finding's line
+  and two either side, so write markers on ONE line. Matching is PER LINE. The
+  cardinal must sit NEXT TO the noun, so `thirteen recorded instances` is
+  invisible where `nine instances` is caught — a floor, not a census, and **that
+  <!-- counted: quoted illustrations of the pattern, not counts of anything -->
+  is why rule 3 still matters after the gate exists**. The finding set is **NOT
+  STABLE UNDER REFORMATTING, so run the gate AFTER the formatter**: `prettier
+  --write` reflows prose and can move a count across or off a line break with no
+  change to the sentence. **The gate cannot see itself** — its help text is a
+  Python string, so the paragraph teaching this rule carried an uncited count of
+  its own until a human read it.
 
-  **Two limits of the mechanism, both load-bearing, both found by using it.**
-  The provenance window is the finding's line and two either side, so a marker
-  spanning three lines has its closing delimiter outside the window and does not
-  register — write markers on one line. Matching is also PER LINE, so a count
-  split across a line break (`Three` / newline / `instances`) is invisible.
-
-  **The consequence, stated as the general fact rather than as one of its
-  directions: the gate's finding set is NOT STABLE UNDER REFORMATTING. A clean
-  result is clean for the CURRENT FORMATTING, not for the text.** `prettier
-  --write` is mandatory before every commit and reflows prose, so an edit
-  anywhere above a flagged line can move a count across — or off — a line break
-  with no change to the sentence. Both directions have now been observed:
-  reflow un-flagging a real finding, and reflow joining a cardinal to its noun
-  and exposing one that had been hidden. Neither is a bug to fix; the point is
-  that **the gate must be run AFTER the formatter, never before**, and that a
-  green run recorded before a reformat says nothing about the tree after it.
-
-  **The worked example this paragraph used to carry was backwards, and it is
-  kept as a correction rather than deleted, because the instruction above is
-  right and the reasoning offered for it was not.** It said fixing the
-  pre-commit hook (#168) "reformats 46 files", so any recalled-count finding
-  hidden by a line break in them would become visible when it landed.
-
-  It landed as PR #311 and reformatted nothing. Measured on `main` at a421e37,
-  2026-09-20: `prettier@3.9.6 --check` over the repo glob reports every file
-  clean, and `prettier@3.1.0 --check` — the version the OLD hook ran — reports
-  49.
-  <!-- counted: npx -y prettier@3.1.0 --list-different "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}" | wc -l, at a421e37, 2026-09-20 -->
-  So those files were never work the fix creates; they are what a
-  version eight minors behind says about a tree CI already keeps correct. The
-  fix REMOVED a reformat that the mandatory pre-commit step was performing on
-  every commit. `.pre-commit-config.yaml` states it correctly and always did
-  ("NO REFORMAT LANDS WITH THIS"); this file said the opposite, and the
-  `DELIVERY_PLAN.md` entry built a sequencing constraint on top of it.
-
-  **The instruction is unchanged and does not depend on that example**: run the
-  gate AFTER the formatter, because a green recorded before a reformat says
-  nothing about the tree after it. Any PR that does reflow prose — a
-  `--write` over changed files, a heading edit above a flagged line — has
-  exactly the consequence described, and the gate's own limits bullet above is
-  the reason.
-
-  More importantly, the pattern requires
-  the cardinal to sit NEXT TO the noun, so `thirteen recorded instances` is
-  invisible where `nine instances` is caught.
-  <!-- counted: quoted phrases illustrating the pattern, not counts of anything -->
-  That is how two documents came to
-  hold different numbers for the same population with only one of them flagged,
-  and it is not a bug to fix: the noun list is a floor rather than a census, and
-  widening it indefinitely turns the gate into a prose critic. It is the reason
-  **rule 3 still matters after the gate exists** — grep the claim's SUBJECT
-  across the doc set, because the mechanism can only see the spellings it knows.
-
-  **The gate cannot see itself.** Its help text is a Python string and the
-  enforced set is Markdown, so the paragraph teaching this rule carried a
-  spelled, uncited count of its own until a human read it. Same shape as a gate
-  whose correctness lives in a `working-directory:` line: the part that matters
-  sits where the check does not reach.
-
-  **The gate finds; it does not fix.** A long finding list invites clearing it
-  mechanically, which deletes correct sentences and rewords true ones. Every site
-  gets its own disposition. Where a finding is a false positive, say why at the
-  site — that is what the marker's free-text reason is for — rather than widening
-  the pattern. And expect the gate to catch its own author. It did twice in
-  the branch that wired it: once on the sentence written to explain the merge
-  rule, and once on the illustration inside rule 1 above — the example of the
-  bad form is itself an instance of the bad form, and the gate cannot tell the
-  difference, which is why the marker carries a reason a human wrote.
+  **The gate finds; it does not fix.** A long list invites clearing it
+  mechanically, which deletes correct sentences. Every site gets its own
+  disposition; where a finding is a false positive, say why at the site rather
+  than widening the pattern. **It catches FORM; it cannot catch what a correct
+  number IMPLIES** — it caught "Three checks drawn at random would have caught
+  <!-- counted: historical -- a verbatim quote of the phrase the gate caught, not a count -->
+  it", and the repair derived the true figure, 54.7%, then stated it so as to
+  imply a detection guarantee it does not support. Form is mechanisable,
+  implication is not; do not grow the gate into the second role.
 
 - **Check `git stash list` DURING work, not only when stopping.** A stash is
   invisible to `git status`, survives a branch switch, and is one command from
@@ -2963,303 +2206,78 @@ Rules of the road:
   wrong time.
 - **Archive a stash before dropping it -- salvage is a race, not a plan.**
   `git stash drop` frees the reflog slot and prints the commit's SHA; the commit
-  itself stays in the object store until pruned -- `git gc --prune=now`
-  immediately, a plain `gc` once past `gc.pruneExpire` (default two weeks).
-  `git fsck --unreachable | grep commit` is git's documented recovery and works
-  even when the SHA was not kept, but it races an unknown `gc`, returns unlabelled
-  commits, and `git stash clear` prints no SHA at all. So archive first, and select
-  **by SHA, never by index** -- an index names a different entry the moment
-  anything else drops:
+  stays in the object store until pruned. `git fsck --unreachable | grep commit`
+  is git's documented recovery, but it races an unknown `gc`, returns unlabelled
+  commits, and `git stash clear` prints no SHA at all. So archive first, and
+  select **by SHA, never by index** -- an index names a different entry the
+  moment anything else drops:
 
       sha=$(git rev-parse "stash@{<n>}")
       git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
       git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
 
-  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08 to establish what it does
-  there, and it does something worse than fail:** `${sha:0:8}` is read as a
-  variable named `sha:0:8`, which does not exist, so it expands to **nothing** —
-  `archive/stash--x`, no error, no SHA. Every stash archived that way collides on
-  one name, and the collision is pre-explained away by the very next paragraph
-  here, which says these archives already carry suffixed names because the bare
-  name was taken. **Run these in Git Bash.** No PowerShell equivalent is offered
-  here, and the reason is the point: a marker covering the FAILURE does not cover
-  a REMEDY. A draft of this block recommended `$sha.Substring(0,8)` under exactly
+  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08, where it does something
+  worse than fail:** `${sha:0:8}` is read as a variable named `sha:0:8`, which
+  does not exist, so it expands to **nothing** -- `archive/stash--x`, no error,
+  no SHA, and every stash archived that way collides on one name. No PowerShell
+  equivalent is offered, deliberately: a marker covering the FAILURE does not
+  cover a REMEDY, and a draft recommended `$sha.Substring(0,8)` under exactly
   that marker, measured for the failure and reasoned for the fix.
 
-  Measured 2026-09-08, PowerShell 5.1, when that was caught: it returns
-  `abcdef12` for a normal value, and **throws** both on a string shorter than
-  eight characters and on `$sha` arriving from parsed `git` output as an array
-  rather than a string. So the remedy is real but conditional, and publishing it
-  would mean publishing its two failure modes too. The block does not need it —
-  "run these in Git Bash" asserts nothing untested.
+  This repo's archives carry a branch AND a `-tag`-suffixed tag per stash
+  because the bare name was taken. **But if EVERY archive collides on one name,
+  that is the PowerShell expansion above, not a name clash** -- the discriminator
+  matters because the sentence before it explains a collision away, and it is
+  the one a confused reader reaches first.
 
-  Check what the name already resolves to: this repo's archives carry a branch AND
-  a `-tag`-suffixed tag per stash because the bare name was taken. **But if EVERY
-  archive collides on one name, that is the PowerShell expansion above, not a name
-  clash** — the SHA segment is empty, so they are all literally the same string.
-  The discriminator matters because the sentence you just read explains a
-  collision away, and it is the sentence a confused reader reaches first.
-  **Discharge any
-  decision-hold on dropping by ENUMERATING the archived ref's parents, never by
-  diffing it** -- a stash taken with `-u` keeps its untracked files on a THIRD
-  parent, which `git stash show` cannot display at all:
+  **Discharge any decision-hold on dropping by ENUMERATING the archived ref's
+  parents, never by diffing it** -- a stash taken with `-u` keeps its untracked
+  files on a THIRD parent, which `git stash show` cannot display at all:
 
       git rev-list --parents -n1 <ref>     # three parents means an untracked half
       git ls-tree -r --name-only <ref>^3   # and this lists what it holds
 
-  Two of this repo's three archives have that third parent: a migration in one, a
-  React component and its test in the other. The diffstat written up as proving
-  recovery covered neither -- **and it was unsupported when written even though it
-  turned out to be true**, because the objects were on the remote all along. An
-  unsupported claim that happens to be correct is still unsupported, and recording
-  that as a near-loss would be the same error facing the other way. A ref existing
-  proves only that a ref was written; a diffstat proves only the tracked half. **Drop highest-numbered first**, because dropping `stash@{0}`
-  renumbers every higher-numbered entry. Assert the SHA immediately before each
-  drop -- and do none of this **while an agent holds the shared tree**: the drop
-  deletes a ref and renumbers every entry under it. See the orchestrating-session
-  rule above.
+  Two of this repo's three archives have that third parent, and the diffstat
+  written up as proving recovery covered neither -- **unsupported when written
+  even though it turned out to be true**, because the objects were on the remote
+  all along. **Drop highest-numbered first**; dropping `stash@{0}` renumbers
+  every higher entry. Do none of this **while an agent holds the shared tree**.
 - **Branch + PR for anything that changes behaviour or states a rule. Two
   exceptions go direct to `main`, and they are exceptions because practice
   already worked this way.**
 
   1. **`context/*.md`** — the personal status files. Owner-write-only by
-     convention, read by the other dev for awareness, and stale within hours of
-     being written.
+     convention, read by the other dev for awareness, stale within hours.
   2. **Typo-class prose fixes** — a misspelling, a mangled character, a
      formatting slip. Nothing that changes what a reader would DO.
 
-     **A broken link is NOT typo-class**, though it looks like one. Repointing
-     a cross-reference is a judgement about where a reader should go, and
-     "a pointer to something that no longer exists" is on the reviewer's
-     BLOCKING (prose) list. Fixing one direct to `main` pushes an unreviewed
-     judgement call, and `audit-gate.yml` triggers on `pull_request` only, so
-     nothing would see it.
+     **A broken link is NOT typo-class**, though it looks like one. Repointing a
+     cross-reference is a judgement about where a reader should go, and "a
+     pointer to something that no longer exists" is on the reviewer's BLOCKING
+     (prose) list. Fixing one direct to `main` pushes an unreviewed judgement
+     call, and `audit-gate.yml` triggers on `pull_request` only, so nothing
+     would see it.
 
-  **The boundary, and it is the only test:** a prose fix that changes what
-  someone would do is not typo-class. Those are PRs, because they are the
-  findings the reviewer labels BLOCKING (prose) — **read that list in the agent
-  file rather than here.** An abridged copy of it is how this exception first
-  shipped licensing direct pushes for one of the items it omitted.
+  **The boundary is the only test:** a prose fix that changes what someone would
+  do is not typo-class. Those are PRs. **Read the BLOCKING (prose) list in the
+  agent file rather than here** — an abridged copy of it is how this exception
+  first shipped licensing direct pushes for one of the items it omitted.
 
   **Why this is a correction rather than a loosening.** Measured on
   <!-- counted: git log -25 --format=%s main | grep -cvE '[(]#[0-9]+[)]$', 2026-08-27 -->
   2026-08-27 over the last twenty-five commits on `main`: **nine were direct**,
-  every one of them `docs(context):`, and every one touched only `.md` files
-  under `context/`. The rule said never; practice said always, for one specific
-  and harmless class. A rule that is routinely and correctly ignored does not
-  bind the case it was written for — it teaches that the rules here are
-  advisory, which is expensive for the ones that are not.
+  every one `docs(context):`, every one touching only `.md` files under
+  `context/`. The rule said never; practice said always, for one specific and
+  harmless class. A rule that is routinely and correctly ignored teaches that
+  the rules here are advisory, which is expensive for the ones that are not.
 
   Everything else — code, tests, CI, gates, migrations, and any document stating
-  a rule or a number someone acts on — is branch + PR, as before.
-- **An agent merges on green WITHOUT checking back, when all six hold.** Standing
-  as of 2026-08-26, after three consecutive PRs came to the human for a decision
-  the evidence had already made.
-
-  **What this rule actually clears: documentation PRs.** Code comes back, and so
-  does anything adding or changing a test — every path where a green suite proves
-  least is a path this codebase's code actually touches, and this repo does not
-  ship code without tests. Measured 2026-08-26 by applying condition 5's path
-  list to the last fifteen PR merges on `main`: **four cleared, eleven came
-  back**, the eleven tripping 1 to 20 paths each. Re-derived 2026-08-27 after
-  the web test globs were added, per the trigger below — the figure is
-  unchanged, because no PR in that window touched a web test file. The hole was
-  real and simply unexercised by the window, which is the measurement's limit
-  rather than a reason to doubt it: a window can only show what it contains.
-
-  **Re-derived again 2026-09-21, because adding `tests/gates/**` to condition 5
-  fires this rule's own standing trigger.** Over the fifteen most recent PR
-  merges on `main` at that date: **two cleared, thirteen came back**, and
-  **one of the thirteen came back ONLY via the new `tests/gates/**` glob** —
-  it tripped nothing else on the list, so under the previous wording it would
-  have merged unattended while editing a gate `ci.yml` executes. The glob is
-  load-bearing on real traffic rather than theoretically.
-  <!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21 -->
-
-  **The first attempt at this re-derivation selected the wrong population and
-  is recorded rather than quietly replaced.** It used `git log --merges`, which
-  on a repo that squash-merges finds only the true merge commits from early
-  history — it returned fifteen 2026-era merges and reported **fifteen cleared,
-  zero came back**, a clean-looking number about commits nobody asked about.
-  Nothing in the output said so; the count was plausible and the command was
-  real. A PR merge on this repo is a first-parent commit whose subject ends
-  `(#N)`, and that is what the window must select. It is written here so nobody
-  has to derive the scope from the conditions and arrive somewhere more generous
-  — an earlier framing promised more than four in fifteen, and the conditions
-  below had grown past it.
-
-  Four in fifteen is worth keeping: those four are the PRs that recur every
-  round. Dropping the rule was weighed against the same evidence and loses — the
-  reviewer passes that produced these conditions were not spent discovering the
-  rule was wrong, they were spent discovering that **a green suite does not
-  license an unattended merge of code here**, and that is worth having written
-  down whether or not a standing rule survives it.
-
-  The measurement carries its window and its date deliberately: it is a claim
-  about a fixed slice of history, so it does not rot the way a live count does.
-  It is only true of condition 5 as that list stood on that date, so
-  **re-derive it whenever condition 5 changes** — not a remote contingency,
-  since condition 5 changed twice in the three days before this was written.
-  (Recorded as **D-059**, which carries the four cleared SHAs and the two PRs on
-  which a denylist and an allowlist construction disagree.)
-
-  Three of the six conditions are checkable and three are self-attested — see the
-  note below the list, which an earlier draft contradicted from here:
-
-  1. All seven CI checks green. (Five jobs in `ci.yml` — python, web,
-     secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
-     is schedule-only and excluded. **Re-derive this count if a job is added**;
-     it is a hardcoded number in prose, which this file has a bullet about.)
-  2. The adversarial reviewer ran **against the final state of the branch**, and
-     whatever it found is fixed or filed, recorded with `Findings:` /
-     `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
-     first — item 10 would never have qualified under the first-run reading, and
-     §14 already requires a re-run after any substantive change. Note the gate
-     checks only that `Findings:` and `Disposition:` exist; it does not read
-     `Scope:` and cannot tell whether the reviewer ran at all.
-  3. `DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated **in the
-     landing commit**, with any counts read live rather than carried forward.
-  4. No migration.
-  5. **None of the following paths**, which are the ones where a green suite
-     proves least:
-       * `apps/api/app/ai/` — the single egress path for all five services.
-       * `apps/api/app/csf/playbook.py`, `app/risk/engine.py`,
-         `app/zt/scoring.py` — the deterministic scoring engines. Core Principle
-         1 says "AI suggests, code computes"; condition 5 named only the
-         suggesting half for one draft, so a refactor of the 5x5 risk mapping
-         would have merged unattended. #84 is on record as `risk.py` hiding
-         exactly that.
-       * any live LLM **prompt**, which is not confined to `app/ai/` —
-         `app/tech_debt/extract.py:44` holds one, and fixture mode echoes payload
-         keys back verbatim, so a prompt drift cannot turn CI red.
-       * `apps/api/app/config.py` — the switch deciding whether the redactor
-         may be disabled, and its default. **#142 lived here, not in
-         `app/ai/`.** A PR widening `is_development()` reintroduces it while
-         tripping nothing else on this list.
-       * `apps/api/app/models/**` and `apps/api/alembic/env.py` — "no
-         migration" (condition 4) is not "nothing under `alembic/`". A
-         cascade rule or a column default changes stored behaviour without
-         one.
-       * `apps/web/**/*.test.ts`, `apps/web/**/*.test.tsx`,
-         `apps/web/**/*.spec.ts`, `apps/web/**/*.spec.tsx` — the vitest suite,
-         which condition 1 counts as one of its checks. The justification
-         written for `apps/api/tests/**` below applies word for word, and
-         for a week this list did not carry it: a PR editing a component and its
-         own test cleared every condition, including a version that WEAKENS the
-         test. The rule's own reasoning was sitting next to the hole. Test globs
-         only, deliberately — most `apps/web` product code that matters is
-         already caught by condition 6's dashboard clause, and widening to
-         `apps/web/**` would expand scope on an argument nobody has made.
-       * `apps/api/tests/**` and `e2e/**` — weakening a test satisfies
-         condition 1 more directly than editing a workflow does, and this
-         repo keeps finding tests that could not fail (#72, D-051). No
-         enumerated list of those instances exists anywhere; the figures
-         that used to be quoted here and in CONTEXT.md disagreed, and
-         neither was ever derived.
-       * `apps/api/scripts/seed_demo.py` and `scripts/demo-reset.sh` — both
-         drive CI jobs, and seed data being clean is why #130 survived months
-         of green.
-       * `docker-compose.yml` and `docker-compose.demo.yml` — this list named
-         `scripts/demo-reset.sh`, a WRAPPER around `docker compose`, and not
-         the file it wraps. CI's E2E and Demo jobs ARE this file: it defines
-         the api bind mounts every containerised gate reads, the web install
-         guard, the api boot chain, and every healthcheck. A compose-only PR
-         that also updated the three documents cleared all six conditions and
-         merged unattended, satisfying condition 1 partly by construction.
-         Found by the review of PR #329, whose own one-file change never
-         qualified (condition 3 was unmet), so this was a gap for the next one
-         rather than a live fail-open.
-       * the deterministic surfaces the first draft of this list missed:
-         `app/attack/coverage.py`, `app/csf/scoring.py`, `app/zt/maturity.py`,
-         `app/tech_debt/security_scope.py`, `app/risk/exporters.py`. Naming
-         one file for three of five services and none for ATT&CK or Tech Debt
-         was a half-sweep — the defect this file has a bullet about.
-       * `apps/api/scripts/check_*.py`, `apps/api/scripts/leave_row_oracle.py`
-         (a CI gate whose name does not match `check_*`), **`tests/gates/**`**,
-         `.github/workflows/**`, and
-         `.github/pull_request_template.md` — the gates and the harness that
-         enforce this rule. A change here satisfies condition 1 by construction.
-         This file already records that `fetch-depth: 0` and one colon in the PR
-         template are each the single character deciding whether a gate means
-         anything.
-
-         **`tests/gates/**` was missing and that was a live fail-open, found
-         2026-09-21 by applying this list to every open PR rather than by
-         reading it.** `ci.yml` runs `bash tests/gates/prettier_hook.sh` and
-         `bash tests/gates/web_install_guard.sh`, so those are CI gates by the
-         same definition as everything else on this line — and a PR editing one
-         cleared conditions 4 and 5 outright. The construction is D-059a's
-         exactly: the list named ONE SPELLING of "a gate", `check_*.py`, and a
-         gate written in shell was invisible to it. `scripts/demo-reset.sh` was
-         already here, which is what made the gap hard to see — a `.sh` path was
-         present, so the list did not read as Python-only.
-
-         **Derive the set; do not extend the list.** The membership test is
-         "does any WORKFLOW execute it as a gate" -- all of them, not `ci.yml`:
-
-             grep -rnE "(bash|python( -m)?) +[A-Za-z0-9_./-]*(check_|leave_row_oracle|tests[/.]gates|scripts[/.])" .github/workflows/
-
-         **The first version of this command was published here wrong, and the
-         way it was wrong is the lesson.** It read `ci.yml` alone and required a
-         literal `scripts/` or `tests/gates/` path, so it missed
-         `audit-gate.yml`'s `bash tests/gates/close_guard_linked_file.sh`
-         entirely and missed `run: python -m scripts.check_test_integrity tests`
-         -- a dotted module with no slash -- inside the very file it did read.
-         It was RUN before publishing, returned ten real invocations, and that
-         is exactly what made it credible: **running a command proves what it
-         returns, never what it cannot see.** Both misses were found by a
-         reviewer reading it, not by anyone re-running it.
-
-         The sentence that stood here is deleted rather than repaired: it said
-         that if the command returns something this list does not name, *the
-         list* is wrong rather than the command. That forecloses the only doubt
-         that would have caught this, and it is why the correction had to come
-         from outside. **Doubt the command first.** If a gate is wired in a
-         spelling neither the command nor this list knows, both are wrong and
-         the command is the one that will go on reporting clean.
-  6. Nothing that changes deliverable content, exporter output, or client
-     dashboard numbers.
-
-  **Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
-
-  **Conditions 1 and 4 are mechanical; 5 is mostly a path match but its
-  live-prompt clause needs a diff read. Conditions 2, 3 and 6 are
-  self-attested by the agent that wants to merge**, and 6 is a judgement call an
-  agent can talk itself out of. An earlier draft of this rule called the whole
-  thing "a file-path check plus two facts, not a judgement call", which is this
-  file's own narrower-than-the-reader-assumes shape. It is not that; it is three
-  checkable conditions and three honest ones. When 6 is arguable, it has been
-  tripped.
-
-  Worked examples, so the boundary is not re-litigated per PR — and a STALE
-  worked example is worse than none, because it ends the check with the wrong
-  answer in the place a reader looks first.
-
-  **Item 7 part 2** (`/ai-inputs` endpoint and panel) **comes back.** An earlier
-  draft said it "is admin-only and trips none of the paths — land it". That was
-  true the day it was written and false by the time anyone read it: the
-  `apps/api/tests/**` and `e2e/**` bullet was added to condition 5 in a later
-  session, and an endpoint plus a panel ships with tests — it must, or condition
-  1 proves nothing about it. Whether a surface is admin-only is not a question
-  condition 5 asks. This is the stale-cross-reference shape occurring inside the
-  rule that records the shape: a claim superseded by an edit elsewhere in the
-  same file, still standing where it gets looked up.
-
-  **A PR that repairs the gates comes back too**, and it trips condition 5 on
-  both `apps/api/scripts/check_*.py` and `apps/api/tests/**` at once.
-  Both are deliberate: a change to a gate satisfies condition 1 by construction,
-  and a change to a test satisfies it more directly than editing a workflow
-  does. That such a commit is *repairing* the harness this rule depends on
-  argues for a human reading it, not against.
-
-  **#131 comes back**, because the winning spelling reaching the client
-  deliverable means fixing it changes deliverable content by definition. Items 9
-  and 6 come back for the same reason. **Item 8 comes back too** — an earlier
-  draft said it "qualifies outright unless the export split touches exporter
-  output", which is wrong twice over: the item is *named* export/publish split,
-  and it owns #123, a **client dashboard** defect. Fixing #123 changes what the
-  client's Risk dashboard shows, which is condition 6's third clause. The
-  example contradicted the #131 reasoning directly above it.
+  a rule or a number someone acts on — is branch + PR.
+- **The merge rule — when an agent may merge unattended — is at the TOP of
+  this file**, under `## The merge rule`. It was here, at byte 192,494 of a
+  210,958-byte file, and every reader with a size limit got the conditions
+  without the path list that decides them (D-079). It is the one rule whose
+  POSITION is load-bearing.
 - **AN ISSUE IS FILED WITH ITS LABELS OR IT IS NOT FILED. Search first, and the
   search only works because everything else was labelled.** The board is
   `is:issue is:open label:mvp-blocking` ordered by tier. An issue without
@@ -3267,28 +2285,24 @@ Rules of the road:
   in the ordering. Either way it is invisible to the only view used to decide
   what to work on — not a slow record, an unreachable one.
 
-  Every new issue therefore carries, at creation: `mvp-blocking` + one of
-  `tier-1` / `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason
-  written in the body. "Untriaged" is not a third option, because nothing ever
-  comes back to triage it. `gh label list` is the authority for what exists.
+  Every new issue carries, at creation: `mvp-blocking` + one of `tier-1` /
+  `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the body.
+  "Untriaged" is not a third option, because nothing ever comes back to triage
+  it. `gh label list` is the authority for what exists.
 
   The tiers are a judgement about client-facing consequence, not effort:
   **tier-1** is live, unmitigated wrongness a client can reach — a number they
-  never asked for, presented as one they did; **tier-2** is client-facing with
-  a mitigation shipped, or no wrong number delivered; **tier-3** is correctness
-  no client reads. Label to the SHIPPED state rather than the threat model, and
-  say on the issue which you did, so the call can be overturned instead of
-  inherited.
+  never asked for, presented as one they did; **tier-2** is client-facing with a
+  mitigation shipped, or no wrong number delivered; **tier-3** is correctness no
+  client reads. Label to the SHIPPED state rather than the threat model, and say
+  on the issue which you did, so the call can be overturned instead of inherited.
 
   **Measured 2026-09-10, and the cost was a duplicate.** A CSF silent-clamp
-  defect was found, searched for on the board, not found, and filed. It had
-  been filed eight days earlier by someone else — and that issue carried no
-  labels, so it appeared in no query. #184 and #286 are the same defect, and
-  the older, better-written one was the invisible one. More unlabelled issues
-  accumulated across that same evening.
-
-  So the search-before-filing step is real and is not sufficient on its own:
-  it can only find what previous filers labelled. The two halves are one rule.
+  defect was found, searched for on the board, not found, and filed. It had been
+  filed eight days earlier by someone else — and that issue carried no labels,
+  so it appeared in no query. #184 and #286 are the same defect, and the older,
+  better-written one was the invisible one. So search-before-filing is real and
+  not sufficient on its own: it can only find what previous filers labelled.
 
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from
@@ -3300,15 +2314,14 @@ Rules of the road:
   **`.claude/settings.json` is COMMITTED and `.claude/settings.local.json` is
   NOT** (`.gitignore:66`). The committed one carries
   `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, so both devs get the flag — it lived
-  in the gitignored file until 2026-08-30, which meant Dave never had it. Keep it
-  `env`-only: **no `permissions`, no `hooks`**. The local allow-list was deleted
-  the same day and is left to rebuild from use; `Bash(python -c ' *)` stays out
-  permanently, because under Agent Teams a pre-approved permission is granted to
-  every agent the team spawns rather than to the session that approved it, and a
-  step needing Python belongs in `apps/api/scripts/` where the reviewer can read
-  it. An empty allow-list means more prompts, which is the intended trade.
-  Staged sprint queues (`.claude/sprint-queue.sprint-<n>.json`) ARE committed —
-  they're the plan of record.
+  in the gitignored file until 2026-08-30, which meant Dave never had it. Keep
+  it `env`-only: **no `permissions`, no `hooks`**. `Bash(python -c ' *)` stays
+  out of the allow-list permanently, because under Agent Teams a pre-approved
+  permission is granted to every agent the team spawns rather than to the
+  session that approved it, and a step needing Python belongs in
+  `apps/api/scripts/` where the reviewer can read it. An empty allow-list means
+  more prompts, which is the intended trade. Staged sprint queues
+  (`.claude/sprint-queue.sprint-<n>.json`) ARE committed — the plan of record.
 - **Sprint loops are launched by the human dev at the keyboard, never by an
   agent.** Agents plan the sprint, stage the queue, and merge the planning PR;
   the dev walks the launch checklist and starts `/loop-sprint-cron` themselves

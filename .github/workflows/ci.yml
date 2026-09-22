@@ -102,6 +102,15 @@ jobs:
       - name: plan totals sum
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
+      # CLAUDE.md reached 210,958 bytes against a 150,000-byte reader limit, so
+      # the last 29% was cut before any agent read it -- and the cut landed on
+      # the merge rule's condition-5 path list. Eleven gates ran on every PR and
+      # not one measured the file all eleven are described in; it surfaced as a
+      # tool error rather than a red build. Same argument as the two sweeps
+      # above: the rule existed and only a machine keeps it.
+      - name: governance file fits in a reader
+        run: python apps/api/scripts/check_claude_md_size.py CLAUDE.md
+
       # The image optimizer stays unmounted, AND nothing imports sharp directly.
       # Together those are the whole reachability argument for the sharp advisory;
       # neither alone is. Measured against the STANDALONE artifact, not the dev

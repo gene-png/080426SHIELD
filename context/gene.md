@@ -1,4 +1,52 @@
-# Gene's Context: 080426SHIELD
+# Gene — in-flight status
+
+_2026-09-22 — `CLAUDE.md` truncation (#347, tier-1), ahead of #254 and #209._
+
+**What I was asked to do and did not:** #254 and #209 were the round's mandate.
+Both were stopped mid-measurement when the truncation was found; #254's survey
+is recorded below so it is not re-done. Neither is fixed.
+
+**#347, done this round.** `CLAUDE.md` at 210,958 bytes against a 150,000-byte
+reader limit — the last 29% cut silently, and the cut landed on the merge rule.
+Merge rule moved to the top (bytes 6,437–14,800), file trimmed to 148,814, and
+`check_claude_md_size.py` wired into `ci.yml`. D-079.
+
+**The diagnosis that was wrong, and it was mine to inherit:** `tn-gates`'
+missing-`tests/gates/**` report was filed as #170, injected-context lag.
+Truncation and staleness present identically to the reader, and the remedy for
+one is useless against the other. Re-opened on #170; the issue is not closed.
+
+**The window, measured rather than estimated.** Condition 5's test glob crossed
+the cut on 2026-09-10 (`f7c7c6ed`), not 2026-09-19. `tests/gates/**` was added
+2026-09-21 and was past the boundary in the commit that introduced it, so no
+truncating reader has ever seen it. 70 PR merges in the window, 51 tripping
+condition 5 only via a path past the cut.
+
+**What I did NOT establish, and it is the honest half:** that any PR merged
+wrongly. Whether an agent merged unattended or Gene decided is not in git. The
+claim is that the control was unavailable.
+
+**Three CLAUDE.md additions HELD at Dave's instruction** (red-on-revert's limit,
+the decorative conditional, "all seven green means seven reported") — every
+addition pushes more rules past the limit. They go in near the top once there is
+headroom; there is 1,186 bytes today.
+
+**#254 survey, measured on 318ce1d so it is not re-done.** The sentinel
+`"(pending intake)"` has 17 production read sites (13 in `apps/api/app`, 4 in
+`apps/web`) plus 2 in comments, and **zero production writes** — the only
+assignments are four unit-test fixtures. Production self-serve provisioning is
+`routes/auth.py`: `_provision_self_serve_client(db, legal_name=domain)` for an
+unknown company domain, and **`legal_name=display_name` for a personal-email
+signup**, which the issue does not name and which puts a person's own name on
+the deliverable where the org's belongs. The guards are not wrong; they check
+for a value nothing produces.
+
+**#209 — the design call is Dave's and is recorded:** LIVE for DRAFT and
+APPROVED, FROZEN at RELEASE, decided once for `zt_dashboard`, `csf_dashboard`,
+`_zt_gap_total` and `_csf_gap_total`, and the dashboard must say which target it
+computed against. Not implemented.
+
+---
 
 ## PICK UP HERE — 2026-09-21
 

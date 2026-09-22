@@ -4677,3 +4677,126 @@ When you write "X, because Y" about a merge, a guard, a sweep or a gate: state Y
 as a standalone proposition and ask what would falsify it. If a counterexample
 exists in the very set you are describing, the reason is wrong even though the
 answer is right — and the answer being right is what stops anyone looking.
+
+## D-079 — A governance file that cannot be read in full is a control that does not exist
+
+**2026-09-22 · governance/tooling**
+
+`CLAUDE.md` reached **210,958 bytes** against a reader limit of **150,000**. The
+last 60,958 bytes — 29% of the file — were cut before any agent read them, and
+the cut landed on the merge rule.
+
+**Decision, in four parts:**
+
+1. **The merge rule moves to the TOP of `CLAUDE.md`**, as its own `## The merge
+rule` section with conditions 1–6 and the whole condition-5 path list. It now
+   occupies bytes 6,437–14,800 rather than 192,494 onward. **Position is part of
+   the rule**, because truncation cuts from the end and what a partial reader
+   loses is decided by order.
+2. **`CLAUDE.md` is trimmed to fit**, 210,958 → 148,602 bytes (−30%), by moving
+   incident narrative out and keeping the instruction. No rule was deleted.
+3. **`apps/api/scripts/check_claude_md_size.py`** refuses the file above
+   150,000 bytes, wired into `ci.yml` as "governance file fits in a reader".
+4. **#347 is reclassified `mvp-blocking` / `tier-1`.** It was triaged post-MVP
+   on the reasoning that it does not stop the five services running an
+   engagement. That was right about the product and wrong about the operation.
+
+### Why it was misdiagnosed as #170, which is the part worth keeping
+
+A subagent reported that its injected `CLAUDE.md` lacked `tests/gates/**` in
+condition 5 while disk carried it. That is exactly the signature of #170,
+injected-context lag — a mechanism this repo had already recorded, with a remedy
+already written ("re-read from disk"). The familiar explanation fit, so it was
+filed as #170 and the real cause ran on.
+
+**Truncation and staleness present identically to the reader**, and the remedy
+for one is useless against the other: re-reading from disk cannot help when the
+disk copy is what gets cut. `CLAUDE.md`'s own rule — _N independent sources
+reporting the same absence are data, and a mechanism that explains them away
+costs one command to test_ — is about precisely this, and it still took a tool
+error rather than a measurement. **#170 is re-opened**: it may well be real, but
+it is not what bit `tn-gates`.
+
+### When each rule actually crossed the cut — measured, and it corrects the estimate
+
+The window was believed to have opened 2026-09-19. It opened on **2026-09-10**,
+and one glob was never readable at all.
+
+| rule                                          | crossed 150,000 at                      | date       |
+| --------------------------------------------- | --------------------------------------- | ---------- |
+| `apps/api/tests/**` (condition 5's test glob) | `f7c7c6ed`                              | 2026-09-10 |
+| the merge rule's own heading                  | `ebecb0a1`                              | 2026-09-11 |
+| `tests/gates/**`                              | added `87b2adf4`, **born past the cut** | 2026-09-21 |
+
+<!-- counted: byte offset of each string in `git show <sha>:CLAUDE.md` for every first-parent commit touching the file, against a 150,000 limit, 2026-09-22 -->
+
+The third row is the sharp one. `tests/gates/**` was added to close a live
+fail-open that the merge rule's own re-derivation calls "load-bearing on real
+traffic rather than theoretically" — and **no truncating reader has ever been
+able to see it.** It was past the boundary in the commit that introduced it.
+
+At the moment of crossing (`f7c7c6ed`) condition 5's first three items were
+still readable — `app/ai/`, the three scoring engines, the live-prompt clause —
+and the last seven were not: `config.py`, `models/**`, the web test globs,
+`apps/api/tests/**` and `e2e/**`, `seed_demo.py`/`demo-reset.sh`, the
+deterministic surfaces, and the `check_*.py` / workflows / template line.
+
+### What merged while it was unreadable
+
+**70 PR merges**, not the nine estimated. Applying condition 5's path list to
+each:
+
+|                                                      | PRs    |
+| ---------------------------------------------------- | ------ |
+| tripped condition 5 **only** via a path past the cut | **51** |
+| also tripped a still-readable path                   | 7      |
+| tripped condition 5 not at all                       | 12     |
+
+<!-- counted: condition 5's path list applied to every first-parent commit on origin/main since 2026-09-10 whose subject ends `(#N)`, 2026-09-22 -->
+
+Of the 51, two also carried a migration (condition 4, readable, would have
+brought them back anyway), leaving **49**; of those, 41 touched no dashboard or
+exporter surface, so condition 6 was likely silent too. **Twenty of them edited
+the gate harness itself** — `apps/api/scripts/`, `.github/workflows/`,
+`tests/gates/` — which is the category condition 5 singles out as satisfying
+condition 1 _by construction_.
+
+**What this does and does not establish.** It establishes EXPOSURE: for those
+PRs an agent reading a truncated file had no way to evaluate condition 5,
+because the paths were not on the page. It does **not** establish that any PR
+merged wrongly — whether an agent merged unattended or the human decided is not
+recorded anywhere git can answer, and this is stated rather than papered over.
+The claim is that the control was unavailable, not that it was violated.
+
+### The gate, and the one option it carries
+
+It measures **bytes** — the most primitive signal, no newline interpretation, no
+encoding round-trip — and reports characters and lines beside them. Bytes are
+conservative for UTF-8 (bytes ≥ characters) and are **not** conservative against
+a reader counting tokens; that residual is in the docstring rather than guessed
+at with a margin.
+
+`--limit N` exists so the fixtures get an honest negative control without a
+150,001-byte blob in the tree, and **it can only lower the bar**: a value above
+`LIMIT_BYTES` is refused with exit 2. That keeps "do not raise the limit" a
+property of the code. The trade is that the fixtures then exercise the
+comparison rather than the constant, so `tests/unit/test_claude_md_size_gate.py`
+pins the constant separately — a constant is the one thing a negative control
+cannot prove.
+
+### Residuals, stated
+
+- **`DECISIONS.md` is itself 287,144 bytes**, nearly twice the limit, and is not
+  gated. Deliberate, and the reason is the access pattern: it is the RECORD,
+  read by grepping a D-number, and is not injected into every agent's context.
+  `CLAUDE.md` is. Saying so here rather than leaving the exemption to look like
+  an oversight.
+- **`DELIVERY_PLAN.md` is 140,438 bytes** — 9,562 from the same cliff, at the
+  rate this repo writes. Not gated yet; the next file to cross.
+- **`CLAUDE.md` has 1,398 bytes of headroom.** That is thin, and it means the
+  next substantive addition is paid for by a trim. That is the ratchet working,
+  and it will feel like an obstruction the first time.
+- **The limit is one reader's, measured once.** This session's own injected copy
+  carried the full 210,958 bytes, so the cut is not universal — which makes it
+  worse, not better: the rule set an agent operates under varies by which agent
+  it is, and nothing in any output says which one you got.

@@ -13,6 +13,38 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
+it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut
+silently — and the cut landed on the merge rule. `An agent merges on green` sat
+at byte 192,494, so agents read that a PR "tripping condition 5" comes back to
+the human and could not read which paths trip it. All four occurrences each of
+`apps/api/tests/**` and `tests/gates/**` were past the boundary.
+
+Three things changed. The **merge rule moved to the top** of `CLAUDE.md` (now
+bytes 6,437–14,800), because position is part of a rule when truncation cuts
+from the end. The file was **trimmed 210,958 → 148,814 bytes** by moving
+incident narrative to D-079 and keeping the instruction; no rule was deleted.
+And **`apps/api/scripts/check_claude_md_size.py`** now refuses the file above
+150,000 bytes, wired as the CI step "governance file fits in a reader".
+
+**It was misdiagnosed as #170** (injected-context lag) because truncation and
+staleness look identical to the reader. #170 is not closed — it may still be
+real — but the `tn-gates` report is withdrawn from it.
+
+**Measured window, which corrects the estimate:** condition 5's test glob
+crossed the cut on **2026-09-10** (`f7c7c6ed`), not 2026-09-19, and
+`tests/gates/**` was born past it on 2026-09-21. Of **70** PR merges in that
+window, **51 tripped condition 5 only through a path past the cut**; 49 of those
+carried no migration, and 20 edited the gate harness itself. That establishes
+the control was unavailable, not that any PR merged wrongly — whether an agent
+merged unattended is not recorded anywhere git can answer.
+
+**Residual: 1,186 bytes of headroom.** The next substantive addition to
+`CLAUDE.md` is paid for by a trim. `DECISIONS.md` (293,879 bytes) is
+deliberately not gated — it is the RECORD, grepped by D-number, not injected
+into every agent's context. `DELIVERY_PLAN.md` at 140,438 bytes is the next file
+to cross.
+
 **#336 landed: a gate now enforces that disclosures reach a reader.**
 `apps/api/scripts/check_disclosure_consumers.py`, wired as the CI step
 "disclosures reach a reader". A field on a `*Response` model recording what was
