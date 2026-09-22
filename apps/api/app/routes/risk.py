@@ -1606,6 +1606,48 @@ def latest(
     return _serialize(db, reg)
 
 
+def _dropped_citations(entries: list) -> int | None:
+    """#403. How many CITATION VALUES a register's run discarded, three-state.
+
+    `None` means nobody counted; a number -- including a legitimate `0` -- means
+    somebody did. `schemas/risk.py`'s field comment carries the argument for why
+    the third state is not `0`.
+
+    ## The empty register is its own branch, deliberately
+
+    `all(e.dropped_links is None for e in entries)` is vacuously TRUE for an
+    empty list, so writing this as a one-line conditional would report a
+    zero-entry register as "nobody counted". That is false: `_resolve_links` runs
+    per entry, so a register with no entries had no citation offered and dropped
+    none -- an OBSERVED zero, not an absence. Reporting it as `None` would
+    understate what the run actually established.
+
+    The distinction is written as a branch rather than left to `all()`'s vacuous
+    truth because a vacuous-truth branch is a decision nobody made, and this file
+    already records the cost of those.
+
+    ## Partial coverage is summed, and the gap is disclosed elsewhere
+
+    Where some entries carry a record and some do not (a register generated
+    before 0048 and since partly regenerated), this sums the ones that do.
+    `entries_links_not_recorded` is the count this could not see, and the two
+    render together -- a scalar that silently summed a subset with nothing naming
+    the population would be the partial-read-as-whole-answer defect.
+    """
+    if entries and all(e.dropped_links is None for e in entries):
+        return None
+    return sum(
+        len(values)
+        for e in entries
+        for values in (e.dropped_links or {}).values()
+        # A persisted `dropped_links` value is a list of discarded strings. A
+        # non-list would be a blob no writer produces; skipping it here rather
+        # than raising keeps a malformed row from 500-ing a read, and the entry
+        # counters beside this one still report the row as having drops.
+        if isinstance(values, list)
+    )
+
+
 def _link_scope_row_fault(counts: object) -> str | None:
     """Why one persisted `link_scope` row is unusable, or None if it is fine.
 
@@ -1651,23 +1693,67 @@ def _link_scope_row_fault(counts: object) -> str | None:
     return None
 
 
+_NOT_RECORDED = {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
+
+
+def _link_scope_unreadable(reason: str, **fields: object) -> dict:
+    """The #403 disclosure withheld because this blob could not be read.
+
+    HOISTED TO MODULE LEVEL, and that is the fix rather than a tidy. It was a
+    closure defined BELOW `_link_scope_fields`' first return, so the two inputs
+    that return earliest -- a NULL provenance and a non-dict -- could not reach
+    it however the code was written. The docstring above promised all four
+    unreadable shapes "plus a loud log" and two of them were silent: the only
+    visibility a malformed blob has, absent for the two cases a real writer is
+    likeliest to produce.
+
+    Same shape as everything else this change is about -- "I could not look"
+    sharing a branch, and here a RETURN STATEMENT, with "nothing to report" --
+    committed inside the function written to close it.
+    """
+    _log.error("risk_register_link_scope_unreadable", reason=reason, **fields)
+    return dict(_NOT_RECORDED)
+
+
 def _link_scope_fields(stored: object) -> dict:
     """The #403 disclosure fields, read out of a register's provenance blob.
 
     Returns the two keys `_serialize` splats, and the two keys are one decision:
     WHAT was scored, and whether this function was able to answer at all.
 
-    ## Three states, and the third is the one that needed writing down
+    ## Four states, and the split between the first two is the point
 
-      * no `link_scope` key -- this register predates the recording. Nothing on
+      * NO `link_scope` KEY -- this register predates the recording. Nothing on
         file says how much was scored, which is NOT "everything was scored".
-        `recorded=False`, empty list.
-      * a key holding per-service counts, every one of them readable --
-        `recorded=True`, one row each.
-      * a key this function cannot fully read -- a NULL provenance, a non-dict,
-        or ANY malformed row -- `recorded=False` and an empty list, plus a loud
-        log. "I could not look" and "here is the answer" must not share a
-        branch.
+        `recorded=False`, empty list, and SILENT: there is no fault to report,
+        every register generated before this shipped is in this state, and
+        logging an error per read would be noise that teaches readers to ignore
+        the log.
+      * A NULL OR NON-DICT `provenance` -- `recorded=False` AND A LOUD LOG. This
+        is not "predates the recording", it is a blob this function cannot read,
+        and the two must not share a branch. They did: the condition was
+        `not isinstance(stored, dict) or "link_scope" not in stored`, one `or`
+        and one return covering both, with the logging helper defined below it
+        and therefore unreachable from it.
+      * A key holding per-service counts, EVERY ONE READABLE and AT LEAST ONE
+        PRESENT -- `recorded=True`, one row each.
+      * A key this function cannot fully read -- a non-dict, an EMPTY object, or
+        ANY malformed row -- `recorded=False` and a loud log.
+
+    ## Why an empty object is unreadable rather than "recorded, zero services"
+
+    `{}` used to fall through the loop to `recorded=True` with no rows, and the
+    dashboard -- gated on `recorded` alone at the time -- rendered the heading
+    "Links can only cite what each assessment has scored" over an empty list.
+    `render_xlsx`' own comment calls that state "a false claim rather than an
+    absence" and refuses it; the screen took the option the exporter refuses.
+
+    UNREACHABLE from the one writer, measured: `_gate` sets
+    `unlocked = has_attack and (has_csf or has_zt)` from `_finalized_for_synthesis`
+    for all three services, and `generate` 409s unless `synthesizable_missing` is
+    empty, so `link_scopes` always carries at least two services. So this is a
+    ratchet -- and it is the one sibling of a hardened class that was left
+    unhandled, which is the unstated-exemption shape rather than a judgement.
 
     ## The partial read is the trap, and the first version of this walked into it
 
@@ -1675,43 +1761,34 @@ def _link_scope_fields(stored: object) -> dict:
     `recorded=True`. So a blob carrying one good service and one malformed one
     reported a COMPLETE answer over a PARTIAL read -- a consultant would see
     "ATT&CK 12 of 700" and no CSF line, indistinguishable from a register that
-    genuinely had no CSF assessment. The counter-shaped disclosure would have
-    understated the very thing it exists to state, which is `CLAUDE.md`'s
-    silent-success branch reached from the read side.
-
-    Dropping the whole answer costs a readable row. That is the right trade:
-    `recorded=False` renders nothing and says nothing, whereas a partial answer
-    presented as a whole one is a false claim about a client's assessments.
+    genuinely had no CSF assessment.
 
     ## Reachability, measured rather than assumed
 
-    NO CURRENT WRITER CAN PRODUCE A MALFORMED ROW. The one writer is `generate`,
-    which builds `{"scored": len(sc.codes), "total": sc.total}` -- two `int`s by
-    construction, `len()` and a loop counter, with `scored <= total` guaranteed
-    because the codes are a subset of the rows counted. `seed_demo.py` writes no
-    `link_scope` key at all, which is state one.
+    NO CURRENT WRITER CAN PRODUCE ANY UNREADABLE SHAPE. `generate` builds
+    `{"scored": len(sc.codes), "total": sc.total}` -- two `int`s by construction
+    -- and `_provenance_snapshot` ends `return {"inputs": ..., "excluded": ...}`
+    unconditionally, so `generate` cannot write a NULL or non-dict provenance
+    either. `seed_demo.py` writes no `link_scope` key at all, which is state one.
 
-    So this validation is a RATCHET, and what would make it reachable is an
-    ordinary change: a hand-edited provenance blob, a migration backfilling the
-    key, a future writer persisting a float or a string, or a second writer that
-    records only some services. The `bool` exclusion is part of the ratchet for
-    the same reason -- `isinstance(True, int)` is True, so a bool would render as
-    a scored count of 1, and `CLAUDE.md` is explicit that `int()` is not a
-    validator.
+    So every validation here is a RATCHET. What would make it reachable is
+    ordinary: a hand-edited blob, a migration backfilling the key, a future
+    writer persisting a float or a string, or a second writer recording only some
+    services. The `bool` exclusion is part of the same ratchet -- NOT
+    "load-bearing", which an earlier draft of its comment claimed and which
+    asserts a reachability no writer has.
     """
-    if not isinstance(stored, dict) or "link_scope" not in stored:
-        return {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
-
-    def _unreadable(reason: str, **fields: object) -> dict:
-        # LOUD, because the alternative is a register that quietly stops
-        # carrying a disclosure it used to carry. Nothing user-facing can say
-        # "the provenance blob is malformed", so the log is where this lands.
-        _log.error("risk_register_link_scope_unreadable", reason=reason, **fields)
-        return {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
-
+    if not isinstance(stored, dict):
+        return _link_scope_unreadable("provenance is not an object", got=type(stored).__name__)
+    if "link_scope" not in stored:
+        # STATE ONE, and the only silent return in this function. Not a fault:
+        # every register generated before #403 shipped is here.
+        return dict(_NOT_RECORDED)
     raw = stored.get("link_scope")
     if not isinstance(raw, dict):
-        return _unreadable("link_scope is not an object", got=type(raw).__name__)
+        return _link_scope_unreadable("link_scope is not an object", got=type(raw).__name__)
+    if not raw:
+        return _link_scope_unreadable("link_scope names no service")
     rows: list[LinkScopeDisclosure] = []
     for service, counts in raw.items():
         fault = _link_scope_row_fault(counts)
@@ -1721,10 +1798,9 @@ def _link_scope_fields(stored: object) -> dict:
             # returned `recorded=True`; mutating this back to `continue` is what
             # `test_an_unreadable_scope_reports_NOT_RECORDED_rather_than_a_partial_answer`
             # is verified red against.
-            return _unreadable(fault, service=str(service), counts=repr(counts))
+            return _link_scope_unreadable(fault, service=str(service), counts=repr(counts))
         # `counts` is a dict carrying two plain ints: `_link_scope_row_fault`
-        # returned None, which it can only do after proving both. No narrowing
-        # `assert` -- see that function's note about B101.
+        # returned None, which it can only do after proving both.
         rows.append(
             LinkScopeDisclosure(
                 service=str(service),
@@ -1874,6 +1950,19 @@ def _serialize(
             and any(e.dropped_links.get(f) for f in ("linked_techniques", "linked_controls"))
         ),
         entries_links_not_recorded=sum(1 for e in entries if e.dropped_links is None),
+        # #403, the three-state VALUE tally, derived here for the same reason the
+        # three entry counters above are: it describes the REGISTER, so it is
+        # correct whenever the register is read rather than only on the generate
+        # response. Possible only because the drop is PERSISTED (0048).
+        #
+        # `None` when NO entry carries a record -- nobody counted -- and a number
+        # otherwise, including a legitimate 0. See the field's own comment in
+        # `schemas/risk.py` for why `int = 0` would be a false positive claim.
+        #
+        # `sum(len(v) ...)` over the persisted lists counts VALUES, not entries;
+        # `source_id` is included because a discarded provenance claim is a
+        # discarded citation, and the consultant-facing copy names it separately.
+        dropped_citations=_dropped_citations(entries),
         # #403, read back from provenance rather than recomputed, because it is
         # a GENERATE-TIME fact. Recomputing from today's assessments would
         # render a present-tense claim beside entries drafted earlier: a

@@ -657,6 +657,58 @@ export function RiskRegisterDashboard(): JSX.Element {
               a control nobody has scored yet.
             </div>
           ) : null}
+          {/* #403, the owner's three-state requirement. The VALUE tally, beside
+              the ENTRY tallies above.
+
+              THREE STATES, AND THE THIRD IS WHY THIS IS NOT A PLAIN NUMBER:
+              `> 0` is a real count; `0` is a real count that happens to be
+              zero, rendered so a consultant can read "nothing was discarded" as
+              an OBSERVED fact; `null` is nobody counted, and renders NOTHING.
+
+              A `null` must never render as "0 dropped". That is the UNCONFIRMED
+              rule: a derived surface that cannot confirm its value never shows a
+              plausible default, and "0 citations dropped" over a register nobody
+              counted is a false assurance about the one population that cannot
+              be re-checked (#372, #376).
+
+              Rendering the zero rather than staying silent is deliberate and is
+              the opposite decision from `null`: a counted zero is information a
+              consultant wants before exporting, and it is the state that makes
+              the silence of `null` legible by contrast.
+
+              THE POPULATION TRAVELS WITH THE COUNT where part of the register
+              could not be counted -- `entries_links_not_recorded` is what this
+              tally could not see, and a scalar summed over a subset with nothing
+              naming the subset is the partial-read-as-whole-answer defect. */}
+          {register.dropped_citations !== null ? (
+            <div
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-citations-dropped"
+            >
+              <span className="font-semibold">
+                {register.dropped_citations === 0
+                  ? "No citation values were discarded"
+                  : `${register.dropped_citations} citation value${
+                      register.dropped_citations === 1 ? " was" : "s were"
+                    } discarded`}
+              </span>
+              {register.entries_links_not_recorded > 0 ? (
+                <>
+                  {" "}
+                  across the{" "}
+                  {register.entries_total -
+                    register.entries_links_not_recorded}{" "}
+                  of {register.entries_total} entries that carry a link record —{" "}
+                  {register.entries_links_not_recorded} predate link recording
+                  and are not in this count.
+                </>
+              ) : (
+                <> across all {register.entries_total} entries.</>
+              )}{" "}
+              This counts VALUES; the entry tallies above count ROWS, so one
+              entry that lost three techniques is 1 there and 3 here.
+            </div>
+          ) : null}
           {register.entries_links_not_recorded > 0 ? (
             <div
               className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"

@@ -17,6 +17,7 @@ All pairwise-merge-checked; all mergeable against `main`.
 
 | PR | What it is |
 | --- | --- |
+| #416 | #403 — the Risk synthesis allow-lists are what the client SCORED, not every code that exists. Open, all 7 green, NOT merged: trips conditions 5 (live prompt) and 6 (deliverable content). Three review rounds, eight blocking findings, all fixed or filed. |
 | #366 | Internal proxy strings reaching clients — rebased onto `1d573ec`, conflict hand-resolved |
 | #351 | Disclosures reach a screen — was CONFLICTING against `main`, rebased |
 | #379 | A failed refresh is not a loading state — nine silent catches in four admin workspaces |

@@ -86,7 +86,7 @@ shape, and it ranks above most of W1.
 Sibling, lower severity: `attack.py:782-783` stamps `answered_by`/`answered_at`
 unconditionally on the same pattern (`AttackCoverage` has no `answer_source`).
 
-**F10 — Risk silently swaps its allow-list for a different one.**
+**F10 — Risk silently swaps its allow-list for a different one.** **CLOSED by #403 (PR #416)** — the `or set(attack_all_codes())` fallback below is DELETED, and the wider defect it sat on was worse than this entry states: the allow-list was the whole catalogue on EVERY run, not only on an empty assessment, because every row of all three tables is pre-seeded and nothing deletes one. It is now the codes each assessment SCORED. The snippet below is kept as the code AS IT THEN WAS, because deleting it would leave the finding unreadable.
 
 ```python
 # risk.py:159 — the docstring four lines up says
@@ -557,7 +557,11 @@ Hard constraints:
 4. A Risk entry whose likelihood/impact failed to parse is visibly untiered, and
    `total_entries` reconciles with the tier bars (F6).
 5. Risk's technique allow-list with an empty ATT&CK assessment does not silently
-   become the whole MITRE catalogue (F10).
+   become the whole MITRE catalogue (F10). **SATISFIED by #403 (PR #416)** —
+   `test_an_all_unscored_attack_assessment_does_not_substitute_the_catalog`, and
+   the invariant as written was too narrow: the list is now asserted EQUAL to the
+   scored rows per service, so it cannot silently become the catalogue on a
+   non-empty assessment either.
 6. `PATCH /csf/dimension-scores/{id}` returns 409 on an APPROVED assessment and
    writes an audit row on a DRAFT one (W0).
 7. A capability item recovered via `include_excluded_row` is distinguishable from a

@@ -94,6 +94,11 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     // exercises the banner by accident.
     excluded_unscored_links: [],
     excluded_unscored_links_recorded: false,
+    // #403 three-state. `null` is the honest default for these fixtures for
+    // the same reason `entries_intended` is: they are not the product of a
+    // recorded generate run, and `0` would have every unrelated test assert
+    // "nothing was discarded" — a claim, not an absence.
+    dropped_citations: null,
     id: "r1",
     client_id: "c1",
     version: 1,
@@ -727,5 +732,66 @@ describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
     );
     await loaded();
     expect(screen.queryByTestId("risk-link-scope")).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // #403, the owner's three-state requirement on the VALUE tally.
+  // -------------------------------------------------------------------------
+
+  it("renders a real drop count with the population it was counted over", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ entries_total: 10, dropped_citations: 7 }),
+    );
+    await loaded();
+    const text = screen.getByTestId("risk-citations-dropped").textContent ?? "";
+    expect(text).toContain("7 citation values were discarded");
+    expect(text).toContain("across all 10 entries");
+  });
+
+  it("renders a COUNTED ZERO rather than staying silent", async () => {
+    // State 2. A counted zero is an observed fact a consultant wants before
+    // exporting, and rendering it is what makes `null`'s silence legible.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ entries_total: 10, dropped_citations: 0 }),
+    );
+    await loaded();
+    expect(
+      screen.getByTestId("risk-citations-dropped").textContent ?? "",
+    ).toContain("No citation values were discarded");
+  });
+
+  it("renders NOTHING when nobody counted, and never a zero", async () => {
+    // State 3, and the one that matters. `null` must not render as "0
+    // dropped": that is a false assurance about the one population that cannot
+    // be re-checked. #372 was filed for exactly this shape and #376 refused it.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({ entries_total: 10, dropped_citations: null }),
+    );
+    await loaded();
+    expect(
+      screen.queryByTestId("risk-citations-dropped"),
+    ).not.toBeInTheDocument();
+    // And the words must not appear anywhere else on the page either.
+    expect(document.body.textContent ?? "").not.toContain(
+      "No citation values were discarded",
+    );
+  });
+
+  it("names the entries it could NOT count when the register is partly pre-0048", async () => {
+    // A scalar summed over a subset with nothing naming the subset is the
+    // partial-read-as-whole-answer defect.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 10,
+        entries_links_not_recorded: 4,
+        dropped_citations: 3,
+      }),
+    );
+    await loaded();
+    const text = screen.getByTestId("risk-citations-dropped").textContent ?? "";
+    expect(text).toContain(
+      "across the 6 of 10 entries that carry a link record",
+    );
+    expect(text).toContain("4 predate link recording");
   });
 });

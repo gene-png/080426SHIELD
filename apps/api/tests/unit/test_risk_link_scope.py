@@ -29,6 +29,7 @@ made-up code like `T9999` cannot do that -- it is rejected under both.
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
 from typing import Any
@@ -386,11 +387,32 @@ def test_the_scored_share_is_disclosed_and_survives_a_reread(app_client) -> None
 
 @pytest.mark.unit
 def test_the_scored_share_reaches_the_pdf_and_word_summary() -> None:
-    """Rendered through the real exporter, from a context built as the route
-    builds it -- not by asserting on `_link_scope_lines` in isolation, which
-    would prove the helper works rather than that the deliverable carries it.
+    """Asserted on the RENDERED document, not on the line handed to the renderer.
+
+    THE FIRST VERSION OF THIS TEST COULD NOT FAIL, and its docstring claimed the
+    opposite -- it said "not by asserting on `_link_scope_lines` in isolation,
+    which would prove the helper works rather than that the deliverable carries
+    it", and then did exactly that. Deleting `*_link_scope_lines(ctx)` from
+    `_summary_lines` left it GREEN: the client's PDF and Word disclosure had no
+    assertion that reddened when its one line of wiring went, while the XLSX
+    (which builds its own sheet) and the vitest banner kept the suite green.
+
+    The excuse it gave was refuted inside this repo. It said "the bytes are a
+    container, so the assertion is on the line the renderers are handed rather
+    than on a substring search through a zip or a PDF stream" -- but the reason
+    this repo uses `pypdf` is precisely that reportlab compresses its content
+    streams, and `_pdf_text` is defined at module level in `test_risk_register.py`,
+    the module this file ALREADY imports `_admin` and `_seed_attack_and_zt` from.
+    `test_attack_exporters.py`, `test_csf_exporters.py` and `test_zt_exporters.py`
+    all do the same. Two lines of established technique were available.
+
+    Red-on-revert: deleting the splat from `_summary_lines` reddens this test.
     """
+    from docx import Document
+
     from app.risk.exporters import build_context, render_docx, render_pdf
+
+    from .test_risk_register import _pdf_text
 
     ctx = build_context(
         client_legal_name="Atlas",
@@ -398,21 +420,16 @@ def test_the_scored_share_reaches_the_pdf_and_word_summary() -> None:
         entries=[],
         link_scope=[("attack", 12, 700), ("csf", 106, 106)],
     )
-    for renderer in (render_pdf, render_docx):
-        blob = renderer(ctx)
-        assert blob[:4] in (b"%PDF", b"PK\x03\x04"), renderer.__name__
 
-    # The bytes are a container, so the assertion is on the line the renderers
-    # are handed rather than on a substring search through a zip or a PDF
-    # stream -- a search that finds nothing in compressed bytes is a false
-    # negative, and one that finds something proves only that the string exists
-    # somewhere.
-    from app.risk.exporters import _link_scope_lines
+    pdf_text = _pdf_text(render_pdf(ctx))
+    assert "12 of 700" in pdf_text
+    assert "106 of 106" in pdf_text
+    assert "only from rows an assessment has scored" in pdf_text
 
-    lines = _link_scope_lines(ctx)
-    assert any("12 of 700" in ln for ln in lines)
-    assert any("106 of 106" in ln for ln in lines)
-    assert any("only from rows an assessment has scored" in ln for ln in lines)
+    paragraphs = " ".join(p.text for p in Document(io.BytesIO(render_docx(ctx))).paragraphs)
+    assert "12 of 700" in paragraphs
+    assert "106 of 106" in paragraphs
+    assert "only from rows an assessment has scored" in paragraphs
 
 
 @pytest.mark.unit
@@ -570,6 +587,13 @@ def _latest(c, bearer: str, cid: str) -> dict:
         ),
         pytest.param({"attack": [1, 9]}, "a list where an object belongs", id="not-an-object"),
         pytest.param("everything", "a scalar where the map belongs", id="not-a-map"),
+        # The sibling the first version of this list left out. `{}` used to fall
+        # THROUGH the validation loop to `recorded=True` with no rows, and the
+        # banner rendered its heading over an empty list -- the state
+        # `render_xlsx`' own comment calls "a false claim rather than an
+        # absence". Leaving one member of a hardened class unhandled is the
+        # unstated-exemption shape, not a judgement.
+        pytest.param({}, "a link_scope naming no service at all", id="empty-object"),
     ],
 )
 def test_an_unreadable_scope_reports_NOT_RECORDED_rather_than_a_partial_answer(
@@ -633,3 +657,114 @@ def test_every_findings_source_id_stays_inside_the_allow_list(app_client) -> Non
     assert findings, "no findings, so a subset assertion would hold vacuously"
     orphans = [f["source_id"] for f in findings if f.get("source_id") not in universe]
     assert orphans == [], f"findings cite codes their own allow-list rejects: {orphans}"
+
+
+# ---------------------------------------------------------------------------
+# #403, the owner's three-state VALUE tally.
+#
+# `int | None`, the #376 decision for `batches_total`. The vitest pins what the
+# consultant SEES; these pin what `_serialize` derives, which the vitest
+# structurally cannot — it mocks the client and no Python runs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_dropped_citations_counts_VALUES_and_survives_a_reread(app_client) -> None:  # noqa: F811
+    """State 1: a real tally, and it counts values rather than entries."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    scored_technique, scored_cap = _seed_attack_and_zt(c, bearer, cid)
+
+    from app.models.attack_assessment import AttackCoverage
+    from app.models.zt_assessment import ZtAnswer
+
+    db = _session()
+    unscored_techs = [
+        r.technique_code
+        for r in db.execute(
+            select(AttackCoverage).where(AttackCoverage.client_id == uuid.UUID(cid))
+        ).scalars()
+        if r.status is None
+    ][:2]
+    unscored_cap = next(
+        r.capability_code
+        for r in db.execute(select(ZtAnswer).where(ZtAnswer.client_id == uuid.UUID(cid))).scalars()
+        if r.maturity_stage is None
+    )
+    db.close()
+    assert len(unscored_techs) == 2
+
+    # Three discarded values on ONE entry, so a count of entries and a count of
+    # values cannot agree — which is the distinction this field exists to make.
+    _cited(
+        provider,
+        techniques=[scored_technique, *unscored_techs],
+        controls=[scored_cap, unscored_cap],
+        source_id=scored_technique,
+    )
+    body = _generate(c, bearer, cid)
+    assert body["entries_with_dropped_links"] == 1
+    assert body["dropped_citations"] == 3
+
+    latest = c.get(
+        f"/risk/clients/{cid}/register/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["dropped_citations"] == 3
+
+
+@pytest.mark.unit
+def test_dropped_citations_is_a_counted_ZERO_when_nothing_was_discarded(
+    app_client,  # noqa: F811
+) -> None:
+    """State 2: an OBSERVED zero, which must not be confused with state 3.
+
+    A run that counted and found nothing is a different fact from a register
+    nobody counted, and `0` vs `None` is the only thing that separates them.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, capability = _seed_attack_and_zt(c, bearer, cid)
+    _cited(provider, techniques=[technique], controls=[capability], source_id=technique)
+    body = _generate(c, bearer, cid)
+    assert body["dropped_citations"] == 0
+    assert body["dropped_citations"] is not None
+
+
+@pytest.mark.unit
+def test_dropped_citations_is_NONE_when_no_entry_carries_a_record(app_client) -> None:  # noqa: F811
+    """State 3: nobody counted, and it must not report 0.
+
+    The reachable population is registers generated before migration 0048, whose
+    entries carry `dropped_links = NULL`. `seed_demo.py` builds every RiskEntry
+    that way, so this is not hypothetical — the whole demo register is here.
+
+    Direct SQL builds the world (a pre-0048 register), not the step under test:
+    what is under test is what `_serialize` DERIVES from it.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, capability = _seed_attack_and_zt(c, bearer, cid)
+    _cited(provider, techniques=[technique], controls=[capability], source_id=technique)
+    _generate(c, bearer, cid)
+
+    from app.models.risk_register import RiskEntry
+
+    db = _session()
+    rows = (
+        db.execute(select(RiskEntry).where(RiskEntry.client_id == uuid.UUID(cid))).scalars().all()
+    )
+    assert rows, "fixture precondition: the run must have written entries"
+    for r in rows:
+        r.dropped_links = None
+        db.add(r)
+    db.commit()
+    db.close()
+
+    body = c.get(
+        f"/risk/clients/{cid}/register/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    assert body["dropped_citations"] is None, "a register nobody counted must not report 0"
+    assert body["entries_links_not_recorded"] == len(rows)

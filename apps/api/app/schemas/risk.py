@@ -264,6 +264,54 @@ class RiskRegisterResponse(BaseModel):
     entries_with_dropped_links: int = 0
     entries_unlinked_after_drops: int = 0
     entries_links_not_recorded: int = 0
+    #: #403, the owner's three-state requirement. HOW MANY CITATION VALUES the
+    #: run discarded, as distinct from how many ENTRIES were affected.
+    #:
+    #: The three counters above are entry tallies and each defaults to 0. This
+    #: one is the VALUE tally and is `int | None`, which is #376's decision for
+    #: `batches_total` and the reasoning transfers without modification:
+    #:
+    #:   N > 0   citations were discarded, and this is how many.
+    #:   0       something counted, and nothing was discarded.
+    #:   None    NOBODY COUNTED. No entry on this register carries a link
+    #:           record at all.
+    #:
+    #: `0` for the third state would assert "zero citations were dropped" about
+    #: a run nobody observed -- a positive claim over the one population that
+    #: cannot be re-checked, which is exactly what #372 was filed for and what
+    #: #376 refused. Missing data defaults to UNCONFIRMED.
+    #:
+    #: MEASURED, not inherited from #376: `grep -rn "exclude_none" apps/api`
+    #: returns nothing, so FastAPI serialises the key and the wire really
+    #: carries `null`. A `?: number` on the web side would declare a shape the
+    #: server never sends and a presence test against it could never
+    #: discriminate -- `lib/risk/types.ts` declares `number | null`.
+    #:
+    #: `null` renders NOTHING rather than a banner, and that is the one place
+    #: this does not fail closed: there is no record to fail closed ON, and a
+    #: permanent "not counted" banner on every historical register is furniture
+    #: that teaches readers to skip the real one. What it refuses is the
+    #: POSITIVE assertion -- the register is never described as having dropped
+    #: nothing.
+    #:
+    #: PARTIAL COVERAGE IS DISCLOSED RATHER THAN HIDDEN. Where some entries
+    #: carry a record and some do not, this tallies the ones that do, and
+    #: `entries_links_not_recorded` above is the count it could not see. A
+    #: scalar that silently summed a subset would be the partial-read-as-whole
+    #: defect; the two fields render together so the population is visible.
+    #: NAMED `dropped_citations`, NOT `citations_dropped`, and the ordering is
+    #: load-bearing rather than taste. `check_disclosure_consumers.py`'s
+    #: predicate is PREFIX-ANCHORED, so `citations_dropped` is invisible to it
+    #: (#373) and the gate would have gone green while saying nothing at all
+    #: about whether this field reaches a reader. Measured, not assumed:
+    #: `is_disclosure("citations_dropped")` returns False and
+    #: `is_disclosure("dropped_citations")` returns True.
+    #:
+    #: So the rename buys a MECHANISM where the alternative was a promise. That
+    #: is the whole argument `CLAUDE.md` makes about the reflex surviving the
+    #: rule until the rule has a gate -- and it was available for the price of
+    #: two words, on a field that had not shipped yet.
+    dropped_citations: int | None = None
 
     # #403. WHY the links are sparse, which the three counters above cannot say.
     #

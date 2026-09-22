@@ -195,6 +195,27 @@ export interface RiskRegister {
   entries_unlinked_after_drops: number;
   entries_links_not_recorded: number;
   /**
+   * #403, the owner's three-state requirement. How many CITATION VALUES the run
+   * discarded, as distinct from how many ENTRIES were affected.
+   *
+   * The three counters above are entry tallies and each is a plain `number`.
+   * This is the VALUE tally and is `number | null`, which is #376's decision for
+   * `batches_total` and the reasoning transfers unchanged:
+   *
+   *   > 0    citations were discarded, and this is how many.
+   *   0      something counted, and nothing was discarded.
+   *   null   NOBODY COUNTED — no entry on this register carries a link record.
+   *
+   * `0` for the third state would assert "zero citations were dropped" about a
+   * run nobody observed, which is what #372 was filed for.
+   *
+   * `| null`, NOT `?:`. There is no `exclude_none` anywhere in `apps/api`, so
+   * the server sends the key carrying `null`; an optional declares a shape the
+   * server never produces and a presence test against it could never
+   * discriminate — the defect #376 records for `entries_intended`.
+   */
+  dropped_citations: number | null;
+  /**
    * #403. WHY the links are sparse, which the three counters above cannot say.
    *
    * Those three describe what the MODEL got wrong. This describes what the

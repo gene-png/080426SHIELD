@@ -1099,3 +1099,26 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
   normalizes every credentials failure to `CredentialsSignin`, so the MFA branch
   surfaces via `signIn(...).code`, not `.error`). The bar was every auth e2e green
   and not one weakened test.
+- **An allow-list built from "present" rows is an allow-list of everything, when
+  every row is pre-seeded.** Risk synthesis guarded what the model could cite
+  with three lists whose docstring said they held "codes the client's
+  assessments never contained" — and they held every code that exists, because
+  `provisioning.py` writes an answer row per catalog entry, `routes/attack.py`
+  writes a coverage row per technique, and nothing under `apps/api/app` deletes
+  one. They are now the codes each assessment SCORED (#403, PR #416). The
+  transferable half is the SHAPE: where a table is pre-seeded, membership is not
+  evidence of anything, and a guard keyed on membership is a guard keyed on
+  nothing. Check what a row's EXISTENCE actually proves before filtering on it.
+- **Narrowing a guard is half a fix; the other half is saying why the output got
+  smaller.** Scoped allow-lists make technique and control links go sparse for
+  any client whose assessments are largely unscored — which is correct and reads
+  as a regression. Without a disclosure the change trades a silently wrong
+  citation for a silently missing one, which is the worse of the two. The scored
+  share is persisted at generate and read back by one parser that both the
+  consultant's screen and the client's export call, so the two cannot disagree.
+- **A disclosure field's NAME decides whether a gate can see it.**
+  `check_disclosure_consumers.py` matches by PREFIX, so `citations_dropped` is
+  invisible to it and `dropped_citations` is not (#373). The same field, the same
+  reader, one green that means nothing and one that means something. Put the
+  disposition first.
+
