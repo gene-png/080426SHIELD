@@ -68,6 +68,31 @@ ENFORCED_TARGETS = [
     "docs/architecture.md",
 ]
 
+#: `context/entries/` is DERIVED, not listed, and that is the whole point.
+#:
+#: Landing entries are one file per PR (D-081) so two branches can never edit
+#: the same one. A hand-written list here would reintroduce the defect the
+#: directory exists to remove: every PR adding a fragment would also have to
+#: edit this constant, which is one shared mutable file that every branch
+#: touches -- exactly `CONTEXT.md`'s problem, moved into a gate.
+#:
+#: So the set is globbed. A fragment is not a lower standard than `CONTEXT.md`;
+#: it is the same standard in a file that cannot collide.
+CONTEXT_ENTRY_DIR = "context/entries"
+
+
+def context_entry_targets(root: Path) -> list[str]:
+    """Every `context/entries/*.md`, sorted, as repo-relative paths.
+
+    Sorted so the reported order is stable; a set whose order depends on the
+    filesystem makes two runs over one tree look different.
+    """
+    entries = root / CONTEXT_ENTRY_DIR
+    if not entries.is_dir():
+        return []
+    return sorted(f"{CONTEXT_ENTRY_DIR}/{p.name}" for p in entries.glob("*.md"))
+
+
 # The personal status files are IN the doc set -- `gene.md` is where the "(20)"
 # heading and its freshness certificate lived, and owner-write-only by
 # convention makes them likelier to drift, not less. They are REPORTED rather
@@ -326,6 +351,12 @@ def main(argv: list[str], root: Path | None = None) -> int:
     else:
         targets = DEFAULT_TARGETS
     root = root or repo_root()
+    # Appended AFTER `root` resolves, and only when the caller did not name
+    # explicit files -- `--porcelain path/to/one.md` must still mean that one
+    # file. Enforced alongside `CONTEXT.md` rather than advisory: these carry
+    # the same claims the dated sections in `CONTEXT.md` used to.
+    if not explicit:
+        targets = list(targets) + context_entry_targets(root)
 
     all_findings: list[tuple[str, int, str, str]] = []
     # COUNTED, never assumed. This used to report `len(targets)` -- the set the
