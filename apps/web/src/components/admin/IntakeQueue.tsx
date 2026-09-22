@@ -613,11 +613,20 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
               {/* The same `cardRows` the predicate above tests -- one list,
                   so a row cannot exist without the predicate seeing it. Legal
                   name renders its label for an unnamed org rather than
-                  disappearing, which is why it is re-read here. */}
+                  disappearing, which is why it is re-read here.
+                  Filtered BY LABEL rather than by `.slice(1)`: a positional
+                  skip is correct only while Legal name is index 0, and a row
+                  inserted above it would be silently dropped from the card
+                  while still satisfying the predicate -- the exact divergence
+                  this single list exists to prevent. */}
               {row("Legal name", orgDisplayName(c.legal_name))}
-              {cardRows.slice(1).map(([label, value]) => (
-                <React.Fragment key={label}>{row(label, value)}</React.Fragment>
-              ))}
+              {cardRows
+                .filter(([label]) => label !== "Legal name")
+                .map(([label, value]) => (
+                  <React.Fragment key={label}>
+                    {row(label, value)}
+                  </React.Fragment>
+                ))}
             </dl>
           </CardBody>
         </Card>

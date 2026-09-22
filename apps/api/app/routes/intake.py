@@ -688,7 +688,21 @@ def create_engagement(
     if not (client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Complete your organization profile in intake before starting an engagement.",
+            # TYPED, per D-016, so a client can key copy on the reason rather
+            # than on the sentence. It was a bare string, and that is why the
+            # test written to pin this guard could assert only a status code --
+            # and this route has several 422s, so a status-only assertion
+            # passed on whichever refusal fired first. Typing the guard is what
+            # makes the test able to name what it caught.
+            #
+            # The other bare-string 422s in this module are tracked in #453 and
+            # deliberately NOT swept here: one guard, one change.
+            detail={
+                "reason": "organization_not_named",
+                "message": (
+                    "Complete your organization profile in intake before " "starting an engagement."
+                ),
+            },
         )
     # Stripped, for the same reason as `submit_intake` above.
     org_name = (client.legal_name or "").strip()

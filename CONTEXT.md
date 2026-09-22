@@ -14,15 +14,24 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 ## Current state
 
 **Landing with THIS PR, not yet on `main`: the #254 follow-up.** Adversarial
-review ran repeatedly on #444. The rounds that arrived before Gene merged it
-landed in the PR; a later round arrived after the merge, and what it found
+review ran repeatedly on #444. The rounds that arrived before the merge
+landed in the PR; a later round's findings reached the dispatching session
+BEFORE the merge and were not incorporated into it, which is a different and
+worse fact than the reviewer not having delivered. What that round found
 includes the defect #254 exists to fix, surviving at the read end.
+
+**Two corrections to the record of how #444 reached `main`**, because both were
+wrong in my earlier account and this file is now the permanent version. Round 4
+DID deliver: complete, with a terminator, to the dispatching session, before
+the 18:40:55Z merge — not "never delivered", which names a different member of
+`CLAUDE.md`'s absent / erroring / reported-to-nobody list. And Gene AUTHORISED
+the merge; Dave performed it.
 
 **A blank `legal_name` still printed a BLANK organisation line on the client's
 DOCX/PDF/XLSX.** All five `*/exporters.py` resolved it with a bare
 `client_legal_name or "Client"`, and `"   "` is truthy, so it never reached the
 fallback. The write side and three readers were fixed by #444; these six were
-not. All six now call `app/client_naming.py`, and **migration 0050** normalises
+not. They all now call `app/client_naming.py`, and **migration 0050** normalises
 the rows that already hold blanks — the two are not alternatives, because 0050
 clears what exists and the helper stops one arriving another way.
 

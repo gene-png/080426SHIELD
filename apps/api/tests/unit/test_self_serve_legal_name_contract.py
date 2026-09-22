@@ -345,23 +345,95 @@ def test_every_exporter_renders_the_fallback_for_a_blank_name(unnamed: str | Non
 
 
 @pytest.mark.unit
-def test_every_exporter_calls_the_shared_resolver() -> None:
-    """The five services agree because they CALL one function, not copy it.
+def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or() -> None:
+    """DERIVED sweep, replacing an iteration over a hand list of five services.
 
-    `CLAUDE.md`: a claim that two surfaces agree is enforced by calling the
-    same code, never by writing it twice. Asserting the call sites is what
-    stops a sixth copy of `or "Client"` reappearing in one service and being
-    correct everywhere it was checked.
+    The previous version of this guard iterated
+    ``("csf", "zt", "attack", "risk", "tech_debt")`` over
+    ``{service}/exporters.py`` and asserted a SUBSTRING. It had two independent
+    ways to report clean over a live defect, and both fired at once:
+
+      * the iteration set could not reach ``routes/csf.py``, where the CSF
+        Playbook export did ``name = org or "Client"`` and fed FIVE client
+        artifacts -- so the guard was structurally blind to the one remaining
+        instance, by construction rather than by accident;
+      * a substring test is satisfied by a DOCSTRING or a comment, so a file
+        that merely mentions the call would have passed without making it.
+
+    This asks the question the other way round, over every file rather than a
+    list: does ANY module turn a nullable name into a display string with a
+    bare ``or "..."``? A bare ``or`` is satisfied by ``"   "``, which is how a
+    blank reached a client's deliverable in the first place.
+
+    ``or ""`` is excluded deliberately -- that is the ``(x or "").strip()``
+    guard idiom, which is the CORRECT shape and the thing the readers should
+    be doing.
+
+    An eighth reader added anywhere under ``app/`` fails this without anyone
+    remembering to add it to a list. That is the difference between deriving
+    the set and extending it.
     """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "app"
+    # A name-ish identifier, `or`, then a NON-EMPTY string literal.
+    bare_fallback = re.compile(r'\b(legal_name|client_name|client_org|org)\s*or\s*"[^"]+"')
+
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "client_naming.py":
+            continue  # the one module allowed to name the fallback
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                continue  # prose describing the defect is not the defect
+            if bare_fallback.search(line):
+                offenders.append(f"{path.relative_to(root)}:{lineno}: {stripped}")
+
+    assert not offenders, (
+        "a bare `or` on a client name is satisfied by a whitespace-only value, so "
+        "a blank reaches the rendered surface instead of the fallback. Call "
+        "app.client_naming.org_display_name instead. Offending lines: " + str(offenders)
+    )
+
+
+@pytest.mark.unit
+def test_the_deliverable_surfaces_call_the_shared_resolver() -> None:
+    """The positive half, asserted on PARSED CALLS rather than on source text.
+
+    ``"org_display_name(" in src`` is satisfied by a comment or a docstring
+    that mentions it -- which is exactly how the previous guard could have
+    passed over a file that talked about the call without making it. Walking
+    the AST for a real ``Call`` node cannot be satisfied by prose.
+
+    The list here is a list, and says so: it names the surfaces whose output
+    reaches a client artifact. The DERIVED half is the sweep above, which is
+    what catches a surface nobody added here.
+    """
+    import ast
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[2] / "app"
-    for service in ("csf", "zt", "attack", "risk", "tech_debt"):
-        src = (root / service / "exporters.py").read_text(encoding="utf-8")
-        assert "org_display_name(client_legal_name)" in src, (
-            f"{service}/exporters.py no longer routes the organisation line through "
-            f"org_display_name; a bare `or` there is satisfied by whitespace"
+    surfaces = [
+        "csf/exporters.py",
+        "zt/exporters.py",
+        "attack/exporters.py",
+        "risk/exporters.py",
+        "tech_debt/exporters.py",
+        "routes/admin.py",
+        "routes/csf.py",  # the seventh, found by round 5 after the other six
+    ]
+    for rel in surfaces:
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
+        called = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "org_display_name"
+            for node in ast.walk(tree)
         )
-        assert (
-            'client_legal_name or "Client"' not in src
-        ), f'{service}/exporters.py has a bare `or "Client"` again'
+        assert called, (
+            f"{rel} does not CALL org_display_name (a mention in a comment or "
+            f"docstring does not count); a bare fallback there renders a blank "
+            f"organisation line for a whitespace-only name"
+        )

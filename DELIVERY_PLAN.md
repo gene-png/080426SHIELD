@@ -45,7 +45,7 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 **2026-09-22 — #254 follow-up (`tier-1` consequence, no new item).** #444
 merged on three review rounds; the fourth found that a blank `legal_name` still
 reached the organisation line of client deliverables through five exporters'
-bare `or "Client"`. Fixed at all six readers plus migration 0050, with the
+bare `or "Client"`. Fixed at every such reader plus migration 0050, with the
 regression test that could not fail repaired and proven red-on-revert. No
 estimate row changes; #254 owns no item, which is the gap this section already
 records under _Still to do_. The missing admin edit path is tracked in #449.
