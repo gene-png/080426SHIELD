@@ -41,28 +41,43 @@ import { describe, expect, it } from "vitest";
  * -- a scope claim wider than its own argument, stated exactly where someone
  * would check, which is the shape `CLAUDE.md` calls worse than no comment.
  *
- * The opener pattern (see `lateMints` below) requires the literal `=>`
- * after the parameter list, so it matches async ARROW FUNCTIONS ONLY. The
- * pattern is deliberately NOT quoted here: writing a regex into prose is
- * how this file acquired an invisible BACKSPACE byte while this very
- * paragraph was being written, which is the defect
- * `check_no_control_chars.py` exists for. Read it at the definition.
+ * ## The opener now covers declarations (#385)
  *
- * An `async function` DECLARATION is invisible to it, and
- * `ZtWorkspace.tsx` alone has six that contain awaits:
- * `onCreateAssessment`, `onAnswerUpdate`, `onApprove`, `onDiscard`,
- * `onChangeTargetStage`, `onRunAi`. A late mint inside any of them is not
- * reported.
+ * It used to match async ARROW FUNCTIONS ONLY, so an `async function`
+ * DECLARATION was invisible to it -- and the admin tree is full of those
+ * (`grep -rn "async function" src/components/admin`). This paragraph stated
+ * that limit correctly and then said widening "is deliberately not made
+ * here", deferring it to the PR that adds the next tokens.
  *
- * That is not hypothetical: those handlers are where the NEXT tokens are owed.
- * `onChangeTargetStage` and its CSF twin currently await a gap fetch with no
- * token and no catch at all (filed), so the fix for that defect is precisely
- * the code this gate cannot see.
+ * #385 IS THAT PR. `onChangeTargetStage` and its CSF twin now mint a token
+ * and catch, inside async function declarations -- exactly the shape the old
+ * opener could not see, so the gate would have gone on reporting clean over
+ * the code written to satisfy it. The deferral is discharged rather than
+ * restated: a deferral its own fix has already met reads as a live limit, and
+ * sends the next reader to build what ships.
  *
- * Widening the opener to cover declarations is the fix and is deliberately not
- * made here -- it changes what this gate reports across four workspaces, which
- * belongs in the PR that adds the tokens rather than in one correcting a
- * comment.
+ * `asyncBodyStarts` below finds both forms. The declaration form is scanned
+ * with BALANCED PARENS rather than a negated character class, because a
+ * parameter list can contain parentheses of its own --
+ * `SecurityClassificationQueue.run` takes `fn: () => Promise<CapabilityList>`,
+ * and a class-based match stops at the first `)`, fails to find a body, and
+ * reports that function CLEAN without having looked at it. The return-type
+ * annotation is then skipped at angle-bracket depth, so a `{` inside
+ * `Promise<{ ... }>` is not mistaken for the body.
+ *
+ * The patterns are deliberately NOT quoted in this prose: writing a regex
+ * into a comment is how this file acquired an invisible BACKSPACE byte while
+ * an earlier version of this paragraph was being written, which is the defect
+ * `check_no_control_chars.py` exists for. Read them at the definitions.
+ *
+ * ## What is still invisible
+ *
+ * METHOD SHORTHAND -- an `async` name directly followed by a parameter list,
+ * in an object literal or a class body -- matches neither form. No admin
+ * component uses it today; the check is the grep for an `async` line whose
+ * next token is a name and then an open paren, and it comes back empty. The
+ * day one appears, its late mints go unreported. Stated rather than fixed,
+ * because the gap nobody writes down is the gap nobody checks.
  */
 
 const ADMIN = join(process.cwd(), "src/components/admin");
@@ -137,16 +152,88 @@ function codeOnly(src: string): string {
   return out;
 }
 
+/**
+ * The body start of an async function DECLARATION whose keyword ends at
+ * `from`, or -1 when this is not one.
+ *
+ * The returned offset is just PAST the `{`, matching what the arrow form
+ * yields, so both feed the same brace walk.
+ *
+ * Both scans below are balanced rather than pattern-matched, and each closes
+ * a FALSE-CLEAN direction:
+ *
+ *   - PARENS. A parameter list can hold parentheses: `fn: () => Promise<T>`.
+ *     Stopping at the first `)` leaves the scan hunting a body it cannot
+ *     find, and a function that is never scanned is a function reported
+ *     clean.
+ *   - ANGLE BRACKETS. A return type can hold braces: `Promise<{ n: number }>`.
+ *     Taking the first `{` after the parameters would start the "body" inside
+ *     the type, and the brace walk would then end early -- clean again, from
+ *     a body nothing read.
+ *
+ * A `;` before the body means an overload signature or a non-function, and
+ * yields -1 rather than scanning on into whatever follows.
+ */
+function declarationBodyStart(src: string, from: number): number {
+  let i = from;
+  while (i < src.length && src[i] !== "(") {
+    if (src[i] === "{" || src[i] === ";") return -1;
+    i++;
+  }
+  let depth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === "(") depth++;
+    else if (src[i] === ")" && --depth === 0) {
+      i++;
+      break;
+    }
+  }
+  if (depth !== 0) return -1;
+  let angle = 0;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (c === "<") angle++;
+    else if (c === ">") {
+      if (angle > 0) angle--;
+    } else if (c === ";") return -1;
+    else if (c === "{" && angle === 0) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * Offsets just past the `{` opening each async function body in `src`.
+ *
+ * Two forms: the arrow, which the pattern closes itself, and the
+ * DECLARATION, which it cannot -- see `declarationBodyStart`. The
+ * declaration alternative is written first, though the arrow one could not
+ * match `async function` anyway: it needs a literal arrow where a
+ * declaration has its name and parameters.
+ */
+function asyncBodyStarts(src: string): number[] {
+  const out: number[] = [];
+  const opener =
+    /\basync\s+function\b|\basync\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = opener.exec(src)) !== null) {
+    const after = m.index + m[0].length;
+    if (src[after - 1] === "{") {
+      out.push(after);
+      continue;
+    }
+    const body = declarationBodyStart(src, after);
+    if (body !== -1) out.push(body);
+  }
+  return out;
+}
+
 /** Offsets of every `beginRefresh(` that follows an `await` in its own async body. */
 export function lateMints(raw: string): number[] {
   const src = codeOnly(raw);
   const bad: number[] = [];
-  const opener = /\basync\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{/g;
-  let m: RegExpExecArray | null;
-  while ((m = opener.exec(src)) !== null) {
+  for (const start of asyncBodyStarts(src)) {
     let depth = 1;
-    let i = m.index + m[0].length;
-    const start = i;
+    let i = start;
     for (; i < src.length && depth > 0; i++) {
       if (src[i] === "{") depth++;
       else if (src[i] === "}") depth--;
@@ -224,6 +311,24 @@ is looking in the wrong place. Until then every assertion below is vacuous.`,
       "minted after an await in a later block",
       'const f = async () => { try { await g(); } catch {} const t = beginRefresh("x"); };',
     ],
+    // THE WIDENING (#385). Every row below returned [] under the arrow-only
+    // opener -- measured by running them against it, not assumed.
+    [
+      "inside an async function DECLARATION",
+      'async function f() { const a = await g(); const t = beginRefresh("x"); }',
+    ],
+    [
+      "a declaration whose PARAMETER LIST contains parentheses",
+      'async function f(cb: () => void) { await g(); beginRefresh("x"); }',
+    ],
+    [
+      "a declaration whose RETURN TYPE contains braces",
+      'async function f(): Promise<{ n: number }> { await g(); beginRefresh("x"); }',
+    ],
+    [
+      "a declaration with a return type and a catch -- the #385 handler's shape",
+      'async function f(n: number): Promise<void> { try { await g(n); } catch { beginRefresh("x"); } }',
+    ],
   ])("detects a late mint: %s", (_l, src) => {
     expect(lateMints(src).length).toBeGreaterThan(0);
   });
@@ -245,6 +350,26 @@ is looking in the wrong place. Until then every assertion below is vacuous.`,
     [
       "a brace inside a string",
       'const f = async () => { const s = "a } brace"; const t = beginRefresh("x"); await g(); };',
+    ],
+    // BOTH HALVES OF THE WIDENING. Without these, a declaration opener that
+    // flagged every declaration outright would satisfy the whole table above.
+    [
+      "a declaration minting at entry",
+      'async function f() { const t = beginRefresh("x"); const a = await g(); }',
+    ],
+    [
+      "a declaration with parens in its params, minting at entry",
+      'async function f(cb: () => void) { const t = beginRefresh("x"); await g(); }',
+    ],
+    [
+      "a declaration with no await",
+      'async function f() { const t = beginRefresh("x"); }',
+    ],
+    // NOT A BODY. `declarationBodyStart` returns -1 rather than scanning on,
+    // which would attribute a later statement's mints to this signature.
+    [
+      "an overload signature",
+      'async function f(): Promise<void>;\nconst t = beginRefresh("x");',
     ],
   ])("does not flag: %s", (_l, src) => {
     expect(lateMints(src)).toEqual([]);

@@ -425,11 +425,39 @@ export function CsfWorkspace({
     }
   }
 
+  /**
+   * THE LABEL FOLLOWS THE DATA. THE DATA IS NEVER RELABELLED (#385).
+   *
+   * The ZT twin, `ZtWorkspace.onChangeTargetStage`, carries the full
+   * reasoning and is the file to read. In brief: this handler used to set the
+   * label first and await the gap fetch with no catch, so a rejection left
+   * the PREVIOUS target's rows on screen under the NEW target's heading. The
+   * card's job is to show gap rows for a target, so on a failure the CONTROL
+   * reverts rather than the rows being relabelled.
+   *
+   * Duplicated rather than shared, as the two workspaces' tests already are:
+   * separate components, separate clients, separate copy, and a shared helper
+   * would hide exactly the divergence the twin-sweep rule exists to catch.
+   */
   async function onChangeTargetTier(next: number): Promise<void> {
+    const previous = targetTier;
     setTargetTier(next);
-    if (assessment) {
+    if (!assessment) return;
+    const attempt = beginRefresh("gap");
+    try {
       const g = await fetchGapAnalysis(serviceId, { targetTier: next });
+      if (attempt.superseded()) return; // a later target owns the rows
       setGap(g);
+      attempt.clear();
+    } catch (err) {
+      if (attempt.superseded()) return; // a later target owns the control
+      setTargetTier(previous);
+      const reason = serverReason(err);
+      attempt.note(
+        reason
+          ? `${reason} The target tier is unchanged.`
+          : "Couldn't load gap rows for that target tier, so the target tier is unchanged. Reload to try again.",
+      );
     }
   }
 

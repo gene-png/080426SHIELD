@@ -440,11 +440,67 @@ export function ZtWorkspace({
     }
   }
 
+  /**
+   * THE LABEL FOLLOWS THE DATA. THE DATA IS NEVER RELABELLED (#385).
+   *
+   * This handler used to set the label first and then await the gap fetch
+   * with no catch at all. On a rejection the PREVIOUS target's rows stayed on
+   * screen under the NEW target's heading -- a number the consultant never
+   * asked for, presented as one they did, with nothing on screen saying so.
+   *
+   * The card's job is to show gap rows FOR A TARGET. If rows for the new
+   * target cannot be fetched, the honest screen is the old target with its
+   * own rows, so the CONTROL reverts. Marking the card stale was considered
+   * and REJECTED: it leaves the heading wrong, which is the defect rather
+   * than a disclosure of it.
+   *
+   * `CLAUDE.md`: prefer a derivation over a synchronization. Reverting makes
+   * the label follow the data instead of being kept in step with it.
+   *
+   * ## Why the revert needs the token, and why it is the SAME source key
+   *
+   * `beginRefresh("gap")` is minted above the await, per `useRefreshFailures`
+   * -- a token minted below one is ordered by when that await RESOLVED, which
+   * inverts the guard.
+   *
+   * `superseded()` is checked around `setGap` and `setTargetStage` because
+   * neither goes through the token. Without it, two quick changes 3 -> 4 -> 5
+   * where the 4 fetch fails after the 5 fetch succeeds would revert the
+   * control to 3 while the 5 rows are on screen -- the same mislabelling,
+   * arrived at from the other direction.
+   *
+   * The key is the gap panel's own, not a new one, so an ordinary
+   * `refreshScoreAndGap` that lands afterwards clears this message once the
+   * panel is fresh again. A second key would need clearing alongside it,
+   * which is the single-slot defect `useRefreshFailures` records.
+   *
+   * ## The reverting is not silent
+   *
+   * A control that snaps back on its own reads as a misclick. The server's
+   * own sentence is preferred where there is one -- `/gap-analysis` answers a
+   * typed 422 naming the framework and the offending value -- and either way
+   * the message states that the target is unchanged, because that is the
+   * thing the consultant just watched happen.
+   */
   async function onChangeTargetStage(next: number): Promise<void> {
+    const previous = targetStage;
     setTargetStage(next);
-    if (assessment) {
+    if (!assessment) return;
+    const attempt = beginRefresh("gap");
+    try {
       const g = await fetchGapAnalysis(serviceId, { targetStage: next });
+      if (attempt.superseded()) return; // a later target owns the rows
       setGap(g);
+      attempt.clear();
+    } catch (err) {
+      if (attempt.superseded()) return; // a later target owns the control
+      setTargetStage(previous);
+      const reason = serverReason(err);
+      attempt.note(
+        reason
+          ? `${reason} The target stage is unchanged.`
+          : "Couldn't load gap rows for that target stage, so the target stage is unchanged. Reload to try again.",
+      );
     }
   }
 
