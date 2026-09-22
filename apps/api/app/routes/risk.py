@@ -1628,7 +1628,24 @@ def _link_scope_row_fault(counts: object) -> str | None:
         # as a scored count of 1. `CLAUDE.md`: `int()` is not a validator.
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{name} is not a plain integer"
-    assert isinstance(scored, int) and isinstance(total, int)  # noqa: S101 - narrowed above
+    # NO NARROWING `assert` HERE, and the absence is deliberate rather than an
+    # oversight: bandit flags every `assert` as B101, `B101` is not in
+    # `pyproject.toml`'s `skips`, and `CLAUDE.md` records that ruff's
+    # suppression comment for S101 does NOT suppress bandit.
+    #
+    # THE DIRECTIVE IS NAMED IN WORDS RATHER THAN SPELLED, and that is not
+    # squeamishness: ruff parses its own suppression token out of ANY comment,
+    # including a sentence about the token, and two drafts of this paragraph
+    # each emitted an invalid-directive warning for quoting it. A marker means
+    # something wherever it appears -- which is the same class of defect as the
+    # asserts below it, one layer down.
+    #
+    # Both asserts this function briefly carried turned CI's Python job red,
+    # caught here rather than there. The comparison below is
+    # reached only after the loop above has proved both operands are plain
+    # ints, so nothing is lost by dropping them.
+    if not isinstance(scored, int) or not isinstance(total, int):  # pragma: no cover
+        return "counts are not plain integers"
     if scored < 0 or total < 0 or scored > total:
         return "counts are not a scored-subset-of-total pair"
     return None
@@ -1705,12 +1722,14 @@ def _link_scope_fields(stored: object) -> dict:
             # `test_an_unreadable_scope_reports_NOT_RECORDED_rather_than_a_partial_answer`
             # is verified red against.
             return _unreadable(fault, service=str(service), counts=repr(counts))
-        assert isinstance(counts, dict)  # noqa: S101 - narrowed by the fault check
+        # `counts` is a dict carrying two plain ints: `_link_scope_row_fault`
+        # returned None, which it can only do after proving both. No narrowing
+        # `assert` -- see that function's note about B101.
         rows.append(
             LinkScopeDisclosure(
                 service=str(service),
-                scored=counts["scored"],
-                total=counts["total"],
+                scored=counts["scored"],  # type: ignore[index]
+                total=counts["total"],  # type: ignore[index]
             )
         )
     return {
