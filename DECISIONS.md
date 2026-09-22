@@ -4987,6 +4987,12 @@ lost from the system — a company-domain signup already writes a `ClientDomain`
 row, and a generic-provider signup already has `primary_poc_user_id`. The
 index's existing duplicate disambiguation (`(id 5b1e3d06)`, plus industry and
 intake date on the subtitle) keeps such rows distinguishable from each other.
+**CORRECTED: that was true of the CARD rows and false of the jump `<select>`**,
+which rendered the label alone — so every unnamed org became a byte-identical
+option, and the page it navigates to identifies the tenant nowhere either. The
+select now carries the same `(id ...)` suffix. Found by the adversarial reviewer;
+the two tests written for the unnamed case each used exactly ONE unnamed org, so
+neither could express it.
 Surfacing the domain on that index is a separate change and is **not** made here.
 
 ### Migration 0049 backfills, narrowly, and the blast radius was measured

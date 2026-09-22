@@ -41,8 +41,16 @@ is exactly what the name column records once it is allowed to be absent.
 
 The column is widened, never narrowed, so no existing row can fail to load and
 no read path gains a value it could not already receive (`legal_name` was
-always a `str`; it can now also be `None`, which every consumer was already
+always a `str`; it can now also be `None`, which MOST consumers were already
 written to handle because the sentinel produced the same `None` downstream).
+
+CORRECTED: two consumers were NOT, and both render the literal string `None`.
+`provision_self_assessment_service` builds `f"{org_name} - {SERVICE_TITLES[..]}"`,
+and `submit_intake`'s notification builds `f"{client.legal_name} requested: .."`.
+Both are guarded by their callers today, so neither can fire -- but the original
+sentence licensed skipping exactly the sweep that finds them. The helper now
+refuses an unnamed org outright rather than resting on two callers' `if not`
+lines in another module.
 
 The backfill below is the part with a blast radius, and it is deliberately
 narrow. It NULLs only rows that satisfy all of:

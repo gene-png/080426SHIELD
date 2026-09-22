@@ -168,6 +168,19 @@ export function IntakeOrgIndex(): JSX.Element {
             {byName.map((c) => (
               <option key={c.id} value={c.id}>
                 {orgDisplayName(c.legal_name)}
+                {/* SAME disambiguation as the card rows below, and it matters
+                      MORE here: a card carries industry and intake date in its
+                      subtitle, an <option> is one line with nothing else in it.
+                      Since D-080 every unnamed org renders the identical label,
+                      so without this an admin picking from "Every organization,
+                      A-Z" sees N byte-identical entries -- and the page they
+                      land on identifies the tenant nowhere either. Before D-080
+                      each self-serve tenant carried a distinct domain- or
+                      person-derived name, which is why this was not needed then
+                      and is now. */}
+                {duplicateNames.has(orgDisplayName(c.legal_name).toLowerCase())
+                  ? ` (id ${c.id.slice(0, 8)})`
+                  : ""}
                 {c.open_request_count > 0
                   ? ` — ${c.open_request_count} awaiting review`
                   : ""}

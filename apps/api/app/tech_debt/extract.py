@@ -382,7 +382,7 @@ def _looks_like_an_account_name(local: str) -> bool:
 
 
 def client_org_name_for_tenant(db: Session, client_id) -> str | None:
-    """Pull the named tenant's legal name (or None for placeholders)."""
+    """Pull the named tenant's legal name (or None when nobody has named the org)."""
     row = db.get(Client, client_id)
     if row is None:
         return None

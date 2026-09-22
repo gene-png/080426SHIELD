@@ -461,7 +461,29 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   // D-080: the condition is the NULL, not a sentinel string. This asks
   // "has anyone named this org", which is what it always meant -- and now
   // actually fires, because self-serve provisioning writes no name.
-  const hasIntake = c !== null && isNamedOrg(c.legal_name);
+  // TWO PREDICATES, because the name and the DATA are different questions and
+  // conflating them makes the page assert something false.
+  //
+  // `Step2Organization` saves each field independently (`onBlur` per field), so
+  // a client who types a website or picks an industry before typing a name
+  // produces a row with real intake data and no name. Gating the Organization
+  // card on the NAME rendered "No client intake yet" over exactly that data --
+  // present in `state.client`, and the page saying it does not exist.
+  //
+  // `hasName` decides what to CALL the org; `hasIntakeData` decides whether
+  // there is anything to SHOW.
+  const hasName = c !== null && isNamedOrg(c.legal_name);
+  const hasIntakeData =
+    c !== null &&
+    (isNamedOrg(c.legal_name) ||
+      Boolean(c.dba_name) ||
+      Boolean(c.website) ||
+      Boolean(c.size_band) ||
+      Boolean(c.industry) ||
+      Boolean(c.address_line1) ||
+      Boolean(c.city) ||
+      Boolean(c.country) ||
+      Boolean(c.prompting_context));
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
@@ -501,7 +523,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
             Admin
           </p>
           <h1 className="text-3xl font-semibold text-ink-primary">
-            {hasIntake ? orgDisplayName(c.legal_name) : "Intake queue"}
+            {hasName ? orgDisplayName(c.legal_name) : "Intake queue"}
           </h1>
           <p className="max-w-prose text-sm text-ink-secondary">
             The queue reflects exactly what the client entered during intake.
@@ -512,7 +534,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
             <StatusPill tone="success" withDot>
               Submitted {submittedAt}
             </StatusPill>
-          ) : hasIntake ? (
+          ) : hasIntakeData ? (
             <StatusPill tone="warning" withDot>
               In progress — not yet submitted
             </StatusPill>
@@ -527,7 +549,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
         </div>
       </header>
 
-      {hasIntake ? (
+      {hasIntakeData ? (
         <Card>
           <CardHeader>
             <CardTitle>Organization</CardTitle>

@@ -247,6 +247,22 @@ def _apply_patch_to_client(client: Client, patch: IntakePatchRequest) -> None:
         data["website"] = str(data["website"])
     if "service_interests" in data and data["service_interests"] is not None:
         data["service_interests"] = [v.value for v in data["service_interests"]]
+    if "legal_name" in data:
+        # NORMALISE HERE, NOT ONLY AT THE GUARD. D-080's claim is that there is
+        # ONE representation of "unnamed" -- the NULL -- and one rendering of
+        # it. A whitespace-only name breaks that: it is falsy to nobody, so the
+        # submit guard passes it, the workspace title becomes "   — NIST CSF
+        # 2.0 Assessment", and every exporter's `client_legal_name or "Client"`
+        # sees a truthy value and renders a BLANK organisation line on the
+        # client's DOCX/PDF/XLSX. Meanwhile the admin UI shows "(pending
+        # intake)" for the same row, because `isNamedOrg` trims and this did
+        # not -- two definitions of "named" that disagree.
+        #
+        # Stripping at the write means no downstream reader needs to know:
+        # `"   "` becomes NULL before it is stored, so the guards, the title
+        # builder and the five exporters all see the one representation.
+        raw = data["legal_name"]
+        data["legal_name"] = raw.strip() or None if isinstance(raw, str) else raw
     for field, value in data.items():
         setattr(client, field, value)
 
@@ -355,7 +371,7 @@ def submit_intake(
 ) -> IntakeStateResponse:
     # D-080: the sentinel is gone, so this is what it always meant -- you
     # cannot submit an intake without naming the organisation.
-    if not body.client.legal_name:
+    if not (body.client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Organization legal name is required to submit intake.",
