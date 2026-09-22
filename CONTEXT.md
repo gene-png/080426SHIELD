@@ -13,6 +13,33 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**Landing with THIS PR, not yet on `main`: the #254 follow-up.** Adversarial
+review ran repeatedly on #444. The rounds that arrived before Gene merged it
+landed in the PR; a later round arrived after the merge, and what it found
+includes the defect #254 exists to fix, surviving at the read end.
+
+**A blank `legal_name` still printed a BLANK organisation line on the client's
+DOCX/PDF/XLSX.** All five `*/exporters.py` resolved it with a bare
+`client_legal_name or "Client"`, and `"   "` is truthy, so it never reached the
+fallback. The write side and three readers were fixed by #444; these six were
+not. All six now call `app/client_naming.py`, and **migration 0050** normalises
+the rows that already hold blanks — the two are not alternatives, because 0050
+clears what exists and the helper stops one arriving another way.
+
+**A regression test I wrote could not fail.** `test_engagement_refuses_a_legacy_blank_name_with_422_not_500`
+posted `csf_profile: "current"`, which is not a `CsfProfile` member, so Pydantic
+422'd the body before the guard ran and the status-only assertion passed for the
+wrong reason. Measured: with the guard reverted it still passed, exit 0. It now
+sends `MOD` and asserts the copy, and goes red on that same revert.
+
+Also: `hasIntakeData` gained the four `primary_contact_*` fields (Step 3 writes
+them one per blur, and the pill said "No intake started" over them) and is now
+genuinely derived from one `cardRows` array the card renders; the provisioning
+ratchet tests `title` the same way it tests `org_name`; and two comments that
+published a grep as the authoritative writer set are back to being lists that
+say they are lists — that grep returned ZERO hits in `routes/intake.py`, the
+main user-input writer, which goes through `setattr`.
+
 **Landing with THIS PR, not yet on `main`: #254 — a self-serve client's email
 was its organisation's legal name.** `"(pending intake)"` was the codebase's
 marker for "nobody has named this client yet", READ in 17 production sites (13

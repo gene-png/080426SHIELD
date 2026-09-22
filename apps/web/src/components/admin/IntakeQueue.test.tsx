@@ -51,8 +51,13 @@ function client(over: Partial<ClientProfileResponse>): ClientProfileResponse {
     country: null,
     prompting_context: null,
     service_interests: null,
+    intake_completed_at: null,
+    primary_contact_name: null,
+    primary_contact_email: null,
+    primary_contact_title: null,
+    primary_contact_phone: null,
     ...over,
-  } as ClientProfileResponse;
+  };
 }
 
 function queue(c: ClientProfileResponse | null) {
@@ -62,7 +67,7 @@ function queue(c: ClientProfileResponse | null) {
     service_requests: [],
     artifacts: [],
     total_users: 1,
-  } as never);
+  });
 }
 
 afterEach(() => {
@@ -70,12 +75,25 @@ afterEach(() => {
 });
 
 describe("IntakeQueue — does the page deny data it is holding?", () => {
-  // One case per field the Organization card renders. Three of these —
-  // address_line2, state, postal_code — were in the card and NOT in the first
-  // version of the predicate, so each produced "No client intake yet" printed
-  // over a value the card would have shown. Derived from the rendered set, so
-  // adding a field to the card without adding it here is the failure this
-  // table exists to make loud.
+  // One case per field a client can fill ALONE.
+  //
+  // NOT derived — this is a hand list, and the previous comment claimed it was
+  // "derived from the rendered set, so adding a field to the card without
+  // adding it here is the failure this table exists to make loud". That was
+  // false: `fields` is a literal array, so adding a card row and omitting it
+  // from both the predicate and this list is SILENT. Saying so is the point —
+  // a table that claims to catch an omission it cannot catch is worse than one
+  // that admits it is a list, because the claim is what stops the next person
+  // updating it.
+  //
+  // What IS derived is the predicate's overlap with the card: `cardRows` in
+  // `IntakeQueue.tsx` is one array the card renders and the predicate tests.
+  // This table guards the fields OUTSIDE that array —
+  // `service_interests` and the four `primary_contact_*` — which no row
+  // renders and which therefore have nothing to derive from.
+  //
+  // History: address_line2 / state / postal_code were in the card and not in
+  // the predicate; the four contact fields were in neither.
   const fields: Array<[string, Partial<ClientProfileResponse>]> = [
     ["dba_name", { dba_name: "Atlas" }],
     ["website", { website: "https://atlas.example" }],
@@ -89,6 +107,13 @@ describe("IntakeQueue — does the page deny data it is holding?", () => {
     ["country", { country: "United States" }],
     ["prompting_context", { prompting_context: "Two data centres." }],
     ["service_interests", { service_interests: ["nist_csf"] }],
+    // Step 3's "I am not the primary contact" override. `saveOverride` writes
+    // ONE of these per blur, so each is reachable with nothing else set — and
+    // the pill said "No intake started" over every one of them.
+    ["primary_contact_name", { primary_contact_name: "Dana Whitfield" }],
+    ["primary_contact_email", { primary_contact_email: "dana@atlas.example" }],
+    ["primary_contact_title", { primary_contact_title: "CISO" }],
+    ["primary_contact_phone", { primary_contact_phone: "+1 555 0100" }],
   ];
 
   it.each(fields)(

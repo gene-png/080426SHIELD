@@ -17,6 +17,12 @@ from app.models.attack_assessment import (
     AttackCoverage,
 )
 
+# Built with chr() rather than written as an escape. A tab typed as an
+# escape into this file arrived as a REAL control byte and broke the parse --
+# CLAUDE.md's control-character rule, and what check_no_control_chars.py
+# exists to catch. chr(9) survives whatever writes the file.
+_TAB_NEWLINE = chr(9) + chr(10) + " "
+
 
 def _build_inputs(*, default_status: str | None = "covered"):
     a = AttackAssessment(
@@ -128,16 +134,49 @@ def test_pdf_handles_zero_gaps() -> None:
 
 
 @pytest.mark.unit
-def test_build_context_falls_back_when_client_none() -> None:
+@pytest.mark.parametrize("unnamed", [None, "", "   ", _TAB_NEWLINE])
+def test_build_context_falls_back_for_every_spelling_of_unnamed(unnamed: str | None) -> None:
+    """A BLANK name must reach the fallback, not the document.
+
+    `None` was the only arm here, and it is the only arm a bare
+    `client_legal_name or "Client"` passes. `"   "` is TRUTHY, so under that
+    expression it skipped the fallback entirely and rendered as EMPTY on the
+    organisation line of the client's DOCX, PDF and XLSX -- the precise outcome
+    #254 names as its motivation, left live at all five exporters while the
+    write side was being fixed.
+
+    Whitespace is reachable: `ClientProfilePatch` carried no validator before
+    D-080, and migration 0049's three backfill predicates match a mapped
+    domain, a display name and the old sentinel -- none of them whitespace.
+    Migration 0050 clears the stored ones; this pins the read.
+    """
     a, coverage, rollup = _build_inputs()
     ctx = build_context(
-        client_legal_name=None,
+        client_legal_name=unnamed,
         service_title="x",
         assessment=a,
         coverage=coverage,
         rollup=rollup,
     )
     assert ctx.client_legal_name == "Client"
+
+
+@pytest.mark.unit
+def test_build_context_strips_a_padded_client_name() -> None:
+    """A stored `"  Acme  "` reaches the document trimmed.
+
+    The organisation line is not slugified, so padding that `deliverable_filename`
+    would collapse survives into the rendered DOCX and PDF.
+    """
+    a, coverage, rollup = _build_inputs()
+    ctx = build_context(
+        client_legal_name="  Atlas Defense Solutions  ",
+        service_title="x",
+        assessment=a,
+        coverage=coverage,
+        rollup=rollup,
+    )
+    assert ctx.client_legal_name == "Atlas Defense Solutions"
 
 
 # ---------------------------------------------------------------------------

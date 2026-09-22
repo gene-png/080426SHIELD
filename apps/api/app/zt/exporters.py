@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.client_naming import org_display_name
 from app.models.zt_assessment import ZtAnswer, ZtAssessment
 from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
@@ -91,7 +92,7 @@ def build_context(
     gap: GapAnalysis,
 ) -> ZtDeliverableContext:
     return ZtDeliverableContext(
-        client_legal_name=client_legal_name or "Client",
+        client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         framework=framework,
         assessment=assessment,

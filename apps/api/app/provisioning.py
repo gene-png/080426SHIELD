@@ -77,6 +77,15 @@ def provision_self_assessment_service(
     """
     # FAIL LOUDLY rather than title a client's workspace "None — ...".
     #
+    # BOTH operands are tested the same way, and the first version was not:
+    # it asked `title is None`, so a whitespace-only `title` skipped the
+    # guard and then failed the builder's own `title and title.strip()`
+    # test three lines below -- falling through to the f-string and
+    # producing the literal "None — NIST CSF 2.0 Assessment", the exact
+    # string this guard exists to prevent. A guard and the code it guards
+    # must agree on what counts as absent; `EngagementCreateRequest.name`
+    # accepts a whitespace title, so that disagreement was reachable input.
+    #
     # `org_name` became `str | None` when D-080 made `Client.legal_name`
     # nullable. Both callers guard, so this cannot fire today -- it is a RATCHET
     # against a third caller, and the failure it prevents is silent: the service
@@ -84,7 +93,7 @@ def provision_self_assessment_service(
     # "None" in it and nothing errors. Typing it `str` while callers pass
     # `str | None` left the invariant held by two `if not ...` lines in another
     # module rather than by this function.
-    if title is None and not (org_name or "").strip():
+    if not (title or "").strip() and not (org_name or "").strip():
         raise ValueError(
             "provision_self_assessment_service needs either an explicit `title` "
             f"or a named organisation; got org_name={org_name!r} for "

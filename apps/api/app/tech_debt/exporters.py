@@ -19,6 +19,7 @@ import io
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from app.client_naming import org_display_name
 from app.models.capability import CapabilityDisposition, CapabilityItem, CapabilityList
 
 
@@ -236,7 +237,7 @@ def build_context(
         excluded_count=excluded_count,
         included_count=included,
         excluded_rows_named=bool(named),
-        client_legal_name=client_legal_name or "Client",
+        client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         cap_list=cap_list,
         items=items_list,

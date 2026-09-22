@@ -490,9 +490,22 @@ def test_engagement_refuses_a_legacy_blank_name_with_422_not_500(app_client) -> 
     r = client.post(
         "/intake/engagements",
         headers={"Authorization": f"Bearer {bearer}"},
-        json={"service_type": "nist_csf", "csf_target_tier": 2, "csf_profile": "current"},
+        # `csf_profile` MUST be a real `CsfProfile` member (LOW/MOD/HIGH). The
+        # first version of this test sent "current", which is not one -- so
+        # Pydantic 422'd the BODY before `create_engagement` ran a line, and the
+        # status-only assertion below passed for a reason that had nothing to do
+        # with the guard. MEASURED: with `.strip()` deleted from the guard, that
+        # version still passed, exit 0. The sibling file
+        # `test_intake_target_floor.py` records this exact trap.
+        json={"service_type": "nist_csf", "csf_target_tier": 2, "csf_profile": "MOD"},
     )
     assert r.status_code == 422, (
         f"expected a typed 422 refusal, got {r.status_code}. A 500 here is the "
         f"ValueError from provision_self_assessment_service escaping untyped."
     )
+    # The status alone does not discriminate -- several other refusals on this
+    # route are also 422. Asserting the COPY is what ties this test to the org
+    # guard rather than to whichever check happened to fire first.
+    assert (
+        "Complete your organization profile" in r.text
+    ), f"422 came from something other than the unnamed-org guard: {r.text}"

@@ -1,5 +1,23 @@
 # Gene — in-flight status
 
+_2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
+round 4 found after the merge._
+
+**Read this before trusting #444 alone.** Four adversarial rounds ran. Rounds
+1–3 landed in the PR; round 4 arrived after Gene merged it, and it found the
+defect #254 exists to fix still live at the read end: five exporters and the
+admin fulfill path resolved the organisation line with a bare
+`client_legal_name or "Client"`, which a whitespace name satisfies, so a blank
+printed on the client's DOCX/PDF/XLSX. Branch `fix/254-followup-round4` fixes
+all six through `app/client_naming.py` and adds migration 0050.
+
+**The lesson worth keeping is about my own test.** The regression test for
+round 3's fix posted an invalid enum value, so Pydantic refused the body before
+the guard ran and the test passed for a reason unrelated to what it was named
+for. Measured rather than reasoned: with the guard reverted it still passed,
+exit 0. A status-only assertion on a route with several 422s does not
+discriminate — assert the copy.
+
 _2026-09-22 — #254 implemented (tier-1) on `fix/254-self-serve-legal-name`;
 #209 still open._
 
