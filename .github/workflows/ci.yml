@@ -109,7 +109,7 @@ jobs:
       # tool error rather than a red build. Same argument as the two sweeps
       # above: the rule existed and only a machine keeps it.
       - name: governance file fits in a reader
-        run: python apps/api/scripts/check_claude_md_size.py CLAUDE.md
+        run: python apps/api/scripts/check_claude_md_size.py --require-canary CLAUDE.md
 
       # The image optimizer stays unmounted, AND nothing imports sharp directly.
       # Together those are the whole reachability argument for the sharp advisory;

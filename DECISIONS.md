@@ -4784,6 +4784,78 @@ comparison rather than the constant, so `tests/unit/test_claude_md_size_gate.py`
 pins the constant separately — a constant is the one thing a negative control
 cannot prove.
 
+### The canary: the per-reader variance the size gate CANNOT fix
+
+Keeping the file under the limit fixes today's instance and not the mechanism.
+**The reader limit is a property of the READER, not of this repository.** One
+session's injected copy carried all 210,958 bytes while another reader's was cut
+at 150,000 — same commit, same file, different rule sets.
+
+So two agents can examine the same PR, apply the merge rule sincerely, and reach
+opposite verdicts on condition 5, and **neither can tell which one it is**.
+Nothing in either agent's output distinguishes "this PR is clear" from "I could
+not see the clause that would have caught it". That is D-051's distinction — "I
+checked and it passes" versus "I could not look" — **missing from the governance
+layer itself, in the one artifact that defines what checking means.**
+
+`CLAUDE.md` therefore ends with:
+
+    <!-- CLAUDE-MD-CANARY: v1 -->
+
+preceded by an instruction to stop, say so, name the last heading received, and
+apply no condition test until someone confirms which clauses are missing.
+`check_claude_md_size.py --require-canary` (wired in `ci.yml`) asserts the marker
+is the **last non-empty line**, because the marker only answers "did I receive
+the whole file" while nothing follows it. An append below it leaves the canary
+readable and everything after it invisible — **strictly worse than no canary**,
+since the reader now holds a positive signal that its copy is whole. Both
+refusal branches exit 2: a missing marker and a mispositioned one are
+could-not-looks, not findings about size.
+
+This converts an invisible variance into a declared one, which is the same move
+as making a gate exit 2 instead of 0.
+
+### The soft line, and why a hard gate alone was not enough
+
+`SOFT_LIMIT_BYTES = 135_000` warns and does not fail. **A gate that fires with
+no prepared remedy reads as the gate being broken**; one that fires early and
+names the next cut is a ratchet. The difference is entirely in whether the
+answer was written down before the alarm.
+
+So `CLAUDE.md` carries a section, "Where the next 15,000 bytes come from",
+listing three candidates in order — the redaction-subsystem narratives, the
+worked examples under Rules of the road, and the per-instance lists — each a
+RECORD whose instruction is already stated in one line above it. It was
+exercised immediately: adding the canary section pushed the file back over
+150,000, and candidates 1, 2 and 3 were taken in order to get under. The list
+worked as a remedy rather than as documentation.
+
+### Re-reading the 20 harness PRs: no weakened assertion found
+
+Of the 51 exposed PRs, twenty edited the gate harness itself — the category
+condition 5 singles out as satisfying condition 1 _by construction_, and
+therefore the one where the rule was least available exactly where it was most
+load-bearing. Those twenty were re-read specifically for a weakened or deleted
+assertion, which is the failure the rule exists to catch and which no gate can
+see.
+
+**Result: none.** Every one is strongly net-additive, and all six carrying
+deletions were adjudicated individually:
+
+| PR                   | deletion                                           | verdict                                                           |
+| -------------------- | -------------------------------------------------- | ----------------------------------------------------------------- |
+| `3a04ac6`            | `assert tree_revisions(...) == {"0001","0002"}`    | replaced by an assertion over keys AND values — strictly stronger |
+| `1b7aaad`            | 2 shell-gate expectations                          | replaced by 9, covering more cases                                |
+| `68500f5`            | `assert set(DEFERRED) <= set(discover_gates(...))` | made precise, excluding shell gates `discover_gates` cannot see   |
+| `39c4d6d`, `0884110` | `def test_...` lines                               | line-wrapping by black; every name still present on `main`        |
+| `ebecb0a`            | comment lines only                                 | no assertion touched                                              |
+
+<!-- counted: per-SHA diff of the 20 harness PRs over apps/api/tests/**, tests/gates/**, apps/api/scripts/check_*.py and .github/workflows/**, 2026-09-22 -->
+
+This is a finding UPHELD rather than a null result: the exposure was real and the
+harm it would have permitted did not occur in the subset where it would have
+mattered most.
+
 ### Residuals, stated
 
 - **`DECISIONS.md` is itself 287,144 bytes**, nearly twice the limit, and is not
@@ -4793,9 +4865,10 @@ cannot prove.
   an oversight.
 - **`DELIVERY_PLAN.md` is 140,438 bytes** — 9,562 from the same cliff, at the
   rate this repo writes. Not gated yet; the next file to cross.
-- **`CLAUDE.md` has 1,398 bytes of headroom.** That is thin, and it means the
-  next substantive addition is paid for by a trim. That is the ratchet working,
-  and it will feel like an obstruction the first time.
+- **`CLAUDE.md` has ~1,600 bytes of hard headroom and is 13,384 bytes past the
+  SOFT line.** The soft warning fires on every clean run and names the next cut,
+  which is the point — the next substantive addition is paid for by a trim, with
+  the candidate already chosen.
 - **The limit is one reader's, measured once.** This session's own injected copy
   carried the full 210,958 bytes, so the cut is not universal — which makes it
   worse, not better: the rule set an agent operates under varies by which agent

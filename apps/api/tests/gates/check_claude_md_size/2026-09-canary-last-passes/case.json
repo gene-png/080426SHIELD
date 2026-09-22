@@ -1,0 +1,3 @@
+{"incident": "Control for the canary branch. A well-formed file must PASS with --require-canary, or the two refusal cases above prove only that the gate can say no. A guard observed in one state is not a guard that has been checked.",
+ "expect": 0, "adversarial": false,
+ "argv": ["--require-canary", "--limit", "1000", "{dir}/CLAUDE.md"]}

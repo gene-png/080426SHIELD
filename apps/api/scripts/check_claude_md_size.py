@@ -92,6 +92,49 @@ trim moved a rule to `DECISIONS.md` or deleted it, or whether the most important
 rule is near the top where a partial read would still reach it. Form is
 mechanisable, implication is not (#213).
 
+## The SOFT line, and why a hard gate alone was not enough
+
+`SOFT_LIMIT_BYTES = 135_000` warns and does not fail. A gate that fires with no
+prepared remedy reads as the gate being broken -- the first person to add a
+paragraph hits a red build and concludes the check is in the way. A gate that
+fires early and NAMES THE NEXT CUT is a ratchet. So `CLAUDE.md` carries a
+section, "Where the next 15,000 bytes come from", listing three candidates in
+order, each a RECORD whose instruction is already stated in one line above it;
+this constant is what sends you to read it while there is still room to act.
+
+The difference is entirely in whether the answer was written down before the
+alarm, which is the same reason the fail-closed convention names its branches
+before the first line of a checker gets written.
+
+## `--require-canary`: the variance the size gate CANNOT fix
+
+The reader limit is a property of the READER. On 2026-09-22 one session's
+injected copy carried all 210,958 bytes while another reader's was cut at
+150,000 -- same commit, same file, different rule sets. Two agents can examine
+the same PR, apply the merge rule sincerely, and reach opposite verdicts on
+condition 5, and NEITHER CAN TELL WHICH ONE IT IS: nothing in either agent's
+output distinguishes "this PR is clear" from "I could not see the clause that
+would have caught it".
+
+That is D-051's distinction -- "I checked and it passes" versus "I could not
+look" -- missing from the governance layer itself. Keeping this file under the
+limit fixes today's instance and not the mechanism: it goes over budget again
+eventually, or a reader arrives with a limit below 150,000, and it recurs
+silently.
+
+`CLAUDE.md` therefore ends with a canary marker and an instruction to stop if
+you cannot read it. `--require-canary` asserts the marker is the **last
+non-empty line**, because the marker only answers "did I receive the whole
+file" while nothing follows it -- an append below it leaves the canary readable
+and everything after it invisible, which is strictly worse than no canary, since
+the reader now has a POSITIVE signal that its copy is whole.
+
+It is a FLAG rather than always-on because this gate is reusable for any
+governance file, and the fixture files are themselves named `CLAUDE.md` without
+carrying canaries. `ci.yml` passes it for the real file. Both refusal branches
+exit 2 -- a missing marker and a mispositioned one are could-not-looks, not
+findings about size.
+
 ## `--limit N` can only LOWER the bar, never raise it
 
 The fixtures need a file this gate REFUSES, and the honest one is 150,001 bytes
@@ -106,7 +149,8 @@ COMPARISON and the exit codes against a small limit, and not the 150,000
 constant itself. `tests/unit/test_claude_md_size_gate.py` pins that constant
 separately, because a constant is the one thing a negative control cannot prove.
 
-Usage:  python apps/api/scripts/check_claude_md_size.py [--limit N] [PATH ...]
+Usage:  python apps/api/scripts/check_claude_md_size.py
+            [--limit N] [--require-canary] [PATH ...]
         (default: CLAUDE.md at the repo root)
 """
 
@@ -118,6 +162,17 @@ from pathlib import Path
 #: The reader limit measured on 2026-09-22. See the docstring: this is an
 #: observed cliff, not a preference, and it is in BYTES.
 LIMIT_BYTES = 150_000
+
+#: A SOFT line, warned about and NOT failed on. It exists because a gate that
+#: fires with no prepared remedy reads as the gate being broken, while one that
+#: fires early and names the next cut is a ratchet. `CLAUDE.md` carries the
+#: named candidate list under "Where the next 15,000 bytes come from"; this
+#: constant is what tells you to go read it, with room still left to act.
+SOFT_LIMIT_BYTES = 135_000
+
+#: The marker that must be the LAST non-empty line of a canary-bearing file.
+#: A reader that cannot see it has been truncated and is told to stop.
+CANARY = "<!-- CLAUDE-MD-CANARY: v1 -->"
 
 #: The budget `CLAUDE.md` sets for itself, reported but NOT enforced. Enforcing
 #: it today would put the repo permanently red, which teaches everyone to route
@@ -171,6 +226,7 @@ def _fmt(n: int) -> str:
 def main(argv: list[str]) -> int:
     args = argv[1:]
     limit = LIMIT_BYTES
+    require_canary = False
     rest: list[str] = []
 
     # `--limit` is the ONLY option. Everything else is a could-not-look: five
@@ -191,9 +247,16 @@ def main(argv: list[str]) -> int:
             limit = int(raw)
             i += 2
             continue
+        if a == "--require-canary":
+            require_canary = True
+            i += 1
+            continue
         if a.startswith("-"):
             print(f"check-claude-md-size: unknown option: {a}")
-            print("check-claude-md-size: this gate takes `--limit N` and file paths.")
+            print(
+                "check-claude-md-size: this gate takes `--limit N`, "
+                "`--require-canary` and file paths."
+            )
             return 2
         rest.append(a)
         i += 1
@@ -242,6 +305,29 @@ def main(argv: list[str]) -> int:
         if size > limit:
             findings.append((target, size, chars, lines))
 
+        # The canary is a SEPARATE proposition from the size, and it fails
+        # closed on its own. A file can be comfortably under the limit and
+        # still have had the marker pushed out of last place by an append,
+        # which silently restores the failure the marker exists to announce.
+        if require_canary:
+            raw_lines = target.read_text(encoding="utf-8").splitlines()
+            tail = [ln for ln in raw_lines if ln.strip()]
+            if not tail:
+                print(f"check-claude-md-size: {target} is empty, so it carries no canary.")
+                return 2
+            if CANARY not in tail:
+                print(f"check-claude-md-size: {target} has NO canary marker.")
+                print(f"  expected the last non-empty line to be: {CANARY}")
+                print("  A reader cannot tell a truncated copy from a whole one without it.")
+                return 2
+            if tail[-1] != CANARY:
+                print(f"check-claude-md-size: {target}'s canary is NOT the last line.")
+                print(f"  last non-empty line is: {tail[-1][:70]}")
+                print("  Something was appended past the marker, so a reader can see the")
+                print("  canary and still be missing everything after it. Move the marker")
+                print("  back to the end, or move the new content above it.")
+                return 2
+
     if not findings:
         for target, size, chars, lines in checked:
             head = _fmt(limit - size)
@@ -249,6 +335,14 @@ def main(argv: list[str]) -> int:
                 f"check-claude-md-size: {target.name} is {_fmt(size)} bytes "
                 f"({_fmt(chars)} chars, {_fmt(lines)} lines) -- {head} bytes of headroom."
             )
+            if size > SOFT_LIMIT_BYTES:
+                print(
+                    f"  SOFT LINE PASSED: {_fmt(size - SOFT_LIMIT_BYTES)} bytes over "
+                    f"{_fmt(SOFT_LIMIT_BYTES)}. This is a WARNING, not a failure."
+                )
+                print('  Read "Where the next 15,000 bytes come from" in CLAUDE.md and take')
+                print("  the next candidate. The list is there so the alarm arrives with a")
+                print("  remedy already chosen, rather than as an obstruction.")
             if lines > SELF_IMPOSED_LINE_BUDGET:
                 over = _fmt(lines - SELF_IMPOSED_LINE_BUDGET)
                 print(

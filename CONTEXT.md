@@ -39,7 +39,18 @@ carried no migration, and 20 edited the gate harness itself. That establishes
 the control was unavailable, not that any PR merged wrongly — whether an agent
 merged unattended is not recorded anywhere git can answer.
 
-**Residual: 1,186 bytes of headroom.** The next substantive addition to
+**The mechanism fix, which the size gate alone does not provide:** `CLAUDE.md`
+now ends with a canary marker and an instruction to stop if you cannot read it,
+and `check_claude_md_size.py --require-canary` asserts the marker is the last
+non-empty line. The reader limit is a property of the READER — one session's
+<!-- counted: "one session" names a single observed reader, not a tally of a population -->
+copy carried all 210,958 bytes while another's was cut — so two agents can apply
+the merge rule sincerely and reach opposite verdicts with neither able to tell
+which it is. The canary makes that variance declared instead of invisible. A
+SOFT line at 135,000 bytes warns and names the next cut, so the alarm arrives
+with a remedy already chosen.
+
+**Residual: ~1,600 bytes of hard headroom.** The next substantive addition to
 `CLAUDE.md` is paid for by a trim. `DECISIONS.md` (293,879 bytes) is
 deliberately not gated — it is the RECORD, grepped by D-number, not injected
 into every agent's context. `DELIVERY_PLAN.md` at 140,438 bytes is the next file

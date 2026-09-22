@@ -145,3 +145,90 @@ def test_a_directory_target_is_a_could_not_look(tmp_path: Path) -> None:
     done = _run(str(tmp_path))
     assert done.returncode == 2
     assert "is a directory" in done.stdout
+
+
+@pytest.mark.unit
+def test_the_soft_line_warns_and_does_not_fail(tmp_path: Path) -> None:
+    """A gate that fires with no prepared remedy reads as the gate being broken.
+
+    The soft line exists to arrive EARLY, while there is still room to act, and
+    to point at the named candidate list in CLAUDE.md rather than just saying
+    no. So it must print and must not change the exit code.
+    """
+    mod = _load()
+    f = tmp_path / "CLAUDE.md"
+    f.write_text("x" * (mod.SOFT_LIMIT_BYTES + 10), encoding="utf-8")
+    done = _run(str(f))
+    assert done.returncode == 0
+    assert "SOFT LINE PASSED" in done.stdout
+    assert "Where the next 15,000 bytes come from" in done.stdout
+
+
+@pytest.mark.unit
+def test_below_the_soft_line_says_nothing_about_it(tmp_path: Path) -> None:
+    """The warning must not fire on every run, or it becomes noise nobody reads."""
+    f = tmp_path / "CLAUDE.md"
+    f.write_text("x" * 100, encoding="utf-8")
+    done = _run(str(f))
+    assert done.returncode == 0
+    assert "SOFT LINE" not in done.stdout
+
+
+@pytest.mark.unit
+def test_the_real_file_carries_the_canary_as_its_last_line() -> None:
+    """The repo's own CLAUDE.md, not a fixture.
+
+    The fixtures prove the CHECK discriminates; this proves the FILE satisfies
+    it. Both are needed: a perfect check over a file that never adopted the
+    marker protects nothing, and that gap is invisible from inside the fixture
+    tree, whose files are also named CLAUDE.md.
+
+    THIS IS THE CONVENIENCE COPY, NOT THE ENFORCEMENT. It SKIPS in the api
+    container, which mounts only `apps/api`, so a skip here proves nothing --
+    and `CLAUDE.md` records that a spec self-skipping on a precondition is
+    UNTESTED rather than passing. The enforcing surface is `ci.yml`'s
+    "governance file fits in a reader" step, which runs
+    `--require-canary CLAUDE.md` on a full checkout and exits 2 if the marker
+    is missing or not last.
+
+    RESIDUAL, stated rather than left to be discovered: if someone drops
+    `--require-canary` from that step, this test skips in-container and the
+    check silently stops happening. That is the same shape as
+    `check_test_integrity`'s correctness living in a `working-directory:` line
+    nothing verifies. Not closed here.
+    """
+    mod = _load()
+    try:
+        real = mod.repo_root() / "CLAUDE.md"
+    except RuntimeError:
+        # The api container mounts only `apps/api` at /app, so neither `.github`
+        # nor `apps` exists above this file and the real CLAUDE.md is genuinely
+        # not present. Skipping is honest here; asserting would be a test about
+        # a file that is not there.
+        pytest.skip("repo root not reachable (api container mounts only apps/api)")
+    if not real.is_file():
+        pytest.skip(f"no CLAUDE.md at {real}")
+    tail = [ln for ln in real.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert tail[-1] == mod.CANARY
+
+
+@pytest.mark.unit
+def test_a_canary_that_is_not_last_is_a_could_not_look(tmp_path: Path) -> None:
+    """Strictly worse than no canary: the reader gets a POSITIVE signal that its
+    copy is whole while everything below the marker is missing."""
+    mod = _load()
+    f = tmp_path / "CLAUDE.md"
+    f.write_text(f"# x\n\n{mod.CANARY}\n\n## appended later\n\nlost text\n", encoding="utf-8")
+    done = _run("--require-canary", str(f))
+    assert done.returncode == 2
+    assert "canary is NOT the last line" in done.stdout
+
+
+@pytest.mark.unit
+def test_require_canary_is_not_a_no_op(tmp_path: Path) -> None:
+    """The flag must be able to REFUSE, or it could be wired in CI and check
+    nothing -- this repo's recorded selector-selects-nothing shape."""
+    f = tmp_path / "CLAUDE.md"
+    f.write_text("# x\n\nno marker\n", encoding="utf-8")
+    assert _run("--require-canary", str(f)).returncode == 2
+    assert _run(str(f)).returncode == 0  # and it is OFF by default

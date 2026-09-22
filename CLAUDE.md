@@ -657,17 +657,16 @@ recorded with a real exit code and a real date, and was the minority outcome
 - **Withholding a value from a RATIO can raise it. Check which side of the
   fraction you took it out of.** #102 withholds a technique whose evidence is
   unconfirmed, and the obvious reading — leave it out of both numerator and
-  denominator, exactly as `unscored` already works — shipped `gap` as
-  withholdable. But `coverage_pct` is
-  `(covered + 0.5·partial) / (covered + partial + gap)`, so a gap contributes to
-  the DENOMINATOR only: ten covered beside ten gaps reported 50%, and flagging
-  every gap reported **100%** with ten findings deleted.
-  <!-- counted: A hypothetical worked example. The number is fixed by construction, not recalled from a population. -->
+  denominator, as `unscored` already works — shipped `gap` as withholdable. But
+  `coverage_pct` is `(covered + 0.5·partial) / (covered + partial + gap)`, so a
+  gap contributes to the DENOMINATOR only: ten covered beside ten gaps reported
+  50%, and flagging every gap reported **100%** with ten findings deleted.
+  <!-- counted: a hypothetical worked example, fixed by construction, not recalled from a population -->
   A run in which more evidence was doubted claimed twice the coverage.
 
-  Only values that carry numerator weight can be withheld conservatively;
+  Only values carrying numerator weight can be withheld conservatively;
   withholding a pure-denominator value is a strictly optimistic move wearing a
-  cautious one's clothes. And even for the rest it is not unconditional —
+  cautious one's clothes. And it is not unconditional even for the rest —
   withholding one `partial` from nine confirmed `covered` takes 95% to 100%,
   because narrowing a denominator changes what the ratio is a ratio OF. **A
   percentage over a withheld population is not self-describing: render the
@@ -723,26 +722,24 @@ recorded with a real exit code and a real date, and was the minority outcome
   CSF, ZT, ATT&CK, Tech Debt and Risk are five copies of the same shapes, so a
   fix filed against one is a fix owed by all of them. #75 was filed against ZT
   and fixed there; CSF truncated identically, through the same
-  `DEFAULT_TOP_N = 20`, in the same three renderers, and the first
-  implementation left it — inside the PR that was also fixing #79, which exists
-  *because* an earlier change fixed one surface and not its twin. Half-fixes are
-  worse than none here: raising CSF's target to the client's tier increases its
-  gap count, so leaving the disclosure out hid MORE than before the "fix".
+  `DEFAULT_TOP_N = 20`, in the same three renderers — inside the PR that was
+  also fixing #79, which exists *because* an earlier change fixed one surface
+  and not its twin. Half-fixes are worse than none here: raising CSF's target to
+  the client's tier increases its gap count, so leaving the disclosure out hid
+  MORE than before the "fix".
 
   Before opening a PR, grep the sibling services for the function you just
-  changed, and **when you deliberately leave a twin alone, say so in the code** —
-  an unstated exemption reads as an oversight to everyone who finds it later.
+  changed, and **when you deliberately leave a twin alone, say so in the code**.
 
   **FIX FROM THE SHAPE, NOT FROM THE LIST YOU WERE HANDED — a reviewer's site
   list is evidence that twins exist, never the set of them.** One branch
   produced three consecutive half-fixes, each round correcting every twin it was
-  shown and none it was not. Nobody was careless: each round worked from the
-  previous review's list, which is a sample. Take the list as proof the shape
-  exists, derive the set yourself, and say in the PR what you derived it from.
-  **Expect the last twin to be the one a USER reads** — a hover title gets
-  corrected while the paragraph beside it does not, because the reviewer quoted
-  the hover. (**D-074** carries the sweep-by-shape record; **D-072** the hover
-  instance, where the phrase survived only in a `title` attribute.)
+  shown and none it was not; each round worked from the previous review's list,
+  which is a sample. Take the list as proof the shape exists, derive the set
+  yourself, and say in the PR what you derived it from. **Expect the last twin
+  to be the one a USER reads** — a hover title gets corrected while the
+  paragraph beside it does not, because the reviewer quoted the hover (D-074,
+  D-072).
 - **These gates check whether a test can fail at all (#72, D-051).**
   `docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"`
   is a two-second static pass and **runs in CI before pytest** — it flags a test
@@ -803,12 +800,11 @@ recorded with a real exit code and a real date, and was the minority outcome
   was written by someone using different words.
 
   **This binds PROSE sweeps identically, and prose is where it is skipped.** A
-  commit titled "record the overturn where the decision is looked up" corrected
-  the three documents named in the finding and left two present-tense claims
-  standing elsewhere, because the author never asked what ELSE asserted the same
-  thing. Write the shape for prose the way you would for code — "any sentence
-  stating what happens when X fails, in the present tense" — and grep the bare
-  nouns rather than the phrasing you were shown.
+  commit correcting the three documents a finding named left two present-tense
+  claims standing elsewhere, because the author never asked what ELSE asserted
+  the same thing. Write the shape for prose the way you would for code — "any
+  sentence stating what happens when X fails, in the present tense" — and grep
+  the bare nouns rather than the phrasing you were shown.
 
   `risk.py` re-derived a gap comparison instead of calling `analyze_gaps` (#84),
   and reimplements the ATT&CK citation drop with no counter (#132), found only
@@ -817,21 +813,17 @@ recorded with a real exit code and a real date, and was the minority outcome
   `_validate_tools` called?". **If you cannot describe the defect without naming
   the function it was found in, you have not generalised it yet.**
 
-  **A worked example, because every rule above says to write a shape statement
-  and none shows a good one.** From the `docs/security.md` honesty pass (#146):
+  **A good shape statement**, from the `docs/security.md` honesty pass (#146):
 
   > A control stated in the present tense whose implementation is a deferral
   > comment, a client-supplied value, a header with no transport to enforce it,
   > or a function with no callers.
 
-  It names four distinct failure modes rather than one (a shape with a single
-  mode is usually the found defect restated); it names no file, function or
-  symbol; each mode is checkable by reading the implementation rather than by
-  knowing the history; and it found three defects outside the table it would
-  <!-- counted: historical -->
-  have been natural to check, none of them in the OWASP rows a narrower sweep
-  would have read. **The test of a shape statement is whether it could have been
-  written BEFORE seeing the defect that prompted it.** This one could.
+  It names four distinct failure modes rather than one; it names no file,
+  function or symbol; each mode is checkable by reading the implementation
+  rather than by knowing the history; and it found defects outside the table it
+  would have been natural to check. **The test of a shape statement is whether
+  it could have been written BEFORE seeing the defect that prompted it.**
 - **A derived lookup key belongs in its OWN tier, below the authoritative one.**
   #33 finding 5 needed the resolver to recognise a tool under the placeholder the
   model was shown, so the redacted form was indexed as an alias — into the same
@@ -932,70 +924,52 @@ recorded with a real exit code and a real date, and was the minority outcome
 - **An over-match can be the ONLY thing covering a legitimate case. Before fixing
   one, check what it was accidentally catching.** `suite_pat`'s `\bFl` ate the
   `oor` in "Floor", and that bug was the sole reason `2nd Floor` got any
-  redaction at all — the pattern has no branch for a value that PRECEDES its
+  redaction at all — the pattern has no branch for a value PRECEDING its
   keyword, so tightening `Fl` silently removed coverage nobody knew existed.
   Nothing fails when this happens: no test knew the coverage was there, because
   it was never intended. **The tell is that the "wrong" behaviour and the only
-  correct behaviour for some input are produced by the same line.**
-
-  Cousin of the twin-sweep rule — that one asks where else the defect is, this
-  one asks what else the defect is doing. Concretely, on #130: `2nd Floor` →
-  `2nd [ADDRESS]` (number left behind) and `3rd Fl` → no match at all, so the
-  honest framing of the new branch was "adds coverage that never existed and
-  closes a live leak", not "preserves coverage through a fix". Say which one it
-  is.
+  correct behaviour for some input are produced by the same line.** Cousin of
+  the twin-sweep rule — that one asks where else the defect is, this one asks
+  what else the defect is doing. Say which one a fix is: on #130 the honest
+  framing was "adds coverage that never existed and closes a live leak", not
+  "preserves coverage through a fix".
 - **A redaction/validation corpus drawn from your own assumptions cannot falsify
   them — and seed data is somebody's assumptions too.** #130 lived for months
-  under a green suite because all 73 name-shaped strings in `seed_demo.py` and
-  `fixtures.py` pass the address rule clean, so an address assertion built on
+  under a green suite because every name-shaped string in `seed_demo.py` and
+  `fixtures.py` passes the address rule clean, so an address assertion built on
   seed data passes forever. Then, fixing it, a hand-written corpus of "real
-  product names" certified a pattern carrying **six leak regressions**,
+  product names" certified a pattern carrying six leak regressions, because the
   <!-- counted: historical -->
-  because the author writes addresses correctly spaced and the failing class was
-  malformed input (`PO Box99`, `Suite400`) that arrives from OCR and exported
-  spreadsheets.
+  author writes addresses correctly spaced and the failing class was malformed
+  input (`PO Box99`, `Suite400`) arriving from OCR and exported spreadsheets.
+  <!-- counted: historical -->
 
-  This is #72's shape pointed at test DATA rather than test code, and the fix is
-  the same: **enumerate the CLASSES and require a row per class**, rather than
-  adding whichever example you thought of last. The classes a hand-written
-  corpus structurally cannot contain: malformed strings, `name + version
-  number`, non-US locale variants, and strings that have already been through
-  the pipeline once.
+  #72's shape pointed at test DATA rather than test code, with the same fix:
+  **enumerate the CLASSES and require a row per class.** The classes a
+  hand-written corpus structurally cannot contain: malformed strings,
+  `name + version number`, non-US locale variants, and strings that have already
+  been through the pipeline once.
 - **A table written FIRST is an independent specification. A table written
   AFTERWARDS is a transcript of what the rule does.** Enumerating cases against
   a rule you have already written cannot falsify that rule, because the rule is
-  where the cases came from.
-
-  **Measured** (2026-08-25, `apps/api/scripts/leave_row_oracle.py`, 104 LEAVE
-  rows, 22 guards). A LEAVE row asserts ordinary prose survives the redactor
-  untouched; disable the guard it was written to pin, and if the row still
-  passes it was never testing that guard.
-
-  | Tables | In risk class | Pinning nothing |
-  | --- | --- | --- |
-  | Written before their pattern | 53 | **2 (3.8%)** |
-  | Written alongside/after their rule | 38 | **16 (42.1%)** |
-
-  Same corpus, same author, same file, same week. The only variable is whether
-  the table existed before the code did.
+  where the cases came from. Measured on 104 LEAVE rows: tables written before
+  their pattern pinned nothing **3.8%** of the time; tables written alongside or
+  after their rule, **42.1%** — same corpus, same author, same week, the only
+  variable being whether the table existed before the code did (D-058).
 
   **The step**: any LEAVE table written or extended after its rule exists gets
-  an oracle run before the PR, and rows that pin nothing are rewritten or
-  reclassified. Scoring a row needs judgement, so the tool reports and a human
-  decides. What IS gated, behind `leave_row_oracle.py --check-registry`: a LEAVE
-  table with no registered guards, and a table DECLARED not-LEAVE whose rows the
-  redactor leaves untouched (#221). The remedy a finding names is to COLLECT the
-  rows, not to exempt them.
+  `leave_row_oracle.py` run before the PR, and rows that pin nothing are
+  rewritten or reclassified. Scoring a row needs judgement, so the tool reports
+  and a human decides. What IS gated, behind `--check-registry`: a LEAVE table
+  with no registered guards, and a table DECLARED not-LEAVE whose rows the
+  redactor leaves untouched (#221). **Budget it** — any item fixing existing
+  code lands its tables in the 42% regime by construction.
 
-  **It is a floor, not a census**, and can only under-report. A row that
-  survives with EVERY guard removed was never in the risk class — a **negative
-  control by design**, derived rather than hand-listed. **Budget it**: any item
-  fixing existing code lands its tables in the 42% regime by construction.
-  **Residual**: the guard list is hand-built, so `unrelated` is an UPPER BOUND.
-  **Still ungated is whether the tool can RUN** (#299) — two mutation anchors
-  had drifted out of `redact.py` and the oracle had been exiting 2 for an
-  unknown length of time, because `--check-registry` returns before
-  `build_mutations` is called.
+  **It is a floor, not a census**, and can only under-report: the guard list is
+  hand-built, so `unrelated` is an UPPER BOUND. **Still ungated is whether the
+  tool can RUN** (#299) — two mutation anchors had drifted out of `redact.py`
+  and the oracle had been exiting 2 for an unknown length of time, because
+  `--check-registry` returns before `build_mutations` is called.
 - **Sweeping for a defect's twins, grep the SYMPTOM as well as the call sites.**
   Grepping for callers of the function you just fixed finds every copy that went
   through that function and misses every REIMPLEMENTATION of it. #84 escaped the
@@ -1087,18 +1061,14 @@ recorded with a real exit code and a real date, and was the minority outcome
   correctly, on the first run, and was not read. **When a gate reports something
   you did not expect, read it before deciding what it is about.**
 - **Replacing a character class with an enumerated one is a subtraction you must
-  COMPUTE, not guess.** `\s` matches 19 horizontal characters. Narrowing it to
-  "space, tab, non-breaking space" to stop a rule crossing newlines therefore
-  dropped SIXTEEN more (U+2000-U+200A, U+202F, U+205F, U+3000, U+1680, U+001F) —
-  and in the redactor that is a LEAK, not a residual: a street address separated
-  by a narrow no-break space, which is exactly what PDF and Word extraction
-  emit, egressed verbatim with no `address` key in `removed_counts`. Strictly
-  worse than the over-match being fixed.
-
-  The decision was framed as being about NEWLINES, so the replacement was
-  written to solve newlines and nobody re-derived what else was in the class.
-  **Write it as the subtraction and let the language define the set**
-  (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
+  COMPUTE, not guess.** `\s` matches 19 horizontal characters; narrowing it to
+  "space, tab, non-breaking space" to stop a rule crossing newlines dropped
+  SIXTEEN more — and in the redactor that is a LEAK, not a residual, because a
+  street address separated by a narrow no-break space is exactly what PDF and
+  Word extraction emit. The decision was framed as being about NEWLINES, so the
+  replacement was written to solve newlines and nobody re-derived what else was
+  in the class. **Write it as the subtraction and let the language define the
+  set** (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
   parametrised sweeps whose parameters come from somewhere other than the thing
   under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
   it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
@@ -1326,15 +1296,12 @@ recorded with a real exit code and a real date, and was the minority outcome
   string is documentation a developer reads under pressure.
 - **Replacing a validator gives you a free ORACLE for exactly one round: the
   thing you are replacing.**
-  <!-- counted: "one round" is a duration in the claim itself, not a recalled figure. -->
+  <!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
   Enumeration depends on imagining cases, and the cases you fail to imagine are
-  precisely the ones that leak. Item 10 replaced a phone regex; the truth
-  table's LEAVE half was carefully enumerated and its REDACT half was seven rows
-  <!-- counted: historical -->
-  of one grouping, so four formats the OLD rule caught — `1-800-555-0199`,
-  `1.555.867.5309`, `020 7946 0958`, and any number separated by a non-ASCII
-  space — leaked silently, and `CAGE1ABC2` regressed the same way. Nobody
-  imagined them; the adversarial reviewer found them by reading.
+  precisely the ones that leak. Item 10 replaced a phone regex; its REDACT half
+  was one grouping, so four formats the OLD rule caught — including
+  `1-800-555-0199` and any number separated by a non-ASCII space — leaked
+  silently. Nobody imagined them; the adversarial reviewer found them by reading.
   <!-- counted: historical -->
 
   The mechanical version costs nothing: **run the old rule and the new rule over
@@ -1343,28 +1310,21 @@ recorded with a real exit code and a real date, and was the minority outcome
   leak, and you must classify each. It works for any validator, filter, guard or
   parser being replaced — and only for that one round, because after the old one
   <!-- counted: "one round" is a duration in the claim itself, not a recalled figure -->
-  is deleted the oracle is gone. Capture the diff while you still have both.
+  is deleted the oracle is gone. **Capture the diff while you still have both.**
 
-  **Second example, same shape: a published standard is to a keyword list what
-  the old rule is to a replacement pattern.** #139 asked which facility
-  designators to add, and the honest answer to "which ones did I think of" is
-  always "the ones I thought of". USPS Publication 28 Appendix C2 is the
-  approved list of US secondary unit designators, so the question became a
-  lookup: some were already covered, some were added, and nine were excluded as
-  ordinary English that takes a digit (`KEY`, `LOT`, `SIDE`, `REAR`, `FRNT`,
-  `SPC`, `PH`, `LOWR`, `UPPR`). The table asserts every covered row redacts and
-  every exclusion still does not, so the list is complete against a standard
-  rather than against recall.
+  **A published standard is to a keyword list what the old rule is to a
+  replacement pattern.** #139 asked which facility designators to add, and the
+  honest answer to "which ones did I think of" is always "the ones I thought
+  of". USPS Publication 28 Appendix C2 is the approved list, so the question
+  became a lookup, and the table asserts every covered row redacts and every
+  exclusion still does not — complete against a standard rather than against
+  recall. It also gave the residual a better reason: `Level` is excluded because
+  **it is not on Pub 28 C2 at all**, not because "patch level 3 is inseparable
+  from a floor" — a phrasing that invites the next person to attempt the
+  separation and fail identically.
 
-  It also gave the residual a better reason. `Level` is excluded not because
-  "patch level 3 is inseparable from a floor" — a phrasing that invites the next
-  person to attempt the separation and fail identically — but because **LEVEL is
-  not on Pub 28 C2 at all**, the same scope call as the non-US postcode
-  residual, with the same firing condition.
-
-  This covers the half enumeration structurally cannot: enumeration finds what
-  you thought of, the oracle finds what the previous author — or the standards
-  body — thought of.
+  Enumeration finds what you thought of; the oracle finds what the previous
+  author — or the standards body — thought of.
 - **When testing ONE branch of a disjunction, assert the other branches are
   absent.** Not the #72 shape — removing every detector would fail the test — but
   the same practical result: the test passes and proves nothing about the thing
@@ -1726,15 +1686,13 @@ Rules of the road:
   | a detached run's marker EXISTS | the marker's AGE |
   | a suite's exit code | which TREE, at which REVISION, it ran against |
 
-  The marker row was a success record from a run **a week earlier**, read as the
-  current one: `test -f /tmp/x.exit` tests existence, not freshness. **The
-  detached-run pattern in `context/gene.md` is unsafe as written** — `rm -f` the
-  marker before launching, or use a per-run filename. The tree row is the
-  sharpest: a backgrounded suite returned exit 0 while the fix it covered had
-  been reverted seconds earlier by a careless `git checkout -- <file>`, which
-  restores from the INDEX, so unstaged work goes with the mutation being undone.
-  **Have the run print the revision and cleanliness of the tree it is testing**
-  (`tree under test: <sha>, clean=yes`). Commit before mutating.
+  The marker row was a success record from a run a week earlier, read as the
+  current one: `test -f /tmp/x.exit` tests existence, not freshness. **`rm -f`
+  the marker before launching, or use a per-run filename.** The tree row: a
+  backgrounded suite returned exit 0 while the fix it covered had been reverted
+  seconds earlier by a careless `git checkout -- <file>`, which restores from
+  the INDEX, so unstaged work goes with the mutation being undone. **Have the
+  run print the revision and cleanliness of the tree it is testing.**
 
   **PREFER A CHECK WHOSE TWO SIDES CAN ONLY AGREE IF THE THING IS TRUE.** After
   converting a file to LF, `git diff --numstat` raw versus `--ignore-cr-at-eol`
@@ -1748,10 +1706,6 @@ Rules of the road:
   inside multi-byte sequences as literal text, so grepping its output counts
   RENDERED LINES. It answered a different question in the same units, the
   hardest kind to catch. **Diagnose the disagreement; do not vote on it.**
-
-  **The verification layer produced more defects than the code under test that
-  day.** That is not an argument for more checking machinery — every fix went
-  toward a more primitive signal, not a cleverer one.
 
 - **"IS THIS ALREADY LANDED?" HAS EXACTLY ONE SOUND TEST HERE, AND IT IS NOT
   ANCESTRY AND NOT A DIFF.** Merge it and count what it stages:
@@ -2003,9 +1957,9 @@ Rules of the road:
       grep -n "the largest remaining gap" DELIVERY_PLAN.md            # no match
       rg -U --multiline -n "largest\s+remaining gap" DELIVERY_PLAN.md  # 1083-1084
 
-  A multiline tool is necessary and NOT sufficient: a literal space in the
-  pattern still will not cross the wrap, because what is there is a newline and
-  an indent. **Write every space in a quoted phrase as `\s+`.**
+  A multiline tool is necessary and NOT sufficient: a literal space still will
+  not cross the wrap, because what is there is a newline and an indent. **Write
+  every space in a quoted phrase as `\s+`.**
 
   **A no-match is a claim about the world. Before reporting an absence, confirm
   the tool could have found it** — re-search a fragment that cannot wrap. This
@@ -2015,18 +1969,14 @@ Rules of the road:
 
   **AND WHEN N INDEPENDENT SOURCES REPORT THE SAME ABSENCE, RUN THE SEARCH
   BEFORE NAMING A MECHANISM.** Four reviewers, in four separate runs against
-  four different trees, each reported the same rule missing from this file.
-  Each report was dismissed as detached-worktree staleness — a real mechanism,
-  documented here, and the first explanation that fits. The rule was simply not
-  in the file. **Four independent observations of one fact are data, and a
-  mechanism that explains them away costs one command to test.** The more
-  familiar the explanation, the faster it arrives and the less it is checked;
-  "your context is stale" explains any disagreement whatsoever, which is what
-  should make it suspect rather than comfortable.
-
-  **And prefer a MEASUREMENT to a citation wherever one exists.** Reading
-  `audit-gate.yml`'s `on:` block settles what triggers it; citing a document
-  about that block inherits every drift problem above.
+  four different trees, each reported the same rule missing from this file. Each
+  was dismissed as detached-worktree staleness — a real mechanism, documented
+  here, and the first explanation that fits. The rule was simply not in the
+  file. **Four independent observations of one fact are data, and a mechanism
+  that explains them away costs one command to test.** "Your context is stale"
+  explains any disagreement whatsoever, which is what should make it suspect
+  rather than comfortable. D-079 is the second instance: truncation wearing
+  #170's clothes.
 
 - **A CITATION'S WORTH IS WHETHER IT FAILS LOUDLY. Pin to an immutable object
   where you can; where you must cite something mutable, the citation has to be
@@ -2035,10 +1985,9 @@ Rules of the road:
   action cannot be falsified by later action"* (false — one that AGGREGATES OVER
   AN OPEN POPULATION goes stale on the next member; `a3137d5..851348b`
   reproduces forever, `a3137d5..HEAD` does not); *"cite something that cannot
-  change without someone having to edit it"* (false — deliberate edits are
-  routine, and a quoted phrase survived a correct edit that moved it into a
-  `title` attribute); and *a quoted string is safe because it survives a reflow*
-  (true of reflows and beside the point).
+  change without someone having to edit it"* (false — a quoted phrase survived a
+  correct edit that moved it into a `title` attribute); and *a quoted string is
+  safe because it survives a reflow* (true of reflows and beside the point).
 
   **Rank the forms by how they fail.** A phrase quoted in prose just stops being
   there — **silent**. A phrase quoted in an ASSERTION is worse: it keeps
@@ -2046,9 +1995,9 @@ Rules of the road:
 
   **A SHA is the loud form, and NOT because it stops resolving.** A rebase
   ORPHANS a commit without deleting it, so the object answers `git cat-file -t`
-  with `commit` until garbage collection — which can be a fortnight. A citation
-  check asking "does this resolve?" PASSES on a SHA no longer on the branch.
-  **What fails loudly is ANCESTRY, and only if someone asks:**
+  with `commit` until garbage collection. A citation check asking "does this
+  resolve?" PASSES on a SHA no longer on the branch. **What fails loudly is
+  ANCESTRY, and only if someone asks:**
 
       git merge-base --is-ancestor <sha> HEAD
 
@@ -2058,11 +2007,9 @@ Rules of the road:
 
   **The gate this wants covers PR BODIES, not changed files** — both stale
   citations that prompted this rule were in bodies, and a body is not a file, so
-  a tree-walking gate reaches neither. It runs `on: pull_request` and reads
-  `github.event.pull_request.body`. Not built.
+  a tree-walking gate reaches neither. Not built.
 
-  **A number carrying its command must also name its REF.** Re-deriving means
-  choosing a tree, and the tree a reader picks is `main`. A unit-test total of
+  **A number carrying its command must also name its REF.** A unit-test total of
   7128 was written with its command and no tree; `main` later moved to 7128
   itself, so re-running on `main` REPRODUCED the number while the branch was
   really 7137 — a false confirmation manufactured by the one sentence whose
@@ -2073,33 +2020,30 @@ Rules of the road:
   report's CALIBRATION.** This replaces "be skeptical of subagent output", which
   is a disposition, and dispositions lose to convenience under time pressure.
 
-  Measured 2026-08-30, a clean partition rather than a near-miss: of fourteen
-  `file:line` citations that entered `DELIVERY_PLAN.md` from an Explore agent's
-  report, **the eleven that were independently run were all correct and the
-  three that were only read were all wrong.**
+  Measured 2026-08-30, a clean partition: of fourteen `file:line` citations that
+  entered `DELIVERY_PLAN.md` from an Explore agent's report, **the eleven that
+  were independently run were all correct and the three that were only read were
+  all wrong.**
 
-  **How big a sample?** At that hit rate, drawing 3 of 14 catches at least one
-  bad citation only **55%** of the time, 4 gets 67%, 5 gets 77%, 6 gets 85%
-  <!-- counted: python -c "from math import comb; [print(k, 1-comb(11,k)/comb(14,k)) for k in (3,4,5,6)]", 2026-08-30 -->.
-  An earlier draft asserted three checks "would have caught it" — a 55% chance
-  stated as a certainty, in the rule about not writing numbers you have not
-  derived. **Sample a third, and round up.**
+  **Sample a third, and round up** — at that hit rate, drawing 3 of 14 catches a
+  bad citation only **55%** of the time.
+  <!-- counted: python -c "from math import comb; print(1-comb(11,3)/comb(14,3))", 2026-08-30 -->
+  An earlier draft asserted three checks "would have caught it", stating a 55%
+  chance as a certainty, in the rule about not writing numbers you have not
+  derived.
 
-  **Those figures are conditional on THIS incident's error rate and are not a
-  detection guarantee.** At 1 bad in 20, sampled at a third, the same sample
-  catches **35%**
-  <!-- counted: python -c "from math import comb; print(1-comb(19,7)/comb(20,7))", 2026-08-30 -->.
-  The sample CALIBRATES the report; it does not CLEAR the citations. Read the
-  table as "how likely am I to learn this report is unreliable", never as "what
-  fraction of bad citations do I catch".
+  **The sample CALIBRATES the report; it does not CLEAR the citations**, and the
+  figures are conditional on this incident's error rate rather than a detection
+  guarantee. Read the table as "how likely am I to learn this report is
+  unreliable", never as "what fraction of bad citations do I catch".
 
-  **And the arithmetic assumes the bad citations are EXCHANGEABLE with the good
-  ones, which here they demonstrably were not.** The three wrong were exactly
-  the three nobody had executed; drawing 11 and finding 0 bad has probability
-  1/364 under a random-draw model, so the model is simply wrong. **Sample the
-  citations you have NOT executed**, and three from that stratum would have been
-  certain rather than 55%. **The wrong ones do not look wrong** — one was a bare
-  closing paren, another a real line of code that reads plausibly in context.
+  **And it assumes the bad citations are EXCHANGEABLE with the good ones, which
+  here they demonstrably were not** — the three wrong were exactly the three
+  nobody had executed, and drawing 11 with 0 bad has probability 1/364 under a
+  random-draw model. **Sample the citations you have NOT executed**; three from
+  that stratum would have been certain rather than 55%. **The wrong ones do not
+  look wrong** — one was a bare closing paren, another a real line of code that
+  reads plausibly in context. D-079 carries the arithmetic.
 
 - **A plan entry that carries only a LOCATION is a derived value with a second
   place to be wrong. Name the MECHANISM instead, or as well.** "`clients.py:741`"
@@ -2187,15 +2131,14 @@ Rules of the road:
   Python string, so the paragraph teaching this rule carried an uncited count of
   its own until a human read it.
 
-  **The gate finds; it does not fix.** A long list invites clearing it
-  mechanically, which deletes correct sentences. Every site gets its own
-  disposition; where a finding is a false positive, say why at the site rather
-  than widening the pattern. **It catches FORM; it cannot catch what a correct
-  number IMPLIES** — it caught "Three checks drawn at random would have caught
+  **The gate finds; it does not fix.** Every site gets its own disposition;
+  where a finding is a false positive, say why at the site rather than widening
+  the pattern. **It catches FORM; it cannot catch what a correct number
+  IMPLIES** — it caught "Three checks drawn at random would have caught it", and
   <!-- counted: historical -- a verbatim quote of the phrase the gate caught, not a count -->
-  it", and the repair derived the true figure, 54.7%, then stated it so as to
-  imply a detection guarantee it does not support. Form is mechanisable,
-  implication is not; do not grow the gate into the second role.
+  the repair derived the true figure, 54.7%, then stated it so as to imply a
+  detection guarantee it does not support. Form is mechanisable, implication is
+  not; do not grow the gate into the second role.
 
 - **Check `git stash list` DURING work, not only when stopping.** A stash is
   invisible to `git status`, survives a branch switch, and is one command from
@@ -2221,14 +2164,13 @@ Rules of the road:
   does not exist, so it expands to **nothing** -- `archive/stash--x`, no error,
   no SHA, and every stash archived that way collides on one name. No PowerShell
   equivalent is offered, deliberately: a marker covering the FAILURE does not
-  cover a REMEDY, and a draft recommended `$sha.Substring(0,8)` under exactly
-  that marker, measured for the failure and reasoned for the fix.
+  cover a REMEDY (D-071).
 
   This repo's archives carry a branch AND a `-tag`-suffixed tag per stash
   because the bare name was taken. **But if EVERY archive collides on one name,
-  that is the PowerShell expansion above, not a name clash** -- the discriminator
-  matters because the sentence before it explains a collision away, and it is
-  the one a confused reader reaches first.
+  that is the PowerShell expansion above, not a name clash** -- the
+  discriminator matters because the sentence before it explains a collision
+  away, and it is the one a confused reader reaches first.
 
   **Discharge any decision-hold on dropping by ENUMERATING the archived ref's
   parents, never by diffing it** -- a stash taken with `-u` keeps its untracked
@@ -2237,11 +2179,10 @@ Rules of the road:
       git rev-list --parents -n1 <ref>     # three parents means an untracked half
       git ls-tree -r --name-only <ref>^3   # and this lists what it holds
 
-  Two of this repo's three archives have that third parent, and the diffstat
-  written up as proving recovery covered neither -- **unsupported when written
-  even though it turned out to be true**, because the objects were on the remote
-  all along. **Drop highest-numbered first**; dropping `stash@{0}` renumbers
-  every higher entry. Do none of this **while an agent holds the shared tree**.
+  A ref existing proves only that a ref was written, and a diffstat proves only
+  the tracked half. **Drop highest-numbered first**; dropping `stash@{0}`
+  renumbers every higher entry. Do none of this **while an agent holds the
+  shared tree**.
 - **Branch + PR for anything that changes behaviour or states a rule. Two
   exceptions go direct to `main`, and they are exceptions because practice
   already worked this way.**
@@ -2332,3 +2273,60 @@ Rules of the road:
   Adopted/rejected findings are tabled in the planning PR body. Codex is a
   reviewer only — it authors nothing.
 - Never commit: credentials, tokens, `.env`, `e2e/artifacts/` binaries.
+
+## If you cannot read this section, stop
+
+**Why this section exists, and it is the finding the size gate alone does not
+fix.** The reader limit is a property of the READER, not of this repository. On
+2026-09-22 one session's injected copy carried all 210,958 bytes while another
+reader's was cut at 150,000 — same commit, same file, different rule sets.
+<!-- counted: "one session" names a single observed reader, not a tally of a population -->
+Two agents can examine the same PR, apply the merge rule sincerely, and reach
+opposite verdicts on condition 5, and **neither can tell which one it is**:
+nothing in either agent's output distinguishes "this PR is clear" from "I could
+not see the clause that would have caught it."
+
+That is the exit-2 distinction this repo built its gate philosophy on — "I
+checked and it passes" versus "I could not look" — missing from the governance
+layer itself, in the one artifact that defines what checking means.
+`check_claude_md_size.py` fixes today's instance; it cannot fix the mechanism,
+because the file goes over budget again eventually, or some reader arrives with
+a limit below 150,000, and it recurs silently. The canary below converts an
+invisible variance into a declared one, which is the same move as making a gate
+exit 2 instead of 0.
+
+**`check_claude_md_size.py --require-canary` asserts the marker is the LAST
+non-empty line**, so a later edit cannot append past it and quietly push it out
+of reach — which would restore the exact failure it exists to announce.
+
+### Where the next 15,000 bytes come from
+
+Written down BEFORE the alarm, because a gate that fires with no prepared remedy
+reads as the gate being broken, and a gate that fires and names the next cut is
+a ratchet. **The soft line is 135,000 bytes**; when it trips, take these in
+order. Each is a RECORD whose instruction is already stated in one line above
+it, so moving it loses no rule:
+
+1. **The `## Environment gotchas` redaction-subsystem narratives** — the
+   `_HSPACE` subtraction, the address-corpus classes, the over-match that was
+   the only coverage, the LEAVE-table oracle percentages. The rules are one
+   sentence each; the stories belong under D-058.
+2. **The worked examples under `Rules of the road`** — the sweep shape
+   statement, the subagent-citation arithmetic, the stash-archive PowerShell
+   measurements. All have a live D-number or issue already holding them.
+3. **The per-instance lists** inside the numbers-in-prose, correction-paragraph
+   and twin-sweep rules. Each is a list that grows, which is the defect those
+   rules describe; they belong in D-079 and D-074, where a tally is expected to
+   move.
+
+Do NOT take the merge rule, the core principles, "verify by running", or the
+gate suite. Those stay at any length, and the size ratchet above says so.
+
+---
+
+**If you cannot read the line below, your copy of `CLAUDE.md` is TRUNCATED.
+Stop.** Say so, name the last heading you did receive, and do not apply the
+merge rule or any condition test until someone confirms which clauses you are
+missing. A truncated governance file is a control that does not exist.
+
+<!-- CLAUDE-MD-CANARY: v1 -->
