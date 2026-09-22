@@ -333,13 +333,19 @@ describe("dashboardLoadReason", () => {
     // same before #318. Preferring the server is still right for these: the
     // page's not-released copy would be FALSE over a wrong-tenant refusal.
     //
-    // NOT FIXED HERE AND NOT FILED, said that way because this read "filed
-    // rather than fixed here" and no issue covers it: searching the board for
-    // the string-detail dashboard case returns nothing, and #365 is about
-    // proxy LABELS on admin components rather than a raw server sentence on a
-    // dashboard. "Filed" is a status word and it was carrying no output, which
-    // is how an unfixed defect comes to read as tracked work. Handed to the
-    // board owner with the rest.
+    // NOT FIXED HERE, and now genuinely tracked: **#394**, tier-3 + post-mvp.
+    //
+    // This comment read "filed rather than fixed here" while nothing was
+    // filed. It is a DIFFERENT defect from #393 (that one is the Python
+    // docstring's pointer) and from #365 (proxy LABELS on admin components,
+    // not a raw server sentence on a dashboard), so it needed its own number
+    // rather than being folded into either.
+    //
+    // #394 records the fix direction too, because the obvious one is wrong:
+    // do NOT fall back to the page's not-released copy here. That copy is
+    // FALSE over a wrong-tenant refusal, which is #244. These refusals need a
+    // typed `{reason, message}` detail, like the conversion #298 did for
+    // `routes/tech_debt.py`.
     const nocode = {
       status: 502,
       payload: { error: { message: "Upstream call failed." } },

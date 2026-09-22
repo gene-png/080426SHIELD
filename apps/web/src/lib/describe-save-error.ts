@@ -151,9 +151,12 @@ export function dashboardLoadReason(err: unknown): string | null {
  * names `SignUpForm.tsx` in its docstring as the TS-side site — which is one
  * hop from here rather than wrong, because that import is the first thing a
  * reader arriving there sees. Repointing the Python docstring at this file is
- * NOT DONE and NOT FILED — `exceptions.py` is outside this PR's territory, so
- * the pointer goes to its owner. Stated that way because this read "is filed",
- * and `gh issue list --search SCHEMA_REASON_PREFIX` returns nothing.
+ * NOT DONE HERE — `exceptions.py` is outside this PR's territory — and is
+ * tracked in **#393**. This clause read "is filed" when nothing was, then
+ * "NOT FILED" citing a search that returned nothing, and that same search
+ * returned #393 within the hour. The longer note is at the matching clause in
+ * `SignUpForm.tsx`; the short version is that a search result is a measurement
+ * with a timestamp, not a property, so cite the number instead.
  *
  * BOTH DIRECTIONS ARE PINNED, and this paragraph asserted that one was not. It
  * read "a Python-side edit reddens NOTHING. `test_schema_422_typed_reason.py`

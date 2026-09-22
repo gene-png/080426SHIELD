@@ -21,11 +21,16 @@ interface FieldErrors {
  * the TS-side site — which is why this note sits here rather than only at the
  * new home. A reader sent here by the Python comment is one hop from the
  * constant, and the hop is the import at the top of this file. (Repointing the
- * Python docstring is NOT DONE and NOT FILED: `exceptions.py` is outside this
- * PR's territory, so the pointer goes to that file's owner. Said plainly
- * because this sentence read "is filed" — a status word with no output behind
- * it. `gh issue list --search SCHEMA_REASON_PREFIX` returns nothing, so a
- * reader could not have followed it.)
+ * Python docstring is NOT DONE HERE — `exceptions.py` is outside this PR's
+ * territory — and is tracked in **#393**.
+ *
+ * This clause has now been wrong in BOTH directions, which is the part worth
+ * keeping. It first read "is filed" while no issue existed: a status word
+ * carrying no output. It was then corrected to "NOT FILED", citing
+ * `gh issue list --search SCHEMA_REASON_PREFIX` returning nothing — and that
+ * same search returned #393 within the hour. A search result is a measurement
+ * with a timestamp, not a property, so quoting one as a standing fact about an
+ * open population goes stale exactly the way a count does. Cite the number.)
  *
  * It moved because the same prefix decides the same question for every
  * client-facing surface that goes through `serverReason`, which had no guard at
