@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, SendMessage
 model: opus
 ---
 
-## Before anything else: is your `CLAUDE.md` COMPLETE?
+## Step 0a — is your `CLAUDE.md` COMPLETE?
 
 **`CLAUDE.md` must end with the line `<!-- CLAUDE-MD-CANARY: v1 -->`. If the
 copy you received does not, IT IS TRUNCATED. Say so, name the last heading you
