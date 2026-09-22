@@ -50,7 +50,21 @@ export interface HomeDashboardProps {
   engagements: AssessmentResponse[];
   unreadMessages: number;
   valueSummary: ValueSummary | null;
+  /**
+   * Panels whose fetch FAILED, as opposed to returning nothing (#236).
+   *
+   * The page fetches four endpoints with `allSettled`, so one 500 no longer
+   * takes the whole page down. But a failed panel must not render as an EMPTY
+   * one: `[]`, `0` and `null` are claims about the client's account -- "you
+   * have no reports", "no unread messages" -- and making them from an error is
+   * the fail-open direction. Anything named here renders "could not load"
+   * instead of its empty state.
+   */
+  unavailable?: HomePanel[];
 }
+
+/** The independently-rendering panels of the client home page (#236). */
+export type HomePanel = "deliverables" | "engagements" | "messages" | "value";
 
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
@@ -213,7 +227,9 @@ export function HomeDashboard({
   engagements,
   unreadMessages,
   valueSummary,
+  unavailable = [],
 }: HomeDashboardProps): JSX.Element {
+  const down = new Set<HomePanel>(unavailable);
   // Which services already have a released report (drives the grid + hero).
   const releasedServiceIds = new Set(deliverables.map((d) => d.service_id));
   // Ordered released_at desc upstream, so [0] is the freshest report.
@@ -320,7 +336,18 @@ export function HomeDashboard({
       )}
 
       {/* Band 2.5: cross-service value loop (§2.5), only once data is released. */}
-      {valueSummary ? <ValueLoopCard summary={valueSummary} /> : null}
+      {down.has("value") ? (
+        <Card>
+          <CardBody>
+            <p className="text-sm text-ink-secondary">
+              Your value summary could not be loaded just now. Nothing is wrong
+              with your account — refresh to try again.
+            </p>
+          </CardBody>
+        </Card>
+      ) : valueSummary ? (
+        <ValueLoopCard summary={valueSummary} />
+      ) : null}
 
       {/* Band 3: services grouped by who owns the next move (C3). */}
       <section aria-labelledby="services-heading" className="space-y-6">
@@ -330,7 +357,12 @@ export function HomeDashboard({
         >
           Your services
         </h2>
-        {engagements.length === 0 ? (
+        {down.has("engagements") ? (
+          <EmptyState
+            title="Your engagements could not be loaded"
+            description="Nothing is wrong with your account — refresh to try again."
+          />
+        ) : engagements.length === 0 ? (
           <EmptyState
             title="No services yet"
             description="When you start an assessment, its progress will show up here."

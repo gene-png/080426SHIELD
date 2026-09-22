@@ -140,9 +140,30 @@ export function SignUpForm(): JSX.Element {
       // machine code, error.message is human-friendly copy. Map each reason to
       // the field it belongs to so the copy lands next to the offending input
       // (and never surfaces a raw "Request validation failed.").
-      const body = (await res.json()) as {
-        error?: { message?: string; reason?: string };
-      };
+      // PARSE DEFENSIVELY. This was a bare `await res.json()`.
+      //
+      // A non-JSON body -- a proxy's HTML error page, an empty 429, a gateway
+      // timeout -- made it throw, the async submit handler's promise rejected,
+      // and `setPending(false)` below never ran. The Create account button
+      // stayed disabled forever, with nothing on screen saying why, on the
+      // PUBLIC sign-up page: a user who hit it could not retry without
+      // reloading (#389).
+      //
+      // `json()` inside a `try`, NOT `text()` then `JSON.parse`. The recorded
+      // rule about reading a Response body once is about an error path that
+      // tries `json()` and then FALLS BACK to `text()` -- that throws "body
+      // stream already read" and the TypeError replaces the error being built.
+      // There is no fallback here, so one read is all that happens.
+      //
+      // The empty envelope is NOT a swallowed error: it routes to the `else`
+      // below, which renders plain-language copy, so the user sees a message
+      // and can retry. Throwing is what showed them nothing.
+      let body: { error?: { message?: string; reason?: string } } = {};
+      try {
+        body = (await res.json()) as typeof body;
+      } catch {
+        body = {};
+      }
       const reason = body.error?.reason;
       const message = body.error?.message;
       if (reason === "email_exists") {

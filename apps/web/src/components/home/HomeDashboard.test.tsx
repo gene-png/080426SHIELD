@@ -347,3 +347,50 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
     }
   });
 });
+
+describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
+  /**
+   * The page used to fetch four endpoints in one `Promise.all` with no `catch`,
+   * and there is no `error.tsx` anywhere under `apps/web/src/app` — so any one
+   * rejection took the WHOLE page down, including the client's released
+   * reports, which have nothing to do with the endpoint that failed.
+   *
+   * `allSettled` alone is only half the fix. Passing `[]` / `0` / `null` for a
+   * panel that ERRORED makes the page assert "you have no engagements" and
+   * "no unread messages" — claims about the client's account, made from a
+   * failure. Missing data defaults to UNCONFIRMED, never to confirmed.
+   */
+  it("says engagements could not be loaded instead of claiming there are none", () => {
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={[deliverable({})]}
+        engagements={[]}
+        unreadMessages={0}
+        valueSummary={null}
+        unavailable={["engagements"]}
+      />,
+    );
+
+    expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+    // The surviving panel still renders — the whole point of allSettled here.
+    expect(screen.queryByText(/no engagements yet/i)).toBeNull();
+  });
+
+  it("still claims nothing when engagements are genuinely empty", () => {
+    // The other half of the branch. Without this, a "fix" that renders the
+    // could-not-load copy unconditionally passes the test above and lies in
+    // the ordinary empty case.
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={[deliverable({})]}
+        engagements={[]}
+        unreadMessages={0}
+        valueSummary={null}
+      />,
+    );
+
+    expect(screen.queryByText(/could not be loaded/i)).toBeNull();
+  });
+});
