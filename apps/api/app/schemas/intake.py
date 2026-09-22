@@ -70,12 +70,20 @@ class ServiceRequestInput(BaseModel):
     notes: str | None = Field(default=None, max_length=4000)
     deadline: datetime | None = None
 
-    # Client-supplied assessment targets (validated against service_type in the
-    # submit route). Target tier/stage is 2-4: Tier/Stage 1 is the floor, so a
-    # client never "targets" it.
-    csf_target_tier: IntNotBool | None = Field(default=None, ge=2, le=4)
+    # Client-supplied assessment targets. RANGE IS DELIBERATELY NOT DECLARED
+    # HERE (#406) -- `routes/intake.py::_validate_targets` owns both ends, and
+    # `app/assessment_targets.py` carries the reason at length. The short
+    # version: a `ge`/`le` bound is refused by FastAPI's own handler as
+    # "Request validation failed." under a `schema_*` reason with no client
+    # copy behind it, on the surface where a client FIRST picks a target.
+    # It also cannot see `service_type`, and the ladders differ -- DoD ZTRA
+    # ends at Stage 3 where CISA ends at 4 (#125).
+    #
+    # `IntNotBool` is unaffected: it refuses `true` in a BeforeValidator, not
+    # as a side effect of a floor above zero. `_numeric.py` says so explicitly.
+    csf_target_tier: IntNotBool | None = None
     csf_profile: CsfProfile | None = None
-    zt_target_stage: IntNotBool | None = Field(default=None, ge=2, le=4)
+    zt_target_stage: IntNotBool | None = None
 
 
 class IntakeSubmitRequest(BaseModel):
@@ -172,9 +180,14 @@ class EngagementCreateRequest(BaseModel):
 
     service_type: ServiceType
     name: str | None = Field(default=None, max_length=255)
-    csf_target_tier: IntNotBool | None = Field(default=None, ge=2, le=4)
+    # Unbound for the reason given on `ServiceRequestInput` above. This route
+    # reaches the same guard by a different path -- it RECONSTRUCTS a
+    # `ServiceRequestInput` and hands it to `_validate_targets` -- so a bound
+    # left on one model and not the other refuses the same value in two
+    # different shapes depending on which endpoint the client reached.
+    csf_target_tier: IntNotBool | None = None
     csf_profile: CsfProfile | None = None
-    zt_target_stage: IntNotBool | None = Field(default=None, ge=2, le=4)
+    zt_target_stage: IntNotBool | None = None
 
 
 class EngagementResponse(BaseModel):

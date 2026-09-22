@@ -26,42 +26,48 @@
  *     CsfSelfAssessment                  catalog.tiers.filter(…)
  *     CsfWorkspace.normalizeTarget       the floor half of its range check
  *
- * **NOT wired, and these are where the client FIRST chooses a target** —
- * `lib/intake/types.ts` states the rule in prose ("Tier/Stage 1 is the floor,
- * so a client only ever targets 2-4") and then encodes it three more times as
- * DATA: `CSF_TARGET_TIERS` opens at `{ value: 2 }`, and both
- * `ZT_TARGET_STAGES` variants do the same. Tracked in **#406**.
+ * Also wired, since #406 — and these are where the client FIRST chooses a
+ * target, so they are the sites that matter most:
  *
- * Those escaped the sweep that produced this module because that sweep grepped
- * for a COMPARISON against a ladder noun, and **a floor expressed by omission
- * from an option list contains no comparison at all**. Worth knowing before
- * trusting any future sweep of this rule: it has to look for the number 2 used
- * as a lower bound however expressed, including by absence.
+ *     lib/intake/types.ts CSF_TARGET_TIERS   CSF_TIERS.filter(t => t.value >= …)
+ *     lib/intake/types.ts ZT_TARGET_STAGES   both variants, same filter
  *
- * ## The API mirrors this floor, in four places
+ * They encoded the floor by OMISSION — the arrays simply opened at
+ * `{ value: 2 }` — and escaped the sweep that produced this module because
+ * that sweep grepped for a COMPARISON against a ladder noun, and **a floor
+ * expressed by omission from an option list contains no comparison at all**.
+ * Worth knowing before trusting any future sweep of this rule: it has to look
+ * for the number 2 used as a lower bound however expressed, including by
+ * absence.
  *
- * **Stated because this docstring previously claimed the opposite**, and the
- * false claim was the load-bearing one: it read "nothing on the Python side
- * mirrors these values, so there is no cross-language window to keep closed".
- * Measured — `grep -rn 'ge=2' apps/api/app/schemas/intake.py`:
+ * ## The API carries its own copy of this floor
  *
- *     :76   csf_target_tier: … Field(default=None, ge=2, le=4)
- *     :78   zt_target_stage: … Field(default=None, ge=2, le=4)
- *     :175  csf_target_tier: … ge=2, le=4
- *     :177  zt_target_stage: … ge=2, le=4
+ * **Stated because this docstring once claimed the opposite**, and the false
+ * claim was the load-bearing one: it read "nothing on the Python side mirrors
+ * these values, so there is no cross-language window to keep closed". How that
+ * claim was produced is the useful part: `routes/zt.py` and `app/zt/scoring.py`
+ * were both read, and both are individually accurate — the route validates only
+ * against the framework's ladder and accepts stage 1, and the scoring module
+ * exports a default with no minimum. **A per-file check was then published as a
+ * system-wide negative**, which is the certificate-over-the-wrong-proposition
+ * shape: the commands proved something true and adjacent to the sentence they
+ * were cited for.
  *
- * How that claim was produced is the useful part: `routes/zt.py` and
- * `app/zt/scoring.py` were both read, and both are individually accurate —
- * the route validates only against the framework's ladder and accepts stage 1,
- * and the scoring module exports a default with no minimum. **A per-file check
- * was then published as a system-wide negative**, which is the
- * certificate-over-the-wrong-proposition shape: the commands proved something
- * true and adjacent to the sentence they were cited for.
+ * The window is real. As of #406 it is **one declaration wide** rather than
+ * four bounds wide: `apps/api/app/assessment_targets.py` is this file's Python
+ * mirror, and `routes/intake.py::_validate_targets` is the single place that
+ * compares against it. The four `Field(..., ge=2, le=4)` bounds that used to
+ * carry the rule are gone — they were refused as a raw `schema_*` 422, message
+ * `"Request validation failed."`, with no client copy behind it, on the surface
+ * where a client first picks a target.
  *
- * So there IS a cross-language window, it is four bounds wide, and lowering
- * the floor here without the other side is refused as a raw `schema_*` 422 —
- * message `"Request validation failed."`, no client copy behind it — on the
- * PUBLIC intake wizard. Tracked in **#406** with both halves.
+ * **What closes that window, and what it does not do.** Each language's own
+ * suite spells the number and names the other file in its failure message —
+ * `test_intake_target_floor.py` and `target-options-are-derived.test.ts`. So a
+ * unilateral change goes RED on the side that made it. It does NOT prove the
+ * two agree: neither container mounts the other's tree, so no test can read
+ * across. Tracked in **#422**; `SCHEMA_REASON_PREFIX` in
+ * `lib/describe-save-error.ts` settled the identical problem the same way.
  *
  * ## Why the constants live HERE rather than in a component
  *

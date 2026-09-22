@@ -24,7 +24,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.assessment_targets import MIN_TARGET_STAGE, MIN_TARGET_TIER
 from app.audit import audit
+from app.csf.maturity import TIER_DEFINITIONS
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.models._common import utcnow
@@ -97,6 +99,22 @@ def _validate_targets(item: ServiceRequestInput) -> None:
 
     The wizard gates this in the UI, but we re-check server-side so the
     target is never silently dropped (the consultant relies on it).
+
+    ## This owns the RANGE as well as the presence, since #406
+
+    The floor used to be a `Field(ge=2, le=4)` bound on the schema, which
+    FastAPI refuses with `"Request validation failed."` under a `schema_*`
+    reason -- a machine token `describe-save-error.ts` withholds by design, so
+    the client's intake wizard rendered a bare generic fallback. Both ends now
+    raise a typed `{reason, message}` detail (D-016) instead.
+
+    **Two causes per field, so two sentences.** `CLAUDE.md`: a guard's message
+    must name the CAUSE, not the check. Below the floor and above the ladder
+    are different mistakes -- Tier 1 exists and is not a target; Tier 5 is not
+    a tier -- and one message covering both tells a client only that something
+    was rejected. The REASON code stays one per field: it is a machine token
+    naming which value the client must change, and splitting it would give a
+    future value-test consumer two codes to handle for one control.
     """
     if item.service_type == ServiceType.NIST_CSF:
         if item.csf_target_tier is None or item.csf_profile is None:
@@ -104,20 +122,44 @@ def _validate_targets(item: ServiceRequestInput) -> None:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="NIST CSF requires a target tier and profile before submitting.",
             )
+        # `TIER_DEFINITIONS` is the ladder's authority; `MIN_TARGET_TIER` is
+        # the product rule. Neither number is restated here.
+        max_tier = len(TIER_DEFINITIONS)
+        if item.csf_target_tier < MIN_TARGET_TIER:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "reason": "csf_target_tier_out_of_range",
+                    "message": (
+                        f"Tier {item.csf_target_tier} is where an organization starts, "
+                        f"not a target to aim at. Choose Tier {MIN_TARGET_TIER} or higher."
+                    ),
+                },
+            )
+        if item.csf_target_tier > max_tier:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "reason": "csf_target_tier_out_of_range",
+                    "message": (
+                        f"NIST CSF 2.0 has tiers 1-{max_tier}; "
+                        f"{item.csf_target_tier} is not one of them."
+                    ),
+                },
+            )
     elif item.service_type in _ZT_SERVICE_TYPES:
         if item.zt_target_stage is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Zero Trust requires a target stage before submitting.",
             )
-        # RANGE, per framework. `ServiceRequestInput.zt_target_stage` is bound
-        # `ge=2, le=4` for both frameworks because a pydantic field constraint
-        # cannot see `service_type`, and DoD ZTRA ends at 3 -- so the schema
-        # admits a DoD Stage 4 and this is the only place that can refuse it
-        # ON THIS ROUTE. It is NOT the only writer of the stored value: the ZT
-        # self-assessment submit path writes it too and carries its own copy of
-        # this check. Said precisely because the first draft of this comment
-        # claimed to be the only door, which is the kind of true-sounding
+        # RANGE, per framework. A pydantic field constraint cannot see
+        # `service_type` and DoD ZTRA ends at 3 where CISA ends at 4, so this
+        # is the only place that can refuse a DoD Stage 4 ON THIS ROUTE. It is
+        # NOT the only writer of the stored value: the ZT self-assessment
+        # submit path writes it too and carries its own copy of this check.
+        # Said precisely because the first draft of this comment claimed to be
+        # the only door, which is the kind of true-sounding
         # narrower-than-you-assume sentence that ends the next reader's search
         # exactly where it should have started.
         #
@@ -126,8 +168,25 @@ def _validate_targets(item: ServiceRequestInput) -> None:
         # called that 3 the client's choice. `resolve_target_stage` now reports
         # such a value honestly instead, but reporting it is the second-best
         # outcome; refusing it at the door means it is never stored at all.
+        #
+        # The FLOOR arrived here with #406. It used to be the schema's `ge=2`,
+        # so this check opened at `1 <=` and a Stage 1 never reached it -- and
+        # a client who sent one got a `schema_*` dump where a DoD Stage 4 got
+        # client copy. Same field, same wizard, two shapes decided by how far
+        # out the value was.
         max_stage = level_count(_ZT_FRAMEWORK_BY_SERVICE[item.service_type])
-        if not 1 <= item.zt_target_stage <= max_stage:
+        if item.zt_target_stage < MIN_TARGET_STAGE:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "reason": "zt_target_stage_out_of_range",
+                    "message": (
+                        f"Stage {item.zt_target_stage} is where an organization starts, "
+                        f"not a target to aim at. Choose Stage {MIN_TARGET_STAGE} or higher."
+                    ),
+                },
+            )
+        if item.zt_target_stage > max_stage:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
