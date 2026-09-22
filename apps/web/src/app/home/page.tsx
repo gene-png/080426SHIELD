@@ -64,7 +64,7 @@ export default async function HomePage(): Promise<JSX.Element> {
   let unreadMessages = 0;
   let valueSummary: ValueSummary | null = null;
   if (clientId) {
-    // CONSIDERED AND LEFT, NOT OVERLOOKED -- tracked in #400.
+    // CONSIDERED AND LEFT, NOT OVERLOOKED -- tracked in #236.
     //
     // These four results render INDEPENDENTLY: `HomeDashboard` already has a
     // missing-value branch for each one. So by the predicate #395 established
@@ -78,6 +78,13 @@ export default async function HomePage(): Promise<JSX.Element> {
     // That is a copy decision, and #395 was scoped to durability. Recorded at
     // the site rather than only in a PR body, because an unstated exemption
     // reads as an oversight to whoever finds it next.
+    //
+    // This cited #400 for one commit. #400 was a DUPLICATE I filed of #236,
+    // which had existed for weeks carrying only `client-reaching` -- no tier,
+    // no `mvp-blocking` -- so it appeared in no board query and a search did
+    // not surface it. #236 is the live issue and is now tiered; #400 is closed.
+    // Repointed here rather than left, because a pointer into a closed
+    // duplicate is worse than none: it reads as tracked and leads nowhere.
     const [deliverableData, engagementData, inbox, summary] = await Promise.all(
       [
         apiFetch<ClientDeliverableListResponse>(
