@@ -179,6 +179,14 @@ export function CsfWorkspace({
   // WRITES and can be taken by a `refreshScoreAndGap` carrying an older tier.
   const targetReqSeq = React.useRef(0);
 
+  /**
+   * Monotonic order over every write to `gap`, whoever makes it. The ZT twin
+   * carries the reasoning: an unguarded stale success used to relabel the
+   * rows, and once the control was derived from them it discarded the
+   * consultant's tier selection in silence instead.
+   */
+  const gapWriteSeq = React.useRef(0);
+
   /** What the picker shows: a pure function of `(pendingTarget, gap)`. */
   const shownTier = pendingTarget ?? gap?.target_tier ?? targetTier;
 
@@ -237,6 +245,7 @@ export function CsfWorkspace({
       // the guard. Both are minted here, above `allSettled`.
       const scoreAttempt = beginRefresh("score");
       const gapAttempt = beginRefresh("gap");
+      const gapWrite = ++gapWriteSeq.current;
       const [scoreOutcome, gapOutcome] = await Promise.allSettled([
         fetchScore(serviceId),
         fetchGapAnalysis(serviceId, { targetTier: currentTarget }),
@@ -267,7 +276,8 @@ export function CsfWorkspace({
       // `Query(ge=, le=)` bounds -- it refuses with a typed reason instead --
       // so an integer from the tier picker cannot produce one.
       if (gapOutcome.status === "fulfilled") {
-        setGap(gapOutcome.value);
+        // A STALE SUCCESS IS DISCARDED, not written. See `gapWriteSeq`.
+        if (gapWrite === gapWriteSeq.current) setGap(gapOutcome.value);
         gapAttempt.clear();
       } else {
         gapAttempt.note(
@@ -483,11 +493,20 @@ export function CsfWorkspace({
       return;
     }
     const attempt = beginRefresh("gap-target");
+    const gapWrite = ++gapWriteSeq.current;
     try {
       const g = await fetchGapAnalysis(serviceId, { targetTier: next });
-      if (mine !== targetReqSeq.current) return; // a newer pick is being waited on
+      // ONE GUARD, NOT TWO. A `mine !== targetReqSeq.current` return sat
+      // above this and red-on-revert could not kill it: every newer pick
+      // bumps BOTH sequences, and a newer refresh bumps this one, so the
+      // ticket below already refuses everything the other refused. Deleted
+      // rather than kept as decoration -- the same unpinned-conditional shape
+      // this branch has now produced twice.
+      if (gapWrite !== gapWriteSeq.current) return; // a newer gap write won
+      // Nothing commits `targetTier` here: after a successful pick the only
+      // thing carrying the new tier is `gap`, which is what `shownTier`
+      // reads.
       setGap(g);
-      setTargetTier(next);
       attempt.clear();
     } catch (err) {
       // NO SEQUENCE CHECK HERE, and its absence is measured rather than
@@ -499,11 +518,15 @@ export function CsfWorkspace({
       // repo keeps finding, so it is deleted rather than left as decoration.
       // The `finally` below DOES check, because `setPendingTarget` is state
       // the token knows nothing about.
+      // Claims nothing about the screen -- see the ZT twin: a concurrent
+      // refresh can land the new tier's rows while this request fails, so
+      // "the selector has gone back" is false in a cell the truth table
+      // enumerates. What is true in every cell is that this request failed.
       const reason = serverReason(err);
       attempt.note(
         reason
-          ? `${reason} The selector has gone back to the tier these gap rows were computed for; pick a tier again to retry.`
-          : "Couldn't load gap rows for that target tier. The selector has gone back to the tier these gap rows were computed for; pick a tier again to retry.",
+          ? `${reason} Target tier ${next} could not be loaded; pick a tier again to retry.`
+          : `Couldn't load gap rows for target tier ${next}. Pick a tier again to retry.`,
       );
     } finally {
       if (mine === targetReqSeq.current) setPendingTarget(null);

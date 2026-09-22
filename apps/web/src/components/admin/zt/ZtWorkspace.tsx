@@ -234,13 +234,72 @@ export function ZtWorkspace({
   const targetReqSeq = React.useRef(0);
 
   /**
+   * MONOTONIC ORDER OVER EVERY WRITE TO `gap`, whoever makes it (#385 round 2).
+   *
+   * `refreshScoreAndGap`'s success path wrote `setGap` unguarded, so a slow
+   * refresh could land rows for an older target on top of newer ones. Before
+   * the control was derived, that produced a VISIBLE mislabel. After it, the
+   * label followed the stale rows down and the consultant's target selection
+   * was discarded in silence, with `gapAttempt.clear()` removing the only
+   * banner -- an end state byte-identical to "they picked the old target".
+   *
+   * That is strictly worse than the defect it came from IN THE DIMENSION THAT
+   * MATTERS: the old one could be seen. A trade like that does not get made
+   * in a test comment, so it is not made at all -- a stale write simply does
+   * not land.
+   *
+   * Deliberately NOT the `"gap"` refresh token: that token is per SOURCE and
+   * the picker owns a different source, so the two writers were never ordered
+   * against each other. This ticket is per WRITE and every writer takes one.
+   */
+  const gapWriteSeq = React.useRef(0);
+
+  /**
    * WHAT THE PICKER SHOWS. A pure function of `(pendingTarget, gap)`.
    *
-   * With nothing pending this IS `gap.target_stage`, so the control cannot
-   * name a target the rows on screen were not computed for -- the #385
-   * invariant, held by construction rather than by a write that has to fire.
-   * A failed change "reverts" by `pendingTarget` being withdrawn; there is no
-   * revert statement to get wrong.
+   * ## The invariant, stated at the width it actually holds
+   *
+   *     WHEN NOTHING IS PENDING, the control shows the rows' own target.
+   *
+   * and no wider. An earlier draft of this comment claimed "there is no
+   * window in which the label and the rows can disagree", which is FALSE:
+   * the PENDING window is exactly such a window, deliberately. The consultant
+   * picks 4, `pendingTarget` is 4, and the rows are still stage 2's until the
+   * fetch lands.
+   *
+   * That overstatement is the same shape that produced #385's reincarnation
+   * -- a sentence true of the cell its author was thinking about and false of
+   * the one they were not -- so it is corrected rather than softened.
+   *
+   * With nothing pending this IS `gap.target_stage`, so at rest the control
+   * cannot name a target the rows were not computed for. A failed change
+   * "reverts" by `pendingTarget` being withdrawn; there is no revert
+   * statement to get wrong.
+   *
+   * ## THE PENDING WINDOW IS LEFT UNMARKED, and that is a decision
+   *
+   * During it the screen reads new-label-over-old-rows, which is #385's own
+   * shape differing only in being brief and intended. It is left unmarked
+   * because the gap fetch is a single request behind a control the consultant
+   * just operated, so the window is the latency of one call and a marker
+   * would flicker on every pick. If that stops being true -- a slower
+   * endpoint, a batched fetch -- this is the decision to revisit, and the
+   * honest marker is on the ROWS ("showing stage N while stage M loads"),
+   * never on the control, because relabelling the control is the defect.
+   *
+   * ## What `targetStage` is doing at the end of the chain
+   *
+   * It is the COMMITTED target, written only by `initialLoad`,
+   * `onCreateAssessment` and `onDiscard` from the assessment's
+   * `client_target_stage` via `normalizeTarget`. It is reached only when
+   * `gap` is null -- before the first gap has ever loaded, or after a discard
+   * clears it. That state IS reachable: `initialLoad`'s gap fetch can fail,
+   * leaving no rows at all.
+   *
+   * So in that one state the control is NOT derived from rendered data, for
+   * the sufficient reason that there is none. It shows what was asked for,
+   * beside a gap panel that says it could not load; it does not name a target
+   * some OTHER rows were computed for, which is the thing #385 is about.
    *
    * `gap` before `targetStage` on purpose: once rows exist they are the truth
    * about what is displayed, and the committed value is only the answer
@@ -317,6 +376,7 @@ export function ZtWorkspace({
       // the guard. Both are minted here, above `allSettled`.
       const scoreAttempt = beginRefresh("score");
       const gapAttempt = beginRefresh("gap");
+      const gapWrite = ++gapWriteSeq.current;
       const [scoreOutcome, gapOutcome] = await Promise.allSettled([
         fetchScore(serviceId),
         fetchGapAnalysis(serviceId, { targetStage: currentTarget }),
@@ -349,7 +409,8 @@ export function ZtWorkspace({
       // `Query(ge=, le=)` bounds -- it refuses with a typed reason instead --
       // so an integer from `normalizeTarget` cannot produce one.
       if (gapOutcome.status === "fulfilled") {
-        setGap(gapOutcome.value);
+        // A STALE SUCCESS IS DISCARDED, not written. See `gapWriteSeq`.
+        if (gapWrite === gapWriteSeq.current) setGap(gapOutcome.value);
         gapAttempt.clear();
       } else {
         gapAttempt.note(
@@ -548,7 +609,8 @@ export function ZtWorkspace({
    *
    * Every cell is satisfied by the derivation above rather than by a branch
    * here, which is the point: `shownTarget` with nothing pending IS
-   * `gap.target_stage`, so no resting cell can disagree. The starred cell
+   * `gap.target_stage`, so no RESTING cell can disagree -- the pending row is
+   * a genuine disagreement and is the optimistic UI. The starred cell
    * degrades to (base, base) -- a stale refresh moves the label WITH its
    * rows, correct-but-stale instead of mislabelled.
    *
@@ -582,11 +644,21 @@ export function ZtWorkspace({
       return;
     }
     const attempt = beginRefresh("gap-target");
+    const gapWrite = ++gapWriteSeq.current;
     try {
       const g = await fetchGapAnalysis(serviceId, { targetStage: next });
-      if (mine !== targetReqSeq.current) return; // a newer pick is being waited on
+      // ONE GUARD, NOT TWO. A `mine !== targetReqSeq.current` return sat
+      // above this and red-on-revert could not kill it: every newer pick
+      // bumps BOTH sequences, and a newer refresh bumps this one, so the
+      // ticket below already refuses everything the other refused. Deleted
+      // rather than kept as decoration -- the same unpinned-conditional shape
+      // this branch has now produced twice.
+      if (gapWrite !== gapWriteSeq.current) return; // a newer gap write won
+      // NOTHING COMMITS `targetStage` HERE, and that is the point. After a
+      // successful pick the ONLY thing carrying the new target is `gap`, so
+      // `shownTarget` reads it from the rows rather than from a second copy
+      // that could disagree with them.
       setGap(g);
-      setTargetStage(next);
       attempt.clear();
     } catch (err) {
       // NO SEQUENCE CHECK HERE, and its absence is measured rather than
@@ -598,11 +670,18 @@ export function ZtWorkspace({
       // repo keeps finding, so it is deleted rather than left as decoration.
       // The `finally` below DOES check, because `setPendingTarget` is state
       // the token knows nothing about.
+      // THE MESSAGE CLAIMS NOTHING ABOUT THE SCREEN. It used to say the
+      // selector "has gone back to the stage these gap rows were computed
+      // for", which the truth table's own `A fails / B(next) succeeds` cell
+      // makes FALSE: a concurrent refresh can land the new target's rows
+      // while this request fails, leaving the selector on `next` under a
+      // warning saying it went back. What is true in every cell is that THIS
+      // REQUEST failed, so that is all it says.
       const reason = serverReason(err);
       attempt.note(
         reason
-          ? `${reason} The selector has gone back to the stage these gap rows were computed for; pick a stage again to retry.`
-          : "Couldn't load gap rows for that target stage. The selector has gone back to the stage these gap rows were computed for; pick a stage again to retry.",
+          ? `${reason} Target stage ${next} could not be loaded; pick a stage again to retry.`
+          : `Couldn't load gap rows for target stage ${next}. Pick a stage again to retry.`,
       );
     } finally {
       // WITHDRAWING THE PENDING VALUE *IS* THE REVERT. `shownTarget` falls

@@ -168,6 +168,23 @@ function deferredGap(): {
   return { promise, settled, resolve, reject };
 }
 
+/** The same tap, for the ACTION a refresh hangs off (`patchAnswer`). */
+function deferredRun(): {
+  promise: Promise<unknown>;
+  settled: Promise<string>;
+  resolve: (v: unknown) => void;
+} {
+  let resolve!: (v: unknown) => void;
+  const promise = new Promise<unknown>((res) => {
+    resolve = res;
+  });
+  const settled = promise.then(
+    () => "resolved",
+    () => "rejected",
+  );
+  return { promise, settled, resolve };
+}
+
 function baseMocks(): void {
   fetchCatalog.mockResolvedValue(CATALOG);
   // A REAL SHAPE, not `{}`. The workspace derives its per-subcategory prompt
@@ -237,8 +254,10 @@ describe("CsfWorkspace target tier is derived from the rows (#385)", () => {
     expect(screen.getByText("rows-computed-for-tier-2")).toBeInTheDocument();
     expect(screen.queryByText("rows-computed-for-tier-4")).toBeNull();
 
-    expect(note.textContent).toMatch(/gone back to the tier/i);
+    // Claims only what is true in every cell -- see the ZT twin.
+    expect(note.textContent).toMatch(/target tier 4/i);
     expect(note.textContent).toMatch(/pick a tier again/i);
+    expect(note.textContent).not.toMatch(/gone back/i);
     expect(note.textContent).not.toMatch(/unchanged/i);
     expect(note.textContent).not.toMatch(/reload/i);
     expect(note.textContent).not.toContain("fetch failed");
@@ -266,7 +285,7 @@ describe("CsfWorkspace target tier is derived from the rows (#385)", () => {
 
     expect(picker()).toHaveValue("2");
     expect(screen.getByText("rows-computed-for-tier-2")).toBeInTheDocument();
-    expect(note.textContent).toMatch(/gone back to the tier/i);
+    expect(note.textContent).toMatch(/target tier 4/i);
 
     await act(async () => {
       slow3.resolve(gapAt(3));
@@ -354,21 +373,16 @@ describe("CsfWorkspace target tier is derived from the rows (#385)", () => {
     expect(note.textContent).toContain(
       "target_tier=4 is not selectable for this assessment.",
     );
-    expect(note.textContent).toMatch(/gone back to the tier/i);
+    expect(note.textContent).toMatch(/target tier 4/i);
     expect(note.textContent).not.toContain("CSF proxy");
     expect(picker()).toHaveValue("2");
   });
 
-  it("keeps the control on the rows' target when a stale refresh relabels them", async () => {
-    // THE CELL THAT MAKES `gap?.target_tier` LOAD-BEARING. Found by mutation,
-    // not by reading: deleting that term from the derivation left the whole
-    // suite green here even after the ZT twin had been pinned -- the twin
-    // sweep catching a half-fix in the fix for #385.
-    //
-    // `refreshScoreAndGap`'s success branch writes `setGap(...)` with no
-    // supersession guard (a pre-existing site), so a slow refresh can land
-    // rows for an older tier after a newer tier's rows are on screen.
-    // Deriving the control from the rows moves the LABEL WITH the data.
+  it("discards a stale refresh rather than letting it relabel the rows", async () => {
+    // `gapWriteSeq`. See the ZT twin: an unguarded stale success used to
+    // relabel the rows, and once the control was derived from them it
+    // discarded the consultant's tier selection in silence instead. The stale
+    // write no longer lands.
     baseMocks();
     const stale2 = deferredGap();
     let tier2Calls = 0;
@@ -402,50 +416,46 @@ describe("CsfWorkspace target tier is derived from the rows (#385)", () => {
       expect(await stale2.settled).toBe("resolved");
     });
 
-    // THE INVARIANT, as a relationship rather than two constants: whatever
-    // rows are on screen, the control names THEIR tier.
-    expect(screen.getByText("rows-computed-for-tier-2")).toBeInTheDocument();
-    expect(screen.queryByText("rows-computed-for-tier-4")).toBeNull();
-    expect(picker()).toHaveValue("2");
+    // The consultant's selection SURVIVES, and the invariant still holds.
+    expect(screen.getByText("rows-computed-for-tier-4")).toBeInTheDocument();
+    expect(screen.queryByText("rows-computed-for-tier-2")).toBeNull();
+    expect(picker()).toHaveValue("4");
   });
 
   it("refreshes the target that is ON SCREEN, not the one its closure began with", async () => {
-    // WHAT `shownTierRef` IS FOR. `onAnswerUpdate` awaits `patchAnswer`
-    // before refreshing, so the tier it closed over belongs to the render the
-    // EDIT began in. The pick below is still pending when the edit lands, so
-    // the committed tier is 2 while the screen shows 4.
+    // ACTION FIRST, pick while it is in flight -- the order the ref exists
+    // for. The first version of this test picked first, so the closure and
+    // the ref agreed and it discriminated nothing (see the ZT twin).
     baseMocks();
-    const slow4 = deferredGap();
-    fetchGapAnalysis.mockImplementation(async (_id, opts) => {
-      const t = requestedTier(opts);
-      if (t === 4) return slow4.promise;
-      return gapAt(t);
-    });
-    vi.mocked(csfClient.patchAnswer).mockResolvedValue(
-      {} as unknown as Awaited<ReturnType<typeof csfClient.patchAnswer>>,
+    const slowPatch = deferredRun();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedTier(opts)),
+    );
+    vi.mocked(csfClient.patchAnswer).mockImplementation(
+      () => slowPatch.promise as never,
     );
 
     renderWorkspace("svc-385-csf-live-ref");
     await screen.findByText("rows-computed-for-tier-2");
 
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "edit an answer" }));
+    });
+
     await pick("4");
-    expect(picker()).toHaveValue("4");
+    await screen.findByText("rows-computed-for-tier-4");
 
     fetchGapAnalysis.mockClear();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "edit an answer" }));
+      slowPatch.resolve({});
+      expect(await slowPatch.settled).toBe("resolved");
     });
 
     const refreshed = fetchGapAnalysis.mock.calls.map(([, opts]) =>
       requestedTier(opts),
     );
     expect(refreshed.length).toBeGreaterThan(0);
-    expect(refreshed).not.toContain(2);
     expect(refreshed).toContain(4);
-
-    await act(async () => {
-      slow4.resolve(gapAt(4));
-      expect(await slow4.settled).toBe("resolved");
-    });
+    expect(refreshed).not.toContain(2);
   });
 });

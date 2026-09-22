@@ -79,17 +79,31 @@ import { describe, expect, it } from "vitest";
  * `async` line whose next token is a name and then an open paren, and it
  * comes back empty. The day one appears, its late mints go unreported.
  *
- * This paragraph previously named that as the ONLY remaining gap, while the
- * arrow branch still used a negated character class for its parameter list --
- * so `async (cb: () => void) => { ... }` matched nothing and was reported
- * clean. A "what is still invisible" section that is itself incomplete is
- * worse than none, because it is what a reader checks INSTEAD of reading the
- * pattern. Both branches are balanced now, and the list above is what is
- * left.
+ * THIS LIST IS A FLOOR, NOT A CENSUS, and it says so because the previous
+ * version closed with "the list above is what is left" -- a completeness
+ * claim, in the paragraph a reader checks INSTEAD of reading the pattern,
+ * and it was false. An adversarial pass named four more, all latent in this
+ * tree and none of them on the list:
  *
- * An unbalanced brace walk is no longer silent either: `unscannable` collects
- * those bodies and the suite asserts it is empty, so "I could not look" and
- * "nothing to complain about" stop sharing a branch.
+ *   - a GENERIC async arrow. `arrowBodyStart` wants `(` or an identifier
+ *     after `async`, so `async <T,>(x: T) => {}` yields no body.
+ *   - a declaration whose TYPE PARAMETERS contain a brace:
+ *     `async function f<T extends { a: 1 }>(...)` hits that `{` while
+ *     scanning for `(` and returns -1.
+ *   - `codeOnly` does not model REGEX LITERALS, so a quote or backtick
+ *     inside one opens a phantom string and blanks live code to spaces.
+ *   - `unscannable` detects only UNDER-closure. A body terminated EARLY by a
+ *     stray `}` -- which is exactly what that phantom string produces --
+ *     balances at the wrong place and is reported scannable, after which
+ *     `lateMints` reads a truncated body and reports it clean.
+ *
+ * Tracked rather than fixed here; adding them is a change to what this gate
+ * reports across four workspaces, and this PR is already carrying a reverted
+ * and rebuilt fix.
+ *
+ * An unbalanced brace walk is no longer silent, within that bound:
+ * `unscannable` collects those bodies and the suite asserts it is empty, so
+ * "I could not look" and "nothing to complain about" stop sharing a branch.
  */
 
 const ADMIN = join(process.cwd(), "src/components/admin");

@@ -226,6 +226,23 @@ function deferredGap(): {
   return { promise, settled, resolve, reject };
 }
 
+/** The same tap, for the ACTION a refresh hangs off (`runZtAi`). */
+function deferredRun(): {
+  promise: Promise<unknown>;
+  settled: Promise<string>;
+  resolve: (v: unknown) => void;
+} {
+  let resolve!: (v: unknown) => void;
+  const promise = new Promise<unknown>((res) => {
+    resolve = res;
+  });
+  const settled = promise.then(
+    () => "resolved",
+    () => "rejected",
+  );
+  return { promise, settled, resolve };
+}
+
 function baseMocks(): void {
   fetchCatalog.mockResolvedValue(CATALOG);
   fetchLatestAssessment.mockResolvedValue(draftAtStage2());
@@ -300,8 +317,15 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     // a control that works. It used to say "unchanged" -- false in the
     // two-picker cell below -- and "Reload to try again", but a reload
     // re-reads `client_target_stage` and so retries a DIFFERENT target.
-    expect(note.textContent).toMatch(/gone back to the stage/i);
+    // THE COPY CLAIMS ONLY WHAT IS TRUE IN EVERY CELL: that THIS REQUEST
+    // failed. It used to assert the selector "has gone back", which the
+    // `A fails / B(next) succeeds` cell makes false, and before that that the
+    // target was "unchanged", which the two-pick cell makes false. It names
+    // the stage that failed and a control that works -- not "Reload", which
+    // re-reads `client_target_stage` and so retries a DIFFERENT target.
+    expect(note.textContent).toMatch(/target stage 4/i);
     expect(note.textContent).toMatch(/pick a stage again/i);
+    expect(note.textContent).not.toMatch(/gone back/i);
     expect(note.textContent).not.toMatch(/unchanged/i);
     expect(note.textContent).not.toMatch(/reload/i);
     expect(note.textContent).not.toContain("fetch failed");
@@ -335,7 +359,7 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     // 3 never landed and 4 failed, so the rows are still stage 2's.
     expect(picker()).toHaveValue("2");
     expect(screen.getByText("rows-computed-for-stage-2")).toBeInTheDocument();
-    expect(note.textContent).toMatch(/gone back to the stage/i);
+    expect(note.textContent).toMatch(/target stage 4/i);
 
     // And the late stage-3 response must not resurrect stage 3 either.
     await act(async () => {
@@ -436,28 +460,26 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     expect(note.textContent).toContain(
       "dod_ztra has stages 1-3; target_stage=4 is not one of them.",
     );
-    expect(note.textContent).toMatch(/gone back to the stage/i);
+    expect(note.textContent).toMatch(/target stage 4/i);
     // Never the internal label the proxy class puts in its own `message`.
     expect(note.textContent).not.toContain("ZT proxy");
     expect(picker()).toHaveValue("2");
   });
 
-  it("keeps the control on the rows' target when a stale refresh relabels them", async () => {
-    // THE CELL THAT MAKES `gap?.target_stage` LOAD-BEARING, and it was found
-    // by mutation rather than by reading: deleting that term from the
-    // derivation left the entire suite green, which is the #72 shape inside
-    // the fix for #385.
+  it("discards a stale refresh rather than letting it relabel the rows", async () => {
+    // `gapWriteSeq`, and the round-2 finding that produced it.
     //
-    // It defends a LIVE path. `refreshScoreAndGap`'s success branch writes
-    // `setGap(...)` WITHOUT a supersession guard (an adversarial finding, and
-    // a pre-existing site), so a slow refresh can land rows for an older
-    // target after a newer target's rows are already on screen. Deriving the
-    // control from the rows means that write moves the LABEL WITH the data --
-    // correct-but-stale rather than mislabelled, which is the whole ruling.
+    // `refreshScoreAndGap`'s success branch wrote `setGap(...)` with no
+    // ordering guard. Before the control was derived from the rows that was a
+    // VISIBLE mislabel. After it, the label followed the stale rows down and
+    // the consultant's selection vanished in silence -- an end state
+    // byte-identical to "they picked 2", with `gapAttempt.clear()` removing
+    // the only banner. A fix that makes a defect invisible is worse than the
+    // defect, so the stale write no longer lands at all.
     //
     // Sequence: Run AI refreshes for the current target (2) and hangs; the
-    // consultant picks 4 and it succeeds; the stale stage-2 response then
-    // lands through the unguarded write.
+    // consultant picks 4 and it succeeds; the stale stage-2 response arrives
+    // last and must be thrown away.
     baseMocks();
     const stale2 = deferredGap();
     let stage2Calls = 0;
@@ -492,11 +514,11 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
       expect(await stale2.settled).toBe("resolved");
     });
 
-    // THE INVARIANT, asserted as a relationship rather than as two constants:
-    // whatever rows are on screen, the control names THEIR target.
-    expect(screen.getByText("rows-computed-for-stage-2")).toBeInTheDocument();
-    expect(screen.queryByText("rows-computed-for-stage-4")).toBeNull();
-    expect(picker()).toHaveValue("2");
+    // The consultant's selection SURVIVES, and the invariant still holds:
+    // the control names the target of the rows beneath it.
+    expect(screen.getByText("rows-computed-for-stage-4")).toBeInTheDocument();
+    expect(screen.queryByText("rows-computed-for-stage-2")).toBeNull();
+    expect(picker()).toHaveValue("4");
   });
 
   it("refreshes the target that is ON SCREEN, not the one its closure began with", async () => {
@@ -508,42 +530,51 @@ describe("ZtWorkspace target stage is derived from the rows (#385)", () => {
     // from the rows, drags the selector back down with it -- silently undoing
     // a selection the consultant made while the action was in flight.
     //
-    // Here the pick is still PENDING when Run AI fires, so the committed
-    // `targetStage` is still 2 while the screen shows 4. Reading the ref is
-    // the only way to refresh 4.
+    // THE ORDER MATTERS AND THE FIRST VERSION OF THIS TEST HAD IT BACKWARDS.
+    // It picked 4 and THEN clicked Run AI, so the click's handler was built in
+    // a render where `shownTarget` was already 4 -- closure and ref agreed,
+    // and swapping the ref for the plain render-scope value left the suite
+    // green. It discriminated the ref from `targetStage` and from nothing
+    // else. Found by adversarial review, and it is the reason red-on-revert
+    // is not sufficient on its own: it proves a test CAN fail, never that it
+    // fails for the reason its name gives.
+    //
+    // The order the ref exists for is ACTION FIRST, pick while it is in
+    // flight: `onRunAi` awaits `runZtAi`, and only then reads a target.
     baseMocks();
-    const slow4 = deferredGap();
-    fetchGapAnalysis.mockImplementation(async (_id, opts) => {
-      const t = requestedStage(opts);
-      if (t === 4) return slow4.promise;
-      return gapAt(t);
-    });
-    vi.mocked(ztClient.runZtAi).mockResolvedValue(
-      {} as unknown as Awaited<ReturnType<typeof ztClient.runZtAi>>,
+    const slowRun = deferredRun();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) =>
+      gapAt(requestedStage(opts)),
+    );
+    vi.mocked(ztClient.runZtAi).mockImplementation(
+      () => slowRun.promise as never,
     );
 
     renderWorkspace("svc-385-zt-live-ref");
     await screen.findByText("rows-computed-for-stage-2");
 
-    await pick("4");
-    // The pick is in flight: the control shows 4, nothing is committed yet.
-    expect(picker()).toHaveValue("4");
-
-    fetchGapAnalysis.mockClear();
+    // 1. The action starts. Its closure captured stage 2.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    });
+
+    // 2. The consultant picks 4 WHILE it is in flight, and that lands.
+    await pick("4");
+    await screen.findByText("rows-computed-for-stage-4");
+
+    // 3. The action resolves and refreshes. It must ask for 4, not for the 2
+    //    its closure began with.
+    fetchGapAnalysis.mockClear();
+    await act(async () => {
+      slowRun.resolve({});
+      expect(await slowRun.settled).toBe("resolved");
     });
 
     const refreshed = fetchGapAnalysis.mock.calls.map(([, opts]) =>
       requestedStage(opts),
     );
     expect(refreshed.length).toBeGreaterThan(0);
-    expect(refreshed).not.toContain(2);
     expect(refreshed).toContain(4);
-
-    await act(async () => {
-      slow4.resolve(gapAt(4));
-      expect(await slow4.settled).toBe("resolved");
-    });
+    expect(refreshed).not.toContain(2);
   });
 });
