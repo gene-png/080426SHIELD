@@ -473,20 +473,18 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   // `hasName` decides what to CALL the org; `hasIntakeData` decides whether
   // there is anything to SHOW.
   const hasName = c !== null && isNamedOrg(c.legal_name);
-  // DERIVED from what the card renders, not enumerated beside it. The first
-  // version of this predicate listed eight fields while the card's Address row
-  // renders six of its own, and `address_line2`, `state` and `postal_code` were
-  // in the row and not in the list -- so a client who typed only a postal code
-  // still got "No client intake yet" printed over it. `Step2Organization` saves
-  // every one of these independently on blur, so each is reachable alone.
+  const filled = (v: string | null | undefined): boolean =>
+    typeof v === "string" && v.trim().length > 0;
+
+  // ONE list, rendered by the card AND tested by the predicate. Adding a row
+  // here joins both, which is what "derived" has to mean to be worth claiming.
   //
-  // `addressParts` is the single source both use: the predicate asks whether
-  // any part is present, the row joins the same array. They cannot diverge
-  // again, which listing the names a second time is exactly how they did.
-  //
-  // `.trim()` rather than `Boolean`, matching `hasContext` below: a
-  // whitespace-only website is not intake data, and the bare-truthy version
-  // showed "In progress -- not yet submitted" over nothing.
+  // The previous version said "DERIVED from what the card renders" while six
+  // of its eight terms were a second enumeration sitting beside the card's own
+  // `row(...)` calls -- so the claim was true of `addressParts` and false of
+  // the rest, in the comment a reader checks before deciding not to update it.
+  // Three fields (`address_line2`, `state`, `postal_code`) had already been
+  // lost that way once.
   const addressParts = c
     ? [
         c.address_line1,
@@ -497,18 +495,46 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
         c.country,
       ]
     : [];
-  const filled = (v: string | null | undefined): boolean =>
-    typeof v === "string" && v.trim().length > 0;
+  const cardRows: Array<[string, string | null]> = c
+    ? [
+        [
+          "Legal name",
+          isNamedOrg(c.legal_name) ? orgDisplayName(c.legal_name) : null,
+        ],
+        ["DBA / Trade name", c.dba_name],
+        ["Website", c.website],
+        ["Headcount band", c.size_band],
+        ["Industry", c.industry],
+        ["Address", addressParts.filter(filled).join(", ") || null],
+        ["Systems and context", c.prompting_context],
+      ]
+    : [];
+
+  // NOT everything the client can enter is on the card, so the predicate is
+  // `cardRows` PLUS the fields that are stored, are reachable alone, and have
+  // no row of their own:
+  //
+  //   * `service_interests` -- Step 1, the FIRST thing a client picks;
+  //   * `primary_contact_*` -- Step 3's "I am not the primary contact"
+  //     override, written one field per blur by `Step3Contact.saveOverride`.
+  //
+  // Both were missing. The pill read "No intake started" over a stored contact
+  // name, which is a claim about whether intake BEGAN and was simply false.
+  // They are listed rather than derived because nothing renders them here; if
+  // the card ever gains a Contact row, move them into `cardRows`.
+  const contactParts = c
+    ? [
+        c.primary_contact_name,
+        c.primary_contact_email,
+        c.primary_contact_title,
+        c.primary_contact_phone,
+      ]
+    : [];
   const hasIntakeData =
     c !== null &&
-    (isNamedOrg(c.legal_name) ||
-      filled(c.dba_name) ||
-      filled(c.website) ||
-      filled(c.size_band) ||
-      filled(c.industry) ||
-      filled(c.prompting_context) ||
-      (c.service_interests?.length ?? 0) > 0 ||
-      addressParts.some(filled));
+    (cardRows.some(([, v]) => filled(v)) ||
+      contactParts.some(filled) ||
+      (c.service_interests?.length ?? 0) > 0);
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
@@ -584,17 +610,14 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
           </CardHeader>
           <CardBody>
             <dl>
+              {/* The same `cardRows` the predicate above tests -- one list,
+                  so a row cannot exist without the predicate seeing it. Legal
+                  name renders its label for an unnamed org rather than
+                  disappearing, which is why it is re-read here. */}
               {row("Legal name", orgDisplayName(c.legal_name))}
-              {row("DBA / Trade name", c.dba_name)}
-              {row("Website", c.website)}
-              {row("Headcount band", c.size_band)}
-              {row("Industry", c.industry)}
-              {row(
-                "Address",
-                // Same `addressParts` the predicate above tests -- one list.
-                addressParts.filter(filled).join(", ") || null,
-              )}
-              {row("Systems and context", c.prompting_context)}
+              {cardRows.slice(1).map(([label, value]) => (
+                <React.Fragment key={label}>{row(label, value)}</React.Fragment>
+              ))}
             </dl>
           </CardBody>
         </Card>

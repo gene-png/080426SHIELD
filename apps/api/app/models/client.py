@@ -33,20 +33,38 @@ class Client(UUIDPKMixin, TimestampMixin, Base):
     # because a registration form collects a person and an email address and
     # neither is the name of a company. It leaves this column NULL.
     #
-    # That is the RULE. For the actual writer set, run the predicate rather than
-    # trusting a list here, because the list was written out twice and was wrong
-    # both times (it missed `scripts/seed_demo.py`):
+    # That is the RULE. THE WRITERS ARE A LIST, and the previous version of
+    # this comment called it a grep, which made it worse. It published
+    # `grep -rn "legal_name\s*=" --include=*.py apps/api scripts | grep -v ==`
+    # on the reasoning that a hand list had been wrong twice. Measured: that
+    # pattern returns ZERO hits in `routes/intake.py` -- the main user-input
+    # writer, which goes through `setattr(client, field, value)` and
+    # `data["legal_name"] = ...` -- and it searched the repo-root `scripts/`
+    # rather than `apps/api/scripts/`, so it missed `seed_demo.py` too, the
+    # exact omission it was published to fix.
     #
-    #     grep -rn "legal_name\s*=" --include=*.py apps/api scripts | grep -v ==
+    # Four writers, and only two are a human naming an org:
+    #
+    #   routes/admin.py        an admin types it       -> strips, refuses empty
+    #   routes/intake.py       the client types it     -> strips, "" -> NULL
+    #   routes/auth.py         self-serve provisioning -> writes NULL
+    #   scripts/seed_demo.py   a trimmed demo literal
+    #
+    # No regex covers `setattr` or a dict key, so re-derive by READING every
+    # `Client(` construction and every assignment into this column. A pattern
+    # blind to two of the four forms is a list wearing a grep, and it ends the
+    # check that would have caught it.
     #
     # Every writer that takes user input normalises before it lands, so a name
     # stored FROM D-080 ONWARD is NULL or non-empty and trimmed. That is a
     # write-time invariant and it does not reach backwards: `ClientProfilePatch`
     # has no validator, so a pre-D-080 `PATCH /intake` could store `"   "`, and
     # migration 0049 does not NULL it (its predicates match a domain, a display
-    # name, or the old sentinel -- not whitespace). Read-side guards therefore
-    # still `.strip()`; an invariant enforced at every writer says nothing about
-    # rows that predate the enforcement.
+    # name, or the old sentinel -- not whitespace). Migration 0050 clears those
+    # rows. Read-side guards still `.strip()`, and every surface that PRINTS the
+    # name goes through `app/client_naming.py` -- a bare `or "Client"` is
+    # satisfied by "   ", which is how a blank reached the organisation line of
+    # a client's deliverable while the admin UI called the same row unnamed.
     #
     # The column is the condition. Every guard that needs "has this org been
     # named" tests `legal_name` itself rather than a sentinel string or a second

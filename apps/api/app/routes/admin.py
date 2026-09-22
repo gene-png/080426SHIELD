@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.ai import keystore
 from app.audit import audit
+from app.client_naming import org_display_name
 from app.config import get_settings
 from app.db.session import get_db
 from app.dependencies import current_client, require_role
@@ -699,12 +700,16 @@ def fulfill_service_request(
 
     client = db.get(Client, sr.client_id)
     # Two different absences, one fallback: no client row at all, and a client
-    # nobody has named yet (D-080, `legal_name` NULL). Both mean "we have no org
-    # name to title this service with", and the service title is consultant-
-    # facing text rather than a claim about the client, so "Client" is the
-    # honest filler for each. Written as `or` rather than a second branch
-    # because distinguishing them here would change nothing.
-    org = (client.legal_name if client is not None else None) or "Client"
+    # nobody has named yet (D-080, `legal_name` NULL or blank). Both mean "we
+    # have no org name to title this service with", and the service title is
+    # consultant-facing text rather than a claim about the client, so the
+    # fallback is the honest filler for each.
+    #
+    # `org_display_name` rather than a bare `or`: a bare `or` is satisfied by
+    # `"   "`, which titled the workspace with three spaces where the client's
+    # name belongs. Same call the five exporters make, so this surface and the
+    # deliverables cannot disagree about what "unnamed" looks like.
+    org = org_display_name(client.legal_name if client is not None else None)
     svc = Service(
         kind=ServiceKind(sr.service_type.value),
         status=ServiceStatus.IN_PROGRESS,

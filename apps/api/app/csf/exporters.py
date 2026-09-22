@@ -30,6 +30,7 @@ from app.csf.scoring import ScoreResult
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
+from app.client_naming import org_display_name
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 
 
@@ -55,7 +56,7 @@ def build_context(
     gap: GapAnalysis,
 ) -> CsfDeliverableContext:
     return CsfDeliverableContext(
-        client_legal_name=client_legal_name or "Client",
+        client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         assessment=assessment,
         answers=list(answers),

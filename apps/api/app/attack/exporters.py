@@ -21,6 +21,7 @@ from app.attack.analytics import CoverageRollup
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
 from app.attack.coverage import CoverageStatus, coverage_label
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.client_naming import org_display_name
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
 if TYPE_CHECKING:
@@ -53,7 +54,7 @@ def build_context(
 ) -> AttackDeliverableContext:
     rows = list(coverage)
     return AttackDeliverableContext(
-        client_legal_name=client_legal_name or "Client",
+        client_legal_name=org_display_name(client_legal_name),
         service_title=service_title,
         assessment=assessment,
         coverage=rows,

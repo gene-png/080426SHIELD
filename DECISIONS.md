@@ -5011,11 +5011,13 @@ merely narrow.
 
 Error direction: a false positive surfaces immediately as "(pending intake)" on
 an admin screen -- but **CORRECTED: there is nowhere to retype it.** No route in
-`routes/admin.py` updates an existing client's `legal_name`; the only writers are
-admin CREATE, `auth.py`'s NULL, and the tenant's own intake wizard. A wrongly
+`routes/admin.py` updates an existing client's `legal_name`; the writers are
+admin CREATE, `auth.py`'s NULL, the tenant's own intake wizard, and
+`scripts/seed_demo.py` — four, not the three first named here. None is an admin
+editing an existing row, so the conclusion holds and the enumeration did not. A wrongly
 NULLed row is recoverable only by that tenant running the wizard, and the
 sentence that said otherwise was what licensed accepting the risk. The missing
-admin edit path is filed, not built here. A false negative leaves the
+admin edit path is tracked in #449, not built here. A false negative leaves the
 pre-existing defect for that one tenant and is not made worse. Only the second
 is silent, and it is the status quo.
 

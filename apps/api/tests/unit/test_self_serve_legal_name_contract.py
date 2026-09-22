@@ -319,3 +319,49 @@ def test_provisioning_accepts_an_explicit_title_without_an_org_name() -> None:
         "the guard fired despite an explicit title; a named engagement does not "
         "need an org name to build its title"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unnamed", [None, "", "   ", "\t\n "])
+def test_every_exporter_renders_the_fallback_for_a_blank_name(unnamed: str | None) -> None:
+    """The TWIN sweep: all five services, not the one the finding named.
+
+    Each `build_context` resolved the organisation line with a bare
+    `client_legal_name or "Client"` -- five byte-identical copies of the same
+    expression, which is why they were all wrong together. A blank name is
+    truthy, so it skipped the fallback and rendered EMPTY where the client's
+    name belongs.
+
+    This asserts the shared resolution rather than each exporter's full
+    context, because the five signatures differ and the defect was never in
+    the signatures: it was in the one expression they each copied. The
+    `build_context`-level assertion lives in `test_attack_exporters.py`, so the
+    wiring is covered through a real exporter too -- this is the claim that the
+    other four agree with it.
+    """
+    from app.client_naming import org_display_name
+
+    assert org_display_name(unnamed) == "Client"
+
+
+@pytest.mark.unit
+def test_every_exporter_calls_the_shared_resolver() -> None:
+    """The five services agree because they CALL one function, not copy it.
+
+    `CLAUDE.md`: a claim that two surfaces agree is enforced by calling the
+    same code, never by writing it twice. Asserting the call sites is what
+    stops a sixth copy of `or "Client"` reappearing in one service and being
+    correct everywhere it was checked.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "app"
+    for service in ("csf", "zt", "attack", "risk", "tech_debt"):
+        src = (root / service / "exporters.py").read_text(encoding="utf-8")
+        assert "org_display_name(client_legal_name)" in src, (
+            f"{service}/exporters.py no longer routes the organisation line through "
+            f"org_display_name; a bare `or` there is satisfied by whitespace"
+        )
+        assert (
+            'client_legal_name or "Client"' not in src
+        ), f'{service}/exporters.py has a bare `or "Client"` again'

@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.client_naming import org_display_name
 from app.risk.engine import (
     IMPACT_ORDER,
     LIKELIHOOD_ORDER,
@@ -82,7 +83,7 @@ def build_context(
     link_scope: Sequence[tuple[str, int, int]] = (),
 ) -> RiskExportContext:
     return RiskExportContext(
-        client_legal_name=client_legal_name or "Client",
+        client_legal_name=org_display_name(client_legal_name),
         version=version,
         entries=list(entries),
         link_scope=tuple(link_scope),

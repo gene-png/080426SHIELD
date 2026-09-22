@@ -252,9 +252,12 @@ def _apply_patch_to_client(client: Client, patch: IntakePatchRequest) -> None:
         # ONE representation of "unnamed" -- the NULL -- and one rendering of
         # it. A whitespace-only name breaks that: it is falsy to nobody, so the
         # submit guard passes it, the workspace title becomes "   — NIST CSF
-        # 2.0 Assessment", and every exporter's `client_legal_name or "Client"`
-        # sees a truthy value and renders a BLANK organisation line on the
-        # client's DOCX/PDF/XLSX. Meanwhile the admin UI shows "(pending
+        # 2.0 Assessment", and -- until the follow-up to #254 -- every
+        # exporter's `client_legal_name or "Client"` saw a truthy value and
+        # rendered a BLANK organisation line on the client's DOCX/PDF/XLSX.
+        # Those six readers now call `org_display_name`, and migration 0050
+        # normalises the rows that already hold blanks; this normaliser is
+        # still what keeps new ones from being written. Meanwhile the admin UI shows "(pending
         # intake)" for the same row, because `isNamedOrg` trims and this did
         # not -- two definitions of "named" that disagree.
         #
@@ -376,6 +379,11 @@ def submit_intake(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Organization legal name is required to submit intake.",
         )
+    # The guard tested the STRIPPED value; everything below uses it, so a
+    # legacy "  Acme  " does not reach a workspace title or an admin
+    # notification with its padding. Guarding on one form and using another is
+    # the same split this branch just closed at the exporters.
+    org_name = (body.client.legal_name or "").strip()
 
     _apply_patch_to_client(
         client,
@@ -425,7 +433,7 @@ def submit_intake(
         kind = ServiceKind(sr.service_type.value)
         if kind in existing_kinds:
             continue
-        provision_self_assessment_service(db, sr, org_name=client.legal_name, actor_user_id=user.id)
+        provision_self_assessment_service(db, sr, org_name=org_name, actor_user_id=user.id)
         existing_kinds.add(kind)
 
     client.intake_completed_at = utcnow()
@@ -451,7 +459,7 @@ def submit_intake(
         role=UserRole.ADMIN,
         event_type="intake.submitted",
         title="New intake submitted",
-        body=(f"{client.legal_name} requested: {services_label}. " "Review in the admin queue."),
+        body=(f"{org_name} requested: {services_label}. " "Review in the admin queue."),
         link="/admin/queue",
     )
 
@@ -644,10 +652,34 @@ def create_engagement(
     # next call -- an untyped 500 six lines below a typed 422, against core
     # principle 2. The strip turns that back into the 422 the client should get.
     #
-    # THE WRITER SET IS A GREP, NOT A LIST -- it was enumerated here twice and
-    # was wrong both times (it missed `scripts/seed_demo.py`):
+    # THE WRITERS ARE A LIST, AND IT IS A LIST. The previous version of this
+    # comment published a grep instead, on the reasoning that a list had been
+    # wrong twice -- and the grep was wrong in a worse way. Measured: it returns
+    # ZERO hits in THIS FILE, because `_apply_patch_to_client` writes through
+    # `setattr(client, field, value)` and normalises via
+    # `data["legal_name"] = ...`, neither of which the pattern can match. It
+    # also searched the repo-root `scripts/`, not `apps/api/scripts/`, so it
+    # missed `seed_demo.py` too -- the very omission it was published to fix --
+    # while padding the result with ~90 non-writers (test fixtures, exporter
+    # kwargs, the migration's own SQL).
     #
-    #     grep -rn "legal_name\s*=" --include=*.py apps/api scripts | grep -v ==
+    # A writer of this column can be `Client(legal_name=...)`, `obj.legal_name =
+    # ...`, `setattr(obj, field, ...)` or a dict key, and NO pattern covers the
+    # last two. So the honest form is an enumeration that admits it is one:
+    #
+    #   * `routes/admin.py`      create-client, `body.legal_name.strip()`
+    #   * `routes/auth.py`       self-serve provisioning, writes None
+    #   * `_apply_patch_to_client` (this file)  `raw.strip() or None`
+    #   * `scripts/seed_demo.py` a trimmed literal
+    #
+    # Re-derive it by reading every construction of `Client(` and every
+    # assignment reaching this column, not by trusting the list or a regex:
+    #
+    #     grep -rn "Client(\|legal_name" --include=*.py apps/api | grep -v "=="
+    #
+    # -- which over-reports and must be READ, which is the trade a pattern that
+    # cannot see `setattr` forces. CLAUDE.md: running a command proves what it
+    # returns, never what it cannot see; doubt the command first.
     #
     # The general shape, which is the part worth keeping: an invariant enforced
     # at every WRITER still does not hold for rows that predate the enforcement.
@@ -658,6 +690,8 @@ def create_engagement(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Complete your organization profile in intake before starting an engagement.",
         )
+    # Stripped, for the same reason as `submit_intake` above.
+    org_name = (client.legal_name or "").strip()
 
     # Reuse the submit-time target validation (CSF needs tier+profile, ZT a stage).
     _validate_targets(
@@ -685,7 +719,7 @@ def create_engagement(
     svc = provision_self_assessment_service(
         db,
         sr,
-        org_name=client.legal_name,
+        org_name=org_name,
         actor_user_id=user.id,
         title=body.name,
     )
@@ -703,7 +737,7 @@ def create_engagement(
         role=UserRole.ADMIN,
         event_type="engagement.created",
         title="New engagement started",
-        body=f"{client.legal_name} started: {svc.title}. Review in the admin queue.",
+        body=f"{org_name} started: {svc.title}. Review in the admin queue.",
         link="/admin/queue",
     )
 

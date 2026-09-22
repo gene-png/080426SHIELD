@@ -136,9 +136,12 @@ not exist. It said a wrongly-NULLed row "is cleared by retyping the name". There
 is NOWHERE to retype it. Measured against `routes/admin.py`: the routes are
 `POST /clients`, `POST /clients/{cid}/domains`, `PATCH /users/{user_id}`,
 `POST /service-requests/{id}/fulfill` and `POST /llm-key` -- **no route updates
-an existing client's `legal_name`**. The only writers are admin CREATE,
-`Client(legal_name=None)` in `routes/auth.py`, and `_apply_patch_to_client`,
-which is the tenant's OWN intake wizard.
+an existing client's `legal_name`**. The writers are admin CREATE,
+`Client(legal_name=None)` in `routes/auth.py`, `_apply_patch_to_client` (the
+tenant's OWN intake wizard), and `scripts/seed_demo.py` -- four, not the three
+this paragraph first named. None of them is an admin editing an existing row,
+so the conclusion stands; the enumeration did not, which is the same omission
+`models/client.py` records the list getting wrong twice before.
 
 So a false positive -- an admin-named row whose typed name equalled its mapped
 domain, with no intake -- is NULLed by this upgrade and **no admin can put it
@@ -148,7 +151,7 @@ Until then five exporters print "Client" on the organisation line and
 
 That correction matters more than the risk it describes: the sentence was what
 licensed accepting the backfill's false-positive risk, and it was false. A
-missing admin edit path is a product gap and is filed rather than built here.
+missing admin edit path is a product gap, tracked in #449 rather than built here.
 
 A false negative (a self-serve row left named) leaves the pre-existing defect in
 place for that one tenant and is not made worse by this migration. Both
