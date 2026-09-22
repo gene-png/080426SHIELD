@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-09 (#237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-21 (status correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 9, 11 and 12 — item 9 included, because its "Remaining from the original seven" line named #115, #46 and #109, every one of which had landed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and the export/publish half it is NAMED after has shipped nothing and owns no issue; item 6 has F10 left, which owns no issue; item 9 has #185 and #194, neither with a live client-facing defect. Those rows — and only those — now cite landed code rather than issue state: rows 0 through 5a, 9a and 10 still rest on a PR number and a merge date, which is said here because a sentence quantifying over the table would tell the next reader the check has been done everywhere. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged; the live `mvp-blocking` blockers own no item; F10 needs filing; and #185's label should move to `post-mvp` to match the row. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -54,7 +54,7 @@ renderer makes fully visible. That arm is exempt until #351 lands, with an
 expiry stated in the code.
 
 
-### Open `mvp-blocking` issues
+### `mvp-blocking` issues — the live list is a command, the mapping below is history
 
 **The count is not written here. Run it:**
 
@@ -84,15 +84,60 @@ have on 2026-08-26, when four were orphaned. By item:
 
 **#165 and #168** have since closed — naming them rather than saying "both of
 those", whose nearest antecedent is the item-11 and item-12 bullets directly
-above, and item 11 is still open. The mapping above is kept rather than
+above. **(Item 11 has since closed too — #152 and #153 landed 2026-09-10 in PR #279, `52568a3`; this sentence said "item 11 is still open" until 2026-09-21.)** The mapping above is kept rather than
 pruned because that is what this list is for: `#165` and `#168` are CLOSED
-(the prettier-pin PR #311, merged 2026-09-19, which took item 12 with it), and
+(the prettier-pin PR #311, merged 2026-09-11, which took item 12 with it), and
 `#159` has lost the label as planned — it is developer tooling and does not
 meet "the MVP cannot ship while this is open", the definition now written into
 `DELIVERY_PLAN.md`. `#159` itself is still open, correctly and off the board.
 
 Run the command above for what is open now; an issue's owning ITEM is the
 durable half and does not change when the issue closes.
+
+**EVERY ISSUE IN THE MAPPING ABOVE IS NOW CLOSED. Measured 2026-09-21 at
+`8e68d46`** (`gh issue view <n> --json state` per issue; landed code verified
+for each and cited in the `DELIVERY_PLAN.md` row that owns it). The mapping is
+kept because it is the durable half, but it is no longer a to-do list and was
+read as one: a night's work order was written on 2026-09-21 from the
+`DELIVERY_PLAN.md` rows this mapping mirrors, and pointed at work that had
+already landed.
+
+**The heading is not what misled anyone, and an earlier draft of this paragraph
+said it was.** It blamed "a heading that says \"Open\"" — but the heading four
+lines above already says the opposite, and no heading in this file contains the
+word. A sentence the file itself falsifies, misattributing the incident to the
+one thing that had been fixed. The actual vector is named above: the plan's
+ROWS, not this mapping and not its heading.
+
+**So the section's rule has a hole this exposes rather than fixes.** Replacing
+the count with a command made the COUNT honest and left the MAPPING to go stale
+by a different route — not by drifting, but by every member of it closing while
+the live blockers appear nowhere here and own no item in `DELIVERY_PLAN.md`.
+Run the command and compare what it returns against the mapping; where a
+returned number is absent from it, that blocker has no owning item, which
+`DELIVERY_PLAN.md` states is the condition under which its total silently stops
+covering its own definition of done. At `8e68d46` the only returned issue
+carrying `unowned-with-reason` was `#220`. Assigning the rest is a scoping
+judgement, flagged for Gene rather than guessed here.
+
+**#185 and #194 are open and neither has a live client-facing defect.** #185's
+headline defect — the swallowed fetch failure — was fixed by `3933c46` across
+all four workspaces; what survives is the `Promise.all` coupling in
+`csf/CsfWorkspace.tsx` and `zt/ZtWorkspace.tsx` and a generic message in place
+of the typed reason, both admin-surface and both disclosed. #194's duplication
+is real and current but all three sites agree, so nothing renders wrongly.
+**The row now judges #185 out of item 9's completion bar, so its `mvp-blocking`
+label should move to `post-mvp`** — the row and the label must agree, and the
+row is what moved. The reasoning is in the `DELIVERY_PLAN.md` item 9 row so the
+call can be overturned rather than inherited.
+
+**Items 6 and 8 are NOT complete though every issue in the mapping closed**, for
+the same reason both times — an item's issues are a sample of its scope, not its
+definition. Item 6 still carries F10 (the allow-list swap the 2026-08-08 plan
+folds into it by name, live in `routes/risk.py`, no issue filed). Item 8's
+export/publish split, what the item is named after, has shipped nothing and owns
+no issue at all, so issue state reads complete over it. Both are written up in
+the `DELIVERY_PLAN.md` rows with the quoted code.
 
 `#125` and `#126` closed with Track C's first PR (`#197`, merged 2026-09-05).
 **`#124` deliberately did NOT ship with them**, which departed from the "must
@@ -171,7 +216,12 @@ which is NOT the gate. **There is no `_latest` in `routes/risk.py` any more**, s
 this paragraph used to name will not resolve. **A SECOND residual sits in `routes/clients.py` itself** —
 `risk_dashboard` takes the highest-`version` register with no finalized filter,
 so generating v2 hides a finalized v1 the client already has. Tracked in #123,
-which queues behind this PR on the same file.
+which queues behind this PR on the same file. **FIXED 2026-09-10 in PR #272
+(`6199c79`); recorded here 2026-09-21.** `risk_dashboard` now selects under
+`RiskRegister.finalized_at.is_not(None)`. The paragraph stands as the record of
+the residual this track filed rather than fixed, but the present-tense
+description above had become a live false claim about the code — someone acting
+on it would have rebuilt what already ships.
 
 Two consequences of the refusal are filed rather than fixed, both outside this
 track's territory: the dashboard pages key their error copy on HTTP status
@@ -420,6 +470,10 @@ must surface the divergence) is a required follow-up, not optional.
 
 **W1 is two services of four.** CSF (#54) and ZT (#66) are on `main`; Risk
 and ATT&CK are outstanding, in that order, and ATT&CK is gated on W2 landing.
+**SUPERSEDED 2026-09-21: W1 ATT&CK is item 7 and is complete; W1 Risk's
+counters are persisted and read back, and what is left of item 6 is F10. See
+the MVP path table in `DELIVERY_PLAN.md`, which is authoritative for item
+status — this sentence is the record of where W1 stood when it was written.**
 ZT removed its narrative fields rather than counting them — nothing consumed
 them (#64) — and corrected D-045's false claim that ZT persisted them.
 
