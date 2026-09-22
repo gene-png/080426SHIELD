@@ -290,6 +290,91 @@ def test_the_engagements_route_still_accepts_every_legal_target(app_client, body
 
 
 # --------------------------------------------------------------------------
+# RANGE is not conditional on service_type. The removed bound was not either.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("csf_target_tier", -99, "csf_target_tier_out_of_range"),
+        ("csf_target_tier", 99, "csf_target_tier_out_of_range"),
+        ("zt_target_stage", -99, "zt_target_stage_out_of_range"),
+        ("zt_target_stage", 99, "zt_target_stage_out_of_range"),
+    ],
+)
+def test_a_target_on_a_service_that_does_not_use_it_is_still_range_checked(
+    app_client, field, value, reason
+) -> None:
+    """The schema bound ran for every item. The guard replacing it must too.
+
+    `submit_intake` writes BOTH columns for every `ServiceRequest` it creates,
+    whatever the `service_type` -- so a range check sited inside the
+    `if NIST_CSF / elif ZT` branches that check PRESENCE silently stopped
+    running for `tech_debt`, `attack_coverage` and `consultation`. At `1281cbd`
+    `Field(ge=2, le=4)` refused `{"service_type": "tech_debt",
+    "csf_target_tier": -99}`; the first draft of this PR returned 200 and
+    stored -99.
+
+    No reader renders such a value today, which is exactly why it is fixed
+    rather than excused: a storage-only hole is indistinguishable from an
+    oversight to whoever inherits the column.
+
+    `tech_debt` is used because it needs neither target, so nothing about the
+    request makes the field plausible -- and because it is not in
+    `SELF_ASSESSMENT_TYPES`, so it cannot be reached through the engagements
+    route at all.
+    """
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+
+    r = _submit(client, bearer, {"service_type": "tech_debt", field: value})
+
+    err = _typed_error(r)
+    assert err["reason"] == reason, err
+
+
+@pytest.mark.unit
+def test_a_service_that_needs_no_target_still_submits_without_one(app_client) -> None:
+    """Positive control for the test above.
+
+    Range-checking every value that arrives must not start DEMANDING one: a
+    guard that refused `tech_debt` outright would satisfy every assertion
+    above while breaking the most ordinary request on the route.
+    """
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _submit(client, bearer, {"service_type": "tech_debt"})
+    assert r.status_code == 200, r.text
+
+
+# --------------------------------------------------------------------------
+# The refusal names a product, not a database identifier
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_the_ceiling_refusal_names_the_product_not_the_enum(app_client) -> None:
+    """`clientFacingError` renders this sentence verbatim to a client.
+
+    It read "zero_trust_dod has stages 1-3; 4 is not one of them." -- a StrEnum
+    value in client copy -- while the CSF branch twelve lines up said
+    "NIST CSF 2.0", so the inconsistency sat inside one guard. Both halves are
+    pinned: the product name must appear AND the enum must not, so a revert
+    fails here rather than passing on the surviving substring.
+    """
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+
+    r = _submit(client, bearer, {"service_type": "zero_trust_dod", "zt_target_stage": 4})
+
+    err = _typed_error(r)
+    assert "Zero Trust (DoD ZTRA)" in err["message"], err["message"]
+    assert "zero_trust_dod" not in err["message"], err["message"]
+
+
+# --------------------------------------------------------------------------
 # The bound is gone from the SCHEMA, which is the thing that made the dump
 # --------------------------------------------------------------------------
 
@@ -336,16 +421,24 @@ def test_no_intake_target_field_carries_a_declarative_range_bound() -> None:
 def test_the_floor_is_the_number_the_web_bundle_spells_out() -> None:
     """Both floors, spelled rather than imported, so a Python-side edit is loud.
 
-    There is no build step shared by this app and the web bundle, and the api
-    container mounts `./apps/api` alone -- so no test on either side can READ
-    the other's file. `SCHEMA_REASON_PREFIX` faced the identical problem one
-    module over and settled it this way: spell the literal in each language's
-    own suite, and name the other file in the failure.
+    There is no build step shared by this app and the web bundle.
+    `SCHEMA_REASON_PREFIX` faced the identical problem one module over and
+    settled it this way: spell the literal in each language's own suite, and
+    name the other file in the failure.
 
     **What this closes, stated exactly:** a change on THIS side goes red here,
-    naming the file that must change with it. It does NOT prove the two agree
-    -- nothing available in either container can -- so an author who updates
-    both this number and this assertion and stops has not been stopped.
+    naming the file that must change with it. It does NOT prove the two agree,
+    so an author who updates both this number and this assertion and stops has
+    not been stopped.
+
+    **What it is NOT is the best available check, and this docstring used to
+    claim otherwise** -- it said the api container "mounts `./apps/api` alone",
+    so no test on either side could read across. Measured: the api service also
+    mounts `./pyproject.toml:ro` and `./packages/zt-data:/packages/zt-data:ro`,
+    the latter added expressly so a contract test could read a tree outside the
+    app. A real parity check is a compose line away; it is deferred on SCOPE
+    (a `docker-compose.yml` edit is merge-rule condition 5) and tracked in
+    **#422**, not because it is impossible.
     """
     assert MIN_TARGET_TIER == 2, (
         "apps/web/src/lib/assessment-targets.ts spells this too, as "

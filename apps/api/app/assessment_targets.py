@@ -20,13 +20,29 @@ suite spells the number and names the other file in its failure message:
 `lib/intake/target-options-are-derived.test.ts` there. So a unilateral change
 goes RED on the side that made it, pointing at the side that did not.
 
-That is all it does. It does **not** prove the two agree, and nothing available
-can: the api container mounts `./apps/api` alone and the web container mounts
-`apps/web`, `packages`, `package.json`, `pnpm-workspace.yaml` and the lockfile
--- neither can read the other's file, so a parity check would pass in CI and
-fail on every developer's machine. An author who edits the number here, updates
-the assertion here, and stops has not been stopped. A shared parity gate needs
-a mount that does not exist today; tracked in **#422**.
+That is all it does. It does **not** prove the two agree. An author who edits
+the number here, updates the assertion here, and stops has not been stopped.
+
+**A REAL PARITY GATE IS BUILDABLE AND THIS PARAGRAPH USED TO SAY IT WAS NOT.**
+The claim was that neither container can read the other's tree, so a parity
+check "would pass in CI and fail on every developer's machine". False, and the
+counter-example is one line further down the file it appealed to:
+`docker-compose.yml` mounts `./packages/zt-data:/packages/zt-data:ro` on the
+api service, commented "read-only, for the questionnaire contract test" -- a
+read-only single-path mount added so a contract test can read a tree outside
+the app, working identically in CI and locally. That is exactly the mechanism
+the old sentence said did not exist.
+
+So the deferral rests on SCOPE, not impossibility: the mount is a
+`docker-compose.yml` edit, which merge-rule condition 5 sends to a human, and
+it did not belong in the change that created the second constant. Tracked in
+**#422**, whose body carries the mount as the cheapest of its options.
+
+Recorded rather than quietly replaced, because the false version is the more
+instructive one: it was a per-file check ("what does the api service mount for
+the app?") published as a system-wide negative ("nothing can read across"),
+which is the certificate-over-the-wrong-proposition shape one file over from
+where this module's own docstring records the last instance of it.
 
 ## Why the ranges are NOT declared here
 
@@ -34,8 +50,9 @@ A floor is one end. The other end is the ladder's length, and the ladder is
 framework-specific: `csf/maturity.py::TIER_DEFINITIONS` has four entries and
 `zt/maturity.py::level_count` returns 4 for CISA and 3 for DoD. Restating
 either here would be a third spelling of a number those modules already own.
-`routes/intake.py::_validate_targets` is where the two ends meet, because it
-is the only place that can see `service_type`.
+`routes/intake.py::_validate_targets` is where the two ends meet ON THE INTAKE
+ROUTES, because a pydantic field constraint cannot see `service_type`. It is
+not the only comparison in the system -- see the next section.
 
 ## TWO WRITERS OF THESE COLUMNS ARE DELIBERATELY NOT WIRED TO THIS
 

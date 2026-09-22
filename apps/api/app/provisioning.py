@@ -34,7 +34,14 @@ SELF_ASSESSMENT_TYPES: tuple[ServiceType, ...] = (
     ServiceType.ZERO_TRUST_DOD,
 )
 
-_SERVICE_TITLES: dict[ServiceType, str] = {
+#: Human product names for the self-assessment service types. PUBLIC because
+#: `routes/intake.py` renders one into a client-facing refusal -- a raw
+#: `ServiceType.value` read as a database identifier in copy. Exported rather
+#: than copied: three spellings of this map already exist in `apps/api/app`
+#: (here, `routes/admin.py`, `deliverable_release.py`), and a fourth written
+#: for one error message would be the cheapest possible way to make them
+#: disagree.
+SERVICE_TITLES: dict[ServiceType, str] = {
     ServiceType.NIST_CSF: "NIST CSF 2.0 Assessment",
     ServiceType.ZERO_TRUST_CISA: "Zero Trust (CISA ZTMM 2.0)",
     ServiceType.ZERO_TRUST_DOD: "Zero Trust (DoD ZTRA)",
@@ -75,7 +82,7 @@ def provision_self_assessment_service(
         title=(
             title.strip()
             if title and title.strip()
-            else f"{org_name} — {_SERVICE_TITLES[sr.service_type]}"
+            else f"{org_name} — {SERVICE_TITLES[sr.service_type]}"
         ),
         client_id=sr.client_id,
         source_request_id=sr.id,

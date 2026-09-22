@@ -39,6 +39,7 @@ from app.models.zt_assessment import ZtAssessment
 from app.notifications import notify_role
 from app.provisioning import (
     SELF_ASSESSMENT_TYPES,
+    SERVICE_TITLES,
     provision_self_assessment_service,
 )
 from app.schemas.intake import (
@@ -94,8 +95,87 @@ def _effective_contact(client: Client | None, user: User) -> IntakeContactRespon
     )
 
 
+def _refuse_csf_tier_out_of_range(tier: int) -> None:
+    """Refuse a CSF target tier, naming the CAUSE rather than the check.
+
+    Below the floor and above the ladder are different mistakes -- Tier 1
+    exists and is not a target; Tier 5 is not a tier -- and one message
+    covering both tells a client only that something was rejected.
+    `TIER_DEFINITIONS` owns the ladder; `MIN_TARGET_TIER` owns the product
+    rule. Neither number is restated here.
+    """
+    max_tier = len(TIER_DEFINITIONS)
+    if tier < MIN_TARGET_TIER:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "csf_target_tier_out_of_range",
+                "message": (
+                    f"Tier {tier} is where an organization starts, not a target to "
+                    f"aim at. Choose Tier {MIN_TARGET_TIER} or higher."
+                ),
+            },
+        )
+    if tier > max_tier:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "csf_target_tier_out_of_range",
+                "message": f"NIST CSF 2.0 has tiers 1-{max_tier}; {tier} is not one of them.",
+            },
+        )
+
+
+def _refuse_zt_stage_out_of_range(stage: int, service_type: ServiceType) -> None:
+    """Refuse a ZT target stage against the ladder the SERVICE actually has.
+
+    DoD ZTRA ends at Stage 3 where CISA ends at 4, and a pydantic field
+    constraint cannot see `service_type` -- which is why the ceiling lives
+    here. Checking PRESENCE and not RANGE is what #125 cost: a DoD engagement
+    stored a 4, `analyze_gaps` clamped it to 3, and the finalize audit row
+    called that 3 the client's choice.
+
+    `service_type` may be one that has NO ZT ladder, because this is called for
+    any stage that arrives rather than only for a ZT request -- see
+    `_validate_targets`. The widest ladder is used there, which is exactly what
+    the removed `le=4` bound did and no more.
+    """
+    framework = _ZT_FRAMEWORK_BY_SERVICE.get(service_type)
+    if framework is None:
+        max_stage = max(level_count(f) for f in _ZT_FRAMEWORK_BY_SERVICE.values())
+        ladder_name = "Zero Trust"
+    else:
+        max_stage = level_count(framework)
+        ladder_name = SERVICE_TITLES.get(service_type, "Zero Trust")
+    if stage < MIN_TARGET_STAGE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "zt_target_stage_out_of_range",
+                "message": (
+                    f"Stage {stage} is where an organization starts, not a target to "
+                    f"aim at. Choose Stage {MIN_TARGET_STAGE} or higher."
+                ),
+            },
+        )
+    if stage > max_stage:
+        # The PRODUCT NAME, not `service_type.value`. This sentence is rendered
+        # verbatim to a client by `clientFacingError`, and the raw StrEnum
+        # ("zero_trust_dod has stages 1-3") read as a database identifier in
+        # client copy -- while its CSF sibling said "NIST CSF 2.0", so the
+        # inconsistency sat inside one guard. `SERVICE_TITLES` is imported
+        # rather than re-spelled: three copies of this map already exist.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "zt_target_stage_out_of_range",
+                "message": f"{ladder_name} has stages 1-{max_stage}; {stage} is not one of them.",
+            },
+        )
+
+
 def _validate_targets(item: ServiceRequestInput) -> None:
-    """Enforce client-supplied assessment targets per selected service.
+    """Enforce client-supplied assessment targets: PRESENCE, then RANGE.
 
     The wizard gates this in the UI, but we re-check server-side so the
     target is never silently dropped (the consultant relies on it).
@@ -108,13 +188,35 @@ def _validate_targets(item: ServiceRequestInput) -> None:
     the client's intake wizard rendered a bare generic fallback. Both ends now
     raise a typed `{reason, message}` detail (D-016) instead.
 
-    **Two causes per field, so two sentences.** `CLAUDE.md`: a guard's message
-    must name the CAUSE, not the check. Below the floor and above the ladder
-    are different mistakes -- Tier 1 exists and is not a target; Tier 5 is not
-    a tier -- and one message covering both tells a client only that something
-    was rejected. The REASON code stays one per field: it is a machine token
-    naming which value the client must change, and splitting it would give a
-    future value-test consumer two codes to handle for one control.
+    ## Presence is per service type. RANGE IS NOT, and that asymmetry is the
+    ## whole reason this function is shaped the way it is
+
+    A bound on the schema ran for EVERY item whatever its `service_type`, so
+    the first draft of this -- which range-checked inside the same
+    `if NIST_CSF / elif ZT` branches that check presence -- lost validation it
+    claimed to keep: `{"service_type": "tech_debt", "csf_target_tier": -99}`
+    returned 200 and stored -99, because `submit_intake` writes both columns
+    for every item regardless of type. No reader renders such a value today
+    (every one resolves through `Service.source_request_id`, and provisioning
+    only creates services for `SELF_ASSESSMENT_TYPES`), so it was storage-only
+    -- which is what makes it worth fixing rather than excusing: an unstated
+    exemption is indistinguishable from an oversight, and the next reader
+    inherits a column that can hold anything.
+
+    So: presence is asked only of the service that needs the target; range is
+    asked of every value that arrives.
+
+    ## This is NOT the only floor, and saying so is load-bearing
+
+    Two other routes write these same columns and neither enforces the floor:
+    `routes/csf.py::submit_self_assessment` writes `sr.csf_target_tier` with no
+    range check at all, and `routes/zt.py::submit_self_assessment` guards the
+    ceiling from a floor of 1. Both resolvers then report a stored 1 as the
+    client's own choice. That is **#85**, and it is left alone deliberately --
+    see `app/assessment_targets.py`, which carries the reasoning. An earlier
+    version of this docstring said the ZT path "carries its own copy of this
+    check", which is true of the CEILING and false of the FLOOR, and never
+    mentioned the CSF path at all.
     """
     if item.service_type == ServiceType.NIST_CSF:
         if item.csf_target_tier is None or item.csf_profile is None:
@@ -122,86 +224,16 @@ def _validate_targets(item: ServiceRequestInput) -> None:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="NIST CSF requires a target tier and profile before submitting.",
             )
-        # `TIER_DEFINITIONS` is the ladder's authority; `MIN_TARGET_TIER` is
-        # the product rule. Neither number is restated here.
-        max_tier = len(TIER_DEFINITIONS)
-        if item.csf_target_tier < MIN_TARGET_TIER:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "reason": "csf_target_tier_out_of_range",
-                    "message": (
-                        f"Tier {item.csf_target_tier} is where an organization starts, "
-                        f"not a target to aim at. Choose Tier {MIN_TARGET_TIER} or higher."
-                    ),
-                },
-            )
-        if item.csf_target_tier > max_tier:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "reason": "csf_target_tier_out_of_range",
-                    "message": (
-                        f"NIST CSF 2.0 has tiers 1-{max_tier}; "
-                        f"{item.csf_target_tier} is not one of them."
-                    ),
-                },
-            )
-    elif item.service_type in _ZT_SERVICE_TYPES:
-        if item.zt_target_stage is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Zero Trust requires a target stage before submitting.",
-            )
-        # RANGE, per framework. A pydantic field constraint cannot see
-        # `service_type` and DoD ZTRA ends at 3 where CISA ends at 4, so this
-        # is the only place that can refuse a DoD Stage 4 ON THIS ROUTE. It is
-        # NOT the only writer of the stored value: the ZT self-assessment
-        # submit path writes it too and carries its own copy of this check.
-        # Said precisely because the first draft of this comment claimed to be
-        # the only door, which is the kind of true-sounding
-        # narrower-than-you-assume sentence that ends the next reader's search
-        # exactly where it should have started.
-        #
-        # Checking PRESENCE and not RANGE is what #125 cost: a DoD engagement
-        # stored a 4, `analyze_gaps` clamped it to 3, and the finalize audit row
-        # called that 3 the client's choice. `resolve_target_stage` now reports
-        # such a value honestly instead, but reporting it is the second-best
-        # outcome; refusing it at the door means it is never stored at all.
-        #
-        # The FLOOR arrived here with #406. It used to be the schema's `ge=2`,
-        # so this check opened at `1 <=` and a Stage 1 never reached it -- and
-        # a client who sent one got a `schema_*` dump where a DoD Stage 4 got
-        # client copy. Same field, same wizard, two shapes decided by how far
-        # out the value was.
-        max_stage = level_count(_ZT_FRAMEWORK_BY_SERVICE[item.service_type])
-        if item.zt_target_stage < MIN_TARGET_STAGE:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "reason": "zt_target_stage_out_of_range",
-                    "message": (
-                        f"Stage {item.zt_target_stage} is where an organization starts, "
-                        f"not a target to aim at. Choose Stage {MIN_TARGET_STAGE} or higher."
-                    ),
-                },
-            )
-        if item.zt_target_stage > max_stage:
-            # `service_type.value` is the raw enum, not the product name, and
-            # this message now reaches a CISA client as well as a DoD one --
-            # the CISA half used to be a withheld `schema_*` refusal. Filed as
-            # #425 rather than reworded here, because the DoD wording shipped
-            # deliberately under #125 and a test pins it.
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "reason": "zt_target_stage_out_of_range",
-                    "message": (
-                        f"{item.service_type.value} has stages 1-{max_stage}; "
-                        f"{item.zt_target_stage} is not one of them."
-                    ),
-                },
-            )
+    elif item.service_type in _ZT_SERVICE_TYPES and item.zt_target_stage is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Zero Trust requires a target stage before submitting.",
+        )
+
+    if item.csf_target_tier is not None:
+        _refuse_csf_tier_out_of_range(item.csf_target_tier)
+    if item.zt_target_stage is not None:
+        _refuse_zt_stage_out_of_range(item.zt_target_stage, item.service_type)
 
 
 router = APIRouter(prefix="/intake", tags=["intake"])

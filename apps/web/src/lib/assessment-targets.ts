@@ -11,7 +11,7 @@
  *
  * ## What this module is, and what it is NOT
  *
- * **It is one home for the five web sites that COMPARE against the floor.** It
+ * **It is one home for the web sites that COMPARE against the floor.** It
  * is not the only place the rule is written down, and an earlier version of
  * this docstring claimed it was — "a single home is the whole of its
  * enforcement", which was false when written. The remaining spellings are
@@ -55,19 +55,34 @@
  *
  * The window is real. As of #406 it is **one declaration wide** rather than
  * four bounds wide: `apps/api/app/assessment_targets.py` is this file's Python
- * mirror, and `routes/intake.py::_validate_targets` is the single place that
- * compares against it. The four `Field(..., ge=2, le=4)` bounds that used to
- * carry the rule are gone — they were refused as a raw `schema_*` 422, message
+ * mirror, and `routes/intake.py::_validate_targets` compares against it. The
+ * four `Field(..., ge=2, le=4)` bounds that used to carry the rule are gone —
+ * they were refused as a raw `schema_*` 422, message
  * `"Request validation failed."`, with no client copy behind it, on the surface
  * where a client first picks a target.
+ *
+ * **`_validate_targets` is NOT the only comparison, and this docstring said it
+ * was** — "the single place that compares against it", which is the kind of
+ * true-sounding sentence that ends the next reader's search exactly where it
+ * should have started. Two other routes write the same two columns and neither
+ * enforces the FLOOR: `routes/csf.py::submit_self_assessment` has no range
+ * check at all, and `routes/zt.py::submit_self_assessment` guards the ceiling
+ * from a floor of 1. Both resolvers then report a stored Tier/Stage 1 as the
+ * client's own choice. That is **#85**, deliberately out of scope for #406;
+ * `assessment_targets.py` carries the reasoning.
  *
  * **What closes that window, and what it does not do.** Each language's own
  * suite spells the number and names the other file in its failure message —
  * `test_intake_target_floor.py` and `target-options-are-derived.test.ts`. So a
  * unilateral change goes RED on the side that made it. It does NOT prove the
- * two agree: neither container mounts the other's tree, so no test can read
- * across. Tracked in **#422**; `SCHEMA_REASON_PREFIX` in
- * `lib/describe-save-error.ts` settled the identical problem the same way.
+ * two agree. `SCHEMA_REASON_PREFIX` in `lib/describe-save-error.ts` settled the
+ * identical problem the same way.
+ *
+ * A real parity check is **buildable** — this paragraph used to say the
+ * containers cannot read across, which is false: `docker-compose.yml` already
+ * mounts `./packages/zt-data:/packages/zt-data:ro` on the api service so a
+ * contract test can read a tree outside the app. It is deferred on scope, not
+ * possibility, and tracked in **#422**.
  *
  * ## Why the constants live HERE rather than in a component
  *

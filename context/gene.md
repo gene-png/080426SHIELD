@@ -35,6 +35,7 @@ All pairwise-merge-checked; all mergeable against `main`.
 | #358 | The disclosure consumer gate |
 | #353 | `entries_total` named two quantities |
 | #343 | A flag a script does not implement must not succeed |
+| #427 | The target floor is derived, and refused with client copy (#406) |
 
 #353's E2E had failed on a transient Docker Hub token error
 (`connection reset by peer` fetching an oauth token) — infrastructure, not the
@@ -48,6 +49,45 @@ PR, and distinct from #328's `pull access denied`. Re-run, now green.
   models.
 - **#378** (tier-3) — `ClientSwitcher` renders a failed fetch as "no clients",
   a FALSE EMPTY rather than a silent catch. Third sub-shape of #292.
+
+**From the #406 work (PR #427), 2026-09-22.** The branch derives both intake
+option lists from `MIN_TARGET_TIER` / `MIN_TARGET_STAGE` and replaces four
+Pydantic `ge=2, le=4` bounds with a typed `{reason, message}` refusal — a
+declarative bound is refused as a `schema_*` 422 that `describe-save-error.ts`
+withholds by design, so the intake wizard rendered a bare "Failed to submit
+intake." naming neither the field nor the range. **Needs your read on the audit
+block: the adversarial reviewer RAN and found eleven things, but its report
+reached the dispatcher only after five send attempts (#414), and two commits
+land after the SHA it reviewed.**
+
+- **#85** — NOT new. Open for weeks carrying only a `bug` label, so it was in
+  no board query; **labelled `mvp-blocking` + `tier-2`**. The two
+  self-assessment submit routes write the same target columns and accept a
+  target of 1 (`routes/csf.py` with no range check at all). **Its stated
+  remedy is now backwards** — it says "raise both submit schemas to `ge=2`",
+  which is the construct #406 removes; commented to that effect. #427 does not
+  fix it, and says so at the site.
+- **#422** (tier-3) — no cross-language parity gate. **My first reason for it
+  was FALSE** and the reviewer caught it: I wrote that neither container can
+  read the other tree, when `docker-compose.yml` already mounts
+  `./packages/zt-data:/packages/zt-data:ro` on the api service for exactly that
+  purpose. Corrected in the issue and in all four docstrings that carried it.
+  The deferral now rests on scope, not impossibility.
+- **#425** (tier-3) — a raw `ServiceType` enum in client copy
+  ("zero_trust_dod has stages 1-3"). Filed, then **fixed in #427** after the
+  review showed a test was PINNING it.
+- **#428** (tier-2) — the range spelled `(2-4)` in three API docstrings, and
+  **wrong for DoD**, which ends at Stage 3. #125 restated as documentation in
+  the two files you read to learn a column's legal values.
+- **#429** (tier-3) — `.claude/agents/clients-dev.md` briefs #125 as unfixed,
+  three clauses, all false. An agent dispatched under it rebuilds shipped work;
+  a concrete instance for #215 to be sized against.
+- **#430**, **#431** (tier-3) — `assessment-targets.test.ts`'s `CONSUMERS` list
+  was not extended to the new consumers, and the CSF ceiling has two spellings
+  (`len(TIER_DEFINITIONS)` vs `csf/gap.py::MAX_TIER`).
+- **#426** — a duplicate of #85 the team lead filed and closed. Worth knowing
+  it happened: it is the #184/#286 shape again, and what prevented a second one
+  was searching the board before filing.
 - **#380** (tier-3) — `tech_debt.py` has 20 untyped refusals beside 5 typed,
   with no stated rule. Eleven are not-found (defensibly untyped); five are
   state refusals that name a remedy.
