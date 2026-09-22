@@ -1,0 +1,3 @@
+{"incident": "ADVERSARIAL, on the one judgement call in this gate. CLAUDE.md measured 210,958 BYTES against 210,215 CHARACTERS -- 743 bytes of multi-byte UTF-8, mostly the em-dashes and arrows this repo writes constantly. A reader checking with len() would call this file 600 characters and expect it to pass a 1000 limit; it is 1800 bytes and must not. Bytes are the conservative unit and this is the case that proves the gate actually uses them.",
+ "expect": 1, "adversarial": true,
+ "argv": ["--limit", "1000", "{dir}/CLAUDE.md"]}

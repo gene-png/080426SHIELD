@@ -72,6 +72,11 @@ GATES = [
     # `sys.argv` because `main(argv)` takes the argument list; the crash
     # injection has to replace a callable with the same shape.
     ("check_disclosure_consumers", "sys.argv"),
+    # #347's size gate. Added WITH its entry here and its fixtures, because the
+    # two enumerations diverging is what `test_universe_equals_the_other_gate_
+    # enumeration` exists to catch and there is no reason to make it work for
+    # its living twice.
+    ("check_claude_md_size", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

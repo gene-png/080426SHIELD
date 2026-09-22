@@ -1,0 +1,4 @@
+{"incident": "#347 fail-closed. Under --require-canary a file with no marker is a could-not-look: the gate cannot certify what a reader would receive, and the size being fine says nothing about it. This is the branch that stops --require-canary being a no-op that passes everything -- without it the flag could be wired in CI and silently check nothing, which is this repo’s recorded selector-selects-nothing shape.",
+ "expect": 2, "adversarial": false,
+ "stdout_contains": "NO canary marker",
+ "argv": ["--require-canary", "--limit", "1000", "{dir}/CLAUDE.md"]}

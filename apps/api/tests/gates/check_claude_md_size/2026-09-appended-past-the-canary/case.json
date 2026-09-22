@@ -1,0 +1,4 @@
+{"incident": "ADVERSARIAL, #347. The canary only answers \"did I get the whole file\" while it is LAST. An edit appended below it leaves the marker readable and everything after it invisible -- a reader sees the canary, concludes its copy is whole, and is wrong. A reasonable person adding a section to the end of CLAUDE.md does exactly this and expects it to pass. Exit 2, not 1: the gate cannot certify what a reader would receive.",
+ "expect": 2, "adversarial": true,
+ "stdout_contains": "canary is NOT the last line",
+ "argv": ["--require-canary", "--limit", "1000", "{dir}/CLAUDE.md"]}

@@ -1,0 +1,3 @@
+{"incident": "THE incident (#347). CLAUDE.md reached 210,958 bytes against a 150,000-byte reader limit, so the merge rule sat at byte 192,494 and its condition-5 path list was cut before any agent read it, with every other gate green throughout. This is the NEGATIVE CONTROL: without a case the gate REFUSES, the suite proves it runs and not that it discriminates.",
+ "expect": 1, "adversarial": false,
+ "argv": ["--limit", "1000", "{dir}/CLAUDE.md"]}

@@ -13,6 +13,62 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
+it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut
+silently — and the cut landed on the merge rule. `An agent merges on green` sat
+at byte 192,494, so agents read that a PR "tripping condition 5" comes back to
+the human and could not read which paths trip it. All four occurrences each of
+`apps/api/tests/**` and `tests/gates/**` were past the boundary.
+
+Three things changed. The **merge rule moved to the top** of `CLAUDE.md` (now
+bytes 6,437–14,800), because position is part of a rule when truncation cuts
+from the end. The file was **trimmed from 210,958 bytes to under the limit** by moving
+incident narrative to D-079 and keeping the instruction; no rule was deleted.
+And **`apps/api/scripts/check_claude_md_size.py`** now refuses the file above
+150,000 bytes, wired as the CI step "governance file fits in a reader".
+
+**It was misdiagnosed as #170** (injected-context lag) because truncation and
+staleness look identical to the reader. #170 is not closed — it may still be
+real — but the `tn-gates` report is withdrawn from it.
+
+**Measured window, which corrects the estimate:** condition 5's test glob
+crossed the cut on **2026-09-10** (`f7c7c6ed`), not 2026-09-19, and
+`tests/gates/**` was born past it on 2026-09-21. Of **70** PR merges in that
+window, **39 tripped condition 5 only through a path past the cut** — with the
+rule set and the boundary recomputed per commit; 38 of those carried no
+migration, and 15 edited the gate harness itself. (An earlier figure of 51
+applied one static path list across a window in which the rule set itself
+changed, so it counted PRs against a rule that did not yet exist. Caught by the
+adversarial reviewer.) That establishes
+the control was unavailable, not that any PR merged wrongly — whether an agent
+merged unattended is not recorded anywhere git can answer.
+
+**The mechanism fix, which the size gate alone does not provide:** `CLAUDE.md`
+now ends with a canary marker and an instruction to stop if you cannot read it,
+and `check_claude_md_size.py --require-canary` asserts the marker is the last
+non-empty line. The reader limit is a property of the READER — one session's
+<!-- counted: "one session" names a single observed reader, not a tally of a population -->
+copy carried all 210,958 bytes while another's was cut — so two agents can apply
+the merge rule sincerely and reach opposite verdicts with neither able to tell
+which it is. The canary makes that variance declared instead of invisible —
+**but only because the instruction to check for it is at the TOP of `CLAUDE.md`
+and in every agent definition**, files small enough that they cannot be cut. The
+first version stated it only beside the marker at the end, where a truncated
+reader never reaches it; caught by the adversarial reviewer. A
+SOFT line at 135,000 bytes warns and names the next cut, so the alarm arrives
+with a remedy already chosen.
+
+**Residual: the headroom is thin and is deliberately not written down here** —
+`check_claude_md_size.py` prints it on every clean run, and three documents
+carried three different figures for it inside one commit before this rule was
+<!-- counted: "one commit" names the single PR in question, not a tally of a population -->
+applied. The next substantive addition to `CLAUDE.md` is paid for by a trim,
+with the candidate already named in the file. `DECISIONS.md`, also well over the
+limit, is
+deliberately not gated — it is the RECORD, grepped by D-number, not injected
+into every agent's context. `DELIVERY_PLAN.md` at 140,438 bytes is the next file
+to cross.
+
 **#336 landed: a gate now enforces that disclosures reach a reader.**
 `apps/api/scripts/check_disclosure_consumers.py`, wired as the CI step
 "disclosures reach a reader". A field on a `*Response` model recording what was

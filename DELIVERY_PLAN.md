@@ -42,6 +42,14 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
+**2026-09-22 — #347 reclassified `tier-1` and fixed.** `CLAUDE.md` was
+210,958 bytes against a 150,000-byte reader limit, so the merge rule's
+condition-5 path list was cut before any agent read it. The merge rule is now at
+the top of the file, the file is under the limit, and
+`check_claude_md_size.py` gates it. No plan item changes; recorded because the
+merge rule is what decides whether items below may land unattended, and it was
+unreadable from 2026-09-10 to 2026-09-22 (D-079).
+
 _Added 2026-08-19, current as of 2026-08-25. **This section is maintained, not archival.** When an item
 lands, change its status here in the same PR that lands it — the same rule
 `CONTEXT.md` follows. A status line that is wrong is worse than none, because

@@ -1,0 +1,3 @@
+{"incident": "Control for #347. A file under the limit must PASS, or the gate rejects every compliant repo and everyone learns to route around it -- the failure check_plan_totals already recorded, where the cheapest route to green was to edit the number rather than the file.",
+ "expect": 0, "adversarial": false,
+ "argv": ["--limit", "1000", "{dir}/CLAUDE.md"]}
