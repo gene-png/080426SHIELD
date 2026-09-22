@@ -27,6 +27,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MIN_TARGET_STAGE, MIN_TARGET_TIER } from "@/lib/assessment-targets";
+import { clientFacingError } from "@/lib/describe-save-error";
 
 afterEach(() => {
   vi.resetModules();
@@ -114,5 +115,82 @@ describe("the cross-language copy", () => {
     expect(MIN_TARGET_STAGE).toBe(2);
     // apps/api/app/assessment_targets.py carries both, and
     // apps/api/tests/unit/test_intake_target_floor.py pins them there.
+  });
+});
+
+/**
+ * The refusal has to reach a PERSON, which is the whole point of the API half.
+ *
+ * `CLAUDE.md`: the endpoint is not the surface, and a test that reads the
+ * endpoint proves the write rather than the claim. The Python suite proves the
+ * API sends a typed `{reason, message}`; nothing there can show that the wizard
+ * renders it — `IntakeWizard.tsx` and `AssessmentsView.tsx` both go through
+ * `clientFacingError`, and that helper deliberately DISCARDS some refusals.
+ *
+ * **Both halves, because the change moved a value across that boundary.** The
+ * old envelope is withheld and the new one is rendered, and a "fix" that
+ * withheld wholesale would satisfy the first assertion alone.
+ *
+ * The payloads are copied from a real response body observed at `1281cbd`
+ * (before) and produced by `_validate_targets` (after), not invented from what
+ * this helper expects.
+ */
+describe("the typed refusal reaches the client's screen", () => {
+  const FALLBACK = "Failed to submit intake.";
+
+  it("rendered nothing useful BEFORE: a schema_* reason is withheld", () => {
+    const before = {
+      status: 422,
+      payload: {
+        error: {
+          code: 422,
+          message: "Request validation failed.",
+          reason: "schema_greater_than_equal",
+          details: [
+            {
+              type: "greater_than_equal",
+              loc: ["body", "service_requests", 0, "csf_target_tier"],
+              msg: "Input should be greater than or equal to 2",
+              input: 1,
+              ctx: { ge: 2 },
+            },
+          ],
+        },
+      },
+    };
+    // The client was told only that it failed — not which field, nor the range.
+    expect(clientFacingError(before, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("renders the typed message AFTER, in place of the fallback", () => {
+    const after = {
+      status: 422,
+      payload: {
+        error: {
+          code: 422,
+          message:
+            "Tier 1 is where an organization starts, not a target to aim at. Choose Tier 2 or higher.",
+          reason: "csf_target_tier_out_of_range",
+        },
+      },
+    };
+    const shown = clientFacingError(after, FALLBACK);
+    expect(shown).not.toBe(FALLBACK);
+    expect(shown).toContain("Tier 2 or higher");
+  });
+
+  it("renders the ZT stage refusal too, and names the control", () => {
+    const after = {
+      status: 422,
+      payload: {
+        error: {
+          code: 422,
+          message:
+            "Stage 1 is where an organization starts, not a target to aim at. Choose Stage 2 or higher.",
+          reason: "zt_target_stage_out_of_range",
+        },
+      },
+    };
+    expect(clientFacingError(after, FALLBACK)).toContain("Stage 2 or higher");
   });
 });
