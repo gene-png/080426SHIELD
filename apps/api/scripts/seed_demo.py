@@ -1227,6 +1227,15 @@ def _seed_risk_register(
 
     # Export the register to XLSX/PDF/Word so the admin demo shows downloadable
     # artifacts, mirroring the /register/export route (which sets finalized_at).
+    #
+    # #403: `link_scope` is deliberately NOT passed, and the omission is stated
+    # here rather than left for whoever next greps `build_context`. These
+    # entries are hand-built rather than synthesized, so no allow-list ever
+    # constrained them and there is no scored share to report. Passing a
+    # fabricated one would put a number about this client's assessments into a
+    # deliverable that no run produced; the exporter renders nothing for an
+    # empty scope, which is the honest "not recorded" state -- the same state
+    # `dropped_links` is already in for every seeded entry.
     ctx = risk_exporters.build_context(
         client_legal_name=org.legal_name,
         version=register.version,
