@@ -64,6 +64,20 @@ export default async function HomePage(): Promise<JSX.Element> {
   let unreadMessages = 0;
   let valueSummary: ValueSummary | null = null;
   if (clientId) {
+    // CONSIDERED AND LEFT, NOT OVERLOOKED -- tracked in #400.
+    //
+    // These four results render INDEPENDENTLY: `HomeDashboard` already has a
+    // missing-value branch for each one. So by the predicate #395 established
+    // -- allSettled is owed where results render independently -- this site
+    // qualifies, and an inbox 500 currently withholds the client's
+    // deliverables, engagements and value summary along with the unread badge.
+    //
+    // It is left here because there is no `catch` at all, so the fix is not a
+    // combinator swap: it has to decide what a DEGRADED home page shows, panel
+    // by panel, and whether a failed unread count is distinguishable from zero.
+    // That is a copy decision, and #395 was scoped to durability. Recorded at
+    // the site rather than only in a PR body, because an unstated exemption
+    // reads as an oversight to whoever finds it next.
     const [deliverableData, engagementData, inbox, summary] = await Promise.all(
       [
         apiFetch<ClientDeliverableListResponse>(

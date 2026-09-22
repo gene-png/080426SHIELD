@@ -33,7 +33,18 @@ vi.mock("@/lib/csf/client", () => ({
 
 // Stub the children so no child effect fetches and the test stays focused on
 // the workspace's own reqSeq logic.
-vi.mock("./CsfScoreCard", () => ({ CsfScoreCard: () => null }));
+// NOT `() => null` -- see finding F3 on #395. Stubbed to null, `setScore`'s
+// effect is unobservable and an implementation that drops
+// `setScore(scoreOutcome.value)` passes every banner assertion in this file.
+// Measured on the ZT twin by deleting the call and watching the suite stay
+// green. Rendering the prop pins "fulfilled AND stored".
+vi.mock("./CsfScoreCard", () => ({
+  CsfScoreCard: ({ score }: { score: unknown }) => (
+    <div data-testid="csf-score-card">
+      {score ? "score-present" : "no-score"}
+    </div>
+  ),
+}));
 vi.mock("./CsfPlaybookPanel", () => ({ CsfPlaybookPanel: () => null }));
 vi.mock("./CsfGapList", () => ({ CsfGapList: () => null }));
 vi.mock("./CsfDeliverableCard", () => ({ CsfDeliverableCard: () => null }));
@@ -273,10 +284,15 @@ describe("CsfWorkspace supplementary-fetch failures (#292)", () => {
     // WORDING UPDATED BY #185, INTENT UNCHANGED. This read `/score and gap/i`,
     // matching the single coupled sentence the one `Promise.all` produced.
     // The two fetches now report separately, so both panels are named on their
-    // own lines and that exact phrase no longer exists. Asserting both names is
-    // strictly stronger than the phrase it replaces -- it would catch a
-    // regression that dropped either panel from the banner, which the old
-    // single-phrase match could not.
+    // own lines and that exact phrase no longer exists.
+    //
+    // NOT "strictly stronger", which is what this comment claimed and what the
+    // PR body claimed with it. It is stronger in one direction -- it catches a
+    // regression that drops either panel from the banner, which a single-phrase
+    // match could not -- and WEAKER in another: the old regex required the two
+    // words ADJACENT, and three independent matches are satisfied by any banner
+    // containing the three tokens in any order or any place. The adjacency is
+    // genuinely gone and nothing here replaces it. Tracked in #402.
     expect(note.textContent).toMatch(/score/i);
     expect(note.textContent).toMatch(/gap/i);
     // Names what the consultant should distrust, not just that something broke.
@@ -516,6 +532,11 @@ describe("CsfWorkspace score/gap are refreshed independently (#185)", () => {
     render(<CsfWorkspace serviceId="svc-185a" serviceTitle="Atlas CSF" />);
 
     const note = await screen.findByTestId("csf-refresh-error");
+    // THE SCORE IS ACTUALLY KEPT -- the property this test is NAMED for.
+    // Without it, deleting `setScore(scoreOutcome.value)` leaves the file green.
+    expect(screen.getByTestId("csf-score-card")).toHaveTextContent(
+      "score-present",
+    );
     expect(note.textContent).toMatch(/gap/i);
     // THE DECOUPLING. The old single message read "Couldn't refresh the score
     // and gap panels", so this is the line that goes red on a revert to
@@ -562,6 +583,9 @@ describe("CsfWorkspace score/gap are refreshed independently (#185)", () => {
     render(<CsfWorkspace serviceId="svc-185c" serviceTitle="Atlas CSF" />);
 
     const note = await screen.findByTestId("csf-refresh-error");
+    // THE INVERSE: a rejected score must not be stored, or "always call
+    // setScore" would satisfy the other direction.
+    expect(screen.getByTestId("csf-score-card")).toHaveTextContent("no-score");
     expect(note.textContent).toMatch(/score/i);
     expect(note.textContent).not.toMatch(/gap/i);
     expect(note.textContent).toMatch(/out of date/i);

@@ -55,7 +55,24 @@ vi.mock("@/lib/stages/client", () => ({
 
 // Children that fetch or render heavy trees. Stubbed so a failure inside one
 // cannot be mistaken for the banner assertions below passing or failing.
-vi.mock("./ZtScoreCard", () => ({ ZtScoreCard: () => null }));
+// NOT `() => null`, and the difference is the whole of finding F3.
+//
+// Stubbed to null, `setScore`'s effect is UNOBSERVABLE: the only assertions
+// available are on the banner text, so an implementation that reports the gap
+// correctly and drops `setScore(scoreOutcome.value)` entirely passed all four
+// tests in this file. Measured, not deduced -- the call was deleted and the
+// suite stayed green. That is the #72 shape in the very test named for
+// "keeps the maturity score", in the PR that exists to keep it.
+//
+// Rendering the prop makes the stored value observable, so "fulfilled but not
+// stored" -- the half #185 was actually filed about -- is now pinned.
+vi.mock("./ZtScoreCard", () => ({
+  ZtScoreCard: ({ score }: { score: unknown }) => (
+    <div data-testid="zt-score-card">
+      {score ? "score-present" : "no-score"}
+    </div>
+  ),
+}));
 vi.mock("./ZtGapList", () => ({ ZtGapList: () => null }));
 vi.mock("./ZtRoadmapCard", () => ({ ZtRoadmapCard: () => null }));
 vi.mock("./ZtQuestionnaire", () => ({ ZtQuestionnaire: () => null }));
@@ -138,6 +155,12 @@ describe("ZtWorkspace maturity/gap are refreshed independently (#185)", () => {
     renderWorkspace("svc-185-zt-a");
 
     const note = await screen.findByTestId("zt-refresh-error");
+    // THE SCORE IS ACTUALLY KEPT -- the property this test is NAMED for, and
+    // which it did not assert until F3. Deleting `setScore(scoreOutcome.value)`
+    // leaves every banner assertion below green; this line is what goes red.
+    expect(screen.getByTestId("zt-score-card")).toHaveTextContent(
+      "score-present",
+    );
     expect(note.textContent).toMatch(/gap/i);
     // THE DECOUPLING. The old single message read "Couldn't refresh the
     // maturity and gap panels", so this is the line that goes red on a revert
@@ -186,6 +209,9 @@ describe("ZtWorkspace maturity/gap are refreshed independently (#185)", () => {
     renderWorkspace("svc-185-zt-c");
 
     const note = await screen.findByTestId("zt-refresh-error");
+    // THE INVERSE OF THE ASSERTION ABOVE: a rejected score must not be stored,
+    // or "always call setScore" would satisfy the other direction.
+    expect(screen.getByTestId("zt-score-card")).toHaveTextContent("no-score");
     expect(note.textContent).toMatch(/maturity/i);
     expect(note.textContent).not.toMatch(/gap/i);
     expect(note.textContent).toMatch(/out of date/i);
