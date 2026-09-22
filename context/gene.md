@@ -367,9 +367,12 @@ guess.
   `node_modules` existing rather than on lockfile currency — so this entry
   paraphrases the original title and understates the issue. **PR #369 converts
   both**: each now executes `scripts/web-install-if-stale.sh` and carries no
-  install of its own. Left open deliberately — whether that discharges the
-  issue is the owner's call rather than a side effect of a merge. It carries
-  `tier-3`/`post-mvp` and no `mvp-blocking`, so it is on no board query.
+  install of its own. The close is AUTHORISED by the owner on
+  2026-09-21, so the PR body carries the `Auto-close-approved: 368` marker
+  line AND a closing keyword beside the number — two different mechanisms,
+  because the marker authorises this repo's own guard and only the keyword is
+  read by GitHub. It carried `tier-3`/`post-mvp` and no `mvp-blocking` while
+  open, so it was on no board query for as long as it was findable only here.
 - **#371** (tier-2) — the restored-value claim above, sequenced.
 
 ### Cleanup owed, and why I did not do it
