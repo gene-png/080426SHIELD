@@ -8,11 +8,24 @@
  *
  * That was survivable only while `analyze_gaps` CLAMPED an out-of-range target
  * and answered 200. Once it began refusing with a typed 422, the same request
- * became fatal to the page: `refreshScoreAndGap` runs both fetches under one
- * `Promise.all` whose rejection is swallowed, so the gap card AND the score
- * card -- which does not depend on the target at all -- both stayed blank, with
- * nothing shown to the consultant and no way back except a dropdown that never
- * offered 4.
+ * started costing the consultant a panel.
+ *
+ * **THE ORIGINAL SENTENCE HERE HAS EXPIRED TWICE and is corrected rather than
+ * deleted**, because this file is where someone checks what the refusal costs.
+ * It said `refreshScoreAndGap` "runs both fetches under one `Promise.all`
+ * whose rejection is swallowed, so the gap card AND the score card ... both
+ * stayed blank, with nothing shown to the consultant". Neither half is true
+ * now: `3933c46` (#292/#379) replaced the swallow with a recorded note, and
+ * #185 replaced the `Promise.all` with `allSettled` keyed per panel. The score
+ * card survives a gap refusal, and the consultant reads the 422's own
+ * sentence.
+ *
+ * This is the same correction made at the copy of this paragraph in
+ * `ZtWorkspace.tsx`'s `normalizeTarget` docstring. Two copies of one claim
+ * expired together, which is the argument for the clamp being pinned HERE
+ * rather than described in two places.
+ *
+ * What still justifies the clamp: the request should never be made at all.
  *
  * No backend test can see this: the API is behaving correctly. It is pinned
  * here or nowhere.

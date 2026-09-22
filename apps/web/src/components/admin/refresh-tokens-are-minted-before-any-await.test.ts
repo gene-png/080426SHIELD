@@ -34,8 +34,35 @@ import { describe, expect, it } from "vitest";
  * The scan is brace-balanced from each `async` opener and does not model
  * nested function declarations: a `beginRefresh` inside a callback defined
  * after an await would be reported. That direction is a FALSE POSITIVE, which
- * is loud and fixable at review. It cannot produce a false clean, which is the
- * direction that matters.
+ * is loud and fixable at review.
+ *
+ * **IT CAN PRODUCE A FALSE CLEAN, and this paragraph used to deny it.** It
+ * read "It cannot produce a false clean, which is the direction that matters"
+ * -- a scope claim wider than its own argument, stated exactly where someone
+ * would check, which is the shape `CLAUDE.md` calls worse than no comment.
+ *
+ * The opener pattern (see `lateMints` below) requires the literal `=>`
+ * after the parameter list, so it matches async ARROW FUNCTIONS ONLY. The
+ * pattern is deliberately NOT quoted here: writing a regex into prose is
+ * how this file acquired an invisible BACKSPACE byte while this very
+ * paragraph was being written, which is the defect
+ * `check_no_control_chars.py` exists for. Read it at the definition.
+ *
+ * An `async function` DECLARATION is invisible to it, and
+ * `ZtWorkspace.tsx` alone has six that contain awaits:
+ * `onCreateAssessment`, `onAnswerUpdate`, `onApprove`, `onDiscard`,
+ * `onChangeTargetStage`, `onRunAi`. A late mint inside any of them is not
+ * reported.
+ *
+ * That is not hypothetical: those handlers are where the NEXT tokens are owed.
+ * `onChangeTargetStage` and its CSF twin currently await a gap fetch with no
+ * token and no catch at all (filed), so the fix for that defect is precisely
+ * the code this gate cannot see.
+ *
+ * Widening the opener to cover declarations is the fix and is deliberately not
+ * made here -- it changes what this gate reports across four workspaces, which
+ * belongs in the PR that adds the tokens rather than in one correcting a
+ * comment.
  */
 
 const ADMIN = join(process.cwd(), "src/components/admin");
@@ -151,11 +178,27 @@ describe("refresh tokens are minted before any await", () => {
     // gate goes green over ZERO mints. A selector that selects nothing passes,
     // and it passes with the answer you were hoping for.
     //
-    // Six exist today: score-gap/interview/deliverable in Csf, score-gap and
-    // deliverable in Zt, heatmap and deliverable in Attack, overlap-plan and
-    // deliverable in TechDebt. The floor is deliberately lower than that count
-    // so an intentional consolidation does not fail this, while a wholesale
-    // disappearance does.
+    // THE COUNT THAT STOOD HERE IS DELETED RATHER THAN UPDATED. It read "Six
+    // exist today" above a list of NINE, and named `score-gap` twice -- a key
+    // #185 removed when it split that refresh into `score` and `gap`. Wrong
+    // when written and wronger afterwards, in the file whose job is to
+    // enumerate them.
+    //
+    // `CLAUDE.md`'s first rule for numbers applies exactly: if a number
+    // describes a list in the same document, delete the number and let the
+    // list be the count. The source names in use, which a reader can verify
+    // with `grep -rhoE 'beginRefresh\("[^"]+"\)' src/components/admin`:
+    //
+    //     deliverable   Csf, Zt, Attack, TechDebt
+    //     score, gap    Csf, Zt
+    //     interview     Csf
+    //     heatmap       Attack
+    //     overlap-plan  TechDebt
+    //
+    // The floor below is deliberately far lower than the live number of CALLS,
+    // so an intentional consolidation does not fail this while a wholesale
+    // disappearance does. It is a tripwire, not a tally -- which is why no
+    // total is written down for it to drift from.
     const mints = walk(ADMIN).reduce(
       (n, f) =>
         n +

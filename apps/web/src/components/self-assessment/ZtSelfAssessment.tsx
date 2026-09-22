@@ -9,6 +9,15 @@ import {
   cn,
 } from "@shield/design-system";
 
+// Sited here, apart from the other `@/lib` imports, on purpose, and the
+// reason is DATED because it expires: as of 2026-09-21 PR #366 was open and
+// rewrote the `describe-save-error` import line just below into a multi-line
+// block, so an import adjacent to it conflicted on merge for no semantic
+// reason. Once #366 has landed the hazard is gone and this import can be moved
+// back down with the others. Left undated, this note would outlive its cause
+// and read as an unexplained placement rule.
+import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
+
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import { ZtStagePicker } from "@/components/admin/zt/ZtStagePicker";
 import { ZtMaturityReference } from "@/components/zt/ZtMaturityReference";
@@ -211,7 +220,9 @@ export function ZtSelfAssessment({
     return <SelfAssessmentSubmitted />;
   }
 
-  const targetStages = catalog.stages.filter((s) => s.stage >= 2);
+  const targetStages = catalog.stages.filter(
+    (s) => s.stage >= MIN_TARGET_STAGE,
+  );
   const pillars = catalog.pillars;
   const idx = Math.min(pillarIdx, pillars.length - 1);
   const pillar: CatalogPillar | undefined = pillars[idx];

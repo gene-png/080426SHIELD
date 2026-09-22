@@ -55,6 +55,8 @@ import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
+import { serverReason } from "@/lib/describe-save-error";
+import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
 export interface ZtWorkspaceProps {
   serviceId: string;
@@ -62,8 +64,6 @@ export interface ZtWorkspaceProps {
   serviceTitle: string;
 }
 
-/** The lowest stage a client can TARGET. Stage 1 is a starting point, not a goal. */
-const MIN_TARGET_STAGE = 2;
 /** Mirrors `DEFAULT_TARGET_STAGE` in `app/zt/scoring.py`; valid on both ladders. */
 const DEFAULT_TARGET_STAGE = 3;
 
@@ -77,17 +77,48 @@ const DEFAULT_TARGET_STAGE = 3;
  * exactly the population #125 is about.
  *
  * It stopped being survivable when `analyze_gaps` began REFUSING an
- * out-of-range target instead of clamping it. `/gap-analysis` now answers a
- * typed 422, and `refreshScoreAndGap` runs both fetches under one
- * `Promise.all` whose rejection is swallowed -- so asking for a stage the
- * framework lacks blanks the gap card AND the score card, which does not depend
- * on the target at all. Before that change the same request returned 200 with a
- * clamped gap set. The consultant sees two empty cards, is told nothing, and
- * can recover only by touching a dropdown that never offered 4 in the first
- * place.
+ * out-of-range target instead of clamping it: `/gap-analysis` now answers a
+ * typed 422 where the same request used to return 200 with a clamped gap set.
+ *
+ * **THE REST OF THIS PARAGRAPH DESCRIBED A STATE THAT NO LONGER EXISTS, and
+ * it is corrected rather than deleted because it is where someone debugging
+ * this would look.** It read that `refreshScoreAndGap` "runs both fetches
+ * under one `Promise.all` whose rejection is swallowed -- so asking for a
+ * stage the framework lacks blanks the gap card AND the score card", and that
+ * "the consultant sees two empty cards, is told nothing". Two separate fixes
+ * have since landed underneath it and neither updated the sentence:
+ *
+ *   - `3933c46` (#292/#379) replaced the swallowing `catch` with a recorded
+ *     note, so the consultant IS told. "Whose rejection is swallowed" expired
+ *     there and survived as a sentence telling the next reader the branch was
+ *     still silent -- a precondition that expired, sitting exactly where it
+ *     would be checked.
+ *   - #185 replaced the `Promise.all` with `allSettled` keyed per panel, so a
+ *     gap refusal no longer blanks the score card, which never depended on the
+ *     target stage.
+ *
+ * What remains TRUE, and is the reason this clamp still matters: a target the
+ * framework lacks costs the consultant the gap panel, and the typed 422's own
+ * sentence is now what they read -- recoverable only through a dropdown that
+ * never offered the stored value in the first place. Normalising here is what
+ * stops the request being made at all.
  *
  * `stages` is the framework's own ladder, fetched from the catalog the target
- * dropdown is already built from, so this cannot drift from what the UI offers.
+ * dropdown is already built from. **That covers the LADDER and not the FLOOR,
+ * and the sentence here used to claim both** -- it read "so this cannot drift
+ * from what the UI offers", full stop, which is a scope wider than its own
+ * argument supports (#194).
+ *
+ * The ladder genuinely cannot drift: it is the same catalog the dropdown is
+ * built from. The floor is a separate, hand-written product rule, and it was
+ * spelled as a bare `2` at three sibling filters while only this function
+ * named it. Raise the picker's floor without the constant and this returns a
+ * stage the dropdown no longer offers -- a controlled `<select>` with
+ * `selectedIndex = -1`, which renders blank with no error at all. Both halves
+ * now come from `MIN_TARGET_STAGE` in `@/lib/assessment-targets`, so the
+ * claim is true of the floor because it has one home rather than because
+ * nobody has changed it yet.
+ *
  * When the ladder is unavailable, fall back to the engine default rather than
  * trusting the stored value: asking for a stage that cannot be checked is the
  * case that just cost two cards.
@@ -190,21 +221,62 @@ export function ZtWorkspace({
 
   const refreshScoreAndGap = React.useCallback(
     async (currentTarget: number) => {
-      const scoreGapAttempt = beginRefresh("score-gap");
-      try {
-        const [s, g] = await Promise.all([
-          fetchScore(serviceId),
-          fetchGapAnalysis(serviceId, { targetStage: currentTarget }),
-        ]);
-        setScore(s);
-        setGap(g);
-        scoreGapAttempt.clear();
-      } catch {
-        // NON-BLOCKING IS NOT SILENT. The old comment was true and is
-        // why this survived: a panel's own loading state cannot be told
-        // apart from a slow network.
-        scoreGapAttempt.note(
-          "Couldn't refresh the maturity and gap panels. The figures shown may be out of date; reload to try again.",
+      // ONE SOURCE KEY PER PANEL, minted before any await.
+      //
+      // NON-BLOCKING IS NOT SILENT (#292): a panel's own loading state cannot
+      // be told apart from a slow network, so a failure is recorded rather
+      // than swallowed. That half is settled.
+      //
+      // What is new here is that the two fetches are no longer COUPLED (#185).
+      // They ran under one `Promise.all` keyed on one source, so a gap
+      // rejection discarded the maturity score's GOOD RESULT -- and the score
+      // does not depend on the target stage at all. `allSettled` gives each
+      // outcome its own branch; two keys let one panel clear while the other
+      // reports.
+      //
+      // The mint-before-await rule is `useRefreshFailures`' own: a token minted
+      // below an await is ordered by when that await RESOLVED, which inverts
+      // the guard. Both are minted here, above `allSettled`.
+      const scoreAttempt = beginRefresh("score");
+      const gapAttempt = beginRefresh("gap");
+      const [scoreOutcome, gapOutcome] = await Promise.allSettled([
+        fetchScore(serviceId),
+        fetchGapAnalysis(serviceId, { targetStage: currentTarget }),
+      ]);
+
+      if (scoreOutcome.status === "fulfilled") {
+        setScore(scoreOutcome.value);
+        scoreAttempt.clear();
+      } else {
+        scoreAttempt.note(
+          serverReason(scoreOutcome.reason) ??
+            "Couldn't refresh the maturity panel. The figures shown may be out of date; reload to try again.",
+        );
+      }
+
+      // THE SERVER'S OWN SENTENCE WHERE THERE IS ONE. `/gap-analysis` answers
+      // a typed 422 for a target the framework lacks -- "dod_ztra has stages
+      // 1-3; target_stage=4 is not one of them." -- and that precision (#125)
+      // was being replaced by a fixed generic, so the consultant was told the
+      // panel was stale without being told the one thing that would fix it.
+      // That sentence names the framework AND the offending value; the generic
+      // named neither.
+      //
+      // `serverReason` never returns `err.message`: the proxy class discards
+      // its reason into `ZT proxy <status>` and keeps the real payload, so
+      // reading the envelope is the only way to get client-usable copy.
+      //
+      // A schema-level 422 would ride the internal "Request validation
+      // failed." here, and this route deliberately does NOT use
+      // `Query(ge=, le=)` bounds -- it refuses with a typed reason instead --
+      // so an integer from `normalizeTarget` cannot produce one.
+      if (gapOutcome.status === "fulfilled") {
+        setGap(gapOutcome.value);
+        gapAttempt.clear();
+      } else {
+        gapAttempt.note(
+          serverReason(gapOutcome.reason) ??
+            "Couldn't refresh the gap panel. The figures shown may be out of date; reload to try again.",
         );
       }
     },
