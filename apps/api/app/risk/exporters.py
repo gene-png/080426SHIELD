@@ -209,6 +209,20 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
 # ---------------------------------------------------------------------------
 
 
+#: Service tokens as the API spells them, for the #403 scored-coverage
+#: disclosure.
+#:
+#: DUPLICATED, unavoidably: `SERVICE_LABELS` in
+#: `apps/web/src/components/admin/risk/RiskRegisterDashboard.tsx` holds the same
+#: three strings for the consultant's screen. There is no shared label map in
+#: this repo to reuse (searched) and no way to share a Python dict with TSX, so
+#: this is a synchronization rather than a derivation -- which `CLAUDE.md` says
+#: to avoid where possible and otherwise to NAME, with the window stated.
+#:
+#: The window: a label changed in one place and not the other makes the client's
+#: PDF and the consultant's screen disagree about which assessment a count
+#: belongs to. Cosmetic rather than numeric -- the counts themselves come from
+#: one parser -- but it is the kind of drift nobody notices. Change both.
 _SERVICE_LABELS = {
     "attack": "ATT&CK coverage",
     "csf": "NIST CSF",

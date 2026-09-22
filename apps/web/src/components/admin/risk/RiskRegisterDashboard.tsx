@@ -48,6 +48,13 @@ import type { JSX } from "react";
  * printing "undefined" beside a real count. A missing label is a cosmetic
  * defect; a missing ROW is the disclosure failing silently, which is the
  * failure this banner exists to prevent.
+ *
+ * DUPLICATED, unavoidably: `_SERVICE_LABELS` in `app/risk/exporters.py` holds
+ * the same three strings for the client's deliverable. No shared label map
+ * exists in this repo to reuse, and a Python dict cannot be shared with TSX, so
+ * this is a synchronization whose window is named rather than a derivation.
+ * Change both, or the client's PDF and this screen disagree about which
+ * assessment a count belongs to.
  */
 const SERVICE_LABELS: Record<string, string> = {
   attack: "ATT&CK coverage",
