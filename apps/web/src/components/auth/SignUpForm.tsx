@@ -185,12 +185,6 @@ export function SignUpForm(): JSX.Element {
             message ??
             "Too many attempts. Please wait a moment before trying again.",
         });
-      } else if (carriesUserFacingCopy(reason, message)) {
-        // Any other typed backend rejection (D-016 envelope) — e.g. the rare
-        // email_domain_unavailable or email_invalid — carries friendly copy, so
-        // surface it on the email field. (Self-registration is open now, so the
-        // old domain-approval reasons no longer fire on the happy path.)
-        setErrors({ email: message });
       } else if (res.status === 429) {
         // A THROTTLE IS STILL A THROTTLE WHEN THE BODY IS UNUSABLE.
         //
@@ -203,6 +197,12 @@ export function SignUpForm(): JSX.Element {
         setErrors({
           form: "Too many attempts. Please wait a moment before trying again.",
         });
+      } else if (carriesUserFacingCopy(reason, message)) {
+        // Any other typed backend rejection (D-016 envelope) — e.g. the rare
+        // email_domain_unavailable or email_invalid — carries friendly copy, so
+        // surface it on the email field. (Self-registration is open now, so the
+        // old domain-approval reasons no longer fire on the happy path.)
+        setErrors({ email: message });
       } else {
         // Nothing here is fit to render: either an untyped body, or a schema
         // refusal whose message is the internal "Request validation failed."

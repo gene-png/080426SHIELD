@@ -241,6 +241,22 @@ export function HomeDashboard({
   const down = new Set<HomePanel>(unavailable);
   // Which services already have a released report (drives the grid + hero).
   const releasedServiceIds = new Set(deliverables.map((d) => d.service_id));
+
+  // WHEN THE DELIVERABLES PANEL FAILED, `releasedServiceIds` IS EMPTY -- and
+  // three separate readers silently treated that as "nothing is released".
+  // `phaseFor` told a client whose report shipped yesterday that it was still
+  // "Finalizing"; `bucketFor` filed it under "With your analyst. Nothing
+  // needed from you right now"; `serviceHref` sent them to /assessments. Worse,
+  // the `assessment_status === "released"` arm still printed "Report ready",
+  // so the card claimed the report while its link went elsewhere.
+  //
+  // The assessment's own status is authoritative for "is this released" and
+  // does not depend on the deliverables list, so fall back to it when that
+  // list did not arrive. One signal, three consistent readers.
+  const isReleased = (e: AssessmentResponse): boolean =>
+    releasedServiceIds.has(e.service_id) ||
+    (unavailable.includes("deliverables") &&
+      e.assessment_status === "released");
   // Ordered released_at desc upstream, so [0] is the freshest report.
   const latest = deliverables[0] ?? null;
   const openSelfAssessments = engagements.filter(needsClient);
@@ -251,7 +267,7 @@ export function HomeDashboard({
     results: [],
   };
   for (const e of engagements) {
-    grouped[bucketFor(e, releasedServiceIds.has(e.service_id))].push(e);
+    grouped[bucketFor(e, isReleased(e))].push(e);
   }
 
   return (
@@ -407,7 +423,12 @@ export function HomeDashboard({
           const showMessagesError = key === "action" && messagesDown;
           if (items.length === 0 && !showMessages && !showMessagesError)
             return null;
-          const count = items.length + (showMessages ? 1 : 0);
+          // The error row is a rendered item, so it counts. Without this the
+          // heading read "Action required (0)" directly above a visible
+          // "Your messages could not be loaded" row -- a number asserted over
+          // a population that failed to load, contradicted on the same screen.
+          const count =
+            items.length + (showMessages ? 1 : 0) + (showMessagesError ? 1 : 0);
           return (
             <section
               key={key}
@@ -457,7 +478,7 @@ export function HomeDashboard({
               {items.length > 0 ? (
                 <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {items.map((e) => {
-                    const released = releasedServiceIds.has(e.service_id);
+                    const released = isReleased(e);
                     const phase = phaseFor(e, released);
                     return (
                       <li key={e.service_id}>
@@ -507,7 +528,13 @@ export function HomeDashboard({
             <CardTitle>Recent activity</CardTitle>
           </CardHeader>
           <CardBody>
-            {deliverables.length === 0 ? (
+            {down.has("deliverables") ? (
+              <p className="text-sm text-ink-secondary">
+                Your released reports could not be loaded — refresh to try
+                again. This is a loading problem, not a statement that you have
+                none.
+              </p>
+            ) : deliverables.length === 0 ? (
               <p className="text-sm text-ink-secondary">
                 Released reports will show up here as your engagement
                 progresses.
