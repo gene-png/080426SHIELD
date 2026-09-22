@@ -34,6 +34,7 @@ def _tree(
     *,
     schema: str,
     web: str = "",
+    web_test: str = "",
     exporter: str = "",
     audit_renderer: bool = True,
 ) -> pathlib.Path:
@@ -63,6 +64,10 @@ def _tree(
     # rather than a flat directory that satisfies it trivially.
     (tmp_path / "apps" / "web" / "src" / "thing").mkdir(parents=True)
     (tmp_path / "apps" / "web" / "src" / "thing" / "Page.tsx").write_text(web, encoding="utf-8")
+    if web_test:
+        (tmp_path / "apps" / "web" / "src" / "thing" / "Page.test.tsx").write_text(
+            web_test, encoding="utf-8"
+        )
     if exporter:
         (tmp_path / "apps" / "api" / "app" / "thing").mkdir(parents=True, exist_ok=True)
         (tmp_path / "apps" / "api" / "app" / "thing" / "exporters.py").write_text(
@@ -168,6 +173,54 @@ def test_a_disclosure_rendered_only_in_a_DELIVERABLE_passes(tmp_path) -> None:
         schema=_SCHEMA,
         web="export const x = 1;",
         exporter="def caption(t: Thing):\n    if t.excluded_inputs:\n        pass\n",
+    )
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_TEST_FILE_is_not_a_reader(tmp_path) -> None:
+    """A fixture asserting a field exists does not mean anyone can see it.
+
+    `reader_text` globbed every `.ts`/`.tsx` under `apps/web/src`, so a test
+    file naming the field satisfied "reaches a screen" -- and the fixture is
+    the first thing a PR adding a disclosure field writes. The gate would have
+    reported the field consumed on the strength of the test asserting it is
+    not.
+
+    MEASURED on #387's branch before the exclusion, deleting the field name in
+    stages and running the gate after each, each deletion asserted to land:
+    removing it from `lib/dashboards/zt.ts` left `25 of 25, exit 0`; removing
+    it from the two ZT test files as well turned it red. Production code was
+    not what cleared it.
+
+    LATENT rather than live when found -- no field in the tree was cleared
+    ONLY by a test file, so the exclusion changed no verdict on the day it
+    landed. That is why it needs a test: nothing else would notice it being
+    undone.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        # The PRODUCTION surface does not mention the field at all.
+        web="export const unrelated = 1;",
+        # The TEST file names both the subject and the field, which is exactly
+        # what `readers_for` requires of a genuine reader.
+        web_test="const t: Thing = d;\nexpect(t.excluded_inputs).toEqual([]);",
+    )
+    assert main(["x", str(seed)]) == 1
+
+
+def test_a_PRODUCTION_file_beside_a_test_file_still_passes(tmp_path) -> None:
+    """The other half, so the exclusion is a filter and not a blanket refusal.
+
+    Without this, an exclusion that dropped the whole directory -- or every
+    file whose name merely contains `test` -- would pass the case above while
+    breaking every real reader that happens to sit beside a spec.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        web="const t: Thing = d;\nt.excluded_inputs;",
+        web_test="const t: Thing = d;\nexpect(t.excluded_inputs).toEqual([]);",
     )
     assert main(["x", str(seed)]) == 0
 
@@ -372,29 +425,42 @@ def test_an_exemption_for_a_field_that_NOW_HAS_A_READER_is_expired() -> None:
     written about. `check_gate_fixtures`' `DEFERRED` refuses the same state --
     "has fixtures AND is in DEFERRED -- pick one".
     """
-    import scripts.check_disclosure_consumers as gate
-
-    key = next(iter(gate.EXEMPT_FIELDS))
+    # A SYNTHETIC exemption, not `next(iter(gate.EXEMPT_FIELDS))`.
+    #
+    # Drawing a live key made this test a hostage to the dict's CONTENTS: the
+    # two arms below are about the expiry RULE, and they went from green to
+    # `StopIteration` the moment #387 discharged the last real entry and left
+    # `EXEMPT_FIELDS` empty -- a test of a rule, broken by data the rule is
+    # not about. Guarding with a skip-when-empty would be worse: the arm would
+    # then be pinned by nothing on the very tree where the dict is empty,
+    # which is this one.
+    #
+    # `CLAUDE.md`: derive the world the test needs; never let the setup depend
+    # on the thing under test happening to be in some state.
+    key = "app/zt/exporters.py::SyntheticExemptResponse.dropped_synthetic"
     origin, rest = key.split("::", 1)
     model, field = rest.rsplit(".", 1)
     # Every exemption sharing this schema file must be declared, or it is
     # reported as renamed-away and this test reads a verdict about a sibling.
     # `risk.py` holds two, which is how that came up.
-    fields = [
-        (o, *r.rsplit(".", 1))
-        for o, r in (k.split("::", 1) for k in gate.EXEMPT_FIELDS)
-        if o == origin
-    ]
+    fields = [(origin, model, field)]
     # Only this key's own schema file is in scope, so exemptions in OTHER files
     # are not judged here -- the scoping that a test below pins directly.
     origins = {origin}
 
+    synthetic = {key: "a synthetic reason"}
+
     # No reader: the exemption is doing its job, and is not reported.
-    assert expired_field_exemptions(fields, [("p.tsx", "nothing here")], origins) == []
+    assert (
+        expired_field_exemptions(fields, [("p.tsx", "nothing here")], origins, exemptions=synthetic)
+        == []
+    )
 
     # A reader that names this model's subject: the exemption has expired.
     subject = model_subject(model)
-    expired = expired_field_exemptions(fields, [("p.tsx", f"{subject}: d.{field}")], origins)
+    expired = expired_field_exemptions(
+        fields, [("p.tsx", f"{subject}: d.{field}")], origins, exemptions=synthetic
+    )
     assert [k for k, _ in expired] == [key]
     assert "delete the exemption" in expired[0][1]
 
@@ -406,12 +472,14 @@ def test_an_exemption_whose_FIELD_WAS_RENAMED_is_expired() -> None:
     The entry then exempts nothing, and the next field to land under that
     triple inherits a reason written about a different defect entirely.
     """
-    import scripts.check_disclosure_consumers as gate
-
-    key = next(iter(gate.EXEMPT_FIELDS))
+    # Synthetic, for the reason given in the test above.
+    key = "app/zt/exporters.py::SyntheticExemptResponse.dropped_synthetic"
     origin = key.split("::", 1)[0]
     expired = expired_field_exemptions(
-        [(origin, "SomethingElseResponse", "dropped_x")], [], {origin}
+        [(origin, "SomethingElseResponse", "dropped_x")],
+        [],
+        {origin},
+        exemptions={key: "a synthetic reason"},
     )
     assert key in [k for k, _ in expired]
     assert any("the exemption is stale" in why for _, why in expired)

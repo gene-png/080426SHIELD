@@ -192,11 +192,18 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
         unusable_target_codes: ["CISA.ID.01", "CISA.DE.02"],
       }),
     );
-    // Both codes, NOT truncated: this is a fault disclosure, and abbreviating
-    // one is what #75/#79 were filed about.
-    expect(note).toContain("CISA.ID.01");
-    expect(note).toContain("CISA.DE.02");
-    expect(note).toContain("could not be used");
+    // THE WHOLE STRING, not `toContain`. Containment left three natural
+    // mutants alive, and the adversarial review found all three: a different
+    // `join` separator, the two sentences concatenated in REVERSE order
+    // (`discarded.concat(base)` -- which every exact-`toBe` provenance test
+    // above still passes, because the empty case is `"".concat(base) ===
+    // base`), and a doubled append. One equality kills all three, and it is
+    // also the only assertion that can see a stray space or a missing one.
+    expect(note).toBe(
+      "Your target, chosen at intake A per-capability target was recorded for" +
+        " CISA.ID.01, CISA.DE.02 but could not be used, so the engagement" +
+        " target was applied to those rows instead.",
+    );
   });
 
   it("says nothing when every per-capability target was usable", () => {
@@ -225,6 +232,37 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
         unusable_target_codes: ["CISA.ID.01"],
       }),
     );
-    expect(note).toContain("CISA.ID.01");
+    expect(note).toBe(
+      "Per-capability targets from your assessment A per-capability target was" +
+        " recorded for CISA.ID.01 but could not be used, so the engagement" +
+        " target was applied to those rows instead.",
+    );
+  });
+
+  it("says it exactly as the client's PDF says it", () => {
+    // THE CROSS-SURFACE PARITY PIN, and it is the point of the whole change.
+    //
+    // `zt/exporters.py::_gap_plan_caption` builds this sentence for the Gap
+    // Plan caption. Until this assertion existed, nothing anywhere failed if
+    // the two drifted -- which is precisely the defect #387 was filed about,
+    // one surface saying something the other does not.
+    //
+    // The expected value is TRANSCRIBED FROM THE PYTHON, not derived from
+    // `targetNote`, so the two sides of this equality have independent
+    // origins. `_gap_plan_caption` carries the pointer back to this test, on
+    // the ORIGIN side, because whoever rewords the caption never opens a
+    // TypeScript file.
+    const fromTheDeliverable =
+      " A per-capability target was recorded for CISA.ID.01, CISA.DE.02 but" +
+      " could not be used, so the engagement target was applied to those rows" +
+      " instead.";
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: ["CISA.ID.01", "CISA.DE.02"],
+      }),
+    );
+    expect(note.endsWith(fromTheDeliverable)).toBe(true);
   });
 });

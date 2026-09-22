@@ -158,28 +158,32 @@ withheld, dropped or rejected must have its name referenced under
 `apps/web/src` OR in an exporter -- "a screen or a delivered artifact", per the
 definition-of-done rule.
 
-**18 such fields today: 15 reach a reader, 3 do not and are exempt with a
-tracked reason.** An earlier draft of this line said "all reachable", which was
-false on both halves -- it stated a count as a clean bill of health over a set
-the gate's own exemption text calls "a REAL unconsumed disclosure". The gate
-prints the split on every clean run, so the number here is a summary of a
-measurement rather than a claim of its own:
+**Do not read a count here. Run the gate** --
+`python apps/api/scripts/check_disclosure_consumers.py` -- which prints the
+split on every clean run. This paragraph used to state one, and the number and
+the verbatim output block quoted beneath it both went stale inside a month: the
+population grew from 18 to 25, every exemption has since been discharged, and
+the `; N do NOT ... are exempt` clause the quote showed **cannot be emitted at
+all** with `EXEMPT_FIELDS` empty. A count under a sentence calling it "a
+summary of a measurement rather than a claim of its own" is the
+correction-paragraph-outlives-the-number shape, in the paragraph arguing it is
+safe.
 
-    check-disclosure-consumers: 15 of 18 disclosure fields reach a screen or a
-    deliverable; 3 do NOT and are exempt with a tracked reason
+**HISTORICAL, and kept because it is the reason the gate is shaped as it is.**
+When that count was written there were three exemptions. Two -- `batches_total`
+and `batches_failed` -- were unconsumed only until #376 landed the banner that
+renders them. The third, `unusable_target_codes`, was a live client-facing
+defect rather than a timing artifact: it reached no screen at all. That is
+**#387**, fixed 2026-09-22.
 
-**Every exemption has an expiry, and two of the three expire on a PR that is
-already open.** `batches_total` and `batches_failed` are unconsumed only because
-the banner that renders them is in #376; the moment it lands they are ordinary
-reachable fields and their entries must go. `unusable_target_codes` is the third
-and is a live client-facing defect rather than a timing artifact -- it reaches no
-screen at all, and it is **#387**.
-
-That matters more than the count. The gate was passing over
-`unusable_target_codes` before this branch, because per-service scoping did not
-separate two models of the same service: `zt/exporters.py` carries the token
-`zt` and reads a DIFFERENT model's field on a different route. A gate green over
-a live instance of the defect it exists to catch.
+Also historical: the gate passed over `unusable_target_codes` under the
+*per-service* scoping, because a service token could not separate two models of
+one service -- `zt/exporters.py` carries `zt` and reads a DIFFERENT model's
+field. #372 replaced that with the model's SUBJECT, and `zt/exporters.py`
+contains no `ZtDashboard`, so the sentence above describes a rule the gate no
+longer has. It is spelled out rather than deleted because #387's own branch
+re-published it as the CURRENT mechanism and had to be corrected -- the same
+stale explanation, believed twice.
 
 Two design calls worth knowing. The consumer surface is TWO surfaces, not the
 web alone: `unusable_target_codes` reaches the client only through
@@ -322,8 +326,11 @@ fail-open).
 
 ### 2026-09-22 — a ZT fault disclosure the deliverable made and the screen did not (#387)
 
-`ZtDashboardResponse.unusable_target_codes` has been served on both return
-paths of `zt_dashboard` since #188 and was read by nothing under `apps/web`.
+`ZtDashboardResponse.unusable_target_codes` has been served by `zt_dashboard`
+since #188 and was read by nothing under `apps/web`. (An earlier draft said
+"both return paths of `zt_dashboard`". The route has ONE
+`return ZtDashboardResponse(`; every other exit raises. The two returns belong
+to `targetNote`, which is a different claim about a different function.)
 The client's PDF said it: `zt/exporters.py::_gap_plan_caption` names the
 capabilities whose per-capability target could not be used. So the two surfaces
 reading one assessment disagreed about whether anything had been discarded, and
@@ -336,20 +343,39 @@ independent of how the headline target was chosen, so an early return anywhere
 would swallow it. The codes are listed, never truncated or counted: this is a
 fault disclosure, and abbreviating one is what #75/#79 were filed about.
 
-**What the consumer gate could not tell us, and this is the durable half.**
+**What the consumer gate could not tell us — and the first version of this
+paragraph named the wrong mechanism, so the correction is the record.**
 `check_disclosure_consumers.py` carried an exemption for this field. Removing
-it, the gate stayed green *with the field name deleted from `apps/web`
-entirely* — it attributes a consumer by the model's SERVICE token, and
-`app/zt/exporters.py` reading `GapAnalysisResponse.unusable_target_codes`
-clears the identically-named field of the OTHER ZT model. #372 fixed the
-pooled-blob defect across services; this is the residual one layer in, because
-**per-service is not per-model**. Filed as **#448**. The exemption is gone and
-the comment that replaced it says plainly that the gate's green is not the
-evidence here and the vitest suite is.
+it, the gate still reported `25 of 25`. This section said that was because the
+gate "attributes a consumer by the model's SERVICE token", so the ZT exporter
+reading the identically-named field of the OTHER ZT model cleared the dashboard
+one. That was false — `readers_for` requires the model's SUBJECT in the
+reader's own text, `zt/exporters.py` contains no `ZtDashboard`, and the
+service-token scheme had already been replaced by the subject rule in #372. It
+was reasoned about instead of executed, and the adversarial review caught it.
 
-Both halves of the new branch were mutated: forcing the disclosure off reddens
-the two tests named for it, and forcing it on reddens the empty case plus four
-existing provenance assertions. A test that only ever sees one side of a
+Re-run in stages, each deletion asserted to land first:
+
+    field removed from `lib/dashboards/zt.ts` (production)  -> 25 of 25, exit 0
+    ALSO removed from the two ZT test files                 -> violation, exit 1
+
+**The production reader was not what cleared it. The test files were.**
+`reader_text` globbed every `.ts`/`.tsx` under `apps/web/src` with no test
+exclusion, so a fixture satisfied "reaches a screen" — and a fixture is the
+first thing a PR adding a disclosure field writes. The gate would have reported
+a field consumed on the strength of the test asserting it is not.
+
+LATENT rather than live: measured over all 25 fields, none was cleared ONLY by
+a test file, so the exclusion changed no verdict the day it landed. It is
+closed here (`TEST_FILE_MARKERS`), pinned by two tests — one requiring the red,
+one requiring a production reader beside a test file to still pass, so the
+filter cannot degrade into a blanket refusal — and tracked in #448.
+
+Both halves of the new branch were mutated: **at 32d5bea**, forcing the
+disclosure off reddened the two tests named for it, and forcing it on reddened
+the empty case plus four existing provenance assertions. Date-qualified rather
+than re-counted, because the tests added below move the figure again and a
+correction paragraph that carries a live number goes stale in turn. A test that only ever sees one side of a
 conditional is the shape this repo keeps finding.
 
 **The first draft shipped without a test at the seam, and the file that needed
@@ -360,6 +386,16 @@ that a pure function is not the surface a client reaches. Replacing
 `ZtDashboard.wiring.test.tsx` was created for, on the card next to the one it
 already guards. Three rendering tests now cover it, and that mutation reddens
 two of them.
+
+The review that cleared this branch found four blocking items, and the one
+worth carrying forward is that **the first write-up of the gate finding named
+the wrong mechanism** — corrected in place above. The others: `EXEMPT_FIELDS =
+{}` broke two pytest tests that drew a live key out of the dict, a test of the
+expiry RULE broken by data the rule is not about (now a synthetic injected
+exemption); three natural mutants of the new sentence survived containment-only
+assertions (now `toBe` on the whole string, plus a parity pin transcribed from
+the Python); and the one-element grammar wart, which is inherited from the PDF
+and is filed as **#452** rather than fixed on one surface.
 
 Writing them turned up a second thing, in the fixture rather than the code.
 `ZtDashboard.wiring.test.tsx` set `target_stage_source: "engagement"`, and

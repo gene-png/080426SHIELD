@@ -142,18 +142,32 @@ DISCLOSURE_SUBSTRINGS = ("withheld", "provenance")
 #: pinned by three tests in `zt.test.ts` including the empty case and the
 #: fully-overridden branch.
 #:
-#: WHAT THIS GATE CANNOT SEE, measured while removing the entry: with the field
-#: name deleted from `apps/web` ENTIRELY, this gate still reported 25 of 25. It
-#: attributes by the model's SERVICE token, and both ZT models carry `zt`, so
-#: `app/zt/exporters.py` reading `GapAnalysisResponse.unusable_target_codes`
-#: clears `ZtDashboardResponse.unusable_target_codes` as well. That is the
-#: identically-named-sibling blindness the deleted entry existed to document,
-#: and it is unchanged -- deleting the entry did not fix it, it only stopped
-#: this field being the one that shows it.
+#: THIS BLOCK FIRST RECORDED THE WRONG MECHANISM, and the correction is kept
+#: here rather than overwritten, because the wrong version is what a reader
+#: would otherwise have acted on.
 #:
-#: So do not read a green here as proof the dashboard renders it. The evidence
-#: is the vitest suite. Tracked in #448; it is the same family as the
-#: prefix-anchored residual in #373.
+#: It said the gate "attributes by the model's SERVICE token, so
+#: `app/zt/exporters.py` reading `GapAnalysisResponse.unusable_target_codes`
+#: clears `ZtDashboardResponse.unusable_target_codes` as well". FALSE.
+#: `readers_for` requires the model's SUBJECT in the reader's own text, and
+#: `grep ZtDashboard apps/api/app/zt/exporters.py` returns zero -- the service
+#: -token scheme was REPLACED by exactly this subject rule, and `unconsumed`'s
+#: docstring says so forty lines down. The claim was reasoned about rather
+#: than executed, which is the failure `CLAUDE.md` opens with.
+#:
+#: WHAT THE MEASUREMENT ACTUALLY SHOWED, re-run in stages with each deletion
+#: asserted to land first:
+#:
+#:     field removed from `lib/dashboards/zt.ts` (production)  -> 25 of 25, 0
+#:     ALSO removed from the two ZT test files                 -> violation, 1
+#:
+#: The production reader was not what cleared it. THE TEST FILES WERE --
+#: `reader_text` globbed every `.ts`/`.tsx` under `apps/web/src` with no test
+#: exclusion, so a fixture satisfied "reaches a screen". See
+#: `TEST_FILE_MARKERS`, which closes it, and #448, which tracks it.
+#:
+#: With that closed, a green here IS evidence the dashboard renders it: the
+#: same production-only deletion now turns the gate red.
 EXEMPT_FIELDS: dict[str, str] = {}
 
 #: Arm 2's exemption, DISCHARGED. It was temporary by construction and its
@@ -182,6 +196,28 @@ AUDIT_RENDERER_EXEMPT: str | None = None
 #: Where a person reads things. Two surfaces, per `CLAUDE.md`'s
 #: "on a screen OR in a delivered artifact".
 WEB_SUFFIXES = {".ts", ".tsx"}
+
+#: A TEST FILE IS NOT A SURFACE, and until #387 this gate counted one.
+#:
+#: `reader_text` globbed every `.ts`/`.tsx` under `apps/web/src`, so a fixture
+#: naming the field satisfied "reaches a screen" -- and a fixture is exactly
+#: what a PR adding a disclosure field writes first. The gate would have
+#: reported a field consumed on the strength of the test asserting it is not.
+#:
+#: MEASURED on #387's branch, by deleting the field name in stages and running
+#: the gate after each (each deletion asserted to land first):
+#:
+#:     removed from `lib/dashboards/zt.ts` (production)  -> 25 of 25, exit 0
+#:     ALSO removed from the two ZT test files           -> violation, exit 1
+#:
+#: The production code was not what cleared it. The tests were.
+#:
+#: LATENT rather than live when found: no field in the tree was cleared ONLY
+#: by a test file, so excluding them changes no current verdict. That is the
+#: distinction `check_test_integrity`'s `working-directory:` note draws -- a
+#: hole nothing has fallen into yet is still a hole, and it opens on the next
+#: PR that writes the fixture before the renderer, which is the normal order.
+TEST_FILE_MARKERS = (".test.", ".spec.")
 
 
 def repo_root_for(start: Path) -> Path | None:
@@ -250,11 +286,15 @@ def reader_text(repo: Path) -> tuple[list[tuple[str, str]], list[str]]:
     readers: list[tuple[str, str]] = []
     web = repo / "apps" / "web" / "src"
     for path in sorted(web.rglob("*")):
-        if path.suffix in WEB_SUFFIXES and path.is_file():
-            try:
-                readers.append((str(path), path.read_text(encoding="utf-8")))
-            except (OSError, UnicodeDecodeError) as exc:
-                problems.append(f"{path}: unreadable ({type(exc).__name__})")
+        if not path.is_file() or path.suffix not in WEB_SUFFIXES:
+            continue
+        # See TEST_FILE_MARKERS: a fixture is not a reader.
+        if any(m in path.name for m in TEST_FILE_MARKERS):
+            continue
+        try:
+            readers.append((str(path), path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError) as exc:
+            problems.append(f"{path}: unreadable ({type(exc).__name__})")
     for path in sorted((repo / "apps" / "api" / "app").rglob("*.py")):
         if "exporters" in path.name or path.name == "docx_export.py":
             try:
@@ -319,10 +359,13 @@ def unconsumed(
     both, so a component that destructures fields without naming the type is
     covered by the types file it imports from.
 
-    MEASURED on this tree, all eighteen fields: fifteen attributed to a reader
-    that names their own model, and three flagged -- the Risk `batches_*` pair
-    (#372) and the ZT dashboard field (#387). Every one of the fifteen is a
-    true positive read by hand, including both cross-file cases
+    MEASURED when this scheme landed, over the eighteen fields the tree then
+    held: fifteen attributed to a reader that names their own model, and three
+    flagged -- the Risk `batches_*` pair (#372) and the ZT dashboard field
+    (#387). Kept in the PAST TENSE with its population, because it is a claim
+    about a fixed window and the population has since grown; re-run the gate
+    for today's figure rather than reading one here. Every one of the fifteen
+    was a true positive read by hand, including both cross-file cases
     (`clients.py` models under `components/dashboards/techDebt/`,
     `GapAnalysisResponse` in `app/zt/exporters.py`) and both remaining
     duplicate names, which now resolve to different files.
@@ -363,6 +406,7 @@ def expired_field_exemptions(
     fields: list[tuple[str, str, str]],
     readers: list[tuple[str, str]],
     origins: set[str],
+    exemptions: dict[str, str] | None = None,
 ) -> list[tuple[str, str]]:
     """Entries in `EXEMPT_FIELDS` that have stopped standing for anything.
 
@@ -401,7 +445,12 @@ def expired_field_exemptions(
     declared = {f"{origin}::{model}.{field}" for origin, model, field in fields}
     by_key = {f"{origin}::{model}.{field}": (model, field) for origin, model, field in fields}
     expired: list[tuple[str, str]] = []
-    for key in EXEMPT_FIELDS:
+    # `exemptions` defaults to the live dict, so production behaviour is
+    # unchanged. It is injectable because the two tests pinning the arms below
+    # used to draw a key out of the live dict, which made a test OF THIS RULE
+    # fail with `StopIteration` the day the dict emptied (#387). A rule's test
+    # must not depend on the rule currently having subjects.
+    for key in (EXEMPT_FIELDS if exemptions is None else exemptions):
         origin = key.split("::", 1)[0]
         if origin not in origins:
             continue
@@ -521,8 +570,11 @@ def main(argv: list[str]) -> int:
         print(
             "check-disclosure-consumers: could not look -- ZERO disclosure "
             "fields discovered across every `*Response` model. This repo has "
-            "eighteen; finding none means the predicate broke, not that the "
-            "tree is clean.",
+            "many; finding none means the predicate broke, not that the tree "
+            "is clean. (No number here on purpose: this message once said "
+            "`eighteen` while the tree held twenty-five, and it is printed to "
+            "a human in a could-not-look branch, where a wrong figure is the "
+            "one thing they have to go on.)",
             file=sys.stderr,
         )
         return EXIT_COULD_NOT_LOOK

@@ -65,6 +65,20 @@ def _gap_plan_caption(gap: GapAnalysis) -> str:
     # No count: the codes are listed here, so the list IS the count and cannot
     # go stale (`CLAUDE.md` rule 1). Not truncated either -- this is a fault
     # disclosure, and abbreviating one is what #75/#79 were filed about.
+    #
+    # THIS SENTENCE IS DUPLICATED IN THE WEB BUNDLE, word for word, and #387 is
+    # what made that true: the ZT client dashboard now says it too, in
+    # `apps/web/src/lib/dashboards/zt.ts::targetNote`. The whole point of #387
+    # was that the deliverable and the screen must not disagree about whether
+    # anything was discarded, so a reword HERE that does not reach there
+    # recreates the defect in the opposite direction.
+    #
+    # The pointer is on THIS side deliberately, per `CLAUDE.md`'s rule about
+    # duplicated cross-language literals: the window is closed by whoever edits
+    # the origin, and a pointer sitting only in the TypeScript closes nothing,
+    # because the person rewording this caption never opens that file.
+    # `zt.test.ts`'s "says it exactly as the client's PDF says it" transcribes
+    # the string from here and fails if the two drift.
     if gap.unusable_target_codes:
         listed = ", ".join(gap.unusable_target_codes)
         target += (

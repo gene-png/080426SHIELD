@@ -71,19 +71,58 @@ client's PDF and no screen; `targetNote` now appends the deliverable's own
 sentence on both returns. Trips merge-rule conditions **5** (web test globs) and
 **6** (client dashboard copy) — **Gene merges, not the agent.**
 
-The finding worth keeping is about the gate rather than the field:
-`check_disclosure_consumers.py` stayed green with the field name deleted from
-`apps/web` entirely, because it attributes a consumer by the model's SERVICE
-token and ZT has two models declaring that name. #372 fixed the cross-service
-pooled blob; **per-service is not per-model** is the residual. Filed as **#448**.
-The exemption was deleted and replaced with a comment stating that this gate's
-green is not the evidence for this field.
+The finding worth keeping is about the gate rather than the field, and **the
+first version of it was wrong** -- recorded that way because the wrong version
+is what was published, on the issue and in three files.
+
+It said the gate "attributes a consumer by the model's SERVICE token, and ZT has
+two models declaring that name". False: `readers_for` requires the model's
+SUBJECT in the reader's own text, `zt/exporters.py` contains no `ZtDashboard`,
+and #372 had already replaced service-token matching with exactly that subject
+rule. The claim was reasoned about, not executed; the adversarial review caught
+it and I confirmed it by running the mutation properly in stages:
+
+    field removed from `lib/dashboards/zt.ts` (production)  -> 25 of 25, exit 0
+    ALSO removed from the two ZT test files                 -> violation, exit 1
+
+**The test files were what cleared it.** `reader_text` globbed every
+`.ts`/`.tsx` under `apps/web/src` with no test exclusion, so a fixture
+satisfied "reaches a screen" -- and the fixture is the first thing a PR adding
+a disclosure field writes. LATENT, not live: over all 25 fields none was
+cleared only by a test file, so the exclusion changes no current verdict.
+
+Closed on this branch (`TEST_FILE_MARKERS`), pinned both ways -- a test
+requiring the red, and one requiring a production reader beside a test file to
+still pass, so the filter cannot degrade into a blanket refusal -- and
+red-on-revert verified. **#448 has been re-aimed at the real mechanism.**
+
+The adversarial review also found that `EXEMPT_FIELDS = {}` broke two pytest
+tests that drew a live key with `next(iter(...))`: a test OF the expiry rule,
+broken by data the rule is not about. **My verification list for this branch
+named five gate scripts, vitest and tsc, and no `pytest -m unit`, on a branch
+editing `apps/api/scripts/` -- which is why it went unnoticed.** Both now use a
+synthetic injected exemption, so the arms stay pinned on a tree where the dict
+is empty.
 
 Verification, commands rather than adjectives, all from the worktree at
 `C:/repos/SHIELD080326/wt-387`:
 
     bash scripts/verify-in-worktree.sh tsc      -> 0 errors
-    bash scripts/verify-in-worktree.sh vitest   -> 697 passed, 60/60 files, 0 never collected
+    bash scripts/verify-in-worktree.sh vitest   -> 698 passed, 60/60 files, 0 never collected
+    pytest, 6 files the change reaches       -> 154 passed, 0 failed (FULL-checkout mount, no skips)
+
+**The full `pytest -m unit` was started and ABANDONED, not skipped quietly.**
+Against a Windows bind mount it runs at roughly 0.26 tests/s -- a ~7h
+projection, measured independently by the #254 work the same evening. The
+targeted run above mounts the whole worktree at `/work` and runs from
+`/work/apps/api`, which is the FULL-checkout layout: the three cases that
+`SKIP` under the `apps/api`-only mount (#314) execute there. CI runs the whole
+suite, and that is the signal of record for it -- said plainly rather than
+letting a green targeted run stand in for one.
+
+The six files are derived rather than picked: everything importing or
+exercising `check_disclosure_consumers.py`, the two gate harnesses that
+enumerate gates, and the ZT exporter and dashboard paths this branch touches.
     eslint .                                    -> exit 0, 3 warnings (the harness's own recorded baseline)
     prettier@3.9.6 --check <repo glob>          -> exit 0
     ruff check --no-cache . && black --check .  -> exit 0, 355 files unchanged
