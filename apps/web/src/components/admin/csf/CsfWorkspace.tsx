@@ -438,6 +438,14 @@ export function CsfWorkspace({
    * Duplicated rather than shared, as the two workspaces' tests already are:
    * separate components, separate clients, separate copy, and a shared helper
    * would hide exactly the divergence the twin-sweep rule exists to catch.
+   *
+   * RESIDUAL (#423), the same one the ZT twin carries: `onAnswerUpdate` calls
+   * `refreshScoreAndGap(targetTier)` with the OPTIMISTIC new tier, so an
+   * auto-save landing inside this fetch's window supersedes the attempt
+   * below. If both gap fetches then fail the revert is skipped and the
+   * control sits on the new tier over the old tier's rows. It narrows #385
+   * rather than reintroducing it; the reasoning is written out in full at
+   * `ZtWorkspace.onChangeTargetStage`.
    */
   async function onChangeTargetTier(next: number): Promise<void> {
     const previous = targetTier;

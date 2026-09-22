@@ -481,6 +481,28 @@ export function ZtWorkspace({
    * typed 422 naming the framework and the offending value -- and either way
    * the message states that the target is unchanged, because that is the
    * thing the consultant just watched happen.
+   *
+   * ## RESIDUAL, stated rather than left as an oversight (#423)
+   *
+   * Sharing the key has a cost, and it is the one case this handler does NOT
+   * fix. `onAnswerUpdate` ends with `refreshScoreAndGap(targetStage)`, and
+   * that `targetStage` is the OPTIMISTIC new value -- so an auto-save landing
+   * inside this fetch's window mints `"gap"` again and supersedes the attempt
+   * below. If BOTH gap fetches then fail, the revert is skipped and the
+   * control is left on the new target over the old target's rows, disclosed
+   * only as "the figures shown may be out of date".
+   *
+   * The guard is still right: when the concurrent refresh SUCCEEDS it has put
+   * the new target's rows on screen, and reverting then would be the mirror
+   * defect. "A later attempt owns this panel" and "a later attempt supplied
+   * the rows this revert was for" are different facts, and the token cannot
+   * tell them apart.
+   *
+   * This NARROWS #385 rather than reintroducing it -- before this change the
+   * picker never reverted at all. The closing move is to derive the heading
+   * from the gap actually rendered (`analysis.target_stage` is already on the
+   * wire) instead of keeping two pieces of state in step; that is wider than
+   * this fix's remit and is #423.
    */
   async function onChangeTargetStage(next: number): Promise<void> {
     const previous = targetStage;
