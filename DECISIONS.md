@@ -5093,30 +5093,66 @@ character class was wrong by sixteen characters with nothing able to see it.
 The migration does not import application code — what is shared is the language
 primitive, which is what makes this a derivation rather than a synchronisation.
 
-### A harness that cannot see the output it asserts on
+### A capture channel the system under test can silently disconnect
 
-Recorded here rather than in `CLAUDE.md` because that file has 856 bytes of
-headroom and is already past its soft line; the one-line instruction lives at
-the site, in `test_migration_0050_blank_legal_name.py`.
+Recorded here rather than in `CLAUDE.md` because that file is past its size
+gate's soft line — run `check_claude_md_size.py CLAUDE.md` for the headroom
+rather than trusting a figure written here. The first version of this paragraph
+quoted a byte count with no command behind it, which is rule 2's own defect in
+the sentence explaining a placement decision, and the decision stands without
+it.
 
 The test that reads migration 0050's report line reached for `caplog` first,
 which is what anyone would do. It captured NOTHING, and the assertion
-`assert reports, "migration 0050 logged no report line at all"` failed with an
-empty list — while the very same pytest run printed the missing line under
-"Captured stderr call".
+`assert reports, ...` failed on an empty list — while the very same pytest run
+printed the missing line under "Captured stderr call".
 
-**Alembic installs its own handler through `fileConfig`, and the migration
-logger does not propagate to the root one**, so `caplog` — which attaches to
-the root logger — sees nothing. The output is real; it is just not where
-`caplog` looks. `capfd` reads it at the file-descriptor level, which is where
-it actually is.
+**THE MECHANISM, and the first version of this section had it backwards.** It
+said the alembic logger "does not propagate to the root one, so `caplog` sees
+nothing". Measured in this tree:
 
-The failure is benign in the direction it happened to land: the assertion was
-written before the fix, so it went red and got investigated. **Written the
-other way round it would have been silent** — a test whose log assertion can
-never fire, in a file added specifically to end "the migration is pinned by
-nothing". That is a silent-success branch in the HARNESS rather than in the
-code, and nothing about reading the test would reveal it.
+    before fileConfig, root handlers: ['Handler']      <- our capture
+    after  fileConfig, root handlers: ['StreamHandler'] <- ours is GONE
+    our handler still attached?  False
+    alembic logger handlers: []   propagate: 1
 
-Reach for `capfd` when asserting on anything a migration, or any library that
-configures its own logging, writes to the log.
+The alembic logger has **no handler of its own** and **does** propagate.
+Propagation to root is the only reason anything prints at all — so the cited
+evidence, that the line appeared on stderr, disproves the mechanism that was
+written beside it. The real cause is that `logging.config.fileConfig`
+**REMOVES root's existing handlers**, pytest's `LogCaptureHandler` among them,
+part-way through the test.
+
+That correction matters because the remedy follows from the mechanism: acting
+on "it does not propagate", the next person adds a handler to the alembic
+logger or sets `propagate=True`, and neither touches it.
+
+**The general form, which is what to carry away.** The scope is not migrations
+and not alembic: it is **any code under test that reconfigures logging** —
+`fileConfig`, `dictConfig`, `basicConfig(force=True)` — and beyond logging, any
+capture the subject can replace: `capsys` against a library that rebinds
+`sys.stdout`, or a mock whose target module gets re-imported.
+
+> **A capture channel the system under test can silently disconnect: assert the
+> capture is NON-EMPTY before you read it, and prefer the most primitive
+> channel available.**
+
+Both halves are rules this repo already carries, which is the point — this
+needed no new tool-specific one:
+
+- _"A SELECTOR THAT SELECTS NOTHING PASSES. ASSERT THE COUNT IT SELECTED BEFORE
+  READING ITS RESULT."_ An empty capture is a selector that selected nothing.
+- _"Assert what must APPEAR before what must not."_ An assertion of ABSENCE
+  over a capture (`assert "normalised 1" not in caplog.text`) is satisfied
+  VACUOUSLY by an empty capture and can never fire.
+- _"PREFER THE MOST PRIMITIVE AVAILABLE SIGNAL."_ `capfd` reads the file
+  descriptor, below anything Python's logging config can rearrange.
+
+**What actually saved this test was the presence guard, not the order it was
+written in.** An earlier draft here claimed the failure was benign "because the
+assertion was written before the fix, so it went red", and that tied benignity
+to authorship order and was false: `assert reports, ...` fails on an empty list
+whenever it runs. The vacuous case is the ABSENCE form above, which this test
+does not use — because it asserts `reports` is non-empty first. Crediting the
+authorship order would teach the next person to rely on luck instead of the
+guard that is actually in the code.

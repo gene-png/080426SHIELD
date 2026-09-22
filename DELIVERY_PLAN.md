@@ -42,13 +42,28 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
-**2026-09-22 — #254 follow-up (`tier-1` consequence, no new item).** #444
-merged on three review rounds; the fourth found that a blank `legal_name` still
-reached the organisation line of client deliverables through five exporters'
-bare `or "Client"`. Fixed at every such reader plus migration 0050, with the
-regression test that could not fail repaired and proven red-on-revert. No
-estimate row changes; #254 owns no item, which is the gap this section already
-records under _Still to do_. The missing admin edit path is tracked in #449.
+**2026-09-22 — #254 follow-up, in TWO parts (`tier-1` consequence, no new
+item).** #444 merged on three review rounds. A fourth found that a blank
+`legal_name` still reached the organisation line of client deliverables through
+a bare `or "Client"`, and #458 fixed the readers it named. **A fifth round then
+found another in `routes/csf.py` -- the Playbook export, feeding five client
+artifacts from a ROUTE rather than an `exporters.py` -- and another in the WEB
+layer, `apps/web/src/lib/risk/client.ts`.** Both are on PR #461
+(`fix/254-round5`), which also rewrites migration 0050's predicate from SQL to
+Python, because single-argument `trim()` is space-only on both engines and left
+tab, newline and NBSP blanks stored. **D-082** records the decision: one
+resolver called rather than copied, and a migration sharing `str.strip()` with
+the reader.
+
+The count is not written here on purpose -- it was stated as six, then seven,
+then eight. What enumerates the readers now is a derived sweep in
+`test_self_serve_legal_name_contract.py`, whose own limits are stated in its
+docstring.
+
+No estimate row changes; #254 owns no item, which is the gap this section
+already records under _Still to do_. The missing admin edit path is tracked in
+#449; the advisories from these rounds are #453, #454-#457, #462, #463 and
+#464.
 
 **2026-09-22 — #254 implemented (`tier-1`, `client-reaching`), awaiting review.**
 `"(pending intake)"` was read in 17 production sites and written in none, so

@@ -165,10 +165,19 @@ def test_0050_leaves_null_alone_and_reports_the_scanned_total(tmp_path, capfd) -
     assert _legal_name(engine, already) is None
     assert _legal_name(engine, named) == "Atlas Defense Solutions"
 
-    # `capfd`, not `caplog`: alembic installs its own handler via `fileConfig`
-    # and the migration logger does not propagate to the root one, so caplog
-    # sees nothing. The output is real -- it reaches stderr -- and capfd reads
-    # it at the file-descriptor level, which is where it actually is.
+    # `capfd`, not `caplog`, and the REASON is not the obvious one. Measured:
+    # the alembic logger has NO handler of its own and DOES propagate
+    # (`propagate = 1`), so propagation to root is the only reason anything
+    # prints. What breaks `caplog` is that `logging.config.fileConfig` -- which
+    # `alembic/env.py` calls -- REPLACES root's handlers, discarding pytest's
+    # `LogCaptureHandler` part-way through the test.
+    #
+    # The general form is in D-082: a capture channel the system under test can
+    # silently disconnect. Assert the capture is non-empty before reading it
+    # (the `assert reports` below) and prefer the most primitive channel --
+    # `capfd` reads the file descriptor, beneath anything logging config can
+    # rearrange. This applies to any subject calling `fileConfig`,
+    # `dictConfig` or `basicConfig(force=True)`, not to migrations.
     captured = capfd.readouterr()
     reports = [line for line in (captured.err + captured.out).splitlines() if "0050:" in line]
     assert reports, "migration 0050 logged no report line at all"

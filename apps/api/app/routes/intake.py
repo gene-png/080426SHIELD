@@ -255,9 +255,11 @@ def _apply_patch_to_client(client: Client, patch: IntakePatchRequest) -> None:
         # 2.0 Assessment", and -- until the follow-up to #254 -- every
         # exporter's `client_legal_name or "Client"` saw a truthy value and
         # rendered a BLANK organisation line on the client's DOCX/PDF/XLSX.
-        # Those six readers now call `org_display_name`, and migration 0050
-        # normalises the rows that already hold blanks; this normaliser is
-        # still what keeps new ones from being written. Meanwhile the admin UI shows "(pending
+        # Every such reader now calls `org_display_name` -- the count is
+        # deliberately not written here, because it was stated as six and then
+        # found to be seven and then eight. Migration 0050 normalises the rows
+        # that already hold blanks; this normaliser is still what keeps new
+        # ones from being written. Meanwhile the admin UI showed "(pending
         # intake)" for the same row, because `isNamedOrg` trims and this did
         # not -- two definitions of "named" that disagree.
         #

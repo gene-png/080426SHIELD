@@ -380,13 +380,35 @@ def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or()
         different lines and neither line has both halves;
       * any form black has wrapped across lines, since the scan is line-wise.
 
-    Two spellings WERE missed and are now covered, both live in this tree for
+    Spellings that WERE missed and are now covered, all live in this tree for
     this exact value: ``org_name`` (the parameter of
-    ``provision_self_assessment_service``) and ``company`` (the
-    ``deliverable_filename`` kwarg, used across the five routes). ``org_name``
-    failed for an ordering reason worth knowing -- ``\\borg`` matched the start
-    of ``org_name`` and then looked for ``or``, finding ``_n`` -- so the longer
-    alternatives are listed FIRST.
+    ``provision_self_assessment_service``), ``company`` (the
+    ``deliverable_filename`` kwarg), and ``client_org_name`` -- which appears in
+    twelve modules including ``ai/engine.py``, ``ai/llm.py``, ``ai/redact.py``
+    and four routes.
+
+    **THE MECHANISM, because the previous version of this docstring got it wrong
+    and the wrong version would have sent the next person nowhere.** It said
+    ``org_name`` was missed for an ORDERING reason -- that a leading ``org``
+    alternative matched the prefix and then failed on ``_n`` -- "so the longer
+    alternatives are listed FIRST". Measured: ordering is IRRELEVANT here.
+    Python's ``re`` BACKTRACKS into an alternation when the remainder fails, so
+    ``(org|org_name)`` and ``(org_name|org)`` both match ``org_name or "X"``.
+    What fixed ``org_name`` was ADDING it, not moving it.
+
+    Ordering IS load-bearing where the shorter alternative COMPLETES the match
+    -- ``redact.py``'s ``_redact_names`` builds an alternation in which a bare
+    first name plus a word boundary succeeds and swallows the longer full name.
+    That is a different precondition, and reaching for a known-good shape
+    without checking which property made it correct is what produced the false
+    sentence above.
+
+    **The real hole was PREFIX SHADOWING, and no reordering could have closed
+    it.** ``client_org`` matches the prefix of ``client_org_name``, nothing
+    spelled the whole identifier, and ``_`` is a word character so there is no
+    word boundary between them. The group is now boundary-anchored on BOTH
+    sides, which is what stops a prefix standing in for the longer identifier --
+    and with that anchor, ordering genuinely does not matter.
 
     The behavioural cover for what a pattern cannot reach is
     ``test_playbook_export_renders_the_fallback_for_a_blank_name``, which
@@ -398,11 +420,15 @@ def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or()
 
     root = pathlib.Path(__file__).resolve().parents[2] / "app"
     # A name-ish identifier, `or`, then a NON-EMPTY string literal.
-    # LONGEST-FIRST: `org` before `org_name` would match the `org` prefix and
-    # then fail on `_n`, which is exactly how `org_name` escaped the first
-    # version of this sweep.
+    #
+    # The word boundary on BOTH sides of the group is the load-bearing part:
+    # without the trailing one, `client_org` matched the PREFIX of
+    # `client_org_name` and the longer identifier was invisible. Ordering is NOT
+    # load-bearing -- `re` backtracks into the alternation -- so this list is
+    # ordered for reading rather than longest-first for matching.
     bare_fallback = re.compile(
-        r"\b(client_legal_name|legal_name|client_name|client_org|org_name|company|org)"
+        r"\b(?:client_legal_name|client_org_name|company_name|legal_name"
+        r"|client_name|client_org|org_name|company|org)\b"
         r'\s*or\s*"[^"]+"'
     )
 

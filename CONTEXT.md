@@ -39,8 +39,14 @@ artifacts and lives in a ROUTE rather than in an `exporters.py`, so both the
 sweep and the guard written to check it went past. An EIGHTH is in the web
 layer, `lib/risk/client.ts`, under a comment claiming parity with the server
 side that the same branch had made false. Both are fixed on
-`fix/254-round5`; no sentence here carries a count any more, because the
-count is what kept being wrong.
+`fix/254-round5`. **This block still states counts, and that sentence used to
+claim it did not** -- "no sentence here carries a count any more" sat above
+"the five `*/exporters.py`", "#458 fixed six readers" and "feeds FIVE client
+artifacts". A bare count invites a check; a count under a certification that
+there are none ends it, over the exact class of number that went six to seven
+to eight. The counts that describe a FIXED past event are kept because they
+are what makes the sequence legible; what is gone is any claim that a current
+population has been fully enumerated.
 
 **Migration 0050's predicate was rewritten from SQL to Python.** Its first
 version was `trim(legal_name) = ''`, and single-argument `trim()` is
