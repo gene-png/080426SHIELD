@@ -184,18 +184,81 @@ describe("ZtSelfAssessment — a save that fails", () => {
   it("carries the server's own reason through, where there is one", async () => {
     // A generic sentence is an acceptable fallback; DISCARDING a typed reason
     // the API went to the trouble of returning is not.
+    //
+    // THE FIXTURE IS NOW A D-016 REFUSAL. It used to be
+    // `{detail: [{msg: "String should have at most 8000 characters"}]}` under
+    // `toHaveTextContent("at most 8000 characters")` -- i.e. this test
+    // certified that a client reads Pydantic's own wording. Two things were
+    // wrong with it, and only the second is about copy:
+    //
+    //  1. NO ROUTE PRODUCES THAT SHAPE. `notes` is `max_length=8000` in
+    //     `schemas/zt.py`, so a long note raises `RequestValidationError`,
+    //     which `_handle_validation_error` returns in the ENVELOPED form --
+    //     `{error: {message: "Request validation failed.", reason:
+    //     "schema_string_too_long", details: [...]}}`. The bare `detail`
+    //     array was written from what the reader would accept, which is the
+    //     fixture defect `CLAUDE.md` names: it agrees with the code by
+    //     construction and can never express a disagreement.
+    //  2. "String should have at most 8000 characters" names a limit in a
+    //     vocabulary the client never saw, for a field identified only in a
+    //     `loc` that nothing renders. Core principle 2: never a raw
+    //     validation dump.
+    //
+    // `routes/zt.py` raises this exact dict for an assessment locked during a
+    // run; `_handle_http_exception` rewraps it into the envelope below.
     vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
-      proxyError(422, {
-        detail: [{ msg: "String should have at most 8000 characters" }],
+      proxyError(409, {
+        error: {
+          code: 409,
+          correlation_id: "c-1",
+          reason: "assessment_not_editable",
+          message: "This assessment was discarded or locked during the run.",
+        },
       }),
     );
 
     await editNotes("another note");
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("at most 8000 characters");
+    expect(alert).toHaveTextContent("discarded or locked");
     // And never the internal string the proxy class puts in `.message`.
     expect(alert).not.toHaveTextContent("ZT proxy");
+  });
+
+  it("does NOT carry a schema 422's internal string through", async () => {
+    // THE OTHER HALF, and the half a client reaches: the notes textarea sets
+    // no maxLength, so pasting a paragraph over 8000 characters is an
+    // ordinary thing for a client to do. Copied off `_handle_validation_error`
+    // rather than invented.
+    //
+    // Without this pair, a "fix" that withheld every server sentence would
+    // pass the test above only by deleting it, and a fix keyed on the wrong
+    // field would pass both halves of nothing. Pinning both is what
+    // discriminates.
+    vi.mocked(ztClient.patchSelfAssessmentAnswer).mockRejectedValue(
+      proxyError(422, {
+        error: {
+          code: 422,
+          correlation_id: "c-2",
+          reason: "schema_string_too_long",
+          message: "Request validation failed.",
+          details: [
+            {
+              loc: ["body", "notes"],
+              msg: "String should have at most 8000 characters",
+              type: "string_too_long",
+            },
+          ],
+        },
+      }),
+    );
+
+    await editNotes("a note far past the limit");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("CISA.ID.01 was not saved.");
+    expect(alert).not.toHaveTextContent("Request validation failed.");
+    expect(alert).not.toHaveTextContent("at most 8000 characters");
   });
 
   it("says nothing when the save succeeds", async () => {

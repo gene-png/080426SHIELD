@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clientFacingError,
   dashboardLoadReason,
   describeSaveError,
   serverReason,
@@ -37,10 +38,22 @@ describe("serverReason", () => {
     ).toBe("Your self-assessment is no longer editable.");
   });
 
-  it("reads the ARRAY detail a schema rejection produces", () => {
-    // The shape `extra="forbid"` and any `max_length` violation emit. The
-    // `describeError` copies in the three admin workspaces read `payload.detail`
-    // unconditionally and would hand React an array of objects here.
+  it("refuses the ARRAY detail a schema rejection produces", () => {
+    // THESE TWO ASSERTIONS ARE REVERSED FROM WHAT THEY PINNED, deliberately,
+    // and it is the behaviour that was wrong rather than the test.
+    //
+    // The old pair asserted that `serverReason` returned the Pydantic `msg`,
+    // and joined several with a space. That is the raw validation dump core
+    // principle 2 names as what a user-facing error must not be: "String
+    // should have at most 8000 characters" is a limit in a vocabulary the
+    // client never saw, for a field identified only in the `loc` nothing
+    // renders. `CLAUDE.md` forbids weakening a test to reach green and
+    // requires saying so out loud when the test itself is wrong -- this one
+    // was, and the file it protected was rendering the dump to clients.
+    //
+    // The array is still HANDLED, which was the original point: returning
+    // null is what stops the three admin `describeError` copies handing React
+    // an array of objects. It is refused, not ignored.
     expect(
       serverReason({
         payload: {
@@ -52,18 +65,96 @@ describe("serverReason", () => {
           ],
         },
       }),
-    ).toBe("String should have at most 8000 characters");
-  });
+    ).toBeNull();
 
-  it("joins a multi-field rejection rather than reporting the first", () => {
-    // Reporting one of two is how a client fixes half a problem and resubmits.
     expect(
       serverReason({
         payload: {
           detail: [{ msg: "field a is wrong" }, { msg: "field b is wrong" }],
         },
       }),
-    ).toBe("field a is wrong field b is wrong");
+    ).toBeNull();
+  });
+
+  it("refuses the ENVELOPED schema 422, on the code and not on presence", () => {
+    // THE DEFECT. This is what `_handle_validation_error` produces for any
+    // `max_length` or `extra="forbid"` violation -- copied off the producer,
+    // not written to suit the parser. `IntakeSubmitRequest.notes` is
+    // `max_length=4000` and the Step 5 textarea sets no `maxLength`, so a
+    // client pasting a long paragraph submitted the intake and read
+    // "Request validation failed." `clientFacingError` returned it because
+    // `serverReason` had no guard at all, one surface over from
+    // `SignUpForm.tsx`, which does.
+    const schema422 = {
+      status: 422,
+      payload: {
+        error: {
+          code: 422,
+          correlation_id: "c-3",
+          reason: "schema_string_too_long",
+          reasons: ["schema_string_too_long"],
+          message: "Request validation failed.",
+          details: [
+            {
+              loc: ["body", "services", 0, "notes"],
+              msg: "String should have at most 4000 characters",
+              type: "string_too_long",
+            },
+          ],
+        },
+      },
+    };
+    expect(serverReason(schema422)).toBeNull();
+    expect(clientFacingError(schema422, "Failed to submit intake.")).toBe(
+      "Failed to submit intake.",
+    );
+
+    // `schema_multiple`, the code for a body that fails several checks at
+    // once. Asserted separately because a guard written against one literal
+    // code rather than the PREFIX would pass the line above and fail here.
+    expect(
+      serverReason({
+        status: 422,
+        payload: {
+          error: {
+            reason: "schema_multiple",
+            message: "Request validation failed.",
+          },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps a typed DOMAIN refusal, which is the other half", () => {
+    // Without this, "withhold everything with a reason" passes every
+    // assertion above while destroying every friendly message the API sends.
+    // `target_stage_out_of_range` is a hand-written D-016 refusal with client
+    // copy behind it; only the `schema_` namespace is synthesised.
+    expect(
+      serverReason({
+        status: 422,
+        payload: {
+          error: {
+            reason: "target_stage_out_of_range",
+            message: "DoD ZTRA has stages 1-3.",
+          },
+        },
+      }),
+    ).toBe("DoD ZTRA has stages 1-3.");
+
+    // And a code that merely CONTAINS the prefix elsewhere is not a schema
+    // code. The guard anchors at the start, and this pins that it does.
+    expect(
+      serverReason({
+        status: 409,
+        payload: {
+          error: {
+            reason: "capability_schema_stale",
+            message: "Re-run the extraction first.",
+          },
+        },
+      }),
+    ).toBe("Re-run the extraction first.");
   });
 
   it("returns null rather than an internal string when there is no reason", () => {
@@ -239,9 +330,22 @@ describe("dashboardLoadReason", () => {
     // So this branch renders the raw string: an admin whose active-client
     // cookie names a deleted client reads "No client with that id." under
     // "Dashboard not available yet". PRE-EXISTING -- `serverReason` did the
-    // same before #318 -- and filed rather than fixed here. Preferring the
-    // server is still right for these: the page's not-released copy would be
-    // FALSE over a wrong-tenant refusal.
+    // same before #318. Preferring the server is still right for these: the
+    // page's not-released copy would be FALSE over a wrong-tenant refusal.
+    //
+    // NOT FIXED HERE, and now genuinely tracked: **#394**, tier-3 + post-mvp.
+    //
+    // This comment read "filed rather than fixed here" while nothing was
+    // filed. It is a DIFFERENT defect from #393 (that one is the Python
+    // docstring's pointer) and from #365 (proxy LABELS on admin components,
+    // not a raw server sentence on a dashboard), so it needed its own number
+    // rather than being folded into either.
+    //
+    // #394 records the fix direction too, because the obvious one is wrong:
+    // do NOT fall back to the page's not-released copy here. That copy is
+    // FALSE over a wrong-tenant refusal, which is #244. These refusals need a
+    // typed `{reason, message}` detail, like the conversion #298 did for
+    // `routes/tech_debt.py`.
     const nocode = {
       status: 502,
       payload: { error: { message: "Upstream call failed." } },
@@ -251,5 +355,73 @@ describe("dashboardLoadReason", () => {
 
   it("returns null when the server sent nothing usable", () => {
     expect(dashboardLoadReason({ status: 500, payload: {} })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #318, from the #295 review: the internal-string defect's twins.
+//
+// `ZtProxyError` is `super(`ZT proxy ${status}`)`. `describeSaveError` was
+// written for that in #283 and applied to the SAVE path only, so the LOAD and
+// SUBMIT paths in the same components still rendered `err.message`.
+// ---------------------------------------------------------------------------
+
+class ZtProxyErrorLike extends Error {
+  // The production shape, copied off `lib/zt/client.ts` rather than invented:
+  // the constructor discards the reason into a label and keeps the real thing
+  // on `payload`. A fixture that carried the reason in `message` would agree
+  // with a broken implementation by construction.
+  constructor(
+    public readonly status: number,
+    public readonly payload: unknown,
+  ) {
+    super(`ZT proxy ${status}`);
+  }
+}
+
+describe("clientFacingError", () => {
+  it("never shows the internal proxy label", () => {
+    const err = new ZtProxyErrorLike(409, {
+      error: {
+        reason: "assessment_not_draft",
+        message: "This assessment is no longer editable.",
+      },
+    });
+    const text = clientFacingError(err, "Submit failed.");
+
+    expect(text).toBe("This assessment is no longer editable.");
+    // Both halves of the label, because "409" alone also appears in plenty of
+    // legitimate copy and "ZT proxy" alone would miss a reworded prefix.
+    expect(text).not.toContain("ZT proxy");
+    expect(text).not.toContain("409");
+  });
+
+  it("falls back to the caller's generic when the server sent nothing", () => {
+    // The fallback is reached on ABSENCE of a server sentence -- never by
+    // showing `err.message`, which is what the old code did here.
+    const err = new ZtProxyErrorLike(500, {});
+    expect(clientFacingError(err, "Failed to load.")).toBe("Failed to load.");
+  });
+
+  it("falls back for a plain Error, whose message is also internal", () => {
+    // A TypeError from fetch reads "Failed to fetch" / "fetch failed". Not a
+    // proxy label, and still not client copy.
+    expect(
+      clientFacingError(new TypeError("fetch failed"), "Network error."),
+    ).toBe("Network error.");
+  });
+
+  it("prefers the server sentence over the generic, which is the point", () => {
+    // THE OTHER HALF. A helper that always returned the fallback would pass
+    // every assertion above while discarding exactly what #244 fought for.
+    const err = new ZtProxyErrorLike(422, {
+      error: {
+        reason: "target_stage_out_of_range",
+        message: "DoD ZTRA has stages 1-3.",
+      },
+    });
+    expect(clientFacingError(err, "Submit failed.")).toBe(
+      "DoD ZTRA has stages 1-3.",
+    );
   });
 });

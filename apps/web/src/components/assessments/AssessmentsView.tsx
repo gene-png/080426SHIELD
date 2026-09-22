@@ -26,6 +26,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
+import { clientFacingError } from "@/lib/describe-save-error";
 
 const SELF_ASSESSMENT_TYPES: ReadonlyArray<ServiceType> = [
   "nist_csf",
@@ -81,9 +82,7 @@ export function AssessmentsView(): JSX.Element {
     try {
       setAssessments(await fetchAssessments());
     } catch (err) {
-      setLoadError(
-        err instanceof Error ? err.message : "Failed to load assessments.",
-      );
+      setLoadError(clientFacingError(err, "Failed to load assessments."));
     }
   }, []);
 
@@ -117,9 +116,7 @@ export function AssessmentsView(): JSX.Element {
         `/self-assessment/${created.service_id}?type=${created.service_type}`,
       );
     } catch (err) {
-      setCreateError(
-        err instanceof Error ? err.message : "Couldn't start the assessment.",
-      );
+      setCreateError(clientFacingError(err, "Couldn't start the assessment."));
       setSubmitting(false);
     }
   }

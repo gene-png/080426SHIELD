@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import * as React from "react";
 
 import type { JSX } from "react";
+import { SCHEMA_REASON_PREFIX } from "@/lib/describe-save-error";
 
 interface FieldErrors {
   email?: string;
@@ -13,28 +14,49 @@ interface FieldErrors {
 }
 
 /**
- * The namespace `apps/api/app/exceptions.py` reserves for a reason SYNTHESISED
- * from Pydantic's own error `type` (#285) — `schema_string_too_short`,
- * `schema_value_error`, and `schema_multiple` when a request fails several
- * checks at once. Every one of them rides on the same internal message,
- * "Request validation failed.", and none has client copy behind it.
+ * THE `schema_` LITERAL IS IMPORTED FROM `lib/describe-save-error.ts` ABOVE.
  *
- * Duplicated across the language boundary rather than derived, because there is
- * no build step shared by the FastAPI app and this bundle. Neither half can be
- * derived from the other, so what closes the window is a POINTER IN BOTH
- * DIRECTIONS: `SCHEMA_REASON_PREFIX` in `exceptions.py` now names this file in
- * its own docstring. Saying only "whoever edits the Python constant will know"
- * was aspirational — that person was the one with no way to find out.
+ * It was DECLARED here, and `SCHEMA_REASON_PREFIX` in
+ * `apps/api/app/exceptions.py` still names THIS FILE in its own docstring as
+ * the TS-side site — which is why this note sits here rather than only at the
+ * new home. A reader sent here by the Python comment is one hop from the
+ * constant, and the hop is the import at the top of this file. (Repointing the
+ * Python docstring is NOT DONE HERE — `exceptions.py` is outside this PR's
+ * territory — and is tracked in **#393**.
  *
- * The width of the gap, stated rather than left to be discovered: a Python-side
- * edit reddens NOTHING. `test_schema_422_typed_reason.py` imports the constant
- * from the module under test, so it follows any change silently. A TS-side edit
- * does redden, because `schemaReasonFallback` in `SignUpForm.test.tsx` spells
- * the literal out instead of importing it. One direction is covered and the
- * other is a comment; if this prefix ever changes, #317 returns on the public
- * sign-up page.
+ * This clause has now been wrong in BOTH directions, which is the part worth
+ * keeping. It first read "is filed" while no issue existed: a status word
+ * carrying no output. It was then corrected to "NOT FILED", citing
+ * `gh issue list --search SCHEMA_REASON_PREFIX` returning nothing — and that
+ * same search returned #393 within the hour. A search result is a measurement
+ * with a timestamp, not a property, so quoting one as a standing fact about an
+ * open population goes stale exactly the way a count does. Cite the number.)
+ *
+ * It moved because the same prefix decides the same question for every
+ * client-facing surface that goes through `serverReason`, which had no guard at
+ * all and was rendering "Request validation failed." to clients. A second
+ * literal in this bundle would be a second place for the two to disagree.
+ * Across the LANGUAGE boundary it is still duplicated, because there is no
+ * build step shared by the FastAPI app and this bundle.
+ *
+ * BOTH DIRECTIONS ARE COVERED, and this paragraph said the opposite. It read
+ * "a Python-side edit reddens NOTHING. `test_schema_422_typed_reason.py`
+ * imports the constant from the module under test, so it follows any change
+ * silently." That file holds
+ * `test_the_schema_namespace_is_the_literal_the_web_layer_spells_out`, whose
+ * body is `assert exceptions.SCHEMA_REASON_PREFIX == "schema_"` — an
+ * independently spelled literal, not the imported value — and whose own
+ * docstring says the gap existed "until this test existed". So a Python-side
+ * edit DOES go red, in the file cited three lines earlier as proof that it does
+ * not.
+ *
+ * Recorded rather than quietly swapped, because the sentence arrived under
+ * "stated rather than left to be discovered" and that phrasing ends the check:
+ * a reader who believed it would open a PR to add a cross-language pin that
+ * already ships. The TS side is pinned too — `schemaReasonFallback` in
+ * `SignUpForm.test.tsx` spells the literal out instead of importing it, and
+ * `describe-save-error.test.ts` does the same.
  */
-const SCHEMA_REASON_PREFIX = "schema_";
 
 /**
  * Whether the envelope's `message` is fit to put in front of a person.

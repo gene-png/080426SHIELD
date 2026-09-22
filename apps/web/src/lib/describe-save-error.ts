@@ -16,17 +16,38 @@
  * forbids. It passed its test only because the test fabricated a plain
  * `Error`, a shape the production code cannot produce.
  *
- * ## Three payload shapes, and the third is the one the house helpers miss
+ * ## Three payload shapes, and ONLY THE FIRST IS WHAT THIS API SENDS
  *
- * `{error: {message}}`  the house envelope, from `app/exceptions.py`
- * `{detail: "..."}`     FastAPI's default for a plain `HTTPException`
- * `{detail: [...]}`     a SCHEMA rejection — `detail` is an ARRAY of error
- *                       objects, which is what `extra="forbid"` and any
- *                       `max_length` violation produce
+ * `{error: {…}}`        the house envelope, from `app/exceptions.py`. The live
+ *                       wire format for BOTH handlers: a string `detail`
+ *                       becomes `error.message`, and a schema rejection's array
+ *                       lands on `error.details` — plural, inside the envelope.
+ * `{detail: "..."}`     FastAPI's default for a plain `HTTPException`,
+ *                       DEFENSIVE ONLY here
+ * `{detail: [...]}`     FastAPI's default for a schema rejection, also
+ *                       DEFENSIVE ONLY, and refused rather than rendered
  *
- * The `describeError` copies in the three admin workspaces read
- * `payload?.detail` and would hand React an array of objects for the third,
- * which renders as `[object Object]` or throws. Handled here.
+ * **The "defensive only" is measured, and this table used to assert the
+ * opposite** — it said the array form is "what `extra="forbid"` and any
+ * `max_length` violation produce", present tense, as the live format.
+ * `register_exception_handlers` registers handlers for both `HTTPException` and
+ * `RequestValidationError` and both return `content={"error": {...}}`;
+ * `grep -rn 'content={"detail\|"detail":' apps/api/app` and
+ * `grep -rn "detail=\[" apps/api` both return nothing. So no route can emit a
+ * bare top-level `detail`, and the two branches below are a harmless superset
+ * kept for an upstream that is not this API.
+ *
+ * The correction matters because `describe-save-error.test.ts` already says
+ * this, in the test for the array branch — so the truth was written where the
+ * subject was DISCUSSED and the false version left standing where a reader
+ * looks it up. That is the correct-at-the-instruction rule failing inside one
+ * commit.
+ *
+ * The array is still HANDLED rather than ignored: the `describeError` copies in
+ * the three admin workspaces read `payload?.detail` and would hand React an
+ * array of objects, which renders as `[object Object]` or throws. Here it
+ * returns null, because a Pydantic `msg` is the raw validation dump core
+ * principle 2 names as what a user-facing error must not be.
  *
  * ## Duck-typed, not `instanceof`
  *
@@ -116,11 +137,84 @@ export function dashboardLoadReason(err: unknown): string | null {
   return serverReason(err);
 }
 
-/** The server's own sentence, or null when it did not send a usable one. */
+/**
+ * The namespace `apps/api/app/exceptions.py` reserves for a reason SYNTHESISED
+ * from Pydantic's own error `type` (#285) — `schema_string_too_short`,
+ * `schema_value_error`, and `schema_multiple` when a request fails several
+ * checks at once. Every one of them rides on the same internal message,
+ * "Request validation failed.", and none has client copy behind it.
+ *
+ * Duplicated across the LANGUAGE boundary rather than derived, because there is
+ * no build step shared by the FastAPI app and this bundle. It is NOT duplicated
+ * within this bundle: `SignUpForm.tsx` imports it from here. That file used to
+ * hold its own literal, and `SCHEMA_REASON_PREFIX` in `exceptions.py` still
+ * names `SignUpForm.tsx` in its docstring as the TS-side site — which is one
+ * hop from here rather than wrong, because that import is the first thing a
+ * reader arriving there sees. Repointing the Python docstring at this file is
+ * NOT DONE HERE — `exceptions.py` is outside this PR's territory — and is
+ * tracked in **#393**. This clause read "is filed" when nothing was, then
+ * "NOT FILED" citing a search that returned nothing, and that same search
+ * returned #393 within the hour. The longer note is at the matching clause in
+ * `SignUpForm.tsx`; the short version is that a search result is a measurement
+ * with a timestamp, not a property, so cite the number instead.
+ *
+ * BOTH DIRECTIONS ARE PINNED, and this paragraph asserted that one was not. It
+ * read "a Python-side edit reddens NOTHING. `test_schema_422_typed_reason.py`
+ * imports the constant from the module under test, so it follows any change
+ * silently." That file holds
+ * `test_the_schema_namespace_is_the_literal_the_web_layer_spells_out`, whose
+ * body is `assert exceptions.SCHEMA_REASON_PREFIX == "schema_"` — spelled out,
+ * not imported — so a Python-side edit goes red there. The TS side is pinned by
+ * `schemaReasonFallback` in `SignUpForm.test.tsx` and again in
+ * `describe-save-error.test.ts`, both of which spell the literal rather than
+ * import it. If this prefix changes in one language and not the other, #317
+ * returns on the public sign-up page — but a test now says so.
+ *
+ * The sentence was INHERITED from `SignUpForm.tsx` when the constant moved, and
+ * copying it turned one wrong claim into two. Corrected in place at both sites
+ * rather than deleted: it arrived under "stated rather than left to be
+ * discovered", which is the phrasing that stops the next reader checking, and a
+ * reader who believed it would build a cross-language pin that already ships.
+ */
+export const SCHEMA_REASON_PREFIX = "schema_";
+
+/**
+ * The server's own sentence, or null when it did not send one FIT FOR A PERSON.
+ *
+ * ## Two things the server sends that are not client copy
+ *
+ * **A schema-level 422.** Its message is the fixed internal string
+ * "Request validation failed." and its reason is a `schema_*` machine token
+ * with nothing behind it. Withheld on the VALUE of the code, never on whether
+ * a message arrived — a presence test here is #317 exactly, and
+ * `serverReasonCode`'s own docstring forbids it. `SignUpForm.tsx` guards this
+ * envelope the same way, one surface over; this is the shared helper the five
+ * client surfaces reach it through, and it had no guard at all.
+ *
+ * Reachable today, not hypothetical: `IntakeSubmitRequest.notes` is
+ * `max_length=4000` and the Step 5 textarea sets no `maxLength`, so a pasted
+ * paragraph put "Request validation failed." under a client's intake.
+ *
+ * **The ARRAY `detail` form.** Each entry is `{loc, msg, type, ...}` and `msg`
+ * is Pydantic's own wording — "String should have at most 8000 characters",
+ * naming a limit in a vocabulary the client never saw, for a field identified
+ * only in the `loc` this never renders. That is the raw validation dump core
+ * principle 2 forbids. An earlier version of this function JOINED those msgs
+ * into client copy and a test pinned the join as intended; both are corrected
+ * rather than kept, because the behaviour was the defect and the test was
+ * certifying it.
+ *
+ * Refusing both returns null, so the caller renders its OWN copy. That is a
+ * loss of specificity and it is the right side to err on: the caller's generic
+ * was written for a person, and neither of these was.
+ */
 export function serverReason(err: unknown): string | null {
   if (!hasPayload(err)) return null;
   const payload = err.payload as ErrorPayload | undefined;
   if (!payload) return null;
+
+  const code = serverReasonCode(err);
+  if (code !== null && code.startsWith(SCHEMA_REASON_PREFIX)) return null;
 
   const enveloped = payload.error?.message;
   if (typeof enveloped === "string" && enveloped.trim())
@@ -129,21 +223,76 @@ export function serverReason(err: unknown): string | null {
   const detail = payload.detail;
   if (typeof detail === "string" && detail.trim()) return detail.trim();
 
-  // The array form. Each entry is `{loc, msg, type, ...}`; `msg` is the human
-  // half and is the only field worth showing. Joined rather than truncated to
-  // the first, because a body can fail two fields at once and reporting one is
-  // how a client fixes half a problem and resubmits.
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((d) =>
-        typeof d === "object" && d !== null
-          ? (d as { msg?: unknown }).msg
-          : null,
-      )
-      .filter((m): m is string => typeof m === "string" && m.trim().length > 0);
-    if (messages.length) return messages.join(" ");
-  }
+  // The array form falls through to null. It is the un-enveloped spelling of
+  // the same schema rejection the code check above withholds, so rendering it
+  // here would reinstate through `detail` what was just refused through
+  // `error.reason`.
   return null;
+}
+
+/**
+ * What to show a CLIENT when a call failed and there is no richer local copy.
+ *
+ * Returns the server's own typed sentence where it sent one, and `fallback`
+ * otherwise. **It never returns `err.message`**, which is the whole point.
+ *
+ * ## The defect this exists to end
+ *
+ * Every proxy error class throws its own reason away in its constructor:
+ *
+ *     super(`ZT proxy ${status}`)      super(`CSF proxy ${status}`)
+ *     super(`Intake proxy ${status}`)  super(`ATT&CK proxy ${status}`)
+ *
+ * ...nine of them, `grep -rn "super(\`" src/lib/*\/client.ts`. So
+ * `err instanceof Error ? err.message : "Failed to load."` renders
+ * **"ZT proxy 409"** to a client -- a raw internal string in client-facing
+ * copy, which core principle 2 forbids.
+ *
+ * `describeSaveError` below was written for exactly this (#283) and was
+ * applied to the SAVE path only. The LOAD and SUBMIT paths in the same
+ * components kept the old shape, twelve lines away.
+ *
+ * ## Why preferring the server over the FALLBACK is right here
+ *
+ * "Unconditionally" is what this said, and it was wrong in the one direction
+ * that costs a client: `serverReason` now withholds a schema-level 422 and the
+ * array `detail` dump, because neither is copy. Preferring the server is about
+ * the choice between its sentence and `fallback`, not about whether everything
+ * it sends is fit to render.
+ *
+ * It is not right everywhere, and the difference is the only thing worth
+ * knowing about this function.
+ *
+ * The client dashboards face the same choice and answer it PER REASON CODE,
+ * not wholesale -- and the distinction is load-bearing, because a sentence
+ * saying they "answer it the other way" would license destroying a fix.
+ *
+ * Their 404 has more than one cause. For `dashboard_not_released` the page's
+ * own copy is richer -- it names the product, whose organization and the next
+ * step -- so the API's "No released X report for this service yet." is a
+ * downgrade. For `dashboard_version_unresolved` the server's sentence is the
+ * whole point: `_unresolved_parent` is written specifically NOT to say "no
+ * released report yet", because there IS one and what is missing is the link
+ * saying which assessment it came from. Printing the not-released copy there
+ * is exactly the #244 defect.
+ *
+ * So the deciding property is a fact about the PAIR (server message, local
+ * copy) for a given refusal -- not about the call site, and not about which
+ * module the caller lives in. PR #362 withholds for the first code only and
+ * keeps the second; anything that withholds wholesale reinstates #244.
+ *
+ * The callers here pass a bare generic: "Failed to load.", "Submit failed.",
+ * "Network error.". No server sentence is worse than those, so there is
+ * nothing to protect.
+ *
+ * **The property that decides it is whether the local copy carries
+ * information the server's does not** -- never which module the caller lives
+ * in. Written down because the two situations look like one shape, differ in
+ * the one thing that matters, and moving either answer into the other's
+ * position would be a regression that reads as consistency.
+ */
+export function clientFacingError(err: unknown, fallback: string): string {
+  return serverReason(err) ?? fallback;
 }
 
 /**

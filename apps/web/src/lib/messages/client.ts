@@ -1,5 +1,7 @@
 "use client";
 
+import { clientFacingError } from "@/lib/describe-save-error";
+
 export interface MessageRow {
   id: string;
   service_id: string;
@@ -88,14 +90,20 @@ export async function fetchInbox(): Promise<InboxResponse> {
 }
 
 export function describeMessagesError(err: unknown): string {
-  if (err instanceof MessagesProxyError) {
-    const payload = err.payload as
-      { error?: { message?: string }; detail?: string } | undefined;
-    return (
-      payload?.error?.message ??
-      payload?.detail ??
-      `Request failed (${err.status}).`
-    );
-  }
-  return err instanceof Error ? err.message : "Request failed.";
+  // CLIENT-FACING. `MessageThread` renders this on
+  // `app/self-assessment/[serviceId]/page.tsx`, so a client messaging their
+  // consultant reads whatever comes back.
+  //
+  // It used to end `err instanceof Error ? err.message : "Request failed."`,
+  // and `MessagesProxyError` is `super(\`Messages proxy ${status}\`)` -- so a
+  // non-proxy throw put "Messages proxy 500" in front of a client. Its proxy
+  // branch also fell back to a bare `Request failed (<status>).`, an HTTP
+  // status code as client copy, which core principle 2 forbids for the same
+  // reason (#318).
+  //
+  // `clientFacingError` reads the same three payload shapes this hand-rolled
+  // chain did -- enveloped `error.message`, string `detail`, and the ARRAY
+  // `detail` form this one could not handle at all -- so this is strictly
+  // more coverage, not a swap.
+  return clientFacingError(err, "We couldn't load your messages just now.");
 }
