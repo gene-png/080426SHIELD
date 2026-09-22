@@ -37,6 +37,32 @@ either here would be a third spelling of a number those modules already own.
 `routes/intake.py::_validate_targets` is where the two ends meet, because it
 is the only place that can see `service_type`.
 
+## TWO WRITERS OF THESE COLUMNS ARE DELIBERATELY NOT WIRED TO THIS
+
+Intake is not the only door. `ServiceRequest.csf_target_tier` and
+`.zt_target_stage` are also written by the self-assessment SUBMIT routes, and
+both accept a target of 1 today:
+
+    routes/csf.py   CsfSelfAssessmentSubmit.target_tier    ge=1, le=4
+                    -- and NO range check in the route at all; the schema
+                       bound is the only thing between the body and
+                       `sr.csf_target_tier = body.target_tier`.
+    routes/zt.py    ZtSelfAssessmentSubmit.target_stage    ge=1, le=4
+                    -- the route DOES guard, `if not 1 <= ... <= max_stage`,
+                       so its floor of 1 is a written decision rather than an
+                       omission.
+
+That is **#85**, filed long before #406 and re-measured at `1281cbd`. It is
+left alone here on purpose: reversing a deliberate floor is a product question
+about whether a client may re-confirm a target of 1 after intake, and the two
+routes need different edits. An unstated exemption reads as an oversight to
+whoever greps `MIN_TARGET_TIER` next, which is why it is written down.
+
+**So closing the intake door does not retire a stored 1.** `routes/zt.py`'s own
+comment records that the ZT self-assessment UI re-persists whatever is stored
+when a client submits without touching the control — refreshing a legacy value
+straight past the new guard.
+
 ## Why the floor is NOT a `Field(ge=2)` bound
 
 It was, on four fields, and that is #406. A declarative bound is refused by

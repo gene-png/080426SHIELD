@@ -187,6 +187,11 @@ def _validate_targets(item: ServiceRequestInput) -> None:
                 },
             )
         if item.zt_target_stage > max_stage:
+            # `service_type.value` is the raw enum, not the product name, and
+            # this message now reaches a CISA client as well as a DoD one --
+            # the CISA half used to be a withheld `schema_*` refusal. Filed as
+            # #425 rather than reworded here, because the DoD wording shipped
+            # deliberately under #125 and a test pins it.
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
