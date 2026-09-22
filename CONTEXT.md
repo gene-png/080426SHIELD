@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-22 (landing with THIS PR and not yet on `main`: #371 — the restoration clause is opt-in, so a client is not told the value was restored before it has been. Earlier the same day, now ON `main` at `d5f97eb`: #254 — `Client.legal_name` is nullable, self-serve provisioning names no org, D-080, migration 0049; earlier 2026-09-21: status correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 9, 11 and 12 — item 9 included, because its "Remaining from the original seven" line named #115, #46 and #109, every one of which had landed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and the export/publish half it is NAMED after has shipped nothing and owns no issue; item 6 has F10 left, which owns no issue; item 9 has #185 and #194, neither with a live client-facing defect. Those rows — and only those — now cite landed code rather than issue state: rows 0 through 5a, 9a and 10 still rest on a PR number and a merge date, which is said here because a sentence quantifying over the table would tell the next reader the check has been done everywhere. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged; the live `mvp-blocking` blockers own no item; F10 needs filing; and #185's label should move to `post-mvp` to match the row. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-22 (landing with THIS PR and not yet on `main`: the #254 follow-up — see `context/entries/2026-09-22-254-blank-name-readers.md`, which is where dated narrative goes since D-081. Earlier the same day: #371 — the restoration clause is opt-in, so a client is not told the value was restored before it has been. Earlier the same day, now ON `main` at `d5f97eb`: #254 — `Client.legal_name` is nullable, self-serve provisioning names no org, D-080, migration 0049; earlier 2026-09-21: status correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 9, 11 and 12 — item 9 included, because its "Remaining from the original seven" line named #115, #46 and #109, every one of which had landed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and the export/publish half it is NAMED after has shipped nothing and owns no issue; item 6 has F10 left, which owns no issue; item 9 has #185 and #194, neither with a live client-facing defect. Those rows — and only those — now cite landed code rather than issue state: rows 0 through 5a, 9a and 10 still rest on a PR number and a merge date, which is said here because a sentence quantifying over the table would tell the next reader the check has been done everywhere. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged; the live `mvp-blocking` blockers own no item; F10 needs filing; and #185's label should move to `post-mvp` to match the row. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -12,150 +12,6 @@ facts and environment gotchas live in `CLAUDE.md`; personal in-flight status
 lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
-
-**Landing with THIS PR, not yet on `main`: the #254 follow-up.** Adversarial
-review ran repeatedly on #444. The rounds that arrived before the merge
-landed in the PR; a later round's findings reached the dispatching session
-BEFORE the merge and were not incorporated into it, which is a different and
-worse fact than the reviewer not having delivered. What that round found
-includes the defect #254 exists to fix, surviving at the read end.
-
-**Two corrections to the record of how #444 reached `main`**, because both were
-wrong in my earlier account and this file is now the permanent version. Round 4
-DID deliver: complete, with a terminator, to the dispatching session, before
-the 18:40:55Z merge — not "never delivered", which names a different member of
-`CLAUDE.md`'s absent / erroring / reported-to-nobody list. And Gene AUTHORISED
-the merge; Dave performed it.
-
-**A blank `legal_name` still printed a BLANK organisation line on the client's
-DOCX/PDF/XLSX.** The five `*/exporters.py` and the admin fulfill path resolved
-it with a bare `client_legal_name or "Client"`, and `"   "` is truthy, so it
-never reached the fallback. They now call `app/client_naming.py`.
-
-**That count was wrong twice, and the record says so rather than restating it.**
-#458 fixed six readers under prose claiming "all six". A SEVENTH was found
-afterwards in `routes/csf.py` — the CSF Playbook export, which feeds FIVE client
-artifacts and lives in a ROUTE rather than in an `exporters.py`, so both the
-sweep and the guard written to check it went past. An EIGHTH is in the web
-layer, `lib/risk/client.ts`, under a comment claiming parity with the server
-side that the same branch had made false. Both are fixed on
-`fix/254-round5`. **This block still states counts, and that sentence used to
-claim it did not** -- "no sentence here carries a count any more" sat above
-"the five `*/exporters.py`", "#458 fixed six readers" and "feeds FIVE client
-artifacts". A bare count invites a check; a count under a certification that
-there are none ends it, over the exact class of number that went six to seven
-to eight. The counts that describe a FIXED past event are kept because they
-are what makes the sequence legible; what is gone is any claim that a current
-population has been fully enumerated.
-
-**Migration 0050's predicate was rewritten from SQL to Python.** Its first
-version was `trim(legal_name) = ''`, and single-argument `trim()` is
-SPACE-ONLY on both engines — measured: tab, newline and NBSP all survived it,
-while `str.strip()` (what the reader uses) treats all four as blank. NBSP is
-the one that actually arrives, since it is what PDF and Word extraction emit.
-The normalisation now runs in Python so the migration and `is_named_org` share
-`str.strip()` itself rather than two descriptions of it, and 0050 now runs
-against DATA — a row per whitespace class, plus a derived sweep over the whole
-Unicode whitespace set.
-
-**A regression test I wrote could not fail.** `test_engagement_refuses_a_legacy_blank_name_with_422_not_500`
-posted `csf_profile: "current"`, which is not a `CsfProfile` member, so Pydantic
-422'd the body before the guard ran and the status-only assertion passed for the
-wrong reason. Measured: with the guard reverted it still passed, exit 0. It now
-sends `MOD` and asserts the typed `reason` (`organization_not_named`) rather
-than a status code or a sentence, and goes red on that same revert. The guard
-was given a typed detail so there was something to assert; the other
-bare-string 422s in that module are tracked in #453.
-
-Also: `hasIntakeData` gained the four `primary_contact_*` fields (Step 3 writes
-them one per blur, and the pill said "No intake started" over them) and is now
-genuinely derived from one `cardRows` array the card renders; the provisioning
-ratchet tests `title` the same way it tests `org_name`; and two comments that
-published a grep as the authoritative writer set are back to being lists that
-say they are lists — that grep returned ZERO hits in `routes/intake.py`, the
-main user-input writer, which goes through `setattr`.
-
-**#254 fixed and ON `main` at `d5f97eb` — a self-serve client's email was its
-organisation's legal name.** (This paragraph arrived saying "landing with THIS
-PR, not yet on `main`", which was true while #444 was open and false the moment
-it merged. Corrected here because this PR is resolving a conflict in the same
-paragraph and leaving a known-false claim beside the resolution is worse than
-the small scope increase.) `"(pending intake)"` was the codebase's
-marker for "nobody has named this client yet", READ in 17 production sites (13
-in `apps/api/app`, 4 in `apps/web`) and **written in none** — the only
-assignments were four unit-test fixtures.
-<!-- counted: grep -rn '"(pending intake)"' apps/api/app apps/web/src -> 19 hits, 17 live conditionals + 2 comments; grep -rn 'legal_name\s*=' apps/api/app --include=*.py | grep -v '==' for the writes, at 3c2dd0a, 2026-09-22 --> So every one of those guards was dead,
-and what reached the organisation line of a client deliverable was whatever
-`routes/auth.py` derived from the registrant's email: the domain for an unknown
-company domain, and **the registrant's own display name** for a personal mailbox
-— a private individual's name, as the client organisation, on a delivered
-document.
-
-**`Client.legal_name` is now nullable and NULL means nobody has named the org**
-(D-080, migration 0049). Both write paths in `routes/auth.py` are fixed. The
-sentinel is deleted from the API entirely; it survives only as web COPY in
-`apps/web/src/lib/org-name.ts`, which nothing branches on. Ten of the thirteen
-API guards collapsed to a plain read of the column.
-
-`routes/admin.py`'s create-client write is a **stated exemption** — an admin
-typing a name is a human naming an org — and the reason the guards key on the
-NAME being absent rather than on `intake_completed_at`: an admin-created tenant
-has a real name and never completes intake, so an intake-keyed guard would blank
-its deliverables and refuse its engagements.
-
-Migration 0049 backfills only rows that reconstruct exactly what the two
-self-serve paths wrote. Measured against the dev Postgres before applying: 4
-client rows, 1 matching, 0 matching the display-name predicate — and the one
-match is a live instance of the defect.
-<!-- counted: docker compose exec -T db psql -U shield -d shield -At, the four SELECT count(*) statements written out in alembic/versions/0049's MEASURED block, 2026-09-22 -->
-
-**#236 and #389 fixed: two client-reaching surfaces that failed silently.**
-
-**#236** — `app/home/page.tsx` fetched four endpoints in one `Promise.all` with
-no `catch`, and there is no `error.tsx` anywhere under `apps/web/src/app`, so
-any one rejection took the whole page down — including the client's released
-reports, which have nothing to do with the endpoint that failed. Now
-`Promise.allSettled`, with each failure recorded per panel.
-
-**The half that was the actual work**, and why the site comment said this was
-"considered and left": `allSettled` alone is not the fix. Passing `[]` / `0` /
-`null` for a panel that ERRORED makes the page assert "you have no
-engagements", "no unread messages" — claims about the client's account made
-from a failure. `HomeDashboard` now takes `unavailable: HomePanel[]` and
-renders "could not be loaded" for those, so a degraded panel is distinguishable
-from an empty one.
-
-**#389** — `SignUpForm`'s `await res.json()` was unguarded inside the typed-422
-branch, so a non-JSON body (proxy HTML, empty 429, gateway timeout) rejected the
-submit handler and `setPending(false)` never ran: the Create account button
-stayed disabled forever with nothing on screen, on the **public** sign-up page.
-Now parsed inside a `try`, falling through to the existing plain-language copy.
-
-Both verified RED-ON-REVERT individually. Web gates from the worktree:
-`tsc` 0 errors, `eslint` clean, `vitest` 694 passed.
-
-**#371 fixed: the client is no longer told the value was restored when it was
-not.** `describeSaveError` printed "The value on screen has been restored to
-what the server has" unconditionally, and both self-assessment surfaces called
-it BEFORE the re-fetch that does the restoring. When that re-fetch also failed,
-the client sat looking at the refused value under a sentence saying it had been
-replaced by server truth — and the `catch` block's own comment claimed the
-message was "the honest one: we cannot show what the server has", which is the
-opposite of what the message said.
-
-The restoration clause is now opt-in. Callers show the bare failure message
-immediately — nobody should wait on a re-fetch to learn their edit failed — and
-replace it with `{ restored: true }` only once the re-fetch resolves, so each
-sentence is true at the moment it is on screen.
-
-`CLAUDE.md`: a success record must be written where the success is, not before
-it. Recorded after N-019, #47 and W1's accounting log — the list is the count,
-and this one is the first where the false record is read by a CLIENT rather
-than by a developer.
-
-**The deferral reason had expired:** the issue was filed rather than fixed
-because `describe-save-error.ts` had two open PRs against it (#362, #366).
-Both merged, so it was unblocked.
 
 **#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
 it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut
@@ -220,28 +76,32 @@ withheld, dropped or rejected must have its name referenced under
 `apps/web/src` OR in an exporter -- "a screen or a delivered artifact", per the
 definition-of-done rule.
 
-**18 such fields today: 15 reach a reader, 3 do not and are exempt with a
-tracked reason.** An earlier draft of this line said "all reachable", which was
-false on both halves -- it stated a count as a clean bill of health over a set
-the gate's own exemption text calls "a REAL unconsumed disclosure". The gate
-prints the split on every clean run, so the number here is a summary of a
-measurement rather than a claim of its own:
+**Do not read a count here. Run the gate** --
+`python apps/api/scripts/check_disclosure_consumers.py` -- which prints the
+split on every clean run. This paragraph used to state one, and the number and
+the verbatim output block quoted beneath it both went stale inside a month: the
+population grew from 18 to 25, every exemption has since been discharged, and
+the `; N do NOT ... are exempt` clause the quote showed **cannot be emitted at
+all** with `EXEMPT_FIELDS` empty. A count under a sentence calling it "a
+summary of a measurement rather than a claim of its own" is the
+correction-paragraph-outlives-the-number shape, in the paragraph arguing it is
+safe.
 
-    check-disclosure-consumers: 15 of 18 disclosure fields reach a screen or a
-    deliverable; 3 do NOT and are exempt with a tracked reason
+**HISTORICAL, and kept because it is the reason the gate is shaped as it is.**
+When that count was written there were three exemptions. Two -- `batches_total`
+and `batches_failed` -- were unconsumed only until #376 landed the banner that
+renders them. The third, `unusable_target_codes`, was a live client-facing
+defect rather than a timing artifact: it reached no screen at all. That is
+**#387**, fixed 2026-09-22.
 
-**Every exemption has an expiry, and two of the three expire on a PR that is
-already open.** `batches_total` and `batches_failed` are unconsumed only because
-the banner that renders them is in #376; the moment it lands they are ordinary
-reachable fields and their entries must go. `unusable_target_codes` is the third
-and is a live client-facing defect rather than a timing artifact -- it reaches no
-screen at all, and it is **#387**.
-
-That matters more than the count. The gate was passing over
-`unusable_target_codes` before this branch, because per-service scoping did not
-separate two models of the same service: `zt/exporters.py` carries the token
-`zt` and reads a DIFFERENT model's field on a different route. A gate green over
-a live instance of the defect it exists to catch.
+Also historical: the gate passed over `unusable_target_codes` under the
+*per-service* scoping, because a service token could not separate two models of
+one service -- `zt/exporters.py` carries `zt` and reads a DIFFERENT model's
+field. #372 replaced that with the model's SUBJECT, and `zt/exporters.py`
+contains no `ZtDashboard`, so the sentence above describes a rule the gate no
+longer has. It is spelled out rather than deleted because #387's own branch
+re-published it as the CURRENT mechanism and had to be corrected -- the same
+stale explanation, believed twice.
 
 Two design calls worth knowing. The consumer surface is TWO surfaces, not the
 web alone: `unusable_target_codes` reaches the client only through
@@ -381,6 +241,131 @@ computed glue-alphabet sweep, filed with its reasoning and measured as searching
 an empty space), **#156** (ruff isort classifying `apps/api/scripts` by whether
 an unrelated top-level `scripts/` exists), **#143** (the pre-push hook's
 fail-open).
+
+### 2026-09-22 — a ZT fault disclosure the deliverable made and the screen did not (#387)
+
+`ZtDashboardResponse.unusable_target_codes` has been served by `zt_dashboard`
+since #188 and was read by nothing under `apps/web`. (An earlier draft said
+"both return paths of `zt_dashboard`". The route has ONE
+`return ZtDashboardResponse(`; every other exit raises. The two returns belong
+to `targetNote`, which is a different claim about a different function.)
+The client's PDF said it: `zt/exporters.py::_gap_plan_caption` names the
+capabilities whose per-capability target could not be used. So the two surfaces
+reading one assessment disagreed about whether anything had been discarded, and
+the surface that stayed quiet is the one a client looks at first.
+
+`lib/dashboards/zt.ts::targetNote` now appends the deliverable's own sentence,
+worded the same way, on **both** returns rather than in place of either — a
+discarded per-capability target is a fact about specific rows and is
+independent of how the headline target was chosen, so an early return anywhere
+would swallow it. The codes are listed, never truncated or counted: this is a
+fault disclosure, and abbreviating one is what #75/#79 were filed about.
+
+**What the consumer gate could not tell us — and the first version of this
+paragraph named the wrong mechanism, so the correction is the record.**
+`check_disclosure_consumers.py` carried an exemption for this field. Removing
+it, the gate still reported `25 of 25`. This section said that was because the
+gate "attributes a consumer by the model's SERVICE token", so the ZT exporter
+reading the identically-named field of the OTHER ZT model cleared the dashboard
+one. That was false — `readers_for` requires the model's SUBJECT in the
+reader's own text, `zt/exporters.py` contains no `ZtDashboard`, and the
+service-token scheme had already been replaced by the subject rule in #372. It
+was reasoned about instead of executed, and the adversarial review caught it.
+
+Re-run in stages, each deletion asserted to land first:
+
+    field removed from `lib/dashboards/zt.ts` (production)  -> 25 of 25, exit 0
+    ALSO removed from the two ZT test files                 -> violation, exit 1
+
+**The production reader was not what cleared it. The test files were.**
+`reader_text` globbed every `.ts`/`.tsx` under `apps/web/src` with no test
+exclusion, so a fixture satisfied "reaches a screen" — and a fixture is the
+first thing a PR adding a disclosure field writes. The gate would have reported
+a field consumed on the strength of the test asserting it is not.
+
+LATENT rather than live: measured over all 25 fields, none was cleared ONLY by
+a test file, so the exclusion changed no verdict the day it landed. It is
+closed here (`TEST_FILE_MARKERS`), pinned by two tests — one requiring the red,
+one requiring a production reader beside a test file to still pass, so the
+filter cannot degrade into a blanket refusal — and tracked in #448.
+
+Both halves of the new branch were mutated: **at 32d5bea**, forcing the
+disclosure off reddened the two tests named for it, and forcing it on reddened
+the empty case plus four existing provenance assertions. Date-qualified rather
+than re-counted, because the tests added below move the figure again and a
+correction paragraph that carries a live number goes stale in turn. A test that only ever sees one side of a
+conditional is the shape this repo keeps finding.
+
+**The first draft shipped without a test at the seam, and the file that needed
+one already said so.** `targetNote` is a pure function; `CLAUDE.md` is explicit
+that a pure function is not the surface a client reaches. Replacing
+`sub={targetNote(data)}` in `ZtDashboard.tsx` with a constant left all three
+`targetNote` tests green while the client saw nothing — the same revert
+`ZtDashboard.wiring.test.tsx` was created for, on the card next to the one it
+already guards. Three rendering tests now cover it, and that mutation reddens
+two of them.
+
+The review that cleared this branch found four blocking items, and the one
+worth carrying forward is that **the first write-up of the gate finding named
+the wrong mechanism** — corrected in place above. The others: `EXEMPT_FIELDS =
+{}` broke two pytest tests that drew a live key out of the dict, a test of the
+expiry RULE broken by data the rule is not about (now a synthetic injected
+exemption); three natural mutants of the new sentence survived containment-only
+assertions (now `toBe` on the whole string, plus a parity pin transcribed from
+the Python); and the one-element grammar wart, which is inherited from the PDF
+and is filed as **#452** rather than fixed on one surface.
+
+A fifth review pass then found the correction itself carrying a false
+assurance. The pointer moved to the origin side closed with "`zt.test.ts` ...
+fails if the two drift" — and it does not, in the origin-to-web direction,
+which is the only direction a pointer sited at the origin serves. The Python
+side was pinned by containment (`code in disclosed`), so rewording the caption
+to "...but could not be used; the engagement target was applied instead."
+passed every test on both surfaces and shipped the divergence. The person
+rewording it stands exactly where that comment is and reads that a test will
+catch them. The caption's exact TAIL is now asserted on the Python side with
+the same literal, so a reword on either surface reddens; verified by applying
+that exact reword and watching the Python test fail.
+
+A sixth pass then found the SAME shape a third time, and that is what makes it
+worth recording as a rule rather than as three mistakes. The Python tail
+assertion added in the fifth round used a ONE-CODE fixture, so `", ".join`
+never executed: changing the separator to `"; "` left the whole Python side
+green — measured, not reasoned. The mutant class was already written down ten
+lines away, in `zt.test.ts`'s comment naming "a different `join` separator" as
+one of three natural mutants of this exact sentence. It was not tried, because
+the reword that WAS tried came from the reviewer's example rather than from the
+class.
+
+**The shape, and it is checkable rather than a disposition: a comment
+addressed to a future reader has to GENERALISE, while the fix that prompted it
+was validated against a SINGLE WITNESS.** Nobody writes "a reword, given
+exactly one discarded code, reddens this test" — the useful phrasing quantifies
+over the class. So the generalisation happens in prose, where nothing executes,
+in the same commit as the fix, while the author is holding the one concrete
+case they just made pass. Three of this branch's blocking findings are that,
+and all three were in prose written to explain a CORRECT change.
+
+This is `CLAUDE.md`'s "fix from the SHAPE, not the list you were handed" and
+"name the shape you searched for" — both stated about twin SITES and about
+SWEEPS, neither about assurance comments or about mutants. One existing rule
+recurring in a domain it does not name.
+
+The step the reviewer proposed, adopted here: **a comment claiming a test
+catches a change names the MUTANT CLASS it covers and one mutant in that class
+it does NOT.** At the site that would have read "asserts the exact tail at
+arity 1; the `join` separator and a repeated append are not pinned" — a
+sentence you cannot write without noticing the defect. It costs nothing when
+there is no gap, because then the second clause is "none I can construct".
+
+Writing them turned up a second thing, in the fixture rather than the code.
+`ZtDashboard.wiring.test.tsx` set `target_stage_source: "engagement"`, and
+`resolve_target_stage` returns exactly four values — `client`, `default`,
+`client_out_of_range`, `client_unparseable`. No writer produces `engagement`,
+so the fixture built an unreachable state and `targetNote` rendered it through
+its unrecognised-value fallback. Inert for the legend tests, which read the
+axis and not the note; not inert for a test of the note. The fixture is now
+`client` with the reason written beside it.
 
 ### 2026-09-08 — the client dashboards labelled one record's numbers with another's (#114, D-073)
 

@@ -137,6 +137,87 @@ def test_too_short_a_path_raises_a_NAMED_error_rather_than_an_IndexError() -> No
 
 
 @pytest.mark.unit
+def _full_doc_set(tmp_path: Path) -> None:
+    """Every ENFORCED target, empty, so a case can add exactly one variable.
+
+    Written from the constant rather than listed, because a hand list here goes
+    stale the moment the enforced set changes -- and a stale list would make
+    every case below exit 2 for a missing document rather than for its own
+    subject.
+    """
+    for rel in check_recalled_counts.ENFORCED_TARGETS:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("nothing to see\n", encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_a_context_entry_FRAGMENT_is_enforced_like_CONTEXT_md(tmp_path: Path) -> None:
+    """D-081: landing entries are one file each, and they are not a lower bar.
+
+    The whole risk of moving the narrative out of `CONTEXT.md` is that the
+    numbers rules stop applying to it -- the record would be conflict-free and
+    unchecked, which is a worse trade than the conflicts. This is the assertion
+    that stops that.
+    """
+    _full_doc_set(tmp_path)
+    entries = tmp_path / "context" / "entries"
+    entries.mkdir(parents=True)
+    (entries / "2026-09-22-probe.md").write_text(
+        "There are three blockers left in this area.\n", encoding="utf-8"
+    )
+    assert main(["prog"], root=tmp_path) == 1
+
+
+@pytest.mark.unit
+def test_the_entries_directory_is_GLOBBED_not_listed(tmp_path: Path) -> None:
+    """A second fragment must be covered without editing the gate.
+
+    If the set were a hand list, every PR adding a fragment would edit one
+    shared constant -- which is `CONTEXT.md`'s own defect moved into a gate.
+    A file the gate has never heard of is the case that proves it is derived.
+    """
+    _full_doc_set(tmp_path)
+    entries = tmp_path / "context" / "entries"
+    entries.mkdir(parents=True)
+    (entries / "2026-12-31-never-seen-before.md").write_text(
+        "Four gates exit 0 here.\n", encoding="utf-8"
+    )
+    assert main(["prog"], root=tmp_path) == 1
+
+
+@pytest.mark.unit
+def test_a_MISSING_entries_directory_is_not_an_error(tmp_path: Path) -> None:
+    """The directory is optional, and its absence is not a could-not-look.
+
+    A checkout with no fragments yet is a normal tree, not an unreadable one --
+    so this must NOT take the exit-2 path that a missing ENFORCED target takes.
+    The distinction is deliberate: `CONTEXT.md` missing means the tree is wrong,
+    `context/entries/` missing means nobody has landed one.
+    """
+    _full_doc_set(tmp_path)
+    assert not (tmp_path / "context" / "entries").exists()
+    assert main(["prog"], root=tmp_path) == 0
+
+
+@pytest.mark.unit
+def test_an_EXPLICIT_target_list_does_not_drag_in_the_entries(tmp_path: Path) -> None:
+    """`--porcelain one.md` means that one file, not that one plus the glob.
+
+    Without this, naming a file would silently widen to the whole entries
+    directory and a caller diffing one document would read findings from
+    others.
+    """
+    entries = tmp_path / "context" / "entries"
+    entries.mkdir(parents=True)
+    (entries / "2026-09-22-probe.md").write_text(
+        "There are three blockers left in this area.\n", encoding="utf-8"
+    )
+    (tmp_path / "solo.md").write_text("nothing to see\n", encoding="utf-8")
+    assert main(["prog", "solo.md"], root=tmp_path) == 0
+
+
+@pytest.mark.unit
 def test_one_missing_target_exits_2_rather_than_being_skipped(tmp_path: Path) -> None:
     """PARTIAL blindness, which is the likely failure, not total blindness.
 

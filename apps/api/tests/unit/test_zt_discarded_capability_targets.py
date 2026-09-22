@@ -76,6 +76,18 @@ def _first_code(framework: ZtFrameworkCode) -> str:
     return capabilities(framework)[0].code
 
 
+def _first_two_codes(framework: ZtFrameworkCode) -> tuple[str, str]:
+    """Two codes, because the caption joins with ", " and one code hides it.
+
+    A single-code fixture renders `listed == code` and never exercises the
+    separator at all -- which is how the wording assertion below shipped
+    pinning only the arity-1 case (#387, sixth review pass).
+    """
+    caps = capabilities(framework)
+    assert len(caps) >= 2, f"{framework} has fewer than two capabilities"
+    return caps[0].code, caps[1].code
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "stored",
@@ -224,10 +236,81 @@ def test_the_client_document_says_the_stored_target_was_not_used() -> None:
     """
     from app.zt.exporters import _gap_plan_caption
 
-    code = _first_code(CISA)
-    disclosed = _gap_plan_caption(analyze_gaps(CISA, {code: 1}, target_stage=3, targets={code: 7}))
-    assert code in disclosed, f"the caption does not name the row: {disclosed!r}"
+    first, second = _first_two_codes(CISA)
+    disclosed = _gap_plan_caption(
+        analyze_gaps(
+            CISA,
+            {first: 1, second: 1},
+            target_stage=3,
+            targets={first: 7, second: 7},
+        )
+    )
+    assert first in disclosed, f"the caption does not name the row: {disclosed!r}"
     assert "could not be used" in disclosed, disclosed
+
+    # THE EXACT TAIL, not containment, and this half exists for a reader who is
+    # not in this file: the identical sentence is duplicated in the web bundle
+    # (`apps/web/src/lib/dashboards/zt.ts::targetNote`, #387), so the screen and
+    # the deliverable must not drift.
+    #
+    # Containment alone does not pin that. Both assertions above survive
+    # `"... but could not be used; the engagement target was applied instead."`
+    # -- a reword that keeps the code and the phrase, changes the sentence, and
+    # ships the two surfaces disagreeing. The comment at `_gap_plan_caption`
+    # tells whoever rewords it that a test will catch them; WITHOUT THIS LINE
+    # that comment is a false assurance, and a false assurance sited exactly
+    # where the reader checks is worse than no comment at all.
+    #
+    # The literal is written out rather than imported from the module under
+    # test: a test that derives its expected value from the thing it tests
+    # agrees by construction and cannot fail.
+    #
+    # TWO codes, not one, and that is the whole reason this assertion is
+    # trustworthy. The first version used a single-code fixture, so
+    # `listed == code` and the `", ".join` was never executed: changing the
+    # separator to "; " left this test GREEN -- measured, not reasoned. The
+    # mutant class was already written down ten lines away, in `zt.test.ts`'s
+    # comment naming "a different `join` separator" as one of three natural
+    # mutants of this sentence, and it was not tried here because the reword
+    # that WAS tried came from a reviewer's example rather than from the class.
+    #
+    # EQUALITY on the appended clause, not `endswith`: `endswith` matches the
+    # LAST copy, so a doubled append survives it.
+    #
+    # WHAT THIS COVERS, AND ONE THING IT DOES NOT -- the second clause is the
+    # point, and it is the step this branch adopted after producing the same
+    # defect three times. A comment claiming a test catches a change has to
+    # GENERALISE, while the fix that prompted it was validated against ONE
+    # witness; writing down a mutant the assertion misses is the cheapest way
+    # to notice the gap, and it is free when there is none.
+    #
+    # COVERED -- every mutant of the rendered SENTENCE at arity 2, each one
+    # applied to `_gap_plan_caption` and run, not reasoned about:
+    #   the `", "` separator changed            -> red
+    #   the clause appended twice               -> red
+    #   one sentence per code, in a loop        -> red
+    #
+    # NOT COVERED: arity >= 3. Nothing here distinguishes a builder that joins
+    # only the first two codes from one that joins all of them, because the
+    # fixture supplies exactly two. That is a real gap and it is small -- a
+    # truncating join is not a plausible edit of a `", ".join` -- but naming
+    # it is what stops the next reader treating this assertion as covering the
+    # whole class. `zt.test.ts` has the identical limit for the same reason.
+    expected = (
+        f" A per-capability target was recorded for {first}, {second} but could"
+        f" not be used, so the engagement target was applied to those rows"
+        f" instead."
+    )
+    head, sep, tail = disclosed.partition(" A per-capability target was recorded for")
+    assert sep, f"the disclosure clause is missing entirely: {disclosed!r}"
+    assert sep + tail == expected, (
+        f"the caption's wording has drifted from the web copy.\n"
+        f"  expected tail: {expected!r}\n"
+        f"  actual tail:   {sep + tail!r}"
+    )
+    assert (
+        head.count("A per-capability target") == 0
+    ), f"the disclosure clause is appended more than once: {disclosed!r}"
 
 
 @pytest.mark.unit

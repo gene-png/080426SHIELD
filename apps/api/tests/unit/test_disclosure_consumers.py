@@ -34,6 +34,8 @@ def _tree(
     *,
     schema: str,
     web: str = "",
+    web_test: str = "",
+    web_spec: str = "",
     exporter: str = "",
     audit_renderer: bool = True,
 ) -> pathlib.Path:
@@ -62,7 +64,26 @@ def _tree(
     # path-token matching would still be exercised against a realistic shape
     # rather than a flat directory that satisfies it trivially.
     (tmp_path / "apps" / "web" / "src" / "thing").mkdir(parents=True)
-    (tmp_path / "apps" / "web" / "src" / "thing" / "Page.tsx").write_text(web, encoding="utf-8")
+    # `LatestPanel.tsx`, not `Page.tsx`, and the name is load-bearing: it
+    # CONTAINS the substring "test". A naive `if "test" in path.name` filter
+    # -- the obvious wrong way to write the exclusion below -- would eat this
+    # production file, and with a neutral name no test in this file would say
+    # so. "latest" is the realistic instance of the word this class swallows.
+    (tmp_path / "apps" / "web" / "src" / "thing" / "LatestPanel.tsx").write_text(
+        web, encoding="utf-8"
+    )
+    if web_test:
+        (tmp_path / "apps" / "web" / "src" / "thing" / "LatestPanel.test.tsx").write_text(
+            web_test, encoding="utf-8"
+        )
+    if web_spec:
+        # `.spec.` is the OTHER member of TEST_FILE_MARKERS, and it had no
+        # fixture at all until the sixth review pass: a filter implementing
+        # only `.test.` passed the whole suite. Two markers, one exercised, is
+        # the half-sweep shape this repo keeps recording.
+        (tmp_path / "apps" / "web" / "src" / "thing" / "InspectorPanel.spec.tsx").write_text(
+            web_spec, encoding="utf-8"
+        )
     if exporter:
         (tmp_path / "apps" / "api" / "app" / "thing").mkdir(parents=True, exist_ok=True)
         (tmp_path / "apps" / "api" / "app" / "thing" / "exporters.py").write_text(
@@ -168,6 +189,129 @@ def test_a_disclosure_rendered_only_in_a_DELIVERABLE_passes(tmp_path) -> None:
         schema=_SCHEMA,
         web="export const x = 1;",
         exporter="def caption(t: Thing):\n    if t.excluded_inputs:\n        pass\n",
+    )
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_TEST_FILE_is_not_a_reader(tmp_path) -> None:
+    """A fixture asserting a field exists does not mean anyone can see it.
+
+    `reader_text` globbed every `.ts`/`.tsx` under `apps/web/src`, so a test
+    file naming the field satisfied "reaches a screen" -- and the fixture is
+    the first thing a PR adding a disclosure field writes. The gate would have
+    reported the field consumed on the strength of the test asserting it is
+    not.
+
+    MEASURED on #387's branch before the exclusion, deleting the field name in
+    stages and running the gate after each, each deletion asserted to land:
+    removing it from `lib/dashboards/zt.ts` left `25 of 25, exit 0`; removing
+    it from the two ZT test files as well turned it red. Production code was
+    not what cleared it.
+
+    LATENT rather than live when found -- no field in the tree was cleared
+    ONLY by a test file, so the exclusion changed no verdict on the day it
+    landed. That is why it needs a test: nothing else would notice it being
+    undone.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        # The PRODUCTION surface does not mention the field at all.
+        web="export const unrelated = 1;",
+        # The TEST file names both the subject and the field, which is exactly
+        # what `readers_for` requires of a genuine reader.
+        web_test="const t: Thing = d;\nexpect(t.excluded_inputs).toEqual([]);",
+    )
+    assert main(["x", str(seed)]) == 1
+
+
+def test_a_SPEC_FILE_is_not_a_reader_either(tmp_path) -> None:
+    """The other member of `TEST_FILE_MARKERS`, which had no case at all.
+
+    Added by the sixth review pass. `.test.` had a fixture and `.spec.`
+    did not, so a filter implementing only `.test.` passed this entire
+    suite -- two markers, one exercised. This repo's own half-sweep
+    shape, inside the tests written to close a half-sweep.
+
+    The production file names the field nowhere, so only the exclusion
+    can decide the verdict.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        web="export const unrelated = 1;",
+        web_spec="const t: Thing = d;\nexpect(t.excluded_inputs).toEqual([]);",
+    )
+    assert main(["x", str(seed)]) == 1
+
+
+def test_a_PRODUCTION_file_beside_a_test_file_still_passes(tmp_path) -> None:
+    """The other half, so the exclusion is a filter and not a blanket refusal.
+
+    Without this, an exclusion that dropped the whole directory -- or every
+    file whose name merely contains `test` -- would pass the case above while
+    breaking every real reader that happens to sit beside a spec.
+
+    The second half is why `_tree` names the production file `LatestPanel.tsx`.
+    It first wrote `Page.tsx`, which contains neither `test` nor `spec`, so a
+    naive `"test" in path.name` filter dropped only the test file and this case
+    still passed -- the docstring claimed a class the fixture could not reach.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        web="const t: Thing = d;\nt.excluded_inputs;",
+        web_test="const t: Thing = d;\nexpect(t.excluded_inputs).toEqual([]);",
+    )
+    assert main(["x", str(seed)]) == 0
+
+
+def test_main_PASSES_THE_LIVE_DICT_to_the_expiry_check(tmp_path, monkeypatch, capsys) -> None:
+    """The WIRING, which the two expiry tests above cannot see.
+
+    They call `expired_field_exemptions` directly, so they prove the rule
+    works given an exemption -- not that `main` ever hands it the real one.
+    Change the call site to `exemptions={}` and both stay green while the arm
+    is dead in production. That is `CLAUDE.md`'s "the test imports the thing
+    it is defending rather than calling the endpoint that reaches it", and it
+    is PRE-EXISTING: the older `next(iter(EXEMPT_FIELDS))` tests called the
+    function directly too. Found by the #387 review, closed here.
+
+    Monkeypatching the module dict rather than passing an argument is the
+    point: the only way this can pass is if `main` reads that dict.
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        # A reader exists, so the field is NOT unconsumed and arm 1 is silent.
+        # The only thing that can fail this run is the expiry check.
+        web="const t: Thing = d;\nt.excluded_inputs;",
+    )
+    import scripts.check_disclosure_consumers as gate
+
+    # An exemption for a field that HAS a reader -- expired by definition.
+    monkeypatch.setitem(
+        gate.EXEMPT_FIELDS, "thing.py::ThingResponse.excluded_inputs", "a synthetic reason"
+    )
+    assert main(["x", str(seed)]) == 1
+    # The MESSAGE as well as the code, because `main` has other ways to reach
+    # exit 1 and this test's name claims a specific one. The sibling
+    # could-not-look cases argue the same thing in their own comments: an exit
+    # code alone lets a branch be rewired to any other cause with the file
+    # green.
+    assert "EXPIRED exemptions" in capsys.readouterr().out
+
+
+def test_main_is_GREEN_on_the_same_tree_with_no_exemption(tmp_path) -> None:
+    """The control, so the case above fails for the expiry and not the tree.
+
+    Without it, any defect in the fixture -- a missing audit renderer, an
+    unreadable schema -- produces the same exit 1 and the test still "passes".
+    """
+    seed = _tree(
+        tmp_path,
+        schema=_SCHEMA,
+        web="const t: Thing = d;\nt.excluded_inputs;",
     )
     assert main(["x", str(seed)]) == 0
 
@@ -372,29 +516,49 @@ def test_an_exemption_for_a_field_that_NOW_HAS_A_READER_is_expired() -> None:
     written about. `check_gate_fixtures`' `DEFERRED` refuses the same state --
     "has fixtures AND is in DEFERRED -- pick one".
     """
-    import scripts.check_disclosure_consumers as gate
-
-    key = next(iter(gate.EXEMPT_FIELDS))
+    # A SYNTHETIC exemption, not `next(iter(gate.EXEMPT_FIELDS))`.
+    #
+    # Drawing a live key made this test a hostage to the dict's CONTENTS: the
+    # two arms below are about the expiry RULE, and they went from green to
+    # `StopIteration` the moment #387 discharged the last real entry and left
+    # `EXEMPT_FIELDS` empty -- a test of a rule, broken by data the rule is
+    # not about. Guarding with a skip-when-empty would be worse: the arm would
+    # then be pinned by nothing on the very tree where the dict is empty,
+    # which is this one.
+    #
+    # `CLAUDE.md`: derive the world the test needs; never let the setup depend
+    # on the thing under test happening to be in some state.
+    #
+    # The origin is a SCHEMA FILENAME (`clients.py`), which is the shape every
+    # real key and `main`'s own `origins` set use. It first read
+    # `app/zt/exporters.py` -- a PATH, and a key shape nothing can produce.
+    # Inert, because this function only splits on `::` and tests set
+    # membership; corrected anyway, in the file that had just fixed a fixture
+    # for building an unreachable state.
+    key = "clients.py::SyntheticExemptResponse.dropped_synthetic"
     origin, rest = key.split("::", 1)
     model, field = rest.rsplit(".", 1)
     # Every exemption sharing this schema file must be declared, or it is
     # reported as renamed-away and this test reads a verdict about a sibling.
     # `risk.py` holds two, which is how that came up.
-    fields = [
-        (o, *r.rsplit(".", 1))
-        for o, r in (k.split("::", 1) for k in gate.EXEMPT_FIELDS)
-        if o == origin
-    ]
+    fields = [(origin, model, field)]
     # Only this key's own schema file is in scope, so exemptions in OTHER files
     # are not judged here -- the scoping that a test below pins directly.
     origins = {origin}
 
+    synthetic = {key: "a synthetic reason"}
+
     # No reader: the exemption is doing its job, and is not reported.
-    assert expired_field_exemptions(fields, [("p.tsx", "nothing here")], origins) == []
+    assert (
+        expired_field_exemptions(fields, [("p.tsx", "nothing here")], origins, exemptions=synthetic)
+        == []
+    )
 
     # A reader that names this model's subject: the exemption has expired.
     subject = model_subject(model)
-    expired = expired_field_exemptions(fields, [("p.tsx", f"{subject}: d.{field}")], origins)
+    expired = expired_field_exemptions(
+        fields, [("p.tsx", f"{subject}: d.{field}")], origins, exemptions=synthetic
+    )
     assert [k for k, _ in expired] == [key]
     assert "delete the exemption" in expired[0][1]
 
@@ -406,12 +570,14 @@ def test_an_exemption_whose_FIELD_WAS_RENAMED_is_expired() -> None:
     The entry then exempts nothing, and the next field to land under that
     triple inherits a reason written about a different defect entirely.
     """
-    import scripts.check_disclosure_consumers as gate
-
-    key = next(iter(gate.EXEMPT_FIELDS))
+    # Synthetic, for the reason given in the test above.
+    key = "clients.py::SyntheticExemptResponse.dropped_synthetic"
     origin = key.split("::", 1)[0]
     expired = expired_field_exemptions(
-        [(origin, "SomethingElseResponse", "dropped_x")], [], {origin}
+        [(origin, "SomethingElseResponse", "dropped_x")],
+        [],
+        {origin},
+        exemptions={key: "a synthetic reason"},
     )
     assert key in [k for k, _ in expired]
     assert any("the exemption is stale" in why for _, why in expired)

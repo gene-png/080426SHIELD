@@ -33,6 +33,19 @@ export interface ZtDashboardData {
   /** See `targetNote` — rendered, not just carried. */
   target_stage_source: string;
   /**
+   * Capabilities whose per-capability target could not be used (#188).
+   *
+   * Served since #188 and rendered by NOTHING until #387 — while the client's
+   * PDF said it in `_gap_plan_caption`. A fact stated in the deliverable and
+   * withheld from the screen is a disagreement between two surfaces reading
+   * the same assessment.
+   *
+   * CODES, not a count, so the sentence can name the rows; the count stays
+   * derivable from the array. Never truncated — this is a fault disclosure,
+   * and abbreviating one is what #75/#79 were filed about.
+   */
+  unusable_target_codes: string[];
+  /**
    * How many capabilities the engagement stage actually decided. Zero means
    * every capability carried its own target and the intake choice contributed
    * nothing to the percentage shown.
@@ -90,6 +103,19 @@ export function pillarsByGap(pillars: ZtPillar[]): ZtPillar[] {
 export function targetNote(data: ZtDashboardData): string {
   const fault = targetFault(data.target_stage_source);
 
+  // APPENDED TO EVERY RETURN BELOW, never in place of one, and deliberately
+  // worded as the deliverable words it (`zt/exporters.py::_gap_plan_caption`).
+  // The two surfaces read the same assessment, so they say the same thing.
+  //
+  // Independent of which branch we take: a discarded per-capability target is
+  // a fact about specific rows, not about how the headline target was chosen.
+  // Returning early anywhere below would swallow it -- the same shape as the
+  // earlier draft of this function that swallowed `client_out_of_range`.
+  const discarded =
+    data.unusable_target_codes.length > 0
+      ? ` A per-capability target was recorded for ${data.unusable_target_codes.join(", ")} but could not be used, so the engagement target was applied to those rows instead.`
+      : "";
+
   // The engagement target decided nothing here: every capability carried its
   // own. Captioning this percentage "your target, chosen at intake" would name
   // a source that contributed none of it -- #124's defect facing the other
@@ -106,14 +132,16 @@ export function targetNote(data: ZtDashboardData): string {
     // chose nothing, which is not a fault and not actionable — and when the
     // engagement stage decided no capability either, saying so is noise about
     // a value that did not reach the page.
-    return isChoiceFailure(data.target_stage_source)
-      ? `${base} — ${fault}`
-      : base;
+    return (
+      isChoiceFailure(data.target_stage_source) ? `${base} — ${fault}` : base
+    ).concat(discarded);
   }
 
-  return fault === null
-    ? "Your target, chosen at intake"
-    : `Default target — ${fault}`;
+  return (
+    fault === null
+      ? "Your target, chosen at intake"
+      : `Default target — ${fault}`
+  ).concat(discarded);
 }
 
 /**
