@@ -1990,7 +1990,7 @@ def _all_findings(cid: str) -> list[dict]:
     from app.routes.risk import _gather_findings
 
     db = _session()
-    findings, _t, _c, _targets = _gather_findings(db, uuid.UUID(cid))
+    findings, _t, _c, _targets, _scopes = _gather_findings(db, uuid.UUID(cid))
     return findings
 
 
@@ -1998,7 +1998,7 @@ def _csf_finding_codes(cid: str) -> list[str]:
     from app.routes.risk import _gather_findings
 
     db = _session()
-    findings, _techs, _controls, _targets = _gather_findings(db, uuid.UUID(cid))
+    findings, _techs, _controls, _targets, _scopes = _gather_findings(db, uuid.UUID(cid))
     return [f["source_id"] for f in findings if f["kind"] == "csf"]
 
 
@@ -2006,7 +2006,7 @@ def _csf_targets(cid: str) -> dict:
     from app.routes.risk import _gather_findings
 
     db = _session()
-    _f, _t, _c, targets = _gather_findings(db, uuid.UUID(cid))
+    _f, _t, _c, targets, _scopes = _gather_findings(db, uuid.UUID(cid))
     return targets.get("csf", {})
 
 
@@ -2223,7 +2223,7 @@ def _zt_finding_codes(cid: str) -> list[str]:
     from app.routes.risk import _gather_findings
 
     db = _session()
-    findings, _t, _c, _targets = _gather_findings(db, uuid.UUID(cid))
+    findings, _t, _c, _targets, _scopes = _gather_findings(db, uuid.UUID(cid))
     return [f["source_id"] for f in findings if f["kind"] == "zt"]
 
 
@@ -2231,7 +2231,7 @@ def _zt_targets(cid: str) -> dict:
     from app.routes.risk import _gather_findings
 
     db = _session()
-    _f, _t, _c, targets = _gather_findings(db, uuid.UUID(cid))
+    _f, _t, _c, targets, _scopes = _gather_findings(db, uuid.UUID(cid))
     return targets.get("zt", {})
 
 

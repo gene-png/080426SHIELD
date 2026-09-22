@@ -77,6 +77,28 @@ class RiskEntryResponse(BaseModel):
     dropped_links: dict | None = None
 
 
+class LinkScopeDisclosure(BaseModel):
+    """How much of one assessment was SCORED, and therefore citable (#403).
+
+    `scored` is the size of that service's allow-list; `total` is the rows the
+    assessment holds. `total - scored` is what was left out for carrying no
+    consultant judgement.
+
+    **`total` is the assessment's own row count, not the catalog's.** An
+    assessment holds the catalog it was provisioned against, so dividing by
+    today's `len(SUBCATEGORIES)` would publish a denominator this client's
+    assessment never had -- and a denominator that moves under a ratio is the
+    withheld-population defect `CLAUDE.md` records for `coverage_pct`.
+
+    Both numbers travel together for the same reason: a count of what was
+    excluded is not self-describing without the population it came out of.
+    """
+
+    service: str
+    scored: int
+    total: int
+
+
 class RiskRegisterResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -242,3 +264,43 @@ class RiskRegisterResponse(BaseModel):
     entries_with_dropped_links: int = 0
     entries_unlinked_after_drops: int = 0
     entries_links_not_recorded: int = 0
+
+    # #403. WHY the links are sparse, which the three counters above cannot say.
+    #
+    # Those three describe what the MODEL got wrong -- it offered a value that
+    # did not resolve. This one describes what the ASSESSMENT does not contain:
+    # the allow-lists are now the codes a client's assessments actually SCORED,
+    # so a client who scored 12 of 700 techniques gets links drawn from 12.
+    # Sparse linkage is then CORRECT and reads as a regression, and the register
+    # has to say which it is or the fix is worse than the defect -- a silently
+    # wrong citation replaced by a silently missing one.
+    #
+    # Distinguishing them is not cosmetic: the two have opposite remedies. A
+    # dropped value is the model's fault and regenerating may fix it; an
+    # unscored control is unfinished assessment work and regenerating cannot.
+    # Telling a consultant to regenerate over the second wastes a live LLM call
+    # and delivers the same sparse register again.
+    #
+    # PER SERVICE, because "your ATT&CK assessment scored 12 of 700" is
+    # actionable and a pooled total is not -- a client with a complete CSF
+    # assessment and an untouched ATT&CK one would read one blended fraction
+    # describing neither.
+    #
+    # PERSISTED at generate into the provenance blob and read back here, the
+    # `entries_intended` mechanism (#330) and for the same two reasons: no
+    # migration, and it is a GENERATE-TIME fact. Deriving it live from the
+    # assessments would be a present-tense claim rendered beside entries drafted
+    # earlier -- a certificate over an adjacent proposition, which `CLAUDE.md`
+    # names as worse than none.
+    excluded_unscored_links: list[LinkScopeDisclosure] = []
+    #: Whether `excluded_unscored_links` is an ANSWER or a SILENCE.
+    #:
+    #: `False` means this register predates the recording, so nothing on file
+    #: says how much of each assessment was scored. NOT the same fact as "every
+    #: code was scored", and an empty list cannot tell them apart -- the same
+    #: two-state trap `excluded_inputs_recorded` exists for.
+    #:
+    #: DEFAULTED FALSE because missing data defaults to UNCONFIRMED. A `True`
+    #: default would let a future writer that forgets the field certify a fully
+    #: scored assessment it never looked at.
+    excluded_unscored_links_recorded: bool = False

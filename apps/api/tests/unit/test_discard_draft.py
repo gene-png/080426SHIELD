@@ -727,7 +727,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
         assert g.has_attack is True  # v1 approved satisfies it, v2 discarded ignored
         assert g.unlocked is True
 
-        findings, _techs, _controls, _targets = _gather_findings(db, client_id)
+        findings, _techs, _controls, _targets, _scopes = _gather_findings(db, client_id)
         attack_findings = [f for f in findings if f["kind"] == "attack"]
         # The gap comes from v1; v2's "covered" must never be read.
         assert len(attack_findings) == 1
