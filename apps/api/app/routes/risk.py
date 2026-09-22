@@ -1499,7 +1499,19 @@ def export(
         .all()
     )
     org = None if client.legal_name == "(pending intake)" else client.legal_name
-    ctx = risk_exporters.build_context(client_legal_name=org, version=reg.version, entries=entries)
+    # #403. The scored share reaches the client's DELIVERABLE, not only the
+    # consultant's screen -- read from the same persisted provenance the
+    # response reads, so the PDF and the dashboard cannot disagree about one
+    # register. `_link_scope_fields` is the single reader of that blob, for the
+    # reason this file already gives at its `resolve_target_tier` import: a
+    # second parser is how two surfaces come to disagree about one client.
+    _scope_rows = _link_scope_fields(reg.provenance)["excluded_unscored_links"]
+    ctx = risk_exporters.build_context(
+        client_legal_name=org,
+        version=reg.version,
+        entries=entries,
+        link_scope=[(r.service, r.scored, r.total) for r in _scope_rows],
+    )
     today = utcnow().date()
 
     def _rr_name(extension: str) -> str:

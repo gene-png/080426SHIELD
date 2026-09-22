@@ -371,3 +371,131 @@ def test_the_scored_share_is_disclosed_and_survives_a_reread(app_client) -> None
     assert latest.status_code == 200, latest.text
     assert latest.json()["excluded_unscored_links"] == body["excluded_unscored_links"]
     assert latest.json()["excluded_unscored_links_recorded"] is True
+
+
+# ---------------------------------------------------------------------------
+# (c) ... and the DELIVERABLE, which is the surface the client actually reads.
+#
+# `CLAUDE.md` is explicit that the definition of done is "a screen OR a
+# delivered artifact", and that the artifact half is not a widening for
+# completeness: this repo's canonical understated-disclosure instance lives in
+# an exporter. The Linked Techniques and Linked Controls columns are what go
+# sparse, and they are columns of the client's own spreadsheet.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_the_scored_share_reaches_the_pdf_and_word_summary() -> None:
+    """Rendered through the real exporter, from a context built as the route
+    builds it -- not by asserting on `_link_scope_lines` in isolation, which
+    would prove the helper works rather than that the deliverable carries it.
+    """
+    from app.risk.exporters import build_context, render_docx, render_pdf
+
+    ctx = build_context(
+        client_legal_name="Atlas",
+        version=1,
+        entries=[],
+        link_scope=[("attack", 12, 700), ("csf", 106, 106)],
+    )
+    for renderer in (render_pdf, render_docx):
+        blob = renderer(ctx)
+        assert blob[:4] in (b"%PDF", b"PK\x03\x04"), renderer.__name__
+
+    # The bytes are a container, so the assertion is on the line the renderers
+    # are handed rather than on a substring search through a zip or a PDF
+    # stream -- a search that finds nothing in compressed bytes is a false
+    # negative, and one that finds something proves only that the string exists
+    # somewhere.
+    from app.risk.exporters import _link_scope_lines
+
+    lines = _link_scope_lines(ctx)
+    assert any("12 of 700" in ln for ln in lines)
+    assert any("106 of 106" in ln for ln in lines)
+    assert any("only from rows an assessment has scored" in ln for ln in lines)
+
+
+@pytest.mark.unit
+def test_an_unrecorded_scope_renders_nothing_rather_than_a_zero() -> None:
+    """A register generated before this was recorded must print silence.
+
+    "0 of 0 scored" is a concrete false claim about a client's assessments;
+    absence is merely an absence. Missing data defaults to UNCONFIRMED.
+    """
+    from app.risk.exporters import _link_scope_lines, build_context
+
+    assert _link_scope_lines(build_context(client_legal_name="A", version=1, entries=[])) == []
+
+
+@pytest.mark.unit
+def test_the_xlsx_carries_a_scored_coverage_sheet() -> None:
+    import io
+
+    from openpyxl import load_workbook
+
+    from app.risk.exporters import build_context, render_xlsx
+
+    ctx = build_context(
+        client_legal_name="Atlas",
+        version=1,
+        entries=[],
+        link_scope=[("attack", 12, 700)],
+    )
+    wb = load_workbook(io.BytesIO(render_xlsx(ctx)))
+    assert "Scored coverage" in wb.sheetnames
+    rows = list(wb["Scored coverage"].iter_rows(values_only=True))
+    assert rows[0] == ("Assessment", "Rows scored", "Rows total", "Not citable")
+    # The excluded count is rendered BESIDE the population, not alone.
+    assert rows[1] == ("ATT&CK coverage", 12, 700, 688)
+
+    # And the sheet is absent, not empty, when nothing was recorded.
+    bare = build_context(client_legal_name="Atlas", version=1, entries=[])
+    assert "Scored coverage" not in load_workbook(io.BytesIO(render_xlsx(bare))).sheetnames
+
+
+@pytest.mark.unit
+def test_the_exported_xlsx_a_client_downloads_carries_the_scored_coverage(
+    app_client,  # noqa: F811
+) -> None:
+    """The route wiring, end to end, on the real bytes.
+
+    The three tests above hand `build_context` a scope and assert the renderers
+    use it -- which proves the RENDERER works and would stay green with the
+    route passing nothing at all. The wiring is where the disclosure gets
+    selected, so this drives generate, export and download, and opens the
+    workbook the client would open.
+    """
+    import io
+
+    from openpyxl import load_workbook
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    _capture(provider)
+    _generate(c, bearer, cid)
+
+    bh = {"Authorization": f"Bearer {bearer}"}
+    ex = c.post(f"/risk/clients/{cid}/register/export", headers=bh)
+    assert ex.status_code == 200, ex.text
+    artifact_id = ex.json()["xlsx_artifact_id"]
+    assert artifact_id
+
+    blob = c.get(
+        f"/artifacts/{artifact_id}/download",
+        headers={**bh, "X-Client-Id": cid},
+    )
+    assert blob.status_code == 200, blob.text
+    wb = load_workbook(io.BytesIO(blob.content))
+    assert "Scored coverage" in wb.sheetnames
+    # Data rows only: the sheet also carries a header and a trailing sentence
+    # explaining the columns, and both have a non-numeric second cell.
+    by_service = {
+        r[0]: r
+        for r in wb["Scored coverage"].iter_rows(values_only=True)
+        if r and isinstance(r[1], int)
+    }
+    assert set(by_service) == {"ATT&CK coverage", "Zero Trust"}
+    for _label, scored, total, not_citable in by_service.values():
+        assert total > scored > 0
+        assert not_citable == total - scored

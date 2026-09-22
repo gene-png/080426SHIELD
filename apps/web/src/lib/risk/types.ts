@@ -67,6 +67,23 @@ export interface RiskEntry {
   dropped_links: Record<string, string[]> | null;
 }
 
+/**
+ * #403. How much of one assessment was SCORED, and therefore citable.
+ *
+ * `scored` is the size of that service's synthesis allow-list; `total` is the
+ * rows the assessment holds. `total - scored` is what was left out for carrying
+ * no consultant judgement.
+ *
+ * Both travel together because a count of what was excluded is not
+ * self-describing without the population it came out of — the same reason a
+ * percentage over a withheld population renders its withheld count beside it.
+ */
+export interface LinkScopeDisclosure {
+  service: string;
+  scored: number;
+  total: number;
+}
+
 export interface RiskRegister {
   /**
    * Inputs that EXISTED and were not approved, so they contributed nothing to
@@ -177,6 +194,34 @@ export interface RiskRegister {
   entries_with_dropped_links: number;
   entries_unlinked_after_drops: number;
   entries_links_not_recorded: number;
+  /**
+   * #403. WHY the links are sparse, which the three counters above cannot say.
+   *
+   * Those three describe what the MODEL got wrong. This describes what the
+   * ASSESSMENT does not contain: the synthesis allow-lists are now the codes a
+   * client's assessments actually SCORED, so a client who scored 12 of 700
+   * techniques gets links drawn from 12. Sparse linkage is then CORRECT and
+   * reads as a regression, and the register has to say which it is.
+   *
+   * The two have OPPOSITE remedies, which is why they are separate fields
+   * rather than one blended count: a dropped value is the model's fault and
+   * regenerating may fix it; an unscored control is unfinished assessment work
+   * and regenerating cannot. Telling a consultant to regenerate over the
+   * second spends a live LLM call and returns the same sparse register.
+   *
+   * Persisted at generate into the provenance blob and read back, so it
+   * survives a reload — the half #316 shipped without.
+   */
+  excluded_unscored_links: LinkScopeDisclosure[];
+  /**
+   * Whether `excluded_unscored_links` is an ANSWER or a SILENCE.
+   *
+   * `false` means the register predates the recording, so nothing on file says
+   * how much of each assessment was scored. NOT the same fact as "everything
+   * was scored", and an empty array cannot tell them apart — the same two-state
+   * trap `excluded_inputs_recorded` exists for.
+   */
+  excluded_unscored_links_recorded: boolean;
   id: string;
   client_id: string;
   version: number;
