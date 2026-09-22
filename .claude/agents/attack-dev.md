@@ -264,10 +264,14 @@ A react-hooks error once slipped the loop gates and surfaced only in CI's
 After ANY `apps/web` edit: `docker compose up -d --force-recreate api web`, then
 re-check `SHIELD_LLM_MODE` — recreating `web` silently recreates `api`.
 
-**Note on committing:** a local pre-commit hook, if installed, runs prettier
-3.1.0 and would reformat ~46 files against CI's 3.9.6 (issue #168). If `git
-commit` reformats files you did not touch, that is why — report it, do not fight
-it with `--no-verify` without saying so.
+**Note on committing:** the local pre-commit hook reads its prettier version
+from `pnpm-lock.yaml`, so it runs whatever CI runs and reformats nothing. That
+was NOT true until PR #311 landed issue #168: the hook was pinned at 3.1.0,
+eight minors behind, and rewrote every commit into a state CI then rejected.
+
+**So if `git commit` reformats files you did not touch, the old hook is still
+installed in your checkout** — re-run `pre-commit install`, and report it. Do
+not fight it with `--no-verify` without saying so.
 
 ## Before you open a PR
 

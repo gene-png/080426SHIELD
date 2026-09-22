@@ -9,6 +9,15 @@ import {
   cn,
 } from "@shield/design-system";
 
+// Sited here, apart from the other `@/lib` imports, on purpose, and the
+// reason is DATED because it expires: as of 2026-09-21 PR #366 was open and
+// rewrote the `describe-save-error` import line just below into a multi-line
+// block, so an import adjacent to it conflicted on merge for no semantic
+// reason. Once #366 has landed the hazard is gone and this import can be moved
+// back down with the others. Left undated, this note would outlive its cause
+// and read as an unexplained placement rule.
+import { MIN_TARGET_TIER } from "@/lib/assessment-targets";
+
 import { CsfQuestionnaire } from "@/components/admin/csf/CsfQuestionnaire";
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import {
@@ -240,7 +249,7 @@ export function CsfSelfAssessment({
   const profileLabel = assessment.client_profile
     ? (PROFILE_LABEL[assessment.client_profile] ?? null)
     : null;
-  const targetTiers = catalog.tiers.filter((t) => t.tier >= 2);
+  const targetTiers = catalog.tiers.filter((t) => t.tier >= MIN_TARGET_TIER);
 
   return (
     <div className="flex flex-col gap-6">

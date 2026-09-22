@@ -3,8 +3,19 @@
 #
 # `scripts/web-install-if-stale.sh` decides whether a security patch is applied.
 # The thing it replaced was a one-line `[ -f ... ] ||` inside a YAML folded
-# scalar, which nothing could test and which was wrong for eighteen months
-# without anyone able to see it.
+# scalar, which nothing could test and which nobody could see was wrong.
+#
+# It said "wrong for eighteen months", and nothing in this repo supports that.
+# DERIVED instead, which is both smaller and checkable:
+#
+#   git log --reverse --format=%ad --date=short | head -1        -> 2026-08-04
+#   git log -S'apps/web/node_modules/next/dist/bin/next' -- docker-compose.yml
+#                                              -> 072ffad, the BASELINE IMPORT
+#
+# So it was present in the first commit this repo has and was wrong for the
+# whole of its recorded history, which is about six weeks to the #226 fix. How
+# long it was wrong BEFORE the import is not knowable from here, and a number
+# that cannot be re-derived does not belong in a file about checks that can be.
 #
 # Watching a guard fire proves it fires. It does not prove it PASSES, and a
 # guard that installs unconditionally would make every `up` reinstall the world
@@ -173,6 +184,390 @@ fi
 rm -f "$probe"
 echo "ok   [both scripts are LF, so the container's sh can read them]"
 
+# ---------------------------------------------------------------------------
+# `scripts/dev-web.sh` must CALL this guard, not carry a second copy of the
+# idea (#318).
+#
+# It used to guard its own `pnpm install` on `[[ ! -d node_modules ]]`, over a
+# NAMED VOLUME that exists from the first boot onward -- so the guard was false
+# forever after and a lockfile change installed nothing. That is #226 exactly,
+# surviving inside a script `README.md` documents as a Quick-start path. The
+# install also had no `--frozen-lockfile`, so the one run it did fire resolved
+# package.json RANGES while CI installs what the lockfile pins.
+#
+# `CLAUDE.md`: "uses the same X as the Y path" is a claim to enforce by CALLING
+# X, never by reimplementing it. Asserted statically because the alternative is
+# running a real install, and a gate that installs the world is a gate nobody
+# runs.
+# ---------------------------------------------------------------------------
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# THE ENTRY POINTS ARE NAMED; THE BYPASS SWEEP IS DERIVED. Both, because
+# neither is enough on its own.
+#
+# This section asserted `dev-web.sh` ALONE while the branch adding it also
+# converted `.devcontainer/post-create.sh`, which `devcontainer.json` runs as
+# `postCreateCommand` -- Quick-start Option A's FIRST install, reached before
+# `dev-web.sh` exists in the flow. Restore that file's
+# `pnpm install --prefer-offline || echo "...non-fatal"` and every gate in this
+# repo still printed its certificate, under a change whose own title says BOTH
+# documented paths. A gate covering half of a two-path claim is the
+# false-coverage shape this file already shipped once.
+#
+# `CLAUDE.md`: fix from the SHAPE, not from the list you were handed. So the
+# list below is the two paths a human is DOCUMENTED to run, which get the
+# strong positive assertion that they CALL the guard, and the sweep after it is
+# the derived half: no shell script in this repo may carry an install of its
+# own, whether or not anyone thought to name it here.
+entry_point_delegates() { # <path-relative-to-repo> <label>
+  rel="$1"; label="$2"
+  f="$REPO/$rel"
+  if [ ! -f "$f" ]; then
+    echo "FAIL: $rel is missing; this check cannot look, which is not a pass."
+    exit 2
+  fi
+
+  # COMMENT LINES STRIPPED FIRST, and that is not tidiness.
+  #
+  # The first version of this check was `grep -q 'web-install-if-stale.sh'` over
+  # the whole file. `dev-web.sh` NAMES that script five times in its own header,
+  # explaining why it calls it -- so deleting the actual call left the check
+  # green. MEASURED: removing the invocation and running this gate returned
+  # `ok   [dev-web.sh calls the guard...]`, exit 0.
+  #
+  # An assertion satisfied by a COMMENT is the #308 shape (a 204 needle matched
+  # by the sentence three lines above it) and the reason `check_test_integrity`
+  # exists. It was caught here by red-on-revert and by nothing else: the check
+  # was correct-looking, correctly motivated, and could not fail.
+  code_only="$(mktemp)"
+  sed 's/[[:space:]]*#.*$//' "$f" > "$code_only"
+
+  if ! grep -q 'web-install-if-stale' "$code_only"; then
+    rm -f "$code_only"
+    echo "FAIL: $rel does not name web-install-if-stale.sh in CODE."
+    echo "      It is documented as a Quick-start path, so an install it performs"
+    echo "      itself bypasses the guard that decides whether a patch is applied."
+    echo "      (Mentioning it in a comment is not calling it.)"
+    exit 1
+  fi
+
+  # Naming it is not running it. Require an actual invocation -- `sh <something>`
+  # where the something is the guard or the variable holding it.
+  if ! grep -qE '(^|[[:space:]])(sh|bash)[[:space:]]+.*(\$GUARD|\$\{GUARD\}|web-install-if-stale)' "$code_only"; then
+    rm -f "$code_only"
+    echo "FAIL: $rel references the guard but never executes it."
+    echo "      Assigning its path and not running it installs nothing, and the"
+    echo "      dev server then starts against whatever is in the volume."
+    exit 1
+  fi
+  rm -f "$code_only"
+  echo "ok   [$label calls the guard]"
+}
+
+entry_point_delegates scripts/dev-web.sh "dev-web.sh"
+# Quick-start Option A's postCreateCommand. Its install ran BEFORE dev-web.sh
+# was ever reached, so "both documented paths go through the guard" was false
+# while this file was unchecked.
+entry_point_delegates .devcontainer/post-create.sh "post-create.sh"
+
+# THE DERIVED HALF, stated as what must NOT exist anywhere. A script that calls
+# the guard AND keeps its own install is not fixed -- whichever runs last wins,
+# and the unfrozen one is the one that drifts. Swept over every tracked shell
+# script rather than over the two named above, because the next bypass will be
+# written by someone who never read this file.
+#
+# THE EXCLUSIONS, and there are THREE, not two. An earlier version of this
+# comment said "TWO EXEMPTIONS, both stated so an unexplained hit is a real
+# finding" and then listed two further exclusion classes fourteen lines below
+# itself -- a heading false inside its own file, which is worse than no heading
+# because it is what a reader checks instead of counting:
+#
+#   1. POPULATION: `git ls-files '*.sh'`. Tracked, and `.sh` only. An install in
+#      `apps/web/Dockerfile`, `.github/workflows/ci.yml`, `devcontainer.json`, a
+#      `package.json` script or a `.ps1` is INVISIBLE here. This is the largest
+#      of the three and the one worth naming a live case for:
+#      `docker-compose.yml`'s web `command:` is a folded YAML scalar and is the
+#      artifact #226 was actually born in, so the one file with the worst
+#      history for this defect is outside the population. Filed, with a number,
+#      rather than papered over -- see the issue referenced in PR #369.
+#   2. `scripts/web-install-if-stale.sh` IS the guard. Its install is the one
+#      legitimate install in the repo.
+#   3. `tests/gates/` holds the gates themselves, which quote the pattern in
+#      order to search for it and stub the binary. A gate installs nothing.
+#
+# QUOTED STRINGS ARE STRIPPED AS WELL AS COMMENTS. Stripping comments alone
+# reported two files, and THEY ARE NOT THE SAME CASE -- the earlier version of
+# this comment classified both as prose, which was true of one of them:
+#
+#   * `scripts/prettier-hook.sh` says `the entry pnpm installs for the
+#     workspace`. A VERB. Prose, correctly excluded.
+#   * `scripts/verify-in-worktree.sh` prints `Fix: run `pnpm install` in the
+#     primary tree`. An IMPERATIVE in a user-facing refusal, with no
+#     `--frozen-lockfile`, and #175 records that a host `pnpm install` breaks
+#     the container. That is a real instruction to do the thing this gate
+#     forbids, and stripping quotes is what hides it.
+#
+# So the strip is a TRADE, not a free win, and the live instance inside it is
+# filed rather than justified away. `terr-A-gates` owns `verify-in-worktree.sh`
+# and takes the remedy string on a clean base. Saying "the price of that, not an
+# oversight" -- which this comment previously did -- is exactly what stops the
+# next reader checking whether anything is in the gap.
+#
+# ---------------------------------------------------------------------------
+# THE PROBE TABLE, and it is the POSITIVE CONTROL the sweep did not have.
+#
+# The per-file test below sits inside an `if` condition, which `set -eu` cannot
+# see. So a broken `sed` or a broken `grep` yields no hit and prints
+# `ok   [no shell script outside the guard carries an install of its own]`:
+# "the pipeline is broken" and "no bypass exists" were the same line. This
+# file already establishes that this is the dangerous direction -- the CR probe
+# above exists because `tr -d ""` deletes nothing and passes always.
+#
+# It also makes the residual list SELF-VERIFYING. Those forms were derived by
+# running probe strings by hand once; a hand measurement recorded as prose is
+# not re-run when the pattern next moves, so the list would go stale silently
+# in the file whose job is to say what the sweep cannot see. Here the list IS
+# the test: change the pattern and whichever row no longer holds goes red.
+# ---------------------------------------------------------------------------
+strip_code() { sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g' -e 's/[[:space:]]*#.*$//' "$1"; }
+matches_install() {
+  strip_code "$1" | grep -qE '(^|[[:space:]]|;|&&)[[:space:]]*pnpm[[:space:]]+(install|i|add|up|update)([[:space:]]|$)'
+}
+
+probe_dir="$(mktemp -d)"
+probe() { # <expect: catch|miss> <label> <line...>
+  want="$1"; label="$2"; shift 2
+  printf '%s\n' "$@" > "$probe_dir/probe.sh"
+  if matches_install "$probe_dir/probe.sh"; then got=catch; else got=miss; fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL [probe] expected to $want, but the pattern said $got: $label"
+    echo "      The sweep below reports by NOT matching, so a pattern or a"
+    echo "      stripper that has stopped working prints its ok line. This"
+    echo "      table is the only thing standing between that and a silent"
+    echo "      green. Fix the pattern, or move this row and say why."
+    rm -rf "$probe_dir"
+    exit 1
+  fi
+}
+
+# MUST be caught. Row 2 is the exact form this branch removes from
+# post-create.sh, so if that row ever stops holding the gate has stopped being
+# able to see the defect it was written for.
+probe catch "a bare install line"            '    pnpm install'
+probe catch "post-create.sh original form"   '(cd "${REPO}" && pnpm install --prefer-offline) || echo "x"'
+probe catch "a heredoc body"                 'cat <<EOF' 'pnpm install' 'EOF'
+probe catch "npx pnpm install"               '    npx pnpm install'
+probe catch "pnpm i"                         '    pnpm i'
+probe catch "pnpm add"                       '    pnpm add react'
+probe catch "pnpm up"                        '    pnpm up'
+probe catch "pnpm update"                    '    pnpm update'
+probe catch "a frozen install of its own"    '    pnpm install --frozen-lockfile'
+
+# MUST NOT be caught, and these are the RESIDUALS -- pinned here so the list
+# cannot go stale. Each needs a different mechanism and none is closed by
+# widening this pattern.
+probe miss  "install in a quoted argument"   'docker compose exec web sh -c "pnpm install"'
+probe miss  "the sh -lc idiom CLAUDE.md prescribes" 'docker compose exec -T web sh -lc "cd /app && pnpm install"'
+probe miss  "variable indirection"           'CMD="pnpm install"; $CMD'
+probe miss  "pnpm -C <dir> install"          '    pnpm -C apps/web install'
+probe miss  "pnpm --filter web add"          '    pnpm --filter web add foo'
+probe miss  "pnpm --dir <dir> install"       '    pnpm --dir apps/web install'
+probe miss  "a line-continued pnpm"          '    pnpm \' '      install'
+probe miss  "npm rather than pnpm"           '    npm install'
+
+# MUST NOT be caught, and these are CORRECT misses rather than residuals --
+# prose about an install is not an install.
+probe miss  "an echo naming the command"     '  echo "run pnpm install first" >&2'
+probe miss  "the verb, in prose"             '  echo "the entry pnpm installs for the workspace"'
+rm -rf "$probe_dir"
+echo "ok   [the pattern still catches what it claims and misses what it admits]"
+
+# THE SWEEP CALLS `matches_install`, the SAME function the probe table above
+# exercises. It used to inline its own copy of the stripper and the pattern, and
+# that is two facts to keep in step: the probe table would have gone on
+# certifying a pattern the sweep no longer used, which is a positive control
+# over the wrong subject and worse than none. `CLAUDE.md`: "uses the same X as
+# the Y path" is a claim to enforce by CALLING X.
+#
+# NOT a subshell for the loop. `bypass_hits="$(...)"` discarded the exit status
+# of everything inside it, including the `cd "$REPO" || exit 2` that was
+# supposed to fail closed -- `exit 2` inside a command substitution ends the
+# SUBSHELL and the assignment happily succeeds with an empty value, which is
+# the pass-shaped answer. The cd is now unconditional and checked.
+cd "$REPO" || {
+  echo "FAIL: cannot cd to $REPO; this sweep could not look, which is not a pass."
+  exit 2
+}
+# `git ls-files` returning NOTHING is not a clean sweep -- it is a sweep that
+# could not look, which D-051 says must never share a branch with a pass.
+# Checked BEFORE the loop, so an empty list cannot reach the report path.
+sh_list="$(mktemp)"
+git ls-files '*.sh' > "$sh_list" || {
+  echo "FAIL: git ls-files failed; this sweep could not look."
+  rm -f "$sh_list"; exit 2
+}
+if [ ! -s "$sh_list" ]; then
+  echo "FAIL: git ls-files '*.sh' found no shell scripts; this sweep could not look."
+  rm -f "$sh_list"; exit 2
+fi
+
+bypass_hits=""
+while IFS= read -r f; do
+  case "$f" in
+    scripts/web-install-if-stale.sh) continue ;;
+    tests/gates/*)                   continue ;;
+  esac
+  if matches_install "$f"; then
+    bypass_hits="$bypass_hits$f
+"
+  fi
+done < "$sh_list"
+swept="$(wc -l < "$sh_list")"
+rm -f "$sh_list"
+
+if [ -n "$bypass_hits" ]; then
+  echo "FAIL: these shell scripts run an install of their own, bypassing the guard:"
+  printf '%s' "$bypass_hits" | sed 's/^/        /'
+  echo "      The guard installs with --frozen-lockfile and keys on the lockfile"
+  echo "      hash; a second, unguarded install beside it re-opens #226 whichever"
+  echo "      order they run in. Call scripts/web-install-if-stale.sh instead."
+  exit 1
+fi
+# The COUNT is printed, not asserted against a hardcoded number. A tally in this
+# position goes stale the next time a script is added; a printed count is
+# evidence that the loop ran over something, which is the property at issue.
+echo "ok   [no install of its own in any of the $swept tracked *.sh files swept]"
+
+
+# ---------------------------------------------------------------------------
+# THE INSTALL HALF. Every case above passes `--check`, which returns at
+#
+#     [ "$CHECK_ONLY" -eq 1 ] && exit "$verdict"
+#
+# BEFORE `pnpm install --frozen-lockfile` and before the stamp write. So this
+# file certified "all states exercised" while covering `decide()` alone, and
+# the half that decides whether a security patch is actually APPLIED was
+# asserted by nothing: delete `--frozen-lockfile`, move the stamp above the
+# install, or drop the refuse->exit-1 remapping, and every case above stayed
+# green.
+#
+# `pnpm` is STUBBED rather than run. A gate that installs the world is a gate
+# nobody runs, and the properties worth pinning are about what the script does
+# with the installer, not about npm. The stub records its argv and can be made
+# to fail on demand, which is what makes the ordering property testable at all.
+# ---------------------------------------------------------------------------
+STUB_DIR="$(mktemp -d)"
+trap 'rm -rf "$ROOT" "$STUB_DIR"' EXIT
+# APPENDS, one line per invocation, and that is not a detail.
+#
+# It overwrote (`>`), so only the LAST call was visible. MEASURED with
+# red-on-revert: adding a bare `pnpm install` BEFORE the frozen one left this
+# gate GREEN -- the second call overwrote the first, the recorded argv still
+# read `install --frozen-lockfile`, and a script running an unguarded install
+# alongside the guarded one passed a check written to forbid exactly that.
+# A one-character bug in a gate asserting that another script has no
+# one-character bug.
+cat > "$STUB_DIR/pnpm" <<'STUB'
+#!/bin/sh
+echo "$@" >> "$PNPM_ARGV"
+[ -n "${PNPM_MUST_FAIL:-}" ] && exit 1
+exit 0
+STUB
+chmod +x "$STUB_DIR/pnpm"
+PNPM_ARGV="$STUB_DIR/argv"
+export PNPM_ARGV
+
+# `$1` expected exit, `$2` the label. Runs WITHOUT `--check`, so the install
+# path is reached.
+install_run() {
+  want_code="$1"; label="$2"
+  set +e
+  install_out="$(PATH="$STUB_DIR:$PATH" SHIELD_WEB_APP_DIR="$ROOT" sh "$SCRIPT" 2>&1)"
+  install_code=$?
+  set -e
+  if [ "$install_code" -ne "$want_code" ]; then
+    echo "FAIL [$label]: exit $install_code, wanted $want_code"
+    echo "$install_out"
+    exit 1
+  fi
+}
+
+# --- The installer is invoked with --frozen-lockfile. -----------------------
+# This is the whole reason the guard exists: CI installs what the lockfile
+# pins, and a range-resolved install in the container means the two can differ
+# with nothing saying so.
+fresh
+rm -f "$PNPM_ARGV"
+install_run 0 "stale volume -> install"
+if [ ! -f "$PNPM_ARGV" ]; then
+  echo "FAIL [install] the guard reported an install and never ran the installer."
+  exit 1
+fi
+# EVERY invocation, not "an" invocation. A check reading only one of them is
+# satisfied by a guarded install standing beside an unguarded one, which is the
+# state `dev-web.sh` was actually in.
+unfrozen="$(grep -c -v -- '--frozen-lockfile' "$PNPM_ARGV" || true)"
+if [ "$unfrozen" -ne 0 ]; then
+  echo "FAIL [install] $unfrozen pnpm invocation(s) ran WITHOUT --frozen-lockfile:"
+  grep -v -- '--frozen-lockfile' "$PNPM_ARGV"
+  echo "      An unfrozen install resolves package.json RANGES while CI installs"
+  echo "      what the lockfile pins, which is the drift this script exists to"
+  echo "      end. One beside a frozen one is not better -- whichever runs last"
+  echo "      decides what is on disk."
+  exit 1
+fi
+if [ "$(wc -l < "$PNPM_ARGV")" -ne 1 ]; then
+  echo "FAIL [install] expected exactly one pnpm invocation, got $(wc -l < "$PNPM_ARGV"):"
+  cat "$PNPM_ARGV"
+  exit 1
+fi
+echo "ok   [exactly one pnpm invocation, and it uses --frozen-lockfile]"
+
+# --- The stamp is written AFTER the install, and only if it SUCCEEDED. ------
+# `CLAUDE.md`: a success record must be written where the success is. A stamp
+# written above the install claims currency for a run that may not have
+# finished -- and the next boot reads that stamp, sees a match, and skips.
+# A failed install that leaves a stamp is therefore not a failed install; it is
+# a permanently wrong container.
+fresh
+rm -f "$PNPM_ARGV"
+PNPM_MUST_FAIL=1 install_run 1 "a failing install is fatal"
+if [ -f "$ROOT/node_modules/.shield-installed-lock" ]; then
+  echo "FAIL [stamp] the install FAILED and a stamp was written anyway."
+  echo "      The next boot will read it, match, and skip -- so the failure"
+  echo "      becomes permanent and silent."
+  exit 1
+fi
+echo "ok   [a failed install exits non-zero and leaves NO stamp]"
+
+# --- And a successful one stamps the lockfile's own hash. -------------------
+fresh
+install_run 0 "successful install stamps"
+if [ ! -f "$ROOT/node_modules/.shield-installed-lock" ]; then
+  echo "FAIL [stamp] the install succeeded and wrote no stamp, so every boot reinstalls."
+  exit 1
+fi
+if [ "$(cat "$ROOT/node_modules/.shield-installed-lock")" != "$(sha256sum "$ROOT/pnpm-lock.yaml" | cut -d' ' -f1)" ]; then
+  echo "FAIL [stamp] the stamp does not hold the lockfile's hash, so it can never match."
+  exit 1
+fi
+echo "ok   [a successful install stamps the lockfile hash]"
+
+# --- A REFUSAL in install mode exits 1, not 2. ------------------------------
+# `--check` returns the raw verdict; without it, 2 is remapped to 1 so the
+# compose command and `dev-web.sh` treat a refusal as fatal. Nothing above
+# reached that remapping.
+fresh
+stamp_from_lock
+rm -f "$ROOT/pnpm-lock.yaml"
+rm -f "$PNPM_ARGV"
+install_run 1 "no lockfile -> refuse, fatal"
+if [ -f "$PNPM_ARGV" ]; then
+  echo "FAIL [refusal] the guard refused and ran the installer anyway."
+  exit 1
+fi
+echo "ok   [a refusal is fatal and installs nothing]"
+
 echo
 # --- ARGUMENT HANDLING. Added because this file claimed "EVERY state it can
 # --- reach" while every case it ran passed `--check`, so the script's
@@ -199,3 +594,11 @@ expect_args 2 "too many arguments" "a second argument is refused" --check --chec
 echo "web-install-guard: every check above printed ok. There is no tally here on"
 echo "purpose -- the labelled lines are the list, and a hand-written count in"
 echo "this position has already gone stale twice."
+
+# The RESIDUAL, stated rather than left to be assumed. `pnpm` is a stub above,
+# so nothing in this file says a real install succeeds -- only what this script
+# does with the installer. Written with no tally for the same reason as the
+# certificate above.
+echo
+echo "NOT covered: pnpm is stubbed, so nothing here says a real install"
+echo "succeeds. That is npm's job, not this guard's."

@@ -49,14 +49,20 @@ All development happens inside the dev container. Nothing installs to the host.
 ### Option A - VS Code Dev Containers (recommended)
 
 1. Open the repo in VS Code with the **Dev Containers** extension installed.
-2. When prompted, **Reopen in Container**. VS Code builds the dev image and brings up the compose services (db, redis, minio, keycloak, mailhog, api, web). There is no `worker` service — AI jobs run synchronously in `api`.
-3. Once VS Code attaches, run:
+2. When prompted, **Reopen in Container**. VS Code builds the dev image and attaches to it. `post-create.sh` creates `.env` from `.env.example` if you have none, and installs the JS dependencies through `scripts/web-install-if-stale.sh` — the same guard the `web` service runs, so this path and CI install the tree the lockfile pins.
+
+   > **It does NOT start the compose services.** This step used to say it "brings up the compose services (db, redis, minio, keycloak, mailhog, api, web)". `.devcontainer/devcontainer.json` is `build`-based with no `dockerComposeFile`, and neither `postCreateCommand` nor `postStartCommand` runs `docker compose` — so nothing was up, and the old step 4's `docker compose logs -f api` followed a service that had never been started. Bring them up yourself, in step 3.
+
+3. Once VS Code attaches, edit `.env` (paste your `ANTHROPIC_API_KEY`, and run `openssl rand -hex 32` for `NEXTAUTH_SECRET`), then:
    ```bash
-   cp .env.example .env
-   # edit .env: paste your ANTHROPIC_API_KEY and run `openssl rand -hex 32` for NEXTAUTH_SECRET
+   docker compose up -d db redis minio keycloak mailhog
+   docker compose up -d --build api
+   ```
+   There is no `worker` service — AI jobs run synchronously in `api`.
+4. Start the web dev server, and watch the api from a second terminal:
+   ```bash
    bash scripts/dev-web.sh
    ```
-4. In a second terminal:
    ```bash
    docker compose logs -f api
    ```
@@ -68,8 +74,25 @@ All development happens inside the dev container. Nothing installs to the host.
 cp .env.example .env
 docker compose up -d db redis minio keycloak mailhog
 docker compose up -d --build api
-docker compose run --service-ports --rm web bash scripts/dev-web.sh
+docker compose up -d web
+docker compose logs -f web    # watch the install guard, then Next.js boot
 ```
+
+> **The last line used to read `docker compose run --service-ports --rm web
+bash scripts/dev-web.sh`, and that command could not work.** The `web`
+> service mounts individual paths (`apps/web`, `packages`, `package.json`,
+> `pnpm-workspace.yaml`, `pnpm-lock.yaml` and the install guard) — **not
+> `./scripts`** — so `scripts/dev-web.sh` does not exist inside that
+> container. Measured 2026-09-20 against the running stack: `ls /app/scripts`
+> → `No such file or directory`.
+>
+> `docker compose up -d web` is also the right command for a second reason: a
+> trailing command on `docker compose run` OVERRIDES the service's `command:`,
+> which is where `web-install-if-stale.sh` runs. The documented route therefore
+> skipped the guard that decides whether a dependency or security patch is
+> actually applied (#226). Using the service's own command means the
+> Quick-start and CI install the same tree, by construction rather than by
+> both being kept up to date.
 
 ### URLs once everything is up
 

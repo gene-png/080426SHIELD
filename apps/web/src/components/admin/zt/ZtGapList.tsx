@@ -11,6 +11,7 @@ import {
 } from "@shield/design-system";
 
 import type { CatalogStage, GapAnalysis } from "@/lib/zt/types";
+import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
 import type { JSX } from "react";
 
@@ -57,7 +58,7 @@ export function ZtGapList({
               className="rounded-md border border-border bg-surface-card px-2 py-1 text-sm text-ink-primary"
             >
               {stages
-                .filter((s) => s.stage >= 2)
+                .filter((s) => s.stage >= MIN_TARGET_STAGE)
                 .map((s) => (
                   <option key={s.stage} value={s.stage}>
                     {s.stage} · {s.label}

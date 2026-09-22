@@ -44,7 +44,7 @@ resolver is one of ten places it lives.
 | F7  | Risk + ATT&CK | `batches_failed`                                             | `risk.py:307/349/418`; `schemas/attack.py:124-125`, `attack.py:832-833` | Whole batches of entries                                                | **yes**, in the response    | **no** — neither string appears under `apps/web/src` |
 | F8  | ATT&CK        | `_validate_tools`                                            | `attack.py:759-763`                                                     | Tool citations                                                          | no on `main`; **[#29]** yes | **[#29]**, and inaccurately (finding 11)             |
 | F9  | ZT            | provenance stamped on a rejected suggestion                  | `zt.py:497-505`                                                         | _see below — not a drop but a lie_                                      | no                          | no                                                   |
-| F10 | Risk          | `{...} or set(attack_all_codes())`                           | `risk.py:159`                                                           | _silently swaps the allow-list itself_                                  | no                          | no                                                   |
+| F10 | Risk          | `{...} or set(attack_all_codes())`                           | `risk.py`, `_gather_findings` (was `:159`; see below)                   | _silently swaps the allow-list itself_                                  | no                          | no                                                   |
 | —   | Tech Debt     | reconciliation                                               | `tech_debt.py:255-257`                                                  | Rows the extractor skipped                                              | **yes**                     | **yes** — `TechDebtWorkspace.tsx:529-537`            |
 
 **Tech Debt is the reference implementation, not the exception.** It already ships
@@ -89,10 +89,20 @@ unconditionally on the same pattern (`AttackCoverage` has no `answer_source`).
 **F10 — Risk silently swaps its allow-list for a different one.** **CLOSED by #403 (PR #416)** — the `or set(attack_all_codes())` fallback below is DELETED, and the wider defect it sat on was worse than this entry states: the allow-list was the whole catalogue on EVERY run, not only on an empty assessment, because every row of all three tables is pre-seeded and nothing deletes one. It is now the codes each assessment SCORED. The snippet below is kept as the code AS IT THEN WAS, because deleting it would leave the finding unreadable.
 
 ```python
-# risk.py:159 — the docstring four lines up says
+# risk.py, in `_gather_findings` — the docstring four lines up says
 # "valid_techniques = every technique in the client's ATT&CK assessment"
 valid_techniques = {r.technique_code for r in rows} or set(attack_all_codes())
 ```
+
+_The `risk.py:159` this entry cited twice is stale — measured 2026-09-21 at
+`8e68d46`, that statement is at `:442`, a drift of 283 lines. **Replaced with the
+file plus the function rather than repointed to `:442`**, because a line number
+expires the next time anyone reflows `_gather_findings` and the danger is not the
+miss: a wrong line usually still contains plausible code, so the citation fails
+silently. The statement quoted above is unique in the repo and greppable, which is
+what `CLAUDE.md` asks a citation to be. Status of F10 itself is tracked in #403 —
+the fallback turns out to be redundant rather than dangerous, and the live half is
+that the allow-list is the whole catalogue on every run._
 
 Two silent branches. An ATT&CK assessment with zero coverage rows → the allow-list
 becomes the **entire MITRE catalogue**, so `risk.py:377` stops meaning "assessed for
