@@ -289,10 +289,29 @@ entry_point_delegates .devcontainer/post-create.sh "post-create.sh"
 # facing the other way: a check on CODE satisfied by PROSE. An over-reporting
 # gate is not the safe direction, because the cheapest route to green is to
 # exempt the file.
+#
+# THE RESIDUALS, MEASURED rather than reasoned about, by running the stripper
+# and the pattern over one probe string per form. Stated because a sweep whose
+# blind spots are unwritten is a sweep whose next reader assumes it has none:
+#
+#   caught: a bare line; `(cd "$X" && pnpm install ...) || echo "..."` (the
+#           exact form this branch removes from post-create.sh); a heredoc
+#           body; `npx pnpm install`; the four other subcommands that write
+#           node_modules (`i`, `add`, `up`, `update`).
+#   NOT caught, and each needs a different mechanism:
+#     * an install inside a QUOTED command argument -- `sh -c "pnpm install"`.
+#       Stripping quoted strings is what stops the prose false positives above,
+#       so this is the price of that, not an oversight.
+#     * variable indirection -- `CMD="pnpm install"; $CMD`.
+#     * a non-`.sh` writer: `Dockerfile`, `docker-compose.yml`,
+#       `devcontainer.json`, a `package.json` script, a `.ps1`. `git ls-files
+#       '*.sh'` is the stated population and nothing here claims more.
+#   correctly NOT caught: `echo "run pnpm install first"`, and the verb in
+#           `the entry pnpm installs for the workspace`.
 bypass_hits="$(
   cd "$REPO" || exit 2
   git ls-files '*.sh'     | grep -v '^scripts/web-install-if-stale\.sh$'     | grep -v '^tests/gates/'     | while IFS= read -r f; do
-        if sed -e "s/'[^']*'//g" -e 's/\"[^\"]*\"//g' -e 's/[[:space:]]*#.*$//' "$f"              | grep -qE '(^|[[:space:]]|;|&&)[[:space:]]*pnpm install([[:space:]]|$)'; then
+        if sed -e "s/'[^']*'//g" -e 's/\"[^\"]*\"//g' -e 's/[[:space:]]*#.*$//' "$f"              | grep -qE '(^|[[:space:]]|;|&&)[[:space:]]*pnpm[[:space:]]+(install|i|add|up|update)([[:space:]]|$)'; then
           echo "$f"
         fi
       done
