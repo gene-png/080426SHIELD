@@ -131,7 +131,12 @@ def upgrade() -> None:
         sa.text("SELECT id, legal_name FROM client WHERE legal_name IS NOT NULL")
     ).fetchall()
 
-    blank_ids = [row[0] for row in rows if not str(row[1]).strip()]
+    # `row[1] or ""` rather than `str(row[1])`: `str(None)` is the four-character
+    # string "None", which is NOT blank -- so if the `WHERE legal_name IS NOT
+    # NULL` above were ever relaxed, `str()` would silently classify every NULL
+    # row as NAMED. That is a fail-OPEN coupling between two lines that do not
+    # look related, and it costs nothing to remove.
+    blank_ids = [row[0] for row in rows if not (row[1] or "").strip()]
 
     for blank_id in blank_ids:
         conn.execute(

@@ -5033,3 +5033,90 @@ deletes.
 It is replaced by `test_submit_rejects_an_unnamed_organization`, parametrised
 over `""`, `null` and an absent key — what the guard always MEANT, and wider
 coverage than it replaces, since the old test exercised none of those three.
+
+## D-082 — One resolver for a client's display name, and the migration shares the reader's definition of blank
+
+**2026-09-22 · client-facing correctness**
+
+D-080 made `Client.legal_name` nullable and fixed the WRITE side. It left every
+READER deciding for itself with a bare `client_legal_name or "Client"` — and a
+bare `or` is satisfied by `"   "`, so a blank never reached the fallback and
+rendered as EMPTY on the organisation line of a client's DOCX, PDF and XLSX
+while the admin UI called the same row unnamed.
+
+### The count was wrong three times, which is why there is no count here
+
+| round | claimed                          | found afterwards                                |
+| ----- | -------------------------------- | ----------------------------------------------- |
+| #444  | the write side and three readers | six readers with a bare `or`                    |
+| #458  | "all six readers"                | a SEVENTH, in `routes/csf.py`                   |
+| #461  | —                                | an EIGHTH, in `apps/web/src/lib/risk/client.ts` |
+
+The seventh lived in a ROUTE rather than an `exporters.py`, so the guard written
+to catch it iterated a hand list that excluded it **by construction** — and it
+asserted a substring, which a docstring satisfies. Two independent ways to
+report clean, both firing at once, on the one instance left.
+
+The eighth was in the WEB layer, which a Python sweep rooted at `apps/api/app`
+cannot see at all, under a comment claiming parity _"as on the server side"_ —
+a claim the branch that wrote the server-side helper had just made false.
+
+**Decision: one `org_display_name` in `app/client_naming.py`, called rather than
+copied**, and the guard is a DERIVED sweep asking whether anything turns a
+nullable name into a display string with a bare `or`, not an iteration over a
+list of files. A list of readers has now been wrong at every revision that
+wrote one down.
+
+**The web keeps its own label.** `orgDisplayName` returns "(pending intake)" and
+the API returns "Client": the web is an internal workflow surface where the
+status is the useful thing, and a deliverable is a document handed to a client
+where an internal status word would be the wrong register. Two labels, one
+condition, stated here so the difference is not read as drift.
+
+### Migration 0050 normalises in Python, not in SQL
+
+The first version was `UPDATE ... WHERE trim(legal_name) = ''`. Measured on
+SQLite and Postgres 16: single-argument `trim()` is SPACE-ONLY on both, so tab,
+newline and NBSP survived it, while `str.strip()` — what `is_named_org` uses —
+treats all four as blank. The docstring asserted the opposite ("no
+false-positive case ... under any reading"), and a surviving row left the
+migration logging `normalised 0 blank rows`, byte-identical to a clean database.
+
+**NBSP is the one that actually arrives**: `CLAUDE.md` records it as what PDF
+and Word extraction emit, which is how intake fields get filled from a client's
+own documents. The most likely real blank was the furthest from the predicate.
+
+The normalisation runs in Python so the migration and the reader share
+`str.strip()` itself rather than two descriptions of it. A two-argument
+`trim(x, <charset>)` was refused for the `_HSPACE` reason: a hand-enumerated
+character class was wrong by sixteen characters with nothing able to see it.
+The migration does not import application code — what is shared is the language
+primitive, which is what makes this a derivation rather than a synchronisation.
+
+### A harness that cannot see the output it asserts on
+
+Recorded here rather than in `CLAUDE.md` because that file has 856 bytes of
+headroom and is already past its soft line; the one-line instruction lives at
+the site, in `test_migration_0050_blank_legal_name.py`.
+
+The test that reads migration 0050's report line reached for `caplog` first,
+which is what anyone would do. It captured NOTHING, and the assertion
+`assert reports, "migration 0050 logged no report line at all"` failed with an
+empty list — while the very same pytest run printed the missing line under
+"Captured stderr call".
+
+**Alembic installs its own handler through `fileConfig`, and the migration
+logger does not propagate to the root one**, so `caplog` — which attaches to
+the root logger — sees nothing. The output is real; it is just not where
+`caplog` looks. `capfd` reads it at the file-descriptor level, which is where
+it actually is.
+
+The failure is benign in the direction it happened to land: the assertion was
+written before the fix, so it went red and got investigated. **Written the
+other way round it would have been silent** — a test whose log assertion can
+never fire, in a file added specifically to end "the migration is pinned by
+nothing". That is a silent-success branch in the HARNESS rather than in the
+code, and nothing about reading the test would reveal it.
+
+Reach for `capfd` when asserting on anything a migration, or any library that
+configures its own logging, writes to the log.

@@ -28,18 +28,38 @@ the 18:40:55Z merge — not "never delivered", which names a different member of
 the merge; Dave performed it.
 
 **A blank `legal_name` still printed a BLANK organisation line on the client's
-DOCX/PDF/XLSX.** All five `*/exporters.py` resolved it with a bare
-`client_legal_name or "Client"`, and `"   "` is truthy, so it never reached the
-fallback. The write side and three readers were fixed by #444; these six were
-not. They all now call `app/client_naming.py`, and **migration 0050** normalises
-the rows that already hold blanks — the two are not alternatives, because 0050
-clears what exists and the helper stops one arriving another way.
+DOCX/PDF/XLSX.** The five `*/exporters.py` and the admin fulfill path resolved
+it with a bare `client_legal_name or "Client"`, and `"   "` is truthy, so it
+never reached the fallback. They now call `app/client_naming.py`.
+
+**That count was wrong twice, and the record says so rather than restating it.**
+#458 fixed six readers under prose claiming "all six". A SEVENTH was found
+afterwards in `routes/csf.py` — the CSF Playbook export, which feeds FIVE client
+artifacts and lives in a ROUTE rather than in an `exporters.py`, so both the
+sweep and the guard written to check it went past. An EIGHTH is in the web
+layer, `lib/risk/client.ts`, under a comment claiming parity with the server
+side that the same branch had made false. Both are fixed on
+`fix/254-round5`; no sentence here carries a count any more, because the
+count is what kept being wrong.
+
+**Migration 0050's predicate was rewritten from SQL to Python.** Its first
+version was `trim(legal_name) = ''`, and single-argument `trim()` is
+SPACE-ONLY on both engines — measured: tab, newline and NBSP all survived it,
+while `str.strip()` (what the reader uses) treats all four as blank. NBSP is
+the one that actually arrives, since it is what PDF and Word extraction emit.
+The normalisation now runs in Python so the migration and `is_named_org` share
+`str.strip()` itself rather than two descriptions of it, and 0050 now runs
+against DATA — a row per whitespace class, plus a derived sweep over the whole
+Unicode whitespace set.
 
 **A regression test I wrote could not fail.** `test_engagement_refuses_a_legacy_blank_name_with_422_not_500`
 posted `csf_profile: "current"`, which is not a `CsfProfile` member, so Pydantic
 422'd the body before the guard ran and the status-only assertion passed for the
 wrong reason. Measured: with the guard reverted it still passed, exit 0. It now
-sends `MOD` and asserts the copy, and goes red on that same revert.
+sends `MOD` and asserts the typed `reason` (`organization_not_named`) rather
+than a status code or a sentence, and goes red on that same revert. The guard
+was given a typed detail so there was something to assert; the other
+bare-string 422s in that module are tracked in #453.
 
 Also: `hasIntakeData` gained the four `primary_contact_*` fields (Step 3 writes
 them one per blur, and the pill said "No intake started" over them) and is now
@@ -48,9 +68,6 @@ ratchet tests `title` the same way it tests `org_name`; and two comments that
 published a grep as the authoritative writer set are back to being lists that
 say they are lists — that grep returned ZERO hits in `routes/intake.py`, the
 main user-input writer, which goes through `setattr`.
-
-**Landing with THIS PR, not yet on `main`: #254 — a self-serve client's email
-was its organisation's legal name.** `"(pending intake)"` was the codebase's
 
 **#254 fixed and ON `main` at `d5f97eb` — a self-serve client's email was its
 organisation's legal name.** (This paragraph arrived saying "landing with THIS

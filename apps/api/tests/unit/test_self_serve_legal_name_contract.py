@@ -369,16 +369,42 @@ def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or()
     guard idiom, which is the CORRECT shape and the thing the readers should
     be doing.
 
-    An eighth reader added anywhere under ``app/`` fails this without anyone
-    remembering to add it to a list. That is the difference between deriving
-    the set and extending it.
+    **WHAT THIS CANNOT SEE, stated because the first version of this docstring
+    claimed "an eighth reader added anywhere under ``app/`` fails this", and
+    that was false.** It is a line-wise regex over four-then-seven spellings,
+    so it is a FLOOR, not a census. Measured misses:
+
+      * a ternary -- ``name = x if x else "Client"``;
+      * a dict default -- ``d.get("legal_name", "Client")``;
+      * an intermediate variable, where the assignment and the fallback are on
+        different lines and neither line has both halves;
+      * any form black has wrapped across lines, since the scan is line-wise.
+
+    Two spellings WERE missed and are now covered, both live in this tree for
+    this exact value: ``org_name`` (the parameter of
+    ``provision_self_assessment_service``) and ``company`` (the
+    ``deliverable_filename`` kwarg, used across the five routes). ``org_name``
+    failed for an ordering reason worth knowing -- ``\\borg`` matched the start
+    of ``org_name`` and then looked for ``or``, finding ``_n`` -- so the longer
+    alternatives are listed FIRST.
+
+    The behavioural cover for what a pattern cannot reach is
+    ``test_playbook_export_renders_the_fallback_for_a_blank_name``, which
+    exercises the surface rather than the source. This test is the cheap
+    wide net; that one is the deep check on the path that actually broke.
     """
     import pathlib
     import re
 
     root = pathlib.Path(__file__).resolve().parents[2] / "app"
     # A name-ish identifier, `or`, then a NON-EMPTY string literal.
-    bare_fallback = re.compile(r'\b(legal_name|client_name|client_org|org)\s*or\s*"[^"]+"')
+    # LONGEST-FIRST: `org` before `org_name` would match the `org` prefix and
+    # then fail on `_n`, which is exactly how `org_name` escaped the first
+    # version of this sweep.
+    bare_fallback = re.compile(
+        r"\b(client_legal_name|legal_name|client_name|client_org|org_name|company|org)"
+        r'\s*or\s*"[^"]+"'
+    )
 
     offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
@@ -410,6 +436,20 @@ def test_the_deliverable_surfaces_call_the_shared_resolver() -> None:
     The list here is a list, and says so: it names the surfaces whose output
     reaches a client artifact. The DERIVED half is the sweep above, which is
     what catches a surface nobody added here.
+
+    **THE WALK IS MODULE-SCOPED, which is a real limit.** `routes/csf.py` and
+    `routes/admin.py` are large modules with several display paths, and ONE
+    call anywhere in the file satisfies this for all of them. So it proves the
+    module knows about the resolver, not that every path in it uses one --
+    combined with the sweep's own blind spots (a ternary, a dict default, an
+    intermediate variable), a single file could satisfy both and still render
+    a blank through a path neither can see.
+
+    It is fail-CLOSED in the direction that matters, which is why it stays: an
+    `ast.Attribute` call, or the import being dropped, reddens it. The
+    behavioural cover is
+    `test_playbook_export_renders_the_fallback_for_a_blank_name`, which reads
+    the rendered workbook cell rather than the source.
     """
     import ast
     import pathlib
@@ -436,4 +476,62 @@ def test_the_deliverable_surfaces_call_the_shared_resolver() -> None:
             f"{rel} does not CALL org_display_name (a mention in a comment or "
             f"docstring does not count); a bare fallback there renders a blank "
             f"organisation line for a whitespace-only name"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_playbook_export_renders_the_fallback_for_a_blank_name(blank: str | None) -> None:
+    """The SURFACE, for the reader that carried the live defect.
+
+    `routes/csf.py`'s Playbook export was the seventh reader: `name = org or
+    "Client"`, feeding five client artifacts. It is now fixed, and until this
+    test the fix was pinned only by a source-text sweep and an AST walk --
+    neither of which exercises anything.
+
+    `CLAUDE.md` is explicit that a resolver and a pure function are not the
+    surface. The scenario a source guard cannot see: `render_xlsx` refactored
+    to re-derive the cover name internally, `routes/csf.py` still calling
+    `org_display_name`, both source guards green, and the cover blank again.
+
+    ATT&CK already had a `build_context`-level assertion; the route that
+    actually broke had none. This is that assertion, one layer up, against the
+    bytes the client receives.
+    """
+    from app.client_naming import org_display_name
+    from app.csf.playbook_export import render_xlsx
+
+    # The route's own resolution, reproduced: this is what `routes/csf.py`
+    # passes as `client_name=`.
+    name = org_display_name(blank)
+    raw = render_xlsx(
+        approved=True,
+        client_name=name,
+        version=1,
+        enterprise_rows=[],
+        tier_profiles={},
+    )
+
+    # Read the RENDERED BYTES, not the resolver's return value. Asserting
+    # `name == "Client"` here would only re-test `org_display_name`, which is
+    # the weakness this test exists to remove: the cover cell is what the
+    # client opens.
+    import io
+
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(raw))
+    cells = [
+        str(cell.value)
+        for sheet in wb.worksheets
+        for row in sheet.iter_rows()
+        for cell in row
+        if cell.value is not None and str(cell.value).startswith("Client:")
+    ]
+    assert cells, "no `Client:` cover cell found -- the export shape changed"
+    for cell in cells:
+        assert cell == "Client: Client", (
+            f"the Playbook cover reads {cell!r}. A blank name is truthy, so it "
+            f"never reaches the fallback and renders as nothing where the "
+            f"organisation's name belongs."
         )
