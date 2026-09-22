@@ -70,7 +70,43 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: printf '%s' "$PR_BODY" > /tmp/body.md
 
+      # DEPENDABOT IS EXEMPT FROM THIS STEP, and the exemption is HERE rather
+      # than in the script on purpose.
+      #
+      # The gate requires a `## Adversarial audit` section in the PR body. A
+      # Dependabot PR has a body Dependabot wrote, and nobody can edit it into
+      # compliance without taking over authorship of the PR -- so the gate is
+      # RED BY CONSTRUCTION for that entire class, and the only ways to clear it
+      # are to merge past a red required check or to close the PR and redo the
+      # bump by hand. Both are worse than the exemption: the first teaches that
+      # a red gate is negotiable, and the second is how security bumps sit
+      # unmerged.
+      #
+      # AUTHOR-BASED, in the WORKFLOW, because that is the only place the author
+      # is known. `check_audit_evidence.py` is handed a changed-file list and a
+      # body; it has no way to learn who opened the PR, and giving it one would
+      # mean passing an identity into a script whose whole job is judging text.
+      #
+      # IT FAILS CLOSED, and that is the property to preserve through any edit.
+      # The condition is a `!=` against one exact login, so every value that is
+      # not that login RUNS the step -- including `null`, which is what
+      # `user.login` is on a trigger that carries no `pull_request` payload. An
+      # `==` here would invert it and exempt everyone except Dependabot.
+      #
+      # THE HUMAN REQUIREMENT IS UNCHANGED. This removes the audit-block
+      # requirement, not review: a Dependabot PR still needs
+      # `gh pr review --approve` from a named human, which is branch protection
+      # and not this gate. The audit block exists so an adversarial reviewer's
+      # findings are recorded; there are no findings to record about a lockfile
+      # bump, and pretending otherwise is the decorative-marker defect.
+      #
+      # LATENT, NOT LIVE: zero Dependabot PRs are open as of 2026-09-22, so
+      # nothing was blocked when this landed and nothing visibly changes. The
+      # empty queue is why this is easy to get wrong and never notice -- do not
+      # read it as evidence the exemption works. `tests/unit/test_audit_gate_
+      # dependabot_exemption.py` is what checks it.
       - name: Require recorded audit evidence
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         working-directory: apps/api
         run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
 
