@@ -115,7 +115,9 @@ class AdminClientSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    legal_name: str
+    # NULL when nobody has named the org yet (D-080, #254). The admin UI
+    # renders its own copy for that state; the API does not invent a name.
+    legal_name: str | None
     dba_name: str | None
     industry: str | None
     size_band: str | None

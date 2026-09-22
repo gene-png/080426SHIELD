@@ -1445,9 +1445,7 @@ def finalize_deliverable(
         .all()
     )
 
-    client_name = client.legal_name
-    if client_name == "(pending intake)":
-        client_name = None
+    client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
     # Filename version: same-day re-finalize -> v2, v3, ...
     today = utcnow().date()

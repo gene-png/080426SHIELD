@@ -1325,7 +1325,7 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         .all()
     }
     locked_keys = frozenset(code for code, r in rows.items() if r.locked)
-    client_org = None if client.legal_name == "(pending intake)" else client.legal_name
+    client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     return AttackAiRequest(
         assessment=a,
         rows=rows,
@@ -1589,9 +1589,9 @@ def run_ai(
     # payload and its tests read it.
     # The client's legal name, so a tool named after the client resolves from the
     # placeholder the model was actually shown (#33 finding 5). `client_org_name`
-    # is None for the "(pending intake)" placeholder, which is exactly when there
-    # is no name to redact -- the same condition `build_attack_ai_request` uses
-    # for the preview payload.
+    # is None for an UNNAMED org -- `legal_name` NULL, nobody has named it yet
+    # (D-080) -- which is exactly when there is no name to redact, and is the
+    # same condition `build_attack_ai_request` uses for the preview payload.
     #
     # The mode and hints matter as much as the name. `redact_for_ai` applies the
     # org-name and address rules ONLY in strict mode, so a resolver told "strict"
@@ -2587,9 +2587,7 @@ def finalize_attack_deliverable(
     # has to.
     rollup = compute_heatmap(coverage_map, attack_pending_codes(coverage))
 
-    client_name = client.legal_name
-    if client_name == "(pending intake)":
-        client_name = None
+    client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
     today = utcnow().date()
     existing = db.execute(select(Deliverable).where(Deliverable.service_id == svc.id)).all()

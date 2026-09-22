@@ -1,10 +1,12 @@
 # Gene — in-flight status
 
-_2026-09-22 — `CLAUDE.md` truncation (#347, tier-1), ahead of #254 and #209._
+_2026-09-22 — #254 implemented (tier-1) on `fix/254-self-serve-legal-name`;
+#209 still open._
 
 **What I was asked to do and did not:** #254 and #209 were the round's mandate.
-Both were stopped mid-measurement when the truncation was found; #254's survey
-is recorded below so it is not re-done. Neither is fixed.
+The truncation (#347) took the first part of the round; #254 is now implemented
+and awaiting Gene's review. **#209 is still not implemented** — its design call
+is recorded below and unchanged.
 
 **#347, done this round.** `CLAUDE.md` at 210,958 bytes against a 150,000-byte
 reader limit — the last 29% cut silently, and the cut landed on the merge rule.
@@ -34,15 +36,26 @@ addition pushes more rules past the limit. They go in near the top once there is
 headroom; run `check_claude_md_size.py CLAUDE.md` for what is left rather than
 trusting a figure written here, which went stale three times in one commit.
 
-**#254 survey, measured on 318ce1d so it is not re-done.** The sentinel
-`"(pending intake)"` has 17 production read sites (13 in `apps/api/app`, 4 in
-`apps/web`) plus 2 in comments, and **zero production writes** — the only
-assignments are four unit-test fixtures. Production self-serve provisioning is
-`routes/auth.py`: `_provision_self_serve_client(db, legal_name=domain)` for an
-unknown company domain, and **`legal_name=display_name` for a personal-email
-signup**, which the issue does not name and which puts a person's own name on
-the deliverable where the org's belongs. The guards are not wrong; they check
-for a value nothing produces.
+**#254 — IMPLEMENTED, not merged.** Branch `fix/254-self-serve-legal-name`,
+PR open, **do not merge without reading it**: it trips merge-rule conditions 4
+(migration 0049), 5 and 6 (it changes what renders on a client deliverable).
+
+The survey above was re-derived independently on `3c2dd0a` and reproduced
+exactly: 17 production read sites (13 in `apps/api/app`, 4 in `apps/web`) plus
+2 in comments, zero production writes. **Both** write paths in `routes/auth.py`
+are fixed, including the `legal_name=display_name` one the issue does not name.
+
+**The design call is option 2 from the issue, recorded as D-080**:
+`Client.legal_name` is nullable and NULL means nobody has named the org. The
+sentinel is deleted; it survives only as web COPY in `lib/org-name.ts`, which
+nothing branches on. Ten of the thirteen API guards collapsed to a plain read.
+
+**The trap worth knowing if you review this:** "test the real condition" reads
+naturally as `intake_completed_at IS NULL`, and that is wrong — an
+admin-created tenant has a real name and never completes intake, so keying on
+intake would blank its deliverables and refuse its engagements. The property is
+"has anyone named this org". `routes/admin.py`'s write is a stated exemption
+with a test pinning it.
 
 **#209 — the design call is Dave's and is recorded:** LIVE for DRAFT and
 APPROVED, FROZEN at RELEASE, decided once for `zt_dashboard`, `csf_dashboard`,

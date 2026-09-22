@@ -42,13 +42,14 @@ def app_client(tmp_path) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = override_get_db
 
     # Work Order B1: a client user can only self-register against a pre-approved
-    # org domain. Seed a "(pending intake)" client + the example.com domain so
-    # the second registrant in these tests auto-joins it.
+    # org domain. Seed an UNNAMED client (D-080: legal_name NULL, because
+    # nobody has named it) + the example.com domain so the second registrant
+    # in these tests auto-joins it.
     from app.models.client import Client as _Client
     from app.models.client_domain import ClientDomain as _ClientDomain
 
     _seed = TestSession()
-    _tenant = _Client(legal_name="(pending intake)")
+    _tenant = _Client(legal_name=None)
     _seed.add(_tenant)
     _seed.flush()
     _seed.add(_ClientDomain(client_id=_tenant.id, domain="example.com"))
@@ -79,7 +80,7 @@ def test_admin_queue_empty_on_fresh_deployment(app_client: TestClient) -> None:
     r = app_client.get("/admin/intake-queue", headers={"Authorization": f"Bearer {bearer}"})
     assert r.status_code == 200
     payload = r.json()
-    assert payload["client"] is None or payload["client"]["legal_name"] == "(pending intake)"
+    assert payload["client"] is None or payload["client"]["legal_name"] is None
     assert payload["service_requests"] == []
     assert payload["artifacts"] == []
     assert payload["total_users"] == 1

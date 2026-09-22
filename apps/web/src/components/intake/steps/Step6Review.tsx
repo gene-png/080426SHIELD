@@ -17,6 +17,7 @@ import {
 import type { JSX } from "react";
 import { formatDateOnly } from "@/lib/dates";
 import { listArtifacts, type ArtifactSummary } from "@/lib/intake/artifacts";
+import { isNamedOrg } from "@/lib/org-name";
 
 /** Human-readable summary of the client-set targets for a service, if any. */
 function targetSummary(
@@ -99,8 +100,7 @@ export function Step6Review({
     };
   }, []);
   const picks = (c?.service_interests ?? []) as ServiceType[];
-  const legalName =
-    c?.legal_name && c.legal_name !== "(pending intake)" ? c.legal_name : null;
+  const legalName = isNamedOrg(c?.legal_name) ? c!.legal_name : null;
 
   const servicesMissingTargets = picks.filter((svc) =>
     hasMissingTargets(svc, serviceInputs[svc]),

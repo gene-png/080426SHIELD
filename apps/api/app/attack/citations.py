@@ -254,9 +254,10 @@ class CitationResolver:
         Deliberately NOT short-circuited on "there is no client name". The first
         draft returned early when `client_org_name` and `name_hints` were both
         empty, which is wrong for the same reason the org-only version was: in
-        strict mode the ADDRESS rule fires regardless of either, so a tenant
-        still on "(pending intake)" -- who has no legal name by definition --
-        would have had `Unit 42` egress as `[ADDRESS]` with no alias indexed.
+        strict mode the ADDRESS rule fires regardless of either, so an UNNAMED
+        tenant -- one whose `legal_name` is NULL because nobody has named it
+        yet (D-080), who has no legal name by definition -- would have had
+        `Unit 42` egress as `[ADDRESS]` with no alias indexed.
         The condition for aliasing is "did the redactor change this string", and
         the only way to know that is to ask it.
         """

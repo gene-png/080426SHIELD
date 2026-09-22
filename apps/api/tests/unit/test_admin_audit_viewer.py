@@ -54,7 +54,7 @@ def ctx(tmp_path) -> Iterator[tuple[TestClient, sessionmaker]]:
     from app.models.client_domain import ClientDomain as _ClientDomain
 
     _seed = TestSession()
-    _tenant = _Client(legal_name="(pending intake)")
+    _tenant = _Client(legal_name=None)
     _seed.add(_tenant)
     _seed.flush()
     _seed.add(_ClientDomain(client_id=_tenant.id, domain="example.com"))

@@ -2,6 +2,7 @@
 import * as React from "react";
 
 import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
+import { orgDisplayName } from "@/lib/org-name";
 
 import {
   addDomain,
@@ -357,12 +358,12 @@ function ClientRow({
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>{client.legal_name}</CardTitle>
+          <CardTitle>{orgDisplayName(client.legal_name)}</CardTitle>
           {confirmingArchive ? (
             <span className="flex flex-wrap items-center gap-2 text-sm">
               <span className="text-ink-secondary">
-                Archive {client.legal_name}? Its data is kept and this can be
-                undone.
+                Archive {orgDisplayName(client.legal_name)}? Its data is kept
+                and this can be undone.
               </span>
               <button
                 type="button"
@@ -385,7 +386,7 @@ function ClientRow({
             <button
               type="button"
               onClick={() => setConfirmingArchive(true)}
-              aria-label={`Archive ${client.legal_name}`}
+              aria-label={`Archive ${orgDisplayName(client.legal_name)}`}
               className="rounded-md border border-status-danger-border px-3 py-1 text-xs font-semibold text-status-danger-fg hover:bg-status-danger-bg"
             >
               Archive client
@@ -431,7 +432,7 @@ function ClientRow({
             value={newDomain}
             onChange={(e) => setNewDomain(e.target.value)}
             placeholder="company.com"
-            aria-label={`New domain for ${client.legal_name}`}
+            aria-label={`New domain for ${orgDisplayName(client.legal_name)}`}
             className="min-w-[12rem] rounded-md border border-border bg-surface-card px-3 py-1.5 text-sm"
           />
           <button

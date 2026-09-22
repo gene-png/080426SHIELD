@@ -46,10 +46,13 @@ export { getActiveClientId } from "@/lib/active-client";
 
 export async function getClientName(cid: string): Promise<string> {
   try {
-    const clients = await jsonRequest<{ id: string; legal_name: string }[]>(
-      "/api/proxy/admin/clients",
-    );
-    return clients.find((c) => c.id === cid)?.legal_name ?? "Client";
+    const clients = await jsonRequest<
+      { id: string; legal_name: string | null }[]
+    >("/api/proxy/admin/clients");
+    // Two absences collapse to one fallback here, as on the server side: no
+    // such client, and a client nobody has named (D-080). `?? "Client"` only
+    // caught the first, so `|| "Client"` covers the null as well.
+    return clients.find((c) => c.id === cid)?.legal_name || "Client";
   } catch {
     return "Client";
   }

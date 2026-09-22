@@ -67,7 +67,11 @@ def _register_and_bearer(client: TestClient) -> str:
     created = client.post(
         "/admin/clients",
         headers={"Authorization": f"Bearer {admin_bearer}"},
-        json={"legal_name": "(pending intake)"},
+        # D-080: the admin endpoint is a HUMAN NAMING AN ORG, so it gets a real
+        # name. The pre-intake unnamed state is no longer reachable through
+        # this endpoint and is covered where it actually happens, in
+        # test_self_serve_legal_name_contract.py.
+        json={"legal_name": "Example Org"},
     )
     assert created.status_code == 201, created.text
     cid = created.json()["id"]
@@ -96,7 +100,7 @@ def test_get_intake_creates_singleton_client(app_client) -> None:
     r = client.get("/intake", headers={"Authorization": f"Bearer {bearer}"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["client"]["legal_name"] == "(pending intake)"
+    assert body["client"]["legal_name"] == "Example Org"
     assert body["service_requests"] == []
     assert body["intake_completed_at"] is None
 
@@ -193,14 +197,50 @@ def test_submit_rejects_empty_service_requests(app_client) -> None:
 
 
 @pytest.mark.unit
-def test_submit_rejects_pending_placeholder_legal_name(app_client) -> None:
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"legal_name": ""},
+        {"legal_name": None},
+        {},
+        # The whitespace case, added after the adversarial review: `"   "`
+        # is TRUTHY, so it is the one arm a bare `not` lets through, and
+        # the three arms above all pass with the guard's `.strip()`
+        # deleted. Without this row the guard cannot go red on revert.
+        {"legal_name": "   "},
+    ],
+)
+def test_submit_rejects_an_unnamed_organization(app_client, payload: dict) -> None:
+    """You cannot submit an intake without naming the organisation.
+
+    THIS TEST REPLACES `test_submit_rejects_pending_placeholder_legal_name`,
+    and the replacement is stated rather than done quietly because weakening a
+    test to reach green is exactly what this repo forbids.
+
+    The old test asserted that the literal string `"(pending intake)"` was
+    refused. That string was a SENTINEL the server stored and compared against,
+    and the submit guard rejected it because the wizard used to prefill the
+    field with it -- so a user could submit the placeholder back unchanged
+    without ever typing a name.
+
+    D-080 removed the sentinel: an unnamed org is NULL, and `Step2Organization`
+    now starts the field EMPTY. The round-trip the old assertion defended
+    against cannot occur, and after the change `"(pending intake)"` is simply an
+    odd name a user typed on purpose -- refusing it would mean keeping the magic
+    string the decision exists to delete.
+
+    What the guard always MEANT is what is pinned here, and it is pinned across
+    all three ways a name can be absent rather than the one the old test
+    happened to use. This is strictly wider coverage than it replaces: the old
+    test exercised none of these three.
+    """
     client, _ = app_client
     bearer = _register_and_bearer(client)
     r = client.post(
         "/intake/submit",
         headers={"Authorization": f"Bearer {bearer}"},
         json={
-            "client": {"legal_name": "(pending intake)"},
+            "client": payload,
             "service_requests": [{"service_type": "consultation"}],
         },
     )
@@ -391,3 +431,68 @@ def test_intake_state_returns_the_contact_for_review(app_client) -> None:
     assert contact["timezone"] == "America/Chicago"
     # The email is the account's own and is shown read-only on the wizard.
     assert contact["email"]
+
+
+@pytest.mark.unit
+def test_patch_normalises_a_whitespace_only_name_to_null(app_client) -> None:
+    """A blank name is stored as NULL, not as blanks.
+
+    This is the WRITE half of D-080's "one representation of unnamed". Without
+    it `"   "` survives in the column: every exporter's `client_legal_name or
+    "Client"` sees a truthy value and renders a BLANK organisation line on the
+    client's DOCX/PDF/XLSX, while the admin UI calls the same row unnamed.
+
+    Asserts the stored column rather than the response, because the response
+    would echo whatever the normaliser produced and could agree with a broken
+    one by construction.
+    """
+    client, TestSession = app_client
+    bearer = _register_and_bearer(client)
+
+    r = client.patch(
+        "/intake",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"client": {"legal_name": "   "}},
+    )
+    assert r.status_code == 200, r.text
+
+    with TestSession() as db:
+        row = db.execute(select(Client)).scalar_one()
+        assert row.legal_name is None, (
+            f"a whitespace-only name was stored as {row.legal_name!r}; it must "
+            f"normalise to NULL so there is one representation of 'unnamed'"
+        )
+
+
+@pytest.mark.unit
+def test_engagement_refuses_a_legacy_blank_name_with_422_not_500(app_client) -> None:
+    """A row that predates the write-time normalisation must still be REFUSED.
+
+    The setup writes `"   "` by direct SQL on purpose. That is not the step
+    under test -- it is the WORLD: `ClientProfilePatch` carries no validator, so
+    any pre-D-080 `PATCH /intake` could store it, and migration 0049 does not
+    NULL it (its predicates match a domain, a display name, or the old
+    sentinel). The invariant is enforced at every writer and does not reach
+    backwards, so the read side has to cope.
+
+    Before the guard stripped, `"   "` was truthy: this guard passed and
+    `provision_self_assessment_service` raised `ValueError` on the next call --
+    an untyped 500 six lines below a typed 422, against core principle 2.
+    """
+    client, TestSession = app_client
+    bearer = _register_and_bearer(client)
+
+    with TestSession() as db:
+        row = db.execute(select(Client)).scalar_one()
+        row.legal_name = "   "
+        db.commit()
+
+    r = client.post(
+        "/intake/engagements",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"service_type": "nist_csf", "csf_target_tier": 2, "csf_profile": "current"},
+    )
+    assert r.status_code == 422, (
+        f"expected a typed 422 refusal, got {r.status_code}. A 500 here is the "
+        f"ValueError from provision_self_assessment_service escaping untyped."
+    )

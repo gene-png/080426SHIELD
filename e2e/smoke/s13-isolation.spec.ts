@@ -49,7 +49,8 @@ const BEACON_DOMAIN = "beacon.example";
 
 interface Client {
   id: string;
-  legal_name: string;
+  // Nullable since D-080 (#254): a self-serve tenant nobody has named yet.
+  legal_name: string | null;
 }
 
 /**
@@ -69,7 +70,7 @@ async function ensureBeaconTenant(
   expect(listed.ok()).toBeTruthy();
   const clients = ((await listed.json()) as { clients: Client[] }).clients;
   let beacon = clients.find(
-    (c) => c.legal_name.toLowerCase() === "beacon labs",
+    (c) => (c.legal_name ?? "").toLowerCase() === "beacon labs",
   );
 
   if (!beacon) {

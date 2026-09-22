@@ -247,6 +247,22 @@ def _apply_patch_to_client(client: Client, patch: IntakePatchRequest) -> None:
         data["website"] = str(data["website"])
     if "service_interests" in data and data["service_interests"] is not None:
         data["service_interests"] = [v.value for v in data["service_interests"]]
+    if "legal_name" in data:
+        # NORMALISE HERE, NOT ONLY AT THE GUARD. D-080's claim is that there is
+        # ONE representation of "unnamed" -- the NULL -- and one rendering of
+        # it. A whitespace-only name breaks that: it is falsy to nobody, so the
+        # submit guard passes it, the workspace title becomes "   — NIST CSF
+        # 2.0 Assessment", and every exporter's `client_legal_name or "Client"`
+        # sees a truthy value and renders a BLANK organisation line on the
+        # client's DOCX/PDF/XLSX. Meanwhile the admin UI shows "(pending
+        # intake)" for the same row, because `isNamedOrg` trims and this did
+        # not -- two definitions of "named" that disagree.
+        #
+        # Stripping at the write means no downstream reader needs to know:
+        # `"   "` becomes NULL before it is stored, so the guards, the title
+        # builder and the five exporters all see the one representation.
+        raw = data["legal_name"]
+        data["legal_name"] = raw.strip() or None if isinstance(raw, str) else raw
     for field, value in data.items():
         setattr(client, field, value)
 
@@ -353,7 +369,9 @@ def submit_intake(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> IntakeStateResponse:
-    if not body.client.legal_name or body.client.legal_name == "(pending intake)":
+    # D-080: the sentinel is gone, so this is what it always meant -- you
+    # cannot submit an intake without naming the organisation.
+    if not (body.client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Organization legal name is required to submit intake.",
@@ -608,7 +626,34 @@ def create_engagement(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Only NIST CSF and Zero Trust can be started as a self-service engagement.",
         )
-    if not client.legal_name or client.legal_name == "(pending intake)":
+    # D-080: NULL means self-serve provisioning never named this org, which
+    # is exactly the state the intake wizard exists to leave.
+    #
+    # `.strip()` HERE TOO, matching the submit guard, and the earlier version of
+    # this comment argued the opposite. It said a stored name is always NULL or
+    # non-empty-and-trimmed, so a bare `not` was the whole test. That is true of
+    # every row written from this branch onward and FALSE of rows already in the
+    # database: `ClientProfilePatch` carries no validator, so any pre-branch
+    # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
+    # its three predicates are domain-match, display-name-match, and the literal
+    # sentinel. The branch introduces a write-time invariant and ships nothing
+    # that establishes it for existing data.
+    #
+    # What that cost, before the strip: `"   "` is truthy, so this guard passed
+    # and `provision_self_assessment_service` raised `ValueError` on the very
+    # next call -- an untyped 500 six lines below a typed 422, against core
+    # principle 2. The strip turns that back into the 422 the client should get.
+    #
+    # THE WRITER SET IS A GREP, NOT A LIST -- it was enumerated here twice and
+    # was wrong both times (it missed `scripts/seed_demo.py`):
+    #
+    #     grep -rn "legal_name\s*=" --include=*.py apps/api scripts | grep -v ==
+    #
+    # The general shape, which is the part worth keeping: an invariant enforced
+    # at every WRITER still does not hold for rows that predate the enforcement.
+    # Either backfill them or keep reading defensively. This does the second,
+    # because the first cannot distinguish `"   "` from a name someone meant.
+    if not (client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Complete your organization profile in intake before starting an engagement.",

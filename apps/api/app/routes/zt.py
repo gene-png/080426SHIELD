@@ -577,7 +577,7 @@ def build_zt_ai_request(db: Session, svc: Service, client: Client) -> ZtAiReques
         if r.capability_code in valid
     }
     locked_keys = frozenset(code for code, r in rows.items() if r.locked)
-    client_org = None if client.legal_name == "(pending intake)" else client.legal_name
+    client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     return ZtAiRequest(
         assessment=a,
         rows=rows,
@@ -1769,9 +1769,7 @@ def finalize_zt_deliverable(
         target_stage=target_stage,
     )
 
-    client_name = client.legal_name
-    if client_name == "(pending intake)":
-        client_name = None
+    client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
     today = utcnow().date()
     existing = db.execute(select(Deliverable).where(Deliverable.service_id == svc.id)).all()

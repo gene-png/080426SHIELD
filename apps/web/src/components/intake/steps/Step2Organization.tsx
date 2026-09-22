@@ -47,7 +47,9 @@ export function Step2Organization({
             id="legal_name"
             type="text"
             defaultValue={
-              c?.legal_name === "(pending intake)" ? "" : (c?.legal_name ?? "")
+              // D-080: an unnamed org is NULL, so the field starts empty --
+              // this is the wizard step whose job is to supply the name.
+              c?.legal_name ?? ""
             }
             onBlur={(e) => saveField("legal_name", e.target.value || undefined)}
             className={inputClasses}

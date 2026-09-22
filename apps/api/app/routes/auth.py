@@ -262,16 +262,31 @@ def _consume_email_token(
 # -----------------------------------------------------------------------------
 
 
-def _provision_self_serve_client(db: Session, *, legal_name: str) -> Client:
-    """Create a brand-new tenant for a self-registering user (D-034).
+def _provision_self_serve_client(db: Session) -> Client:
+    """Create a brand-new, UNNAMED tenant for a self-registering user (D-034).
 
     Used when no approved domain matches: a personal-email signup gets its own
     private org (never grouped), and the first user of a new company domain
     creates that org. The caller stamps ``primary_poc_user_id`` and (for a
-    company domain) the ``ClientDomain`` mapping once the user row exists. The
-    ``legal_name`` is a placeholder the org refines through the intake wizard.
+    company domain) the ``ClientDomain`` mapping once the user row exists.
+
+    **This function takes no name, deliberately (D-080, #254).** Nobody has
+    named the organisation at this point -- a registration form asks for the
+    PERSON's name and the PERSON's email, and neither is the name of a company.
+    It used to derive one anyway, and both derivations reached the organisation
+    line of client deliverables:
+
+      * an unknown company domain became ``acme.example``, which reads as a
+        system placeholder on a document a consultant hands to a client;
+      * a generic provider (gmail and friends) became the registrant's own
+        DISPLAY NAME, putting a private individual's name on the organisation
+        line and shipping PII on a delivered document.
+
+    ``legal_name`` therefore stays NULL until a human names the org, through
+    the intake wizard or through admin client creation. The NULL is the record
+    that no name was offered; see `models/client.py`.
     """
-    client = Client(legal_name=legal_name)
+    client = Client(legal_name=None)
     db.add(client)
     db.flush()
     log.info("auth.self_serve_client_provisioned", client_id=str(client.id))
@@ -279,7 +294,7 @@ def _provision_self_serve_client(db: Session, *, legal_name: str) -> Client:
 
 
 def _resolve_registration_tenant(
-    db: Session, *, email: str, display_name: str, is_first_user: bool
+    db: Session, *, email: str, is_first_user: bool
 ) -> tuple[UserRole, Client | None, bool, str | None]:
     """Decide the role + tenant for a registration (D-004 bootstrap + D-034 open
     self-registration).
@@ -309,7 +324,8 @@ def _resolve_registration_tenant(
         )
 
     if is_generic_provider(domain):
-        client = _provision_self_serve_client(db, legal_name=display_name)
+        # #254: the org is NOT named after the person who signed up.
+        client = _provision_self_serve_client(db)
         return role, client, True, None
 
     approved = db.execute(
@@ -329,8 +345,11 @@ def _resolve_registration_tenant(
             )
         return role, client, False, None
 
-    # Unknown company domain: stand up a new org and map the domain.
-    client = _provision_self_serve_client(db, legal_name=domain)
+    # Unknown company domain: stand up a new org and map the domain. #254: the
+    # DOMAIN is recorded as a ClientDomain row (below, by the caller) and is not
+    # also written as the org's legal name -- a domain is how coworkers find the
+    # org, never what the org is called.
+    client = _provision_self_serve_client(db)
     return role, client, True, domain
 
 
@@ -401,7 +420,6 @@ def register(
             role, client_for_user, is_primary_poc, domain_to_map = _resolve_registration_tenant(
                 db,
                 email=email,
-                display_name=body.display_name,
                 is_first_user=is_first_user,
             )
 
@@ -428,6 +446,13 @@ def register(
                     target_type="client",
                     target_id=client_for_user.id,
                     actor_user_id=user.id,
+                    # `legal_name` is NULL here and that is the record, not a
+                    # gap: #254 means a self-serve tenant is created unnamed, so
+                    # the audit row states that no name was offered rather than
+                    # repeating a value derived from the registrant's email.
+                    # Who signed up is already on the `user.created` row beside
+                    # this one, and the domain (where there is one) becomes a
+                    # ClientDomain row a few lines below.
                     details={"legal_name": client_for_user.legal_name, "source": "self_serve"},
                 )
             if domain_to_map is not None:

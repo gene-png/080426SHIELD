@@ -62,7 +62,7 @@ def provision_self_assessment_service(
     db: Session,
     sr: ServiceRequest,
     *,
-    org_name: str,
+    org_name: str | None,
     actor_user_id: uuid.UUID,
     title: str | None = None,
 ) -> Service:
@@ -75,6 +75,23 @@ def provision_self_assessment_service(
     `title` can name each engagement distinctly. Sets
     `sr.fulfilled_service_id` to the new service.
     """
+    # FAIL LOUDLY rather than title a client's workspace "None — ...".
+    #
+    # `org_name` became `str | None` when D-080 made `Client.legal_name`
+    # nullable. Both callers guard, so this cannot fire today -- it is a RATCHET
+    # against a third caller, and the failure it prevents is silent: the service
+    # title reaches the consultant's workspace list with the literal string
+    # "None" in it and nothing errors. Typing it `str` while callers pass
+    # `str | None` left the invariant held by two `if not ...` lines in another
+    # module rather than by this function.
+    if title is None and not (org_name or "").strip():
+        raise ValueError(
+            "provision_self_assessment_service needs either an explicit `title` "
+            f"or a named organisation; got org_name={org_name!r} for "
+            f"service_request={sr.id}. An unnamed client must be refused at the "
+            "route (see routes/intake.py), not titled here."
+        )
+
     kind = ServiceKind(sr.service_type.value)
     svc = Service(
         kind=kind,

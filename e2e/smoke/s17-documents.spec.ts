@@ -37,7 +37,8 @@ const PASSWORD = "correct horse battery staple!";
 
 interface ClientRow {
   id: string;
-  legal_name: string;
+  // Nullable since D-080 (#254): a self-serve tenant nobody has named yet.
+  legal_name: string | null;
 }
 
 interface DeliverableRow {
@@ -71,7 +72,7 @@ async function ensureDocsTenant(
   expect(listed.ok()).toBeTruthy();
   const clients = ((await listed.json()) as { clients: ClientRow[] }).clients;
   let tenant = clients.find(
-    (c) => c.legal_name.toLowerCase() === TENANT_NAME.toLowerCase(),
+    (c) => (c.legal_name ?? "").toLowerCase() === TENANT_NAME.toLowerCase(),
   );
   if (!tenant) {
     const created = await request.post(`${API_BASE}/admin/clients`, {

@@ -13,6 +13,7 @@ import {
 } from "@shield/design-system";
 
 import { fetchIntakeQueue, fulfillServiceRequest } from "@/lib/admin/client";
+import { isNamedOrg, orgDisplayName } from "@/lib/org-name";
 import {
   AGE_OPTIONS,
   DEFAULT_REQUEST_FILTERS,
@@ -457,7 +458,57 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const submittedAt = state.intake_completed_at
     ? new Date(state.intake_completed_at).toLocaleString()
     : null;
-  const hasIntake = c !== null && c.legal_name !== "(pending intake)";
+  // D-080: the condition is the NULL, not a sentinel string. This asks
+  // "has anyone named this org", which is what it always meant -- and now
+  // actually fires, because self-serve provisioning writes no name.
+  // TWO PREDICATES, because the name and the DATA are different questions and
+  // conflating them makes the page assert something false.
+  //
+  // `Step2Organization` saves each field independently (`onBlur` per field), so
+  // a client who types a website or picks an industry before typing a name
+  // produces a row with real intake data and no name. Gating the Organization
+  // card on the NAME rendered "No client intake yet" over exactly that data --
+  // present in `state.client`, and the page saying it does not exist.
+  //
+  // `hasName` decides what to CALL the org; `hasIntakeData` decides whether
+  // there is anything to SHOW.
+  const hasName = c !== null && isNamedOrg(c.legal_name);
+  // DERIVED from what the card renders, not enumerated beside it. The first
+  // version of this predicate listed eight fields while the card's Address row
+  // renders six of its own, and `address_line2`, `state` and `postal_code` were
+  // in the row and not in the list -- so a client who typed only a postal code
+  // still got "No client intake yet" printed over it. `Step2Organization` saves
+  // every one of these independently on blur, so each is reachable alone.
+  //
+  // `addressParts` is the single source both use: the predicate asks whether
+  // any part is present, the row joins the same array. They cannot diverge
+  // again, which listing the names a second time is exactly how they did.
+  //
+  // `.trim()` rather than `Boolean`, matching `hasContext` below: a
+  // whitespace-only website is not intake data, and the bare-truthy version
+  // showed "In progress -- not yet submitted" over nothing.
+  const addressParts = c
+    ? [
+        c.address_line1,
+        c.address_line2,
+        c.city,
+        c.state,
+        c.postal_code,
+        c.country,
+      ]
+    : [];
+  const filled = (v: string | null | undefined): boolean =>
+    typeof v === "string" && v.trim().length > 0;
+  const hasIntakeData =
+    c !== null &&
+    (isNamedOrg(c.legal_name) ||
+      filled(c.dba_name) ||
+      filled(c.website) ||
+      filled(c.size_band) ||
+      filled(c.industry) ||
+      filled(c.prompting_context) ||
+      (c.service_interests?.length ?? 0) > 0 ||
+      addressParts.some(filled));
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
@@ -497,7 +548,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
             Admin
           </p>
           <h1 className="text-3xl font-semibold text-ink-primary">
-            {hasIntake ? c.legal_name : "Intake queue"}
+            {hasName ? orgDisplayName(c.legal_name) : "Intake queue"}
           </h1>
           <p className="max-w-prose text-sm text-ink-secondary">
             The queue reflects exactly what the client entered during intake.
@@ -508,7 +559,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
             <StatusPill tone="success" withDot>
               Submitted {submittedAt}
             </StatusPill>
-          ) : hasIntake ? (
+          ) : hasIntakeData ? (
             <StatusPill tone="warning" withDot>
               In progress — not yet submitted
             </StatusPill>
@@ -523,7 +574,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
         </div>
       </header>
 
-      {hasIntake ? (
+      {hasIntakeData ? (
         <Card>
           <CardHeader>
             <CardTitle>Organization</CardTitle>
@@ -533,23 +584,15 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
           </CardHeader>
           <CardBody>
             <dl>
-              {row("Legal name", c.legal_name)}
+              {row("Legal name", orgDisplayName(c.legal_name))}
               {row("DBA / Trade name", c.dba_name)}
               {row("Website", c.website)}
               {row("Headcount band", c.size_band)}
               {row("Industry", c.industry)}
               {row(
                 "Address",
-                [
-                  c.address_line1,
-                  c.address_line2,
-                  c.city,
-                  c.state,
-                  c.postal_code,
-                  c.country,
-                ]
-                  .filter(Boolean)
-                  .join(", ") || null,
+                // Same `addressParts` the predicate above tests -- one list.
+                addressParts.filter(filled).join(", ") || null,
               )}
               {row("Systems and context", c.prompting_context)}
             </dl>

@@ -25,7 +25,8 @@ export const API_BASE = "http://localhost:8000";
 
 interface ClientRow {
   id: string;
-  legal_name: string;
+  // Nullable since D-080 (#254): a self-serve tenant nobody has named yet.
+  legal_name: string | null;
 }
 
 interface Engagement {
@@ -35,7 +36,7 @@ interface Engagement {
 
 /** Pick the Atlas tenant from a clients list (never a QA-* throwaway). */
 function pickAtlas(clients: ClientRow[]): string {
-  const atlas = clients.find((c) => /atlas/i.test(c.legal_name));
+  const atlas = clients.find((c) => /atlas/i.test(c.legal_name ?? ""));
   expect(atlas, "Atlas tenant must exist in the seed").toBeTruthy();
   return (atlas as ClientRow).id;
 }

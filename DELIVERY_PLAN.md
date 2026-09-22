@@ -42,6 +42,17 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
+**2026-09-22 — #254 implemented (`tier-1`, `client-reaching`), awaiting review.**
+`"(pending intake)"` was read in 17 production sites and written in none, so
+every guard against an unnamed client was dead and self-serve provisioning put
+the signup's email domain — or, on a personal mailbox, **the registrant's own
+name** — on the organisation line of client deliverables. `Client.legal_name` is
+now nullable and NULL means nobody has named the org (D-080, migration 0049).
+**No estimate row changes and no total moves**: #254 owns no item in the table
+below, which is the gap this section already records under _Still to do_ —
+assigning it is a scoping call, and this note is a status update. The PR trips
+merge-rule conditions 4, 5 and 6 and goes to Gene.
+
 **2026-09-22 — #236 and #389 fixed** (tier-2, both client-reaching). The client
 home page no longer dies entirely when one of four panel fetches errors, and a
 failed panel is distinguishable from an empty one rather than asserting the

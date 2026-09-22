@@ -576,9 +576,9 @@ def test_a_real_name_beats_another_capabilitys_redacted_form() -> None:
 def test_no_client_name_means_no_extra_keys_and_no_behaviour_change() -> None:
     """`client_org_name` is optional, and absent it changes nothing.
 
-    `build_attack_ai_request` passes the client's legal name, but the seeded
-    "(pending intake)" placeholder is deliberately passed as None elsewhere in
-    this route, so the no-name path is real and must stay inert.
+    `build_attack_ai_request` passes the client's legal name, but an UNNAMED
+    tenant's `legal_name` is NULL (D-080), so the no-name path is real and
+    must stay inert.
     """
     plain = CitationResolver([Candidate(name="CrowdStrike Falcon", vendor="CrowdStrike")])
     assert resolve_citations(["CrowdStrike Falcon"], plain).tools == ["CrowdStrike Falcon"]
@@ -686,9 +686,9 @@ def test_a_redacted_tool_resolves_even_when_the_client_has_no_legal_name() -> No
 
     `_redacted_form` originally returned early when there was no client org name
     and no name hints. But in strict mode the address rule fires regardless of
-    both, so a tenant still on "(pending intake)" -- which is precisely when
-    `client_org_name` is None -- would have the tool egress as `[ADDRESS]` with
-    no alias indexed, and the tool uncitable.
+    both, so an UNNAMED tenant -- `legal_name` NULL (D-080), which is precisely
+    when `client_org_name` is None -- would have the tool egress as `[ADDRESS]`
+    with no alias indexed, and the tool uncitable.
 
     The question is never "is there a name to redact", it is "did the redactor
     change this string".

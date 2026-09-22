@@ -4908,3 +4908,126 @@ mattered most.
   carried the full 210,958 bytes, so the cut is not universal — which makes it
   worse, not better: the rule set an agent operates under varies by which agent
   it is, and nothing in any output says which one you got.
+
+## D-080 — "Unnamed" is a NULL, not a magic string: `Client.legal_name` becomes nullable
+
+**2026-09-22 · data model / client-facing correctness**
+
+`"(pending intake)"` was this codebase's marker for "this client has not named
+itself yet". It was **READ in 13 live conditionals** across six route modules
+and the Tech Debt extractor, and **WRITTEN in ZERO production paths** — the only
+assignments anywhere were four unit-test fixtures. Every one of those thirteen
+guards was dead.
+
+What reached the organisation line of a client deliverable instead was whatever
+`routes/auth.py` had derived from the registrant's email at self-serve
+provisioning (D-034):
+
+| path in `_resolve_registration_tenant` | what `legal_name` became |
+| -------------------------------------- | ------------------------ |
+| unknown company domain                 | `acme.example`           |
+| generic provider (gmail and friends)   | **a person's own name**  |
+
+**Both were in scope and the second is the worse one**, which the issue title
+does not cover: a domain reads as a system placeholder, whereas a private
+individual's name on the organisation line of a delivered document is PII, and
+it misstates who the client is.
+
+### Decision
+
+**`Client.legal_name` is nullable (migration 0049), and NULL means nobody has
+named this organisation.** Self-serve provisioning writes no name. The thirteen
+guards stop comparing against a string and read the column.
+
+Ten of the thirteen collapse to a plain read — `client_org = client.legal_name`
+— because the resolution they performed is now the value itself.
+
+### Why not write the sentinel at provisioning
+
+That was the smaller change and it would have made all thirteen guards start
+working. It was refused because the sentinel is a **second representation** of a
+fact the table can state directly. Two representations can disagree, and this
+pair already did: for as long as the sentinel went unwritten, the column said
+"named: acme.example" while the product's own guards said "unnamed", and nothing
+could see the contradiction. NULL cannot disagree with itself.
+
+This is `CLAUDE.md`'s **prefer a derivation over a synchronization**, and the
+same class as #410.
+
+### Why NOT `intake_completed_at IS NULL`, which is the trap
+
+"Make the guards test the real condition — no intake completed" is the obvious
+reading of the alternative, and it is **wrong**. `routes/admin.py` creates
+tenants with a name an admin typed, and those tenants never complete intake.
+Keying the guards on intake would blank a real client's deliverables and refuse
+its engagements — a regression strictly worse than the defect being fixed.
+
+The property is "**has anyone named this org**", which is what the name column
+records once it is allowed to be absent. `routes/admin.py`'s write is therefore
+a **stated exemption** carried at the site, not an oversight, and
+`test_admin_created_client_keeps_its_name` pins it.
+
+### The string survives in exactly one place, as COPY
+
+`apps/web/src/lib/org-name.ts` holds `UNNAMED_ORG_LABEL = "(pending intake)"`
+plus `isNamedOrg` / `orgDisplayName`. Nothing branches on it: the condition is
+the null and the label is a rendering of it. Centralising the literal is what
+stops it drifting back into a condition, because a component importing the
+helper never sees the string.
+
+`isNamedOrg` and `orgDisplayName` are deliberately **two** helpers. One returning
+`legal_name ?? label` would make every caller needing the boolean compare against
+the label instead — the magic string reintroduced one layer out.
+
+### What the admin loses, stated rather than left to be discovered
+
+An unnamed org no longer shows its signup domain in the queue's A–Z index; it
+shows the label. That information was never the org's legal name, and it is not
+lost from the system — a company-domain signup already writes a `ClientDomain`
+row, and a generic-provider signup already has `primary_poc_user_id`. The
+index's existing duplicate disambiguation (`(id 5b1e3d06)`, plus industry and
+intake date on the subtitle) keeps such rows distinguishable from each other.
+**CORRECTED: that was true of the CARD rows and false of the jump `<select>`**,
+which rendered the label alone — so every unnamed org became a byte-identical
+option, and the page it navigates to identifies the tenant nowhere either. The
+select now carries the same `(id ...)` suffix. Found by the adversarial reviewer;
+the two tests written for the unnamed case each used exactly ONE unnamed org, so
+neither could express it.
+Surfacing the domain on that index is a separate change and is **not** made here.
+
+### Migration 0049 backfills, narrowly, and the blast radius was measured
+
+The backfill NULLs only rows with no `intake_completed_at` whose stored name is
+exactly what one of the two self-serve paths would have written — a domain
+mapped to that same client, or that client's own primary contact's display name.
+Those predicates reconstruct the writes rather than guessing at them.
+
+Measured against the dev Postgres before applying, 2026-09-22: **4 client rows,
+1 matching the domain predicate, 0 matching the display-name predicate.** The
+one match is a live instance of the defect (`newco-1789834953739.com`, no
+intake, identical mapped domain); the other three are untouched for three
+different reasons, which is what makes the predicate discriminating rather than
+merely narrow.
+
+Error direction: a false positive surfaces immediately as "(pending intake)" on
+an admin screen -- but **CORRECTED: there is nowhere to retype it.** No route in
+`routes/admin.py` updates an existing client's `legal_name`; the only writers are
+admin CREATE, `auth.py`'s NULL, and the tenant's own intake wizard. A wrongly
+NULLed row is recoverable only by that tenant running the wizard, and the
+sentence that said otherwise was what licensed accepting the risk. The missing
+admin edit path is filed, not built here. A false negative leaves the
+pre-existing defect for that one tenant and is not made worse. Only the second
+is silent, and it is the status quo.
+
+### One test was REPLACED, and the replacement is declared
+
+`test_submit_rejects_pending_placeholder_legal_name` asserted that the literal
+sentinel was refused at submit. It existed because the wizard used to prefill
+the field with the sentinel, so a user could submit it back unchanged. With the
+sentinel gone and `Step2Organization` starting empty, that round-trip cannot
+occur, and refusing the string would mean keeping the magic value this decision
+deletes.
+
+It is replaced by `test_submit_rejects_an_unnamed_organization`, parametrised
+over `""`, `null` and an absent key — what the guard always MEANT, and wider
+coverage than it replaces, since the old test exercised none of those three.
