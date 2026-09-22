@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import type { ClientDeliverableListResponse } from "@/components/results/ResultsList";
-import { HomeDashboard } from "@/components/home/HomeDashboard";
+import { HomeDashboard, type HomePanel } from "@/components/home/HomeDashboard";
 import type { ValueSummary } from "@/components/home/ValueLoopCard";
 import { PublicFooter } from "@/components/site/PublicFooter";
 import { PublicHeader } from "@/components/site/PublicHeader";
@@ -63,30 +63,32 @@ export default async function HomePage(): Promise<JSX.Element> {
   let engagements: AssessmentResponse[] = [];
   let unreadMessages = 0;
   let valueSummary: ValueSummary | null = null;
+  const unavailable: HomePanel[] = [];
   if (clientId) {
-    // CONSIDERED AND LEFT, NOT OVERLOOKED -- tracked in #236.
+    // `/auth/me` ABOVE IS DELIBERATELY NOT IN THIS SET, and saying so because
+    // an unstated exemption reads as an oversight. It is still a bare `await`,
+    // so its failure still takes the page down -- correctly: there is no
+    // identity, so there is no page to degrade INTO. The four below are
+    // different: each renders a panel that means something on its own.
     //
-    // These four results render INDEPENDENTLY: `HomeDashboard` already has a
-    // missing-value branch for each one. So by the predicate #395 established
-    // -- allSettled is owed where results render independently -- this site
-    // qualifies, and an inbox 500 currently withholds the client's
-    // deliverables, engagements and value summary along with the unread badge.
+    // FOUR PANELS THAT RENDER INDEPENDENTLY MUST FAIL INDEPENDENTLY (#236).
     //
-    // It is left here because there is no `catch` at all, so the fix is not a
-    // combinator swap: it has to decide what a DEGRADED home page shows, panel
-    // by panel, and whether a failed unread count is distinguishable from zero.
-    // That is a copy decision, and #395 was scoped to durability. Recorded at
-    // the site rather than only in a PR body, because an unstated exemption
-    // reads as an oversight to whoever finds it next.
+    // This was one `Promise.all` with no `catch`, and there is no `error.tsx`
+    // anywhere under `apps/web/src/app`, so ANY one of the four rejecting took
+    // down the WHOLE page -- including the client's list of released reports,
+    // which has nothing to do with the endpoint that failed. The four dashboard
+    // pages already wrap their fetch and render a friendly not-available state
+    // (no dead ends); `/home` did not.
     //
-    // This cited #400 for one commit. #400 was a DUPLICATE I filed of #236,
-    // which had existed for weeks carrying only `client-reaching` -- no tier,
-    // no `mvp-blocking` -- so it appeared in no board query and a search did
-    // not surface it. #236 is the live issue and is now tiered; #400 is closed.
-    // Repointed here rather than left, because a pointer into a closed
-    // duplicate is worse than none: it reads as tracked and leads nowhere.
-    const [deliverableData, engagementData, inbox, summary] = await Promise.all(
-      [
+    // THE PART THAT WAS THE ACTUAL WORK, and why this sat open: a degraded
+    // panel must not be indistinguishable from an EMPTY one. Passing `[]`, `0`
+    // and `null` on failure would make the page assert "you have no reports",
+    // "no engagements" and "no unread messages" -- claims about the client's
+    // account, made from an error. Missing data defaults to UNCONFIRMED, never
+    // to confirmed, so each failure is recorded and rendered as "could not
+    // load" rather than as an absence.
+    const [deliverableData, engagementData, inbox, summary] =
+      await Promise.allSettled([
         apiFetch<ClientDeliverableListResponse>(
           `/clients/${clientId}/deliverables`,
           { bearer: token },
@@ -98,12 +100,28 @@ export default async function HomePage(): Promise<JSX.Element> {
         apiFetch<ValueSummary>(`/clients/${clientId}/value-summary`, {
           bearer: token,
         }),
-      ],
-    );
-    deliverables = deliverableData.items;
-    engagements = engagementData;
-    unreadMessages = inbox.unread_total;
-    valueSummary = summary;
+      ]);
+
+    if (deliverableData.status === "fulfilled") {
+      deliverables = deliverableData.value.items;
+    } else {
+      unavailable.push("deliverables");
+    }
+    if (engagementData.status === "fulfilled") {
+      engagements = engagementData.value;
+    } else {
+      unavailable.push("engagements");
+    }
+    if (inbox.status === "fulfilled") {
+      unreadMessages = inbox.value.unread_total;
+    } else {
+      unavailable.push("messages");
+    }
+    if (summary.status === "fulfilled") {
+      valueSummary = summary.value;
+    } else {
+      unavailable.push("value");
+    }
   }
 
   const greetingName = me.display_name?.trim() || me.email;
@@ -123,6 +141,7 @@ export default async function HomePage(): Promise<JSX.Element> {
           engagements={engagements}
           unreadMessages={unreadMessages}
           valueSummary={valueSummary}
+          unavailable={unavailable}
         />
       </main>
       <PublicFooter />

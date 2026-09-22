@@ -140,9 +140,34 @@ export function SignUpForm(): JSX.Element {
       // machine code, error.message is human-friendly copy. Map each reason to
       // the field it belongs to so the copy lands next to the offending input
       // (and never surfaces a raw "Request validation failed.").
-      const body = (await res.json()) as {
-        error?: { message?: string; reason?: string };
-      };
+      // PARSE DEFENSIVELY. This was a bare `await res.json()`.
+      //
+      // A non-JSON body -- an edge WAF or CDN 429 with an HTML or empty body
+      // (NOT this app's own proxy: `route.ts` re-wraps upstream bodies as
+      // JSON, and `apiFetch` passes a bare string through as valid JSON, so
+      // the throw needs an intermediary in front of Next; and NOT a 504,
+      // which never enters the 409|422|429 branch this annotates)
+      // -- made it throw, the async submit handler's promise rejected,
+      // and `setPending(false)` below never ran. The Create account button
+      // stayed disabled forever, with nothing on screen saying why, on the
+      // PUBLIC sign-up page: a user who hit it could not retry without
+      // reloading (#389).
+      //
+      // `json()` inside a `try`, NOT `text()` then `JSON.parse`. The recorded
+      // rule about reading a Response body once is about an error path that
+      // tries `json()` and then FALLS BACK to `text()` -- that throws "body
+      // stream already read" and the TypeError replaces the error being built.
+      // There is no fallback here, so one read is all that happens.
+      //
+      // The empty envelope is NOT a swallowed error: it routes to the `else`
+      // below, which renders plain-language copy, so the user sees a message
+      // and can retry. Throwing is what showed them nothing.
+      let body: { error?: { message?: string; reason?: string } } = {};
+      try {
+        body = (await res.json()) as typeof body;
+      } catch {
+        body = {};
+      }
       const reason = body.error?.reason;
       const message = body.error?.message;
       if (reason === "email_exists") {
@@ -160,6 +185,18 @@ export function SignUpForm(): JSX.Element {
             message ??
             "Too many attempts. Please wait a moment before trying again.",
         });
+      } else if (res.status === 429) {
+        // A THROTTLE IS STILL A THROTTLE WHEN THE BODY IS UNUSABLE.
+        //
+        // This case fell through to the input prompt below, which says
+        // "then try again" -- advice that re-trips the limiter, and a claim
+        // about what the user typed for an error that is not about their
+        // input. The comment on the 429 branch above names that exact harm as
+        // the reason the branch exists, and the branch then failed to cover
+        // its own untyped case.
+        setErrors({
+          form: "Too many attempts. Please wait a moment before trying again.",
+        });
       } else if (carriesUserFacingCopy(reason, message)) {
         // Any other typed backend rejection (D-016 envelope) — e.g. the rare
         // email_domain_unavailable or email_invalid — carries friendly copy, so
@@ -170,6 +207,9 @@ export function SignUpForm(): JSX.Element {
         // Nothing here is fit to render: either an untyped body, or a schema
         // refusal whose message is the internal "Request validation failed."
         // Show a plain-language prompt instead of leaking that string.
+        //
+        // Reached only for 409 and 422 now -- both genuinely about the
+        // submitted values, which is what makes this copy true here.
         setErrors({
           form: "Please double-check your name, email, and password (12+ characters), then try again.",
         });

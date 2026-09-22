@@ -50,7 +50,30 @@ export interface HomeDashboardProps {
   engagements: AssessmentResponse[];
   unreadMessages: number;
   valueSummary: ValueSummary | null;
+  /**
+   * Panels whose fetch FAILED, as opposed to returning nothing (#236).
+   *
+   * The page fetches four endpoints with `allSettled`, so one 500 no longer
+   * takes the whole page down. But a failed panel must not render as an EMPTY
+   * one: `[]`, `0` and `null` are claims about the client's account -- "you
+   * have no reports", "no unread messages" -- and making them from an error is
+   * the fail-open direction. Anything named here renders "could not load"
+   * instead of its empty state.
+   *
+   * REQUIRED, not optional, and that is the point. As an optional prop with a
+   * `[]` default, deleting `unavailable={unavailable}` from the page reverted
+   * the entire user-visible half of #236 in SILENCE: tsc stayed green because
+   * the prop was optional, eslint stayed green because the page still computed
+   * the value, and every test here still passed because they pass the prop
+   * directly. The guard was defended only by tests that import the component,
+   * never by anything exercising the surface the client reaches. Required
+   * means tsc reddens on the drop.
+   */
+  unavailable: HomePanel[];
 }
+
+/** The independently-rendering panels of the client home page (#236). */
+export type HomePanel = "deliverables" | "engagements" | "messages" | "value";
 
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
@@ -213,9 +236,27 @@ export function HomeDashboard({
   engagements,
   unreadMessages,
   valueSummary,
+  unavailable,
 }: HomeDashboardProps): JSX.Element {
+  const down = new Set<HomePanel>(unavailable);
   // Which services already have a released report (drives the grid + hero).
   const releasedServiceIds = new Set(deliverables.map((d) => d.service_id));
+
+  // WHEN THE DELIVERABLES PANEL FAILED, `releasedServiceIds` IS EMPTY -- and
+  // three separate readers silently treated that as "nothing is released".
+  // `phaseFor` told a client whose report shipped yesterday that it was still
+  // "Finalizing"; `bucketFor` filed it under "With your analyst. Nothing
+  // needed from you right now"; `serviceHref` sent them to /assessments. Worse,
+  // the `assessment_status === "released"` arm still printed "Report ready",
+  // so the card claimed the report while its link went elsewhere.
+  //
+  // The assessment's own status is authoritative for "is this released" and
+  // does not depend on the deliverables list, so fall back to it when that
+  // list did not arrive. One signal, three consistent readers.
+  const isReleased = (e: AssessmentResponse): boolean =>
+    releasedServiceIds.has(e.service_id) ||
+    (unavailable.includes("deliverables") &&
+      e.assessment_status === "released");
   // Ordered released_at desc upstream, so [0] is the freshest report.
   const latest = deliverables[0] ?? null;
   const openSelfAssessments = engagements.filter(needsClient);
@@ -226,7 +267,7 @@ export function HomeDashboard({
     results: [],
   };
   for (const e of engagements) {
-    grouped[bucketFor(e, releasedServiceIds.has(e.service_id))].push(e);
+    grouped[bucketFor(e, isReleased(e))].push(e);
   }
 
   return (
@@ -242,7 +283,23 @@ export function HomeDashboard({
       </header>
 
       {/* Band 2: hero (report ready) or next-step guidance. */}
-      {latest ? (
+      {down.has("deliverables") ? (
+        <section
+          aria-labelledby="hero-heading"
+          className="rounded-xl border border-border bg-surface-card px-6 py-6"
+        >
+          <h2
+            id="hero-heading"
+            className="text-lg font-semibold text-ink-primary"
+          >
+            Your reports could not be loaded
+          </h2>
+          <p className="mt-2 max-w-prose text-sm text-ink-secondary">
+            Nothing is wrong with your account — refresh to try again. This is a
+            loading problem, not a statement that you have no reports.
+          </p>
+        </section>
+      ) : latest ? (
         <section
           aria-labelledby="hero-heading"
           className="rounded-xl border border-status-success-border bg-status-success-bg px-6 py-6"
@@ -320,7 +377,18 @@ export function HomeDashboard({
       )}
 
       {/* Band 2.5: cross-service value loop (§2.5), only once data is released. */}
-      {valueSummary ? <ValueLoopCard summary={valueSummary} /> : null}
+      {down.has("value") ? (
+        <Card>
+          <CardBody>
+            <p className="text-sm text-ink-secondary">
+              Your value summary could not be loaded just now. Nothing is wrong
+              with your account — refresh to try again.
+            </p>
+          </CardBody>
+        </Card>
+      ) : valueSummary ? (
+        <ValueLoopCard summary={valueSummary} />
+      ) : null}
 
       {/* Band 3: services grouped by who owns the next move (C3). */}
       <section aria-labelledby="services-heading" className="space-y-6">
@@ -330,7 +398,12 @@ export function HomeDashboard({
         >
           Your services
         </h2>
-        {engagements.length === 0 ? (
+        {down.has("engagements") ? (
+          <EmptyState
+            title="Your engagements could not be loaded"
+            description="Nothing is wrong with your account — refresh to try again."
+          />
+        ) : engagements.length === 0 ? (
           <EmptyState
             title="No services yet"
             description="When you start an assessment, its progress will show up here."
@@ -341,9 +414,21 @@ export function HomeDashboard({
           // Unread messages need the client too, but have no service card of
           // their own — they belong under the same heading rather than in a
           // second "what needs me" list somewhere else on the page.
-          const showMessages = key === "action" && unreadMessages > 0;
-          if (items.length === 0 && !showMessages) return null;
-          const count = items.length + (showMessages ? 1 : 0);
+          // A failed inbox fetch arrives here as 0, which would render as
+          // "no unread messages" -- a claim about the client's account made
+          // from an error. Suppress the count and say so instead (#236).
+          const messagesDown = down.has("messages");
+          const showMessages =
+            key === "action" && !messagesDown && unreadMessages > 0;
+          const showMessagesError = key === "action" && messagesDown;
+          if (items.length === 0 && !showMessages && !showMessagesError)
+            return null;
+          // The error row is a rendered item, so it counts. Without this the
+          // heading read "Action required (0)" directly above a visible
+          // "Your messages could not be loaded" row -- a number asserted over
+          // a population that failed to load, contradicted on the same screen.
+          const count =
+            items.length + (showMessages ? 1 : 0) + (showMessagesError ? 1 : 0);
           return (
             <section
               key={key}
@@ -362,6 +447,19 @@ export function HomeDashboard({
                 </h3>
                 <p className="text-xs text-ink-secondary">{blurb}</p>
               </div>
+              {showMessagesError ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface-card px-4 py-3 text-sm">
+                  <span className="text-ink-secondary">
+                    Your messages could not be loaded — refresh to try again.
+                  </span>
+                  <Link
+                    href="/messages"
+                    className="font-semibold text-brand-600 hover:text-brand-500"
+                  >
+                    Open messages →
+                  </Link>
+                </div>
+              ) : null}
               {showMessages ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface-card px-4 py-3 text-sm">
                   <span className="text-ink-secondary">
@@ -380,7 +478,7 @@ export function HomeDashboard({
               {items.length > 0 ? (
                 <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {items.map((e) => {
-                    const released = releasedServiceIds.has(e.service_id);
+                    const released = isReleased(e);
                     const phase = phaseFor(e, released);
                     return (
                       <li key={e.service_id}>
@@ -430,7 +528,13 @@ export function HomeDashboard({
             <CardTitle>Recent activity</CardTitle>
           </CardHeader>
           <CardBody>
-            {deliverables.length === 0 ? (
+            {down.has("deliverables") ? (
+              <p className="text-sm text-ink-secondary">
+                Your released reports could not be loaded — refresh to try
+                again. This is a loading problem, not a statement that you have
+                none.
+              </p>
+            ) : deliverables.length === 0 ? (
               <p className="text-sm text-ink-secondary">
                 Released reports will show up here as your engagement
                 progresses.

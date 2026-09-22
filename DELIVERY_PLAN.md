@@ -53,6 +53,12 @@ below, which is the gap this section already records under _Still to do_ —
 assigning it is a scoping call, and this note is a status update. The PR trips
 merge-rule conditions 4, 5 and 6 and goes to Gene.
 
+**2026-09-22 — #236 and #389 fixed** (tier-2, both client-reaching). The client
+home page no longer dies entirely when one of four panel fetches errors, and a
+failed panel is distinguishable from an empty one rather than asserting the
+client has no data. `SignUpForm` no longer leaves the Create account button
+disabled forever on a non-JSON error body. No plan item changes.
+
 **2026-09-22 — #347 reclassified `tier-1` and fixed.** `CLAUDE.md` was
 210,958 bytes against a 150,000-byte reader limit, so the merge rule's
 condition-5 path list was cut before any agent read it. The merge rule is now at
