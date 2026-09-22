@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { isNamedOrg } from "@/lib/org-name";
 
 import {
   Card,
@@ -32,10 +33,9 @@ export interface IntakeSubmittedProps {
  * sitting on the review step. Summarizes what was sent and what happens next.
  */
 export function IntakeSubmitted({ state }: IntakeSubmittedProps): JSX.Element {
-  const legalName =
-    state.client?.legal_name && state.client.legal_name !== "(pending intake)"
-      ? state.client.legal_name
-      : "your organization";
+  const legalName = isNamedOrg(state.client?.legal_name)
+    ? state.client!.legal_name
+    : "your organization";
 
   // Authoritative list of what was actually created, de-duplicated.
   const services = Array.from(

@@ -335,6 +335,18 @@ def create_client(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="legal_name is required.",
         )
+    # THIS WRITE IS DELIBERATE AND STAYS (#254, D-080). It is the exemption, not
+    # an oversight: an admin creating a tenant has TYPED the organisation's name,
+    # which is a human naming an org and is exactly what `legal_name` is for.
+    #
+    # The sibling write in `routes/auth.py` was removed because nothing there is
+    # a name -- a registration form collects a person and an email address. The
+    # rule is "only a human naming an org may write this column", and this path
+    # satisfies it while self-serve provisioning cannot.
+    #
+    # Note the tenant created here has a real name and NO `intake_completed_at`,
+    # which is why the downstream guards key on the name being absent rather
+    # than on intake being incomplete -- see `models/client.py`.
     client = Client(
         legal_name=legal_name,
         dba_name=body.dba_name,
@@ -686,7 +698,13 @@ def fulfill_service_request(
             )
 
     client = db.get(Client, sr.client_id)
-    org = client.legal_name if client is not None else "Client"
+    # Two different absences, one fallback: no client row at all, and a client
+    # nobody has named yet (D-080, `legal_name` NULL). Both mean "we have no org
+    # name to title this service with", and the service title is consultant-
+    # facing text rather than a claim about the client, so "Client" is the
+    # honest filler for each. Written as `or` rather than a second branch
+    # because distinguishing them here would change nothing.
+    org = (client.legal_name if client is not None else None) or "Client"
     svc = Service(
         kind=ServiceKind(sr.service_type.value),
         status=ServiceStatus.IN_PROGRESS,

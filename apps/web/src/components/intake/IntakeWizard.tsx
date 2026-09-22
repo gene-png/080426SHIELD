@@ -144,7 +144,13 @@ export function IntakeWizard(): JSX.Element {
     try {
       const next = await submitIntake({
         client: {
-          legal_name: state.client.legal_name,
+          // `?? undefined` like every sibling field below. Since D-080 an
+          // unnamed org is NULL rather than a sentinel, and submitting one is
+          // refused by the API with a typed 422 ("Organization legal name is
+          // required to submit intake.") — the wizard does not pre-empt that
+          // check, so the user gets the server's message rather than a silent
+          // no-op.
+          legal_name: state.client.legal_name ?? undefined,
           dba_name: state.client.dba_name ?? undefined,
           website: state.client.website ?? undefined,
           size_band: state.client.size_band ?? undefined,

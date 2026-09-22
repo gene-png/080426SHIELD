@@ -30,7 +30,8 @@ const PASSWORD = "correct horse battery staple!";
 
 interface ClientRow {
   id: string;
-  legal_name: string;
+  // Nullable since D-080 (#254): a self-serve tenant nobody has named yet.
+  legal_name: string | null;
 }
 
 interface DeliverableRow {

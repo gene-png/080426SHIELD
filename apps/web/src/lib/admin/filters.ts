@@ -1,4 +1,5 @@
 import { SERVICE_LABELS, type ServiceType } from "@/lib/intake/types";
+import { orgDisplayName } from "@/lib/org-name";
 
 import type { AdminServiceRequestRow } from "./types";
 
@@ -139,7 +140,10 @@ export const DEFAULT_ORG_FILTERS: OrgFilters = {
 
 /** Minimal shape needed to filter the org index — anything wider also works. */
 interface OrgLike {
-  legal_name: string;
+  // Nullable since D-080: an org nobody has named yet. Matching keys on the
+  // DISPLAY name so such a row is findable by the label the admin can see,
+  // rather than being unmatchable or throwing on `null.toLowerCase()`.
+  legal_name: string | null;
   open_request_count: number;
 }
 
@@ -149,7 +153,8 @@ export function filterOrganizations<T extends OrgLike>(
 ): T[] {
   const q = filters.query.trim().toLowerCase();
   return orgs.filter((org) => {
-    if (q && !org.legal_name.toLowerCase().includes(q)) return false;
+    if (q && !orgDisplayName(org.legal_name).toLowerCase().includes(q))
+      return false;
     if (filters.awaitingOnly && org.open_request_count <= 0) return false;
     return true;
   });

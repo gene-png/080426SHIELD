@@ -67,6 +67,45 @@ describe("IntakeOrgIndex", () => {
     ]);
   });
 
+  // D-080 (#254): a self-serve tenant reaches this list with `legal_name` NULL.
+  // Every one of the three reads below — sort key, dedupe key, option label —
+  // called a string method on that column, so an unnamed org did not render a
+  // blank row, it threw and took the whole page with it.
+  it("renders an organization nobody has named yet, instead of crashing the page", async () => {
+    mockList.mockResolvedValue([
+      org({ id: "id-named", legal_name: "Zulu Corp" }),
+      org({ id: "id-unnamed", legal_name: null }),
+    ]);
+    render(<IntakeOrgIndex />);
+
+    const select = await screen.findByRole("combobox", {
+      name: "Jump to an organization",
+    });
+    const labels = Array.from(select.querySelectorAll("option")).map(
+      (o) => o.textContent,
+    );
+    // Both rows present: the named one is proof the list rendered at all, so a
+    // page that failed to load cannot satisfy this assertion vacuously.
+    expect(labels).toContain("Zulu Corp");
+    expect(labels).toContain("(pending intake)");
+    expect(labels[0]).toContain("Select from 2 organizations");
+  });
+
+  it("keeps an unnamed organization reachable from the jump list", async () => {
+    // Findability is the whole job of this surface, and an admin triaging a
+    // fresh signup has nothing but the label to click.
+    mockList.mockResolvedValue([org({ id: "id-unnamed", legal_name: null })]);
+    render(<IntakeOrgIndex />);
+
+    const select = await screen.findByRole("combobox", {
+      name: "Jump to an organization",
+    });
+    fireEvent.change(select, { target: { value: "id-unnamed" } });
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith("/admin/queue/id-unnamed"),
+    );
+  });
+
   it("navigates to the organization the admin picks", async () => {
     mockList.mockResolvedValue([org({ id: "id-alpha", legal_name: "Alpha" })]);
     render(<IntakeOrgIndex />);

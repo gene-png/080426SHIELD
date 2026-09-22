@@ -386,8 +386,11 @@ def client_org_name_for_tenant(db: Session, client_id) -> str | None:
     row = db.get(Client, client_id)
     if row is None:
         return None
+    # D-080: NULL is the store's own record that nobody has named this org,
+    # so there is no name to hint the redactor with. The empty-string arm is
+    # kept because a wizard that clears the field writes "" rather than NULL.
     name = row.legal_name
-    if not name or name == "(pending intake)":
+    if not name:
         return None
     return name
 

@@ -353,7 +353,9 @@ def submit_intake(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> IntakeStateResponse:
-    if not body.client.legal_name or body.client.legal_name == "(pending intake)":
+    # D-080: the sentinel is gone, so this is what it always meant -- you
+    # cannot submit an intake without naming the organisation.
+    if not body.client.legal_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Organization legal name is required to submit intake.",
@@ -608,7 +610,9 @@ def create_engagement(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Only NIST CSF and Zero Trust can be started as a self-service engagement.",
         )
-    if not client.legal_name or client.legal_name == "(pending intake)":
+    # D-080: NULL means self-serve provisioning never named this org, which
+    # is exactly the state the intake wizard exists to leave.
+    if not client.legal_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Complete your organization profile in intake before starting an engagement.",

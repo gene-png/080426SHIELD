@@ -14,10 +14,11 @@
 
 import { useEffect, useState, type JSX } from "react";
 import { useRouter } from "next/navigation";
+import { orgDisplayName } from "@/lib/org-name";
 
 interface ClientSummary {
   id: string;
-  legal_name: string;
+  legal_name: string | null;
   dba_name: string | null;
 }
 
@@ -102,7 +103,9 @@ export function ClientSwitcher(): JSX.Element | null {
         <option value="">— pick one —</option>
         {clients.map((c) => (
           <option key={c.id} value={c.id}>
-            {c.dba_name ? `${c.dba_name} (${c.legal_name})` : c.legal_name}
+            {c.dba_name
+              ? `${c.dba_name} (${orgDisplayName(c.legal_name)})`
+              : orgDisplayName(c.legal_name)}
           </option>
         ))}
       </select>

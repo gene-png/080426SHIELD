@@ -191,4 +191,44 @@ describe("filterOrganizations", () => {
       ),
     ).toEqual(["Atlas Defense"]);
   });
+
+  // D-080 (#254): `legal_name` is NULL for an org nobody has named, which is
+  // every self-serve signup — a REACHABLE state, not a hypothetical, and one
+  // that used to throw here on `null.toLowerCase()`.
+  describe("an organization nobody has named yet", () => {
+    const withUnnamed = [...orgs, { legal_name: null, open_request_count: 5 }];
+
+    it("does not throw, and is kept when no query narrows it", () => {
+      expect(filterOrganizations(withUnnamed, orgFilters())).toHaveLength(3);
+    });
+
+    it("is findable by the label the admin can actually see", () => {
+      // The admin has no name to type, so the only searchable handle is the
+      // rendered label. Matching on it is what keeps the row reachable.
+      expect(
+        filterOrganizations(withUnnamed, orgFilters({ query: "pending" })).map(
+          (o) => o.open_request_count,
+        ),
+      ).toEqual([5]);
+    });
+
+    it("is excluded by a query that matches a real name instead", () => {
+      // The other half of the branch: the unnamed row must not match
+      // everything just because it has no name of its own.
+      expect(
+        filterOrganizations(withUnnamed, orgFilters({ query: "atlas" })).map(
+          (o) => o.legal_name,
+        ),
+      ).toEqual(["Atlas Defense"]);
+    });
+
+    it("still answers the awaiting-review filter", () => {
+      expect(
+        filterOrganizations(
+          withUnnamed,
+          orgFilters({ awaitingOnly: true }),
+        ).map((o) => o.legal_name),
+      ).toEqual(["Atlas Defense", null]);
+    });
+  });
 });

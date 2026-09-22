@@ -101,7 +101,8 @@ class ClientProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    legal_name: str
+    # NULL until the wizard's own Step 2 supplies it (D-080, #254).
+    legal_name: str | None
     dba_name: str | None
     website: str | None
     size_band: str | None

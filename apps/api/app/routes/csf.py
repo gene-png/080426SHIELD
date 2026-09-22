@@ -1910,7 +1910,7 @@ def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequ
         for ans in answer_rows
         if ans.maturity_tier is not None or ans.notes or ans.evidence_artifact_id is not None
     }
-    client_org = None if client.legal_name == "(pending intake)" else client.legal_name
+    client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     return CsfAiRequest(
         assessment=a,
         rows=rows,
@@ -2144,7 +2144,7 @@ def export_playbook(
 
     from app.docx_export import DOCX_MIME
 
-    org = None if client.legal_name == "(pending intake)" else client.legal_name
+    org = client.legal_name  # NULL when nobody has named the org (D-080)
     name = org or "Client"
     today = utcnow().date()
     on = utcnow().strftime("%Y-%m-%d")
@@ -2404,9 +2404,7 @@ def finalize_csf_deliverable(
     resolved_tier, target_tier_source = resolve_target_tier(engagement_tier)
     gap = analyze_gaps(tier_map, notes=notes_map, target_tier=resolved_tier)
 
-    client_name = client.legal_name
-    if client_name == "(pending intake)":
-        client_name = None
+    client_name = client.legal_name  # NULL when nobody has named the org (D-080)
 
     # Filename version: same-day re-finalize -> v2, v3, ...
     today = utcnow().date()

@@ -12,6 +12,7 @@ import {
 } from "@shield/design-system";
 
 import { listClients, type ClientSummary } from "@/lib/admin/client";
+import { orgDisplayName } from "@/lib/org-name";
 import {
   DEFAULT_ORG_FILTERS,
   filterOrganizations,
@@ -83,11 +84,15 @@ export function IntakeOrgIndex(): JSX.Element {
   // difference between scanning and searching.
   const byName = React.useMemo(
     () =>
-      (clients ?? []).slice().sort((a, b) =>
-        a.legal_name.localeCompare(b.legal_name, undefined, {
-          sensitivity: "base",
-        }),
-      ),
+      (clients ?? [])
+        .slice()
+        .sort((a, b) =>
+          orgDisplayName(a.legal_name).localeCompare(
+            orgDisplayName(b.legal_name),
+            undefined,
+            { sensitivity: "base" },
+          ),
+        ),
     [clients],
   );
 
@@ -99,7 +104,7 @@ export function IntakeOrgIndex(): JSX.Element {
   const duplicateNames = React.useMemo(() => {
     const seen = new Map<string, number>();
     for (const c of byName) {
-      const key = c.legal_name.toLowerCase();
+      const key = orgDisplayName(c.legal_name).toLowerCase();
       seen.set(key, (seen.get(key) ?? 0) + 1);
     }
     return new Set(
@@ -162,7 +167,7 @@ export function IntakeOrgIndex(): JSX.Element {
             </option>
             {byName.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.legal_name}
+                {orgDisplayName(c.legal_name)}
                 {c.open_request_count > 0
                   ? ` — ${c.open_request_count} awaiting review`
                   : ""}
@@ -230,8 +235,10 @@ export function IntakeOrgIndex(): JSX.Element {
                   <CardBody className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-ink-primary">
-                        {c.legal_name}
-                        {duplicateNames.has(c.legal_name.toLowerCase()) ? (
+                        {orgDisplayName(c.legal_name)}
+                        {duplicateNames.has(
+                          orgDisplayName(c.legal_name).toLowerCase(),
+                        ) ? (
                           /* Leading space is inside the span deliberately: CSS
                              margin does not separate words in the ACCESSIBLE
                              NAME, so without it a screen reader announces

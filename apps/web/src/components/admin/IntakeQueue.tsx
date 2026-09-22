@@ -13,6 +13,7 @@ import {
 } from "@shield/design-system";
 
 import { fetchIntakeQueue, fulfillServiceRequest } from "@/lib/admin/client";
+import { isNamedOrg, orgDisplayName } from "@/lib/org-name";
 import {
   AGE_OPTIONS,
   DEFAULT_REQUEST_FILTERS,
@@ -457,7 +458,10 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   const submittedAt = state.intake_completed_at
     ? new Date(state.intake_completed_at).toLocaleString()
     : null;
-  const hasIntake = c !== null && c.legal_name !== "(pending intake)";
+  // D-080: the condition is the NULL, not a sentinel string. This asks
+  // "has anyone named this org", which is what it always meant -- and now
+  // actually fires, because self-serve provisioning writes no name.
+  const hasIntake = c !== null && isNamedOrg(c.legal_name);
   const hasContext = Boolean(
     c?.prompting_context && c.prompting_context.trim(),
   );
@@ -497,7 +501,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
             Admin
           </p>
           <h1 className="text-3xl font-semibold text-ink-primary">
-            {hasIntake ? c.legal_name : "Intake queue"}
+            {hasIntake ? orgDisplayName(c.legal_name) : "Intake queue"}
           </h1>
           <p className="max-w-prose text-sm text-ink-secondary">
             The queue reflects exactly what the client entered during intake.
@@ -533,7 +537,7 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
           </CardHeader>
           <CardBody>
             <dl>
-              {row("Legal name", c.legal_name)}
+              {row("Legal name", orgDisplayName(c.legal_name))}
               {row("DBA / Trade name", c.dba_name)}
               {row("Website", c.website)}
               {row("Headcount band", c.size_band)}

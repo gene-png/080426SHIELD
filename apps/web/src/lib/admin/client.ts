@@ -48,7 +48,7 @@ export async function fulfillServiceRequest(
 
 export interface ClientSummary {
   id: string;
-  legal_name: string;
+  legal_name: string | null;
   dba_name: string | null;
   industry: string | null;
   size_band: string | null;
@@ -179,7 +179,7 @@ export async function setUserActive(
 }
 
 export async function createClient(body: {
-  legal_name: string;
+  legal_name: string | null;
   industry?: string;
 }): Promise<ClientSummary> {
   const res = await fetch("/api/proxy/admin/clients", {

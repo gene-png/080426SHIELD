@@ -839,7 +839,7 @@ def generate(
     findings, valid_techniques, valid_controls, target_sources, link_scopes = _gather_findings(
         db, cid
     )
-    client_org = None if client.legal_name == "(pending intake)" else client.legal_name
+    client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     # Batched: one request cannot express this job (see _RISK_BATCH_SIZE). A
     # total failure still raises typed, through ai_call_boundary.
     entries_draft, batches_total, batches_failed, discarded_in_batches = (
@@ -1517,7 +1517,7 @@ def export(
         .scalars()
         .all()
     )
-    org = None if client.legal_name == "(pending intake)" else client.legal_name
+    org = client.legal_name  # NULL when nobody has named the org (D-080)
     # #403. The scored share reaches the client's DELIVERABLE, not only the
     # consultant's screen -- read from the same persisted provenance the
     # response reads, so the PDF and the dashboard cannot disagree about one

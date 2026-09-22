@@ -17,7 +17,7 @@ export type ServiceType =
 
 export interface ClientProfileResponse {
   id: string;
-  legal_name: string;
+  legal_name: string | null;
   dba_name: string | null;
   website: string | null;
   size_band: string | null;
