@@ -1587,49 +1587,113 @@ def latest(
     return _serialize(db, reg)
 
 
+def _link_scope_row_fault(counts: object) -> str | None:
+    """Why one persisted `link_scope` row is unusable, or None if it is fine.
+
+    Separated from `_link_scope_fields` so the CALLER's response to a fault is a
+    single line -- see the comment at that line. A validator whose every failure
+    branch is inline is a validator whose failure POLICY cannot be changed, or
+    mutated, in one edit.
+
+    Returns a reason string rather than a bool, because the log line that
+    records this is the only place a malformed blob is ever visible: nothing
+    user-facing can say "the provenance is malformed", and "invalid" without a
+    reason is the empty-reason defect `check_test_integrity` exists to reject.
+    """
+    if not isinstance(counts, dict):
+        return "service entry is not an object"
+    scored, total = counts.get("scored"), counts.get("total")
+    for name, value in (("scored", scored), ("total", total)):
+        # `bool` is an `int` in Python, so excluding it is load-bearing rather
+        # than defensive: `isinstance(True, int)` is True and `True` would render
+        # as a scored count of 1. `CLAUDE.md`: `int()` is not a validator.
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{name} is not a plain integer"
+    assert isinstance(scored, int) and isinstance(total, int)  # noqa: S101 - narrowed above
+    if scored < 0 or total < 0 or scored > total:
+        return "counts are not a scored-subset-of-total pair"
+    return None
+
+
 def _link_scope_fields(stored: object) -> dict:
     """The #403 disclosure fields, read out of a register's provenance blob.
 
-    Returns the two keys `_serialize` splats. Kept as a function rather than
-    inlined because it has to decide THREE states from an untyped blob and an
-    inline expression would collapse two of them:
+    Returns the two keys `_serialize` splats, and the two keys are one decision:
+    WHAT was scored, and whether this function was able to answer at all.
+
+    ## Three states, and the third is the one that needed writing down
 
       * no `link_scope` key -- this register predates the recording. Nothing on
         file says how much was scored, which is NOT "everything was scored".
         `recorded=False`, empty list.
-      * a key holding per-service counts -- `recorded=True`, one row each.
-      * a key holding something unexpected (a NULL provenance, a non-dict, a
-        malformed row) -- `recorded=False`, because a shape this cannot read is
-        "I could not look" and must never render as an answer. Missing data
-        defaults to UNCONFIRMED.
+      * a key holding per-service counts, every one of them readable --
+        `recorded=True`, one row each.
+      * a key this function cannot fully read -- a NULL provenance, a non-dict,
+        or ANY malformed row -- `recorded=False` and an empty list, plus a loud
+        log. "I could not look" and "here is the answer" must not share a
+        branch.
 
-    Rows are validated field by field rather than trusted. The blob is JSON
-    written by an earlier version of this file, so it is the one input here that
-    a future writer can change without touching this function, and a row that
-    fails validation is DROPPED rather than rendered as a zero -- a zero would
-    read as "this service scored nothing", which is a concrete false claim about
-    a client's assessment rather than an absence.
+    ## The partial read is the trap, and the first version of this walked into it
+
+    It validated each row and `continue`d past a bad one, then returned
+    `recorded=True`. So a blob carrying one good service and one malformed one
+    reported a COMPLETE answer over a PARTIAL read -- a consultant would see
+    "ATT&CK 12 of 700" and no CSF line, indistinguishable from a register that
+    genuinely had no CSF assessment. The counter-shaped disclosure would have
+    understated the very thing it exists to state, which is `CLAUDE.md`'s
+    silent-success branch reached from the read side.
+
+    Dropping the whole answer costs a readable row. That is the right trade:
+    `recorded=False` renders nothing and says nothing, whereas a partial answer
+    presented as a whole one is a false claim about a client's assessments.
+
+    ## Reachability, measured rather than assumed
+
+    NO CURRENT WRITER CAN PRODUCE A MALFORMED ROW. The one writer is `generate`,
+    which builds `{"scored": len(sc.codes), "total": sc.total}` -- two `int`s by
+    construction, `len()` and a loop counter, with `scored <= total` guaranteed
+    because the codes are a subset of the rows counted. `seed_demo.py` writes no
+    `link_scope` key at all, which is state one.
+
+    So this validation is a RATCHET, and what would make it reachable is an
+    ordinary change: a hand-edited provenance blob, a migration backfilling the
+    key, a future writer persisting a float or a string, or a second writer that
+    records only some services. The `bool` exclusion is part of the ratchet for
+    the same reason -- `isinstance(True, int)` is True, so a bool would render as
+    a scored count of 1, and `CLAUDE.md` is explicit that `int()` is not a
+    validator.
     """
     if not isinstance(stored, dict) or "link_scope" not in stored:
         return {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
+
+    def _unreadable(reason: str, **fields: object) -> dict:
+        # LOUD, because the alternative is a register that quietly stops
+        # carrying a disclosure it used to carry. Nothing user-facing can say
+        # "the provenance blob is malformed", so the log is where this lands.
+        _log.error("risk_register_link_scope_unreadable", reason=reason, **fields)
+        return {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
+
     raw = stored.get("link_scope")
     if not isinstance(raw, dict):
-        return {"excluded_unscored_links": [], "excluded_unscored_links_recorded": False}
+        return _unreadable("link_scope is not an object", got=type(raw).__name__)
     rows: list[LinkScopeDisclosure] = []
     for service, counts in raw.items():
-        if not isinstance(counts, dict):
-            continue
-        scored, total = counts.get("scored"), counts.get("total")
-        # `bool` is an `int` in Python, so the explicit exclusion is load-bearing
-        # rather than defensive: `isinstance(True, int)` is True and `True` would
-        # render as a scored count of 1. `CLAUDE.md`: `int()` is not a validator.
-        if not isinstance(scored, int) or isinstance(scored, bool):
-            continue
-        if not isinstance(total, int) or isinstance(total, bool):
-            continue
-        if scored < 0 or total < 0 or scored > total:
-            continue
-        rows.append(LinkScopeDisclosure(service=str(service), scored=scored, total=total))
+        fault = _link_scope_row_fault(counts)
+        if fault is not None:
+            # ONE LINE, and it is the line that decides the whole behaviour of
+            # this function. The first version `continue`d here and still
+            # returned `recorded=True`; mutating this back to `continue` is what
+            # `test_an_unreadable_scope_reports_NOT_RECORDED_rather_than_a_partial_answer`
+            # is verified red against.
+            return _unreadable(fault, service=str(service), counts=repr(counts))
+        assert isinstance(counts, dict)  # noqa: S101 - narrowed by the fault check
+        rows.append(
+            LinkScopeDisclosure(
+                service=str(service),
+                scored=counts["scored"],
+                total=counts["total"],
+            )
+        )
     return {
         "excluded_unscored_links": sorted(rows, key=lambda r: r.service),
         "excluded_unscored_links_recorded": True,

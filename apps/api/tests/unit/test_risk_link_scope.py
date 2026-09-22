@@ -499,3 +499,106 @@ def test_the_exported_xlsx_a_client_downloads_carries_the_scored_coverage(
     for _label, scored, total, not_citable in by_service.values():
         assert total > scored > 0
         assert not_citable == total - scored
+
+
+# ---------------------------------------------------------------------------
+# The READ fails closed. A partial read must not present as a whole answer.
+#
+# These construct the malformed blob with direct SQL, and that is deliberate
+# rather than a fixture building an unreachable state: `generate` cannot produce
+# one (it writes `len()` and a loop counter), so the validation is a RATCHET,
+# and a ratchet is only pinned by a test that makes its state reachable. The
+# precedent in this repo is explicit -- `test_a_row_dropped_between_add_and_flush_is_recorded`
+# installs the very `before_flush` listener its own comment says no writer has.
+#
+# Building the world, not performing the step under test: the step under test is
+# the READ, and nothing here reads.
+# ---------------------------------------------------------------------------
+
+
+def _overwrite_link_scope(cid: str, blob: object) -> None:
+    """Put `blob` in the latest register's `provenance["link_scope"]`."""
+    from app.models.risk_register import RiskRegister
+
+    db = _session()
+    reg = (
+        db.execute(
+            select(RiskRegister)
+            .where(RiskRegister.client_id == uuid.UUID(cid))
+            .order_by(RiskRegister.version.desc())
+        )
+        .scalars()
+        .first()
+    )
+    assert reg is not None
+    prov = dict(reg.provenance or {})
+    assert "link_scope" in prov, "fixture precondition: generate must have written the key"
+    prov["link_scope"] = blob
+    reg.provenance = prov
+    db.add(reg)
+    db.commit()
+    db.close()
+
+
+def _latest(c, bearer: str, cid: str) -> dict:
+    r = c.get(
+        f"/risk/clients/{cid}/register/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "blob,why",
+    [
+        pytest.param(
+            {"attack": {"scored": 1, "total": 9}, "csf": {"scored": "x", "total": 9}},
+            "one good service beside one malformed one",
+            id="partial",
+        ),
+        pytest.param(
+            {"attack": {"scored": True, "total": 9}},
+            "a bool, which isinstance(_, int) accepts and which would render as 1",
+            id="bool",
+        ),
+        pytest.param(
+            {"attack": {"scored": 10, "total": 9}},
+            "more scored than exist, so the pair is not a subset relation",
+            id="scored-exceeds-total",
+        ),
+        pytest.param({"attack": [1, 9]}, "a list where an object belongs", id="not-an-object"),
+        pytest.param("everything", "a scalar where the map belongs", id="not-a-map"),
+    ],
+)
+def test_an_unreadable_scope_reports_NOT_RECORDED_rather_than_a_partial_answer(
+    app_client,  # noqa: F811
+    blob: object,
+    why: str,
+) -> None:
+    """The whole answer is withheld, not just the bad row.
+
+    The `partial` case is the one that matters and is why this exists: the first
+    version of `_link_scope_fields` skipped a malformed row and still reported
+    `recorded=True`, so a consultant would have read "ATT&CK 12 of 700" with no
+    CSF line -- indistinguishable from a register that genuinely had no CSF
+    assessment. A disclosure understating itself is the defect this whole change
+    is about, arriving from the read side.
+
+    Dropping a readable row is the cost, and it is the right trade: nothing
+    renders and nothing is claimed.
+    """
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    _capture(provider)
+    generated = _generate(c, bearer, cid)
+    # The precondition, asserted rather than assumed: the good path must be
+    # working, or "not recorded" below would pass for the wrong reason.
+    assert generated["excluded_unscored_links_recorded"] is True, why
+
+    _overwrite_link_scope(cid, blob)
+    body = _latest(c, bearer, cid)
+    assert body["excluded_unscored_links_recorded"] is False, why
+    assert body["excluded_unscored_links"] == [], why
