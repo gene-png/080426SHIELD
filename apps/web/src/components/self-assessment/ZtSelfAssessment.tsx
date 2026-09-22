@@ -9,6 +9,12 @@ import {
   cn,
 } from "@shield/design-system";
 
+// Sited here, apart from the other `@/lib` imports, on purpose: #366 is in
+// flight and rewrites the `describe-save-error` import line just below into
+// a multi-line block. An import adjacent to that line conflicts on merge for
+// no semantic reason, so this one is kept clear of it.
+import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
+
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import { ZtStagePicker } from "@/components/admin/zt/ZtStagePicker";
 import { ZtMaturityReference } from "@/components/zt/ZtMaturityReference";
@@ -211,7 +217,9 @@ export function ZtSelfAssessment({
     return <SelfAssessmentSubmitted />;
   }
 
-  const targetStages = catalog.stages.filter((s) => s.stage >= 2);
+  const targetStages = catalog.stages.filter(
+    (s) => s.stage >= MIN_TARGET_STAGE,
+  );
   const pillars = catalog.pillars;
   const idx = Math.min(pillarIdx, pillars.length - 1);
   const pillar: CatalogPillar | undefined = pillars[idx];

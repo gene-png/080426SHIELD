@@ -56,6 +56,7 @@ import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { serverReason } from "@/lib/describe-save-error";
+import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
 export interface ZtWorkspaceProps {
   serviceId: string;
@@ -63,8 +64,6 @@ export interface ZtWorkspaceProps {
   serviceTitle: string;
 }
 
-/** The lowest stage a client can TARGET. Stage 1 is a starting point, not a goal. */
-const MIN_TARGET_STAGE = 2;
 /** Mirrors `DEFAULT_TARGET_STAGE` in `app/zt/scoring.py`; valid on both ladders. */
 const DEFAULT_TARGET_STAGE = 3;
 
@@ -105,7 +104,21 @@ const DEFAULT_TARGET_STAGE = 3;
  * stops the request being made at all.
  *
  * `stages` is the framework's own ladder, fetched from the catalog the target
- * dropdown is already built from, so this cannot drift from what the UI offers.
+ * dropdown is already built from. **That covers the LADDER and not the FLOOR,
+ * and the sentence here used to claim both** -- it read "so this cannot drift
+ * from what the UI offers", full stop, which is a scope wider than its own
+ * argument supports (#194).
+ *
+ * The ladder genuinely cannot drift: it is the same catalog the dropdown is
+ * built from. The floor is a separate, hand-written product rule, and it was
+ * spelled as a bare `2` at three sibling filters while only this function
+ * named it. Raise the picker's floor without the constant and this returns a
+ * stage the dropdown no longer offers -- a controlled `<select>` with
+ * `selectedIndex = -1`, which renders blank with no error at all. Both halves
+ * now come from `MIN_TARGET_STAGE` in `@/lib/assessment-targets`, so the
+ * claim is true of the floor because it has one home rather than because
+ * nobody has changed it yet.
+ *
  * When the ladder is unavailable, fall back to the engine default rather than
  * trusting the stored value: asking for a stage that cannot be checked is the
  * case that just cost two cards.

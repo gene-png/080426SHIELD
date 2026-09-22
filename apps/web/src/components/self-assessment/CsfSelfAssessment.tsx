@@ -9,6 +9,12 @@ import {
   cn,
 } from "@shield/design-system";
 
+// Sited here, apart from the other `@/lib` imports, on purpose: #366 is in
+// flight and rewrites the `describe-save-error` import line just below into
+// a multi-line block. An import adjacent to that line conflicts on merge for
+// no semantic reason, so this one is kept clear of it.
+import { MIN_TARGET_TIER } from "@/lib/assessment-targets";
+
 import { CsfQuestionnaire } from "@/components/admin/csf/CsfQuestionnaire";
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import {
@@ -240,7 +246,7 @@ export function CsfSelfAssessment({
   const profileLabel = assessment.client_profile
     ? (PROFILE_LABEL[assessment.client_profile] ?? null)
     : null;
-  const targetTiers = catalog.tiers.filter((t) => t.tier >= 2);
+  const targetTiers = catalog.tiers.filter((t) => t.tier >= MIN_TARGET_TIER);
 
   return (
     <div className="flex flex-col gap-6">
