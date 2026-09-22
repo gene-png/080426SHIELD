@@ -84,6 +84,16 @@ function register(over: Partial<RiskRegister> = {}): RiskRegister {
     entries_with_dropped_links: 0,
     entries_unlinked_after_drops: 0,
     entries_links_not_recorded: 0,
+    // #403. `false` + `[]` is the PRE-RECORDING state, and it is the right
+    // default for the same reason `excluded_inputs_recorded` is `true`: it is
+    // what most fixtures here are. These registers are not the product of a
+    // recorded generate run, so claiming a scored share for them would have
+    // every unrelated test render a banner about data it never built.
+    //
+    // The recorded case is set explicitly in the tests for it, so that no test
+    // exercises the banner by accident.
+    excluded_unscored_links: [],
+    excluded_unscored_links_recorded: false,
     id: "r1",
     client_id: "c1",
     version: 1,
@@ -197,7 +207,22 @@ describe("RiskRegisterDashboard tier-less entries disclosure", () => {
     );
     expect(alert.textContent).toMatch(/3 of 40/);
     expect(alert).toHaveAttribute("role", "alert");
-    expect(alert.textContent).toMatch(/Regenerate before exporting/i);
+    // #403 CHANGED THIS ASSERTION ON PURPOSE, and the old one is named here
+    // rather than quietly swapped. It was `/Regenerate before exporting/i`.
+    //
+    // That imperative was sound while every dropped value was a misnamed one:
+    // regenerating gave the model another try. It is now a promise the product
+    // cannot keep -- a drop is equally a correctly spelled code nobody has
+    // scored, and no number of regenerations adds a link for an unjudged row.
+    // `CLAUDE.md`: a user-facing string naming an action must name a control
+    // that works TODAY, and a consultant who follows a false one spends a live
+    // model call to receive the identical register.
+    //
+    // So the banner now states the CONSEQUENCE and the condition under which
+    // regenerating is futile, and this pins that rather than dropping the
+    // assertion -- deleting it would leave the guidance untested.
+    expect(alert.textContent).toMatch(/regenerating returns the same rows/i);
+    expect(alert.textContent).toMatch(/sees those rows as unlinked/i);
     // The OUTCOME count, not the spelling-problem count. Nine entries have a
     // dropped value and six of them still show linkage; saying 9 would send
     // the consultant looking for six absences that are not there.
@@ -580,5 +605,106 @@ describe("RiskRegisterDashboard denominator (#330)", () => {
     );
     await loaded();
     expect(screen.queryByTestId("risk-entries-lost")).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+});
+
+describe("RiskRegisterDashboard scored-coverage disclosure (#403)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getActiveClientId.mockResolvedValue("c1");
+    getClientName.mockResolvedValue("Atlas");
+    fetchRiskGate.mockResolvedValue(gate());
+  });
+
+  // #403. The scored-coverage disclosure.
+  //
+  // After the allow-list narrowing, technique and control links are drawn only
+  // from rows an assessment SCORED -- so a largely unscored assessment yields
+  // a sparsely linked register, which is CORRECT and reads as a regression.
+  // Without this banner the fix trades a silently wrong citation for a
+  // silently missing one, which is the worse of the two.
+  // -------------------------------------------------------------------------
+
+  it("renders the scored share per assessment, with the population beside it", async () => {
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 1,
+        excluded_unscored_links_recorded: true,
+        excluded_unscored_links: [
+          { service: "attack", scored: 12, total: 700 },
+          { service: "csf", scored: 106, total: 106 },
+        ],
+      }),
+    );
+    await loaded();
+    const panel = screen.getByTestId("risk-link-scope");
+    // textContent, not innerText: the assertion is about the COPY, and
+    // innerText would read back whatever CSS transform is applied.
+    const text = panel.textContent ?? "";
+    expect(text).toContain("ATT&CK coverage");
+    // The excluded count never appears without the population it came out of.
+    expect(text).toContain("12 of 700 scored");
+    expect(text).toContain("688 not yet judged");
+    // A fully scored assessment states so rather than printing a bare zero.
+    expect(text).toContain("106 of 106 scored");
+    expect(text).toContain("every row judged");
+  });
+
+  it("stays silent when the scored share was never recorded", async () => {
+    // A register generated before #403 records no scope. That is "nobody
+    // looked", not "everything was scored" -- and a banner built from an
+    // absent operand would assert the second.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 1,
+        excluded_unscored_links_recorded: false,
+        excluded_unscored_links: [],
+      }),
+    );
+    await loaded();
+    expect(screen.queryByTestId("risk-link-scope")).not.toBeInTheDocument();
+  });
+
+  it("renders a service the label table does not know, rather than dropping it", async () => {
+    // A row vanishing from a disclosure is the disclosure failing silently,
+    // which is the failure this banner exists to prevent. An unlabelled token
+    // is merely ugly.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 1,
+        excluded_unscored_links_recorded: true,
+        excluded_unscored_links: [
+          { service: "tech_debt", scored: 1, total: 9 },
+        ],
+      }),
+    );
+    await loaded();
+    const text = screen.getByTestId("risk-link-scope").textContent ?? "";
+    expect(text).toContain("tech_debt");
+    expect(text).toContain("1 of 9 scored");
+  });
+
+  it("no longer tells the consultant every dropped value was misnamed", async () => {
+    // The unlinked-entries banner said "Every value the model sent named
+    // something that is not in this client's assessments". That was true while
+    // the allow-lists held every code that exists -- the only way to miss was
+    // to misname one. It is now false: a correctly spelled, catalog-valid code
+    // is dropped when nobody has scored it, and the two causes have opposite
+    // remedies.
+    fetchRiskRegisterLatest.mockResolvedValue(
+      register({
+        entries_total: 4,
+        entries_unlinked_after_drops: 1,
+        entries_with_dropped_links: 1,
+      }),
+    );
+    await loaded();
+    const text =
+      screen.getByTestId("risk-entries-unlinked-after-drops").textContent ?? "";
+    expect(text).not.toContain("named something that is not in");
+    expect(text).toContain("misnamed or names a control");
+    expect(text).toContain("have not scored");
   });
 });

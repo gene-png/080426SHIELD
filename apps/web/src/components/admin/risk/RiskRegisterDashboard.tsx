@@ -604,11 +604,11 @@ export function RiskRegisterDashboard(): JSX.Element {
               linked. Every value the model sent was either misnamed or names a
               control this client&apos;s assessments have not scored. A dropped
               source shows as <em>not recognised</em> in the Source column; the
-              full values are on the{" "}
-              <code>risk_register.generated</code> audit row. Where the cause is
-              unscored assessment work rather than a misnamed value,
-              regenerating returns the same rows and spends another model call.
-              A client reading this register sees those rows as unlinked.
+              full values are on the <code>risk_register.generated</code> audit
+              row. Where the cause is unscored assessment work rather than a
+              misnamed value, regenerating returns the same rows and spends
+              another model call. A client reading this register sees those rows
+              as unlinked.
             </div>
           ) : null}
           {/* #132 review. Three counters exist because there are three
