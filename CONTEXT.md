@@ -103,6 +103,12 @@ number is absent from it, that blocker has no owning item, which
 Assigning the rest is a scoping judgement and is flagged for Gene, not done
 here.
 
+**#185 and #194 are open and both appear ADDRESSED in code** (measured
+2026-09-21 at `8e68d46`; the evidence is in `DELIVERY_PLAN.md`'s item 9 row).
+An open issue is as weak a signal as a closed one, and neither was closed here
+because that is triage. Do not plan work from either without checking the code
+first.
+
 **Items 6 and 8 are NOT complete despite every issue in the mapping being
 closed**, and the reason is the same both times — an item's issues are a sample of its
 scope, not its definition. Item 6 still carries F10 (the allow-list swap the
