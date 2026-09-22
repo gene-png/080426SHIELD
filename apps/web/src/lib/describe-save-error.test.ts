@@ -195,6 +195,33 @@ describe("describeSaveError", () => {
     expect(text).not.toContain("409");
   });
 
+  it("does NOT claim the value was restored unless it was", () => {
+    // #371. This sentence used to be unconditional and was printed BEFORE the
+    // re-fetch that restores the value -- so when that re-fetch failed, the
+    // client sat looking at the refused value under a sentence saying it had
+    // been replaced by server truth. A lie that something succeeded, which
+    // core principle 2 forbids in as many words.
+    //
+    // `CLAUDE.md`: a success record must be written where the success is, not
+    // before it. N-019, #47 and W1's accounting log were the first three; this
+    // was the fourth, and the first read by a CLIENT rather than a developer.
+    const text = describeSaveError({ payload: {} }, "CISA.ID.01");
+    expect(text).not.toContain("has been restored");
+    // It still says the thing the client needs immediately.
+    expect(text).toContain("was not saved");
+  });
+
+  it("DOES claim it once the caller says the restore happened", () => {
+    // The other half. Without this, a "fix" that deletes the sentence entirely
+    // passes the test above while losing information the client wants in the
+    // ordinary case.
+    const text = describeSaveError({ payload: {} }, "CISA.ID.01", {
+      restored: true,
+    });
+    expect(text).toContain("has been restored");
+    expect(text).toContain("was not saved");
+  });
+
   it("does not tell the client to try again", () => {
     // The likeliest failure is a 409 — the consultant approved the assessment
     // while the client was typing — and retrying can never succeed for a
