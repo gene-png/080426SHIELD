@@ -122,6 +122,7 @@ describe("HomeDashboard — service card links (issue 1)", () => {
         ]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     const card = serviceCard(SVC_RELEASED);
@@ -147,6 +148,7 @@ describe("HomeDashboard — service card links (issue 1)", () => {
         ]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     const card = serviceCard(SVC_DRAFT);
@@ -177,6 +179,7 @@ describe("HomeDashboard — service card links (issue 1)", () => {
         ]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     const grid = screen.getByRole("heading", { name: "Your services" })
@@ -235,6 +238,7 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
         engagements={threeServices}
         unreadMessages={unreadMessages}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
   }
@@ -269,6 +273,7 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
         engagements={[engagement({ service_id: SVC_DRAFT })]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     expect(
@@ -337,6 +342,7 @@ describe("HomeDashboard — task-status buckets (C3)", () => {
         engagements={[]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
     expect(screen.getByText("No services yet")).toBeInTheDocument();
@@ -373,8 +379,13 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
     );
 
     expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
-    // The surviving panel still renders — the whole point of allSettled here.
-    expect(screen.queryByText(/no engagements yet/i)).toBeNull();
+    // The EMPTY-state copy must NOT also be on screen, or "failed" and "empty"
+    // are still indistinguishable. The needle is the component's actual string:
+    // an earlier version of this line looked for "no engagements yet", which
+    // appears nowhere in the component under any input, so it passed in the
+    // fixed and the unfixed world alike -- the #72 shape, inside the test whose
+    // whole purpose is to prove these two states are distinguishable.
+    expect(screen.queryByText(/no services yet/i)).toBeNull();
   });
 
   // DERIVED, NOT ENUMERATED. The first version of this fix pushed four panel
@@ -411,6 +422,42 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
     },
   );
 
+  it("still renders the value card when the summary loaded fine", () => {
+    // The other half of the `value` branch. The it.each above covers its
+    // FAILURE state; without this, deleting the whole `down.has("value")`
+    // block -- or rendering the could-not-load copy unconditionally -- stays
+    // green while the card never appears.
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={[]}
+        engagements={[]}
+        unreadMessages={0}
+        valueSummary={{
+          tech_debt_savings_usd: null,
+          tech_debt_savings_cost_known: true,
+          tech_debt_savings_unresolved: false,
+          zt_gap_count: null,
+          zt_gap_unresolved: false,
+          zt_services: 0,
+          zt_targets_defaulted: null,
+          zt_targets_unusable: null,
+          attack_uncovered_count: null,
+          attack_uncovered_unresolved: false,
+          csf_gap_count: null,
+          csf_gap_unresolved: false,
+          csf_services: 0,
+          csf_targets_defaulted: null,
+          csf_targets_unusable: null,
+          has_any_data: false,
+          has_unresolved: false,
+        }}
+        unavailable={[]}
+      />,
+    );
+    expect(screen.queryByText(/could not be loaded/i)).toBeNull();
+  });
+
   it("still claims nothing when engagements are genuinely empty", () => {
     // The other half of the branch. Without this, a "fix" that renders the
     // could-not-load copy unconditionally passes the test above and lies in
@@ -422,6 +469,7 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
         engagements={[]}
         unreadMessages={0}
         valueSummary={null}
+        unavailable={[]}
       />,
     );
 

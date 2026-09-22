@@ -142,8 +142,12 @@ export function SignUpForm(): JSX.Element {
       // (and never surfaces a raw "Request validation failed.").
       // PARSE DEFENSIVELY. This was a bare `await res.json()`.
       //
-      // A non-JSON body -- a proxy's HTML error page, an empty 429, a gateway
-      // timeout -- made it throw, the async submit handler's promise rejected,
+      // A non-JSON body -- an edge WAF or CDN 429 with an HTML or empty body
+      // (NOT this app's own proxy: `route.ts` re-wraps upstream bodies as
+      // JSON, and `apiFetch` passes a bare string through as valid JSON, so
+      // the throw needs an intermediary in front of Next; and NOT a 504,
+      // which never enters the 409|422|429 branch this annotates)
+      // -- made it throw, the async submit handler's promise rejected,
       // and `setPending(false)` below never ran. The Create account button
       // stayed disabled forever, with nothing on screen saying why, on the
       // PUBLIC sign-up page: a user who hit it could not retry without
@@ -187,10 +191,25 @@ export function SignUpForm(): JSX.Element {
         // surface it on the email field. (Self-registration is open now, so the
         // old domain-approval reasons no longer fire on the happy path.)
         setErrors({ email: message });
+      } else if (res.status === 429) {
+        // A THROTTLE IS STILL A THROTTLE WHEN THE BODY IS UNUSABLE.
+        //
+        // This case fell through to the input prompt below, which says
+        // "then try again" -- advice that re-trips the limiter, and a claim
+        // about what the user typed for an error that is not about their
+        // input. The comment on the 429 branch above names that exact harm as
+        // the reason the branch exists, and the branch then failed to cover
+        // its own untyped case.
+        setErrors({
+          form: "Too many attempts. Please wait a moment before trying again.",
+        });
       } else {
         // Nothing here is fit to render: either an untyped body, or a schema
         // refusal whose message is the internal "Request validation failed."
         // Show a plain-language prompt instead of leaking that string.
+        //
+        // Reached only for 409 and 422 now -- both genuinely about the
+        // submitted values, which is what makes this copy true here.
         setErrors({
           form: "Please double-check your name, email, and password (12+ characters), then try again.",
         });

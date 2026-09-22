@@ -59,8 +59,17 @@ export interface HomeDashboardProps {
    * have no reports", "no unread messages" -- and making them from an error is
    * the fail-open direction. Anything named here renders "could not load"
    * instead of its empty state.
+   *
+   * REQUIRED, not optional, and that is the point. As an optional prop with a
+   * `[]` default, deleting `unavailable={unavailable}` from the page reverted
+   * the entire user-visible half of #236 in SILENCE: tsc stayed green because
+   * the prop was optional, eslint stayed green because the page still computed
+   * the value, and every test here still passed because they pass the prop
+   * directly. The guard was defended only by tests that import the component,
+   * never by anything exercising the surface the client reaches. Required
+   * means tsc reddens on the drop.
    */
-  unavailable?: HomePanel[];
+  unavailable: HomePanel[];
 }
 
 /** The independently-rendering panels of the client home page (#236). */
@@ -227,7 +236,7 @@ export function HomeDashboard({
   engagements,
   unreadMessages,
   valueSummary,
-  unavailable = [],
+  unavailable,
 }: HomeDashboardProps): JSX.Element {
   const down = new Set<HomePanel>(unavailable);
   // Which services already have a released report (drives the grid + hero).

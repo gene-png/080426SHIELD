@@ -65,6 +65,12 @@ export default async function HomePage(): Promise<JSX.Element> {
   let valueSummary: ValueSummary | null = null;
   const unavailable: HomePanel[] = [];
   if (clientId) {
+    // `/auth/me` ABOVE IS DELIBERATELY NOT IN THIS SET, and saying so because
+    // an unstated exemption reads as an oversight. It is still a bare `await`,
+    // so its failure still takes the page down -- correctly: there is no
+    // identity, so there is no page to degrade INTO. The four below are
+    // different: each renders a panel that means something on its own.
+    //
     // FOUR PANELS THAT RENDER INDEPENDENTLY MUST FAIL INDEPENDENTLY (#236).
     //
     // This was one `Promise.all` with no `catch`, and there is no `error.tsx`

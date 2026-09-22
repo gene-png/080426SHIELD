@@ -107,10 +107,14 @@ describe("SignUpForm — open self-registration (D-034)", () => {
     fill();
     clickCreate();
 
-    // Something is said...
-    expect(
-      await screen.findByText(/double-check your name/i),
-    ).toBeInTheDocument();
+    // Something is said, and it is the RIGHT something: a 429 whose body is
+    // unusable is still a throttle. This asserted the input-advice copy
+    // ("double-check your name ... then try again") until the adversarial
+    // review pointed out that it pins the violation -- advice to retry now
+    // re-trips the limiter, and it blames the user's input for an error that
+    // is not about their input.
+    expect(await screen.findByText(/too many attempts/i)).toBeInTheDocument();
+    expect(screen.queryByText(/double-check your name/i)).toBeNull();
     // ...and the user can try again, which is the half that was broken.
     await waitFor(() =>
       expect(
