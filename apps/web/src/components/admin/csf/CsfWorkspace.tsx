@@ -39,6 +39,7 @@ import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
+import { serverReason } from "@/lib/describe-save-error";
 
 import { CsfDeliverableCard } from "./CsfDeliverableCard";
 import { CsfGapList } from "./CsfGapList";
@@ -163,23 +164,59 @@ export function CsfWorkspace({
 
   const refreshScoreAndGap = React.useCallback(
     async (currentTarget: number) => {
-      const scoreGapAttempt = beginRefresh("score-gap");
-      try {
-        const [s, g] = await Promise.all([
-          fetchScore(serviceId),
-          fetchGapAnalysis(serviceId, { targetTier: currentTarget }),
-        ]);
-        setScore(s);
-        setGap(g);
-        scoreGapAttempt.clear();
-      } catch {
-        // NON-BLOCKING IS NOT THE SAME AS SILENT. The old comment here said
-        // "the score/gap panels show their own loading state" -- true, and the
-        // reason the defect survived: that state is indistinguishable from a
-        // slow network, so a consultant watching a permanently-spinning score
-        // card cannot tell in-flight from failed from never-attempted.
-        scoreGapAttempt.note(
-          "Couldn't refresh the score and gap panels. The figures shown may be out of date; reload to try again.",
+      // ONE SOURCE KEY PER PANEL, minted before any await.
+      //
+      // NON-BLOCKING IS NOT THE SAME AS SILENT (#292): a panel's own loading
+      // state cannot be told apart from a slow network, so a failure is
+      // recorded rather than swallowed. That half is settled.
+      //
+      // What is new here is that the two fetches are no longer COUPLED (#185).
+      // They ran under one `Promise.all` keyed on one source, so a gap
+      // rejection discarded the score's GOOD RESULT -- and the score does not
+      // depend on the target at all. `allSettled` gives each outcome its own
+      // branch; two keys let one panel clear while the other reports.
+      //
+      // The mint-before-await rule is `useRefreshFailures`' own: a token minted
+      // below an await is ordered by when that await RESOLVED, which inverts
+      // the guard. Both are minted here, above `allSettled`.
+      const scoreAttempt = beginRefresh("score");
+      const gapAttempt = beginRefresh("gap");
+      const [scoreOutcome, gapOutcome] = await Promise.allSettled([
+        fetchScore(serviceId),
+        fetchGapAnalysis(serviceId, { targetTier: currentTarget }),
+      ]);
+
+      if (scoreOutcome.status === "fulfilled") {
+        setScore(scoreOutcome.value);
+        scoreAttempt.clear();
+      } else {
+        scoreAttempt.note(
+          serverReason(scoreOutcome.reason) ??
+            "Couldn't refresh the score panel. The figures shown may be out of date; reload to try again.",
+        );
+      }
+
+      // THE SERVER'S OWN SENTENCE WHERE THERE IS ONE. `/gap-analysis` answers
+      // a typed 422 for an out-of-range target -- "CSF 2.0 has tiers 1-4;
+      // target_tier=9 is not one of them." -- and that precision (#125) was
+      // being replaced by a fixed generic, so the consultant was told the
+      // panel was stale without being told the one thing that would fix it.
+      //
+      // `serverReason` never returns `err.message`: the proxy class discards
+      // its reason into `CSF proxy <status>` and keeps the real payload, so
+      // reading the envelope is the only way to get client-usable copy.
+      //
+      // A schema-level 422 would ride the internal "Request validation
+      // failed." here, and this route deliberately does NOT use
+      // `Query(ge=, le=)` bounds -- it refuses with a typed reason instead --
+      // so an integer from the tier picker cannot produce one.
+      if (gapOutcome.status === "fulfilled") {
+        setGap(gapOutcome.value);
+        gapAttempt.clear();
+      } else {
+        gapAttempt.note(
+          serverReason(gapOutcome.reason) ??
+            "Couldn't refresh the gap panel. The figures shown may be out of date; reload to try again.",
         );
       }
     },

@@ -270,7 +270,15 @@ describe("CsfWorkspace supplementary-fetch failures (#292)", () => {
     render(<CsfWorkspace serviceId="svc-1" serviceTitle="Atlas CSF" />);
 
     const note = await screen.findByTestId("csf-refresh-error");
-    expect(note.textContent).toMatch(/score and gap/i);
+    // WORDING UPDATED BY #185, INTENT UNCHANGED. This read `/score and gap/i`,
+    // matching the single coupled sentence the one `Promise.all` produced.
+    // The two fetches now report separately, so both panels are named on their
+    // own lines and that exact phrase no longer exists. Asserting both names is
+    // strictly stronger than the phrase it replaces -- it would catch a
+    // regression that dropped either panel from the banner, which the old
+    // single-phrase match could not.
+    expect(note.textContent).toMatch(/score/i);
+    expect(note.textContent).toMatch(/gap/i);
     // Names what the consultant should distrust, not just that something broke.
     expect(note.textContent).toMatch(/out of date/i);
   });
@@ -436,5 +444,126 @@ describe("CsfWorkspace supplementary-fetch failures (#292)", () => {
       expect(csfClient.fetchLatestDeliverable).toHaveBeenCalled(),
     );
     expect(screen.queryByTestId("csf-refresh-error")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #185 -- the two fetches were COUPLED and the typed reason was DISCARDED.
+//
+// Distinct from #292 above, which is why these are their own block. #292 made
+// a failure distinguishable from a load, and that half is fixed and stays
+// fixed. What it did not change is that `refreshScoreAndGap` ran both fetches
+// under one `Promise.all` keyed on one source, so:
+//
+//   1. one rejection discarded the OTHER call's good result -- a gap failure
+//      blanked the score panel, which does not depend on the target at all;
+//   2. the recorded sentence was a fixed generic, so the precision #125 added
+//      to the API -- "CSF 2.0 has tiers 1-4; target_tier=9 is not one of
+//      them." -- never reached the screen.
+//
+// Both assertions below are RED on `Promise.all` + the generic sentence and
+// green on `allSettled` + `serverReason`. Neither passes by accident: the old
+// message contains the word "score", so the negative in the first test fails
+// against it, and the old code has no path that can emit the server's text.
+// ---------------------------------------------------------------------------
+
+/**
+ * A rejection shaped like the one `lib/csf/client.ts` actually throws.
+ *
+ * Copied off the PRODUCER, not written to suit the reader: `routes/csf.py`
+ * raises `HTTPException(422, detail={"reason": ..., "message": ...})` and
+ * `_handle_http_exception` rewraps it as `{error: {...}}`. The class discards
+ * the reason into its own `message` -- `super(\`CSF proxy ${status}\`)` -- and
+ * keeps the real thing on `payload`. A fixture carrying the sentence in
+ * `message` would agree with a broken implementation by construction.
+ */
+function typedRefusal(status: number, reason: string, message: string): Error {
+  const err = new Error(`CSF proxy ${status}`) as Error & {
+    status: number;
+    payload: unknown;
+  };
+  err.status = status;
+  err.payload = {
+    error: { code: status, correlation_id: "c-185", reason, message },
+  };
+  return err;
+}
+
+describe("CsfWorkspace score/gap are refreshed independently (#185)", () => {
+  // THE FIRST DRAFT OF THE DECOUPLING TEST ASSERTED THE WRONG THING and is
+  // recorded rather than quietly swapped. It paired `toMatch(/gap/i)` with
+  // `not.toMatch(/score/i)` on the SAME render -- but when the refusal is
+  // typed, the gap's line IS the server's sentence ("CSF 2.0 has tiers
+  // 1-4..."), which contains neither word. The positive was written against
+  // the generic fallback and the negative against the coupled message, so one
+  // of the two could not hold whichever way the code behaved.
+  //
+  // Split by what each test is FOR: decoupling is exercised with an untyped
+  // failure, where the fallback names its own panel and the words are the
+  // observable; the typed sentence gets its own test; and the third pins the
+  // OTHER direction, because a fix that special-cased the gap would pass both
+  // of the first two.
+
+  it("keeps the score when only the gap fetch fails, and blames the gap alone", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchInterviewQuestionnaire.mockResolvedValue(null);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    // The score SUCCEEDS. Under `Promise.all` its result is thrown away with
+    // the gap's rejection and the consultant loses a panel that was fine.
+    fetchScore.mockResolvedValue(SCORE);
+    fetchGapAnalysis.mockRejectedValue(new TypeError("fetch failed"));
+
+    render(<CsfWorkspace serviceId="svc-185a" serviceTitle="Atlas CSF" />);
+
+    const note = await screen.findByTestId("csf-refresh-error");
+    expect(note.textContent).toMatch(/gap/i);
+    // THE DECOUPLING. The old single message read "Couldn't refresh the score
+    // and gap panels", so this is the line that goes red on a revert to
+    // `Promise.all`. Safe as a negative because the positive above has already
+    // settled the banner.
+    expect(note.textContent).not.toMatch(/score/i);
+    // And the caught value's own text is never copy.
+    expect(note.textContent).not.toContain("fetch failed");
+  });
+
+  it("puts the server's own sentence on screen, not a fixed generic", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchInterviewQuestionnaire.mockResolvedValue(null);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchScore.mockResolvedValue(SCORE);
+    fetchGapAnalysis.mockRejectedValue(
+      typedRefusal(
+        422,
+        "target_tier_out_of_range",
+        "CSF 2.0 has tiers 1-4; target_tier=9 is not one of them.",
+      ),
+    );
+
+    render(<CsfWorkspace serviceId="svc-185b" serviceTitle="Atlas CSF" />);
+
+    const note = await screen.findByTestId("csf-refresh-error");
+    expect(note.textContent).toContain(
+      "CSF 2.0 has tiers 1-4; target_tier=9 is not one of them.",
+    );
+    // Never the internal label the proxy class puts in `.message`.
+    expect(note.textContent).not.toContain("CSF proxy");
+  });
+
+  it("blames the score alone when only the score fetch fails", async () => {
+    // THE OTHER DIRECTION. Without it, a fix that gave only the gap its own
+    // branch would pass both tests above while the score still dragged the
+    // gap down with it.
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchInterviewQuestionnaire.mockResolvedValue(null);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchScore.mockRejectedValue(new TypeError("fetch failed"));
+    fetchGapAnalysis.mockResolvedValue(GAP);
+
+    render(<CsfWorkspace serviceId="svc-185c" serviceTitle="Atlas CSF" />);
+
+    const note = await screen.findByTestId("csf-refresh-error");
+    expect(note.textContent).toMatch(/score/i);
+    expect(note.textContent).not.toMatch(/gap/i);
+    expect(note.textContent).toMatch(/out of date/i);
   });
 });
