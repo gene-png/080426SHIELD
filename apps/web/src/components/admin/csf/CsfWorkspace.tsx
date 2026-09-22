@@ -163,7 +163,39 @@ export function CsfWorkspace({
   const [busy, setBusy] = React.useState<
     "create" | "approve" | "discard" | null
   >(null);
+  /**
+   * THE TARGET THE CONTROL SHOWS IS DERIVED, NOT REMEMBERED (#385).
+   *
+   * The ZT twin, `ZtWorkspace`, carries the reasoning and the truth table in
+   * full. In brief: remembering the control's previous value and writing it
+   * back on failure is a synchronization, and it reintroduced #385 -- the
+   * remembered value is the LABEL's, so it can name a tier no rows were ever
+   * fetched for. `shownTier` is computed instead.
+   */
   const [targetTier, setTargetTier] = React.useState(3);
+  const [pendingTarget, setPendingTarget] = React.useState<number | null>(null);
+
+  // Separate from the `"gap"` refresh token on purpose: that token orders gap
+  // WRITES and can be taken by a `refreshScoreAndGap` carrying an older tier.
+  const targetReqSeq = React.useRef(0);
+
+  /** What the picker shows: a pure function of `(pendingTarget, gap)`. */
+  const shownTier = pendingTarget ?? gap?.target_tier ?? targetTier;
+
+  /**
+   * The live `shownTier`, for callers that read it after an await --
+   * `onAnswerUpdate` closes over the tier from the render its edit began in.
+   *
+   * An effect rather than a render-time assignment because
+   * `react-hooks/refs` rejects the latter and `pnpm -F web lint` is a CI
+   * gate, so this lags by one commit. The ZT twin states what that window can
+   * and cannot cost; in short it cannot produce a mislabel, because the label
+   * comes from `shownTier`, which is computed at render.
+   */
+  const shownTierRef = React.useRef(shownTier);
+  React.useEffect(() => {
+    shownTierRef.current = shownTier;
+  }, [shownTier]);
   const [interviewByCode, setInterviewByCode] = React.useState<
     Record<string, CsfInterviewQuestion[]>
   >({});
@@ -371,7 +403,7 @@ export function CsfWorkspace({
         };
       });
       // Re-fetch derived data; cheap.
-      await refreshScoreAndGap(targetTier);
+      await refreshScoreAndGap(shownTierRef.current);
     } catch (err) {
       setLoadError(describeError(err));
       // Roll back by re-fetching authoritative answers, guarded so a newer
@@ -428,44 +460,53 @@ export function CsfWorkspace({
   /**
    * THE LABEL FOLLOWS THE DATA. THE DATA IS NEVER RELABELLED (#385).
    *
-   * The ZT twin, `ZtWorkspace.onChangeTargetStage`, carries the full
-   * reasoning and is the file to read. In brief: this handler used to set the
-   * label first and await the gap fetch with no catch, so a rejection left
-   * the PREVIOUS target's rows on screen under the NEW target's heading. The
-   * card's job is to show gap rows for a target, so on a failure the CONTROL
-   * reverts rather than the rows being relabelled.
+   * The ZT twin, `ZtWorkspace.onChangeTargetStage`, carries the truth table
+   * and the full reasoning; this is the same shape over tiers. The revert is
+   * `pendingTarget` being withdrawn, so `shownTier` falls back to the tier
+   * the rendered rows were computed for -- there is no revert statement that
+   * could name a different one.
+   *
+   * `"gap-target"` rather than `"gap"`: the shared key let an ordinary
+   * `refreshScoreAndGap` supersede this attempt and swallow both the revert
+   * and its message.
    *
    * Duplicated rather than shared, as the two workspaces' tests already are:
    * separate components, separate clients, separate copy, and a shared helper
    * would hide exactly the divergence the twin-sweep rule exists to catch.
-   *
-   * RESIDUAL (#423), the same one the ZT twin carries: `onAnswerUpdate` calls
-   * `refreshScoreAndGap(targetTier)` with the OPTIMISTIC new tier, so an
-   * auto-save landing inside this fetch's window supersedes the attempt
-   * below. If both gap fetches then fail the revert is skipped and the
-   * control sits on the new tier over the old tier's rows. It narrows #385
-   * rather than reintroducing it; the reasoning is written out in full at
-   * `ZtWorkspace.onChangeTargetStage`.
    */
   async function onChangeTargetTier(next: number): Promise<void> {
-    const previous = targetTier;
-    setTargetTier(next);
-    if (!assessment) return;
-    const attempt = beginRefresh("gap");
+    const mine = ++targetReqSeq.current;
+    setPendingTarget(next);
+    if (!assessment) {
+      setTargetTier(next);
+      setPendingTarget(null);
+      return;
+    }
+    const attempt = beginRefresh("gap-target");
     try {
       const g = await fetchGapAnalysis(serviceId, { targetTier: next });
-      if (attempt.superseded()) return; // a later target owns the rows
+      if (mine !== targetReqSeq.current) return; // a newer pick is being waited on
       setGap(g);
+      setTargetTier(next);
       attempt.clear();
     } catch (err) {
-      if (attempt.superseded()) return; // a later target owns the control
-      setTargetTier(previous);
+      // NO SEQUENCE CHECK HERE, and its absence is measured rather than
+      // assumed. A `mine !== targetReqSeq.current` return sat here and
+      // red-on-revert could not kill it: the only write in this branch is
+      // `attempt.note`, and `useRefreshFailures` already makes that a no-op
+      // once a later attempt on the same source has begun. An unpinned
+      // conditional that duplicates a guard one layer down is the shape this
+      // repo keeps finding, so it is deleted rather than left as decoration.
+      // The `finally` below DOES check, because `setPendingTarget` is state
+      // the token knows nothing about.
       const reason = serverReason(err);
       attempt.note(
         reason
-          ? `${reason} The target tier is unchanged.`
-          : "Couldn't load gap rows for that target tier, so the target tier is unchanged. Reload to try again.",
+          ? `${reason} The selector has gone back to the tier these gap rows were computed for; pick a tier again to retry.`
+          : "Couldn't load gap rows for that target tier. The selector has gone back to the tier these gap rows were computed for; pick a tier again to retry.",
       );
+    } finally {
+      if (mine === targetReqSeq.current) setPendingTarget(null);
     }
   }
 
@@ -691,7 +732,7 @@ export function CsfWorkspace({
           <CsfScoreCard score={score} />
           <CsfGapList
             analysis={gap}
-            targetTier={targetTier}
+            targetTier={shownTier}
             onChangeTargetTier={(t) => void onChangeTargetTier(t)}
           />
           <MessageThread serviceId={serviceId} />

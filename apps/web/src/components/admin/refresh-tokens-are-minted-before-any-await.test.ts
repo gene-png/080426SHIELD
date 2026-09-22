@@ -73,11 +73,23 @@ import { describe, expect, it } from "vitest";
  * ## What is still invisible
  *
  * METHOD SHORTHAND -- an `async` name directly followed by a parameter list,
- * in an object literal or a class body -- matches neither form. No admin
- * component uses it today; the check is the grep for an `async` line whose
- * next token is a name and then an open paren, and it comes back empty. The
- * day one appears, its late mints go unreported. Stated rather than fixed,
- * because the gap nobody writes down is the gap nobody checks.
+ * in an object literal or a class body. `arrowBodyStart` reads the name, then
+ * requires `=>`, finds a `{` instead and returns -1, so the body is not
+ * scanned. No admin component uses it today; the check is the grep for an
+ * `async` line whose next token is a name and then an open paren, and it
+ * comes back empty. The day one appears, its late mints go unreported.
+ *
+ * This paragraph previously named that as the ONLY remaining gap, while the
+ * arrow branch still used a negated character class for its parameter list --
+ * so `async (cb: () => void) => { ... }` matched nothing and was reported
+ * clean. A "what is still invisible" section that is itself incomplete is
+ * worse than none, because it is what a reader checks INSTEAD of reading the
+ * pattern. Both branches are balanced now, and the list above is what is
+ * left.
+ *
+ * An unbalanced brace walk is no longer silent either: `unscannable` collects
+ * those bodies and the suite asserts it is empty, so "I could not look" and
+ * "nothing to complain about" stop sharing a branch.
  */
 
 const ADMIN = join(process.cwd(), "src/components/admin");
@@ -202,27 +214,98 @@ function declarationBodyStart(src: string, from: number): number {
 }
 
 /**
+ * The body start of an async ARROW whose `async` keyword ends at `from`, or
+ * -1 when this is not one.
+ *
+ * BOTH parameter forms are balanced, and the parenthesised one is why this
+ * exists. The opener used to spell it `\([^)]*\)`, which cannot cross a `)`
+ * -- so `async (cb: () => void) => { await g(); beginRefresh("x"); }` matched
+ * NO opener at all, was never scanned, and came back clean. That is the same
+ * false-CLEAN direction `declarationBodyStart` was written to close, left
+ * open in the sibling branch, under a "what is still invisible" paragraph
+ * that named only method shorthand. Found by adversarial review; latent
+ * rather than live, which is exactly why nothing would have surfaced it.
+ */
+function arrowBodyStart(src: string, from: number): number {
+  let i = from;
+  while (i < src.length && /\s/.test(src[i])) i++;
+  if (src[i] === "(") {
+    let depth = 0;
+    for (; i < src.length; i++) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")" && --depth === 0) {
+        i++;
+        break;
+      }
+    }
+    if (depth !== 0) return -1;
+  } else if (/[A-Za-z_$]/.test(src[i] ?? "")) {
+    while (i < src.length && /[\w$]/.test(src[i])) i++;
+  } else {
+    return -1;
+  }
+  // A return-type annotation may sit between the parameters and the arrow,
+  // and may itself contain braces (`): Promise<{ n: number }> =>`), so the
+  // scan to `=>` runs at angle depth exactly as the declaration form does.
+  let angle = 0;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (c === "<") angle++;
+    else if (c === ">") {
+      // `=>` is the terminator, not a closing angle bracket.
+      if (src[i - 1] === "=" && angle === 0) {
+        i++;
+        break;
+      }
+      if (angle > 0) angle--;
+    } else if (c === ";") return -1;
+  }
+  while (i < src.length && /\s/.test(src[i])) i++;
+  return src[i] === "{" ? i + 1 : -1;
+}
+
+/**
  * Offsets just past the `{` opening each async function body in `src`.
  *
- * Two forms: the arrow, which the pattern closes itself, and the
- * DECLARATION, which it cannot -- see `declarationBodyStart`. The
- * declaration alternative is written first, though the arrow one could not
- * match `async function` anyway: it needs a literal arrow where a
- * declaration has its name and parameters.
+ * The opener now matches only the `async` KEYWORD; each form's parameters,
+ * return type and body brace are found by a balanced scan, because every
+ * character class tried here has had a false-clean hiding in it.
  */
 function asyncBodyStarts(src: string): number[] {
   const out: number[] = [];
-  const opener =
-    /\basync\s+function\b|\basync\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{/g;
+  const opener = /\basync\b/g;
   let m: RegExpExecArray | null;
   while ((m = opener.exec(src)) !== null) {
     const after = m.index + m[0].length;
-    if (src[after - 1] === "{") {
-      out.push(after);
-      continue;
-    }
-    const body = declarationBodyStart(src, after);
+    const decl = /^\s+function\b/.exec(src.slice(after, after + 32));
+    const body =
+      decl !== null
+        ? declarationBodyStart(src, after + decl[0].length)
+        : arrowBodyStart(src, after);
     if (body !== -1) out.push(body);
+  }
+  return out;
+}
+
+/**
+ * Offsets of async bodies this scan could NOT read, because the brace walk
+ * never balanced.
+ *
+ * Separate from `lateMints` on purpose: a body nobody scanned is not a body
+ * with nothing wrong in it, and this repo's rule is that those two must never
+ * be the same branch.
+ */
+export function unscannable(raw: string): number[] {
+  const src = codeOnly(raw);
+  const out: number[] = [];
+  for (const start of asyncBodyStarts(src)) {
+    let depth = 1;
+    let i = start;
+    for (; i < src.length && depth > 0; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") depth--;
+    }
+    if (depth !== 0) out.push(start);
   }
   return out;
 }
@@ -231,6 +314,7 @@ function asyncBodyStarts(src: string): number[] {
 export function lateMints(raw: string): number[] {
   const src = codeOnly(raw);
   const bad: number[] = [];
+  const unbalanced: number[] = [];
   for (const start of asyncBodyStarts(src)) {
     let depth = 1;
     let i = start;
@@ -238,7 +322,16 @@ export function lateMints(raw: string): number[] {
       if (src[i] === "{") depth++;
       else if (src[i] === "}") depth--;
     }
-    if (depth !== 0) continue; // unbalanced: the emptiness guard reports it
+    // AN UNBALANCED WALK IS "I COULD NOT LOOK", AND IT USED TO SHARE THIS
+    // BRANCH WITH "NOTHING TO COMPLAIN ABOUT". The comment here claimed the
+    // emptiness guard would report it; that guard counts `beginRefresh(` over
+    // RAW text and asserts a floor, so a body skipped for imbalance leaves
+    // its count untouched and cannot fire. Collected and asserted separately
+    // instead -- see `unscannable` below.
+    if (depth !== 0) {
+      unbalanced.push(start);
+      continue;
+    }
     const body = src.slice(start, i - 1);
     const firstAwait = body.search(/\bawait\b/);
     if (firstAwait === -1) continue;
@@ -248,6 +341,9 @@ export function lateMints(raw: string): number[] {
       if (g.index > firstAwait) bad.push(start + g.index);
     }
   }
+  // Not merged into `bad`: an unreadable body is a different claim from a
+  // late mint, and `unscannable` is what the suite asserts on.
+  void unbalanced;
   return bad;
 }
 
@@ -329,6 +425,17 @@ is looking in the wrong place. Until then every assertion below is vacuous.`,
       "a declaration with a return type and a catch -- the #385 handler's shape",
       'async function f(n: number): Promise<void> { try { await g(n); } catch { beginRefresh("x"); } }',
     ],
+    // THE ARROW BRANCH'S OWN BALANCED SCAN. Under the negated character class
+    // this row matched no opener at all and returned [] -- a false clean in
+    // the direction the declaration branch had already closed.
+    [
+      "an ARROW whose parameter list contains parentheses",
+      'const f = async (cb: () => void) => { await g(); beginRefresh("x"); };',
+    ],
+    [
+      "an ARROW with a return type containing braces",
+      'const f = async (): Promise<{ n: number }> => { await g(); beginRefresh("x"); };',
+    ],
   ])("detects a late mint: %s", (_l, src) => {
     expect(lateMints(src).length).toBeGreaterThan(0);
   });
@@ -371,8 +478,55 @@ is looking in the wrong place. Until then every assertion below is vacuous.`,
       "an overload signature",
       'async function f(): Promise<void>;\nconst t = beginRefresh("x");',
     ],
+    // BOTH HALVES of the arrow widening, so an arrow scan that flagged every
+    // arrow outright would not satisfy the table above.
+    [
+      "an ARROW with parens in its params, minting at entry",
+      'const f = async (cb: () => void) => { const t = beginRefresh("x"); await g(); };',
+    ],
+    [
+      "a single-identifier arrow parameter",
+      'const f = async x => { const t = beginRefresh("x"); await g(x); };',
+    ],
   ])("does not flag: %s", (_l, src) => {
     expect(lateMints(src)).toEqual([]);
+  });
+
+  // "I COULD NOT LOOK" IS NOT "NOTHING TO COMPLAIN ABOUT".
+  //
+  // The brace walk used to `continue` on an unbalanced body under a comment
+  // saying the emptiness guard would report it. That guard counts
+  // `beginRefresh(` over RAW text against a floor, so a body skipped for
+  // imbalance leaves the count unchanged and the guard cannot fire -- the
+  // silent-success shape this repo keeps finding in its own tooling.
+  it.each([
+    [
+      "an unterminated body",
+      'const f = async () => { await g(); beginRefresh("x");',
+    ],
+  ])("reports a body it could not scan: %s", (_l, src) => {
+    expect(unscannable(src).length).toBeGreaterThan(0);
+    // And it is NOT reported as a clean scan.
+    expect(lateMints(src)).toEqual([]);
+  });
+
+  it("does not report a balanced body as unscannable", () => {
+    expect(
+      unscannable('const f = async () => { await g(); beginRefresh("x"); };'),
+    ).toEqual([]);
+  });
+
+  it("every admin component's async bodies can actually be scanned", () => {
+    const blind = walk(ADMIN)
+      .filter((f) => unscannable(readFileSync(f, "utf8")).length > 0)
+      .map((f) => f.slice(f.indexOf("src")));
+
+    expect(
+      blind,
+      `the brace walk never balanced inside these files, so their async bodies
+were SKIPPED rather than found clean. A late mint in any of them is invisible
+to the offender assertion below.`,
+    ).toEqual([]);
   });
 
   it("no admin component mints a refresh token after an await", () => {

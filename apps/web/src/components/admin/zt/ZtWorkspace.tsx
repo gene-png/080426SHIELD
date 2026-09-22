@@ -199,7 +199,85 @@ export function ZtWorkspace({
   const [runResult, setRunResult] = React.useState<ZtRunAiResponse | null>(
     null,
   );
+  /**
+   * THE TARGET THE CONTROL SHOWS IS DERIVED, NOT REMEMBERED (#385).
+   *
+   * Three pieces, and only the third is ever rendered:
+   *
+   *   `targetStage`    the COMMITTED target -- what `initialLoad`, create and
+   *                    discard put here from the assessment. Never written by
+   *                    the picker's failure path, because that path has no
+   *                    value to write that is not already derivable.
+   *   `pendingTarget`  the picker request currently in flight, or null.
+   *   `shownTarget`    what the consultant sees, computed at render.
+   *
+   * The first version of this fix remembered the control's previous value and
+   * wrote it back on failure. That is a SYNCHRONIZATION, and it reintroduced
+   * the defect it was written to close: `previous` is the LABEL's last value,
+   * so at stage 2 a pick of 3 followed by a pick of 4 captures `previous = 3`
+   * -- and when 4 fails it reverts the control to 3 while the rows are still
+   * stage 2's, under a message asserting nothing changed. Three independent
+   * adversarial reviews found four distinct interleavings of that shape and
+   * all three proposed the same remedy, which is this one.
+   *
+   * `CLAUDE.md`: prefer a derivation over a synchronization. A derived value
+   * cannot be out of sync; a synchronized one merely is not, right now.
+   */
   const [targetStage, setTargetStage] = React.useState(3);
+  const [pendingTarget, setPendingTarget] = React.useState<number | null>(null);
+
+  // Monotonic per-PICKER-REQUEST sequence, deliberately separate from the
+  // `"gap"` refresh token. The refresh token orders GAP WRITES and can be
+  // taken by a `refreshScoreAndGap` carrying an OLDER target -- "newest
+  // token, stalest data" -- so it is the wrong thing to ask "is my request
+  // still the one the consultant is waiting for".
+  const targetReqSeq = React.useRef(0);
+
+  /**
+   * WHAT THE PICKER SHOWS. A pure function of `(pendingTarget, gap)`.
+   *
+   * With nothing pending this IS `gap.target_stage`, so the control cannot
+   * name a target the rows on screen were not computed for -- the #385
+   * invariant, held by construction rather than by a write that has to fire.
+   * A failed change "reverts" by `pendingTarget` being withdrawn; there is no
+   * revert statement to get wrong.
+   *
+   * `gap` before `targetStage` on purpose: once rows exist they are the truth
+   * about what is displayed, and the committed value is only the answer
+   * before the first fetch lands.
+   */
+  const shownTarget = pendingTarget ?? gap?.target_stage ?? targetStage;
+
+  /**
+   * The live `shownTarget`, for callers that read it AFTER an await.
+   *
+   * It exists because `onAnswerUpdate` and `onRunAi` both await before they
+   * call `refreshScoreAndGap`, so the target they closed over belongs to the
+   * render the ACTION began in. Refreshing that refetches the old target, and
+   * because the control is derived from the rows it drags the selector down
+   * with it -- silently undoing a selection made while the action was in
+   * flight.
+   *
+   * ## The window, named rather than implied
+   *
+   * Assigning this during render has NO window and is what the first version
+   * did. `react-hooks/refs` rejects it outright ("Cannot access refs during
+   * render") and `pnpm -F web lint` is a CI gate, so it is an effect instead
+   * and the value therefore lags by ONE COMMIT: the update that closes the
+   * gap is this effect, and the gap is the interval between React committing
+   * a new `shownTarget` and flushing passive effects.
+   *
+   * What that can cost is bounded and is NOT a mislabel: a refresh starting
+   * inside that interval fetches the target that was correct one commit ago,
+   * and the derivation then moves the label to match whatever rows arrive.
+   * The #385 invariant is held by `shownTarget` itself, which is computed at
+   * render and has no window at all; this ref only decides which target a
+   * background refresh asks for.
+   */
+  const shownTargetRef = React.useRef(shownTarget);
+  React.useEffect(() => {
+    shownTargetRef.current = shownTarget;
+  }, [shownTarget]);
 
   // Monotonic request sequence: only the newest assessment-producing operation
   // may write `assessment`. Without this, a slow mount-time load resolving
@@ -387,7 +465,7 @@ export function ZtWorkspace({
           answers: curr.answers.map((a) => (a.id === answerId ? next : a)),
         };
       });
-      await refreshScoreAndGap(targetStage);
+      await refreshScoreAndGap(shownTargetRef.current);
     } catch (err) {
       setLoadError(describeError(err));
       // Roll back by re-fetching, guarded so a newer edit still wins.
@@ -443,86 +521,94 @@ export function ZtWorkspace({
   /**
    * THE LABEL FOLLOWS THE DATA. THE DATA IS NEVER RELABELLED (#385).
    *
-   * This handler used to set the label first and then await the gap fetch
-   * with no catch at all. On a rejection the PREVIOUS target's rows stayed on
-   * screen under the NEW target's heading -- a number the consultant never
-   * asked for, presented as one they did, with nothing on screen saying so.
-   *
-   * The card's job is to show gap rows FOR A TARGET. If rows for the new
+   * This handler used to set the label and await the gap fetch with no catch,
+   * so a rejection left the PREVIOUS target's rows under the NEW target's
+   * heading. The ruling is that the CONTROL gives way: if rows for the new
    * target cannot be fetched, the honest screen is the old target with its
-   * own rows, so the CONTROL reverts. Marking the card stale was considered
-   * and REJECTED: it leaves the heading wrong, which is the defect rather
-   * than a disclosure of it.
+   * own rows. Marking the card stale was considered and REJECTED -- it leaves
+   * the heading wrong, which is the defect rather than a disclosure of it.
    *
-   * `CLAUDE.md`: prefer a derivation over a synchronization. Reverting makes
-   * the label follow the data instead of being kept in step with it.
+   * ## The truth table, written before this logic and not after it
    *
-   * ## Why the revert needs the token, and why it is the SAME source key
+   * `A` is this attempt, for `next`. `B` is any other gap write in flight --
+   * `refreshScoreAndGap(t_B)` from an answer edit, a Run-AI or a discard,
+   * where `t_B` is whatever THAT call site closed over and may be the OLD
+   * target with a NEWER token. Cells are (control, rows) at rest:
    *
-   * `beginRefresh("gap")` is minted above the await, per `useRefreshFailures`
-   * -- a token minted below one is ordered by when that await RESOLVED, which
-   * inverts the guard.
+   *   |                | B absent | B(next) ok | B(base) ok   | B fails |
+   *   | A succeeds     | next,next| next,next  | next,base *  | next,next|
+   *   | A fails        | base,base| next,next  | base,base    | base,base|
+   *   | A pending      | pending  | next,next  | pending,base | pending  |
    *
-   * `superseded()` is checked around `setGap` and `setTargetStage` because
-   * neither goes through the token. Without it, two quick changes 3 -> 4 -> 5
-   * where the 4 fetch fails after the 5 fetch succeeds would revert the
-   * control to 3 while the 5 rows are on screen -- the same mislabelling,
-   * arrived at from the other direction.
+   * and the two-picker sequences the first version of this fix got wrong:
    *
-   * The key is the gap panel's own, not a new one, so an ordinary
-   * `refreshScoreAndGap` that lands afterwards clears this message once the
-   * panel is fresh again. A second key would need clearing alongside it,
-   * which is the single-slot defect `useRefreshFailures` records.
+   *   base 2, pick 3 (slow), pick 4, 4 FAILS   -> must rest at (2, 2)
+   *   base 2, pick 3, pick 4, BOTH fail        -> must rest at (2, 2)
+   *   base 2, pick 3 (slow ok), pick 4 (ok)    -> must rest at (4, 4)
    *
-   * ## The reverting is not silent
+   * Every cell is satisfied by the derivation above rather than by a branch
+   * here, which is the point: `shownTarget` with nothing pending IS
+   * `gap.target_stage`, so no resting cell can disagree. The starred cell
+   * degrades to (base, base) -- a stale refresh moves the label WITH its
+   * rows, correct-but-stale instead of mislabelled.
    *
-   * A control that snaps back on its own reads as a misclick. The server's
-   * own sentence is preferred where there is one -- `/gap-analysis` answers a
-   * typed 422 naming the framework and the offending value -- and either way
-   * the message states that the target is unchanged, because that is the
-   * thing the consultant just watched happen.
+   * ## Why the gap token is not the guard
    *
-   * ## RESIDUAL, stated rather than left as an oversight (#423)
+   * `beginRefresh("gap")` orders GAP WRITES. It cannot answer "is my request
+   * still the one being waited on", because `refreshScoreAndGap` mints the
+   * same key for a different target. Gating the revert on it let an ordinary
+   * answer edit suppress both the revert and its message. So the picker gets
+   * `targetReqSeq` for its own ordering, and `"gap-target"` for its own
+   * message -- a source `refreshScoreAndGap` never mints, so it cannot be
+   * swallowed. It is self-clearing: the next picker attempt supersedes it.
    *
-   * Sharing the key has a cost, and it is the one case this handler does NOT
-   * fix. `onAnswerUpdate` ends with `refreshScoreAndGap(targetStage)`, and
-   * that `targetStage` is the OPTIMISTIC new value -- so an auto-save landing
-   * inside this fetch's window mints `"gap"` again and supersedes the attempt
-   * below. If BOTH gap fetches then fail, the revert is skipped and the
-   * control is left on the new target over the old target's rows, disclosed
-   * only as "the figures shown may be out of date".
+   * ## The copy claims only what the derivation guarantees
    *
-   * The guard is still right: when the concurrent refresh SUCCEEDS it has put
-   * the new target's rows on screen, and reverting then would be the mirror
-   * defect. "A later attempt owns this panel" and "a later attempt supplied
-   * the rows this revert was for" are different facts, and the token cannot
-   * tell them apart.
-   *
-   * This NARROWS #385 rather than reintroducing it -- before this change the
-   * picker never reverted at all. The closing move is to derive the heading
-   * from the gap actually rendered (`analysis.target_stage` is already on the
-   * wire) instead of keeping two pieces of state in step; that is wider than
-   * this fix's remit and is #423.
+   * It used to say "The target stage is unchanged", which the 2 -> 3 -> 4
+   * cell makes false. And its remedy was "Reload to try again" -- but
+   * `initialLoad` re-reads `client_target_stage`, so a reload retries the
+   * ASSESSMENT's target, never the one that failed (the D-076 shape: a
+   * user-facing string must name a control that works today). Picking the
+   * stage again does retry it.
    */
   async function onChangeTargetStage(next: number): Promise<void> {
-    const previous = targetStage;
-    setTargetStage(next);
-    if (!assessment) return;
-    const attempt = beginRefresh("gap");
+    const mine = ++targetReqSeq.current;
+    setPendingTarget(next);
+    if (!assessment) {
+      // No rows exist, so nothing can be mislabelled and nothing is fetched.
+      // The committed value is the only thing `shownTarget` can fall back to.
+      setTargetStage(next);
+      setPendingTarget(null);
+      return;
+    }
+    const attempt = beginRefresh("gap-target");
     try {
       const g = await fetchGapAnalysis(serviceId, { targetStage: next });
-      if (attempt.superseded()) return; // a later target owns the rows
+      if (mine !== targetReqSeq.current) return; // a newer pick is being waited on
       setGap(g);
+      setTargetStage(next);
       attempt.clear();
     } catch (err) {
-      if (attempt.superseded()) return; // a later target owns the control
-      setTargetStage(previous);
+      // NO SEQUENCE CHECK HERE, and its absence is measured rather than
+      // assumed. A `mine !== targetReqSeq.current` return sat here and
+      // red-on-revert could not kill it: the only write in this branch is
+      // `attempt.note`, and `useRefreshFailures` already makes that a no-op
+      // once a later attempt on the same source has begun. An unpinned
+      // conditional that duplicates a guard one layer down is the shape this
+      // repo keeps finding, so it is deleted rather than left as decoration.
+      // The `finally` below DOES check, because `setPendingTarget` is state
+      // the token knows nothing about.
       const reason = serverReason(err);
       attempt.note(
         reason
-          ? `${reason} The target stage is unchanged.`
-          : "Couldn't load gap rows for that target stage, so the target stage is unchanged. Reload to try again.",
+          ? `${reason} The selector has gone back to the stage these gap rows were computed for; pick a stage again to retry.`
+          : "Couldn't load gap rows for that target stage. The selector has gone back to the stage these gap rows were computed for; pick a stage again to retry.",
       );
+    } finally {
+      // WITHDRAWING THE PENDING VALUE *IS* THE REVERT. `shownTarget` falls
+      // back to the rows' own target the moment this clears, on the success
+      // path too (where `setGap` has already made them agree).
+      if (mine === targetReqSeq.current) setPendingTarget(null);
     }
   }
 
@@ -544,7 +630,7 @@ export function ZtWorkspace({
       // guarded so a concurrent edit that started meanwhile still wins.
       const a = await fetchLatestAssessment(serviceId);
       if (seq === assessmentSeq.current) setAssessment(a);
-      await refreshScoreAndGap(targetStage);
+      await refreshScoreAndGap(shownTargetRef.current);
     } catch (err) {
       setLoadError(describeError(err));
     } finally {
@@ -853,7 +939,7 @@ export function ZtWorkspace({
           <ZtScoreCard score={score} />
           <ZtGapList
             analysis={gap}
-            targetStage={targetStage}
+            targetStage={shownTarget}
             onChangeTargetStage={(s) => void onChangeTargetStage(s)}
             stages={catalog.stages}
           />

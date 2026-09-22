@@ -14,19 +14,18 @@ import type {
 import { CsfWorkspace } from "./CsfWorkspace";
 
 /**
- * #385 -- A FAILED GAP FETCH REVERTS THE CONTROL. The label follows the data;
- * the data is never relabelled.
+ * #385 -- THE CONTROL SHOWS THE TARGET ITS ROWS WERE COMPUTED FOR.
  *
  * The ZT twin, `zt/ZtWorkspace.target-revert.test.tsx`, carries the reasoning
- * in full. In brief: `onChangeTargetTier` set the label first and awaited the
- * gap fetch with no catch, so a rejection left the PREVIOUS target's rows on
- * screen under the NEW target's heading.
+ * and the truth table these cells come from. In brief: the first fix
+ * REMEMBERED the control's previous value and wrote it back on failure, which
+ * names a tier no rows were ever fetched for; the control is now derived from
+ * the rendered rows instead.
  *
  * Separate from `CsfWorkspace.test.tsx` because that file stubs `CsfGapList`
  * to null, and the control under test -- a `<select>` labelled "Target tier"
- * -- lives inside it. Driving the surface is the point: a test that imported
- * the handler would prove a variable reverts and say nothing about the
- * screen.
+ * -- lives inside it. That select is CONTROLLED, so `toHaveValue(...)` can
+ * only pass if the derivation produced the value.
  */
 
 vi.mock("@/lib/csf/client", () => ({
@@ -51,7 +50,24 @@ vi.mock("@/lib/stages/client", () => ({
 vi.mock("./CsfScoreCard", () => ({ CsfScoreCard: () => null }));
 vi.mock("./CsfPlaybookPanel", () => ({ CsfPlaybookPanel: () => null }));
 vi.mock("./CsfDeliverableCard", () => ({ CsfDeliverableCard: () => null }));
-vi.mock("./CsfQuestionnaire", () => ({ CsfQuestionnaire: () => null }));
+// NOT `() => null`. CSF has no Run-AI control to drive `refreshScoreAndGap`
+// from, so the questionnaire stub exposes the REAL `onAnswerUpdate` prop
+// behind a button. That is the surface a consultant uses to trigger a
+// refresh, and the invariant test below needs one.
+vi.mock("./CsfQuestionnaire", () => ({
+  CsfQuestionnaire: ({
+    onAnswerUpdate,
+  }: {
+    onAnswerUpdate: (id: string, patch: unknown) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => onAnswerUpdate("answer-1", { maturity_tier: 2 })}
+    >
+      edit an answer
+    </button>
+  ),
+}));
 vi.mock("@/components/messages/MessageThread", () => ({
   MessageThread: () => null,
 }));
@@ -71,7 +87,7 @@ const fetchGapAnalysis = vi.mocked(csfClient.fetchGapAnalysis);
 const CATALOG = {} as unknown as CsfCatalog;
 const SCORE = {} as unknown as CsfScoreSummary;
 
-/** The tier a row's name carries is what makes label-versus-data readable. */
+/** Rows that NAME their own target, so a disagreeing cell is visible. */
 function gapAt(tier: number): GapAnalysis {
   return {
     assessment_id: "csf-assess-385",
@@ -128,15 +144,36 @@ function typedRefusal(status: number, reason: string, message: string): Error {
   return err;
 }
 
+/**
+ * A promise the test settles by hand, with a TAP proving it propagated.
+ * Without it, an end state equal to the state BEFORE the settle passes even
+ * when the settle never reached the component (adversarial finding 4b).
+ */
+function deferredGap(): {
+  promise: Promise<GapAnalysis>;
+  settled: Promise<string>;
+  resolve: (g: GapAnalysis) => void;
+  reject: (e: unknown) => void;
+} {
+  let resolve!: (g: GapAnalysis) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<GapAnalysis>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  const settled = promise.then(
+    () => "resolved",
+    () => "rejected",
+  );
+  return { promise, settled, resolve, reject };
+}
+
 function baseMocks(): void {
   fetchCatalog.mockResolvedValue(CATALOG);
   // A REAL SHAPE, not `{}`. The workspace derives its per-subcategory prompt
   // map from `questions`, and an empty object made that derivation throw --
-  // so an unrelated "interview" message appeared in the shared banner and the
-  // positive control below failed for a reason that had nothing to do with
-  // the target. The failure was useful: it is the same banner, so a fixture
-  // that quietly broke a sibling source would otherwise have weakened this
-  // file's one assertion that the banner stays EMPTY.
+  // putting an unrelated "interview" message in the SHARED banner, which is
+  // the element these tests assert is empty.
   fetchInterviewQuestionnaire.mockResolvedValue({
     framework_key: "csf_2_0",
     profile: null,
@@ -156,10 +193,16 @@ function picker(): HTMLSelectElement {
   return screen.getByLabelText("Target tier") as HTMLSelectElement;
 }
 
-describe("CsfWorkspace reverts the target tier when its gap fetch fails (#385)", () => {
+async function pick(value: string): Promise<void> {
+  await act(async () => {
+    fireEvent.change(picker(), { target: { value } });
+  });
+}
+
+describe("CsfWorkspace target tier is derived from the rows (#385)", () => {
   it("keeps the new target, and shows its rows, when the fetch succeeds", async () => {
-    // THE POSITIVE HALF. A handler that reverted unconditionally would
-    // satisfy every failure assertion below.
+    // THE POSITIVE HALF. A handler that never let the tier move would satisfy
+    // every failure cell below.
     baseMocks();
     fetchGapAnalysis.mockImplementation(async (_id, opts) =>
       gapAt(requestedTier(opts)),
@@ -168,9 +211,7 @@ describe("CsfWorkspace reverts the target tier when its gap fetch fails (#385)",
     renderWorkspace("svc-385-csf-ok");
 
     await screen.findByText("rows-computed-for-tier-2");
-    await act(async () => {
-      fireEvent.change(picker(), { target: { value: "4" } });
-    });
+    await pick("4");
 
     expect(picker()).toHaveValue("4");
     expect(screen.getByText("rows-computed-for-tier-4")).toBeInTheDocument();
@@ -178,9 +219,7 @@ describe("CsfWorkspace reverts the target tier when its gap fetch fails (#385)",
     expect(screen.queryByTestId("csf-refresh-error")).toBeNull();
   });
 
-  it("reverts the control to the target whose rows are still on screen", async () => {
-    // THE DEFECT, stated as the pairing it produced: tier 4 in the control,
-    // tier 2's rows underneath it, and nothing saying so.
+  it("falls back to the rows' own target when the fetch fails", async () => {
     baseMocks();
     fetchGapAnalysis.mockImplementation(async (_id, opts) => {
       if (requestedTier(opts) === 4) throw new TypeError("fetch failed");
@@ -190,22 +229,110 @@ describe("CsfWorkspace reverts the target tier when its gap fetch fails (#385)",
     renderWorkspace("svc-385-csf-revert");
 
     await screen.findByText("rows-computed-for-tier-2");
-    await act(async () => {
-      fireEvent.change(picker(), { target: { value: "4" } });
-    });
+    await pick("4");
 
-    // ASSERT WHAT MUST APPEAR BEFORE WHAT MUST NOT.
     const note = await screen.findByTestId("csf-refresh-error");
 
     expect(picker()).toHaveValue("2");
     expect(screen.getByText("rows-computed-for-tier-2")).toBeInTheDocument();
     expect(screen.queryByText("rows-computed-for-tier-4")).toBeNull();
 
-    expect(note.textContent).toMatch(/unchanged/i);
+    expect(note.textContent).toMatch(/gone back to the tier/i);
+    expect(note.textContent).toMatch(/pick a tier again/i);
+    expect(note.textContent).not.toMatch(/unchanged/i);
+    expect(note.textContent).not.toMatch(/reload/i);
     expect(note.textContent).not.toContain("fetch failed");
   });
 
-  it("puts the server's own refusal on screen beside the revert", async () => {
+  it("reverts to the ROWS' target, not to the control's previous value", async () => {
+    // THE CELL THE FIRST FIX FAILED. 2 -> pick 3 (slow) -> pick 4 -> 4 fails.
+    // A remembered `previous` is 3, a tier whose rows were never rendered.
+    baseMocks();
+    const slow3 = deferredGap();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) => {
+      const t = requestedTier(opts);
+      if (t === 3) return slow3.promise;
+      if (t === 4) throw new TypeError("fetch failed");
+      return gapAt(t);
+    });
+
+    renderWorkspace("svc-385-csf-two-picks");
+
+    await screen.findByText("rows-computed-for-tier-2");
+    await pick("3");
+    await pick("4");
+
+    const note = await screen.findByTestId("csf-refresh-error");
+
+    expect(picker()).toHaveValue("2");
+    expect(screen.getByText("rows-computed-for-tier-2")).toBeInTheDocument();
+    expect(note.textContent).toMatch(/gone back to the tier/i);
+
+    await act(async () => {
+      slow3.resolve(gapAt(3));
+      expect(await slow3.settled).toBe("resolved");
+    });
+    expect(picker()).toHaveValue("2");
+    expect(screen.queryByText("rows-computed-for-tier-3")).toBeNull();
+  });
+
+  it("does not land a superseded attempt's rows when that attempt SUCCEEDS", async () => {
+    // THE SUCCESS-SIDE GUARD (adversarial finding 4a): the previous version
+    // only ever REJECTED the superseded promise, so the guard above `setGap`
+    // was deletable with the suite green.
+    baseMocks();
+    const slow3 = deferredGap();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) => {
+      const t = requestedTier(opts);
+      if (t === 3) return slow3.promise;
+      return gapAt(t);
+    });
+
+    renderWorkspace("svc-385-csf-superseded-success");
+
+    await screen.findByText("rows-computed-for-tier-2");
+    await pick("3");
+    await pick("4");
+    await screen.findByText("rows-computed-for-tier-4");
+
+    await act(async () => {
+      slow3.resolve(gapAt(3));
+      expect(await slow3.settled).toBe("resolved");
+    });
+
+    expect(picker()).toHaveValue("4");
+    expect(screen.getByText("rows-computed-for-tier-4")).toBeInTheDocument();
+    expect(screen.queryByText("rows-computed-for-tier-3")).toBeNull();
+    expect(screen.queryByTestId("csf-refresh-error")).toBeNull();
+  });
+
+  it("does not revert past a later change that already succeeded", async () => {
+    baseMocks();
+    const slow3 = deferredGap();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) => {
+      const t = requestedTier(opts);
+      if (t === 3) return slow3.promise;
+      return gapAt(t);
+    });
+
+    renderWorkspace("svc-385-csf-superseded");
+
+    await screen.findByText("rows-computed-for-tier-2");
+    await pick("3");
+    await pick("4");
+    await screen.findByText("rows-computed-for-tier-4");
+
+    await act(async () => {
+      slow3.reject(new TypeError("fetch failed"));
+      expect(await slow3.settled).toBe("rejected");
+    });
+
+    expect(picker()).toHaveValue("4");
+    expect(screen.getByText("rows-computed-for-tier-4")).toBeInTheDocument();
+    expect(screen.queryByTestId("csf-refresh-error")).toBeNull();
+  });
+
+  it("puts the server's own refusal on screen beside the fallback", async () => {
     baseMocks();
     fetchGapAnalysis.mockImplementation(async (_id, opts) => {
       if (requestedTier(opts) === 4) {
@@ -221,54 +348,104 @@ describe("CsfWorkspace reverts the target tier when its gap fetch fails (#385)",
     renderWorkspace("svc-385-csf-typed");
 
     await screen.findByText("rows-computed-for-tier-2");
-    await act(async () => {
-      fireEvent.change(picker(), { target: { value: "4" } });
-    });
+    await pick("4");
 
     const note = await screen.findByTestId("csf-refresh-error");
     expect(note.textContent).toContain(
       "target_tier=4 is not selectable for this assessment.",
     );
-    expect(note.textContent).toMatch(/unchanged/i);
+    expect(note.textContent).toMatch(/gone back to the tier/i);
     expect(note.textContent).not.toContain("CSF proxy");
     expect(picker()).toHaveValue("2");
   });
 
-  it("does not revert past a later change that already succeeded", async () => {
-    // 2 -> 3 (rejects LAST) -> 4 (resolves FIRST). The tier-3 attempt
-    // captured `previous = 2`; unguarded, its rejection pulls the control
-    // back to 2 under tier 4's rows. `attempt.superseded()` refuses it, and
-    // this test is the only thing pinning that check.
+  it("keeps the control on the rows' target when a stale refresh relabels them", async () => {
+    // THE CELL THAT MAKES `gap?.target_tier` LOAD-BEARING. Found by mutation,
+    // not by reading: deleting that term from the derivation left the whole
+    // suite green here even after the ZT twin had been pinned -- the twin
+    // sweep catching a half-fix in the fix for #385.
+    //
+    // `refreshScoreAndGap`'s success branch writes `setGap(...)` with no
+    // supersession guard (a pre-existing site), so a slow refresh can land
+    // rows for an older tier after a newer tier's rows are on screen.
+    // Deriving the control from the rows moves the LABEL WITH the data.
     baseMocks();
-    let reject3: (err: unknown) => void = () => {};
+    const stale2 = deferredGap();
+    let tier2Calls = 0;
     fetchGapAnalysis.mockImplementation(async (_id, opts) => {
-      if (requestedTier(opts) === 3) {
-        return new Promise<GapAnalysis>((_res, rej) => {
-          reject3 = rej;
-        });
+      const t = requestedTier(opts);
+      if (t === 2) {
+        tier2Calls += 1;
+        // The first tier-2 fetch is `initialLoad`'s and must land, or there
+        // are no rows to relabel. The second is the answer-edit refresh.
+        if (tier2Calls > 1) return stale2.promise;
       }
-      return gapAt(requestedTier(opts));
+      return gapAt(t);
     });
+    vi.mocked(csfClient.patchAnswer).mockResolvedValue(
+      {} as unknown as Awaited<ReturnType<typeof csfClient.patchAnswer>>,
+    );
 
-    renderWorkspace("svc-385-csf-superseded");
-
+    renderWorkspace("svc-385-csf-stale-refresh");
     await screen.findByText("rows-computed-for-tier-2");
+
     await act(async () => {
-      fireEvent.change(picker(), { target: { value: "3" } });
+      fireEvent.click(screen.getByRole("button", { name: "edit an answer" }));
     });
-    await act(async () => {
-      fireEvent.change(picker(), { target: { value: "4" } });
-    });
+    expect(tier2Calls).toBeGreaterThan(1);
+
+    await pick("4");
     await screen.findByText("rows-computed-for-tier-4");
 
     await act(async () => {
-      reject3(new TypeError("fetch failed"));
-      await Promise.resolve();
-      await Promise.resolve();
+      stale2.resolve(gapAt(2));
+      expect(await stale2.settled).toBe("resolved");
     });
 
+    // THE INVARIANT, as a relationship rather than two constants: whatever
+    // rows are on screen, the control names THEIR tier.
+    expect(screen.getByText("rows-computed-for-tier-2")).toBeInTheDocument();
+    expect(screen.queryByText("rows-computed-for-tier-4")).toBeNull();
+    expect(picker()).toHaveValue("2");
+  });
+
+  it("refreshes the target that is ON SCREEN, not the one its closure began with", async () => {
+    // WHAT `shownTierRef` IS FOR. `onAnswerUpdate` awaits `patchAnswer`
+    // before refreshing, so the tier it closed over belongs to the render the
+    // EDIT began in. The pick below is still pending when the edit lands, so
+    // the committed tier is 2 while the screen shows 4.
+    baseMocks();
+    const slow4 = deferredGap();
+    fetchGapAnalysis.mockImplementation(async (_id, opts) => {
+      const t = requestedTier(opts);
+      if (t === 4) return slow4.promise;
+      return gapAt(t);
+    });
+    vi.mocked(csfClient.patchAnswer).mockResolvedValue(
+      {} as unknown as Awaited<ReturnType<typeof csfClient.patchAnswer>>,
+    );
+
+    renderWorkspace("svc-385-csf-live-ref");
+    await screen.findByText("rows-computed-for-tier-2");
+
+    await pick("4");
     expect(picker()).toHaveValue("4");
-    expect(screen.getByText("rows-computed-for-tier-4")).toBeInTheDocument();
-    expect(screen.queryByTestId("csf-refresh-error")).toBeNull();
+
+    fetchGapAnalysis.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "edit an answer" }));
+    });
+
+    const refreshed = fetchGapAnalysis.mock.calls.map(([, opts]) =>
+      requestedTier(opts),
+    );
+    expect(refreshed.length).toBeGreaterThan(0);
+    expect(refreshed).not.toContain(2);
+    expect(refreshed).toContain(4);
+
+    await act(async () => {
+      slow4.resolve(gapAt(4));
+      expect(await slow4.settled).toBe("resolved");
+    });
   });
 });
