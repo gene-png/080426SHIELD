@@ -135,18 +135,26 @@ DISCLOSURE_SUBSTRINGS = ("withheld", "provenance")
 #: gone. Without that, the first person to render one of these gets no signal,
 #: the entry stays forever, and a future twin inherits an exemption written for
 #: a defect somebody already fixed.
-EXEMPT_FIELDS: dict[str, str] = {
-    "clients.py::ZtDashboardResponse.unusable_target_codes": (
-        "TEMPORARY, tracked in #387. The field this gate shipped BLIND to, and "
-        "the reason the attribution below is keyed on the model's subject "
-        "rather than on a path token. Nothing under `apps/web/src` mentions it; "
-        "the evidence that cleared it was `app/zt/exporters.py` reading the "
-        "identically-named field of the OTHER ZT model. Its own comment says it "
-        "exists so the client's screen does not disagree with the client's PDF, "
-        "so clearing it with the PDF is the one reading that cannot be right. "
-        "DELETE THIS when the ZT dashboard renders the codes."
-    ),
-}
+#: DISCHARGED by #387 -- and the discharge is NOT evidenced by this gate.
+#:
+#: `clients.py::ZtDashboardResponse.unusable_target_codes` is now rendered:
+#: `lib/dashboards/zt.ts::targetNote` appends the deliverable's own sentence,
+#: pinned by three tests in `zt.test.ts` including the empty case and the
+#: fully-overridden branch.
+#:
+#: WHAT THIS GATE CANNOT SEE, measured while removing the entry: with the field
+#: name deleted from `apps/web` ENTIRELY, this gate still reported 25 of 25. It
+#: attributes by the model's SERVICE token, and both ZT models carry `zt`, so
+#: `app/zt/exporters.py` reading `GapAnalysisResponse.unusable_target_codes`
+#: clears `ZtDashboardResponse.unusable_target_codes` as well. That is the
+#: identically-named-sibling blindness the deleted entry existed to document,
+#: and it is unchanged -- deleting the entry did not fix it, it only stopped
+#: this field being the one that shows it.
+#:
+#: So do not read a green here as proof the dashboard renders it. The evidence
+#: is the vitest suite. Tracked in #448; it is the same family as the
+#: prefix-anchored residual in #373.
+EXEMPT_FIELDS: dict[str, str] = {}
 
 #: Arm 2's exemption, DISCHARGED. It was temporary by construction and its
 #: condition has been met: PR #351 added the generic `details` renderer, so

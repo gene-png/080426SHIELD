@@ -56,6 +56,7 @@ describe("zt dashboard transforms", () => {
 function data(p: Partial<ZtDashboardData>): ZtDashboardData {
   return {
     service_id: "s",
+    unusable_target_codes: [],
     service_title: "Atlas — Zero Trust",
     released_at: "2026-09-06T00:00:00Z",
     deliverable_version: 1,
@@ -173,5 +174,57 @@ describe("zt target provenance", () => {
         }),
       ),
     ).toBe("Your target, chosen at intake");
+  });
+});
+
+describe("targetNote — a discarded per-capability target reaches the screen (#387)", () => {
+  /**
+   * `unusable_target_codes` has been served since #188 and rendered by nothing,
+   * while the client's PDF said it in `_gap_plan_caption`. A fact in the
+   * deliverable and absent from the screen is two surfaces reading one
+   * assessment and disagreeing.
+   */
+  it("names the rows whose per-capability target could not be used", () => {
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: ["CISA.ID.01", "CISA.DE.02"],
+      }),
+    );
+    // Both codes, NOT truncated: this is a fault disclosure, and abbreviating
+    // one is what #75/#79 were filed about.
+    expect(note).toContain("CISA.ID.01");
+    expect(note).toContain("CISA.DE.02");
+    expect(note).toContain("could not be used");
+  });
+
+  it("says nothing when every per-capability target was usable", () => {
+    // The other half. A fix that appends unconditionally passes the test above
+    // and puts a fault sentence on every ordinary engagement.
+    const note = targetNote(
+      data({
+        target_stage_source: "client",
+        engagement_target_capability_count: 3,
+        unusable_target_codes: [],
+      }),
+    );
+    expect(note).not.toContain("could not be used");
+    expect(note).toContain("Your target, chosen at intake");
+  });
+
+  it("appends it in the fully-overridden branch too, rather than returning early", () => {
+    // `engagement_target_capability_count === 0` returns early for the SUBJECT
+    // of the sentence. An earlier draft of this function swallowed
+    // `client_out_of_range` exactly that way; the disclosure must not go the
+    // same route.
+    const note = targetNote(
+      data({
+        target_stage_source: "default",
+        engagement_target_capability_count: 0,
+        unusable_target_codes: ["CISA.ID.01"],
+      }),
+    );
+    expect(note).toContain("CISA.ID.01");
   });
 });

@@ -64,6 +64,45 @@ computed against. Not implemented.
 
 ---
 
+## In flight — 2026-09-22, #387
+
+`fix/387-unusable-targets-on-screen`. ZT's `unusable_target_codes` reached the
+client's PDF and no screen; `targetNote` now appends the deliverable's own
+sentence on both returns. Trips merge-rule conditions **5** (web test globs) and
+**6** (client dashboard copy) — **Gene merges, not the agent.**
+
+The finding worth keeping is about the gate rather than the field:
+`check_disclosure_consumers.py` stayed green with the field name deleted from
+`apps/web` entirely, because it attributes a consumer by the model's SERVICE
+token and ZT has two models declaring that name. #372 fixed the cross-service
+pooled blob; **per-service is not per-model** is the residual. Filed as **#448**.
+The exemption was deleted and replaced with a comment stating that this gate's
+green is not the evidence for this field.
+
+Verification, commands rather than adjectives, all from the worktree at
+`C:/repos/SHIELD080326/wt-387`:
+
+    bash scripts/verify-in-worktree.sh tsc      -> 0 errors
+    bash scripts/verify-in-worktree.sh vitest   -> 697 passed, 60/60 files, 0 never collected
+    eslint .                                    -> exit 0, 3 warnings (the harness's own recorded baseline)
+    prettier@3.9.6 --check <repo glob>          -> exit 0
+    ruff check --no-cache . && black --check .  -> exit 0, 355 files unchanged
+
+**`scripts/verify-in-worktree.sh eslint` is BROKEN and exits 2**, on this branch
+and on `main` — it passes `--format unix`, which ESLint 9 core no longer ships
+("The unix formatter is no longer part of core ESLint"). It fails loudly, which
+is the right shape, but the eslint arm of the harness verifies nothing today.
+Tracked in #450.
+
+**And the MSYS rewrite reaches `docker run -v`'s DESTINATION, not just `-w`.**
+A `-v "$(pwd)/apps/api:/app"` without `MSYS_NO_PATHCONV=1` mounted nothing at
+`/app`; the container then ran against the **image's baked copy**, reported
+`80 files would be reformatted`, and exited non-zero for a tree that is clean.
+The live container said 355 unchanged for the same directory. The discriminator
+was the file count — 162 against 362 — not the verdict. `CLAUDE.md` records this
+mechanism for `-w /app`, where Docker refuses loudly; through `-v` it is silent
+and produces a plausible wrong answer.
+
 ## PICK UP HERE — 2026-09-21
 
 **Maintained by the agent since D-063; Gene owns it by review.** Every claim

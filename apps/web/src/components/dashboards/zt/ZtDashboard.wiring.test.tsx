@@ -38,9 +38,13 @@ const dodPillar = {
   weakest: [],
 };
 
-function dashboard(framework: string): ZtDashboardData {
+function dashboard(
+  framework: string,
+  unusable: string[] = [],
+): ZtDashboardData {
   return {
     service_id: "11111111-1111-4111-8111-111111111111",
+    unusable_target_codes: unusable,
     service_title: "Zero Trust Assessment",
     released_at: "2026-09-09T00:00:00Z",
     deliverable_version: 1,
@@ -51,7 +55,14 @@ function dashboard(framework: string): ZtDashboardData {
     target_label: "Advanced",
     target_pct: 70,
     target_stage: 2,
-    target_stage_source: "engagement",
+    // "client", not "engagement". `resolve_target_stage` returns exactly four
+    // values -- "client", "default", "client_out_of_range",
+    // "client_unparseable" -- so the previous fixture built a state no writer
+    // can produce, and `targetNote` rendered it through its unrecognised-value
+    // fallback ("Default target -- the stage on file was not usable"). Inert
+    // for the legend tests below, which read the axis and not the note; the
+    // disclosure tests read the note, so they need a reachable state.
+    target_stage_source: "client",
     engagement_target_capability_count: 4,
     total_gap_count: 1,
     largest_gap_pillar: "Device",
@@ -98,5 +109,52 @@ describe("ZtDashboard maturity legend (wiring)", () => {
     ]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
+  });
+});
+
+describe("ZtDashboard discarded-target disclosure (wiring)", () => {
+  /**
+   * #387 at the SAME SEAM, and added because the fix shipped without it.
+   *
+   * `targetNote` is a pure function with three tests of its own. `CLAUDE.md`
+   * is explicit that a pure function is not the surface a client reaches:
+   * delete `sub={targetNote(data)}` from `ZtDashboard.tsx`, or pass it a
+   * different object, and every one of those three stays green while the
+   * client sees nothing. That is the defect the legend tests above were
+   * written for, one card over.
+   */
+  const SENTENCE = /A per-capability target was recorded for/;
+
+  it("prints the discarded capabilities on the rendered card", () => {
+    render(
+      <ZtDashboard
+        data={dashboard("cisa_ztmm_2_0", ["CISA.ID.01", "CISA.ID.02"])}
+      />,
+    );
+    // The codes themselves, not just the lead-in: a sentence that named the
+    // fault and dropped the rows would satisfy a looser assertion and tell
+    // the client nothing actionable.
+    expect(screen.getByText(SENTENCE)).toHaveTextContent(
+      "CISA.ID.01, CISA.ID.02",
+    );
+  });
+
+  it("says nothing on a card with no discarded targets", () => {
+    // The negative control. Without it, a component that printed the sentence
+    // unconditionally would pass the case above.
+    render(<ZtDashboard data={dashboard("cisa_ztmm_2_0")} />);
+    // Assert what must APPEAR before what must not. A `queryByText` returning
+    // null is also what a card that threw, or never mounted, looks like --
+    // so pin the note that DOES belong on this card first, and only then the
+    // absence. Without this line the case passes over a dead render.
+    expect(screen.getByText("Your target, chosen at intake")).toBeVisible();
+    expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();
+  });
+
+  it("prints it under a DoD engagement too", () => {
+    // The disclosure is about rows, not about which ladder the engagement
+    // uses, so it must not ride on the framework branch.
+    render(<ZtDashboard data={dashboard("dod_ztra", ["DOD.DEV.02"])} />);
+    expect(screen.getByText(SENTENCE)).toHaveTextContent("DOD.DEV.02");
   });
 });

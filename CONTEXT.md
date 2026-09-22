@@ -320,6 +320,56 @@ an empty space), **#156** (ruff isort classifying `apps/api/scripts` by whether
 an unrelated top-level `scripts/` exists), **#143** (the pre-push hook's
 fail-open).
 
+### 2026-09-22 — a ZT fault disclosure the deliverable made and the screen did not (#387)
+
+`ZtDashboardResponse.unusable_target_codes` has been served on both return
+paths of `zt_dashboard` since #188 and was read by nothing under `apps/web`.
+The client's PDF said it: `zt/exporters.py::_gap_plan_caption` names the
+capabilities whose per-capability target could not be used. So the two surfaces
+reading one assessment disagreed about whether anything had been discarded, and
+the surface that stayed quiet is the one a client looks at first.
+
+`lib/dashboards/zt.ts::targetNote` now appends the deliverable's own sentence,
+worded the same way, on **both** returns rather than in place of either — a
+discarded per-capability target is a fact about specific rows and is
+independent of how the headline target was chosen, so an early return anywhere
+would swallow it. The codes are listed, never truncated or counted: this is a
+fault disclosure, and abbreviating one is what #75/#79 were filed about.
+
+**What the consumer gate could not tell us, and this is the durable half.**
+`check_disclosure_consumers.py` carried an exemption for this field. Removing
+it, the gate stayed green *with the field name deleted from `apps/web`
+entirely* — it attributes a consumer by the model's SERVICE token, and
+`app/zt/exporters.py` reading `GapAnalysisResponse.unusable_target_codes`
+clears the identically-named field of the OTHER ZT model. #372 fixed the
+pooled-blob defect across services; this is the residual one layer in, because
+**per-service is not per-model**. Filed as **#448**. The exemption is gone and
+the comment that replaced it says plainly that the gate's green is not the
+evidence here and the vitest suite is.
+
+Both halves of the new branch were mutated: forcing the disclosure off reddens
+the two tests named for it, and forcing it on reddens the empty case plus four
+existing provenance assertions. A test that only ever sees one side of a
+conditional is the shape this repo keeps finding.
+
+**The first draft shipped without a test at the seam, and the file that needed
+one already said so.** `targetNote` is a pure function; `CLAUDE.md` is explicit
+that a pure function is not the surface a client reaches. Replacing
+`sub={targetNote(data)}` in `ZtDashboard.tsx` with a constant left all three
+`targetNote` tests green while the client saw nothing — the same revert
+`ZtDashboard.wiring.test.tsx` was created for, on the card next to the one it
+already guards. Three rendering tests now cover it, and that mutation reddens
+two of them.
+
+Writing them turned up a second thing, in the fixture rather than the code.
+`ZtDashboard.wiring.test.tsx` set `target_stage_source: "engagement"`, and
+`resolve_target_stage` returns exactly four values — `client`, `default`,
+`client_out_of_range`, `client_unparseable`. No writer produces `engagement`,
+so the fixture built an unreachable state and `targetNote` rendered it through
+its unrecognised-value fallback. Inert for the legend tests, which read the
+axis and not the note; not inert for a test of the note. The fixture is now
+`client` with the reason written beside it.
+
 ### 2026-09-08 — the client dashboards labelled one record's numbers with another's (#114, D-073)
 
 Four client dashboards (ATT&CK, ZT, CSF, Tech Debt) and the four value-loop
