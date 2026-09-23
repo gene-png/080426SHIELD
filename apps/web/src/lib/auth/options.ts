@@ -22,7 +22,7 @@ import Keycloak from "next-auth/providers/keycloak";
 import { ApiError, apiFetch } from "@/lib/api";
 import { OIDC_EXCHANGE_ERROR, REAUTH_REQUIRED_ERROR } from "@/lib/auth/errors";
 import { isOidcEnabled, keycloakFetch } from "@/lib/auth/oidc";
-import { sessionEndsAt } from "@/lib/auth/session-cookie";
+import { sessionEndsAt, sessionHasEnded } from "@/lib/auth/session-cookie";
 
 interface LoginResponse {
   access_token: string | null;
@@ -369,11 +369,12 @@ export const authConfig: NextAuthConfig = {
       // warning counts down to (#498). The API checks the ceiling only on the
       // next refresh, up to one access-token lifetime later, and a lapsed
       // refresh token fails as a GENERIC error the guard does not act on; both
-      // are known here without calling the backend. The warning asks for this
-      // callback at its deadline (`update()`), so the guard signs the user out
-      // with the right reason instead of leaving them typing into 401s.
-      const endsAt = sessionEndsAt(token.refreshExpiresAt, token.reauthAt);
-      if (endsAt && Date.now() >= Date.parse(endsAt)) {
+      // are known here without calling the backend. The warning runs this
+      // callback (`update()`) once `/api/session-expiry` says the session has
+      // ended -- `sessionHasEnded`, this same rule on this same clock -- so the
+      // guard signs the user out with the right reason instead of leaving them
+      // typing into 401s. Running it any EARLIER would refresh the session.
+      if (sessionHasEnded(token.refreshExpiresAt, token.reauthAt)) {
         if (token.error !== REAUTH_REQUIRED_ERROR) {
           console.info("[auth] session end reached; ending the session");
         }

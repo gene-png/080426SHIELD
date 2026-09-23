@@ -36,5 +36,28 @@ describe("GET /api/session-expiry", () => {
       await GET(new Request("http://localhost/api/session-expiry"))
     ).json();
     expect(body.sessionExpiresAt).toBeNull();
+    expect(body.ended).toBe(false);
+  });
+
+  // `ended` is decided on THIS server's clock, the one the jwt callback uses,
+  // so the warning never has to trust the browser's (round 5 on #499).
+  it("says the session has ended once its end has passed on the server clock", async () => {
+    readSessionToken.mockResolvedValueOnce({
+      refreshExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const body = await (
+      await GET(new Request("http://localhost/api/session-expiry"))
+    ).json();
+    expect(body.ended).toBe(true);
+  });
+
+  it("says the session has NOT ended while its end is still ahead", async () => {
+    readSessionToken.mockResolvedValueOnce({
+      refreshExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const body = await (
+      await GET(new Request("http://localhost/api/session-expiry"))
+    ).json();
+    expect(body.ended).toBe(false);
   });
 });

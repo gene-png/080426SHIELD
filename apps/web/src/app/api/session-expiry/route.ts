@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { readSessionToken, sessionEndsAt } from "@/lib/auth/session-cookie";
+import {
+  readSessionToken,
+  sessionEndsAt,
+  sessionHasEnded,
+} from "@/lib/auth/session-cookie";
 
 /**
  * The stored session expiry, read WITHOUT running any auth callback (#498).
@@ -17,6 +21,12 @@ import { readSessionToken, sessionEndsAt } from "@/lib/auth/session-cookie";
  * default, `JWT_REFRESH_TTL_SECONDS`) is what idles a session out. So
  * this route only DECODES the cookie, and it is excluded from the middleware
  * matcher for the same reason. Polling it is not activity.
+ *
+ * `ended` is decided HERE, on the web server's clock -- the clock the `jwt`
+ * callback ends the session on. The warning runs `update()` only when this
+ * says ended, because `update()` on a session the server still considers
+ * alive REFRESHES it: a browser clock a few seconds fast would otherwise roll
+ * the idle deadline forward every time it arrived (round 5 on #499).
  */
 export const dynamic = "force-dynamic";
 
@@ -30,6 +40,7 @@ export async function GET(req: Request): Promise<Response> {
       // nothing reads one, and a decode-only read would not see a fresh one.
       sessionExpiresAt:
         sessionEndsAt(token?.refreshExpiresAt, token?.reauthAt) ?? null,
+      ended: sessionHasEnded(token?.refreshExpiresAt, token?.reauthAt),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

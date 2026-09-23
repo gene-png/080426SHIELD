@@ -55,14 +55,19 @@ tests; making `sessionChanged` always true fails the three that expect `false`.
   no backend call). Otherwise the API would notice only at the next refresh,
   up to one access-token lifetime later, after the warning had disappeared. Capping
   the refresh token's own `exp` at the ceiling was rejected: an expired token
-  never reaches the refresh endpoint's `auth_time` check, so the user would get
-  a generic error instead of the typed `reauth_required` sign-out
-  (`test_refresh_past_forced_reauth_returns_typed_401`).
+  never reaches the refresh endpoint's `auth_time` check, so an API client
+  would get a generic error instead of the typed `reauth_required` refusal
+  (`test_refresh_past_forced_reauth_returns_typed_401`). The web client now
+  ends a lapsed session itself before calling the backend, so for the web
+  alone that cost no longer applies; for any other API client it still does.
 - **The session ends at its end, whichever deadline that is.** The `jwt`
   callback's end check uses the same earlier-of rule as the warning, so a
-  lapsed refresh expiry also ends the session without a backend call. At the
-  deadline the warning calls `update()` once, so an open page learns the
-  session ended rather than sitting on a stale one until the next navigation.
+  lapsed refresh expiry also ends the session without a backend call. Past
+  its deadline the warning re-asks `/api/session-expiry` every 5 s, and calls
+  `update()` once only when that route says `ended`. That answer comes from
+  the web server's clock, which the `jwt` callback also uses. Calling
+  `update()` on the browser's clock alone refreshed an idle session whenever
+  the browser ran ahead of the server, so that tab never timed out.
 - **The OIDC path** seeds `reauthAt` from the exchange too, and a refresh
   response that omits `reauth_at` keeps the ceiling the token already had.
   Each wiring point is pinned by a named test in `options.test.ts` or

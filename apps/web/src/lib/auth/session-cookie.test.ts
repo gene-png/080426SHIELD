@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   sessionChanged,
   sessionEndsAt,
+  sessionHasEnded,
   stripSessionCookies,
 } from "./session-cookie";
 
@@ -92,5 +93,35 @@ describe("sessionEndsAt", () => {
   it("is undefined when neither is usable", () => {
     expect(sessionEndsAt(undefined, undefined)).toBeUndefined();
     expect(sessionEndsAt("not a date", undefined)).toBeUndefined();
+  });
+});
+
+describe("sessionHasEnded", () => {
+  const now = Date.parse("2026-09-23T12:00:00.000Z");
+
+  it("is true AT the end, not only after it", () => {
+    expect(sessionHasEnded("2026-09-23T12:00:00.000Z", undefined, now)).toBe(
+      true,
+    );
+  });
+
+  it("is false one millisecond before the end", () => {
+    expect(sessionHasEnded("2026-09-23T12:00:00.001Z", undefined, now)).toBe(
+      false,
+    );
+  });
+
+  it("ends at the EARLIER deadline", () => {
+    expect(
+      sessionHasEnded(
+        "2026-09-24T00:00:00.000Z",
+        "2026-09-23T11:59:59.000Z",
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("is false when the session states no end at all", () => {
+    expect(sessionHasEnded(undefined, undefined, now)).toBe(false);
   });
 });

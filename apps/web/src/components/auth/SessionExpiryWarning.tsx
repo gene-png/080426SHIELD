@@ -40,6 +40,16 @@ function minutesLabel(msRemaining: number): string {
 /** How often to re-read the stored expiry from `/api/session-expiry`. */
 const STORED_EXPIRY_POLL_MS = 60_000;
 
+/** How often to re-ask the server once the browser thinks the end has come. */
+const DEADLINE_RECHECK_MS = 5_000;
+
+/** What `/api/session-expiry` answered. */
+interface StoredExpiry {
+  sessionExpiresAt: string | null;
+  /** Decided on the SERVER's clock, the one the `jwt` callback ends it on. */
+  ended: boolean;
+}
+
 /**
  * The expiry stored in the session cookie, read without running any auth
  * callback (#498). The `useSession` cache refetches only on focus, and since
@@ -48,17 +58,26 @@ const STORED_EXPIRY_POLL_MS = 60_000;
  * `/api/auth/session` instead would refresh and extend the session, so a
  * polling tab would never idle out; `/api/session-expiry` only decodes.
  *
- * Returns null until the first successful read, or while every read has
+ * `stored` is null until the first successful read, or while every read has
  * failed; the caller then falls back to the cached value, which is the
  * behaviour before this existed. After a success, a failed read keeps the last
- * stored value.
+ * stored value. `recheck` reads again now.
  */
-function useStoredExpiry(enabled: boolean): string | null {
-  const [stored, setStored] = React.useState<string | null>(null);
+function useStoredExpiry(enabled: boolean): {
+  stored: StoredExpiry | null;
+  recheck: () => void;
+} {
+  const [stored, setStored] = React.useState<StoredExpiry | null>(null);
+  const live = React.useRef(true);
   React.useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    const read = async () => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+
+  const recheck = React.useCallback(() => {
+    void (async () => {
       try {
         const res = await fetch("/api/session-expiry", { cache: "no-store" });
         if (!res.ok) {
@@ -70,8 +89,16 @@ function useStoredExpiry(enabled: boolean): string | null {
           );
           return;
         }
-        const body = (await res.json()) as { sessionExpiresAt?: string | null };
-        if (!cancelled) setStored(body.sessionExpiresAt ?? null);
+        const body = (await res.json()) as {
+          sessionExpiresAt?: string | null;
+          ended?: boolean;
+        };
+        if (live.current) {
+          setStored({
+            sessionExpiresAt: body.sessionExpiresAt ?? null,
+            ended: body.ended === true,
+          });
+        }
       } catch (err) {
         // Stated, not swallowed: the warning falls back to the cached expiry.
         console.warn(
@@ -79,21 +106,25 @@ function useStoredExpiry(enabled: boolean): string | null {
           err,
         );
       }
-    };
-    void read();
-    const id = setInterval(() => void read(), STORED_EXPIRY_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [enabled]);
-  return stored;
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    if (!enabled) return;
+    recheck();
+    const id = setInterval(recheck, STORED_EXPIRY_POLL_MS);
+    return () => clearInterval(id);
+  }, [enabled, recheck]);
+
+  return { stored, recheck };
 }
 
 export function SessionExpiryWarning(): React.JSX.Element | null {
   const { data: session, update } = useSession();
-  const stored = useStoredExpiry(Boolean(session?.sessionExpiresAt));
-  const source = stored ?? session?.sessionExpiresAt;
+  const { stored, recheck } = useStoredExpiry(
+    Boolean(session?.sessionExpiresAt),
+  );
+  const source = stored?.sessionExpiresAt ?? session?.sessionExpiresAt;
   const expiresAt = source ? Date.parse(source) : null;
 
   const [now, setNow] = React.useState(() => Date.now());
@@ -110,29 +141,36 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
     return () => clearInterval(id);
   }, [expiresAt]);
 
-  // AT the deadline, ask the server ONCE whether the session has ended. The
-  // guard only sees `useSession`, which refetches on focus, so without this a
-  // user who never leaves the page watched the countdown vanish and then typed
-  // into 401s with no sign-out and no reason. `update()` runs the `jwt`
-  // callback, which sets REAUTH_REQUIRED_ERROR when the session's end has
-  // passed; the guard then signs out with `reason=session_expired`. Asking
-  // rather than signing out directly means a stale deadline (a failed stored
-  // read) cannot end a healthy session: the callback would find it alive.
+  // AT the deadline, the guard has to learn the session ended. It only sees
+  // `useSession`, which refetches on focus, so without this a user who never
+  // leaves the page watched the countdown vanish and then typed into 401s with
+  // no sign-out and no reason.
+  //
+  // `update()` runs the `jwt` callback, which ends the session once its end
+  // has passed -- and REFRESHES it otherwise, rolling the idle deadline
+  // forward. So the browser's clock only decides when to ASK: past its own
+  // deadline it re-reads `/api/session-expiry` every few seconds, and runs
+  // `update()` only once the SERVER says `ended`, on the clock the callback
+  // itself uses. A browser clock that runs fast, or a stale cached deadline
+  // after a failed read, therefore cannot extend an idle session (round 5 on
+  // #499). Once per deadline: `askedFor` holds the one already acted on.
   const askedFor = React.useRef<number | null>(null);
   const reachedDeadline =
     expiresAt !== null && !Number.isNaN(expiresAt) && now >= expiresAt;
+  const serverSaysEnded = stored?.ended === true;
   React.useEffect(() => {
-    if (
-      !reachedDeadline ||
-      expiresAt === null ||
-      askedFor.current === expiresAt
-    ) {
+    if (!reachedDeadline || expiresAt === null) return;
+    if (serverSaysEnded) {
+      if (askedFor.current === expiresAt) return;
+      askedFor.current = expiresAt;
+      console.info("[auth.session-expiry] the server says ended; updating");
+      void update();
       return;
     }
-    askedFor.current = expiresAt;
-    console.info("[auth.session-expiry] deadline reached; asking the server");
-    void update();
-  }, [reachedDeadline, expiresAt, update]);
+    recheck();
+    const id = setInterval(recheck, DEADLINE_RECHECK_MS);
+    return () => clearInterval(id);
+  }, [reachedDeadline, serverSaysEnded, expiresAt, recheck, update]);
 
   if (expiresAt === null || Number.isNaN(expiresAt)) return null;
 

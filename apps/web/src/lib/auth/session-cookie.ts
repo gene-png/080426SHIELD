@@ -97,6 +97,22 @@ export function sessionEndsAt(
 }
 
 /**
+ * Whether the session is over, on THIS server's clock. One rule for both
+ * readers -- the `jwt` callback, which ends the session, and
+ * `/api/session-expiry`, which tells the warning it has ended -- so the two
+ * cannot disagree about the moment. The browser's clock is never asked: a
+ * browser ahead of the server would otherwise decide too early.
+ */
+export function sessionHasEnded(
+  refreshExpiresAt: string | undefined,
+  reauthAt: string | undefined,
+  now: number = Date.now(),
+): boolean {
+  const endsAt = sessionEndsAt(refreshExpiresAt, reauthAt);
+  return endsAt !== undefined && now >= Date.parse(endsAt);
+}
+
+/**
  * Drop every `Set-Cookie` for the session cookie (including its chunks) and
  * keep any other cookie the response sets.
  */

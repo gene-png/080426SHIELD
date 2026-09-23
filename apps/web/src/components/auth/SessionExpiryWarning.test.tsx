@@ -28,12 +28,16 @@ function expiringIn(ms: number): void {
 
 /** What `/api/session-expiry` answers; null means "no stored expiry". */
 let storedExpiry: string | null = null;
-const fetchMock = vi.fn(async (url: string) => {
+/** Whether the SERVER's clock says the session has ended. */
+let serverSaysEnded = false;
+async function answer(url: string): Promise<Response> {
   if (url !== "/api/session-expiry") throw new Error(`unexpected fetch ${url}`);
-  return new Response(JSON.stringify({ sessionExpiresAt: storedExpiry }), {
-    status: 200,
-  });
-});
+  return new Response(
+    JSON.stringify({ sessionExpiresAt: storedExpiry, ended: serverSaysEnded }),
+    { status: 200 },
+  );
+}
+const fetchMock = vi.fn(answer);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -41,7 +45,9 @@ beforeEach(() => {
   update.mockClear();
   sessionData = null;
   storedExpiry = null;
-  fetchMock.mockClear();
+  serverSaysEnded = false;
+  fetchMock.mockReset();
+  fetchMock.mockImplementation(answer);
   vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -112,20 +118,71 @@ describe("SessionExpiryWarning", () => {
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
   });
 
-  it("at the deadline, asks the server ONCE whether the session ended", async () => {
+  it("once the SERVER says the session ended, runs update() exactly once", async () => {
     // The guard only sees useSession, which refetches on focus. Without this a
     // user who never left the page watched the countdown vanish and typed into
     // 401s. update() runs the jwt callback, which ends the session; the guard
     // then signs out with the reason. The banner itself stays quiet.
     expiringIn(-1_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
+    serverSaysEnded = true;
     render(<SessionExpiryWarning />);
     await settle();
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
     expect(update).toHaveBeenCalledTimes(1);
     await act(async () => {
-      vi.advanceTimersByTime(5_000);
+      vi.advanceTimersByTime(30_000);
     });
+    await settle();
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT run update() on the browser's clock alone -- a browser ahead of the server would refresh an idle session instead of ending it", async () => {
+    // update() runs the jwt callback, which REFRESHES a session the server
+    // still considers alive -- rolling the idle deadline forward. A browser
+    // clock a few seconds fast would do that at every deadline, so an idle
+    // tab would never time out.
+    expiringIn(-1_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
+    serverSaysEnded = false;
+    render(<SessionExpiryWarning />);
+    await settle();
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+    await settle();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("past its own deadline, re-asks the server soon rather than in a minute", async () => {
+    expiringIn(-1_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
+    render(<SessionExpiryWarning />);
+    await settle();
+    const before = fetchMock.mock.calls.length;
+    serverSaysEnded = true;
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    await settle();
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(before);
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not run update() when the server cannot be asked", async () => {
+    // A failed read is not an answer: the cached expiry may be stale, and
+    // update() on a live session would extend it.
+    fetchMock.mockImplementation(async () => new Response("", { status: 500 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expiringIn(-1_000);
+    render(<SessionExpiryWarning />);
+    await settle();
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+    await settle();
+    expect(update).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("does not ask the server while time remains", async () => {

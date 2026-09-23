@@ -165,6 +165,9 @@ describe("reauthAt through the jwt and session callbacks", () => {
       },
     });
     expect(token.reauthAt).toBe(reauthAt);
+    // The end check must NOT fire on a live session: this one refreshed.
+    expect(token.error).toBeUndefined();
+    expect(apiFetch).toHaveBeenCalledWith("/auth/refresh", expect.anything());
   });
 
   it("ends the session once the refresh expiry has lapsed, too", async () => {
