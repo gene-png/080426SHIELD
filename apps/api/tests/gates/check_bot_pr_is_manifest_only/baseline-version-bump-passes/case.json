@@ -1,1 +1,12 @@
-{"incident": "The control. Manifests and lockfiles only, which is what a version bump is -- validated against all four open bot PRs (#465-#468) on 2026-09-22, every one manifests only. A guard that fails a real bump gets disabled, and then the author-versus-content hole is back with a suite that says otherwise.", "expect": 0, "adversarial": false, "stdout_contains": "manifests or lockfiles", "argv": ["--author", "dependabot[bot]", "--changed-files", "{dir}/changed.txt"]}
+{
+ "incident": "The control. Manifests and lockfiles only, which is what a version bump is -- validated against all four open bot PRs (#465-#468) on 2026-09-22, every one manifests only. A guard that fails a real bump gets disabled, and then the author-versus-content hole is back with a suite that says otherwise. Its needle read 'manifests or lockfiles' and went stale when the success message was reworded for the two-allow-list split -- caught by the fixtures harness, which is the whole point of pinning the message rather than the code.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "manifest/lockfile path(s)",
+ "argv": [
+  "--author",
+  "dependabot[bot]",
+  "--changed-files",
+  "{dir}/changed.txt"
+ ]
+}

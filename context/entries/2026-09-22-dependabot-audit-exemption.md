@@ -71,8 +71,8 @@ or the exemption is unguarded and that is recorded.
 
 ## The exemption is bounded by CONTENT as well as author
 
-The skip is keyed on AUTHOR; its justification is about CONTENT. A maintainer
-can push commits to a Dependabot branch — the routine case is a bump that breaks
+The skip is keyed on AUTHOR; its justification is about CONTENT. A maintainer can
+push commits to a Dependabot branch — the routine case is a bump that breaks
 something and a human fixing it in place — and `pull_request.user.login` stays
 `dependabot[bot]`. So the exemption would follow the BRANCH, and arbitrary
 human-authored code would merge with the required audit check green and no audit
@@ -80,16 +80,57 @@ block anywhere. That is the class #93/#94/#95 record putting a client-facing
 fabricated gap on `main`, arriving through the one PR class nobody can edit.
 
 `check_bot_pr_is_manifest_only.py` runs only for the exempted author and fails
-when that PR touches anything outside the manifest and lockfile set, naming the
-paths. A human pushing code onto a bot branch is blocked instead of inheriting
-an exemption written for a version bump.
+when that PR touches anything the exemption was not written for.
 
-Validated against all four open bot PRs — every one is manifests and lockfiles
-only, so the allow-list matches what Dependabot actually writes here rather than
-what its author guessed. The allow-list is deliberately **not** derived from
-`.github/dependabot.yml`: that file names ecosystems and directories, not the
-files an updater writes, so deriving it would encode Dependabot's internal
-behaviour — a synchronisation with something this repo does not control.
+### `.github/` is judged by CONTENT, and the first version got that wrong
+
+It put `.github/workflows/*.yml` on the **path** allow-list, because the
+github-actions updater legitimately rewrites workflows to bump `uses:` refs.
+A path match cannot tell a ref bump from a rewrite of `audit-gate.yml` itself —
+so a PR authored as the bot could have deleted the audit step it is exempt from
+and passed. In the file class that controls every other gate, with
+`enforce_admins` false and zero required reviews.
+
+**Removing the glob was the wrong fix**, because #465 is the github-actions group
+and would have re-broken. So every added or removed line in a `.github/` file
+must be a `uses: <owner>/<repo>@<ref>` bump:
+
+| input | exit |
+| --- | --- |
+| bot + `audit-gate.yml` with the audit step deleted | **1**, quoting the line |
+| bot + workflow, every changed line a `uses:` bump | **0** |
+| bot + `uses: ./.github/actions/something-else` | **1** — local code is not a dependency |
+| `.github/` touched and no `--diff` given | **2** |
+| `.github/` path in the list, absent from the diff | **2** |
+
+## VALIDATED FOR RESTRICTION, and the first attempt only did coverage
+
+The first run checked all four bot PRs and reported every one clean. That
+establishes the allow-list is **wide enough**. It says nothing about whether it
+is **narrow enough** — and #465 passed *precisely because* workflows were
+permitted, so the run meant to validate the guard exercised the dangerous case
+and recorded it as a pass.
+
+**An allow-list validated only against benign traffic is certified for coverage,
+never for restriction.** That is the same defect as sampling mutations only from
+inside the region the tests already cover: both produce a confident green from a
+population that could not have gone red.
+
+Both halves now:
+
+    all four real PRs, real diffs                       -> exit 0
+    #465's real diff + one planted continue-on-error    -> exit 1
+
+### What the four actually touch, by file rather than by category
+
+Because "every one is manifests-only" was true and misleading at once:
+
+    #465  .github/workflows/{audit-gate,mutation-sweep,scheduled-triggers}.yml
+          -- every changed line a `uses:` bump, checked against the real diff
+    #466  apps/api/pyproject.toml
+    #467  apps/api/pyproject.toml
+    #468  apps/web/package.json, package.json,
+          packages/design-system/package.json, pnpm-lock.yaml
 
 ## LIVE, not latent — and this entry first said the opposite
 

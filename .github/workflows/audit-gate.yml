@@ -63,6 +63,12 @@ jobs:
           git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt
           echo "changed paths:"; cat /tmp/changed.txt
 
+      # THE DIFF, not just the names, because `.github/` files are judged by
+      # CONTENT. A path match cannot tell a `uses:` ref bump from a rewrite of
+      # this workflow, and the manifest guard below refuses to answer without it.
+      - name: Collect the diff
+        run: git diff "origin/${{ github.base_ref }}...HEAD" > /tmp/diff.txt
+
       - name: Read the PR body
         env:
           # Via env, not inline: a PR body is untrusted text, and interpolating
@@ -151,14 +157,37 @@ jobs:
       # exemption belongs to -- the audit requirement and its bound are one
       # question, unlike the merge-rule job which is a different one.
       #
-      # Validated against all four open bot PRs (#465-#468) on 2026-09-22: every
-      # one is manifests and lockfiles only, so the allow-list matches what
-      # Dependabot actually writes here rather than what its author guessed.
+      # `.github/` IS JUDGED BY CONTENT, not by path, and the first version of
+      # this guard got that wrong: it allowed `.github/workflows/*.yml` by path,
+      # so a bot-authored PR could have rewritten THIS FILE -- deleting the step
+      # below -- and passed. Every changed line in a `.github/` file must now be
+      # a `uses: <owner>/<repo>@<ref>` bump.
+      #
+      # VALIDATED IN BOTH DIRECTIONS on 2026-09-22, and the first attempt only
+      # did one. "All four open bot PRs pass" establishes the allow-list is wide
+      # enough; it says nothing about narrow enough -- and #465 passed precisely
+      # BECAUSE workflows were permitted, so the run meant to validate the guard
+      # exercised the dangerous case and recorded it as a pass. An allow-list
+      # validated only against benign traffic is certified for coverage, never
+      # for restriction. So:
+      #
+      #   all four real PRs, real diffs                       -> exit 0
+      #   #465's real diff + one planted `continue-on-error`   -> exit 1
+      #
+      # What the four actually touch, by file rather than by category, because
+      # "manifests only" was true and misleading at once:
+      #
+      #   #465  .github/workflows/{audit-gate,mutation-sweep,scheduled-triggers}.yml
+      #         -- every changed line a `uses:` bump, checked
+      #   #466  apps/api/pyproject.toml
+      #   #467  apps/api/pyproject.toml
+      #   #468  apps/web/package.json, package.json,
+      #         packages/design-system/package.json, pnpm-lock.yaml
       - name: An audit-exempt bot PR must be manifest-only
         if: github.event.pull_request.user.login == 'dependabot[bot]'
         working-directory: apps/api
         run: |
-          python scripts/check_bot_pr_is_manifest_only.py             --author '${{ github.event.pull_request.user.login }}'             --changed-files /tmp/changed.txt
+          python scripts/check_bot_pr_is_manifest_only.py             --author '${{ github.event.pull_request.user.login }}'             --changed-files /tmp/changed.txt             --diff /tmp/diff.txt
 
       - name: Require recorded audit evidence
         if: github.event.pull_request.user.login != 'dependabot[bot]'
