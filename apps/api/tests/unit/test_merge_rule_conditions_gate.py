@@ -276,3 +276,52 @@ def test_a_REAL_declaration_after_a_commented_one_still_passes(tmp_path: pathlib
     result = _run(tmp_path, f"{MIGRATION}\n", body)
     assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
     assert "adds 0051" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# ROUND 3. Markdown has TWO code-block syntaxes and the round-2 fix handled one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("prefix", "label"),
+    [
+        ("    ", "four spaces -- an indented code block"),
+        ("\t", "a tab -- also an indented code block"),
+        ("      ", "six spaces, as the failure message prints it"),
+    ],
+)
+def test_an_INDENTED_marker_does_not_satisfy_it(tmp_path, prefix, label) -> None:
+    """It renders as a code sample, which is the hazard fence-stripping closes.
+
+    `_MARKER` anchored `^[ \t]*` on purpose, documented as the reason a
+    blockquote cannot match -- and that same tolerance let an indented code block
+    through. Two comments two screens apart, in direct conflict, neither noticing
+    the other. The anchor is markdown's own rule now: at most three spaces, no tab.
+    """
+    result = _run(tmp_path, f"{MIGRATION}\n", f"{prefix}Merge-rule-condition-4: adds a column\n")
+    assert result.returncode == EXIT_VIOLATION, f"{label}: {result.stdout} {result.stderr}"
+
+
+@pytest.mark.unit
+def test_three_spaces_is_still_prose_and_still_counts(tmp_path: pathlib.Path) -> None:
+    """The narrowing must not fail an honest body.
+
+    Three spaces is not a code block in markdown, so a marker indented under a
+    list item still declares. Asserted because the cheap fix -- requiring column
+    zero -- would have failed real bodies and taught people to fight the gate.
+    """
+    result = _run(tmp_path, f"{MIGRATION}\n", "   Merge-rule-condition-4: adds a column\n")
+    assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "why", ["not applicable", "no migration in this PR", "does not apply", "not a migration"]
+)
+def test_the_SPELLED_OUT_denials_are_refused_too(tmp_path, why) -> None:
+    """A floor that blocks `n/a` and passes `not applicable` is one word short of
+    its own examples. Still a denylist and still a floor -- see `_NOT_A_REASON`."""
+    result = _run(tmp_path, f"{MIGRATION}\n", f"Merge-rule-condition-4: {why}\n")
+    assert result.returncode == EXIT_VIOLATION, f"{why!r}: {result.stdout} {result.stderr}"

@@ -120,8 +120,22 @@ MIGRATION_GLOBS = ("apps/api/alembic/versions/*.py",)
 #:
 #: The COLON is required, so `Merge-rule-condition-4` appearing in prose ("I read
 #: the Merge-rule-condition-4 rule and it does not apply") does not satisfy it.
+#: **AT MOST THREE LEADING SPACES, AND NO TAB.** That is markdown's own rule for
+#: what is NOT an indented code block, and this pattern was `[ \t]*` -- so
+#:
+#:     Merge-rule-condition-4: adds a column
+#:
+#: matched at exit 0 while RENDERING to a reviewer as a code sample, which is
+#: exactly the hazard the fence stripping below exists to close. Markdown has two
+#: code-block syntaxes and the first fix handled one of them.
+#:
+#: TWO COMMENTS TWO SCREENS APART WERE IN DIRECT CONFLICT AND NEITHER NOTICED.
+#: `[ \t]*` was chosen deliberately and documented as the reason a blockquote
+#: cannot match -- `>` is not whitespace, so the anchor excludes it. That same
+#: tolerance is what let an indented code block through. The blockquote property
+#: survives this narrowing and is still asserted by its own test.
 _MARKER = re.compile(
-    r"^[ \t]*merge-rule-condition-4[ \t]*:[ \t]*(?P<why>.+?)[ \t]*$",
+    r"^ {0,3}merge-rule-condition-4[ \t]*:[ \t]*(?P<why>.+?)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -152,7 +166,28 @@ _CODE_FENCE = re.compile(r"^[ \t]*```.*?^[ \t]*```", re.DOTALL | re.MULTILINE)
 #: 4."), so the marker-shaped denial was untested. Refusing "" and accepting "n/a"
 #: is the same ritual-satisfaction outcome one character away.
 _NOT_A_REASON = frozenset(
-    {"n/a", "na", "none", "no", "nil", "nothing", "-", "--", "tbd", "todo", "x"}
+    {
+        "n/a",
+        "na",
+        "none",
+        "no",
+        "nil",
+        "nothing",
+        "-",
+        "--",
+        "tbd",
+        "todo",
+        "x",
+        # THE PHRASES THE ABBREVIATIONS ABBREVIATE. The first version held `n/a`
+        # and `na` and not `not applicable` -- a floor that blocked the short
+        # form and passed the long one, one word short of its own examples.
+        "not applicable",
+        "no migration",
+        "no migration in this pr",
+        "does not apply",
+        "not a migration",
+        "n/a - no migration",
+    }
 )
 
 

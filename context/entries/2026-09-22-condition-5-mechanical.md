@@ -210,3 +210,58 @@ recording a gate's withdrawal. The note is at the top now.
 | `check_gate_fixtures.py` | 42 cases across 9 gates behaved as specified |
 | eight escape-hatch probes, measured | every one exit 1; two honest bodies exit 0 |
 | `ruff` / `black` / `prettier` / `check_recalled_counts` | exit 0 |
+
+## Round 3 — markdown has two code-block syntaxes and round 2 handled one
+
+**A four-space indented marker passed, and rendered as a code block.**
+
+    Merge-rule-condition-4: adds a column
+
+Exit 0. `_declaration_region` strips HTML comments and FENCED blocks; markdown's
+other code-block syntax is four-space indentation, which renders identically. So
+the marker displayed to a reviewer as a sample and counted as a declaration —
+precisely the hazard the fence stripping exists to close.
+
+**It was caused by a decision two comments away, with neither comment noticing the
+other.** `_MARKER` anchored `^[ 	]*` deliberately, documented as the reason a
+blockquote cannot match (`>` is not whitespace). That same tolerance is what let
+an indented code block through. The anchor is markdown's own rule now — at most
+three spaces, no tab — and the blockquote property survives, asserted by its own
+test rather than inherited.
+
+Third instance tonight of the twin-sweep shape: the code form the review named was
+fixed and the other form of the same construct was left, after `pyproject.toml`
+and the denial-list prose.
+
+**And the denial floor was one word short of its own examples.**
+`Merge-rule-condition-4: not applicable` and `: no migration in this PR` both
+passed while `n/a` was blocked. `_NOT_A_REASON` now carries the spelled-out forms.
+It is still a denylist and still a floor, and the docstring still says so.
+
+Twelve probes after, including the round-2 fixes re-run as regressions: four-space
+and tab indentation, three spaces (must still PASS — the cheap fix of requiring
+column zero would have failed honest bodies), four denial phrasings, a blockquote,
+an HTML comment, a fence, the failure message's own line, and a real declaration.
+All twelve as specified.
+
+## What the gate actually gates, measured from branch protection
+
+Worth recording here because a perfect guard that is not required does not gate,
+and the workflow file cannot answer it.
+
+    required contexts        Adversarial audit recorded
+                             Python / Web / E2E / Demo / Secret scan
+                             No accidental issue closes
+    required_approving_review_count   0
+    enforce_admins                    false
+    strict                            false
+
+**This gate's job is NOT among them**, which is correct and deliberate — it is new
+and its first job is to be observed. The audit gate IS required, and the
+Dependabot manifest guard runs inside that same job, so that one does bind.
+
+The residual is `enforce_admins: false` with zero required approvals: both devs
+are admins, so a human can merge past any red. The guard binds bots and not
+people. That is a standing choice rather than a defect, and it is Gene's call —
+recorded here so the next reader does not infer from a green check that a control
+was enforced on the person who merged.
