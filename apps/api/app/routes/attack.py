@@ -16,6 +16,7 @@ analytics endpoint in place of scoring/gap.
 
 from __future__ import annotations
 
+import contextvars
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1445,7 +1446,13 @@ def _run_mitre_map_batched(
     first_error: Exception | None = None
 
     with ThreadPoolExecutor(max_workers=_MITRE_MAX_WORKERS) as pool:
-        futures = [pool.submit(_one, b) for b in batches]
+        # Each worker runs inside a COPY of the request's context. A pool thread
+        # starts with an empty one, so `correlation_id_var` read None there and
+        # every `llm_calls` row a batch wrote lost the request's correlation id
+        # -- measured 2026-09-23, 0 of 52 live mitre_map rows carried one. A
+        # fresh copy per submit, because one Context cannot be entered by two
+        # threads at once. `routes/risk.py` has the same runner and the same fix.
+        futures = [pool.submit(contextvars.copy_context().run, _one, b) for b in batches]
         for fut in as_completed(futures):
             try:
                 data = fut.result()
