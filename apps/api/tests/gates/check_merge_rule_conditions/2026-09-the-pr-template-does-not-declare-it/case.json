@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. `.github/pull_request_template.md` has no `## Merge rule` heading, so the old region fell back to the whole body -- and the template's own commented example carries a bare `4`. Every author who left the comment block in place, which the template instructs, acknowledged condition 4 for free. The sibling gate in the same workflow has a dedicated step for exactly this hazard; this one had neither a step nor a test.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "trips condition 4",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}
