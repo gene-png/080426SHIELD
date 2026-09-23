@@ -202,13 +202,20 @@ _MAX_OUTPUT_TOKENS = 8192
 #     default that flipped from Opus 4.8/4.7). An unknown share of the budget is
 #     spent before the first JSON byte.
 #   * The failure mode is asymmetric: too small loses the whole run and the
-#     money spent on it; too large costs nothing extra, because output is billed
-#     on tokens actually generated, not on the cap.
+#     money spent on it. Too large costs nothing for a generation that stops on
+#     its own, because output is billed on tokens actually generated -- but a
+#     runaway generation now bills up to the cap before it is cut off.
 #
-# Anything not listed keeps the shared default — this is a targeted fix, not a
-# blanket raise. Longer term the better shape is to chunk `mitre_map` per tactic
-# (14 smaller calls that fail independently and retry cheaply) rather than ask
-# for one very large document; this unblocks the job without that refactor.
+# EVERY registered job is listed. `test_every_registered_job_has_a_chosen_output
+# _budget` walks the job registry and fails CI for a `call_purpose` missing here,
+# so a new job cannot silently inherit the shared default. (mitre_map has since
+# been batched -- `_MITRE_BATCH_SIZE` in routes/attack.py -- so its 64000 is
+# per batch.)
+#
+# The caps are one table for every provider. Anthropic streams and accepts all
+# of them; the httpx adapters do not stream and some models have lower output
+# ceilings -- tracked in #485, and the OpenAI adapter has no truncation guard at
+# all (#484).
 _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     "mitre_map": 64000,
     # risk_synthesize drafts one entry per finding and is batched at 20 (see
@@ -220,28 +227,31 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # small loses the batch and the money spent on it.
     "risk_synthesize": 32000,
     # The three below ran on the shared 8192 until 2026-09-23 because nobody
-    # had listed them, which is why every purpose is now listed explicitly and
-    # an unlisted one raises instead of defaulting.
+    # had listed them (#479).
     #
     # csf_score is ONE unbatched call over the whole assessment: a full Working
     # Profile is 106 subcategories x 3 tiers = 318 rows, each five integers and
-    # a narrative -- ~32k tokens of JSON before thinking, so 8192 could not fit
-    # even one tier. No live csf_score had ever run on the dev stack when this
-    # was sized. 64000 is the largest cap already proven accepted here
-    # (mitre_map). If a long-narrative profile still overruns it, the
-    # stop_reason guard fails loudly and the fix is batching per tier, as
-    # risk_synthesize and mitre_map already are.
+    # a narrative. That per-row cost is an ESTIMATE -- no live csf_score has run
+    # on the dev stack -- and it spans a wide range: at ~100 tokens a row the
+    # JSON is ~32k, at the ~575 a mitre_map row was measured at (routes/attack.py)
+    # it is ~183k. So 8192 could not fit even one tier, and 64000 -- the largest
+    # cap the dev stack's Anthropic model has accepted (mitre_map) -- fits only
+    # the low end. The real fix is batching per tier, as risk_synthesize and
+    # mitre_map already are; until then an overrun fails loudly on Anthropic
+    # and generateContent (stop_reason / finishReason), not on OpenAI (#484).
     "csf_score": 64000,
     # extract.capabilities output scales with the uploaded inventory, which the
     # client supplies and nothing bounds. Measured 2026-09-23 on the dev stack:
     # one live run failed on stop_reason=max_tokens and the retry finished at
     # 8117 of 8192.
     "extract.capabilities": 64000,
-    # zt_score is small (37-50 capabilities, three short fields each), but it is
-    # the job that truncated at 4096 (2026-08-04) and at 8192 under unbounded
-    # gemini thinking (2026-07-15). Headroom costs nothing: output is billed on
-    # tokens generated, not on the cap.
-    "zt_score": 32000,
+    # zt_score is small: 37-50 capabilities, three short fields each, no
+    # narrative since #64 removed three unconsumed ones. Its 2026-08-04 overrun
+    # at 4096 was with those narratives, and the 2026-07-15 one at 8192 was
+    # unbounded gemini thinking, now capped at _THINKING_BUDGET_TOKENS. So 8192
+    # is CHOSEN, not defaulted -- and raising it would buy nothing while
+    # breaking it on models whose output ceiling is 8192 or 16384 (#485).
+    "zt_score": _MAX_OUTPUT_TOKENS,
 }
 
 
@@ -251,7 +261,9 @@ def max_output_tokens_for(purpose: str | None) -> int:
     The fallback is NOT how a registered job gets its budget:
     `test_every_registered_job_has_a_chosen_output_budget` walks the job
     registry and fails CI for any `call_purpose` missing from the table above.
-    It stays for purposes with no job behind them (direct provider calls).
+    No production path reaches it -- `engine.run_job` is the only caller of
+    `LLMClient.invoke` and always passes a registered purpose. It serves tests
+    that call a provider with an ad-hoc purpose.
     """
     if not purpose:
         return _MAX_OUTPUT_TOKENS

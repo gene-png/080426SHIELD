@@ -697,19 +697,6 @@ def test_every_registered_job_has_a_chosen_output_budget() -> None:
     assert missing == [], f"no output budget chosen for: {missing}"
 
 
-@pytest.mark.unit
-def test_csf_score_budget_fits_a_full_working_profile() -> None:
-    """csf_score is one unbatched call: one row per (tier, subcategory), five
-    integers and a narrative each. Derived from the catalog and the three
-    valid tiers, not from the constant under test: a full Working Profile is
-    106 x 3 rows, and at ~100 tokens a row the JSON alone is ~32k before
-    adaptive thinking takes its share."""
-    from app.csf.catalog import SUBCATEGORIES
-
-    rows = len(SUBCATEGORIES) * len(("high", "moderate", "low"))
-    assert llm_mod.max_output_tokens_for("csf_score") >= rows * 100
-
-
 # --------------------------------------------------------------------------- #
 # llm_calls.mode must describe the PROVIDER, not the environment variable.
 #
