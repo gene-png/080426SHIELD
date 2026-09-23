@@ -63,8 +63,10 @@ tests; making `sessionChanged` always true fails the three that expect `false`.
 - **The session ends at its end, whichever deadline that is.** The `jwt`
   callback's end check uses the same earlier-of rule as the warning, so a
   lapsed refresh expiry also ends the session without a backend call. Past
-  its deadline the warning re-asks `/api/session-expiry` every 5 s, and calls
-  `update()` once only when that route says `ended`. That answer comes from
+  its deadline the warning re-asks `/api/session-expiry` every 5 s. It calls
+  `update()` only when that route says `ended`, and does so whatever the
+  browser's clock says, re-asking every 5 s until the guard signs the user
+  out. A cookie that is gone reads as `ended`. That answer comes from
   the web server's clock, which the `jwt` callback also uses. Calling
   `update()` on the browser's clock alone refreshed an idle session whenever
   the browser ran ahead of the server, so that tab never timed out.
@@ -84,3 +86,8 @@ The grace window is 60 s. If the rotating request runs longer than that (a live
 Run-AI can), another request sent meanwhile still carries the old refresh
 token and is rejected after 60 s. What can still race a sign-out is the set of
 requests in flight around a rotation, not every request.
+
+Clock skew, filed as #501: the end is decided on the web server's clock. With
+several web replicas whose clocks disagree, the route and `update()` can land
+on different instances. And a web clock BEHIND the API's leaves a window, as
+wide as the skew, where a refresh fails as a generic error the guard ignores.

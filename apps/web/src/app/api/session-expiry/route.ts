@@ -40,7 +40,11 @@ export async function GET(req: Request): Promise<Response> {
       // nothing reads one, and a decode-only read would not see a fresh one.
       sessionExpiresAt:
         sessionEndsAt(token?.refreshExpiresAt, token?.reauthAt) ?? null,
-      ended: sessionHasEnded(token?.refreshExpiresAt, token?.reauthAt),
+      // No cookie is a session that HAS ended, not one still running: a tab
+      // told `false` here would wait for an end that already happened.
+      ended:
+        token === null ||
+        sessionHasEnded(token.refreshExpiresAt, token.reauthAt),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

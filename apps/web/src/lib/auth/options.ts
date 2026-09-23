@@ -371,9 +371,11 @@ export const authConfig: NextAuthConfig = {
       // refresh token fails as a GENERIC error the guard does not act on; both
       // are known here without calling the backend. The warning runs this
       // callback (`update()`) once `/api/session-expiry` says the session has
-      // ended -- `sessionHasEnded`, this same rule on this same clock -- so the
-      // guard signs the user out with the right reason instead of leaving them
-      // typing into 401s. Running it any EARLIER would refresh the session.
+      // ended -- `sessionHasEnded`, this same rule, and on this same clock
+      // WHILE there is one web process; several replicas with skewed clocks
+      // could disagree -- so the guard signs the user out with the right
+      // reason instead of leaving them typing into 401s. Running it any
+      // EARLIER would refresh the session.
       if (sessionHasEnded(token.refreshExpiresAt, token.reauthAt)) {
         if (token.error !== REAUTH_REQUIRED_ERROR) {
           console.info("[auth] session end reached; ending the session");

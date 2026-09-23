@@ -36,7 +36,10 @@ describe("GET /api/session-expiry", () => {
       await GET(new Request("http://localhost/api/session-expiry"))
     ).json();
     expect(body.sessionExpiresAt).toBeNull();
-    expect(body.ended).toBe(false);
+    // No cookie means no session: it HAS ended. Answering `false` here left a
+    // tab whose cookie was gone polling every five seconds for good, waiting
+    // for an end that had already happened (round 6 on #499).
+    expect(body.ended).toBe(true);
   });
 
   // `ended` is decided on THIS server's clock, the one the jwt callback uses,

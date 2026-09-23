@@ -118,7 +118,11 @@ describe("SessionExpiryWarning", () => {
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
   });
 
-  it("once the SERVER says the session ended, runs update() exactly once", async () => {
+  // SPECIFICATION CHANGE, round 6 on #499: this said "exactly once". A single
+  // failed update() then left the tab on a dead session for good, so it now
+  // re-asks every five seconds until the guard's sign-out unmounts it. What is
+  // still pinned: it asks at once, and at that rate -- not once per render.
+  it("once the SERVER says the session ended, runs update() at once and then every five seconds", async () => {
     // The guard only sees useSession, which refetches on focus. Without this a
     // user who never left the page watched the countdown vanish and typed into
     // 401s. update() runs the jwt callback, which ends the session; the guard
@@ -134,7 +138,8 @@ describe("SessionExpiryWarning", () => {
       vi.advanceTimersByTime(30_000);
     });
     await settle();
-    expect(update).toHaveBeenCalledTimes(1);
+    // 1 at once + 6 over thirty seconds; a render-keyed effect would be far more.
+    expect(update).toHaveBeenCalledTimes(7);
   });
 
   it("does NOT run update() on the browser's clock alone -- a browser ahead of the server would refresh an idle session instead of ending it", async () => {
@@ -167,6 +172,40 @@ describe("SessionExpiryWarning", () => {
     await settle();
     expect(fetchMock.mock.calls.length).toBeGreaterThan(before);
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("acts on the server's `ended` even while the BROWSER's clock says time remains", async () => {
+    // A browser clock behind the server's: the server has ended the session,
+    // every proxy call is a 401, and the banner must not count down minutes
+    // the user does not have (round 6 on #499).
+    expiringIn(3 * 60_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
+    serverSaysEnded = true;
+    render(<SessionExpiryWarning />);
+    await settle();
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
+  });
+
+  it("asks again when an update() did not end the session", async () => {
+    // One failed or no-op update() must not leave the tab on a dead session
+    // for good: while the server keeps saying ended, it keeps asking.
+    expiringIn(-1_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
+    serverSaysEnded = true;
+    update.mockImplementationOnce(async () => {
+      throw new Error("network blip");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<SessionExpiryWarning />);
+    await settle();
+    expect(update).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    await settle();
+    expect(update).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
   });
 
   it("does not run update() when the server cannot be asked", async () => {

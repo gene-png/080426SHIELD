@@ -141,38 +141,55 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
     return () => clearInterval(id);
   }, [expiresAt]);
 
-  // AT the deadline, the guard has to learn the session ended. It only sees
+  // When the session ends, the guard has to learn it. It only sees
   // `useSession`, which refetches on focus, so without this a user who never
   // leaves the page watched the countdown vanish and then typed into 401s with
   // no sign-out and no reason.
   //
   // `update()` runs the `jwt` callback, which ends the session once its end
   // has passed -- and REFRESHES it otherwise, rolling the idle deadline
-  // forward. So the browser's clock only decides when to ASK: past its own
-  // deadline it re-reads `/api/session-expiry` every few seconds, and runs
-  // `update()` only once the SERVER says `ended`, on the clock the callback
-  // itself uses. A browser clock that runs fast, or a stale cached deadline
-  // after a failed read, therefore cannot extend an idle session (round 5 on
-  // #499). Once per deadline: `askedFor` holds the one already acted on.
-  const askedFor = React.useRef<number | null>(null);
+  // forward. So only the SERVER's `ended` (from `/api/session-expiry`, on the
+  // clock the callback itself uses) ever triggers `update()`, and it does so
+  // whatever the browser's clock says: a browser running fast cannot extend an
+  // idle session (round 5 on #499), and one running slow cannot leave the user
+  // on a dead session under a countdown (round 6). The browser's clock only
+  // decides when to re-ask sooner than the minute poll.
   const reachedDeadline =
     expiresAt !== null && !Number.isNaN(expiresAt) && now >= expiresAt;
   const serverSaysEnded = stored?.ended === true;
+
   React.useEffect(() => {
-    if (!reachedDeadline || expiresAt === null) return;
-    if (serverSaysEnded) {
-      if (askedFor.current === expiresAt) return;
-      askedFor.current = expiresAt;
-      console.info("[auth.session-expiry] the server says ended; updating");
-      void update();
-      return;
-    }
+    if (!reachedDeadline || serverSaysEnded) return;
     recheck();
     const id = setInterval(recheck, DEADLINE_RECHECK_MS);
     return () => clearInterval(id);
-  }, [reachedDeadline, serverSaysEnded, expiresAt, recheck, update]);
+  }, [reachedDeadline, serverSaysEnded, recheck]);
+
+  // Keeps asking while the server says ended: one failed or no-op `update()`
+  // must not leave the tab on a dead session for good. The guard's sign-out
+  // unmounts this. `update` is read through a ref because its identity is not
+  // stable across renders, and an effect keyed on it would ask on every one.
+  const updateRef = React.useRef(update);
+  React.useEffect(() => {
+    updateRef.current = update;
+  });
+  React.useEffect(() => {
+    if (!serverSaysEnded) return;
+    const ask = () => {
+      console.info("[auth.session-expiry] the server says ended; updating");
+      updateRef.current().catch((err: unknown) => {
+        // Stated, not swallowed: the next tick asks again.
+        console.warn("[auth.session-expiry] update failed; retrying", err);
+      });
+    };
+    ask();
+    const id = setInterval(ask, DEADLINE_RECHECK_MS);
+    return () => clearInterval(id);
+  }, [serverSaysEnded]);
 
   if (expiresAt === null || Number.isNaN(expiresAt)) return null;
+  // The session is over; a countdown would claim time the user does not have.
+  if (serverSaysEnded) return null;
 
   const remaining = expiresAt - now;
   if (remaining <= 0) return null; // SessionExpiryGuard owns the actual sign-out.
