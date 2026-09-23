@@ -2,7 +2,8 @@
 
 XLSX sheets:
   - Heatmap Summary: tactic rollup (counts + coverage %)
-  - Coverage:        per-technique status + notes (all 600+ rows)
+  - Coverage:        per-technique status, rationale, the three tool lists
+                     (unconfirmed citations marked) and notes (all 600+ rows)
   - Gaps:            techniques flagged as Gap, ordered by technique code
   - Unscored:        techniques with no usable status, listed by code
 
@@ -22,6 +23,7 @@ from app.attack.analytics import CoverageRollup
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
 from app.attack.coverage import CoverageStatus, coverage_label
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.pending import uncleared_tools
 from app.client_naming import org_display_name
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
@@ -83,15 +85,24 @@ def _status_or_unscored(value: str | None) -> str:
 COVERAGE_PCT_DEFINITION = (
     "Coverage % = (Covered + 0.5 x Partial) / (Covered + Partial + Gap). "
     "N/A, Unscored and Pending review techniques are outside it; "
-    "n/a means nothing was addressable."
+    "'not measured' means no technique there is Covered, Partial or Gap."
 )
 
 #: Rendered where `Covered + Partial + Gap` is zero. `_pct` in
 #: `attack/analytics.py` returns 0.0 there, which is the same figure a tactic
 #: that is ALL gaps earns -- so "nothing to measure" and "nothing covered" were
-#: one number. The rollup is left alone (it feeds the dashboard and the risk
-#: register); only what this deliverable prints changes.
-NOT_ADDRESSABLE = "n/a"
+#: one number. NOT "n/a": that is the N/A (not applicable) status two columns to
+#: the left, and a tactic whose techniques were never assessed would read as
+#: "not applicable to us" -- the reassuring misreading. The rollup is left
+#: alone (it also feeds the dashboards); what this deliverable prints, and the
+#: deliverable's stored summary line (`coverage_pct_text`), change.
+NOT_ADDRESSABLE = "not measured"
+
+#: Suffix on a tool whose citation was INFERRED (a near-match to the client's
+#: tool list) and not yet cleared by a consultant (#102, `attack/pending.py`).
+#: A row with one confirmed tool is not pending, so without this mark an
+#: inferred tool beside a confirmed one printed exactly like a confirmed one.
+UNCONFIRMED_MARK = " (unconfirmed)"
 
 
 def _addressable(covered: int, partial: int, gap: int) -> bool:
@@ -108,13 +119,34 @@ def _pct_text(covered: int, partial: int, gap: int, pct: float) -> str:
     return f"{pct}%" if _addressable(covered, partial, gap) else NOT_ADDRESSABLE
 
 
-def _overall_pct_text(ctx: AttackDeliverableContext) -> str:
-    r = ctx.rollup
-    return _pct_text(r.covered, r.partial, r.gap, r.coverage_pct)
+def coverage_pct_text(rollup: CoverageRollup) -> str:
+    """The overall percentage as every surface of the deliverable states it --
+    the renderers AND the stored `Deliverable.summary` line, so the results list
+    cannot say 0.0% beside a PDF that says "not measured"."""
+    return _pct_text(rollup.covered, rollup.partial, rollup.gap, rollup.coverage_pct)
 
 
-def _tools(value: list | None) -> str:
-    return "; ".join(str(t) for t in (value or []))
+def _tools(value: list | None, unconfirmed: frozenset[str]) -> str:
+    return "; ".join(
+        f"{t}{UNCONFIRMED_MARK}" if t in unconfirmed else str(t) for t in (value or [])
+    )
+
+
+def _safe_text_row(ws, values: list) -> None:
+    """Append a row whose strings may be model output or client input.
+
+    openpyxl stores any string starting with "=" as a FORMULA, and raises on
+    control characters -- so a rationale of `=HYPERLINK(...)` would become a
+    live formula in a Kentro-branded workbook, and one stray control byte
+    would fail the whole finalize. Illegal characters are dropped and a
+    leading "=" is kept as text.
+    """
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+    ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
+    for cell in ws[ws.max_row]:
+        if isinstance(cell.value, str) and cell.value.startswith("="):
+            cell.data_type = "s"
 
 
 def _is_unscored(cov: AttackCoverage | None) -> bool:
@@ -172,11 +204,19 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     # #102. Beside the percentage, never instead of it and never omitted: the
     # percentage is a ratio over what can currently be CLAIMED, so a withheld row
     # leaves both sides of it. An assessment whose every positive claim is
-    # withheld renders 0.0% here, which without this line is indistinguishable
-    # from a client who owns no controls at all.
+    # withheld renders 0.0% here when gaps remain and "not measured" when none
+    # do -- either way, without this line it is indistinguishable from a client
+    # who owns no controls at all.
     ws.append(["Pending review", ctx.rollup.pending_review])
     ws.append(["Coverage % means", COVERAGE_PCT_DEFINITION])
-    for row in ws.iter_rows(min_row=1, max_row=7, min_col=1, max_col=1):
+    ws.append(
+        [
+            f"Tools marked{UNCONFIRMED_MARK}",
+            "Inferred from a near-match to the client's tool list and not yet "
+            "confirmed by a consultant.",
+        ]
+    )
+    for row in ws.iter_rows(min_row=1, max_row=8, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
     ws.append([])
@@ -254,7 +294,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     for tech in TECHNIQUES:
         cov = cov_by_code.get(tech.id)
         tactic_str = ", ".join(_tactic_name(t) for t in tech.tactics)
-        ws2.append(
+        unconfirmed = uncleared_tools(cov.unconfirmed_citations) if cov else frozenset()
+        _safe_text_row(
+            ws2,
             [
                 tech.id,
                 tech.name,
@@ -263,11 +305,11 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 _status_or_unscored(cov.status if cov else None),
                 "Yes" if tech.id in ctx.pending_codes else "",
                 (cov.rationale if cov else None) or "",
-                _tools(cov.detection_tools if cov else None),
-                _tools(cov.prevention_tools if cov else None),
-                _tools(cov.response_tools if cov else None),
+                _tools(cov.detection_tools if cov else None, unconfirmed),
+                _tools(cov.prevention_tools if cov else None, unconfirmed),
+                _tools(cov.response_tools if cov else None, unconfirmed),
                 (cov.notes if cov else None) or "",
-            ]
+            ],
         )
     widths2 = [14, 38, 28, 8, 12, 15, 60, 30, 30, 30, 40]
     for w, col in zip(widths2, range(1, len(widths2) + 1), strict=True):
@@ -291,7 +333,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         except KeyError:
             tactic_str = ""
             name = cov.technique_code
-        ws3.append([cov.technique_code, name, tactic_str, cov.rationale or "", cov.notes or ""])
+        _safe_text_row(
+            ws3, [cov.technique_code, name, tactic_str, cov.rationale or "", cov.notes or ""]
+        )
     if not gap_rows:
         ws3.append(["—", "No gaps recorded", "", "", ""])
         ws3.cell(row=2, column=2).font = italic
@@ -346,7 +390,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
     add_paragraphs(
         doc,
         [
-            "Overall coverage: " + _overall_pct_text(ctx),
+            "Overall coverage: " + coverage_pct_text(ctx.rollup),
             COVERAGE_PCT_DEFINITION,
             f"Scored: {ctx.rollup.scored_count}/"
             f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
@@ -476,7 +520,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story.append(Paragraph("Coverage summary", h2))
     story.append(
         Paragraph(
-            f"Overall coverage: <b>{_overall_pct_text(ctx)}</b> · "
+            f"Overall coverage: <b>{coverage_pct_text(ctx.rollup)}</b> · "
             f"Scored: <b>{ctx.rollup.scored_count}/"
             f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}</b> · "
             f"Covered <b>{ctx.rollup.covered}</b>, "

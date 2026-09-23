@@ -525,7 +525,7 @@ def _recon_unscored_rest_gap():
 
 
 @pytest.mark.unit
-def test_a_tactic_with_nothing_addressable_reads_na_not_zero_in_the_xlsx() -> None:
+def test_a_tactic_with_nothing_addressable_reads_not_measured_not_zero_in_the_xlsx() -> None:
     ctx, _ = _recon_unscored_rest_gap()
     ws = _xlsx(ctx)["Heatmap Summary"]
     header_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "Tactic")
@@ -536,11 +536,11 @@ def test_a_tactic_with_nothing_addressable_reads_na_not_zero_in_the_xlsx() -> No
     }
     other = next(t for t in by_tactic if t != _RECON)
     assert by_tactic[other] == 0.0  # the positive half first: a real zero stays zero
-    assert by_tactic[_RECON] == "n/a"
+    assert by_tactic[_RECON] == "not measured"
 
 
 @pytest.mark.unit
-def test_a_tactic_with_nothing_addressable_reads_na_not_zero_in_docx_and_pdf() -> None:
+def test_a_tactic_with_nothing_addressable_reads_not_measured_not_zero_in_docx_and_pdf() -> None:
     from docx import Document
 
     ctx, _ = _recon_unscored_rest_gap()
@@ -551,18 +551,18 @@ def test_a_tactic_with_nothing_addressable_reads_na_not_zero_in_docx_and_pdf() -
     by_tactic = {r.cells[0].text: r.cells[pct].text for r in table.rows[1:]}
     other = next(t for t in by_tactic if t != _RECON)
     assert by_tactic[other] == "0.0%"
-    assert by_tactic[_RECON] == "n/a"
+    assert by_tactic[_RECON] == "not measured"
 
     # The PDF table is drawn; assert the Recon row's text rather than a cell.
     text = " ".join(_pdf_text(render_pdf(ctx)).split())
     assert "TA0043 Reconnaissance" in text
     recon_row = text.split("TA0043 Reconnaissance", 1)[1].split("TA", 1)[0]
-    assert "n/a" in recon_row, recon_row
+    assert "not measured" in recon_row, recon_row
     assert "0.0%" not in recon_row, recon_row
 
 
 @pytest.mark.unit
-def test_nothing_addressable_overall_reads_na_in_every_renderer() -> None:
+def test_nothing_addressable_overall_reads_not_measured_in_every_renderer() -> None:
     from docx import Document
 
     ctx, rollup = _ctx_from({}, default_status=CoverageStatus.NOT_APPLICABLE.value)
@@ -570,11 +570,11 @@ def test_nothing_addressable_overall_reads_na_in_every_renderer() -> None:
 
     ws = _xlsx(ctx)["Heatmap Summary"]
     labels = {r[0].value: r[1].value for r in ws.iter_rows(max_row=12)}
-    assert labels["Coverage %"] == "n/a"
+    assert labels["Coverage %"] == "not measured"
 
     paras = [p.text for p in Document(io.BytesIO(render_docx(ctx))).paragraphs]
-    assert "Overall coverage: n/a" in paras
-    assert "Overall coverage: n/a" in " ".join(_pdf_text(render_pdf(ctx)).split())
+    assert "Overall coverage: not measured" in paras
+    assert "Overall coverage: not measured" in " ".join(_pdf_text(render_pdf(ctx)).split())
 
 
 @pytest.mark.unit
@@ -589,3 +589,66 @@ def test_every_renderer_defines_the_coverage_percentage() -> None:
     docx_text = "\n".join(p.text for p in Document(io.BytesIO(render_docx(ctx))).paragraphs)
     assert needle in docx_text
     assert needle in " ".join(_pdf_text(render_pdf(ctx)).split())
+
+
+@pytest.mark.unit
+def test_an_inferred_tool_is_marked_unconfirmed_beside_a_confirmed_one() -> None:
+    """#102. A row with one confirmed tool is NOT pending review, so its
+    inferred neighbour used to print exactly like a confirmed citation. The
+    mark comes from `pending.uncleared_tools`: inferred and not cleared."""
+    code = TECHNIQUES[4].id
+    ctx, _ = _ctx_from(
+        {
+            code: {
+                "detection_tools": ["CrowdStrike Falcon", "Splunk"],
+                "unconfirmed_citations": [
+                    {"tool": "Splunk", "cited": "splunk es", "cleared_at": None}
+                ],
+            }
+        }
+    )
+    row = next(r for r in _sheet_rows(_xlsx(ctx)["Coverage"]) if r["Technique"] == code)
+    # The row itself is not withheld (an empty cell reads back as None)...
+    assert not row["Pending review"]
+    assert row["Detection tools"] == "CrowdStrike Falcon; Splunk (unconfirmed)"
+
+
+@pytest.mark.unit
+def test_a_cleared_citation_is_not_marked() -> None:
+    code = TECHNIQUES[5].id
+    ctx, _ = _ctx_from(
+        {
+            code: {
+                "detection_tools": ["Splunk"],
+                "unconfirmed_citations": [
+                    {"tool": "Splunk", "cited": "splunk es", "cleared_at": "2026-09-23T00:00:00"}
+                ],
+            }
+        }
+    )
+    row = next(r for r in _sheet_rows(_xlsx(ctx)["Coverage"]) if r["Technique"] == code)
+    assert row["Detection tools"] == "Splunk"
+
+
+@pytest.mark.unit
+def test_model_text_cannot_become_a_formula_or_break_the_workbook() -> None:
+    """Rationale is model output and tool names come from a client upload.
+    openpyxl stores a leading "=" as a formula and raises on control bytes."""
+    code, gap_code = TECHNIQUES[6].id, TECHNIQUES[7].id
+    formula = '=HYPERLINK("http://example.test","click")'
+    ctx, _ = _ctx_from(
+        {
+            code: {"rationale": formula, "detection_tools": ["=cmd|' /C calc'!A0"]},
+            gap_code: {"status": CoverageStatus.GAP.value, "rationale": "bell" + chr(7)},
+        }
+    )
+    wb = _xlsx(ctx)
+    ws = wb["Coverage"]
+    headers = [c.value for c in ws[1]]
+    r = next(i for i in range(2, ws.max_row + 1) if ws.cell(i, 1).value == code)
+    rationale = ws.cell(r, headers.index("Rationale") + 1)
+    assert rationale.value == formula
+    assert rationale.data_type == "s"
+    assert ws.cell(r, headers.index("Detection tools") + 1).data_type == "s"
+    gap = next(x for x in _sheet_rows(wb["Gaps"]) if x["Technique"] == gap_code)
+    assert gap["Rationale"] == "bell"

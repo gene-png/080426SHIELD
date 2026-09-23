@@ -238,3 +238,27 @@ def test_attack_deliverable_invisible_to_client(app_client) -> None:
 def test_catalog_count_matches_constant() -> None:
     # Smoke - lock against accidental catalog regression.
     assert len(TECHNIQUES) >= 600
+
+
+@pytest.mark.unit
+def test_the_stored_summary_says_what_the_deliverable_says(app_client) -> None:
+    """`Deliverable.summary` is what the results list shows. It printed the
+    rollup's raw 0.0% beside a PDF that says "not measured" when nothing is
+    Covered, Partial or Gap. Driven through the real finalize endpoint."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    assessment = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()
+    for cov in assessment["coverage"][:3]:
+        r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "not_applicable"})
+        assert r.status_code == 200, r.text
+    c.post(f"/attack/assessments/{assessment['id']}/approve", headers=h)
+    fin = c.post(f"/attack/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+    summary = fin.json()["summary"]
+    assert summary.startswith("Coverage: not measured."), summary
+    assert "0.0%" not in summary, summary

@@ -19,27 +19,40 @@ Reconnaissance technique unscored, so its Recon tactic exported 0.0%.
 ## What changed
 
 - **Coverage sheet:** Rationale, Detection tools, Prevention tools and Response
-  tools columns. Notes stays, because it has its own writer (the technique
-  panel's PATCH) and a consultant's note is not the model's rationale.
+  tools columns. **A tool whose citation was inferred and not yet cleared is
+  printed with ` (unconfirmed)`** (from `pending.uncleared_tools`). A row with
+  one confirmed tool is not pending review, so without the mark an inferred
+  tool beside a confirmed one would have reached the client looking confirmed.
+  The summary sheet says what the mark means. Notes stays, because it has its
+  own writer (the technique panel's PATCH).
 - **Gaps sheet:** a Rationale column.
 - **New Unscored sheet:** every technique the rollup counts as unscored, by
-  code. It uses the rollup's own predicate (no row, no status, or an unrecognised
-  status) and iterates the catalogue as the rollup does, so its length equals
-  `rollup.unscored_count`.
-- **Coverage %:** reads `n/a` wherever Covered + Partial + Gap is zero, in all
-  three renderers (XLSX, DOCX, PDF), overall and per tactic. Each renderer states
-  the formula beside the number. `attack/analytics.py` is unchanged: its 0.0 also
-  feeds the dashboard and the risk register, so only what the deliverable prints
-  changes here.
+  code. It uses the rollup's own predicate and iterates the catalogue as the
+  rollup does, so its length equals `rollup.unscored_count`.
+- **Coverage %:** reads **"not measured"** wherever Covered + Partial + Gap is
+  zero, in XLSX, DOCX and PDF, overall and per tactic, and in the stored
+  `Deliverable.summary` the results list shows. It is not "n/a", which is the
+  N/A status two columns away: "never assessed" would have read as "not
+  applicable to us". Each renderer states the formula.
+- **Text cells are safe:** model rationale and client-supplied tool names can
+  no longer become an XLSX formula (a leading `=` is kept as text), and a
+  control character is dropped instead of failing the finalize.
+
+`attack/analytics.py` is unchanged: its 0.0 also feeds the dashboards (#489).
 
 ## Proof
 
-The new tests fail against the unfixed exporter (9 of 27). Each fix was then
-reverted on its own and turned exactly one named test red: the XLSX, DOCX and
-PDF percentage sites separately, the PDF definition, the Unscored predicate,
-and the Gaps rationale.
+The first-round tests fail against the unfixed exporter (9 of 27). Every fix
+was then reverted on its own and turned a named test red: the XLSX, DOCX and PDF
+percentage sites, the PDF definition, the Unscored predicate, the Gaps
+rationale, the unconfirmed mark, the formula guard, the illegal-character strip,
+the stored summary line (checked through the real finalize endpoint), and the
+label. Measured on the live-run assessment: none of the 632 rationales contain a
+redaction placeholder or begin with a formula character, so the last two
+defended cases are latent, not live.
 
 ## Left alone, on purpose
 
-The dashboard shows the same `0.0%` for nothing-addressable tactics. It reads
-`analytics.compute`, is outside this file, and is filed separately.
+The dashboards' identical `0.0%` reads `analytics.compute`, which is outside
+this file: #489. CSF and ZT divide by the catalogue total, which is never zero,
+so they do not share the defect.

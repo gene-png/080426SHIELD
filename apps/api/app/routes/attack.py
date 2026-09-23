@@ -48,6 +48,7 @@ from app.attack.citations import (
 )
 from app.attack.coverage import COVERAGE_DEFINITIONS, CoverageStatus
 from app.attack.exporters import build_context as build_attack_context
+from app.attack.exporters import coverage_pct_text
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
@@ -2657,7 +2658,9 @@ def finalize_attack_deliverable(
     )
 
     summary_line = (
-        f"Coverage: {rollup.coverage_pct}%. "
+        # The same text the deliverable's own renderers print, so the results
+        # list cannot say 0.0% beside a PDF that says "not measured".
+        f"Coverage: {coverage_pct_text(rollup)}. "
         f"{rollup.covered} covered, {rollup.partial} partial, {rollup.gap} gaps, "
         f"{rollup.not_applicable} N/A across {rollup.scored_count} scored techniques."
     )
