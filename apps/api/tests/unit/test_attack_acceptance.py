@@ -271,10 +271,13 @@ def test_the_stored_summary_carries_the_withheld_count(app_client) -> None:
     0 covered, 0 partial, 0 gaps ..." for a run whose every claim was withheld
     -- indistinguishable from a client with no controls.
 
-    The world is built by direct SQL because no API writer produces it today:
-    a PATCH stamps citations (None -> []), so a hand-set status is never
-    pending. Covered over NULL citations is the pre-0044 legacy shape that
-    migration records, and `pending.is_pending_review` withholds it."""
+    No HAND-SET status is pending: a PATCH stamps citations (None -> []). The
+    live writer of pending rows is run-ai -- inferred, rejected and no-citation
+    entries all land uncleared, and approve has no pending check, so run-ai ->
+    approve -> finalize reaches this state on every live run with an inexact
+    citation (see test_attack_pending_persistence). Direct SQL here only
+    because this fixture has no provider handle; Covered over NULL citations
+    (the pre-0044 shape) is withheld the same way."""
     import uuid as _uuid
 
     from sqlalchemy import update

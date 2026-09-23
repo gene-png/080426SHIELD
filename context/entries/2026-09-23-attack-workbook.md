@@ -2,7 +2,7 @@
 
 Branch `fix/attack-workbook-says-what-it-knows`, base `df7d5b7`. The renderers
 are all in `apps/api/app/attack/exporters.py`, which #482 owned until it merged;
-`routes/attack.py` changes one line, the stored summary.
+`routes/attack.py` changes only the stored summary line (and its import).
 
 ## What was wrong, measured on the dev stack's one live-run assessment
 
