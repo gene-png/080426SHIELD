@@ -1,1 +1,0 @@
-{"incident": "The other half of the pair above. Same diff, honest body -- and it must pass, or the gate is refusing the PRs it is meant to let through and the enforced property becomes abstention rather than honesty.", "expect": 0, "adversarial": false, "stdout_contains": "names every condition", "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md"]}

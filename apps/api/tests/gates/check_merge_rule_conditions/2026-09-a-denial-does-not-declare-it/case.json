@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. The first version of this gate matched a bare digit inside a `## Merge rule` region, so this body PASSED over a diff adding a revision -- the negation is invisible to the matcher. That is CLAUDE.md's closing-keyword defect rebuilt inside the gate whose subject is honesty, and the more carefully the author writes their scope statement the likelier the pass. The acknowledgment is now an explicit `Merge-rule-condition-4:` marker, which a denial cannot produce.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "trips condition 4",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}

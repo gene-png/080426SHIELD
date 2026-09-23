@@ -1,0 +1,12 @@
+{
+ "incident": "The merge rule puts `alembic/env.py` under condition 5, in as many words: it alters stored behaviour without adding a revision. The obvious glob -- anything under `alembic/` -- would demand a migration declaration for a change that adds no migration. Condition 5 is NOT computed by this gate, so `env.py` is unenforced here, and that is stated rather than silently true.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "condition 4 is not tripped",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}

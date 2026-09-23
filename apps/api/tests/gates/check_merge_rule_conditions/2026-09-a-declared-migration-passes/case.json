@@ -1,0 +1,12 @@
+{
+ "incident": "The passing direction of the marker, and it asserts the REASON reaches stdout: a marker whose reason nobody echoes degrades into a ritual token.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "the body declares it",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}

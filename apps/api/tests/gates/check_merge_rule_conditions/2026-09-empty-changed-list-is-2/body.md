@@ -1,3 +1,1 @@
-## Merge rule
-
-Trips nothing.
+Merge-rule-condition-4: x

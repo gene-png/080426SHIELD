@@ -1,1 +1,0 @@
-apps/api/scripts/check_merge_rule_conditions.py

@@ -1,3 +1,1 @@
-## Summary
-
-A docs change.
+A documentation pass.

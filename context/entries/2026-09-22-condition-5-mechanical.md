@@ -78,3 +78,73 @@ Empty changed-file list, missing or unreadable input, an unknown flag, no repo
 root above the script, and a derived set that comes back empty — all exit 2.
 Only "no gated path touched" exits 0, and its message states how many paths it
 read so a reader can tell it from the others.
+
+## 2026-09-23 — NARROWED TO CONDITION 4, and the condition-5 half withdrawn
+
+Everything above describes a gate computing conditions 4 AND 5. Adversarial
+review found defects that are design rather than patch, so condition 5 was
+withdrawn and filed as **#478**.
+
+**The derivation could not see `scripts/web-install-if-stale.sh`.** That is the
+web install guard — named in `CLAUDE.md` as a reason `docker-compose.yml` is a
+condition-5 path, the thing that decides whether a lockfile security bump reaches
+the running container (#226), and gated by `tests/gates/web_install_guard.sh`. It
+hid three ways at once: the derivation opened only `.github/workflows/`, the verb
+is `sh` rather than `bash|python`, and the operand is the container path
+`/app/web-install-if-stale.sh`. Any one would have hidden it.
+
+**That was a regression against a fix this repo had already made.**
+`check_gate_fixtures.py::invocation_text` takes compose files as `extra` because
+reading only the workflows directory was, in its own words, "a live FALSE
+POSITIVE, not a latent one". The new gate read the narrower surface the sibling
+gate had been corrected away from.
+
+**And the acknowledgment matcher could not tell an acknowledgment from a
+denial.** `## Merge rule` + "This does not trip condition 5." passed. That is the
+closing-keyword defect `CLAUDE.md` records — "THE NEGATION IS INVISIBLE TO THE
+MATCHER" — rebuilt inside the gate whose subject is honesty. Two more ways it
+passed a body acknowledging nothing: the PR template has no `## Merge rule`
+heading so the region fell back to the whole body, and the template's own
+commented `the 4 files in this diff` carries a bare `4`; and any sha, version,
+ordered-list item or changed path with an isolated digit did it too.
+
+**So the acknowledgment is a MARKER now**, the same shape as
+`Auto-close-approved:` and for the same reason:
+
+    Merge-rule-condition-4: <what the migration does>
+
+A denial cannot produce it, the template does not contain it, and an empty reason
+is refused — the rule `check_test_integrity` applies to `# test-integrity:`.
+
+**The test named for the derived half never exercised it.** Its input
+`apps/api/scripts/check_decision_numbers.py` matched the EXPLICIT glob, and the
+lookup tried the table first and `break`ed. Replacing `_as_path`'s body with
+`return raw` would have left the suite green. Recorded in #478, because whatever
+replaces this needs a derived-ONLY input or it inherits the hole with a suite
+that says otherwise.
+
+### What the narrowed gate is
+
+Condition 4: one glob (`apps/api/alembic/versions/*.py`) with an exact answer.
+`alembic/env.py` is deliberately NOT condition 4 — the merge rule puts it under
+condition 5 in as many words — so it is unenforced by this gate, which the
+docstring says rather than leaving silently true.
+
+| check | result |
+| --- | --- |
+| `pytest tests/unit/test_merge_rule_conditions_gate.py` | 18 passed |
+| `check_gate_fixtures.py` | 42 cases across 9 gates behaved as specified |
+| `ruff` / `black` / `prettier` | exit 0 |
+
+The fixture set kept the control and the empty-list case, dropped four
+condition-5 cases, and gained three adversarial ones: a denial, the PR template's
+boilerplate, and a declared migration passing with its reason echoed.
+
+### Whether condition 5 should be mechanised at all
+
+Left open in #478 rather than assumed. The merge rule's own measurement is that
+13 of the last 15 merges trip it, so a blocking gate would be red on nearly
+everything — and `CLAUDE.md` records what a routinely-and-correctly-ignored rule
+teaches. An informational report that never blocks, or a marker declaration of
+condition 4's shape, are the honest options. The regex is not the first thing to
+fix.

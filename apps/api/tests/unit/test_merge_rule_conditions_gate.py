@@ -1,22 +1,30 @@
-"""Conditions 4 and 5 of the merge rule, computed rather than remembered.
+"""Merge-rule condition 4, computed from the diff and declared in the body.
 
-The rule says a PR tripping 4, 5 or 6 comes back to the human, and calls
-condition 5 "mostly a path match". A path match with an exact answer, decided
-from memory by whoever wants to merge, is the shape this gate replaces.
+## THIS FILE LOST MOST OF ITS CASES, AND THE DELETION IS THE POINT
 
-## What these cases are about
+The gate covered condition 5 as well. Adversarial review found the derivation
+could not see a PR whose only change is `scripts/web-install-if-stale.sh` -- a
+condition-5 path by the merge rule's own reasoning -- because it opened only
+`.github/workflows/`, matched only `bash|python` as the verb, and could not map
+the container path `/app/web-install-if-stale.sh` back to a repo path. Each of
+those is a way the enumeration was narrower than the thing it enumerated.
 
-The gate does not refuse a PR for tripping a condition -- see its docstring for
-why a permanently red required check is the wrong design. It refuses a PR body
-that names FEWER conditions than the diff carries. So the cases split three
-ways: the computation is right, the comparison is right, and every
-could-not-look branch is 2 rather than 0.
+Worse, the test NAMED for the derived half did not exercise it: its input
+`apps/api/scripts/check_decision_numbers.py` matched the EXPLICIT glob
+`apps/api/scripts/check_*.py`, and the lookup tried the table first and `break`ed.
+Replacing `_as_path`'s body with `return raw` would have left the suite green.
 
-The last group is the one worth having. `check_audit_evidence.py` shipped with
-`is_code_change([])` returning False, so an empty changed-file list printed
-"documentation-only change, exempt" and exited 0 -- a green gate with an
-encouraging sentence over input supporting neither reading. Every equivalent
-branch here is asserted.
+So condition 5 is withdrawn rather than patched, and filed. What is left is
+condition 4: one glob with an exact answer.
+
+## AND THE ACKNOWLEDGMENT IS A MARKER NOW, SO THESE CASES TEST A DIFFERENT
+## PROPERTY THAN THEY DID
+
+The old matcher looked for a bare digit in a `## Merge rule` region. It accepted
+a DENIAL ("This does not trip condition 5.") and it accepted the PR template's
+own commented `the 4 files in this diff`, which appears in every body in the
+repo. Both are pinned below as cases that must now FAIL -- a suite exercising
+only the happy path would have caught neither.
 """
 
 from __future__ import annotations
@@ -33,300 +41,164 @@ EXIT_OK = 0
 EXIT_VIOLATION = 1
 EXIT_COULD_NOT_LOOK = 2
 
-SILENT_BODY = "## Merge rule\n\nTrips nothing.\n"
+MIGRATION = "apps/api/alembic/versions/0051_x.py"
+MARKER = "Merge-rule-condition-4: adds two nullable columns to deliverables"
 
 
 def _run(tmp_path: pathlib.Path, changed: str | None, body: str | None, *extra: str):
-    """Run the gate as a PROCESS, so the `__main__` block is exercised.
-
-    Importing `main` would skip the crash handler entirely, and the crash
-    handler is the difference between exit 2 and exit 1 on an unhandled
-    exception -- the distinction this repo reserves for "could not look".
-    """
-    args = [sys.executable, str(SCRIPT)]
+    """Run it as a PROCESS, so the `__main__` crash handler is exercised."""
+    args = [sys.executable, str(SCRIPT), *extra]
     if changed is not None:
-        path = tmp_path / "changed.txt"
-        path.write_text(changed, encoding="utf-8")
-        args += ["--changed-files", str(path)]
+        p = tmp_path / "changed.txt"
+        p.write_text(changed, encoding="utf-8")
+        args += ["--changed-files", str(p)]
     if body is not None:
-        path = tmp_path / "body.md"
-        path.write_text(body, encoding="utf-8")
-        args += ["--body", str(path)]
-    args += list(extra)
+        b = tmp_path / "body.md"
+        b.write_text(body, encoding="utf-8")
+        args += ["--body", str(b)]
     # noqa justified: every argument is built here from `sys.executable` and
-    # `tmp_path`. There is no untrusted input, and running the gate as a real
-    # process is the point.
+    # `tmp_path`; there is no untrusted input.
     return subprocess.run(  # noqa: S603
         args, capture_output=True, text=True, encoding="utf-8", timeout=120
     )
 
 
-# --------------------------------------------------------------------------
-# The computation
-# --------------------------------------------------------------------------
+# --------------------------------------------------------------- computing it
 
 
 @pytest.mark.unit
-def test_a_docs_only_diff_trips_nothing() -> None:
-    """The one legitimate green, and it must print what it looked at.
+def test_a_diff_with_no_migration_passes(tmp_path: pathlib.Path) -> None:
+    result = _run(tmp_path, "README.md\napps/api/app/config.py\n", "Nothing to declare.\n")
+    assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
+    assert "condition 4 is not tripped" in result.stdout
 
-    A gate whose clean message says only "clean" cannot be told from one that
-    read nothing. This asserts the message carries the counts, which is what
-    distinguishes it from the exit-2 branches below.
+
+@pytest.mark.unit
+def test_alembic_env_is_NOT_condition_4(tmp_path: pathlib.Path) -> None:
+    """The merge rule puts `env.py` under condition 5, in as many words.
+
+    Asserted because the obvious glob -- anything under `alembic/` -- would catch
+    it and then demand a migration declaration for a change that adds no
+    revision. Condition 5 is not computed here, so `env.py` is unenforced by this
+    gate; the docstring says so rather than leaving it silently true.
     """
-    import tempfile
+    result = _run(tmp_path, "apps/api/alembic/env.py\n", "No declaration here.\n")
+    assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
 
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), "README.md\ndocs/security.md\n", "## Summary\n\nDocs.\n")
-    assert result.returncode == EXIT_OK, result.stderr
-    assert "clean" in result.stdout
-    assert "2 changed path(s)" in result.stdout, (
-        "the clean message must state how many paths it read; a bare 'clean' "
-        f"cannot be told from a gate that read nothing. Got: {result.stdout!r}"
+
+@pytest.mark.unit
+def test_a_migration_without_the_marker_FAILS(tmp_path: pathlib.Path) -> None:
+    result = _run(tmp_path, f"{MIGRATION}\n", "A tidy body that mentions nothing.\n")
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
+    assert MIGRATION in result.stdout, "the failure must NAME the path that tripped it"
+
+
+@pytest.mark.unit
+def test_a_migration_WITH_the_marker_passes(tmp_path: pathlib.Path) -> None:
+    result = _run(tmp_path, f"{MIGRATION}\n", f"## Summary\n\nWork.\n\n{MARKER}\n")
+    assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
+    assert "adds two nullable columns" in result.stdout, (
+        "the clean line must echo the REASON, or the marker degrades into a "
+        "ritual token nobody reads"
     )
+
+
+# ------------------------------------------- what the digit matcher accepted
+
+
+@pytest.mark.unit
+def test_a_DENIAL_does_not_satisfy_it(tmp_path: pathlib.Path) -> None:
+    """THE DEFECT THE MARKER EXISTS FOR.
+
+    The first version matched a bare digit inside a `## Merge rule` region, so
+    this body passed over a diff adding a revision. `CLAUDE.md`'s closing-keyword
+    shape -- "THE NEGATION IS INVISIBLE TO THE MATCHER" -- rebuilt inside the gate
+    whose subject is honesty, and the more carefully someone writes their scope
+    statement the likelier the pass.
+    """
+    body = "## Merge rule\n\nThis does not trip condition 4. No migration here.\n"
+    result = _run(tmp_path, f"{MIGRATION}\n", body)
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.unit
+def test_the_PR_TEMPLATES_OWN_BOILERPLATE_does_not_satisfy_it(tmp_path: pathlib.Path) -> None:
+    """`.github/pull_request_template.md` carries `the 4 files in this diff`.
+
+    It has no `## Merge rule` heading, so the old region fell back to the WHOLE
+    body and that bare `4` acknowledged condition 4 for every author who left the
+    comment block in place -- which the template tells them to do. The sibling
+    gate in the same workflow has a dedicated step for exactly this hazard; this
+    one had neither a step nor a test.
+    """
+    body = "<!-- Scope -> the 4 files in this diff, at <sha> -->\n\nA real summary.\n"
+    result = _run(tmp_path, f"{MIGRATION}\n", body)
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("path", "why"),
+    ("body", "label"),
     [
-        ("apps/api/app/config.py", "the redactor switch -- #142 lived here"),
-        ("apps/api/app/ai/llm.py", "the single egress path"),
-        ("apps/api/app/risk/engine.py", "a deterministic scoring engine"),
-        ("apps/api/app/models/client.py", "stored behaviour without a migration"),
-        ("apps/api/tests/unit/test_x.py", "weakening a test satisfies condition 1"),
-        ("e2e/smoke/s1.spec.ts", "weakening a test satisfies condition 1"),
-        ("apps/web/src/lib/x.test.ts", "the vitest suite"),
-        ("docker-compose.yml", "the mounts every containerised gate reads"),
-        (".github/workflows/ci.yml", "satisfies condition 1 by construction"),
-        ("apps/api/scripts/check_plan_totals.py", "a gate"),
-        ("tests/gates/prettier_hook.sh", "a gate written in shell"),
-        ("apps/api/scripts/seed_demo.py", "clean seed data hid #130 for months"),
+        ("Reviewed at a3137d5.\n", "a sha with an isolated 4"),
+        ("Pinned to prettier@3.9.4 today.\n", "a version"),
+        ("4. Added the fixtures\n", "an ordered-list item"),
+        ("Touches e2e/smoke/s4-login.spec.ts only.\n", "a path with an isolated digit"),
+        ("Quoting the rule: any PR tripping 4, 5 or 6 comes back.\n", "a quoted merge rule"),
     ],
 )
-def test_each_gated_path_trips_condition_5(path: str, why: str) -> None:
-    """One case per class, because a single representative proves one glob.
+def test_a_stray_digit_does_not_satisfy_it(tmp_path, body, label) -> None:
+    """Five shapes the digit matcher accepted, none of which declares anything.
 
-    The parameters are the classes `CLAUDE.md`'s condition 5 names, not a
-    sample of them -- a table drawn from what its author happened to think of
-    is the enumeration defect this repo records. Where the rule names a class,
-    there is a row.
+    Parametrised because the failure is a CLASS -- "a 4 appears somewhere" -- and
+    one example would leave the rest untested while looking covered.
     """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), f"{path}\n", SILENT_BODY)
-    assert result.returncode == EXIT_VIOLATION, (
-        f"{path} ({why}) did not trip condition 5.\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-    assert path in result.stdout, "the failure must name the path a human is being sent to"
+    result = _run(tmp_path, f"{MIGRATION}\n", body)
+    assert result.returncode == EXIT_VIOLATION, f"{label}: {result.stdout} {result.stderr}"
 
 
 @pytest.mark.unit
-def test_a_new_alembic_revision_trips_condition_4() -> None:
-    import tempfile
+def test_an_EMPTY_reason_is_not_a_reason(tmp_path: pathlib.Path) -> None:
+    """The rule `check_test_integrity` applies to `# test-integrity:`.
 
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), "apps/api/alembic/versions/0099_x.py\n", SILENT_BODY)
-    assert result.returncode == EXIT_VIOLATION
-    assert "condition 4" in result.stdout
-
-
-@pytest.mark.unit
-def test_alembic_env_is_condition_5_and_NOT_a_migration() -> None:
-    """The distinction the merge rule draws: "no migration" is not "nothing
-    under alembic/". A cascade rule or a column default changes stored
-    behaviour without adding a revision, so `env.py` must trip 5 and not 4 --
-    getting that backwards would let an `env.py` change read as a migration and
-    be handled under the wrong condition.
+    A marker with nothing after the colon is the ritual-satisfaction outcome the
+    marker was chosen to avoid, so it is refused rather than counted.
     """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), "apps/api/alembic/env.py\n", SILENT_BODY)
-    assert result.returncode == EXIT_VIOLATION
-    assert "condition 5" in result.stdout
-    assert "condition 4" not in result.stdout
+    result = _run(tmp_path, f"{MIGRATION}\n", "Merge-rule-condition-4:   \n")
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
 
 
 @pytest.mark.unit
-def test_a_gate_script_trips_5_even_when_the_explicit_table_does_not_name_it() -> None:
-    """The DERIVED half, which is the half that survives a new gate.
-
-    `CLAUDE.md`: derive the set, do not extend the list. A gate wired into a
-    workflow in a spelling this file has never heard of still counts, because
-    the membership test is "does any workflow execute it".
-    """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(
-            pathlib.Path(tmp), "apps/api/scripts/check_decision_numbers.py\n", SILENT_BODY
-        )
-    assert result.returncode == EXIT_VIOLATION
-    assert "check_decision_numbers.py" in result.stdout
+def test_the_marker_in_PROSE_does_not_satisfy_it(tmp_path: pathlib.Path) -> None:
+    """The colon is required, so a mention of the rule is not a declaration."""
+    body = "I read the Merge-rule-condition-4 rule and it does not apply.\n"
+    result = _run(tmp_path, f"{MIGRATION}\n", body)
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
 
 
-@pytest.mark.unit
-def test_THIS_GATE_trips_its_own_condition_5() -> None:
-    """Self-application, and it is here because it found a real hole.
-
-    The first version of `EXPLICIT_CONDITION_5` omitted
-    `apps/api/scripts/check_*.py`, on the belief that `derived_gate_paths`
-    subsumed it. It does not: the derived set answers "is this EXECUTED as a
-    gate today", and a gate not yet wired into a workflow is not. Run against
-    its own one-file diff, the gate reported "clean -- none of 1 changed path(s)
-    trips condition 4 or 5" over a new gate script.
-
-    So this case is the mechanism that caught it, kept.
-    """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), f"apps/api/scripts/{SCRIPT.name}\n", SILENT_BODY)
-    assert result.returncode == EXIT_VIOLATION, (
-        "this gate does not trip its own condition 5, which is how the first "
-        "version shipped. See the comment on EXPLICIT_CONDITION_5."
-    )
-
-
-# --------------------------------------------------------------------------
-# The comparison against the body
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_a_body_that_NAMES_the_condition_passes() -> None:
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(
-            pathlib.Path(tmp),
-            "apps/api/app/config.py\n",
-            "## Merge rule\n\nTrips condition 5 (the redactor switch).\n",
-        )
-    assert result.returncode == EXIT_OK, result.stderr
-
-
-@pytest.mark.unit
-def test_a_number_OUTSIDE_the_merge_rule_section_does_not_satisfy_it() -> None:
-    """The scoping, without which any PR mentioning a 5 anywhere passes.
-
-    A body carrying "prettier@3.9.5" or "fixes 5 sites" would otherwise
-    acknowledge condition 5 by accident -- a gate satisfied by an unrelated
-    digit is the containment-assertion defect (#72) in a different costume.
-    """
-    import tempfile
-
-    body = "## Summary\n\nThis fixes 5 separate sites.\n\n## Merge rule\n\nTrips nothing.\n"
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), "apps/api/app/config.py\n", body)
-    assert result.returncode == EXIT_VIOLATION, (
-        "a '5' in the Summary satisfied condition 5. The check must read only "
-        "the merge-rule region when one exists."
-    )
-
-
-@pytest.mark.unit
-def test_a_body_with_NO_merge_rule_heading_falls_back_to_the_whole_body() -> None:
-    """Deliberate, and stated so it is not read as a bug.
-
-    A PR that discusses the conditions in prose without a heading is being
-    honest, and failing it would teach people to add a heading rather than to
-    think about the paths. The scoping above applies only when a heading exists.
-    """
-    import tempfile
-
-    body = "## Summary\n\nThis trips condition 5 because it edits the redactor switch.\n"
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), "apps/api/app/config.py\n", body)
-    assert result.returncode == EXIT_OK, result.stderr
-
-
-@pytest.mark.unit
-def test_15_does_not_satisfy_condition_5() -> None:
-    """The lookarounds, pinned. `15` contains `5`."""
-    import tempfile
-
-    body = "## Merge rule\n\nSee the 15 findings; trips nothing.\n"
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), "apps/api/app/config.py\n", body)
-    assert result.returncode == EXIT_VIOLATION
-
-
-@pytest.mark.unit
-def test_BOTH_conditions_must_be_named_when_both_are_tripped() -> None:
-    """Naming one of two is the partial-honesty case, and it must fail.
-
-    Without this, a body saying "trips condition 5" over a diff that also adds
-    a migration would pass -- and condition 4 is the one the human most needs
-    to see.
-    """
-    import tempfile
-
-    changed = "apps/api/alembic/versions/0099_x.py\napps/api/app/config.py\n"
-    body = "## Merge rule\n\nTrips condition 5.\n"
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), changed, body)
-    assert result.returncode == EXIT_VIOLATION
-    assert "condition(s) 4" in result.stderr, result.stderr
-
-
-# --------------------------------------------------------------------------
-# Could not look. Every one of these is 2, never 0.
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_an_EMPTY_changed_file_list_is_2_not_0() -> None:
-    """The `is_code_change([])` shape, refused explicitly.
-
-    An empty diff is not a clean diff -- it is a checkout that did not fetch
-    enough history. Reading it as "no gated paths" is the false green this gate
-    exists to avoid.
-    """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), "", SILENT_BODY)
-    assert result.returncode == EXIT_COULD_NOT_LOOK, result.stdout
-    assert "EMPTY" in result.stderr
+# ------------------------------------------------- could-not-look is not clean
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("changed", "body", "extra", "label"),
     [
-        (None, SILENT_BODY, (), "no --changed-files"),
-        ("x\n", None, (), "no --body"),
-        ("x\n", SILENT_BODY, ("--bogus",), "an unknown flag"),
-        (None, None, (), "no arguments at all"),
+        ("", "x\n", (), "an empty changed-file list"),
+        (None, "x\n", (), "no --changed-files"),
+        (f"{MIGRATION}\n", None, (), "no --body"),
+        (f"{MIGRATION}\n", "x\n", ("--bogus",), "an unknown flag"),
     ],
 )
-def test_unreadable_or_unparseable_input_is_2(changed, body, extra, label) -> None:
-    """An ignored flag is how a gate reports clean having read nothing (#343)."""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run(pathlib.Path(tmp), changed, body, *extra)
+def test_could_not_look_branches_are_2(tmp_path, changed, body, extra, label) -> None:
+    """Each must be 2, never 0. An empty list would otherwise read as "no
+    migration", which is `check_audit_evidence.py`'s `is_code_change([])`."""
+    result = _run(tmp_path, changed, body, *extra)
     assert result.returncode == EXIT_COULD_NOT_LOOK, f"{label}: {result.stdout} {result.stderr}"
 
 
 @pytest.mark.unit
-def test_a_missing_input_FILE_is_2() -> None:
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        args = [
-            sys.executable,
-            str(SCRIPT),
-            "--changed-files",
-            str(pathlib.Path(tmp) / "nope.txt"),
-            "--body",
-            str(pathlib.Path(tmp) / "also-nope.md"),
-        ]
-        result = subprocess.run(  # noqa: S603
-            args, capture_output=True, text=True, encoding="utf-8", timeout=120
-        )
-    assert result.returncode == EXIT_COULD_NOT_LOOK, result.stdout
+def test_a_migration_in_a_SUBDIRECTORY_is_still_caught(tmp_path: pathlib.Path) -> None:
+    """`fnmatch`'s `*` crosses `/`, which is load-bearing rather than a quirk to
+    work around: a revision filed in a subdirectory is still a revision."""
+    result = _run(tmp_path, "apps/api/alembic/versions/legacy/0002_x.py\n", "No marker.\n")
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
