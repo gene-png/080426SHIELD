@@ -202,13 +202,20 @@ _MAX_OUTPUT_TOKENS = 8192
 #     default that flipped from Opus 4.8/4.7). An unknown share of the budget is
 #     spent before the first JSON byte.
 #   * The failure mode is asymmetric: too small loses the whole run and the
-#     money spent on it; too large costs nothing extra, because output is billed
-#     on tokens actually generated, not on the cap.
+#     money spent on it. Too large costs nothing for a generation that stops on
+#     its own, because output is billed on tokens actually generated -- but a
+#     runaway generation now bills up to the cap before it is cut off.
 #
-# Anything not listed keeps the shared default — this is a targeted fix, not a
-# blanket raise. Longer term the better shape is to chunk `mitre_map` per tactic
-# (14 smaller calls that fail independently and retry cheaply) rather than ask
-# for one very large document; this unblocks the job without that refactor.
+# EVERY registered job is listed. `test_every_registered_job_has_a_chosen_output
+# _budget` walks the job registry and fails CI for a `call_purpose` missing here,
+# so a new job cannot silently inherit the shared default. (mitre_map has since
+# been batched -- `_MITRE_BATCH_SIZE` in routes/attack.py -- so its 64000 is
+# per batch.)
+#
+# The raises made on 2026-09-23 apply to the streamed (Anthropic) adapter
+# only; the non-streamed adapters send what they sent before -- see
+# `non_streamed_output_cap` below. Provider ceilings and the 60 s timeout are
+# #485, and the OpenAI adapter has no truncation guard at all (#484).
 _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     "mitre_map": 64000,
     # risk_synthesize drafts one entry per finding and is batched at 20 (see
@@ -219,14 +226,71 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # actually generated, not on the cap, so too large costs nothing while too
     # small loses the batch and the money spent on it.
     "risk_synthesize": 32000,
+    # The three below ran on the shared 8192 until 2026-09-23 because nobody
+    # had listed them (#479).
+    #
+    # csf_score is ONE unbatched call over the whole assessment: a full Working
+    # Profile is 106 subcategories x 3 tiers = 318 rows, each five integers and
+    # a narrative. That per-row cost is an ESTIMATE -- no live csf_score has run
+    # on the dev stack -- and it spans a wide range: at ~100 tokens a row the
+    # JSON is ~32k, at the ~575 a mitre_map row was measured at (routes/attack.py)
+    # it is ~183k. So 8192 could not fit even one tier, and 64000 -- the largest
+    # cap the dev stack's Anthropic model has accepted (mitre_map) -- fits only
+    # the low end. The real fix is batching per tier, as risk_synthesize and
+    # mitre_map already are. Until then an overrun fails loudly on Anthropic
+    # (stop_reason, streamed). The non-streamed adapters keep the shared 8192
+    # for this purpose (`non_streamed_output_cap`).
+    "csf_score": 64000,
+    # extract.capabilities output scales with the uploaded inventory, which the
+    # client supplies and nothing bounds. Measured 2026-09-23 on the dev stack:
+    # one live run failed on stop_reason=max_tokens and the retry finished at
+    # 8117 of 8192.
+    "extract.capabilities": 64000,
+    # zt_score is small: 37-50 capabilities, three short fields each, no
+    # narrative since #64 removed three unconsumed ones. Its 2026-08-04 overrun
+    # at 4096 was with those narratives, and the 2026-07-15 one at 8192 was
+    # unbounded gemini thinking, now capped at _THINKING_BUDGET_TOKENS. So 8192
+    # is CHOSEN, not defaulted: raising it buys nothing for an output this
+    # size.
+    "zt_score": _MAX_OUTPUT_TOKENS,
 }
 
 
 def max_output_tokens_for(purpose: str | None) -> int:
-    """Output-token cap for `purpose`, falling back to the shared default."""
+    """Output-token cap for `purpose`, falling back to the shared default.
+
+    The fallback is NOT how a registered job gets its budget:
+    `test_every_registered_job_has_a_chosen_output_budget` walks the job
+    registry and fails CI for any `call_purpose` missing from the table above.
+    No production path reaches it -- `engine.run_job` is the only caller of
+    `LLMClient.invoke` and always passes a registered purpose. It serves tests
+    that call a provider with an ad-hoc purpose.
+    """
     if not purpose:
         return _MAX_OUTPUT_TOKENS
     return _MAX_OUTPUT_TOKENS_BY_PURPOSE.get(purpose, _MAX_OUTPUT_TOKENS)
+
+
+# The table above is sized for the STREAMED adapter (Anthropic): it is where
+# the extract.capabilities failure was measured, and a stream has no client read
+# timeout. The non-streamed adapters (OpenAI, Gemini, Vertex) send exactly what
+# they sent before this table grew -- the shared default for the two purposes
+# raised on 2026-09-23 -- so nothing changes for them.
+#
+# This replaced a per-model ceiling list. Three review rounds each found a model
+# it missed (gpt-4.1, then gpt-5-chat-latest), and every miss was an HTTP 400 on
+# a configuration that worked at 8192. A list of provider limits cannot be
+# complete; "these adapters are unchanged" can be, and a test pins it. Raising
+# them is its own change, with #485's ceilings and 60 s timeout.
+_RAISED_FOR_THE_STREAMED_ADAPTER_ONLY = frozenset({"csf_score", "extract.capabilities"})
+
+
+def non_streamed_output_cap(purpose: str | None) -> int:
+    """The cap for the non-streamed (httpx) adapters: what they sent before the
+    2026-09-23 raise, for every purpose."""
+    if purpose in _RAISED_FOR_THE_STREAMED_ADAPTER_ONLY:
+        return _MAX_OUTPUT_TOKENS
+    return max_output_tokens_for(purpose)
 
 
 # OpenAI reasoning / `responses` model families (the o-series and gpt-5) REJECT
@@ -269,7 +333,7 @@ def _generate_content_body(
 ) -> dict[str, Any]:
     """Shape a redacted prompt + payload into a generateContent request body."""
     generation_config: dict[str, Any] = {
-        "maxOutputTokens": max_output_tokens_for(payload.get("__purpose__"))
+        "maxOutputTokens": non_streamed_output_cap(payload.get("__purpose__"))
     }
     if model is not None and _GEMINI_THINKING_RE.search(model):
         generation_config["thinkingConfig"] = {"thinkingBudget": _THINKING_BUDGET_TOKENS}
@@ -337,7 +401,9 @@ class OpenAIProvider:
     def complete(self, prompt: str, payload: dict[str, Any]) -> LLMResponse:
         body = {
             "model": self.model,
-            _openai_token_limit_key(self.model): max_output_tokens_for(payload.get("__purpose__")),
+            _openai_token_limit_key(self.model): non_streamed_output_cap(
+                payload.get("__purpose__")
+            ),
             "messages": [
                 {"role": "user", "content": f"{prompt}\n\n{json.dumps(_egress_payload(payload))}"},
             ],

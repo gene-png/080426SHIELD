@@ -658,8 +658,10 @@ def test_output_cap_is_sized_per_purpose(monkeypatch) -> None:
     # The big job gets room for the whole matrix.
     assert llm_mod.max_output_tokens_for("mitre_map") >= 32000
 
-    # Everything else is unchanged — this is not a blanket raise.
-    assert llm_mod.max_output_tokens_for("csf_score") == llm_mod._MAX_OUTPUT_TOKENS
+    # A direct provider call with no purpose (no job behind it) keeps the
+    # shared default. This test used to also assert csf_score == the default,
+    # "not a blanket raise" -- that assertion pinned the defect below
+    # (test_every_registered_job_has_a_chosen_output_budget), so it is gone.
     assert llm_mod.max_output_tokens_for(None) == llm_mod._MAX_OUTPUT_TOKENS
 
     # And the provider actually applies it, keyed off the __purpose__ control key.
@@ -669,7 +671,32 @@ def test_output_cap_is_sized_per_purpose(monkeypatch) -> None:
 
     provider2, fake2 = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
     provider2.complete("Draft it.", {"k": "v", "__purpose__": "csf_score"})
-    assert fake2.last_kwargs["max_tokens"] == llm_mod._MAX_OUTPUT_TOKENS
+    # Against the default it replaced, not against the table: comparing the
+    # provider to max_output_tokens_for() would compare the code with itself.
+    assert fake2.last_kwargs["max_tokens"] > 8192
+
+
+@pytest.mark.unit
+def test_every_registered_job_has_a_chosen_output_budget() -> None:
+    """Three of five jobs ran on the shared 8192 because nobody listed them.
+
+    Read from the REGISTRY at runtime, not from the tree by grep: a grep for
+    `purpose="..."` literals finds two strings and misses `mitre_map`, whose
+    purpose is its name. What reaches the provider is `job.call_purpose`, so
+    that is what must have an entry. Measured on the dev stack 2026-09-23:
+    `extract.capabilities` failed live on stop_reason=max_tokens and its retry
+    finished at 8117 of 8192.
+    """
+    from app.ai.engine import get_job, registered_jobs
+
+    names = registered_jobs()
+    assert names, "registry is empty -- this test would pass over nothing"
+    missing = sorted(
+        get_job(name).call_purpose
+        for name in names
+        if get_job(name).call_purpose not in llm_mod._MAX_OUTPUT_TOKENS_BY_PURPOSE
+    )
+    assert missing == [], f"no output budget chosen for: {missing}"
 
 
 # --------------------------------------------------------------------------- #
@@ -765,3 +792,95 @@ def test_anthropic_streams_instead_of_blocking_on_one_response(monkeypatch) -> N
     assert resp.content == '{"ok": true}'
     assert resp.input_tokens == 11
     assert resp.output_tokens == 22
+
+
+@pytest.mark.unit
+def test_the_raised_budgets_clear_what_actually_failed() -> None:
+    """The registry gate proves each purpose HAS an entry, not what it is:
+    re-setting a budget to the value that failed would pass it. These pin the
+    values against their evidence, not against the table."""
+    # Measured 2026-09-23 on the dev stack: a live extract.capabilities OVERRAN
+    # 8192 (stop_reason=max_tokens) and its retry needed 8117. The value that
+    # failed is 8192, so the bound is strictly above it.
+    assert llm_mod.max_output_tokens_for("extract.capabilities") > 8192
+    # One CSF tier alone is 106 rows (csf/catalog.py) at >= ~100 tokens a row.
+    assert llm_mod.max_output_tokens_for("csf_score") >= 106 * 100
+    # Deliberately NOT raised: three short fields per capability, so a larger
+    # budget buys nothing.
+    assert llm_mod.max_output_tokens_for("zt_score") == 8192
+
+
+_OPENAI_OK = {
+    "choices": [{"message": {"content": "{}"}}],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+}
+_GEMINI_OK = {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+
+@pytest.mark.unit
+def test_a_read_timeout_does_not_promise_that_a_retry_will_help() -> None:
+    """A non-streamed call that outlives the client timeout is OUR limit, and a
+    job too large for it times out again on every retry -- billed each time.
+    It used to share the dropped-connection copy, which says "you can retry"."""
+    from app.ai.failures import friendly_reason
+
+    timeout = friendly_reason(httpx.ReadTimeout("The read operation timed out"))
+    assert "time limit" in timeout, timeout
+    assert "retry" not in timeout, timeout
+
+    dropped = friendly_reason(RuntimeError("APIConnectionError: Server disconnected"))
+    assert "closed the connection" in dropped, dropped
+
+
+#: What origin/main (df7d5b7) sent from EVERY adapter, before the 2026-09-23
+#: raise: the two explicit entries it had, and the shared 8192 for the rest.
+#: Written out, not read from llm.py -- it is the spec the non-streamed
+#: adapters are held to.
+_MAIN_BUDGETS = {"mitre_map": 64000, "risk_synthesize": 32000}
+_MAIN_DEFAULT = 8192
+
+
+def _registered_purposes() -> list[str]:
+    from app.ai.engine import get_job, registered_jobs
+
+    return sorted({get_job(n).call_purpose for n in registered_jobs()})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("adapter", ["openai-chat", "openai-reasoning", "gemini"])
+def test_the_non_streamed_adapters_send_what_main_sent_for_every_purpose(
+    monkeypatch, adapter
+) -> None:
+    """Three review rounds each found a model a per-model ceiling list missed,
+    and every miss was an HTTP 400 on a configuration that worked at 8192. The
+    non-streamed adapters are now simply unchanged from main -- for every
+    registered purpose, on every model."""
+    purposes = _registered_purposes()
+    assert len(purposes) >= 5, purposes
+    for purpose in purposes:
+        expected = _MAIN_BUDGETS.get(purpose, _MAIN_DEFAULT)
+        if adapter == "gemini":
+            captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
+            GeminiProvider(model="gemini-2.5-flash", api_key="g-test").complete(
+                "p", {"k": "v", "__purpose__": purpose}
+            )
+            sent = captured["json"]["generationConfig"]["maxOutputTokens"]
+        else:
+            model = "gpt-4o-mini" if adapter == "openai-chat" else "gpt-5-chat-latest"
+            captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
+            OpenAIProvider(model=model, api_key="sk-test").complete(
+                "p", {"k": "v", "__purpose__": purpose}
+            )
+            body = captured["json"]
+            sent = body.get("max_tokens", body.get("max_completion_tokens"))
+        assert sent == expected, (adapter, purpose, sent, expected)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("purpose", ["csf_score", "extract.capabilities"])
+def test_the_streamed_adapter_gets_the_raise(monkeypatch, purpose) -> None:
+    """The other half: Anthropic, where the failure was measured, does send the
+    raised budget -- above the 8192 that failed."""
+    provider, fake = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
+    provider.complete("p", {"k": "v", "__purpose__": purpose})
+    assert fake.last_kwargs["max_tokens"] > _MAIN_DEFAULT
