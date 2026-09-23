@@ -12,7 +12,10 @@ import type { AiStatus } from "@/lib/admin/client";
 import type { JSX } from "react";
 
 /**
- * Issue 2: intercept a Run-AI click while no API key is loaded.
+ * Issue 2: intercept a Run-AI click while AI is not ready to run live.
+ *
+ * NOT 'while no API key is loaded', which is what this said and is one of
+ * FIVE reasons `ready` is false -- the wrong one in four of them (#471).
  *
  * Wraps any Run-AI control. When AI is ready, or the admin already
  * acknowledged offline mode for THIS configuration, the child renders
@@ -84,7 +87,12 @@ export function RunAiGuard({
         // landmark and a second one breaks its locator. aria-live announces it
         // without adding a competing status role.
         <p aria-live="polite" className="mt-2 text-xs text-ink-tertiary">
-          Checking whether an API key is loaded…
+          {/* #471, and this is the line the first pass MISSED. It swept for
+              the literal "No API key" and this says "an API key is loaded",
+              so a sweep by spelling could not see it. The shape is "any
+              user-facing string in this component asserting the guard is
+              about key presence", and there were two. */}
+          Checking whether AI is ready to run live…
         </p>
       ) : null}
       {promptFor ? (
@@ -103,6 +111,12 @@ export function RunAiGuard({
              a name that varies per branch makes it unselectable by name while
              adding nothing a reader cannot get from the body text below. */
           aria-label="AI is not ready to run live"
+          /* #471: the SPECIFIC cause reaches assistive tech through the
+             description rather than the name. The name has to stay constant
+             to remain selectable; `aria-describedby` has no such constraint,
+             so there is no trade to make here -- the first version simply
+             left the specificity on the floor. */
+          aria-describedby="run-ai-guard-detail"
           className="mt-3 rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm"
         >
           {/* THE SERVER'S OWN SENTENCE, not a guess at it.
@@ -118,7 +132,10 @@ export function RunAiGuard({
               `AiStatusBanner` and `LlmKeyPanel` already render `status.detail`.
               The Management page told the truth; the modal at the point of
               action did not, which is the one place it matters. */}
-          <p className="font-semibold text-status-warning-fg">
+          <p
+            id="run-ai-guard-detail"
+            className="font-semibold text-status-warning-fg"
+          >
             {promptFor.detail}
           </p>
           <p className="mt-1 text-ink-secondary">
@@ -126,8 +143,18 @@ export function RunAiGuard({
                 -- is false for the adapter, SDK and model-id causes, where a
                 key IS loaded. A user-facing string naming an action has to name
                 a control that works TODAY, and `promptFor.detail` above now
-                carries the remedy that actually applies to this cause. What is
-                left is true of all five. */}
+                carries the SERVER'S remedy for this cause rather than one
+                guess for every cause.
+
+                NOT "the remedy that applies", which is what this said and is
+                false for at least one branch: on a `vertex` deployment the
+                server itself prints "No API key is loaded ... Load a key",
+                and following it BREAKS live AI, because vertex uses ADC and
+                `_build_provider` then refuses. Tracked in #472; not fixable
+                here, because the string is the server's.
+
+                The sentence below is true of all five regardless: it says
+                what fixture output IS, and claims nothing about the cause. */}
             Offline (fixture) output is deterministic demo content, not analysis
             of this client&apos;s data.
           </p>

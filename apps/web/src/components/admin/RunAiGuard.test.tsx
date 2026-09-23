@@ -239,7 +239,17 @@ describe("RunAiGuard (issue 2)", () => {
 // never produce.
 //
 // The strings are copied from `routes/admin.py::_ai_readiness`, not from what
-// the component does with them.
+// the component does with them. **That is a hand duplication across a language
+// boundary and nothing pins it:** reword a branch tomorrow and nothing here goes
+// red, because every case asserts pass-through (`mockStatus(detail: x)` then
+// `toHaveTextContent(x)`). Bounded rather than worthless -- pass-through is
+// exactly what kills the hardcode mutant, which is the defect. The branch COUNT
+// is pinned on the Python side.
+//
+// The labels carried `(admin.py:819)` and so on until review pointed out they sat
+// two paragraphs from this repo's rule against citing line numbers. All five were
+// correct and would have rotted on the next reflow of `admin.py`, inside test
+// names. Find a branch by its quoted `detail` instead.
 // ---------------------------------------------------------------------------
 
 const READINESS_BRANCHES: ReadonlyArray<{
@@ -250,38 +260,46 @@ const READINESS_BRANCHES: ReadonlyArray<{
   contradictsTheOldCopy: boolean;
 }> = [
   {
-    label: "no key at all (admin.py:819)",
+    label: "no key at all",
     body: { key_source: "none" },
     detail:
       "No API key is loaded — AI steps will generate offline (fixture) responses. Load a key to enable live AI.",
     contradictsTheOldCopy: false,
   },
   {
-    label: "env key but mode is not live (admin.py:840)",
+    label: "env key but mode is not live",
     body: { key_source: "environment", mode: "fixture" },
     detail:
       "SHIELD_LLM_MODE='fixture', so AI steps generate offline (fixture) responses even though an environment key is present. Set SHIELD_LLM_MODE=live and restart the api, or load a key here to enable live AI without a redeploy.",
     contradictsTheOldCopy: true,
   },
   {
-    label: "provider has no adapter (admin.py:852)",
-    body: { key_source: "database", provider: "mistral" },
+    // `vertex`, not `mistral`. `mistral` is not a member of `LLMProvider`, so the
+    // server could never interpolate it -- a fixture building a state no writer
+    // can reach, which is the shape this file's own header warns about. `vertex`
+    // IS a member and IS implemented, and reaching for a real value here is what
+    // surfaced #472: this branch is live for a provider that works.
+    label: "provider has no key-based adapter",
+    body: { key_source: "database", provider: "vertex" },
     detail:
-      "A key is loaded but provider 'mistral' has no runtime adapter — use anthropic, openai, or gemini.",
+      "A key is loaded but provider 'vertex' has no runtime adapter — use anthropic, openai, or gemini.",
     contradictsTheOldCopy: true,
   },
   {
-    label: "anthropic SDK not importable (admin.py:860)",
+    label: "anthropic SDK not importable",
     body: { key_source: "database", provider: "anthropic" },
     detail:
       "A key is loaded but the 'anthropic' SDK is not importable in the api image.",
     contradictsTheOldCopy: true,
   },
   {
-    label: "model id is a placeholder (admin.py:868)",
-    body: { key_source: "database", model: "your-model-here" },
+    // `claude-opus-4-7` is the ONLY member of `config.py`'s
+    // `_KNOWN_PLACEHOLDER_MODELS`, so it is the only value this branch can
+    // interpolate. `your-model-here` was invented and unconstructible.
+    label: "model id is a known placeholder",
+    body: { key_source: "database", model: "claude-opus-4-7" },
     detail:
-      "A key is loaded, but SHIELD_LLM_MODEL='your-model-here' is not a usable model id — set a current model id and restart the api.",
+      "A key is loaded, but SHIELD_LLM_MODEL='claude-opus-4-7' is not a usable model id — set a current model id and restart the api.",
     contradictsTheOldCopy: true,
   },
 ];
@@ -300,9 +318,19 @@ describe("the warning states the server's own cause", () => {
   }
 
   it("says a key IS loaded on the four branches where one is", async () => {
-    // The assertion the old component could never satisfy, stated once over
-    // the whole set rather than per case -- so ADDING a sixth branch that says
-    // "a key is loaded" and forgetting to drive it cannot pass here silently.
+    // The assertion the old component could never satisfy, stated once over the
+    // whole set rather than per case.
+    //
+    // IT DOES NOT CATCH A SIXTH BRANCH, and this comment claimed it did. It
+    // iterates `READINESS_BRANCHES`, which is the very list a forgetful author
+    // would have failed to extend, so a new branch in `_ai_readiness` leaves it
+    // green. A test cannot be its own tripwire for a fact that lives in another
+    // language's source file.
+    //
+    // The real tripwire is `apps/api/tests/unit/test_ai_readiness_branch_count.py`,
+    // which goes red when the count changes and names this file. What this DOES
+    // catch is someone editing the table itself -- dropping a row, or flipping a
+    // `contradictsTheOldCopy` flag.
     const contradicting = READINESS_BRANCHES.filter(
       (b) => b.contradictsTheOldCopy,
     );
