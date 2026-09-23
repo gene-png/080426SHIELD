@@ -42,7 +42,7 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
-**2026-09-22 — #209 implemented (`tier-1`, `client-reaching`), awaiting Gene.**
+**2026-09-22 — #209 implemented (`tier-1`, `client-reaching`); LANDED 2026-09-23 as PR #476 (`c4d3cc2`).** The status below is as written before it merged.
 The last open `tier-1`. Four client-facing surfaces resolved the engagement
 target LIVE on every request while the released document held the number it was
 rendered with, so changing the intake target after release put a PDF and the

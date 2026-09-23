@@ -57,9 +57,11 @@ migration logging `normalised 0 blank legal_name row(s)`, byte-identical to
 what a clean database logs. Nothing in that line could tell you it had missed.
 
 So the normalisation runs in Python, and `str.strip()` — the LANGUAGE's
-definition of whitespace — is the single shared definition. `is_named_org` is
-`bool(x and x.strip())`, so both rest on the same call rather than on two
-descriptions of it. The two-argument SQL form `trim(legal_name, <charset>)`
+definition of whitespace — is the definition this migration shares with every
+API reader. `is_named_org` is `bool(x and x.strip())`, so both rest on the same
+call rather than on two descriptions of it. The web's `isNamedOrg` is NOT on it:
+JavaScript `trim()` differs from Python on U+FEFF and U+001C-U+001F / U+0085
+(D-082). The two-argument SQL form `trim(legal_name, <charset>)`
 works on both engines and was refused: it re-creates a hand-enumerated
 character class, which is the `_HSPACE` defect this repo records being wrong by
 sixteen characters with nothing able to see it. Let the language define the set.

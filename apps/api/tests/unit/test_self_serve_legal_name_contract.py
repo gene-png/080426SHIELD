@@ -508,7 +508,14 @@ def test_the_deliverable_surfaces_call_the_shared_resolver() -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize("blank", [None, "", "   "])
 def test_playbook_export_renders_the_fallback_for_a_blank_name(blank: str | None) -> None:
-    """The SURFACE, for the reader that carried the live defect.
+    """The RENDERER, for the reader that carried the live defect.
+
+    This calls `render_xlsx` with a name it resolved itself, so it cannot see
+    `routes/csf.py` passing the raw value to one of its five renderers. The
+    route-level assertion is
+    `test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts`
+    in `test_csf_playbook_export.py`, which drives `/playbook/export` and reads
+    all five stored artifacts. This one pins the renderer half.
 
     `routes/csf.py`'s Playbook export was the seventh reader: `name = org or
     "Client"`, feeding five client artifacts. It is now fixed, and until this
@@ -522,7 +529,7 @@ def test_playbook_export_renders_the_fallback_for_a_blank_name(blank: str | None
 
     ATT&CK already had a `build_context`-level assertion; the route that
     actually broke had none. This is that assertion, one layer up, against the
-    bytes the client receives.
+    bytes the renderer produces.
     """
     from app.client_naming import org_display_name
     from app.csf.playbook_export import render_xlsx

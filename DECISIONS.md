@@ -5164,8 +5164,15 @@ wrote one down.
 **The web keeps its own label.** `orgDisplayName` returns "(pending intake)" and
 the API returns "Client": the web is an internal workflow surface where the
 status is the useful thing, and a deliverable is a document handed to a client
-where an internal status word would be the wrong register. Two labels, one
-condition, stated here so the difference is not read as drift.
+where an internal status word would be the wrong register. Two labels, stated
+here so the difference is not read as drift -- and, strictly, two conditions:
+the web's `isNamedOrg` uses JavaScript `trim()` and the API's `is_named_org`
+uses Python `str.strip()`. By the language specifications (not measured here)
+they disagree on U+FEFF, which JS strips and Python keeps, and on U+001C-U+001F
+and U+0085, which Python strips and JS keeps. A stored name consisting only of
+those would be "named" on one side and "unnamed" on the other. The migration and
+every API reader share `str.strip()`; the web does not, and no test pins the
+two against each other.
 
 ### Migration 0050 normalises in Python, not in SQL
 
@@ -5253,8 +5260,8 @@ guard that is actually in the code.
 
 ## D-083 — Freeze the engagement target's INPUT, and let a provenance column say a freeze happened
 
-**D-082 is deliberately skipped**, not missing: it belongs to open PR #461,
-which is routed to Gene and may land after this. A gap in an append-only log is
+**D-082 is deliberately skipped**, not missing: it belonged to PR #461, then
+open and routed to Gene, which landed after this and carries D-082 above. A gap in an append-only log is
 recoverable by reading this sentence; a duplicate number produces the positional
 conflict D-078's gate exists to stop being misread as a collision.
 

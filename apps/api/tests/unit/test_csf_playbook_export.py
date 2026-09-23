@@ -186,3 +186,82 @@ def test_playbook_export_produces_downloadable_xlsx(app_client) -> None:
         dl = c.get(f"/artifacts/{art['artifact_id']}/download", headers=dh)
         assert dl.status_code == 200, f"{kind}: {dl.status_code}"
         assert dl.content.startswith(magic[kind]), f"{kind} wrong magic bytes"
+
+
+@pytest.mark.parametrize("stored", [None, "   "])
+def test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts(
+    app_client, stored
+) -> None:
+    """The SURFACE for the seventh reader, driven through the route.
+
+    `routes/csf.py` resolves the organisation once and passes it to five
+    renderers. A test that calls a renderer with its own resolved name cannot
+    see one of those five arguments being the raw value, so this one stores the
+    blank name, runs `/playbook/export`, downloads every artifact the route
+    stored, and reads the organisation line out of each.
+
+    `None` is how D-080 stores an unnamed organisation today; `"   "` is the
+    legacy shape migration 0050 normalises and the readers must still survive.
+    """
+    import io
+    import uuid as _uuid
+
+    from docx import Document
+    from openpyxl import load_workbook
+    from pypdf import PdfReader
+    from sqlalchemy import update
+
+    from app.models.client import Client
+
+    c, cid = app_client
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        db.execute(update(Client).where(Client.id == _uuid.UUID(cid)).values(legal_name=stored))
+        db.commit()
+    engine.dispose()
+
+    r = c.post(
+        "/auth/register",
+        json={
+            "email": "admin@example.com",
+            "password": "correct horse battery staple!",
+            "display_name": "A",
+        },
+    )
+    h = {"Authorization": f"Bearer {r.json()['tokens']['access_token']}"}
+    svc_id = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()[
+        "id"
+    ]
+    c.post(f"/csf/services/{svc_id}/assessments", headers=h)
+    c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    ex = c.post(f"/csf/services/{svc_id}/playbook/export", headers=h)
+    assert ex.status_code == 200, ex.text
+    arts = {a["kind"]: a for a in ex.json()["artifacts"]}
+    assert set(arts) == {"xlsx", "exec_pdf", "exec_docx", "full_pdf", "full_docx"}
+
+    def text_of(kind: str, raw: bytes) -> str:
+        if kind == "xlsx":
+            wb = load_workbook(io.BytesIO(raw))
+            return "\n".join(
+                str(cell.value)
+                for ws in wb.worksheets
+                for row in ws.iter_rows()
+                for cell in row
+                if cell.value is not None
+            )
+        if kind.endswith("pdf"):
+            return "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(raw)).pages)
+        return "\n".join(p.text for p in Document(io.BytesIO(raw)).paragraphs)
+
+    for kind, art in arts.items():
+        dl = c.get(f"/artifacts/{art['artifact_id']}/download", headers={**h, "X-Client-Id": cid})
+        assert dl.status_code == 200, f"{kind}: {dl.status_code}"
+        text = text_of(kind, dl.content)
+        label = "Client:" if kind == "xlsx" else "Prepared for:"
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip().startswith(label)]
+        assert lines, f"{kind}: no {label!r} line found -- the artifact shape changed"
+        for ln in lines:
+            assert ln == f"{label} Client", (
+                f"{kind} prints {ln!r} for a stored legal_name of {stored!r}; "
+                "the organisation line must fall back, not print the blank"
+            )

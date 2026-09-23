@@ -6,7 +6,7 @@ current-state description, and it is the third time this branch family has
 hand-resolved a `CONTEXT.md` conflict whose only possible outcome was
 keep-both._
 
-**Landing with THIS PR, not yet on `main`: the #254 follow-up.** Adversarial
+**Landing with THIS PR (#461): the #254 follow-up.** Adversarial
 review ran repeatedly on #444. The rounds that arrived before the merge
 landed in the PR; a later round's findings reached the dispatching session
 BEFORE the merge and were not incorporated into it, which is a different and
