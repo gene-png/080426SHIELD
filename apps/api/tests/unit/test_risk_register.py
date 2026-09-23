@@ -2503,3 +2503,36 @@ def test_the_batch_keys_are_always_present_on_the_wire(app_client) -> None:
                 "INCOMPLETE disclosure vanish on a register that lost entries "
                 "-- silently, and #317 is the recorded instance of exactly this"
             )
+
+
+@pytest.mark.unit
+def test_every_batched_risk_synthesize_call_carries_the_requests_correlation_id(
+    app_client,
+) -> None:
+    """The twin of the ATT&CK batch runner: the same `pool.submit(_one, b)`
+    shape, so the same loss of the request's correlation id on every
+    `llm_calls` row a generate writes."""
+    from app.models.llm_call import LLMCall
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    _seed_many_gaps(c, bearer, cid, _RISK_BATCH_SIZE + 1)
+    provider.register("risk_synthesize", _entry_per_finding)
+
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate",
+        headers={"Authorization": f"Bearer {bearer}", "X-Request-ID": "corr-risk-batches"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.headers["X-Request-ID"] == "corr-risk-batches"
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        ids = (
+            db.execute(select(LLMCall.correlation_id).where(LLMCall.purpose == "risk_synthesize"))
+            .scalars()
+            .all()
+        )
+    engine.dispose()
+    assert len(ids) > 1, ids  # more than one batch, or the workers are untested
+    assert set(ids) == {"corr-risk-batches"}, ids
