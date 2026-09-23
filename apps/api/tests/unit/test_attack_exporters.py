@@ -332,7 +332,13 @@ def test_the_gap_truncation_disclosure_is_actually_printed() -> None:
     )
     total = rollup.gap
     assert total > 50, "fixture must exceed the cap or this proves nothing"
-    expected = f"Top remediation gaps (50 of {total} shown)"
+    # THE WORDING CHANGED AT #480 AND THE PROPERTY DID NOT. The heading read
+    # "Top remediation gaps (50 of N shown)", which disclosed the truncation
+    # correctly and, in the same breath, claimed a ranking the alphabetical sort
+    # does not provide and a remediation the two-column table does not contain.
+    # This pins the DISCLOSURE -- both numbers and the literal words -- so it
+    # moves with the rewording rather than being deleted.
+    expected = f"first 50 of {total} by technique code"
 
     assert expected in _pdf_text(render_pdf(ctx))
 
@@ -341,7 +347,17 @@ def test_the_gap_truncation_disclosure_is_actually_printed() -> None:
     from docx import Document
 
     doc = Document(_io.BytesIO(render_docx(ctx)))
-    assert expected in "\n".join(p.text for p in doc.paragraphs)
+    docx_text = "\n".join(p.text for p in doc.paragraphs)
+    assert expected in docx_text
+    assert "alphabetical, not ranked" in docx_text, (
+        "the heading must say the order is NOT a ranking -- that half is the "
+        "#480 defect, and a reword keeping the counts while dropping it would "
+        "pass the assertion above"
+    )
+    assert "Top remediation gaps" not in docx_text, (
+        "the claim #480 removed is back: an alphabetical two-column list under "
+        "a heading asserting a prioritisation"
+    )
 
 
 @pytest.mark.unit
