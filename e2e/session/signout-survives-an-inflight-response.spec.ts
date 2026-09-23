@@ -10,8 +10,11 @@
  *
  * Built as a regression test, not a timing measurement: Playwright HOLDS tab A's
  * proxy response until tab B has signed out, so the race is forced rather than
- * hoped for. It needs no short TTL -- within a fresh sign-in no rotation is due,
- * which is exactly the case the rotation-only rule exists for.
+ * hoped for. It runs in the MAIN suite, at the default TTL, where no rotation
+ * is due within a fresh sign-in -- exactly the case the rotation-only rule
+ * exists for. The #487 CI step (60 s TTL) deliberately does not run it: there a
+ * rotation can fall inside the race, which is the documented residual, not a
+ * regression.
  */
 import { expect, test } from "@playwright/test";
 

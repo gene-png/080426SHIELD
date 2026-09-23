@@ -19,8 +19,9 @@ import * as React from "react";
  * five-minute notice does NOT suppress the one-minute one — that is the point
  * at which "I'll deal with it" stops being a safe answer.
  *
- * `sessionExpiresAt` is the refresh token's expiry: the moment past which no
- * rotation can save the session. The access token's own expiry is deliberately
+ * `sessionExpiresAt` is the EARLIER of the refresh token's expiry and the
+ * forced re-auth ceiling (`reauth_at`): the moment past which no rotation can
+ * save the session, and at which the `jwt` callback ends it. The access token's own expiry is deliberately
  * NOT used — it is renewed silently (every 15 minutes under the compose default)
  * and means nothing to a user.
  */

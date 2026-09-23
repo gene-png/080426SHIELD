@@ -701,7 +701,9 @@ jobs:
         # Its own output dir: Playwright empties `test-results/` at the start of
         # every run, which would delete the main suite's retry traces before the
         # upload step below.
-        run: npx playwright test session/ --output test-results-487
+        # ONLY the TTL spec: the sign-out race spec assumes no rotation is due
+        # (true at the default TTL, in the main suite) and a 60 s TTL breaks that.
+        run: npx playwright test session/session-survives-refresh.spec.ts --output test-results-487
 
       - name: Upload Playwright report and traces
         if: always()
