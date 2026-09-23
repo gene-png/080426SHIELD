@@ -5128,10 +5128,140 @@ before this decision, `context/entries/` for anything after. That is a real
 cost and it is the price of the conflicts stopping. It shrinks as the old
 sections age out of relevance and it never grows.
 
+## D-082 — One resolver for a client's display name, and the migration shares the reader's definition of blank
+
+**2026-09-22 · client-facing correctness**
+
+D-080 made `Client.legal_name` nullable and fixed the WRITE side. It left every
+READER deciding for itself with a bare `client_legal_name or "Client"` — and a
+bare `or` is satisfied by `"   "`, so a blank never reached the fallback and
+rendered as EMPTY on the organisation line of a client's DOCX, PDF and XLSX
+while the admin UI called the same row unnamed.
+
+### The count was wrong three times, which is why there is no count here
+
+| round | claimed                          | found afterwards                                |
+| ----- | -------------------------------- | ----------------------------------------------- |
+| #444  | the write side and three readers | six readers with a bare `or`                    |
+| #458  | "all six readers"                | a SEVENTH, in `routes/csf.py`                   |
+| #461  | —                                | an EIGHTH, in `apps/web/src/lib/risk/client.ts` |
+
+The seventh lived in a ROUTE rather than an `exporters.py`, so the guard written
+to catch it iterated a hand list that excluded it **by construction** — and it
+asserted a substring, which a docstring satisfies. Two independent ways to
+report clean, both firing at once, on the one instance left.
+
+The eighth was in the WEB layer, which a Python sweep rooted at `apps/api/app`
+cannot see at all, under a comment claiming parity _"as on the server side"_ —
+a claim the branch that wrote the server-side helper had just made false.
+
+**Decision: one `org_display_name` in `app/client_naming.py`, called rather than
+copied**, and the guard is a DERIVED sweep asking whether anything turns a
+nullable name into a display string with a bare `or`, not an iteration over a
+list of files. A list of readers has now been wrong at every revision that
+wrote one down.
+
+**The web keeps its own label.** `orgDisplayName` returns "(pending intake)" and
+the API returns "Client": the web is an internal workflow surface where the
+status is the useful thing, and a deliverable is a document handed to a client
+where an internal status word would be the wrong register. Two labels, stated
+here so the difference is not read as drift -- and, strictly, two conditions:
+the web's `isNamedOrg` uses JavaScript `trim()` and the API's `is_named_org`
+uses Python `str.strip()`. By the language specifications (not measured here)
+they disagree on U+FEFF, which JS strips and Python keeps, and on U+001C-U+001F
+and U+0085, which Python strips and JS keeps. A stored name consisting only of
+those would be "named" on one side and "unnamed" on the other. The migration and
+every API reader share `str.strip()`; the web does not, and no test pins the
+two against each other.
+
+### Migration 0050 normalises in Python, not in SQL
+
+The first version was `UPDATE ... WHERE trim(legal_name) = ''`. Measured on
+SQLite and Postgres 16: single-argument `trim()` is SPACE-ONLY on both, so tab,
+newline and NBSP survived it, while `str.strip()` — what `is_named_org` uses —
+treats all four as blank. The docstring asserted the opposite ("no
+false-positive case ... under any reading"), and a surviving row left the
+migration logging `normalised 0 blank rows`, byte-identical to a clean database.
+
+**NBSP is the one that actually arrives**: `CLAUDE.md` records it as what PDF
+and Word extraction emit, which is how intake fields get filled from a client's
+own documents. The most likely real blank was the furthest from the predicate.
+
+The normalisation runs in Python so the migration and the reader share
+`str.strip()` itself rather than two descriptions of it. A two-argument
+`trim(x, <charset>)` was refused for the `_HSPACE` reason: a hand-enumerated
+character class was wrong by sixteen characters with nothing able to see it.
+The migration does not import application code — what is shared is the language
+primitive, which is what makes this a derivation rather than a synchronisation.
+
+### A capture channel the system under test can silently disconnect
+
+Recorded here rather than in `CLAUDE.md` because that file is past its size
+gate's soft line — run `check_claude_md_size.py CLAUDE.md` for the headroom
+rather than trusting a figure written here. The first version of this paragraph
+quoted a byte count with no command behind it, which is rule 2's own defect in
+the sentence explaining a placement decision, and the decision stands without
+it.
+
+The test that reads migration 0050's report line reached for `caplog` first,
+which is what anyone would do. It captured NOTHING, and the assertion
+`assert reports, ...` failed on an empty list — while the very same pytest run
+printed the missing line under "Captured stderr call".
+
+**THE MECHANISM, and the first version of this section had it backwards.** It
+said the alembic logger "does not propagate to the root one, so `caplog` sees
+nothing". Measured in this tree:
+
+    before fileConfig, root handlers: ['Handler']      <- our capture
+    after  fileConfig, root handlers: ['StreamHandler'] <- ours is GONE
+    our handler still attached?  False
+    alembic logger handlers: []   propagate: 1
+
+The alembic logger has **no handler of its own** and **does** propagate.
+Propagation to root is the only reason anything prints at all — so the cited
+evidence, that the line appeared on stderr, disproves the mechanism that was
+written beside it. The real cause is that `logging.config.fileConfig`
+**REMOVES root's existing handlers**, pytest's `LogCaptureHandler` among them,
+part-way through the test.
+
+That correction matters because the remedy follows from the mechanism: acting
+on "it does not propagate", the next person adds a handler to the alembic
+logger or sets `propagate=True`, and neither touches it.
+
+**The general form, which is what to carry away.** The scope is not migrations
+and not alembic: it is **any code under test that reconfigures logging** —
+`fileConfig`, `dictConfig`, `basicConfig(force=True)` — and beyond logging, any
+capture the subject can replace: `capsys` against a library that rebinds
+`sys.stdout`, or a mock whose target module gets re-imported.
+
+> **A capture channel the system under test can silently disconnect: assert the
+> capture is NON-EMPTY before you read it, and prefer the most primitive
+> channel available.**
+
+Both halves are rules this repo already carries, which is the point — this
+needed no new tool-specific one:
+
+- _"A SELECTOR THAT SELECTS NOTHING PASSES. ASSERT THE COUNT IT SELECTED BEFORE
+  READING ITS RESULT."_ An empty capture is a selector that selected nothing.
+- _"Assert what must APPEAR before what must not."_ An assertion of ABSENCE
+  over a capture (`assert "normalised 1" not in caplog.text`) is satisfied
+  VACUOUSLY by an empty capture and can never fire.
+- _"PREFER THE MOST PRIMITIVE AVAILABLE SIGNAL."_ `capfd` reads the file
+  descriptor, below anything Python's logging config can rearrange.
+
+**What actually saved this test was the presence guard, not the order it was
+written in.** An earlier draft here claimed the failure was benign "because the
+assertion was written before the fix, so it went red", and that tied benignity
+to authorship order and was false: `assert reports, ...` fails on an empty list
+whenever it runs. The vacuous case is the ABSENCE form above, which this test
+does not use — because it asserts `reports` is non-empty first. Crediting the
+authorship order would teach the next person to rely on luck instead of the
+guard that is actually in the code.
+
 ## D-083 — Freeze the engagement target's INPUT, and let a provenance column say a freeze happened
 
-**D-082 is deliberately skipped**, not missing: it belongs to open PR #461,
-which is routed to Gene and may land after this. A gap in an append-only log is
+**D-082 is deliberately skipped**, not missing: it belonged to PR #461, then
+open and routed to Gene, which landed after this and carries D-082 above. A gap in an append-only log is
 recoverable by reading this sentence; a duplicate number produces the positional
 conflict D-078's gate exists to stop being misread as a collision.
 

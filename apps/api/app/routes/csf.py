@@ -35,6 +35,7 @@ from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.ai.provenance import SOURCE_CONSULTANT, protected_keys
 from app.audit import audit
+from app.client_naming import org_display_name
 from app.csf import playbook_export as csf_playbook_export
 from app.csf.catalog import (
     CATEGORIES,
@@ -2145,7 +2146,12 @@ def export_playbook(
     from app.docx_export import DOCX_MIME
 
     org = client.legal_name  # NULL when nobody has named the org (D-080)
-    name = org or "Client"
+    # THE SEVENTH READER. `or "Client"` is satisfied by "   ", and this `name`
+    # reaches FIVE client artifacts through `playbook_export` -- the XLSX cover
+    # ("Client: "), both PDFs and both DOCX ("Prepared for: "), and the PDF
+    # metadata title. It sits in a route rather than in an `exporters.py`, which
+    # is why the sweep that fixed the other six went past it.
+    name = org_display_name(org)
     today = utcnow().date()
     on = utcnow().strftime("%Y-%m-%d")
     xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

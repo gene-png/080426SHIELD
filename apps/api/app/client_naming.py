@@ -16,11 +16,19 @@ other half, and the two are not alternatives: 0050 clears the rows that exist,
 this stops one that arrives any other way — a direct SQL fix-up, a restored
 backup, a future writer that forgets to normalise.
 
-**Why a function rather than the same expression six times.** Five exporters and
-the admin fulfill path were byte-identical copies of the wrong thing, which is
-how they were all wrong together and why the fix has to be a call rather than a
-sixfold edit. `CLAUDE.md`: a claim that two surfaces agree is enforced by
-CALLING the same code, never by writing it twice.
+**Why a function rather than the same expression at each site.** The exporters
+and the admin fulfill path were byte-identical copies of the wrong thing, which
+is how they were all wrong together and why the fix has to be a call rather
+than an edit repeated per file. `CLAUDE.md`: a claim that two surfaces agree is
+enforced by CALLING the same code, never by writing it twice.
+
+**The count is deliberately not written here.** The first version of this
+docstring said "five exporters and the admin fulfill path", and a SEVENTH
+reader was found afterwards in `routes/csf.py` -- the CSF Playbook export,
+which feeds five client artifacts and lives in a route rather than in an
+`exporters.py`, so the sweep and the guard that checked it both went past.
+A number here is a completeness claim, and it was wrong. The derived sweep in
+`test_self_serve_legal_name_contract.py` is what enumerates them now.
 """
 
 from __future__ import annotations

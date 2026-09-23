@@ -503,11 +503,16 @@ def test_engagement_refuses_a_legacy_blank_name_with_422_not_500(app_client) -> 
         f"expected a typed 422 refusal, got {r.status_code}. A 500 here is the "
         f"ValueError from provision_self_assessment_service escaping untyped."
     )
-    # The status alone does not discriminate -- several other refusals on this
-    # route are also 422. Asserting the COPY is what ties this test to the org
-    # guard rather than to whichever check happened to fire first.
+    # The status alone does not discriminate -- this route has several 422
+    # exits, so a status-only assertion passes on whichever refusal fires
+    # first. That is exactly what let the first version of this test pass over
+    # a Pydantic body rejection while the guard it is named for was deleted.
+    #
+    # Assert the REASON rather than the sentence: the guard is typed (D-016)
+    # precisely so there is a machine token to name here. A copy assertion
+    # would still pass if that sentence were reused by a different refusal.
     assert (
-        "Complete your organization profile" in r.text
+        r.json()["error"]["reason"] == "organization_not_named"
     ), f"422 came from something other than the unnamed-org guard: {r.text}"
 
 

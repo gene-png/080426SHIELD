@@ -345,23 +345,231 @@ def test_every_exporter_renders_the_fallback_for_a_blank_name(unnamed: str | Non
 
 
 @pytest.mark.unit
-def test_every_exporter_calls_the_shared_resolver() -> None:
-    """The five services agree because they CALL one function, not copy it.
+def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or() -> None:
+    """DERIVED sweep, replacing an iteration over a hand list of five services.
 
-    `CLAUDE.md`: a claim that two surfaces agree is enforced by calling the
-    same code, never by writing it twice. Asserting the call sites is what
-    stops a sixth copy of `or "Client"` reappearing in one service and being
-    correct everywhere it was checked.
+    The previous version of this guard iterated
+    ``("csf", "zt", "attack", "risk", "tech_debt")`` over
+    ``{service}/exporters.py`` and asserted a SUBSTRING. It had two independent
+    ways to report clean over a live defect, and both fired at once:
+
+      * the iteration set could not reach ``routes/csf.py``, where the CSF
+        Playbook export did ``name = org or "Client"`` and fed FIVE client
+        artifacts -- so the guard was structurally blind to the one remaining
+        instance, by construction rather than by accident;
+      * a substring test is satisfied by a DOCSTRING or a comment, so a file
+        that merely mentions the call would have passed without making it.
+
+    This asks the question the other way round, over every file rather than a
+    list: does ANY module turn a nullable name into a display string with a
+    bare ``or "..."``? A bare ``or`` is satisfied by ``"   "``, which is how a
+    blank reached a client's deliverable in the first place.
+
+    ``or ""`` is excluded deliberately -- that is the ``(x or "").strip()``
+    guard idiom, which is the CORRECT shape and the thing the readers should
+    be doing.
+
+    **WHAT THIS CANNOT SEE, stated because the first version of this docstring
+    claimed "an eighth reader added anywhere under ``app/`` fails this", and
+    that was false.** It is a line-wise regex over four-then-seven spellings,
+    so it is a FLOOR, not a census. Measured misses:
+
+      * a ternary -- ``name = x if x else "Client"``;
+      * a dict default -- ``d.get("legal_name", "Client")``;
+      * an intermediate variable, where the assignment and the fallback are on
+        different lines and neither line has both halves;
+      * any form black has wrapped across lines, since the scan is line-wise;
+      * ANYTHING in ``apps/web``: the sweep is rooted at ``apps/api/app``, and
+        the eighth reader (``lib/risk/client.ts``) was in the web layer (D-082).
+        Grep ``apps/web/src`` separately.
+
+    Spellings that WERE missed and are now covered, all live in this tree for
+    this exact value: ``org_name`` (the parameter of
+    ``provision_self_assessment_service``), ``company`` (the
+    ``deliverable_filename`` kwarg), and ``client_org_name`` -- which appears in
+    twelve modules including ``ai/engine.py``, ``ai/llm.py``, ``ai/redact.py``
+    and four routes.
+
+    **THE MECHANISM, because the previous version of this docstring got it wrong
+    and the wrong version would have sent the next person nowhere.** It said
+    ``org_name`` was missed for an ORDERING reason -- that a leading ``org``
+    alternative matched the prefix and then failed on ``_n`` -- "so the longer
+    alternatives are listed FIRST". Measured: ordering is IRRELEVANT here.
+    Python's ``re`` BACKTRACKS into an alternation when the remainder fails, so
+    ``(org|org_name)`` and ``(org_name|org)`` both match ``org_name or "X"``.
+    What fixed ``org_name`` was ADDING it, not moving it.
+
+    Ordering IS load-bearing where the shorter alternative COMPLETES the match
+    -- ``redact.py``'s ``_redact_names`` builds an alternation in which a bare
+    first name plus a word boundary succeeds and swallows the longer full name.
+    That is a different precondition, and reaching for a known-good shape
+    without checking which property made it correct is what produced the false
+    sentence above.
+
+    **The real hole was PREFIX SHADOWING, and no reordering could have closed
+    it.** ``client_org`` matches the prefix of ``client_org_name``, nothing
+    spelled the whole identifier, and ``_`` is a word character so there is no
+    word boundary between them. The group is now boundary-anchored on BOTH
+    sides, which is what stops a prefix standing in for the longer identifier --
+    and with that anchor, ordering genuinely does not matter.
+
+    The behavioural cover for what a pattern cannot reach is
+    ``test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts``
+    in ``test_csf_playbook_export.py``, which drives the route and reads all five
+    stored artifacts. This test is the cheap wide net; that one is the deep check
+    on the path that actually broke.
     """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "app"
+    # A name-ish identifier, `or`, then a NON-EMPTY string literal.
+    #
+    # The word boundary on BOTH sides of the group is the load-bearing part:
+    # without the trailing one, `client_org` matched the PREFIX of
+    # `client_org_name` and the longer identifier was invisible. Ordering is NOT
+    # load-bearing -- `re` backtracks into the alternation -- so this list is
+    # ordered for reading rather than longest-first for matching.
+    bare_fallback = re.compile(
+        r"\b(?:client_legal_name|client_org_name|company_name|legal_name"
+        r"|client_name|client_org|org_name|company|org)\b"
+        r'\s*or\s*"[^"]+"'
+    )
+
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "client_naming.py":
+            continue  # the one module allowed to name the fallback
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                continue  # prose describing the defect is not the defect
+            if bare_fallback.search(line):
+                offenders.append(f"{path.relative_to(root)}:{lineno}: {stripped}")
+
+    assert not offenders, (
+        "a bare `or` on a client name is satisfied by a whitespace-only value, so "
+        "a blank reaches the rendered surface instead of the fallback. Call "
+        "app.client_naming.org_display_name instead. Offending lines: " + str(offenders)
+    )
+
+
+@pytest.mark.unit
+def test_the_deliverable_surfaces_call_the_shared_resolver() -> None:
+    """The positive half, asserted on PARSED CALLS rather than on source text.
+
+    ``"org_display_name(" in src`` is satisfied by a comment or a docstring
+    that mentions it -- which is exactly how the previous guard could have
+    passed over a file that talked about the call without making it. Walking
+    the AST for a real ``Call`` node cannot be satisfied by prose.
+
+    The list here is a list, and says so: it names the surfaces whose output
+    reaches a client artifact. The DERIVED half is the sweep above, which is
+    what catches a surface nobody added here.
+
+    **THE WALK IS MODULE-SCOPED, which is a real limit.** `routes/csf.py` and
+    `routes/admin.py` are large modules with several display paths, and ONE
+    call anywhere in the file satisfies this for all of them. So it proves the
+    module knows about the resolver, not that every path in it uses one --
+    combined with the sweep's own blind spots (a ternary, a dict default, an
+    intermediate variable), a single file could satisfy both and still render
+    a blank through a path neither can see.
+
+    It is fail-CLOSED in the direction that matters, which is why it stays: an
+    `ast.Attribute` call, or the import being dropped, reddens it. The
+    behavioural cover is
+    `test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts`
+    (`test_csf_playbook_export.py`), which drives the route and reads the five
+    stored artifacts rather than the source.
+    """
+    import ast
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[2] / "app"
-    for service in ("csf", "zt", "attack", "risk", "tech_debt"):
-        src = (root / service / "exporters.py").read_text(encoding="utf-8")
-        assert "org_display_name(client_legal_name)" in src, (
-            f"{service}/exporters.py no longer routes the organisation line through "
-            f"org_display_name; a bare `or` there is satisfied by whitespace"
+    surfaces = [
+        "csf/exporters.py",
+        "zt/exporters.py",
+        "attack/exporters.py",
+        "risk/exporters.py",
+        "tech_debt/exporters.py",
+        "routes/admin.py",
+        "routes/csf.py",  # the seventh, found by round 5 after the other six
+    ]
+    for rel in surfaces:
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
+        called = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "org_display_name"
+            for node in ast.walk(tree)
         )
-        assert (
-            'client_legal_name or "Client"' not in src
-        ), f'{service}/exporters.py has a bare `or "Client"` again'
+        assert called, (
+            f"{rel} does not CALL org_display_name (a mention in a comment or "
+            f"docstring does not count); a bare fallback there renders a blank "
+            f"organisation line for a whitespace-only name"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_playbook_export_renders_the_fallback_for_a_blank_name(blank: str | None) -> None:
+    """The RENDERER, for the reader that carried the live defect.
+
+    This calls `render_xlsx` with a name it resolved itself, so it cannot see
+    `routes/csf.py` passing the raw value to one of its five renderers. The
+    route-level assertion is
+    `test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts`
+    in `test_csf_playbook_export.py`, which drives `/playbook/export` and reads
+    all five stored artifacts. This one pins the renderer half.
+
+    `routes/csf.py`'s Playbook export was the seventh reader: `name = org or
+    "Client"`, feeding five client artifacts. It is now fixed, and until this
+    test the fix was pinned only by a source-text sweep and an AST walk --
+    neither of which exercises anything.
+
+    `CLAUDE.md` is explicit that a resolver and a pure function are not the
+    surface. The scenario a source guard cannot see: `render_xlsx` refactored
+    to re-derive the cover name internally, `routes/csf.py` still calling
+    `org_display_name`, both source guards green, and the cover blank again.
+
+    ATT&CK already had a `build_context`-level assertion; the route that
+    actually broke had none. This is that assertion, one layer up, against the
+    bytes the renderer produces.
+    """
+    from app.client_naming import org_display_name
+    from app.csf.playbook_export import render_xlsx
+
+    # The route's own resolution, reproduced: this is what `routes/csf.py`
+    # passes as `client_name=`.
+    name = org_display_name(blank)
+    raw = render_xlsx(
+        approved=True,
+        client_name=name,
+        version=1,
+        enterprise_rows=[],
+        tier_profiles={},
+    )
+
+    # Read the RENDERED BYTES, not the resolver's return value. Asserting
+    # `name == "Client"` here would only re-test `org_display_name`, which is
+    # the weakness this test exists to remove: the cover cell is what the
+    # client opens.
+    import io
+
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(raw))
+    cells = [
+        str(cell.value)
+        for sheet in wb.worksheets
+        for row in sheet.iter_rows()
+        for cell in row
+        if cell.value is not None and str(cell.value).startswith("Client:")
+    ]
+    assert cells, "no `Client:` cover cell found -- the export shape changed"
+    for cell in cells:
+        assert cell == "Client: Client", (
+            f"the Playbook cover reads {cell!r}. A blank name is truthy, so it "
+            f"never reaches the fallback and renders as nothing where the "
+            f"organisation's name belongs."
+        )

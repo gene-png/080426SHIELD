@@ -42,7 +42,7 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
-**2026-09-22 — #209 implemented (`tier-1`, `client-reaching`), awaiting Gene.**
+**2026-09-22 — #209 implemented (`tier-1`, `client-reaching`); LANDED 2026-09-23 as PR #476 (`c4d3cc2`).** The status below is as written before it merged.
 The last open `tier-1`. Four client-facing surfaces resolved the engagement
 target LIVE on every request while the released document held the number it was
 rendered with, so changing the intake target after release put a PDF and the
@@ -77,15 +77,31 @@ with a regression test verified red on revert. Further findings became **#473**
 not evidence anything renders) and **#474** (a Risk Register and the deliverables
 it summarizes can state different engagement targets).
 
-**2026-09-22 — #254 follow-up (`tier-1` consequence, no new item).** #444
-merged on three review rounds; the fourth found that a blank `legal_name` still
-reached the organisation line of client deliverables through five exporters'
-bare `or "Client"`. Fixed at all six readers plus migration 0050, with the
-regression test that could not fail repaired and proven red-on-revert. No
-estimate row changes; #254 owns no item, which is the gap this section already
-records under _Still to do_. The missing admin edit path is tracked in #449.
+**2026-09-22 — #254 follow-up, in TWO parts (`tier-1` consequence, no new
+item).** #444 merged on three review rounds. A fourth found that a blank
+`legal_name` still reached the organisation line of client deliverables through
+a bare `or "Client"`, and #458 fixed the readers it named. **A fifth round then
+found another in `routes/csf.py` -- the Playbook export, feeding five client
+artifacts from a ROUTE rather than an `exporters.py` -- and another in the WEB
+layer, `apps/web/src/lib/risk/client.ts`.** Both are on PR #461
+(`fix/254-round5`), which also rewrites migration 0050's predicate from SQL to
+Python, because single-argument `trim()` is space-only on both engines and left
+tab, newline and NBSP blanks stored. **D-082** records the decision: one
+resolver called rather than copied, and a migration sharing `str.strip()` with
+the reader.
 
-**2026-09-22 — #254 implemented (`tier-1`, `client-reaching`), awaiting review.**
+The count is not written here on purpose -- it was stated as six, then seven,
+then eight. What enumerates the API readers now is a derived sweep in
+`test_self_serve_legal_name_contract.py`, whose own limits are stated in its
+docstring. It is rooted at `apps/api/app` and cannot see `apps/web` at all, which
+is where the eighth reader was (D-082), so web readers still need a grep.
+
+No estimate row changes; #254 owns no item, which is the gap this section
+already records under _Still to do_. The missing admin edit path is tracked in
+#449; the advisories from these rounds are #453, #454-#457, #462, #463, #464 and
+#495.
+
+**2026-09-22 — #254 implemented (`tier-1`, `client-reaching`); LANDED as #444, with follow-ups #458 and #461.** The status below is as written before it merged.
 `"(pending intake)"` was read in 17 production sites and written in none, so
 every guard against an unnamed client was dead and self-serve provisioning put
 the signup's email domain — or, on a personal mailbox, **the registrant's own

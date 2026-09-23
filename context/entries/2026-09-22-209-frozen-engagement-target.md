@@ -1,7 +1,7 @@
 # 2026-09-22 — #209: the engagement target a deliverable was rendered against is frozen
 
 The last open `tier-1`. Branch `fix/209-frozen-target`, base `43bfa99`.
-Decision record: **D-083** (D-082 is reserved by open PR #461).
+Decision record: **D-083** (D-082 was reserved by PR #461, open when this was written).
 
 ## What was wrong
 

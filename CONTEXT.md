@@ -1,6 +1,6 @@
 # Project Context — state of `main`
 
-_Last updated: 2026-09-22 (landing with THIS PR and not yet on `main`: #371 — the restoration clause is opt-in, so a client is not told the value was restored before it has been. Earlier the same day, now ON `main` at `d5f97eb`: #254 — `Client.legal_name` is nullable, self-serve provisioning names no org, D-080, migration 0049; earlier 2026-09-21: status correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 9, 11 and 12 — item 9 included, because its "Remaining from the original seven" line named #115, #46 and #109, every one of which had landed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and the export/publish half it is NAMED after has shipped nothing and owns no issue; item 6 has F10 left, which owns no issue; item 9 has #185 and #194, neither with a live client-facing defect. Those rows — and only those — now cite landed code rather than issue state: rows 0 through 5a, 9a and 10 still rest on a PR number and a merge date, which is said here because a sentence quantifying over the table would tell the next reader the check has been done everywhere. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged; the live `mvp-blocking` blockers own no item; F10 needs filing; and #185's label should move to `post-mvp` to match the row. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
+_Last updated: 2026-09-22 (landing with PR #461: the #254 follow-up — see `context/entries/2026-09-22-254-blank-name-readers.md`, which is where dated narrative goes since D-081. Earlier the same day: #371 — the restoration clause is opt-in, so a client is not told the value was restored before it has been. Earlier the same day, now ON `main` at `d5f97eb`: #254 — `Client.legal_name` is nullable, self-serve provisioning names no org, D-080, migration 0049; earlier 2026-09-21: status correction, `main` at `8e68d46`: the `DELIVERY_PLAN.md` MVP path was stale across items 6, 7, 8, 9, 11 and 12 — item 9 included, because its "Remaining from the original seven" line named #115, #46 and #109, every one of which had landed. Items 7, 11 and 12 are complete; item 8's #123 half shipped and the export/publish half it is NAMED after has shipped nothing and owns no issue; item 6 has F10 left, which owns no issue; item 9 has #185 and #194, neither with a live client-facing defect. Those rows — and only those — now cite landed code rather than issue state: rows 0 through 5a, 9a and 10 still rest on a PR number and a merge date, which is said here because a sentence quantifying over the table would tell the next reader the check has been done everywhere. NOT done here and flagged for Gene: the 12–18 headline and the estimate table are stale and unchanged; the live `mvp-blocking` blockers own no item; F10 needs filing; and #185's label should move to `post-mvp` to match the row. Earlier 2026-09-09: #237 shipped in PR #242 — Risk synthesis now reads only APPROVED/RELEASED assessments, so DRAFT work can no longer be exported under a client's name; the generic `_latest` is split three ways -- `_exists_for_gate`, `_finalized_for_synthesis`, and `_latest_register` for the register row, D-075, `main` at `851348b`. Landing with THIS PR, not yet on `main` when it was written: #114 fixed — all four client dashboards and the four value-loop cards now resolve their assessment from the released deliverable's `parent_version` rather than from "latest APPROVED", so the numbers and the version label beside them name the same record; `_latest_finalized` is deleted, D-073; earlier 2026-09-07: the next 15.5.24 RCE patch, and the exposure correction that goes with it — see the dated section below; earlier 2026-09-06: #131 fixed — the approved snapshot's vendor and spelling now win the capability merge, D-064, and item 7's `mvp-blocking` line below is updated for it; earlier the same day: `DELIVERY_PLAN.md` reconciliation recorded, the item table reconciled against what shipped, the #183–#196 issues each given a disposition, and the item 7 and item 9 sizing sections re-derived. The rest of the `mvp-blocking` mapping below was NOT revised and predates `f10955c` — see #201; earlier 2026-08-30: the plan correction: `mvp-blocking` defined, items 11 and 12 added, item 8 split; earlier 2026-08-26: item 10 / PR #155 merged, `main` at `fbca899`; earlier 2026-08-24: #130, the redaction over-match; earlier: cross-service integrity; PRs #34, #35, #36, #39, #42,
 #45, #48, #54, #56, #58, #63, #66, #78, #80, #81, #82 merged, `main` at `a7db134`,
 CI green). NOTE: this
 repo (`gene-png/080426SHIELD`) starts from a single baseline-import commit on
@@ -12,118 +12,6 @@ facts and environment gotchas live in `CLAUDE.md`; personal in-flight status
 lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
-
-**Landing with THIS PR, not yet on `main`: the #254 follow-up.** Adversarial
-review ran repeatedly on #444. The rounds that arrived before Gene merged it
-landed in the PR; a later round arrived after the merge, and what it found
-includes the defect #254 exists to fix, surviving at the read end.
-
-**A blank `legal_name` still printed a BLANK organisation line on the client's
-DOCX/PDF/XLSX.** All five `*/exporters.py` resolved it with a bare
-`client_legal_name or "Client"`, and `"   "` is truthy, so it never reached the
-fallback. The write side and three readers were fixed by #444; these six were
-not. All six now call `app/client_naming.py`, and **migration 0050** normalises
-the rows that already hold blanks — the two are not alternatives, because 0050
-clears what exists and the helper stops one arriving another way.
-
-**A regression test I wrote could not fail.** `test_engagement_refuses_a_legacy_blank_name_with_422_not_500`
-posted `csf_profile: "current"`, which is not a `CsfProfile` member, so Pydantic
-422'd the body before the guard ran and the status-only assertion passed for the
-wrong reason. Measured: with the guard reverted it still passed, exit 0. It now
-sends `MOD` and asserts the copy, and goes red on that same revert.
-
-Also: `hasIntakeData` gained the four `primary_contact_*` fields (Step 3 writes
-them one per blur, and the pill said "No intake started" over them) and is now
-genuinely derived from one `cardRows` array the card renders; the provisioning
-ratchet tests `title` the same way it tests `org_name`; and two comments that
-published a grep as the authoritative writer set are back to being lists that
-say they are lists — that grep returned ZERO hits in `routes/intake.py`, the
-main user-input writer, which goes through `setattr`.
-
-**Landing with THIS PR, not yet on `main`: #254 — a self-serve client's email
-was its organisation's legal name.** `"(pending intake)"` was the codebase's
-
-**#254 fixed and ON `main` at `d5f97eb` — a self-serve client's email was its
-organisation's legal name.** (This paragraph arrived saying "landing with THIS
-PR, not yet on `main`", which was true while #444 was open and false the moment
-it merged. Corrected here because this PR is resolving a conflict in the same
-paragraph and leaving a known-false claim beside the resolution is worse than
-the small scope increase.) `"(pending intake)"` was the codebase's
-marker for "nobody has named this client yet", READ in 17 production sites (13
-in `apps/api/app`, 4 in `apps/web`) and **written in none** — the only
-assignments were four unit-test fixtures.
-<!-- counted: grep -rn '"(pending intake)"' apps/api/app apps/web/src -> 19 hits, 17 live conditionals + 2 comments; grep -rn 'legal_name\s*=' apps/api/app --include=*.py | grep -v '==' for the writes, at 3c2dd0a, 2026-09-22 --> So every one of those guards was dead,
-and what reached the organisation line of a client deliverable was whatever
-`routes/auth.py` derived from the registrant's email: the domain for an unknown
-company domain, and **the registrant's own display name** for a personal mailbox
-— a private individual's name, as the client organisation, on a delivered
-document.
-
-**`Client.legal_name` is now nullable and NULL means nobody has named the org**
-(D-080, migration 0049). Both write paths in `routes/auth.py` are fixed. The
-sentinel is deleted from the API entirely; it survives only as web COPY in
-`apps/web/src/lib/org-name.ts`, which nothing branches on. Ten of the thirteen
-API guards collapsed to a plain read of the column.
-
-`routes/admin.py`'s create-client write is a **stated exemption** — an admin
-typing a name is a human naming an org — and the reason the guards key on the
-NAME being absent rather than on `intake_completed_at`: an admin-created tenant
-has a real name and never completes intake, so an intake-keyed guard would blank
-its deliverables and refuse its engagements.
-
-Migration 0049 backfills only rows that reconstruct exactly what the two
-self-serve paths wrote. Measured against the dev Postgres before applying: 4
-client rows, 1 matching, 0 matching the display-name predicate — and the one
-match is a live instance of the defect.
-<!-- counted: docker compose exec -T db psql -U shield -d shield -At, the four SELECT count(*) statements written out in alembic/versions/0049's MEASURED block, 2026-09-22 -->
-
-**#236 and #389 fixed: two client-reaching surfaces that failed silently.**
-
-**#236** — `app/home/page.tsx` fetched four endpoints in one `Promise.all` with
-no `catch`, and there is no `error.tsx` anywhere under `apps/web/src/app`, so
-any one rejection took the whole page down — including the client's released
-reports, which have nothing to do with the endpoint that failed. Now
-`Promise.allSettled`, with each failure recorded per panel.
-
-**The half that was the actual work**, and why the site comment said this was
-"considered and left": `allSettled` alone is not the fix. Passing `[]` / `0` /
-`null` for a panel that ERRORED makes the page assert "you have no
-engagements", "no unread messages" — claims about the client's account made
-from a failure. `HomeDashboard` now takes `unavailable: HomePanel[]` and
-renders "could not be loaded" for those, so a degraded panel is distinguishable
-from an empty one.
-
-**#389** — `SignUpForm`'s `await res.json()` was unguarded inside the typed-422
-branch, so a non-JSON body (proxy HTML, empty 429, gateway timeout) rejected the
-submit handler and `setPending(false)` never ran: the Create account button
-stayed disabled forever with nothing on screen, on the **public** sign-up page.
-Now parsed inside a `try`, falling through to the existing plain-language copy.
-
-Both verified RED-ON-REVERT individually. Web gates from the worktree:
-`tsc` 0 errors, `eslint` clean, `vitest` 694 passed.
-
-**#371 fixed: the client is no longer told the value was restored when it was
-not.** `describeSaveError` printed "The value on screen has been restored to
-what the server has" unconditionally, and both self-assessment surfaces called
-it BEFORE the re-fetch that does the restoring. When that re-fetch also failed,
-the client sat looking at the refused value under a sentence saying it had been
-replaced by server truth — and the `catch` block's own comment claimed the
-message was "the honest one: we cannot show what the server has", which is the
-opposite of what the message said.
-
-The restoration clause is now opt-in. Callers show the bare failure message
-immediately — nobody should wait on a re-fetch to learn their edit failed — and
-replace it with `{ restored: true }` only once the re-fetch resolves, so each
-sentence is true at the moment it is on screen.
-
-`CLAUDE.md`: a success record must be written where the success is, not before
-it. Recorded after N-019, #47 and W1's accounting log — the list is the count,
-and this one is the first where the false record is read by a CLIENT rather
-than by a developer.
-
-**The deferral reason had expired:** the issue was filed rather than fixed
-because `describe-save-error.ts` had two open PRs against it (#362, #366).
-Both merged, so it was unblocked.
 
 **#347 landed as tier-1: `CLAUDE.md` was being truncated before any agent read
 it.** At 210,958 bytes against a 150,000-byte reader limit, the last 29% was cut

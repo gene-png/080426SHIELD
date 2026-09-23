@@ -4,12 +4,22 @@ _2026-09-22 — #254 merged as #444 (`d5f97eb`); a FOLLOW-UP is open for what
 round 4 found after the merge._
 
 **Read this before trusting #444 alone.** Four adversarial rounds ran. Rounds
-1–3 landed in the PR; round 4 arrived after Gene merged it, and it found the
-defect #254 exists to fix still live at the read end: five exporters and the
-admin fulfill path resolved the organisation line with a bare
-`client_legal_name or "Client"`, which a whitespace name satisfies, so a blank
-printed on the client's DOCX/PDF/XLSX. Branch `fix/254-followup-round4` fixes
-all six through `app/client_naming.py` and adds migration 0050.
+1–3 landed in the PR; round 4's findings reached the dispatching session
+before the merge and were not folded into it — not "the reviewer never
+delivered", which is a different claim and the one I first wrote. It found the
+defect #254 exists to fix still live at the read end: readers resolved the
+organisation line with a bare `client_legal_name or "Client"`, which a
+whitespace name satisfies, so a blank printed on the client's DOCX/PDF/XLSX.
+
+**Two branches, and the second exists because the first's count was wrong.**
+`fix/254-followup-round4` merged as #458 (`4a7e08f`) fixing six readers under
+prose claiming "all six". Round 5 then found a SEVENTH in `routes/csf.py` — the
+Playbook export, feeding five client artifacts from a ROUTE rather than an
+`exporters.py` — and an EIGHTH in `apps/web/src/lib/risk/client.ts`, under a
+comment claiming server-side parity that #458 had just falsified. Both are on
+**`fix/254-round5`** (PR #461), which also rewrites migration 0050's predicate
+from SQL to Python: `trim()` is space-only on both engines, so tab, newline and
+NBSP survived it while `str.strip()` treats them as blank.
 
 **The lesson worth keeping is about my own test.** The regression test for
 round 3's fix posted an invalid enum value, so Pydantic refused the body before

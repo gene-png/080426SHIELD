@@ -43,16 +43,29 @@ async function jsonRequest<T>(
  * unaffected by the plain Error it throws.
  */
 export { getActiveClientId } from "@/lib/active-client";
+import { orgDisplayName } from "@/lib/org-name";
 
 export async function getClientName(cid: string): Promise<string> {
   try {
     const clients = await jsonRequest<
       { id: string; legal_name: string | null }[]
     >("/api/proxy/admin/clients");
-    // Two absences collapse to one fallback here, as on the server side: no
-    // such client, and a client nobody has named (D-080). `?? "Client"` only
-    // caught the first, so `|| "Client"` covers the null as well.
-    return clients.find((c) => c.id === cid)?.legal_name || "Client";
+    // THREE absences, and they are NOT one fallback -- the earlier version of
+    // this comment claimed parity with the server side and that claim is now
+    // false. `|| "Client"` was satisfied by `"   "`, so a blank name rendered
+    // as a blank heading, and it invented a SECOND label for "unnamed" ("Client")
+    // while every other web reader says "(pending intake)".
+    //
+    //   * no such client        -> "Client": we could not identify the tenant
+    //   * the fetch failed      -> "Client" (the catch below): same, we do not know
+    //   * the client is UNNAMED -> orgDisplayName, the one label the rest of
+    //                              the web uses for exactly this state
+    //
+    // The first two are "we cannot say who this is"; the third is "we know who
+    // it is and nobody has named them". Collapsing the third into the other two
+    // is what put a different word on the same state.
+    const found = clients.find((c) => c.id === cid);
+    return found ? orgDisplayName(found.legal_name) : "Client";
   } catch {
     return "Client";
   }
