@@ -13,10 +13,11 @@ import { SessionExpiryWarning } from "./SessionExpiryWarning";
  */
 
 const signOut = vi.fn();
+const update = vi.fn(async () => null);
 let sessionData: { sessionExpiresAt?: string } | null = null;
 
 vi.mock("next-auth/react", () => ({
-  useSession: () => ({ data: sessionData }),
+  useSession: () => ({ data: sessionData, update }),
   signOut: (...args: unknown[]) => signOut(...args),
 }));
 
@@ -37,6 +38,7 @@ const fetchMock = vi.fn(async (url: string) => {
 beforeEach(() => {
   vi.useFakeTimers();
   signOut.mockReset();
+  update.mockClear();
   sessionData = null;
   storedExpiry = null;
   fetchMock.mockClear();
@@ -110,10 +112,27 @@ describe("SessionExpiryWarning", () => {
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
   });
 
-  it("stays quiet once the deadline has passed — the guard owns the sign-out", () => {
+  it("at the deadline, asks the server ONCE whether the session ended", async () => {
+    // The guard only sees useSession, which refetches on focus. Without this a
+    // user who never left the page watched the countdown vanish and typed into
+    // 401s. update() runs the jwt callback, which ends the session; the guard
+    // then signs out with the reason. The banner itself stays quiet.
     expiringIn(-1_000);
     render(<SessionExpiryWarning />);
+    await settle();
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
+    expect(update).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask the server while time remains", async () => {
+    expiringIn(30 * 60_000);
+    render(<SessionExpiryWarning />);
+    await settle();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("offers a way to re-authenticate without losing the reason", () => {

@@ -58,6 +58,15 @@ tests; making `sessionChanged` always true fails the three that expect `false`.
   never reaches the refresh endpoint's `auth_time` check, so the user would get
   a generic error instead of the typed `reauth_required` sign-out
   (`test_refresh_past_forced_reauth_returns_typed_401`).
+- **The session ends at its end, whichever deadline that is.** The `jwt`
+  callback's end check uses the same earlier-of rule as the warning, so a
+  lapsed refresh expiry also ends the session without a backend call. At the
+  deadline the warning calls `update()` once, so an open page learns the
+  session ended rather than sitting on a stale one until the next navigation.
+- **The OIDC path** seeds `reauthAt` from the exchange too, and a refresh
+  response that omits `reauth_at` keeps the ceiling the token already had.
+  Each wiring point is pinned by a named test in `options.test.ts` or
+  `route.test.ts` that goes red when it is removed.
 - **Like with like.** The raw token keeps its access token after a refresh
   error, but the session hides it, so an errored session read as "changed" on
   every request. Both sides are now normalised the same way.

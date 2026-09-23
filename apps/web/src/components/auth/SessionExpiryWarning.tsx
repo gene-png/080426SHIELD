@@ -91,7 +91,7 @@ function useStoredExpiry(enabled: boolean): string | null {
 }
 
 export function SessionExpiryWarning(): React.JSX.Element | null {
-  const { data: session } = useSession();
+  const { data: session, update } = useSession();
   const stored = useStoredExpiry(Boolean(session?.sessionExpiresAt));
   const source = stored ?? session?.sessionExpiresAt;
   const expiresAt = source ? Date.parse(source) : null;
@@ -109,6 +109,30 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
     const id = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(id);
   }, [expiresAt]);
+
+  // AT the deadline, ask the server ONCE whether the session has ended. The
+  // guard only sees `useSession`, which refetches on focus, so without this a
+  // user who never leaves the page watched the countdown vanish and then typed
+  // into 401s with no sign-out and no reason. `update()` runs the `jwt`
+  // callback, which sets REAUTH_REQUIRED_ERROR when the session's end has
+  // passed; the guard then signs out with `reason=session_expired`. Asking
+  // rather than signing out directly means a stale deadline (a failed stored
+  // read) cannot end a healthy session: the callback would find it alive.
+  const askedFor = React.useRef<number | null>(null);
+  const reachedDeadline =
+    expiresAt !== null && !Number.isNaN(expiresAt) && now >= expiresAt;
+  React.useEffect(() => {
+    if (
+      !reachedDeadline ||
+      expiresAt === null ||
+      askedFor.current === expiresAt
+    ) {
+      return;
+    }
+    askedFor.current = expiresAt;
+    console.info("[auth.session-expiry] deadline reached; asking the server");
+    void update();
+  }, [reachedDeadline, expiresAt, update]);
 
   if (expiresAt === null || Number.isNaN(expiresAt)) return null;
 

@@ -26,10 +26,10 @@ export async function GET(req: Request): Promise<Response> {
   return NextResponse.json(
     {
       // The EARLIER of the rolling refresh expiry and the fixed re-auth
-      // ceiling -- the same rule the session callback uses.
+      // ceiling -- the same rule the session callback uses. No `error` field:
+      // nothing reads one, and a decode-only read would not see a fresh one.
       sessionExpiresAt:
         sessionEndsAt(token?.refreshExpiresAt, token?.reauthAt) ?? null,
-      error: token?.error ?? null,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

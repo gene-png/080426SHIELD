@@ -124,6 +124,65 @@ describe("reauthAt through the jwt and session callbacks", () => {
     expect(apiFetch).not.toHaveBeenCalled();
   });
 
+  it("seeds reauthAt from the OIDC exchange", async () => {
+    const reauthAt = iso(24 * 3600_000);
+    apiFetch.mockResolvedValueOnce({
+      user: { role: "admin" },
+      tokens: {
+        access_token: "a",
+        refresh_token: "r",
+        access_expires_at: iso(900_000),
+        refresh_expires_at: iso(1800_000),
+        reauth_at: reauthAt,
+      },
+    });
+    const token = await jwt({
+      token: {},
+      account: { provider: "keycloak", access_token: "kc-token" },
+      user: { id: "kc-user" },
+    });
+    expect(apiFetch).toHaveBeenCalledWith(
+      "/auth/oidc/exchange",
+      expect.anything(),
+    );
+    expect(token.reauthAt).toBe(reauthAt);
+  });
+
+  it("keeps the ceiling it has when a refresh response omits reauth_at", async () => {
+    const reauthAt = iso(20 * 3600_000);
+    apiFetch.mockResolvedValueOnce({
+      access_token: "a2",
+      refresh_token: "r2",
+      access_expires_at: iso(900_000),
+      refresh_expires_at: iso(1800_000),
+    });
+    const token = await jwt({
+      token: {
+        accessToken: "a1",
+        refreshToken: "r1",
+        accessExpiresAt: iso(-1000),
+        reauthAt,
+      },
+    });
+    expect(token.reauthAt).toBe(reauthAt);
+  });
+
+  it("ends the session once the refresh expiry has lapsed, too", async () => {
+    // A lapsed refresh token fails at the API as a GENERIC error, which the
+    // guard does not act on; the session is over either way.
+    const token = await jwt({
+      token: {
+        accessToken: "a1",
+        refreshToken: "r1",
+        accessExpiresAt: iso(-1000),
+        refreshExpiresAt: iso(-500),
+        reauthAt: iso(20 * 3600_000),
+      },
+    });
+    expect(token.error).toBe(REAUTH_REQUIRED_ERROR);
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
   it("ends the session at the EARLIER of refresh expiry and the ceiling", async () => {
     const soon = iso(4 * 60_000);
     const later = iso(25 * 60_000);

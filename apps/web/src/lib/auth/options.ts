@@ -364,16 +364,18 @@ export const authConfig: NextAuthConfig = {
       if (token.error === OIDC_EXCHANGE_ERROR) {
         return token;
       }
-      // The forced re-auth ceiling ends the session HERE, at the moment the
-      // warning counted down to (#498). The API checks it only on the next
-      // refresh, up to one access-token lifetime later, so without this the
-      // countdown reached zero, disappeared, and the user was signed out later
-      // with no warning. Set without calling the backend: the answer is known.
-      if (token.reauthAt && Date.now() >= Date.parse(token.reauthAt)) {
+      // The session ENDS here once its end has passed -- the EARLIER of the
+      // forced re-auth ceiling and the refresh expiry, the same value the
+      // warning counts down to (#498). The API checks the ceiling only on the
+      // next refresh, up to one access-token lifetime later, and a lapsed
+      // refresh token fails as a GENERIC error the guard does not act on; both
+      // are known here without calling the backend. The warning asks for this
+      // callback at its deadline (`update()`), so the guard signs the user out
+      // with the right reason instead of leaving them typing into 401s.
+      const endsAt = sessionEndsAt(token.refreshExpiresAt, token.reauthAt);
+      if (endsAt && Date.now() >= Date.parse(endsAt)) {
         if (token.error !== REAUTH_REQUIRED_ERROR) {
-          console.info(
-            "[auth] forced re-auth ceiling reached; ending the session",
-          );
+          console.info("[auth] session end reached; ending the session");
         }
         return { ...token, error: REAUTH_REQUIRED_ERROR };
       }
