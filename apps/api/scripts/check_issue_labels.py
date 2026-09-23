@@ -134,8 +134,14 @@ def main(argv: list[str]) -> int:
     # live run mid-report -- exit 1, which reads as a verdict. Measured
     # 2026-09-23. The runner is Linux, where this is a no-op.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # Parsed OUTSIDE the read's `try`: a bad argument is a different cause from
+    # a failed read, and a guard's message names the cause, not the check.
     try:
         issues_file, only = _parse(argv)
+    except ValueError as exc:
+        print(f"check-issue-labels: bad argument, nothing was read: {exc}")
+        return 2
+    try:
         issues = _read_issues(issues_file)
     except (RuntimeError, ValueError, OSError) as exc:
         print(f"check-issue-labels: could not read the open issues: {exc}")

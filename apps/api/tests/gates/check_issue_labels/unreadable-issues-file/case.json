@@ -1,3 +1,3 @@
 {"incident": "Could not look: the input does not exist. Must be 2 with the read failure named, never a clean 0 over nothing read.",
- "expect": 2, "stdout_contains": "could not read the open issues",
+ "expect": 2, "stdout_contains": "absent.json",
  "argv": ["--issues-file", "{dir}/absent.json"]}

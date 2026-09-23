@@ -197,4 +197,22 @@ def test_an_unreadable_issues_file_is_could_not_look(tmp_path, monkeypatch, caps
 def test_an_unknown_argument_is_could_not_look_not_a_clean_run(monkeypatch, capsys) -> None:
     code, out = _run(monkeypatch, capsys, [[_issue(1, "mvp-blocking", "tier-1")]], "--isue", "1")
     assert code == 2
-    assert "unknown or incomplete argument: '--isue'" in out
+    assert "bad argument, nothing was read: unknown or incomplete argument: '--isue'" in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["abc", "#123"])
+def test_a_non_integer_issue_is_a_bad_argument_not_a_failed_read(
+    monkeypatch, capsys, value: str
+) -> None:
+    code, out = _run(monkeypatch, capsys, [[_issue(1, "mvp-blocking", "tier-1")]], "--issue", value)
+    assert code == 2
+    assert "bad argument, nothing was read" in out
+    assert "could not read the open issues" not in out
+
+
+@pytest.mark.unit
+def test_issue_with_no_value_is_a_bad_argument(monkeypatch, capsys) -> None:
+    code, out = _run(monkeypatch, capsys, [[_issue(1, "mvp-blocking", "tier-1")]], "--issue")
+    assert code == 2
+    assert "bad argument, nothing was read: unknown or incomplete argument: '--issue'" in out
