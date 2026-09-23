@@ -487,6 +487,7 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
           zt_services: 0,
           zt_targets_defaulted: null,
           zt_targets_unusable: null,
+          zt_targets_computed_live: null,
           attack_uncovered_count: null,
           attack_uncovered_unresolved: false,
           csf_gap_count: null,
@@ -494,6 +495,7 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
           csf_services: 0,
           csf_targets_defaulted: null,
           csf_targets_unusable: null,
+          csf_targets_computed_live: null,
           has_any_data: true,
           has_unresolved: false,
         }}

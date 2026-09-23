@@ -68,6 +68,11 @@ function data(p: Partial<ZtDashboardData>): ZtDashboardData {
     target_pct: 100,
     target_stage: 4,
     target_stage_source: "client",
+    // #209. Defaulting to FROZEN, because that is what every deliverable this
+    // product builds carries. A base fixture defaulting to the legacy null
+    // would make every unrelated case here exercise a disclosure path only
+    // pre-0051 rows can reach; the tests for that path override it.
+    target_frozen_at: "2026-09-06T00:00:00Z",
     engagement_target_capability_count: 37,
     total_gap_count: 37,
     largest_gap_pillar: "Identity",
@@ -264,5 +269,65 @@ describe("targetNote — a discarded per-capability target reaches the screen (#
       }),
     );
     expect(note.endsWith(fromTheDeliverable)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #209: which target the figures were computed against.
+//
+// BOTH BRANCHES OF `targetNote`, deliberately. It returns early-ish through two
+// separate paths -- the fully-overridden one and the ordinary one -- and this
+// function has twice shipped a fault that one path swallowed. A single case
+// here would pass under an implementation that appends the sentence to one
+// branch only, which is the defect, not a variant of it.
+// ---------------------------------------------------------------------------
+
+describe("targetNote discloses a live-read target (#209)", () => {
+  const LIVE =
+    " These figures use your target as it stands today. Your released report" +
+    " was rendered against the target on file at the time, so the two can" +
+    " differ.";
+
+  it("appends it on the ordinary branch", () => {
+    expect(targetNote(data({ target_frozen_at: null }))).toContain(LIVE);
+  });
+
+  it("appends it on the fully-overridden branch too", () => {
+    expect(
+      targetNote(
+        data({
+          target_frozen_at: null,
+          engagement_target_capability_count: 0,
+        }),
+      ),
+    ).toContain(LIVE);
+  });
+
+  it("appends it BESIDE a target fault rather than in place of one", () => {
+    // The shape this function has been repaired for twice: a second fact is
+    // added and an existing one stops rendering.
+    const note = targetNote(
+      data({
+        target_frozen_at: null,
+        target_stage_source: "client_out_of_range",
+      }),
+    );
+    expect(note).toContain(LIVE);
+    expect(note).toContain("Default target");
+  });
+
+  it("appends it BESIDE the discarded-capability sentence", () => {
+    const note = targetNote(
+      data({ target_frozen_at: null, unusable_target_codes: ["ZT-1"] }),
+    );
+    expect(note).toContain(LIVE);
+    expect(note).toContain("A per-capability target was recorded for ZT-1");
+  });
+
+  it("says nothing extra on a frozen dashboard, on either branch", () => {
+    expect(targetNote(data({}))).not.toContain("as it stands today");
+    expect(
+      targetNote(data({ engagement_target_capability_count: 0 })),
+    ).not.toContain("as it stands today");
   });
 });

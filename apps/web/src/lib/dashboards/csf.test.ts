@@ -56,6 +56,8 @@ function data(over: Partial<CsfDashboardData> = {}): CsfDashboardData {
     target_label: "Repeatable",
     target_pct: 75,
     target_tier_source: "client",
+    // #209, as in `zt.test.ts`: frozen by default.
+    target_frozen_at: "2026-09-06T00:00:00Z",
     total_gap_count: 37,
     largest_gap_function: "Govern",
     largest_gap_pct: 25,

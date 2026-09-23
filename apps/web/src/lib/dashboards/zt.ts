@@ -3,6 +3,8 @@
  * Mirrors the backend `ZtDashboardResponse` (apps/api/app/schemas/clients.py).
  */
 
+import { renderedAgainstNote } from "./frozenTarget";
+
 export interface ZtPillar {
   code: string;
   name: string;
@@ -32,6 +34,14 @@ export interface ZtDashboardData {
   target_stage: number;
   /** See `targetNote` — rendered, not just carried. */
   target_stage_source: string;
+  /**
+   * When the engagement target behind these figures was FROZEN (#209), or
+   * null when it was resolved live on this request.
+   *
+   * Null is the disclosure, not an absence — see `renderedAgainstNote`,
+   * which is where it is rendered.
+   */
+  target_frozen_at: string | null;
   /**
    * Capabilities whose per-capability target could not be used (#188).
    *
@@ -103,6 +113,14 @@ export function pillarsByGap(pillars: ZtPillar[]): ZtPillar[] {
 export function targetNote(data: ZtDashboardData): string {
   const fault = targetFault(data.target_stage_source);
 
+  // #209, and APPENDED TO EVERY RETURN for exactly the reason `discarded`
+  // below is: which target the figures were computed against is a fact
+  // about the whole card, independent of how the headline target was
+  // chosen and independent of whether per-capability targets decided it.
+  // An early return anywhere below would swallow it, which is the shape
+  // this function has already been fixed for twice.
+  const rendered = renderedAgainstNote(data.target_frozen_at);
+
   // APPENDED TO EVERY RETURN BELOW, never in place of one, and deliberately
   // worded as the deliverable words it (`zt/exporters.py::_gap_plan_caption`).
   // The two surfaces read the same assessment, so they say the same thing.
@@ -134,14 +152,14 @@ export function targetNote(data: ZtDashboardData): string {
     // a value that did not reach the page.
     return (
       isChoiceFailure(data.target_stage_source) ? `${base} — ${fault}` : base
-    ).concat(discarded);
+    ).concat(discarded, rendered);
   }
 
   return (
     fault === null
       ? "Your target, chosen at intake"
       : `Default target — ${fault}`
-  ).concat(discarded);
+  ).concat(discarded, rendered);
 }
 
 /**

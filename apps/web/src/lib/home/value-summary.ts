@@ -39,6 +39,9 @@ export interface ValueSummary {
   zt_services: number;
   zt_targets_defaulted: number | null;
   zt_targets_unusable: number | null;
+  /** #209: summands counted against a LIVE target rather than the one
+   *  their released report was rendered against. See `liveTargetNote`. */
+  zt_targets_computed_live: number | null;
   attack_uncovered_count: number | null;
   attack_uncovered_unresolved: boolean;
   csf_gap_count: number | null;
@@ -46,6 +49,8 @@ export interface ValueSummary {
   csf_services: number;
   csf_targets_defaulted: number | null;
   csf_targets_unusable: number | null;
+  /** The CSF twin of `zt_targets_computed_live`. */
+  csf_targets_computed_live: number | null;
   has_any_data: boolean;
   has_unresolved: boolean;
 }
@@ -57,6 +62,12 @@ export interface TargetProvenance {
   defaulted: number | null;
   /** Summands where the client's stored choice could not be used. */
   unusable: number | null;
+  /** #209: summands whose target was read LIVE rather than frozen at the
+   *  moment their report was rendered. A THIRD fact, not a flavour of the
+   *  two above: a live-read target may well be the client's own current
+   *  choice, so both of those stay 0 while the figure still need not match
+   *  the delivered document. */
+  computedLive: number | null;
   /** "stage" for ZT, "tier" for CSF — the client's word for the target. */
   unit: string;
   /** What the figure is summed over, plural, in the client's words. */
@@ -132,6 +143,47 @@ export function assumedTargetNote(p: TargetProvenance): string | null {
  * used the client's own choice. A mixed set is not "your target" for the part
  * that was assumed, and `assumedTargetNote` says how much of it.
  */
+/**
+ * The sentence disclosing figures counted against a LIVE target, or `null`.
+ *
+ * SEPARATE FROM `assumedTargetNote`, deliberately. That one returns null when
+ * nothing was assumed, and a live-read target is not an assumed one -- a client
+ * who chose their own stage at intake has `defaulted === 0` and
+ * `unusable === 0`, so folding this into it would drop the disclosure in
+ * exactly the commonest case. `CLAUDE.md` records that shape: a conditional
+ * added so a value is not charged twice becomes the path that records nothing.
+ *
+ * `null` propagates rather than becoming `0`, for the reason
+ * `assumedTargetCount` gives: the API sends null whenever the figure itself is
+ * null, and a `0` would read as "every figure matches your reports" over
+ * something nobody measured.
+ *
+ * Never an imperative: a client cannot re-render a report from this card.
+ */
+export function liveTargetNote(p: TargetProvenance): string | null {
+  if (p.computedLive === null || p.computedLive === 0) return null;
+  const scope =
+    p.computedLive === p.services
+      ? `Counted against your target as it stands today`
+      : `${p.computedLive} of ${p.services} ${p.noun} counted against your target as it stands today`;
+  return `${scope} — your released report was rendered against the ${p.unit} on file at the time, so the two can differ.`;
+}
+
+/**
+ * Both target disclosures for one kind, joined, or `null` when neither fires.
+ *
+ * ONE composer so the card cannot render one disclosure and forget the other.
+ * The card has a single note slot, and the alternative -- calling both helpers
+ * at each of the two call sites -- is four places for two facts, which is how
+ * one service ends up disclosing something the other does not.
+ */
+export function targetNotes(p: TargetProvenance): string | null {
+  const notes = [assumedTargetNote(p), liveTargetNote(p)].filter(
+    (n): n is string => n !== null,
+  );
+  return notes.length === 0 ? null : notes.join(" ");
+}
+
 export function gapHint(p: TargetProvenance, subject: string): string {
   const possessive = targetIsWhollyTheClients(p) ? "your " : "the ";
   return `${subject} below ${possessive}target maturity ${p.unit}.`;

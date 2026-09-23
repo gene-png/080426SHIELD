@@ -3,7 +3,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 import type { JSX } from "react";
 
 import {
-  assumedTargetNote,
+  targetNotes,
   gapHint,
   type TargetProvenance,
   type ValueSummary,
@@ -77,6 +77,7 @@ function ztTargets(summary: ValueSummary): TargetProvenance {
     services: summary.zt_services,
     defaulted: summary.zt_targets_defaulted,
     unusable: summary.zt_targets_unusable,
+    computedLive: summary.zt_targets_computed_live,
     unit: "stage",
     noun: "Zero Trust reports",
   };
@@ -89,6 +90,7 @@ function csfTargets(summary: ValueSummary): TargetProvenance {
     services: summary.csf_services,
     defaulted: summary.csf_targets_defaulted,
     unusable: summary.csf_targets_unusable,
+    computedLive: summary.csf_targets_computed_live,
     unit: "tier",
     noun: "NIST CSF reports",
   };
@@ -125,7 +127,11 @@ function buildMetrics(summary: ValueSummary): Metric[] {
       // choice. The hint was unconditional, so a client who chose nothing read
       // a possessive about a stage they had never seen.
       hint: gapHint(ztTargets(summary), "Capabilities"),
-      targetNote: assumedTargetNote(ztTargets(summary)),
+      // #209: BOTH disclosures, via the one composer. `assumedTargetNote`
+      // alone returns null whenever nothing was assumed, which is the
+      // commonest case and precisely where a live-read target still needs
+      // saying.
+      targetNote: targetNotes(ztTargets(summary)),
       unresolved: summary.zt_gap_unresolved,
     },
     {
@@ -151,7 +157,8 @@ function buildMetrics(summary: ValueSummary): Metric[] {
       // internally inconsistent -- the half-fix shape that made #79 worse than
       // the defect it replaced.
       hint: gapHint(csfTargets(summary), "Subcategories"),
-      targetNote: assumedTargetNote(csfTargets(summary)),
+      // Both twins together, as with `gapHint` above.
+      targetNote: targetNotes(csfTargets(summary)),
       unresolved: summary.csf_gap_unresolved,
     },
   ];
@@ -226,10 +233,12 @@ export function ValueLoopCard({
                   : m.hint}
               </p>
               {/* Only beside a figure. In the unresolved branch there is no
-                  number for this to qualify, and `assumedTargetNote` returns
-                  null there anyway because the API sends null counts -- but the
-                  guard is written rather than inherited, so the rendering does
-                  not depend on a promise held in another file. */}
+                  number for this to qualify, and `targetNotes` returns null
+                  there anyway because the API sends null counts -- BOTH of its
+                  halves check for null independently, which is what keeps that
+                  true after #209 added the second one. The guard is still
+                  written rather than inherited, so the rendering does not depend
+                  on a promise held in another file. */}
               {!m.unresolved && m.targetNote ? (
                 <p
                   className="mt-1 text-xs text-status-warning-fg"
