@@ -212,10 +212,10 @@ _MAX_OUTPUT_TOKENS = 8192
 # been batched -- `_MITRE_BATCH_SIZE` in routes/attack.py -- so its 64000 is
 # per batch.)
 #
-# The caps are one table for every provider. Anthropic streams and accepts all
-# of them; the httpx adapters do not stream and some models have lower output
-# ceilings -- tracked in #485, and the OpenAI adapter has no truncation guard at
-# all (#484).
+# The raises made on 2026-09-23 apply to the streamed (Anthropic) adapter
+# only; the non-streamed adapters send what they sent before -- see
+# `non_streamed_output_cap` below. Provider ceilings and the 60 s timeout are
+# #485, and the OpenAI adapter has no truncation guard at all (#484).
 _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     "mitre_map": 64000,
     # risk_synthesize drafts one entry per finding and is batched at 20 (see
@@ -238,10 +238,8 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # cap the dev stack's Anthropic model has accepted (mitre_map) -- fits only
     # the low end. The real fix is batching per tier, as risk_synthesize and
     # mitre_map already are. Until then an overrun fails loudly on Anthropic
-    # (stop_reason, streamed). On the non-streamed adapters a long generation
-    # hits the 60 s client timeout (_HTTP_TIMEOUT_SECONDS) before any
-    # finishReason arrives -- `failures.friendly_reason` names that case -- and
-    # OpenAI has no truncation guard at all (#484).
+    # (stop_reason, streamed). The non-streamed adapters keep the shared 8192
+    # for this purpose (`non_streamed_output_cap`).
     "csf_score": 64000,
     # extract.capabilities output scales with the uploaded inventory, which the
     # client supplies and nothing bounds. Measured 2026-09-23 on the dev stack:
@@ -253,8 +251,7 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # at 4096 was with those narratives, and the 2026-07-15 one at 8192 was
     # unbounded gemini thinking, now capped at _THINKING_BUDGET_TOKENS. So 8192
     # is CHOSEN, not defaulted: raising it buys nothing for an output this
-    # size. (It is not held down for provider ceilings -- `output_cap_for`
-    # handles those for the families it names.)
+    # size.
     "zt_score": _MAX_OUTPUT_TOKENS,
 }
 
@@ -274,44 +271,26 @@ def max_output_tokens_for(purpose: str | None) -> int:
     return _MAX_OUTPUT_TOKENS_BY_PURPOSE.get(purpose, _MAX_OUTPUT_TOKENS)
 
 
-# Output ceilings for non-Anthropic model families whose published maximum
-# output is below the budgets in the table above. The figures are the
-# providers' published limits, NOT measured here. The families include the
-# example ids this repo's docs give (README's OpenAI example gpt-4o-mini;
-# SMOKE_TEST's setup examples gpt-4o-mini / gemini-1.5-pro). The one live-
-# validated generateContent model, gemini-2.5-flash, is above every cap and
-# is not clamped. A request above a model's ceiling is an HTTP 400 even for a
-# draft that would fit, which is what raising csf_score / extract.capabilities
-# would otherwise have done on these families where 8192 worked.
+# The table above is sized for the STREAMED adapter (Anthropic): it is where
+# the extract.capabilities failure was measured, and a stream has no client read
+# timeout. The non-streamed adapters (OpenAI, Gemini, Vertex) send exactly what
+# they sent before this table grew -- the shared default for the two purposes
+# raised on 2026-09-23 -- so nothing changes for them.
 #
-# Clamping cannot make a draft fit that does not: a clamped call that runs out
-# still stops on finishReason=MAX_TOKENS (generateContent) and fails loudly.
-# OpenAI has no such guard yet (#484). Anthropic streams and its current models
-# accept every cap in the table above, so it is not clamped. Unknown models are
-# left alone rather than guessed at; #485 carries the general version.
-_OUTPUT_CEILING_BY_MODEL_FAMILY: tuple[tuple[str, int], ...] = (
-    ("gpt-4o", 16384),
-    ("gpt-4.1", 32768),
-    ("gemini-1.5", 8192),
-    ("gemini-2.0", 8192),
-)
+# This replaced a per-model ceiling list. Three review rounds each found a model
+# it missed (gpt-4.1, then gpt-5-chat-latest), and every miss was an HTTP 400 on
+# a configuration that worked at 8192. A list of provider limits cannot be
+# complete; "these adapters are unchanged" can be, and a test pins it. Raising
+# them is its own change, with #485's ceilings and 60 s timeout.
+_RAISED_FOR_THE_STREAMED_ADAPTER_ONLY = frozenset({"csf_score", "extract.capabilities"})
 
 
-def output_cap_for(purpose: str | None, model: str | None) -> int:
-    """`max_output_tokens_for(purpose)`, clamped to `model`'s known ceiling."""
-    cap = max_output_tokens_for(purpose)
-    lowered = (model or "").lower()
-    for family, ceiling in _OUTPUT_CEILING_BY_MODEL_FAMILY:
-        if family in lowered and cap > ceiling:
-            _log.info(
-                "llm_output_cap_clamped",
-                purpose=purpose,
-                model=model,
-                requested=cap,
-                ceiling=ceiling,
-            )
-            return ceiling
-    return cap
+def non_streamed_output_cap(purpose: str | None) -> int:
+    """The cap for the non-streamed (httpx) adapters: what they sent before the
+    2026-09-23 raise, for every purpose."""
+    if purpose in _RAISED_FOR_THE_STREAMED_ADAPTER_ONLY:
+        return _MAX_OUTPUT_TOKENS
+    return max_output_tokens_for(purpose)
 
 
 # OpenAI reasoning / `responses` model families (the o-series and gpt-5) REJECT
@@ -354,7 +333,7 @@ def _generate_content_body(
 ) -> dict[str, Any]:
     """Shape a redacted prompt + payload into a generateContent request body."""
     generation_config: dict[str, Any] = {
-        "maxOutputTokens": output_cap_for(payload.get("__purpose__"), model)
+        "maxOutputTokens": non_streamed_output_cap(payload.get("__purpose__"))
     }
     if model is not None and _GEMINI_THINKING_RE.search(model):
         generation_config["thinkingConfig"] = {"thinkingBudget": _THINKING_BUDGET_TOKENS}
@@ -422,8 +401,8 @@ class OpenAIProvider:
     def complete(self, prompt: str, payload: dict[str, Any]) -> LLMResponse:
         body = {
             "model": self.model,
-            _openai_token_limit_key(self.model): output_cap_for(
-                payload.get("__purpose__"), self.model
+            _openai_token_limit_key(self.model): non_streamed_output_cap(
+                payload.get("__purpose__")
             ),
             "messages": [
                 {"role": "user", "content": f"{prompt}\n\n{json.dumps(_egress_payload(payload))}"},

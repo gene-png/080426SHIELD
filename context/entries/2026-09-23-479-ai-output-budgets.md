@@ -12,63 +12,56 @@ real assessment, and that needs a live, billable run nobody has authorised.
 because nobody chose otherwise.
 
 Measured on the dev stack's `llm_calls` before changing anything: a live
-`extract.capabilities` failed on `stop_reason=max_tokens` at 00:47 UTC, and its
-retry finished at **8117 of 8192**. No live `csf_score` or `zt_score` has ever run
-there.
+`extract.capabilities` overran 8192 (`stop_reason=max_tokens`, 00:47 UTC), and
+its retry finished at **8117 of 8192**. No live `csf_score` or `zt_score` has
+ever run there.
 
 ## What changed
 
-| purpose | before | after | basis |
+| purpose | Anthropic (streamed) | OpenAI / Gemini / Vertex (not streamed) | basis |
 | --- | --- | --- | --- |
-| `extract.capabilities` | 8192 (default) | 64000 | measured, above |
-| `csf_score` | 8192 (default) | 64000 | **estimate**: 318 rows at 100–575 tokens each. 64000 fits only the low end; batching per tier is the real fix |
-| `zt_score` | 8192 (default) | 8192, **chosen** | 3 short fields per capability, so a larger budget buys nothing |
+| `extract.capabilities` | 8192 → **64000** | 8192, unchanged | measured, above |
+| `csf_score` | 8192 → **64000** | 8192, unchanged | **estimate**: 318 rows at 100–575 tokens each. 64000 fits only the low end, and batching per tier is the real fix |
+| `zt_score` | 8192, now **chosen** | 8192, unchanged | 3 short fields per capability, so a larger budget buys nothing |
+| `mitre_map`, `risk_synthesize` | unchanged | unchanged | |
+
+**The non-streamed adapters are byte-for-byte unchanged from `main`, on purpose.**
+A per-model ceiling list was tried first. Three review rounds each found a model
+it missed (`gpt-4.1`, then `gpt-5-chat-latest`), and every miss was an HTTP 400 on
+a configuration that worked at 8192. A list of provider limits cannot be
+complete; "these adapters are unchanged" can be, and
+`test_the_non_streamed_adapters_send_what_main_sent_for_every_purpose` pins it
+for every registered purpose. Raising them is its own change, with #485.
 
 `test_every_registered_job_has_a_chosen_output_budget` walks the registry through
 the public `registered_jobs()` / `get_job()`. A grep for `purpose="..."` literals
-would miss `mitre_map`. Each new entry was checked red-on-revert, one at a time.
+would miss `mitre_map`. The values are pinned against their evidence:
+`extract.capabilities > 8192` (the value that failed), `csf_score >= 106 * 100`,
+and `zt_score == 8192`.
 
-## Corrected by two adversarial rounds, before the PR opened
+A `ReadTimeout` no longer shares the dropped-connection copy that says "you can
+retry". It is our 60 s client limit, and a job too large for it fails again on
+every retry and is billed again.
 
-Round 1:
+## What the review rounds changed
 
-- A comment claimed that an unlisted purpose raises. It does not; the claim was withdrawn.
-- A test named "fits a full working profile" rested on an invented 100 tokens per
-  row. The only measured row cost in the repo (~575, `mitre_map`) puts a full
-  profile far past any cap, so the test is gone.
-- `zt_score` went back from 32000 to a chosen 8192.
+Five adversarial rounds ran before the PR opened. The findings that changed the
+code:
 
-Round 2 found that raising a cap **broke working configurations**, and "filed"
-was not an answer to that:
+- A comment claimed an unlisted purpose raises; it does not. Withdrawn.
+- A sizing test rested on an invented 100 tokens per row. Removed, and the range
+  is now stated as an estimate.
+- Raising the non-streamed adapters' caps broke models whose output ceilings are
+  lower. The per-model list failed as described above and was replaced by
+  "unchanged".
+- The first value pins were too weak (`> 8117` is satisfied by the failing 8192).
+- A timeout pattern named a class httpx never raises.
 
-- **Ceilings.** A request above a model's published output ceiling is an HTTP
-  400 even for a draft that fits. The example ids in README (`gpt-4o-mini`,
-  16384) and SMOKE_TEST's setup (`gpt-4o-mini`, `gemini-1.5-pro` at 8192) worked
-  at 8192 and would have broken at 64000. (The one live-validated
-  generateContent run, `gemini-2.5-flash`, is above every cap and unaffected.)
-  `output_cap_for` now clamps to the published ceiling of named families
-  (`gpt-4o`, `gpt-4.1`, `gemini-1.5`, `gemini-2.0`),
-  in the OpenAI and generateContent adapters only, and logs
-  `llm_output_cap_clamped` when it does. This also stops `mitre_map` and
-  `risk_synthesize` sending a 400-inducing cap to those models, which had been
-  broken there all along.
-- **Timeout copy.** A `ReadTimeout` used to share the dropped-connection copy,
-  which says "you can retry". It is our 60 s client limit, and a job too large
-  for it fails again on every retry and is billed again. It now has its own copy.
-- **Values pinned.** The registry gate proves that an entry exists, not what it
-  holds; `extract.capabilities > 8192` (the value that failed), `csf_score >=
-  106 * 100` and `zt_score == 8192` are now asserted against their evidence.
-
-Round 3 tightened the pins above (the first `extract` pin was `> 8117`, which
-the failing value 8192 satisfies), pinned the clamp's direction and every
-family row, dropped a timeout alternative that could never match, and
-rewrote two justifications that had gone stale.
-
-Every fix above was checked red-on-revert on its own.
+Each code fix was reverted on its own and failed a named test before it was
+kept. The prose fixes were checked by re-reading the code.
 
 ## Filed from it
 
 - #484: `OpenAIProvider` has no truncation guard.
-- #485: the general version of the provider problem. Ceilings for families the
-  clamp does not name, and the 60 s timeout itself (as distinct from its copy),
-  are still open there.
+- #485: raising the non-streamed adapters. This needs per-model ceilings and the
+  60 s timeout, and both fail today under the wrong message.

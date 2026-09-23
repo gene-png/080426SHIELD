@@ -818,46 +818,6 @@ _GEMINI_OK = {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4o"])
-def test_openai_cap_is_clamped_to_the_models_published_ceiling(monkeypatch, model) -> None:
-    """README's example OpenAI model is gpt-4o-mini, whose published output
-    ceiling is 16384. Sending csf_score's 64000 there is an HTTP 400 on a draft
-    that would have fit -- a regression the raise would otherwise introduce."""
-    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
-    OpenAIProvider(model=model, api_key="sk-test").complete(
-        "p", {"k": "v", "__purpose__": "csf_score"}
-    )
-    assert captured["json"]["max_tokens"] == 16384
-
-
-@pytest.mark.unit
-def test_gemini_cap_is_clamped_to_the_models_published_ceiling(monkeypatch) -> None:
-    """SMOKE_TEST's live-smoke Gemini model is gemini-1.5-pro: ceiling 8192."""
-    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
-    GeminiProvider(model="gemini-1.5-pro", api_key="g-test").complete(
-        "p", {"k": "v", "__purpose__": "extract.capabilities"}
-    )
-    assert captured["json"]["generationConfig"]["maxOutputTokens"] == 8192
-
-
-@pytest.mark.unit
-def test_models_without_a_known_lower_ceiling_are_not_clamped(monkeypatch) -> None:
-    """The clamp is a list of named families, not a blanket reduction: a model
-    it does not know keeps the purpose's full budget."""
-    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
-    OpenAIProvider(model="gpt-5", api_key="sk-test").complete(
-        "p", {"k": "v", "__purpose__": "csf_score"}
-    )
-    assert captured["json"]["max_completion_tokens"] > 16384
-
-    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
-    GeminiProvider(model="gemini-2.5-flash", api_key="g-test").complete(
-        "p", {"k": "v", "__purpose__": "csf_score"}
-    )
-    assert captured["json"]["generationConfig"]["maxOutputTokens"] > 8192
-
-
-@pytest.mark.unit
 def test_a_read_timeout_does_not_promise_that_a_retry_will_help() -> None:
     """A non-streamed call that outlives the client timeout is OUR limit, and a
     job too large for it times out again on every retry -- billed each time.
@@ -872,37 +832,55 @@ def test_a_read_timeout_does_not_promise_that_a_retry_will_help() -> None:
     assert "closed the connection" in dropped, dropped
 
 
-@pytest.mark.unit
-def test_the_clamp_never_raises_a_budget_above_the_purposes_own(monkeypatch) -> None:
-    """A ceiling is a MAXIMUM. zt_score's 8192 is below gpt-4o's 16384, so the
-    clamp must leave it alone -- not lift it to the ceiling."""
-    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
-    OpenAIProvider(model="gpt-4o-mini", api_key="sk-test").complete(
-        "p", {"k": "v", "__purpose__": "zt_score"}
-    )
-    assert captured["json"]["max_tokens"] == 8192
+#: What origin/main (df7d5b7) sent from EVERY adapter, before the 2026-09-23
+#: raise: the two explicit entries it had, and the shared 8192 for the rest.
+#: Written out, not read from llm.py -- it is the spec the non-streamed
+#: adapters are held to.
+_MAIN_BUDGETS = {"mitre_map": 64000, "risk_synthesize": 32000}
+_MAIN_DEFAULT = 8192
+
+
+def _registered_purposes() -> list[str]:
+    from app.ai.engine import get_job, registered_jobs
+
+    return sorted({get_job(n).call_purpose for n in registered_jobs()})
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "provider_cls, model, ceiling",
-    [
-        ("gemini", "gemini-2.0-flash", 8192),
-        ("openai", "gpt-4.1", 32768),
-    ],
-)
-def test_every_named_family_is_clamped(monkeypatch, provider_cls, model, ceiling) -> None:
-    """One case per row of the ceiling table not covered above, so deleting a
-    row fails a test. Ceilings are the providers' published limits."""
-    if provider_cls == "gemini":
-        captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
-        GeminiProvider(model=model, api_key="g-test").complete(
-            "p", {"k": "v", "__purpose__": "csf_score"}
-        )
-        assert captured["json"]["generationConfig"]["maxOutputTokens"] == ceiling
-    else:
-        captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
-        OpenAIProvider(model=model, api_key="sk-test").complete(
-            "p", {"k": "v", "__purpose__": "csf_score"}
-        )
-        assert captured["json"]["max_tokens"] == ceiling
+@pytest.mark.parametrize("adapter", ["openai-chat", "openai-reasoning", "gemini"])
+def test_the_non_streamed_adapters_send_what_main_sent_for_every_purpose(
+    monkeypatch, adapter
+) -> None:
+    """Three review rounds each found a model a per-model ceiling list missed,
+    and every miss was an HTTP 400 on a configuration that worked at 8192. The
+    non-streamed adapters are now simply unchanged from main -- for every
+    registered purpose, on every model."""
+    purposes = _registered_purposes()
+    assert len(purposes) >= 5, purposes
+    for purpose in purposes:
+        expected = _MAIN_BUDGETS.get(purpose, _MAIN_DEFAULT)
+        if adapter == "gemini":
+            captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
+            GeminiProvider(model="gemini-2.5-flash", api_key="g-test").complete(
+                "p", {"k": "v", "__purpose__": purpose}
+            )
+            sent = captured["json"]["generationConfig"]["maxOutputTokens"]
+        else:
+            model = "gpt-4o-mini" if adapter == "openai-chat" else "gpt-5-chat-latest"
+            captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
+            OpenAIProvider(model=model, api_key="sk-test").complete(
+                "p", {"k": "v", "__purpose__": purpose}
+            )
+            body = captured["json"]
+            sent = body.get("max_tokens", body.get("max_completion_tokens"))
+        assert sent == expected, (adapter, purpose, sent, expected)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("purpose", ["csf_score", "extract.capabilities"])
+def test_the_streamed_adapter_gets_the_raise(monkeypatch, purpose) -> None:
+    """The other half: Anthropic, where the failure was measured, does send the
+    raised budget -- above the 8192 that failed."""
+    provider, fake = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
+    provider.complete("p", {"k": "v", "__purpose__": purpose})
+    assert fake.last_kwargs["max_tokens"] > _MAIN_DEFAULT
