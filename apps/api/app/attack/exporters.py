@@ -19,7 +19,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.attack.analytics import CoverageRollup
+from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
 from app.attack.coverage import CoverageStatus, coverage_label
 from app.attack.pending import pending_codes as attack_pending_codes
@@ -85,7 +85,8 @@ def _status_or_unscored(value: str | None) -> str:
 COVERAGE_PCT_DEFINITION = (
     "Coverage % = (Covered + 0.5 x Partial) / (Covered + Partial + Gap). "
     "N/A, Unscored and Pending review techniques are outside it; "
-    "'not measured' means no technique there is Covered, Partial or Gap."
+    "'not measured' means no technique there has a Covered, Partial or Gap "
+    "status, counting those pending review."
 )
 
 #: Rendered where `Covered + Partial + Gap` is zero. `_pct` in
@@ -105,25 +106,32 @@ NOT_ADDRESSABLE = "not measured"
 UNCONFIRMED_MARK = " (unconfirmed)"
 
 
-def _addressable(covered: int, partial: int, gap: int) -> bool:
-    return covered + partial + gap > 0
+def _measured(t: CoverageRollup | TacticCoverage) -> bool:
+    """Whether any status-bearing claim exists here, INCLUDING withheld ones.
+
+    `pending_review` rows are Covered/Partial claims #102 holds out of
+    `covered`/`partial`. A tactic whose claims are all withheld has
+    covered + partial + gap == 0, but it was assessed: it reads 0.0% beside its
+    pending count, as the #102 note in `render_xlsx` intends -- not "never
+    assessed", which is what "not measured" says."""
+    return t.covered + t.partial + t.gap + t.pending_review > 0
 
 
-def _pct_value(covered: int, partial: int, gap: int, pct: float) -> float | str:
-    """The XLSX cell: the number where there is one, `n/a` where there is not."""
-    return pct if _addressable(covered, partial, gap) else NOT_ADDRESSABLE
+def _pct_value(t: CoverageRollup | TacticCoverage) -> float | str:
+    """The XLSX cell: the number, or NOT_ADDRESSABLE where nothing was claimed."""
+    return t.coverage_pct if _measured(t) else NOT_ADDRESSABLE
 
 
-def _pct_text(covered: int, partial: int, gap: int, pct: float) -> str:
-    """The DOCX/PDF text: `12.5%`, or `n/a` where nothing was addressable."""
-    return f"{pct}%" if _addressable(covered, partial, gap) else NOT_ADDRESSABLE
+def _pct_text(t: CoverageRollup | TacticCoverage) -> str:
+    """The DOCX/PDF text: `12.5%`, or NOT_ADDRESSABLE where nothing was claimed."""
+    return f"{t.coverage_pct}%" if _measured(t) else NOT_ADDRESSABLE
 
 
 def coverage_pct_text(rollup: CoverageRollup) -> str:
     """The overall percentage as every surface of the deliverable states it --
     the renderers AND the stored `Deliverable.summary` line, so the results list
     cannot say 0.0% beside a PDF that says "not measured"."""
-    return _pct_text(rollup.covered, rollup.partial, rollup.gap, rollup.coverage_pct)
+    return _pct_text(rollup)
 
 
 def _tools(value: list | None, unconfirmed: frozenset[str]) -> str:
@@ -190,11 +198,13 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
 
     # --- Heatmap Summary ---
     ws = wb.create_sheet("Heatmap Summary")
-    ws.append(["Engagement", ctx.client_legal_name])
-    ws.append(["Service", ctx.service_title])
+    # Client- and consultant-entered text, so through the same guard as the
+    # model's rationale.
+    _safe_text_row(ws, ["Engagement", ctx.client_legal_name])
+    _safe_text_row(ws, ["Service", ctx.service_title])
     ws.append(["Assessment version", ctx.assessment.version])
     r = ctx.rollup
-    ws.append(["Coverage %", _pct_value(r.covered, r.partial, r.gap, r.coverage_pct)])
+    ws.append(["Coverage %", _pct_value(r)])
     ws.append(
         [
             "Scored / Total",
@@ -204,9 +214,8 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     # #102. Beside the percentage, never instead of it and never omitted: the
     # percentage is a ratio over what can currently be CLAIMED, so a withheld row
     # leaves both sides of it. An assessment whose every positive claim is
-    # withheld renders 0.0% here when gaps remain and "not measured" when none
-    # do -- either way, without this line it is indistinguishable from a client
-    # who owns no controls at all.
+    # withheld renders 0.0% here, which without this line is indistinguishable
+    # from a client who owns no controls at all.
     ws.append(["Pending review", ctx.rollup.pending_review])
     ws.append(["Coverage % means", COVERAGE_PCT_DEFINITION])
     ws.append(
@@ -251,7 +260,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 tc.not_applicable,
                 tc.unscored,
                 tc.pending_review,
-                _pct_value(tc.covered, tc.partial, tc.gap, tc.coverage_pct),
+                _pct_value(tc),
             ]
         )
     widths = [10, 28, 12, 14, 10, 10, 8, 8, 12, 15, 14]
@@ -417,7 +426,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
                 tc.gap,
                 tc.not_applicable,
                 tc.pending_review,
-                _pct_text(tc.covered, tc.partial, tc.gap, tc.coverage_pct),
+                _pct_text(tc),
             ]
             for tc in ctx.rollup.by_tactic
         ],
@@ -548,7 +557,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 tc.gap,
                 tc.not_applicable,
                 tc.pending_review,
-                _pct_text(tc.covered, tc.partial, tc.gap, tc.coverage_pct),
+                _pct_text(tc),
             ]
         )
     # Eight columns since #102 added `Pending review`. A width list shorter than

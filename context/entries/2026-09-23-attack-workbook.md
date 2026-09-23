@@ -1,7 +1,8 @@
 # 2026-09-23 — The ATT&CK workbook says what the assessment knows
 
-Branch `fix/attack-workbook-says-what-it-knows`, base `df7d5b7`. Everything is in
-`apps/api/app/attack/exporters.py`, which #482 owned until it merged.
+Branch `fix/attack-workbook-says-what-it-knows`, base `df7d5b7`. The renderers
+are all in `apps/api/app/attack/exporters.py`, which #482 owned until it merged;
+`routes/attack.py` changes one line, the stored summary.
 
 ## What was wrong, measured on the dev stack's one live-run assessment
 
@@ -29,12 +30,13 @@ Reconnaissance technique unscored, so its Recon tactic exported 0.0%.
 - **New Unscored sheet:** every technique the rollup counts as unscored, by
   code. It uses the rollup's own predicate and iterates the catalogue as the
   rollup does, so its length equals `rollup.unscored_count`.
-- **Coverage %:** reads **"not measured"** wherever Covered + Partial + Gap is
-  zero, in XLSX, DOCX and PDF, overall and per tactic, and in the stored
+- **Coverage %:** reads **"not measured"** wherever no technique has a Covered,
+  Partial or Gap status, counting those pending review, in XLSX, DOCX and PDF, overall and per tactic, and in the stored
   `Deliverable.summary` the results list shows. It is not "n/a", which is the
   N/A status two columns away: "never assessed" would have read as "not
   applicable to us". Each renderer states the formula.
-- **Text cells are safe:** model rationale and client-supplied tool names can
+- **Text cells are safe:** model rationale, client-supplied tool names, the
+  engagement name and the service title can
   no longer become an XLSX formula (a leading `=` is kept as text), and a
   control character is dropped instead of failing the finalize.
 

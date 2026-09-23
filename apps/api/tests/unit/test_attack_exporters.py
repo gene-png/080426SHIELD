@@ -11,6 +11,7 @@ from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import TECHNIQUES
 from app.attack.coverage import CoverageStatus
 from app.attack.exporters import build_context, render_docx, render_pdf, render_xlsx
+from app.attack.pending import pending_codes as attack_pending_codes
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
@@ -432,7 +433,11 @@ def _ctx_from(rows: dict[str, dict], *, default_status: str | None = "covered"):
     for cov in coverage:
         for field, value in rows.get(cov.technique_code, {}).items():
             setattr(cov, field, value)
-    rollup = compute_heatmap({c.technique_code: c.status for c in coverage})
+    # Pending codes as production computes them, so a withheld row is withheld
+    # here too (routes/attack.py builds the rollup the same way).
+    rollup = compute_heatmap(
+        {c.technique_code: c.status for c in coverage}, attack_pending_codes(coverage)
+    )
     ctx = build_context(
         client_legal_name="Atlas Defense Solutions",
         service_title="MITRE ATT&CK Coverage",
@@ -652,3 +657,55 @@ def test_model_text_cannot_become_a_formula_or_break_the_workbook() -> None:
     assert ws.cell(r, headers.index("Detection tools") + 1).data_type == "s"
     gap = next(x for x in _sheet_rows(wb["Gaps"]) if x["Technique"] == gap_code)
     assert gap["Rationale"] == "bell"
+
+
+@pytest.mark.unit
+def test_a_tactic_whose_claims_are_all_pending_review_is_measured_not_unmeasured() -> None:
+    """#102 withholds a Covered claim backed only by an inferred tool, moving it
+    from `covered` into `pending_review`. Such a tactic has covered + partial +
+    gap = 0, and read "not measured" -- while its Coverage tab listed the same
+    techniques as Covered. Claims were made; they are withheld, which is 0.0%
+    beside a pending count, not "never assessed"."""
+    recon = [t.id for t in TECHNIQUES if _RECON in t.tactics]
+    rows = {
+        code: {
+            "status": CoverageStatus.COVERED.value,
+            "detection_tools": ["Inferred Tool"],
+            "unconfirmed_citations": [
+                {"tool": "Inferred Tool", "cited": "inferred", "cleared_at": None}
+            ],
+        }
+        for code in recon
+    }
+    ctx, rollup = _ctx_from(rows, default_status=CoverageStatus.GAP.value)
+    recon_tc = next(tc for tc in rollup.by_tactic if tc.tactic_id == _RECON)
+    assert recon_tc.pending_review == len(recon)  # the setup withholds, as intended
+    assert recon_tc.covered + recon_tc.partial + recon_tc.gap == 0
+
+    ws = _xlsx(ctx)["Heatmap Summary"]
+    header_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "Tactic")
+    headers = [c.value for c in ws[header_row]]
+    pct = headers.index("Coverage %")
+    by_tactic = {
+        row[0].value: row[pct].value for row in ws.iter_rows(min_row=header_row + 1) if row[0].value
+    }
+    assert by_tactic[_RECON] == 0.0
+
+
+@pytest.mark.unit
+def test_the_client_entered_header_cells_are_safe_text() -> None:
+    """Engagement (the client's legal name) and Service (a consultant-typed
+    title) were written with a bare append, past the guard the rest of the
+    workbook's free text goes through."""
+    a, coverage, rollup = _build_inputs()
+    ctx = build_context(
+        client_legal_name="Atlas" + chr(7) + " Defense",
+        service_title='=HYPERLINK("http://example.test","click")',
+        assessment=a,
+        coverage=coverage,
+        rollup=rollup,
+    )
+    ws = _xlsx(ctx)["Heatmap Summary"]
+    assert ws.cell(1, 2).value == "Atlas Defense"
+    assert ws.cell(2, 2).value == '=HYPERLINK("http://example.test","click")'
+    assert ws.cell(2, 2).data_type == "s"
