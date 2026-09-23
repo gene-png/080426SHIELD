@@ -21,6 +21,8 @@ declare module "next-auth" {
     refreshToken?: string;
     accessExpiresAt?: string;
     refreshExpiresAt?: string;
+    /** The forced re-auth ceiling (#498). */
+    reauthAt?: string;
   }
 }
 
@@ -31,6 +33,7 @@ declare module "next-auth/jwt" {
     refreshToken?: string;
     accessExpiresAt?: string;
     refreshExpiresAt?: string;
+    reauthAt?: string;
     error?: string;
   }
 }

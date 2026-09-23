@@ -47,8 +47,10 @@ const STORED_EXPIRY_POLL_MS = 60_000;
  * `/api/auth/session` instead would refresh and extend the session, so a
  * polling tab would never idle out; `/api/session-expiry` only decodes.
  *
- * Returns null until the first read lands, or if it fails -- the caller then
- * falls back to the cached value, which is the behaviour before this existed.
+ * Returns null until the first successful read, or while every read has
+ * failed; the caller then falls back to the cached value, which is the
+ * behaviour before this existed. After a success, a failed read keeps the last
+ * stored value.
  */
 function useStoredExpiry(enabled: boolean): string | null {
   const [stored, setStored] = React.useState<string | null>(null);

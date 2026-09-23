@@ -42,13 +42,28 @@ user was signed out: at 15.8 minutes with the compose default 900 s TTL (#487).
 
 The TTL spec runs in a new E2E job step against api and web recreated with
 `JWT_ACCESS_TTL_SECONDS=60`, and it fails if the TTL is not short. The race spec
-runs in the main suite. `sessionChanged` and the cookie stripping have unit
+runs in the main suite, and again in the #487 step, which runs everything under `session/`. `sessionChanged` and the cookie stripping have unit
 tests; making `sessionChanged` always true fails two of them.
+
+## Also from review
+
+- **The daily re-auth ceiling.** A rotation rolls the refresh expiry forward,
+  so counting down to it alone would miss the forced re-auth deadline, which
+  does not move. The API now states `reauth_at` (login `auth_time` + ceiling)
+  on every token pair, and the session's end is the EARLIER of the two. Capping
+  the refresh token's own `exp` at the ceiling was rejected: an expired token
+  never reaches the refresh endpoint's `auth_time` check, so the user would get
+  a generic error instead of the typed `reauth_required` sign-out
+  (`test_refresh_past_forced_reauth_returns_typed_401`).
+- **Like with like.** The raw token keeps its access token after a refresh
+  error, but the session hides it, so an errored session read as "changed" on
+  every request. Both sides are now normalised the same way.
+- **The cookie name** follows next-auth's `x-forwarded-proto` fallback when no
+  auth URL is set. A decode miss with a live session logs an error.
 
 ## Residual
 
 The grace window is 60 s. If the rotating request runs longer than that (a live
 Run-AI can), another request sent meanwhile still carries the old refresh
-token and is rejected after 60 s. A rotation that coincides with a sign-out can
-still race; that window is now one rotation per access-token lifetime, not
-every request.
+token and is rejected after 60 s. What can still race a sign-out is the set of
+requests in flight around a rotation, not every request.

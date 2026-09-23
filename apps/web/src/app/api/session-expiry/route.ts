@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { readSessionToken } from "@/lib/auth/session-cookie";
+import { readSessionToken, sessionEndsAt } from "@/lib/auth/session-cookie";
 
 /**
  * The stored session expiry, read WITHOUT running any auth callback (#498).
@@ -13,7 +13,8 @@ import { readSessionToken } from "@/lib/auth/session-cookie";
  *
  * Refetching `/api/auth/session` instead would run the `jwt` callback, which
  * refreshes near expiry and rolls the refresh expiry forward: a polling tab
- * would never time out, and the 30-minute refresh TTL is the idle timeout. So
+ * would never time out, and the refresh TTL (30 minutes under the compose
+ * default, `JWT_REFRESH_TTL_SECONDS`) is what idles a session out. So
  * this route only DECODES the cookie, and it is excluded from the middleware
  * matcher for the same reason. Polling it is not activity.
  */
@@ -24,7 +25,10 @@ export async function GET(req: Request): Promise<Response> {
   console.info(`[auth.session-expiry] token ${token ? "present" : "absent"}`);
   return NextResponse.json(
     {
-      sessionExpiresAt: token?.refreshExpiresAt ?? null,
+      // The EARLIER of the rolling refresh expiry and the fixed re-auth
+      // ceiling -- the same rule the session callback uses.
+      sessionExpiresAt:
+        sessionEndsAt(token?.refreshExpiresAt, token?.reauthAt) ?? null,
       error: token?.error ?? null,
     },
     { headers: { "Cache-Control": "no-store" } },

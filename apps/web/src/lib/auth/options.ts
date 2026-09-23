@@ -22,12 +22,15 @@ import Keycloak from "next-auth/providers/keycloak";
 import { ApiError, apiFetch } from "@/lib/api";
 import { OIDC_EXCHANGE_ERROR, REAUTH_REQUIRED_ERROR } from "@/lib/auth/errors";
 import { isOidcEnabled, keycloakFetch } from "@/lib/auth/oidc";
+import { sessionEndsAt } from "@/lib/auth/session-cookie";
 
 interface LoginResponse {
   access_token: string | null;
   refresh_token: string | null;
   access_expires_at: string | null;
   refresh_expires_at: string | null;
+  /** The forced re-auth ceiling (#498); optional because it is additive. */
+  reauth_at?: string | null;
   // MFA challenge branch (Sprint 6 T4, D-027). When the user has TOTP MFA
   // enrolled, /auth/login returns mfa_required=true + a short-lived pending
   // token instead of the pair; the pair arrives from /auth/mfa/verify-login.
@@ -73,6 +76,7 @@ interface RefreshResponse {
   refresh_token: string;
   access_expires_at: string;
   refresh_expires_at: string;
+  reauth_at?: string | null;
 }
 
 /** Refresh this many ms early so an in-flight proxy call never races expiry. */
@@ -125,6 +129,9 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       refreshToken: refreshed.refresh_token,
       accessExpiresAt: refreshed.access_expires_at,
       refreshExpiresAt: refreshed.refresh_expires_at,
+      // The ceiling does not move on refresh; keep the one we have if an older
+      // API omits it.
+      reauthAt: refreshed.reauth_at ?? token.reauthAt,
       error: undefined,
     };
   } catch (err) {
@@ -160,6 +167,7 @@ interface OidcExchangeResponse {
     // The backend has always sent this (it returns a full TokenPairResponse);
     // it was simply not declared here until the session countdown needed it.
     refresh_expires_at: string;
+    reauth_at?: string | null;
   };
 }
 
@@ -252,6 +260,7 @@ export const authConfig: NextAuthConfig = {
             refreshToken: tokens.refresh_token,
             accessExpiresAt: tokens.access_expires_at ?? undefined,
             refreshExpiresAt: tokens.refresh_expires_at ?? undefined,
+            reauthAt: tokens.reauth_at ?? undefined,
           };
           return user;
         } catch (err) {
@@ -318,6 +327,7 @@ export const authConfig: NextAuthConfig = {
           token.accessExpiresAt = exchanged.tokens.access_expires_at;
           token.refreshExpiresAt =
             exchanged.tokens.refresh_expires_at ?? undefined;
+          token.reauthAt = exchanged.tokens.reauth_at ?? undefined;
           token.error = undefined;
           console.info(
             `[auth.oidc] exchange succeeded role=${exchanged.user.role}`,
@@ -340,6 +350,7 @@ export const authConfig: NextAuthConfig = {
         token.refreshToken = user.refreshToken;
         token.accessExpiresAt = user.accessExpiresAt;
         token.refreshExpiresAt = user.refreshExpiresAt;
+        token.reauthAt = user.reauthAt;
         token.error = undefined;
         return token;
       }
@@ -369,10 +380,15 @@ export const authConfig: NextAuthConfig = {
       // can route back to sign-in instead of silently 401ing on every proxy.
       session.accessToken = token.error ? undefined : token.accessToken;
       session.error = token.error;
-      // The point past which no rotation can save the session. SessionExpiryWarning
-      // counts down to this; the access token's own expiry is meaningless to a
-      // user because it is renewed silently.
-      session.sessionExpiresAt = token.refreshExpiresAt;
+      // The point past which no rotation can save the session: the EARLIER of
+      // the refresh expiry (which rolls forward on every rotation) and the
+      // forced re-auth ceiling (which does not). SessionExpiryWarning counts
+      // down to this; the access token's own expiry is meaningless to a user
+      // because it is renewed silently.
+      session.sessionExpiresAt = sessionEndsAt(
+        token.refreshExpiresAt,
+        token.reauthAt,
+      );
       return session;
     },
   },

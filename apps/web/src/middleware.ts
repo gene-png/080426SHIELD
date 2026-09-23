@@ -38,8 +38,10 @@ import {
  * session back. `POST /auth/logout` revokes nothing (#392), so that was a
  * sign-out that did not sign you out. The cookie is now written only when
  * `sessionChanged`: a new access token, or a new error the browser must learn.
- * A rotation that coincides with a sign-out can still race; that window is one
- * rotation per access-token lifetime, not every request.
+ * What can still race a sign-out is the set of requests in flight around a
+ * rotation -- the rotating one, and any sent meanwhile with the pre-rotation
+ * cookie, which refresh through the grace window and also write -- rather than
+ * every request.
  *
  * RESIDUAL: the grace window is 60 s (`jwt_refresh_grace_seconds`). If the
  * rotating request runs longer than that -- a live Run-AI can -- another
@@ -62,6 +64,15 @@ export default async function middleware(
     return undefined;
   });
   const response = (await run(req, event as never)) as Response;
+  if (before === null && after !== null) {
+    // A session after the callback means a session cookie came in, so a null
+    // decode means this file is reading the wrong cookie name or secret. Every
+    // response would then count as "changed" and the rotation-only rule would
+    // silently revert to writing on every request. Said out loud.
+    console.error(
+      "[auth.middleware] session present but the incoming cookie did not decode -- cookie name or secret mismatch; writing the cookie on every response",
+    );
+  }
   if (!sessionChanged(before, after)) {
     stripSessionCookies(response.headers, sessionCookieName(req));
   }

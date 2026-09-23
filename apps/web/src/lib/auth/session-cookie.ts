@@ -17,8 +17,14 @@ import { getToken, type JWT } from "next-auth/jwt";
  * is why `lib/auth/options.ts` reads the secret the same way.
  */
 function secureCookiesFor(req: Request): boolean {
-  const url = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? req.url;
-  return url.startsWith("https:");
+  const configured = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+  if (configured) return configured.startsWith("https:");
+  // With no auth URL configured, next-auth builds it from the forwarded
+  // protocol (@auth/core `createActionURL`: `x-forwarded-proto ?? protocol`).
+  // Mirror that, or a TLS-terminating proxy would make this read the wrong
+  // cookie name and `before` would always be null.
+  const forwarded = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  return (forwarded ? `${forwarded}:` : new URL(req.url).protocol) === "https:";
 }
 
 /** The session cookie's base name. Large sessions are chunked as `<name>.0`, `<name>.1`, … */
@@ -63,10 +69,31 @@ export function sessionChanged(
   before: Pick<JWT, "accessToken" | "error"> | null,
   after: SessionAfter | null,
 ): boolean {
+  // `before` is the raw token; `after` is the SESSION, whose callback hides the
+  // access token once an error is set. Compare like with like, or an errored
+  // session reads as "changed" on every request and every response rewrites
+  // the cookie -- the sign-out race this rule exists to close.
+  const beforeAccess = before?.error ? undefined : before?.accessToken;
   return (
-    (before?.accessToken ?? null) !== (after?.accessToken ?? null) ||
+    (beforeAccess ?? null) !== (after?.accessToken ?? null) ||
     (before?.error ?? null) !== (after?.error ?? null)
   );
+}
+
+/**
+ * When the session really ends: the EARLIER of the refresh token's expiry,
+ * which rolls forward on every rotation, and the forced re-auth ceiling, which
+ * does not (#498). Either may be absent.
+ */
+export function sessionEndsAt(
+  refreshExpiresAt?: string,
+  reauthAt?: string,
+): string | undefined {
+  const candidates = [refreshExpiresAt, reauthAt].filter(
+    (v): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v)),
+  );
+  if (candidates.length === 0) return undefined;
+  return candidates.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
 }
 
 /**

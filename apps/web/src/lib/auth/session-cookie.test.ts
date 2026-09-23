@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { sessionChanged, stripSessionCookies } from "./session-cookie";
+import {
+  sessionChanged,
+  sessionEndsAt,
+  stripSessionCookies,
+} from "./session-cookie";
 
 /**
  * #487's review: the middleware wrote the session cookie on EVERY response, so a
@@ -30,6 +34,19 @@ describe("sessionChanged", () => {
     ).toBe(true);
   });
 
+  it("is false for a session that was ALREADY errored and still is", () => {
+    // The raw token keeps its access token after a refresh error; the session
+    // callback hides it. Compared raw-to-session, every request of an errored
+    // session read as "changed" and rewrote the cookie -- the sign-out race,
+    // back for that state. Found by review of the first rotation-only rule.
+    expect(
+      sessionChanged(
+        { accessToken: "a1", error: "RefreshAccessTokenError" },
+        { accessToken: undefined, error: "RefreshAccessTokenError" },
+      ),
+    ).toBe(false);
+  });
+
   it("is false with no session before or after (an anonymous page)", () => {
     expect(sessionChanged(null, null)).toBe(false);
   });
@@ -53,5 +70,27 @@ describe("stripSessionCookies", () => {
     expect(headers.getSetCookie()).toEqual([
       "authjs.session-token-other=x; Path=/",
     ]);
+  });
+});
+
+describe("sessionEndsAt", () => {
+  const soon = "2026-09-23T12:00:00.000Z";
+  const later = "2026-09-24T09:00:00.000Z";
+
+  it("is the EARLIER of the rolling refresh expiry and the fixed re-auth ceiling", () => {
+    // A user active all day: rotations push the refresh expiry past the
+    // ceiling, which does not move. The session ends at the ceiling.
+    expect(sessionEndsAt(later, soon)).toBe(soon);
+    expect(sessionEndsAt(soon, later)).toBe(soon);
+  });
+
+  it("uses whichever one is present", () => {
+    expect(sessionEndsAt(soon, undefined)).toBe(soon);
+    expect(sessionEndsAt(undefined, later)).toBe(later);
+  });
+
+  it("is undefined when neither is usable", () => {
+    expect(sessionEndsAt(undefined, undefined)).toBeUndefined();
+    expect(sessionEndsAt("not a date", undefined)).toBeUndefined();
   });
 });
