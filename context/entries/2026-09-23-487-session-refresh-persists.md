@@ -62,14 +62,21 @@ tests; making `sessionChanged` always true fails the three that expect `false`.
   alone that cost no longer applies; for any other API client it still does.
 - **The session ends at its end, whichever deadline that is.** The `jwt`
   callback's end check uses the same earlier-of rule as the warning, so a
-  lapsed refresh expiry also ends the session without a backend call. Past
-  its deadline the warning re-asks `/api/session-expiry` every 5 s. It calls
-  `update()` only when that route says `ended`, and does so whatever the
-  browser's clock says, re-asking every 5 s until the guard signs the user
-  out. A cookie that is gone reads as `ended`. That answer comes from
-  the web server's clock, which the `jwt` callback also uses. Calling
-  `update()` on the browser's clock alone refreshed an idle session whenever
-  the browser ran ahead of the server, so that tab never timed out.
+  lapsed refresh expiry also ends the session without a backend call.
+- **An open page is told, on the server's clock.** `/api/session-expiry`
+  returns `ended`, decided by the same rule the callback uses, and the warning
+  signs out with `reason=session_expired` when it is true, whatever the
+  browser's clock says. Past its own deadline the page re-asks every 5 s
+  instead of every minute. A failed sign-out is retried. With no cookie at
+  all, `ended` is true. A cookie that is PRESENT but will not decode is a 500
+  with `reason: session_cookie_unreadable`, and the page does nothing on a
+  failed read. It took four review rounds to land here:
+  - `update()` on the browser's clock refreshed an idle session whenever the
+    browser ran ahead of the server;
+  - acting on `ended` only after the browser's own deadline left a slow
+    browser on a dead session under a countdown;
+  - `update()` resolves `undefined` or `null` ambiguously, and next-auth drops
+    a null, so a tab whose cookie was gone looped on it with no sign-out.
 - **The OIDC path** seeds `reauthAt` from the exchange too, and a refresh
   response that omits `reauth_at` keeps the ceiling the token already had.
   Each wiring point is pinned by a named test in `options.test.ts` or
@@ -78,7 +85,8 @@ tests; making `sessionChanged` always true fails the three that expect `false`.
   error, but the session hides it, so an errored session read as "changed" on
   every request. Both sides are now normalised the same way.
 - **The cookie name** follows next-auth's `x-forwarded-proto` fallback when no
-  auth URL is set. A decode miss with a live session logs an error.
+  auth URL is set. A decode miss with a live session logs an error, in the
+  middleware and in `/api/session-expiry` alike.
 
 ## Residual
 
@@ -88,6 +96,7 @@ token and is rejected after 60 s. What can still race a sign-out is the set of
 requests in flight around a rotation, not every request.
 
 Clock skew, filed as #501: the end is decided on the web server's clock. With
-several web replicas whose clocks disagree, the route and `update()` can land
-on different instances. And a web clock BEHIND the API's leaves a window, as
-wide as the skew, where a refresh fails as a generic error the guard ignores.
+several web replicas whose clocks disagree, a replica running fast ends a
+session early by the skew, which is the safe direction. And a web clock BEHIND
+the API's leaves a window, as wide as the skew, where a refresh fails as a
+generic error the guard ignores.

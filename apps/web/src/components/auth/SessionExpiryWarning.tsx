@@ -120,7 +120,7 @@ function useStoredExpiry(enabled: boolean): {
 }
 
 export function SessionExpiryWarning(): React.JSX.Element | null {
-  const { data: session, update } = useSession();
+  const { data: session } = useSession();
   const { stored, recheck } = useStoredExpiry(
     Boolean(session?.sessionExpiresAt),
   );
@@ -141,19 +141,23 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
     return () => clearInterval(id);
   }, [expiresAt]);
 
-  // When the session ends, the guard has to learn it. It only sees
-  // `useSession`, which refetches on focus, so without this a user who never
-  // leaves the page watched the countdown vanish and then typed into 401s with
-  // no sign-out and no reason.
+  // When the session ends, the page has to learn it. `useSession` refetches
+  // only on focus, so without this a user who never leaves the page watched
+  // the countdown vanish and then typed into 401s with no sign-out and no
+  // reason.
   //
-  // `update()` runs the `jwt` callback, which ends the session once its end
-  // has passed -- and REFRESHES it otherwise, rolling the idle deadline
-  // forward. So only the SERVER's `ended` (from `/api/session-expiry`, on the
-  // clock the callback itself uses) ever triggers `update()`, and it does so
-  // whatever the browser's clock says: a browser running fast cannot extend an
-  // idle session (round 5 on #499), and one running slow cannot leave the user
-  // on a dead session under a countdown (round 6). The browser's clock only
-  // decides when to re-ask sooner than the minute poll.
+  // Only the SERVER's `ended` (from `/api/session-expiry`, decided on the
+  // clock the `jwt` callback uses) triggers the sign-out, whatever the
+  // browser's clock says: acting on the browser's clock either refreshed a
+  // live session (round 5 on #499) or left a dead one under a countdown
+  // (round 6). The browser's clock only decides when to re-ask sooner than
+  // the minute poll.
+  //
+  // It signs out DIRECTLY, with the reason the guard would give, rather than
+  // asking `update()` to have the guard do it (rounds 4-6): `update()`
+  // resolves `undefined` while a fetch is in flight and `null` both for "no
+  // session" and for a failed fetch, and next-auth drops a null -- so a tab
+  // whose cookie was gone looped on it for good (round 7).
   const reachedDeadline =
     expiresAt !== null && !Number.isNaN(expiresAt) && now >= expiresAt;
   const serverSaysEnded = stored?.ended === true;
@@ -165,27 +169,30 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
     return () => clearInterval(id);
   }, [reachedDeadline, serverSaysEnded, recheck]);
 
-  // Keeps asking while the server says ended: one failed or no-op `update()`
-  // must not leave the tab on a dead session for good. The guard's sign-out
-  // unmounts this. `update` is read through a ref because its identity is not
-  // stable across renders, and an effect keyed on it would ask on every one.
-  const updateRef = React.useRef(update);
+  // Once per page: `signOut` navigates away. A failed one is retried after
+  // DEADLINE_RECHECK_MS -- `attempt` re-runs this effect -- so a network blip
+  // cannot leave the tab on a dead session for good.
+  const signingOut = React.useRef(false);
+  const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
-    updateRef.current = update;
-  });
-  React.useEffect(() => {
-    if (!serverSaysEnded) return;
-    const ask = () => {
-      console.info("[auth.session-expiry] the server says ended; updating");
-      updateRef.current().catch((err: unknown) => {
-        // Stated, not swallowed: the next tick asks again.
-        console.warn("[auth.session-expiry] update failed; retrying", err);
-      });
+    if (!serverSaysEnded || signingOut.current) return;
+    signingOut.current = true;
+    console.info("[auth.session-expiry] the server says ended; signing out");
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    signOut({ callbackUrl: "/sign-in?reason=session_expired" }).catch(
+      (err: unknown) => {
+        // Stated, not swallowed: tried again shortly.
+        console.warn("[auth.session-expiry] sign-out failed; retrying", err);
+        retry = setTimeout(() => {
+          signingOut.current = false;
+          setAttempt((n) => n + 1);
+        }, DEADLINE_RECHECK_MS);
+      },
+    );
+    return () => {
+      if (retry !== undefined) clearTimeout(retry);
     };
-    ask();
-    const id = setInterval(ask, DEADLINE_RECHECK_MS);
-    return () => clearInterval(id);
-  }, [serverSaysEnded]);
+  }, [serverSaysEnded, attempt]);
 
   if (expiresAt === null || Number.isNaN(expiresAt)) return null;
   // The session is over; a countdown would claim time the user does not have.

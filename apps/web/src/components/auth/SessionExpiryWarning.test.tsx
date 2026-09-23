@@ -12,7 +12,8 @@ import { SessionExpiryWarning } from "./SessionExpiryWarning";
  * questions long.
  */
 
-const signOut = vi.fn();
+// Resolves like the real one; `signOut` returns a Promise.
+const signOut = vi.fn(async (..._args: unknown[]) => undefined);
 const update = vi.fn(async () => null);
 let sessionData: { sessionExpiresAt?: string } | null = null;
 
@@ -42,6 +43,7 @@ const fetchMock = vi.fn(answer);
 beforeEach(() => {
   vi.useFakeTimers();
   signOut.mockReset();
+  signOut.mockImplementation(async () => undefined);
   update.mockClear();
   sessionData = null;
   storedExpiry = null;
@@ -118,35 +120,36 @@ describe("SessionExpiryWarning", () => {
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
   });
 
-  // SPECIFICATION CHANGE, round 6 on #499: this said "exactly once". A single
-  // failed update() then left the tab on a dead session for good, so it now
-  // re-asks every five seconds until the guard's sign-out unmounts it. What is
-  // still pinned: it asks at once, and at that rate -- not once per render.
-  it("once the SERVER says the session ended, runs update() at once and then every five seconds", async () => {
-    // The guard only sees useSession, which refetches on focus. Without this a
-    // user who never left the page watched the countdown vanish and typed into
-    // 401s. update() runs the jwt callback, which ends the session; the guard
-    // then signs out with the reason. The banner itself stays quiet.
+  // SPECIFICATION CHANGE, round 7 on #499. Rounds 4-6 answered `ended` with
+  // update(), trusting the jwt callback and the guard to sign out. But
+  // update() resolves `undefined` while another fetch is in flight and `null`
+  // both for "no session" and for a failed fetch, and next-auth drops a null
+  // -- so a tab whose cookie was gone looped on it for good with no sign-out.
+  // `ended` IS the server's answer, on the callback's own clock, so the
+  // warning now signs out directly, with the reason the guard would give.
+  it("once the SERVER says the session ended, signs out with the reason -- once", async () => {
     expiringIn(-1_000);
     storedExpiry = sessionData!.sessionExpiresAt!;
     serverSaysEnded = true;
     render(<SessionExpiryWarning />);
     await settle();
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
-    expect(update).toHaveBeenCalledTimes(1);
+    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(signOut).toHaveBeenCalledWith({
+      callbackUrl: "/sign-in?reason=session_expired",
+    });
     await act(async () => {
       vi.advanceTimersByTime(30_000);
     });
     await settle();
-    // 1 at once + 6 over thirty seconds; a render-keyed effect would be far more.
-    expect(update).toHaveBeenCalledTimes(7);
+    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
   });
 
-  it("does NOT run update() on the browser's clock alone -- a browser ahead of the server would refresh an idle session instead of ending it", async () => {
-    // update() runs the jwt callback, which REFRESHES a session the server
-    // still considers alive -- rolling the idle deadline forward. A browser
-    // clock a few seconds fast would do that at every deadline, so an idle
-    // tab would never time out.
+  it("does NOT act on the browser's clock alone -- a browser ahead of the server must not end or extend a live session", async () => {
+    // Round 5: update() here ran the jwt callback, which REFRESHES a session
+    // the server still considers alive. Signing out would be the opposite
+    // error. Either way, the browser's clock is not the server's.
     expiringIn(-1_000);
     storedExpiry = sessionData!.sessionExpiresAt!;
     serverSaysEnded = false;
@@ -157,6 +160,7 @@ describe("SessionExpiryWarning", () => {
     });
     await settle();
     expect(update).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
   });
 
   it("past its own deadline, re-asks the server soon rather than in a minute", async () => {
@@ -171,7 +175,7 @@ describe("SessionExpiryWarning", () => {
     });
     await settle();
     expect(fetchMock.mock.calls.length).toBeGreaterThan(before);
-    expect(update).toHaveBeenCalledTimes(1);
+    expect(signOut).toHaveBeenCalledTimes(1);
   });
 
   it("acts on the server's `ended` even while the BROWSER's clock says time remains", async () => {
@@ -183,28 +187,28 @@ describe("SessionExpiryWarning", () => {
     serverSaysEnded = true;
     render(<SessionExpiryWarning />);
     await settle();
-    expect(update).toHaveBeenCalledTimes(1);
+    expect(signOut).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("session-expiry-warning")).toBeNull();
   });
 
-  it("asks again when an update() did not end the session", async () => {
-    // One failed or no-op update() must not leave the tab on a dead session
-    // for good: while the server keeps saying ended, it keeps asking.
+  it("tries the sign-out again when it fails", async () => {
+    // A sign-out that failed on a network blip must not leave the tab on a
+    // dead session for good.
     expiringIn(-1_000);
     storedExpiry = sessionData!.sessionExpiresAt!;
     serverSaysEnded = true;
-    update.mockImplementationOnce(async () => {
+    signOut.mockImplementationOnce(async () => {
       throw new Error("network blip");
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     render(<SessionExpiryWarning />);
     await settle();
-    expect(update).toHaveBeenCalledTimes(1);
+    expect(signOut).toHaveBeenCalledTimes(1);
     await act(async () => {
       vi.advanceTimersByTime(6_000);
     });
     await settle();
-    expect(update).toHaveBeenCalledTimes(2);
+    expect(signOut).toHaveBeenCalledTimes(2);
     warn.mockRestore();
   });
 
@@ -221,6 +225,7 @@ describe("SessionExpiryWarning", () => {
     });
     await settle();
     expect(update).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 

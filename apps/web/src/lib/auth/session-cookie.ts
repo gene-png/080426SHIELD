@@ -34,6 +34,22 @@ export function sessionCookieName(req: Request): string {
     : "authjs.session-token";
 }
 
+/**
+ * Whether the request CARRIES a session cookie, whole or chunked (`.0`, `.1`,
+ * ...), decodable or not. `readSessionToken` returns null for both "no cookie"
+ * and "a cookie that will not decode", and those must not be answered alike:
+ * the first is a session that has ended, the second is a secret or name
+ * mismatch over what may be a live one.
+ */
+export function hasSessionCookie(req: Request): boolean {
+  const name = sessionCookieName(req);
+  const header = req.headers.get("cookie") ?? "";
+  return header
+    .split(";")
+    .map((part) => part.split("=", 1)[0].trim())
+    .some((cookie) => cookie === name || cookie.startsWith(`${name}.`));
+}
+
 /** The decoded session token as it arrived, or null when there is none or it does not decode. */
 export async function readSessionToken(req: Request): Promise<JWT | null> {
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;

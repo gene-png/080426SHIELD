@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   sessionChanged,
   sessionEndsAt,
+  hasSessionCookie,
   sessionHasEnded,
   stripSessionCookies,
 } from "./session-cookie";
@@ -123,5 +124,20 @@ describe("sessionHasEnded", () => {
 
   it("is false when the session states no end at all", () => {
     expect(sessionHasEnded(undefined, undefined, now)).toBe(false);
+  });
+});
+
+describe("hasSessionCookie", () => {
+  const req = (cookie?: string) =>
+    new Request("http://localhost/x", cookie ? { headers: { cookie } } : {});
+
+  it("sees the session cookie, whole or chunked", () => {
+    expect(hasSessionCookie(req("authjs.session-token=a"))).toBe(true);
+    expect(hasSessionCookie(req("x=1; authjs.session-token.1=b"))).toBe(true);
+  });
+
+  it("is false with no cookie, or only other cookies", () => {
+    expect(hasSessionCookie(req())).toBe(false);
+    expect(hasSessionCookie(req("authjs.csrf-token=z; other=1"))).toBe(false);
   });
 });

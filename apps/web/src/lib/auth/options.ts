@@ -369,13 +369,11 @@ export const authConfig: NextAuthConfig = {
       // warning counts down to (#498). The API checks the ceiling only on the
       // next refresh, up to one access-token lifetime later, and a lapsed
       // refresh token fails as a GENERIC error the guard does not act on; both
-      // are known here without calling the backend. The warning runs this
-      // callback (`update()`) once `/api/session-expiry` says the session has
-      // ended -- `sessionHasEnded`, this same rule, and on this same clock
-      // WHILE there is one web process; several replicas with skewed clocks
-      // could disagree -- so the guard signs the user out with the right
-      // reason instead of leaving them typing into 401s. Running it any
-      // EARLIER would refresh the session.
+      // are known here without calling the backend, so a proxy call past the
+      // end signs the user out through the guard with the right reason. An
+      // open page learns it from `/api/session-expiry`, which applies this
+      // same rule (`sessionHasEnded`) on this same clock while there is one
+      // web process (#501), and the warning then signs out directly.
       if (sessionHasEnded(token.refreshExpiresAt, token.reauthAt)) {
         if (token.error !== REAUTH_REQUIRED_ERROR) {
           console.info("[auth] session end reached; ending the session");

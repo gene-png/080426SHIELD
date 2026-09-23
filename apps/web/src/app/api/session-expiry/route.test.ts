@@ -36,10 +36,30 @@ describe("GET /api/session-expiry", () => {
       await GET(new Request("http://localhost/api/session-expiry"))
     ).json();
     expect(body.sessionExpiresAt).toBeNull();
-    // No cookie means no session: it HAS ended. Answering `false` here left a
-    // tab whose cookie was gone polling every five seconds for good, waiting
-    // for an end that had already happened (round 6 on #499).
+    // No cookie means no session: it HAS ended, and the warning signs the
+    // tab out rather than waiting for an end that already happened.
     expect(body.ended).toBe(true);
+  });
+
+  it("refuses LOUDLY when a session cookie is present but will not decode", async () => {
+    // A secret or cookie-name mismatch would otherwise read a LIVE session as
+    // `ended` and sign the user out (round 7 on #499). A failed read is not an
+    // answer, so the warning does nothing on it.
+    readSessionToken.mockResolvedValueOnce(null);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const res = await GET(
+      new Request("http://localhost/api/session-expiry", {
+        headers: { cookie: "authjs.session-token.0=abc; other=1" },
+      }),
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.reason).toBe("session_cookie_unreadable");
+    expect(body).not.toHaveProperty("ended");
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
   // `ended` is decided on THIS server's clock, the one the jwt callback uses,
