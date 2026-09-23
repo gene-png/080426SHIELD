@@ -378,7 +378,10 @@ def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or()
       * a dict default -- ``d.get("legal_name", "Client")``;
       * an intermediate variable, where the assignment and the fallback are on
         different lines and neither line has both halves;
-      * any form black has wrapped across lines, since the scan is line-wise.
+      * any form black has wrapped across lines, since the scan is line-wise;
+      * ANYTHING in ``apps/web``: the sweep is rooted at ``apps/api/app``, and
+        the eighth reader (``lib/risk/client.ts``) was in the web layer (D-082).
+        Grep ``apps/web/src`` separately.
 
     Spellings that WERE missed and are now covered, all live in this tree for
     this exact value: ``org_name`` (the parameter of

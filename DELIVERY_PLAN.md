@@ -91,9 +91,10 @@ resolver called rather than copied, and a migration sharing `str.strip()` with
 the reader.
 
 The count is not written here on purpose -- it was stated as six, then seven,
-then eight. What enumerates the readers now is a derived sweep in
+then eight. What enumerates the API readers now is a derived sweep in
 `test_self_serve_legal_name_contract.py`, whose own limits are stated in its
-docstring.
+docstring. It is rooted at `apps/api/app` and cannot see `apps/web` at all, which
+is where the eighth reader was (D-082), so web readers still need a grep.
 
 No estimate row changes; #254 owns no item, which is the gap this section
 already records under _Still to do_. The missing admin edit path is tracked in
