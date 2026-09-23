@@ -1,0 +1,1 @@
+{"incident": "is_code_change([]) one gate over. An empty diff on a bot PR is a checkout that did not resolve, and reading it as no offending paths would exempt a PR nobody looked at.", "expect": 2, "adversarial": true, "stdout_contains": "changed-file list is EMPTY", "argv": ["--author", "dependabot[bot]", "--changed-files", "{dir}/changed.txt"]}

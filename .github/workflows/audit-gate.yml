@@ -63,6 +63,12 @@ jobs:
           git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt
           echo "changed paths:"; cat /tmp/changed.txt
 
+      # THE DIFF, not just the names, because `.github/` files are judged by
+      # CONTENT. A path match cannot tell a `uses:` ref bump from a rewrite of
+      # this workflow, and the manifest guard below refuses to answer without it.
+      - name: Collect the diff
+        run: git diff "origin/${{ github.base_ref }}...HEAD" > /tmp/diff.txt
+
       - name: Read the PR body
         env:
           # Via env, not inline: a PR body is untrusted text, and interpolating
@@ -70,7 +76,155 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: printf '%s' "$PR_BODY" > /tmp/body.md
 
+      # DEPENDABOT IS EXEMPT FROM THIS STEP, and the exemption is HERE rather
+      # than in the script on purpose.
+      #
+      # The gate requires a `## Adversarial audit` section in the PR body. A
+      # Dependabot PR has a body Dependabot wrote, and nobody can edit it into
+      # compliance without taking over authorship of the PR -- so the gate is
+      # RED BY CONSTRUCTION for that entire class, and the only ways to clear it
+      # are to merge past a red required check or to close the PR and redo the
+      # bump by hand. Both are worse than the exemption: the first teaches that
+      # a red gate is negotiable, and the second is how security bumps sit
+      # unmerged.
+      #
+      # AUTHOR-BASED, in the WORKFLOW, because that is the only place the author
+      # is known. `check_audit_evidence.py` is handed a changed-file list and a
+      # body; it has no way to learn who opened the PR, and giving it one would
+      # mean passing an identity into a script whose whole job is judging text.
+      #
+      # IT FAILS CLOSED, and that is the property to preserve through any edit.
+      # The condition is a `!=` against one exact login, so every value that is
+      # not that login RUNS the step -- including `null`, which is what
+      # `user.login` is on a trigger that carries no `pull_request` payload. An
+      # `==` here would invert it and exempt everyone except Dependabot.
+      #
+      # WHAT THIS REMOVES, stated without a compensating control it does not
+      # have. THE FIRST VERSION OF THIS COMMENT CLAIMED ONE.
+      #
+      # It said "a Dependabot PR still needs `gh pr review --approve` from a
+      # named human, which is branch protection and not this gate". MEASURED
+      # 2026-09-22, and it is false:
+      #
+      #     gh api repos/{owner}/{repo}/branches/main/protection
+      #       required_pull_request_reviews.required_approving_review_count -> 0
+      #       enforce_admins                                                -> false
+      #
+      # Nothing enforces a review. So this step's skip removes the ONLY enforced
+      # check on these PRs and leaves a convention in its place. That is
+      # probably the right trade with four security updates stuck -- see below --
+      # but it has to be argued on those terms rather than on a control that
+      # exists only in a sentence. Whether to turn a real review requirement on
+      # is a decision for the humans, not something this workflow should imply
+      # an answer to.
+      #
+      # The audit block exists so an adversarial reviewer's findings are
+      # recorded; there are no findings to record about a version bump, and a
+      # block written to satisfy the matcher is the decorative-marker defect.
+      # The step below bounds that justification by CONTENT so it cannot be
+      # inherited by a human pushing code onto a bot branch.
+      #
+      # LIVE, NOT LATENT -- and this comment first said the opposite. It read
+      # "zero Dependabot PRs are open as of 2026-09-22", which was true when
+      # measured and false within the hour. Four are open and every one is
+      # blocked on this exact check:
+      #
+      #     #465  github-actions group      #467  anthropic requirement
+      #     #466  ruff 0.16.3 -> 0.16.8     #468  npm-minor-patch group
+      #
+      # <!-- counted: gh pr list --state open --author app/dependabot --json number | jq length -> 4, 2026-09-22 -->
+      #
+      # A stuck queue you can name is a stronger justification than a
+      # hypothetical one, and the stale figure is why rule 2 says to carry the
+      # command rather than the number.
+      # THE OTHER HALF OF THE EXEMPTION, and without it the exemption is a hole.
+      #
+      # The skip above is keyed on AUTHOR; its justification is about CONTENT
+      # ("no findings to record about a lockfile bump"). A maintainer can push
+      # commits to a Dependabot branch -- the routine case is a bump that breaks
+      # something and a human fixing it in place -- and
+      # `pull_request.user.login` stays `dependabot[bot]`. So the exemption
+      # follows the BRANCH, and arbitrary human-authored code would merge with
+      # the required audit check green and no audit block anywhere. That is the
+      # class #93/#94/#95 record putting a client-facing fabricated gap on main.
+      #
+      # This step runs ONLY for the exempted author and fails when that PR
+      # touches anything outside the manifest and lockfile set, naming the
+      # paths. A human pushing code onto a bot branch is blocked rather than
+      # inheriting an exemption written for a version bump.
+      #
+      # Its verdict lands in THIS job, so it reports under the same check the
+      # exemption belongs to -- the audit requirement and its bound are one
+      # question, unlike the merge-rule job which is a different one.
+      #
+      # `.github/` IS JUDGED BY CONTENT, not by path, and the first version of
+      # this guard got that wrong: it allowed `.github/workflows/*.yml` by path,
+      # so a bot-authored PR could have rewritten THIS FILE -- deleting the step
+      # below -- and passed. Every changed line in a `.github/` file must now be
+      # a `uses: <owner>/<repo>@<ref>` bump.
+      #
+      # VALIDATED IN BOTH DIRECTIONS on 2026-09-22, and the first attempt only
+      # did one. "All four open bot PRs pass" establishes the allow-list is wide
+      # enough; it says nothing about narrow enough -- and #465 passed precisely
+      # BECAUSE workflows were permitted, so the run meant to validate the guard
+      # exercised the dangerous case and recorded it as a pass. An allow-list
+      # validated only against benign traffic is certified for coverage, never
+      # for restriction. So:
+      #
+      # THE EVIDENCE BELOW REPLACES A SINGLE NEGATIVE CASE THAT DID NOT REACH
+      # THE CLAIM. It read "#465's real diff + one planted `continue-on-error`
+      # -> exit 1", and adversarial review convicted it on this paragraph's own
+      # standard: a planted `continue-on-error` is not a `uses:` line at all, so
+      # it sits entirely OUTSIDE the admitted language. It establishes that the
+      # guard refuses obviously foreign content; it never tests whether the
+      # admitted language is narrow. Three real holes lived inside it, all
+      # measured at exit 0 before the fix.
+      #
+      # Probes, measured 2026-09-23. Every row below except the first is
+      # exercised by a named test in `tests/unit/test_bot_pr_manifest_guard.py`
+      # or a fixture under `tests/gates/check_bot_pr_is_manifest_only/`; the
+      # first (`all four real bot PRs`) is a one-off run against live PRs and
+      # has no test behind it, which is worth knowing since it is the row that
+      # answers "does this still pass real traffic".
+      #
+      # The count that stood here said SIX above EIGHT rows -- so the
+      # date-and-measurement certificate covered six of them and a reader
+      # could not tell which two were uncertified. Deleted rather than
+      # corrected, per the rule about numbers describing a list beside them.
+      #
+      #   all four real bot PRs, real diffs                    -> exit 0
+      #   a real `uses:` bump PAIR (-@v4 / +@v7)               -> exit 0
+      #   a real dependency bump in a package.json             -> exit 0
+      #   OWNER SWAP  -gitleaks/... / +attacker/...            -> exit 1  (was 0)
+      #   LONE ADDED  +uses: attacker/action@v1, no removal    -> exit 1  (was 0)
+      #   package.json "build": "next build && curl ... | sh"  -> exit 1  (was 0)
+      #   a content-judged path with no --diff                 -> exit 2
+      #   a `.github/` diff with ZERO changed content lines    -> exit 2
+      #
+      # The three that were 0: `_USES_BUMP` matched a line SHAPE and never
+      # checked that anything was BUMPED -- a bump is a PAIR, same owner/repo
+      # with different refs, which no single-line regex can express -- and
+      # `package.json` was judged by PATH under a claim `ci.yml` falsifies,
+      # since it runs `format:check`, `lint`, `typecheck`, `test` and `build`,
+      # every one a script defined in a `package.json`.
+      #
+      # What the four actually touch, by file rather than by category, because
+      # "manifests only" was true and misleading at once:
+      #
+      #   #465  .github/workflows/{audit-gate,mutation-sweep,scheduled-triggers}.yml
+      #         -- every changed line a `uses:` bump, checked
+      #   #466  apps/api/pyproject.toml
+      #   #467  apps/api/pyproject.toml
+      #   #468  apps/web/package.json, package.json,
+      #         packages/design-system/package.json, pnpm-lock.yaml
+      - name: An audit-exempt bot PR must be manifest-only
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        working-directory: apps/api
+        run: |
+          python scripts/check_bot_pr_is_manifest_only.py             --author '${{ github.event.pull_request.user.login }}'             --changed-files /tmp/changed.txt             --diff /tmp/diff.txt
+
       - name: Require recorded audit evidence
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         working-directory: apps/api
         run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
 

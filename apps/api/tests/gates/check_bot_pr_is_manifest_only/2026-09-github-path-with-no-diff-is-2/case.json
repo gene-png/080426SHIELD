@@ -1,0 +1,1 @@
+{"incident": "Refusing to answer beats answering from a path match. This is the branch that reinstates the hole the moment the workflow forgets to pass --diff.", "expect": 2, "adversarial": true, "stdout_contains": "no --diff was given", "argv": ["--author", "dependabot[bot]", "--changed-files", "{dir}/changed.txt"]}

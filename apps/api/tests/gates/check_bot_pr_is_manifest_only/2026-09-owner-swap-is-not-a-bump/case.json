@@ -1,0 +1,14 @@
+{
+ "incident": "THE HOLE, measured at exit 0 before 2026-09-23. Both lines match the line SHAPE and neither is a bump: a bump is a PAIR, same owner/repo with different refs. `ci.yml` already has this shape -- a gitleaks step in the job holding `pull-requests: write`, whose `env:` block sits on the following lines and so never enters the diff. Dependabot's token is read-only while the PR is open, so the escalation is that the line MERGES, after which every human-triggered run executes the attacker's action with the full token.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "attacker/gitleaks-action",
+ "argv": [
+  "--author",
+  "dependabot[bot]",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--diff",
+  "{dir}/diff.txt"
+ ]
+}
