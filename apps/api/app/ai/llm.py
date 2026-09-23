@@ -237,8 +237,11 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # it is ~183k. So 8192 could not fit even one tier, and 64000 -- the largest
     # cap the dev stack's Anthropic model has accepted (mitre_map) -- fits only
     # the low end. The real fix is batching per tier, as risk_synthesize and
-    # mitre_map already are; until then an overrun fails loudly on Anthropic
-    # and generateContent (stop_reason / finishReason), not on OpenAI (#484).
+    # mitre_map already are. Until then an overrun fails loudly on Anthropic
+    # (stop_reason, streamed). On the non-streamed adapters a long generation
+    # hits the 60 s client timeout (_HTTP_TIMEOUT_SECONDS) before any
+    # finishReason arrives -- `failures.friendly_reason` names that case -- and
+    # OpenAI has no truncation guard at all (#484).
     "csf_score": 64000,
     # extract.capabilities output scales with the uploaded inventory, which the
     # client supplies and nothing bounds. Measured 2026-09-23 on the dev stack:
@@ -268,6 +271,43 @@ def max_output_tokens_for(purpose: str | None) -> int:
     if not purpose:
         return _MAX_OUTPUT_TOKENS
     return _MAX_OUTPUT_TOKENS_BY_PURPOSE.get(purpose, _MAX_OUTPUT_TOKENS)
+
+
+# Output ceilings for the model families this repo's own documentation names
+# for the non-Anthropic adapters: README's example OpenAI model (gpt-4o-mini)
+# and SMOKE_TEST's live-smoke models (gpt-4o-mini, gemini-1.5-pro). The figures
+# are the providers' published maximum output tokens, NOT measured here. A
+# request above them is an HTTP 400, so without this clamp raising a purpose's
+# budget broke that purpose on these models even for a draft that fits -- a
+# working csf_score smoke (364 in / 307 out) would have gone to a 400.
+#
+# Clamping cannot make a draft fit that does not: a clamped call that runs out
+# still stops on finishReason=MAX_TOKENS (generateContent) and fails loudly.
+# OpenAI has no such guard yet (#484). Anthropic streams and its current models
+# accept every cap in the table above, so it is not clamped. Unknown models are
+# left alone rather than guessed at; #485 carries the general version.
+_OUTPUT_CEILING_BY_MODEL_FAMILY: tuple[tuple[str, int], ...] = (
+    ("gpt-4o", 16384),
+    ("gemini-1.5", 8192),
+    ("gemini-2.0", 8192),
+)
+
+
+def output_cap_for(purpose: str | None, model: str | None) -> int:
+    """`max_output_tokens_for(purpose)`, clamped to `model`'s known ceiling."""
+    cap = max_output_tokens_for(purpose)
+    lowered = (model or "").lower()
+    for family, ceiling in _OUTPUT_CEILING_BY_MODEL_FAMILY:
+        if family in lowered and cap > ceiling:
+            _log.info(
+                "llm_output_cap_clamped",
+                purpose=purpose,
+                model=model,
+                requested=cap,
+                ceiling=ceiling,
+            )
+            return ceiling
+    return cap
 
 
 # OpenAI reasoning / `responses` model families (the o-series and gpt-5) REJECT
@@ -310,7 +350,7 @@ def _generate_content_body(
 ) -> dict[str, Any]:
     """Shape a redacted prompt + payload into a generateContent request body."""
     generation_config: dict[str, Any] = {
-        "maxOutputTokens": max_output_tokens_for(payload.get("__purpose__"))
+        "maxOutputTokens": output_cap_for(payload.get("__purpose__"), model)
     }
     if model is not None and _GEMINI_THINKING_RE.search(model):
         generation_config["thinkingConfig"] = {"thinkingBudget": _THINKING_BUDGET_TOKENS}
@@ -378,7 +418,9 @@ class OpenAIProvider:
     def complete(self, prompt: str, payload: dict[str, Any]) -> LLMResponse:
         body = {
             "model": self.model,
-            _openai_token_limit_key(self.model): max_output_tokens_for(payload.get("__purpose__")),
+            _openai_token_limit_key(self.model): output_cap_for(
+                payload.get("__purpose__"), self.model
+            ),
             "messages": [
                 {"role": "user", "content": f"{prompt}\n\n{json.dumps(_egress_payload(payload))}"},
             ],

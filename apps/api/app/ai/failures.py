@@ -40,7 +40,18 @@ def friendly_reason(exc: BaseException) -> str:
             "This usually means the draft exceeded the output budget for this job. "
             f"({text})"
         )
-    if re.search(r"APIConnectionError|RemoteProtocolError|Server disconnected|ReadTimeout", text):
+    # A read timeout is OUR client giving up, not the provider hanging up, and
+    # it was folded into the branch below telling the admin to retry. For a job
+    # too large to finish inside the limit on a non-streamed provider, every
+    # retry times out the same way and is billed again -- so this copy says what
+    # happened and does not promise a retry will help.
+    if re.search(r"ReadTimeout|TimeoutException", text):
+        return (
+            "The AI provider did not finish within SHIELD's time limit for a single "
+            "call, so nothing was applied. A job this large can hit that limit on "
+            f"every attempt with this provider. ({text})"
+        )
+    if re.search(r"APIConnectionError|RemoteProtocolError|Server disconnected", text):
         return (
             "The AI provider closed the connection before responding. Nothing was "
             f"applied; you can retry. ({text})"

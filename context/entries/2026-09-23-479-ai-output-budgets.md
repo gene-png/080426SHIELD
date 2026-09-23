@@ -28,7 +28,9 @@ there.
 the public `registered_jobs()` / `get_job()`. A grep for `purpose="..."` literals
 would miss `mitre_map`. Each new entry was checked red-on-revert, one at a time.
 
-## Corrected by the adversarial review, before the PR opened
+## Corrected by two adversarial rounds, before the PR opened
+
+Round 1:
 
 - A comment claimed that an unlisted purpose raises. It does not; the claim was withdrawn.
 - A test named "fits a full working profile" rested on an invented 100 tokens per
@@ -36,7 +38,29 @@ would miss `mitre_map`. Each new entry was checked red-on-revert, one at a time.
   profile far past any cap, so the test is gone.
 - `zt_score` went back from 32000 to a chosen 8192.
 
+Round 2 found that raising a cap **broke working configurations**, and "filed"
+was not an answer to that:
+
+- **Ceilings.** README's example OpenAI model (`gpt-4o-mini`, 16384) and
+  SMOKE_TEST's live-smoke models (`gpt-4o-mini`, `gemini-1.5-pro` at 8192) would
+  have turned a working `csf_score` smoke (364 in / 307 out) into an HTTP 400.
+  `output_cap_for` now clamps to the published ceiling of those named families,
+  in the OpenAI and generateContent adapters only, and logs
+  `llm_output_cap_clamped` when it does. This also stops `mitre_map` and
+  `risk_synthesize` sending a 400-inducing cap to those models, which had been
+  broken there all along.
+- **Timeout copy.** A `ReadTimeout` used to share the dropped-connection copy,
+  which says "you can retry". It is our 60 s client limit, and a job too large
+  for it fails again on every retry and is billed again. It now has its own copy.
+- **Values pinned.** The registry gate proves that an entry exists, not what it
+  holds; `extract.capabilities > 8117`, `csf_score > 8192` and `zt_score == 8192`
+  are now asserted against their evidence.
+
+Every fix above was checked red-on-revert on its own.
+
 ## Filed from it
 
-#484 (OpenAI has no truncation guard) and #485 (one cap table for every provider:
-ceilings and the 60 s non-streamed timeout, both failing under the wrong message).
+- #484: `OpenAIProvider` has no truncation guard.
+- #485: the general version of the provider problem. Ceilings for families the
+  clamp does not name, and the 60 s timeout itself (as distinct from its copy),
+  are still open there.

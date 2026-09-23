@@ -671,7 +671,9 @@ def test_output_cap_is_sized_per_purpose(monkeypatch) -> None:
 
     provider2, fake2 = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
     provider2.complete("Draft it.", {"k": "v", "__purpose__": "csf_score"})
-    assert fake2.last_kwargs["max_tokens"] == llm_mod.max_output_tokens_for("csf_score")
+    # Against the default it replaced, not against the table: comparing the
+    # provider to max_output_tokens_for() would compare the code with itself.
+    assert fake2.last_kwargs["max_tokens"] > 8192
 
 
 @pytest.mark.unit
@@ -790,3 +792,81 @@ def test_anthropic_streams_instead_of_blocking_on_one_response(monkeypatch) -> N
     assert resp.content == '{"ok": true}'
     assert resp.input_tokens == 11
     assert resp.output_tokens == 22
+
+
+@pytest.mark.unit
+def test_the_raised_budgets_clear_what_actually_failed() -> None:
+    """The registry gate proves each purpose HAS an entry, not what it is:
+    re-setting a budget to the value that failed would pass it. These pin the
+    values against their evidence, not against the table."""
+    # Measured 2026-09-23 on the dev stack: a live extract.capabilities failed on
+    # stop_reason=max_tokens, and its retry completed at 8117 of 8192.
+    assert llm_mod.max_output_tokens_for("extract.capabilities") > 8117
+    # One CSF tier alone is 106 rows (csf/catalog.py), which 8192 cannot hold
+    # at even ~100 tokens a row.
+    assert llm_mod.max_output_tokens_for("csf_score") > 8192
+    # Deliberately NOT raised: three short fields per capability, and a higher
+    # cap is an HTTP 400 on models whose output ceiling is 8192.
+    assert llm_mod.max_output_tokens_for("zt_score") == 8192
+
+
+_OPENAI_OK = {
+    "choices": [{"message": {"content": "{}"}}],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+}
+_GEMINI_OK = {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4o"])
+def test_openai_cap_is_clamped_to_the_models_published_ceiling(monkeypatch, model) -> None:
+    """README's example OpenAI model is gpt-4o-mini, whose published output
+    ceiling is 16384. Sending csf_score's 64000 there is an HTTP 400 on a draft
+    that would have fit -- a regression the raise would otherwise introduce."""
+    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
+    OpenAIProvider(model=model, api_key="sk-test").complete(
+        "p", {"k": "v", "__purpose__": "csf_score"}
+    )
+    assert captured["json"]["max_tokens"] == 16384
+
+
+@pytest.mark.unit
+def test_gemini_cap_is_clamped_to_the_models_published_ceiling(monkeypatch) -> None:
+    """SMOKE_TEST's live-smoke Gemini model is gemini-1.5-pro: ceiling 8192."""
+    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
+    GeminiProvider(model="gemini-1.5-pro", api_key="g-test").complete(
+        "p", {"k": "v", "__purpose__": "extract.capabilities"}
+    )
+    assert captured["json"]["generationConfig"]["maxOutputTokens"] == 8192
+
+
+@pytest.mark.unit
+def test_models_without_a_known_lower_ceiling_are_not_clamped(monkeypatch) -> None:
+    """The clamp is a list of named families, not a blanket reduction: a model
+    it does not know keeps the purpose's full budget."""
+    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
+    OpenAIProvider(model="gpt-5", api_key="sk-test").complete(
+        "p", {"k": "v", "__purpose__": "csf_score"}
+    )
+    assert captured["json"]["max_completion_tokens"] > 16384
+
+    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
+    GeminiProvider(model="gemini-2.5-flash", api_key="g-test").complete(
+        "p", {"k": "v", "__purpose__": "csf_score"}
+    )
+    assert captured["json"]["generationConfig"]["maxOutputTokens"] > 8192
+
+
+@pytest.mark.unit
+def test_a_read_timeout_does_not_promise_that_a_retry_will_help() -> None:
+    """A non-streamed call that outlives the client timeout is OUR limit, and a
+    job too large for it times out again on every retry -- billed each time.
+    It used to share the dropped-connection copy, which says "you can retry"."""
+    from app.ai.failures import friendly_reason
+
+    timeout = friendly_reason(httpx.ReadTimeout("The read operation timed out"))
+    assert "time limit" in timeout, timeout
+    assert "retry" not in timeout, timeout
+
+    dropped = friendly_reason(RuntimeError("APIConnectionError: Server disconnected"))
+    assert "closed the connection" in dropped, dropped
