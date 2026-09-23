@@ -5152,11 +5152,11 @@ Three more sites read the target live and stay that way. They are written into
 that function's docstring rather than left for the next sweeper, because **a site
 that SHOULD read live is indistinguishable from one that was missed**:
 
-| site                                    | why live is correct                                                                                                                                                         |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `routes/{zt,csf}.py` at finalize        | the write side — this value is what gets frozen                                                                                                                             |
-| `routes/risk.py::_gather_findings`      | its only caller is `@router.post def generate`, so the live read happens at synthesis and is persisted with the register (0047). Freeze-at-write, reached by another route. |
-| `routes/zt.py:292`, `routes/csf.py:187` | admin assessment detail, describing the intake choice as it stands NOW to a consultant scoring a draft                                                                      |
+| site                                    | why live is correct                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routes/{zt,csf}.py` at finalize        | the write side — this value is what gets frozen                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `routes/risk.py::_gather_findings`      | its only caller is `@router.post def generate`, so the live read happens at synthesis and is persisted with the register (0047). Freeze-at-write, reached by another route -- but **NOT the same shape as finalize**, and an earlier version of this row said it was. Finalize freezes the target the ARTIFACT used; generate freezes one read at a LATER moment, so a register and the deliverables it summarizes can state different baselines. Corrected, and filed as **#474**. |
+| `routes/zt.py:292`, `routes/csf.py:187` | admin assessment detail, describing the intake choice as it stands NOW to a consultant scoring a draft                                                                                                                                                                                                                                                                                                                                                                              |
 
 The risk.py row was settled by finding the callers, not by reasoning about them.
 #84 is on record as `risk.py` re-deriving exactly this kind of comparison inline
@@ -5274,11 +5274,26 @@ rather than a flavour of `targets_defaulted` / `targets_unusable` — a live-rea
 target may well be the client's own current choice, so both of those stay 0 while
 the figure still need not match the delivered document.
 
-`check_disclosure_consumers.py` reported **25 of 25, exit 0** over all three,
-because its predicate is prefix-anchored (#373) and they match none of the eight
-prefixes. The same count as before the change, which is what gave it away.
+`check_disclosure_consumers.py` reported **25 of 25, exit 0** over all FOUR
+`(model, field)` pairs -- `CsfDashboardResponse.target_frozen_at`,
+`ZtDashboardResponse.target_frozen_at` and
+`ValueSummaryResponse.{zt,csf}_targets_computed_live` -- because its predicate is
+prefix-anchored (#373) and they match none of the eight prefixes. (This paragraph
+said "three" while saying "four fields" two sentences later.) The same count as
+before the change is what gave it away.
+
 Adding `"frozen"` and `"computed_live"` to `DISCLOSURE_SUBSTRINGS` takes it to
-**29 of 29, still exit 0** — four fields, no false positives — and deleting
-`renderedAgainstNote`'s call site makes it **exit 1** naming
-`ZtDashboardResponse.target_frozen_at`. The count is evidence because it can go
-red, not because it went up.
+**29 of 29, still exit 0**, and it goes **exit 1** when the field is removed from
+`lib/dashboards/zt.ts`.
+
+**It does NOT go red when the RENDER is deleted, and this paragraph claimed it
+did.** Measured 2026-09-23: replacing `renderedAgainstNote(data.target_frozen_at)`
+with `""` and deleting the `.concat(...)` in `CsfDashboard.tsx` leaves the gate at
+29 of 29, exit 0. `readers_for` needs only the field name and the model's subject
+in one file's text, and the `interface ZtDashboardData` declaration satisfies
+both. The red I cited came from a different mutation than the one I named.
+
+The residual is general and worse than the miscitation: **every field this gate
+checks is pre-cleared by its own TypeScript type definition**, so a green is not
+evidence that anything renders -- it would have reported #322 clean. Stated in the
+gate's docstring and filed as **#473**.

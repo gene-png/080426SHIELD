@@ -552,12 +552,27 @@ def _frozen_or_live_target(
         would be circular.
       * `routes/risk.py` (`_gather_findings`). Its only caller is
         `@router.post def generate`, so the live read happens at SYNTHESIS time
-        and is persisted with the register (migration 0047). That is the same
-        freeze-at-write shape as finalize, reached by a different route, and it
-        is why the Risk Register is not a fifth surface. Checked by finding the
-        callers, not by assuming: #84 is on record as `risk.py` re-deriving
-        exactly this kind of comparison inline where a call-site sweep came back
-        clean.
+        and is persisted with the register (migration 0047) -- freeze-at-write,
+        reached by a different route. Checked by finding the callers, not by
+        assuming: #84 is on record as `risk.py` re-deriving exactly this kind of
+        comparison inline where a call-site sweep came back clean.
+
+        **IT IS NOT THE SAME SHAPE AS FINALIZE, and an earlier version of this
+        paragraph said it was, concluding the register 'is not a fifth
+        surface'.** Finalize freezes the target the ARTIFACT used; generate
+        freezes a target read live at a LATER moment. So: intake tier 4, CSF
+        finalized and released (frozen 4), `submit_self_assessment` writes tier
+        2, an admin regenerates the register -- its CSF findings are computed
+        against 2 while the released CSF report and the now-frozen CSF dashboard
+        both say 4. Two client-facing artifacts, one client, different
+        baselines, and the register's export re-reads only persisted rows so
+        nothing corrects it. `target_sources` reaches the audit row and no
+        schema, dashboard or exporter, so the baseline it used is invisible.
+
+        Out of scope here and filed: the register's own freeze is a separate
+        decision about when a register's inputs are fixed, not a read path this
+        change owns. What is corrected is the claim -- a reader who took 'not a
+        fifth surface' at face value would stop looking.
       * `routes/zt.py::292` and `routes/csf.py::187`, which publish
         `client_target_stage` / `client_target_tier` on an ADMIN assessment
         detail. They describe the intake choice as it stands NOW, to a

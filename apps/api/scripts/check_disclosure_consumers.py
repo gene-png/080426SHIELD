@@ -113,9 +113,26 @@ DISCLOSURE_PREFIXES = (
 #: narrowed here for these two shapes rather than solved.
 #:
 #: Measured before landing: adding them takes the gate from 25 of 25 to 29 of
-#: 29, still exit 0. Four fields, no false positives -- and verified RED by
-#: deleting `renderedAgainstNote`'s call site, so the count is evidence rather
+#: 29, still exit 0. Four fields, no false positives, and RED when the field
+#: is removed from `lib/dashboards/zt.ts` -- so the count is evidence rather
 #: than a number that went up.
+#:
+#: **NOT red when the RENDER is deleted, and an earlier version of this note
+#: claimed it was.** Measured 2026-09-23: replacing
+#: `renderedAgainstNote(data.target_frozen_at)` with `""` in `zt.ts` AND
+#: deleting the `.concat(...)` in `CsfDashboard.tsx` leaves the gate at
+#: **29 of 29, exit 0**. The red came from removing the field NAME, which is a
+#: different mutation.
+#:
+#: THE RESIDUAL THAT EXPOSES, and it is PRE-EXISTING and applies to every field
+#: this gate checks: `readers_for` asks only whether the field name and the
+#: model's subject both appear in a file's text. **A TypeScript interface
+#: mirroring the API response satisfies that with nothing rendering.** So a
+#: green here means "the name reaches a file that also mentions this
+#: dashboard", NOT "a person can see it". Every `lib/dashboards/*.ts` declares
+#: its response shape, so every field is pre-cleared by its own type
+#: definition. The gate is a floor against a field nobody typed at all; the
+#: render still has to be read by a human. Filed.
 DISCLOSURE_SUBSTRINGS = ("withheld", "provenance", "frozen", "computed_live")
 
 #: Fields this gate does not currently require a reader for, each with its

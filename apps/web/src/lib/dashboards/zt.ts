@@ -65,9 +65,17 @@ export interface ZtDashboardData {
   /**
    * Every gap the engine found, not a rendered subset.
    *
-   * Close to the released document's figure and NOT guaranteed equal to it:
-   * the document is frozen at finalize, this is recomputed per request against
-   * a target that stays writable after release (#209).
+   * Equal to the released document's figure for a FROZEN deliverable, which is
+   * every one this product builds since #209: both are computed against the
+   * same stored choice.
+   *
+   * THE SENTENCE THAT STOOD HERE EXPIRED WITH #209. It read "the document is
+   * frozen at finalize, this is recomputed per request against a target that
+   * stays writable after release (#209)" -- true when written, and it named
+   * #209 as open work in the class that closed it.
+   *
+   * Still true where `target_frozen_at` is NULL: a row predating the migration
+   * resolves live, and that null is the disclosure.
    */
   total_gap_count: number;
 

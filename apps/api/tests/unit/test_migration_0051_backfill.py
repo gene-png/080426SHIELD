@@ -130,6 +130,21 @@ def _build_released_zt(c: TestClient, *, stage: int | None) -> str:
     return svc_id
 
 
+def _admin_token(c: TestClient) -> str:
+    """The admin bearer, re-issued. `_build_released_zt` registers the user."""
+    r = c.post(
+        "/auth/login",
+        json={"email": "admin@example.com", "password": "correct horse battery staple!"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # `/auth/login` returns a bare `TokenPairResponse`; `/auth/register` nests it
+    # under `tokens`. Both shapes are handled rather than guessed, because the
+    # first version of this helper assumed the register shape and died with
+    # `KeyError: 'tokens'`.
+    return body["access_token"] if "access_token" in body else body["tokens"]["access_token"]
+
+
 def _freeze(svc_id: str) -> tuple[int | None, str | None]:
     from app.models.deliverable import Deliverable
 
@@ -308,6 +323,75 @@ def test_the_updated_at_fallback_freezes_an_untouched_intake_row(ctx) -> None:
     assert _freeze(svc_id) == (4, "updated_at"), (
         "the fallback did not freeze an intake row that has not been written "
         "since the deliverable was finalized"
+    )
+
+
+@pytest.mark.unit
+def test_arm_2_picks_the_column_by_SERVICE_KIND_not_by_coalesce(ctx) -> None:
+    """A ZT service carrying a stray CSF tier must freeze the STAGE.
+
+    THIS IS A REGRESSION TEST FOR A MEASURED DEFECT, not a hypothetical. Arm 2
+    read `COALESCE(sr.csf_target_tier, sr.zt_target_stage)` under a comment
+    claiming COALESCE "picks whichever the service kind populated". It does not:
+    `routes/intake.py::_validate_targets` records that `submit_intake` WRITES
+    BOTH COLUMNS for every item regardless of `service_type`, asking presence per
+    type but range for every value. So a ZT item carrying an in-range
+    `csf_target_tier` is accepted and both are stored, and CSF is first in the
+    COALESCE.
+
+    Measured on postgres:16-alpine before the fix: a ZT deliverable froze
+    `frozen_target=4, source=updated_at` for a client who contracted stage 2 --
+    MORE gaps than the released PDF lists, under a non-null `target_frozen_at`
+    whose entire meaning is "these figures agree with your report". #209's harm,
+    produced by #209's fix.
+
+    The audit row is deleted so arm 2 is the arm under test; arm 1 always wins
+    where it can, which the tests above assert.
+    """
+    c, cfg = ctx
+    svc_id = _build_released_zt(c, stage=2)
+
+    # The stray tier, written the way intake writes it: alongside the stage, on
+    # the same row, for a service whose kind does not use it.
+    from app.models.service import Service as _Service
+    from app.models.service_request import ServiceRequest as _SR
+
+    with _session() as s:
+        svc = s.get(_Service, _uuid.UUID(svc_id))
+        sr = s.get(_SR, svc.source_request_id)
+        sr.csf_target_tier = 4
+        s.add(sr)
+        s.commit()
+        # `updated_at` moved, so predicate 2 would now decline this deliverable.
+        # Re-finalizing is what puts a fresh deliverable after the write.
+        finalized_after = sr.updated_at
+
+    h = {"Authorization": f"Bearer {_admin_token(c)}"}
+    deliv_id = c.post(f"/zt/services/{svc_id}/deliverables/finalize", headers=h).json()["id"]
+    assert c.post(f"/zt/deliverables/{deliv_id}/release", headers=h).status_code == 200
+    assert finalized_after is not None
+
+    with _session() as s:
+        s.execute(
+            text(
+                "UPDATE audit_entries SET target_type = 'deliverable_disabled'"
+                " WHERE action LIKE '%deliverable.finalized'"
+            )
+        )
+        s.commit()
+
+    _rewind(cfg)
+
+    value, source = _freeze(svc_id)
+    assert source == "updated_at", (
+        f"arm 2 is not the arm under test (source={source!r}); the audit rows "
+        f"were not neutralised"
+    )
+    assert value == 2, (
+        f"arm 2 froze {value!r} onto a ZERO TRUST deliverable. The client "
+        f"contracted stage 2; 4 is the stray `csf_target_tier` on the same intake "
+        f"row, which COALESCE reaches first. The column must be chosen by "
+        f"`services.kind`."
     )
 
 

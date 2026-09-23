@@ -97,6 +97,12 @@ though it were original. No product code does that -- `submit_self_assessment`
 writes through the ORM -- but it is a fail-OPEN and it is written down here
 because nothing else would say so.
 
+Predicate 2 also picks the intake column by `services.kind`. `submit_intake`
+writes both columns for every item whatever its type, so choosing by COALESCE
+freezes a CSF tier onto a ZT deliverable -- measured, and the reason
+`_TARGET_COLUMN_BY_KIND` exists. Kinds with no engagement target of this shape
+are excluded outright.
+
 Predicate 2 requires the stored target to be NON-NULL, so it can never
 establish the "the client chose nothing" freeze -- only source 1 can. That is
 under-backfilling again, in the same safe direction, and it is the reason the
@@ -124,11 +130,36 @@ records -- writing a `MEASURED` block from expectation and then running the quer
 of a blast-radius block is that a reader can trust the figure without re-running
 it. A corrected number with no note reads exactly like one that was right.
 
-`seed_demo.py` stamps both columns in the same commit as this migration, so CI
-and a fresh dev database start with zero rows in the NULL branch. That is the
+`seed_demo.py` stamps the pair for CSF and ZT in the same commit as this
+migration, so CI and a fresh dev database exercise the FROZEN read path rather
+than only the backfill.
+
+**NOT "zero rows in the NULL branch", which is what this said and is false.**
+`seed_demo.py` deliberately leaves `frozen_target_source` NULL on ATT&CK and
+Tech Debt deliverables, because those kinds have no engagement target of this
+shape. So a seeded database DOES carry NULL-source rows, and someone querying
+dev Postgres would have read them as a seed failure. The argument the sentence
+was making survives; the absolute claim does not. That is the
 argument for landing the migration and the seed change together rather than in
 sequence: split them and every CI run exercises only the backfill path, which is
 the path that will almost never run in production.
+
+## A RESIDUAL NOTHING ASSERTS: `finalized_at` IS NULLABLE
+
+`_frozen_or_live_target` branches on `frozen_target_source is not None` and
+then returns `deliv.finalized_at` as the disclosure stamp. Those are two
+different columns, and the second is nullable -- so a row with a non-null
+source and a NULL `finalized_at` would return FROZEN figures under a NULL
+stamp, and the screen would print "These figures use your target as it stands
+today ... the two can differ" over figures that cannot.
+
+Unreachable from today's writers: both finalize routes write `finalized_at` and
+the pair together, and arm 2 below requires `finalized_at IS NOT NULL`. **Arm 1
+does not**, so a deliverable with a finalize audit row and a NULL
+`finalized_at` would produce it -- a state no route mints, and nothing asserts
+the invariant. Written down rather than guarded, because the guard belongs with
+the disclosure rather than in a migration, and because an unstated window is
+the one nobody tests.
 
 ## THE POSTGRES BRANCH IS RUN BY NO TEST, SO IT WAS RUN BY HAND
 
@@ -147,7 +178,17 @@ rows.
     A draft  not finalized                          -> unfrozen
 
 Log line: `0 row(s) from the finalize audit and 1 from updated_at; declined 0;
-2 row(s) remain unfrozen`. That is the same behaviour
+2 row(s) remain unfrozen`.
+
+**Arm 1 was measured on Postgres separately, and it had to be.** That first run
+carried no audit rows, so it certified the `UPDATE ... FROM` branch and NOT arm 1
+-- and review raised a specific suspicion about arm 1 there: it keys `from_audit`
+on `str(target_id)` and binds that text against `deliverables.id`, which is a
+native `uuid` on Postgres and a `String(36)` on SQLite, so the tests could pass
+while production matched zero rows or raised. Measured 2026-09-23 with a real
+`zt.deliverable.finalized` audit row present: `1 row(s) from the finalize audit`,
+`frozen_target=2 source=audit`, exit 0. The suspicion does not hold, and it is
+recorded here because the earlier certificate genuinely did not cover it. That is the same behaviour
 `tests/unit/test_migration_0051_backfill.py` asserts on SQLite, on the dialect
 arm those tests cannot reach.
 
@@ -199,6 +240,76 @@ _SOURCE_CLIENT = "client"
 #: recoverable as a freeze of NULL. Everything else -- `client_out_of_range`,
 #: `client_unparseable` -- is declined; see the docstring.
 _SOURCE_NO_CHOICE = "default"
+
+#: WHICH intake column holds the engagement target, per `services.kind`.
+#:
+#: **COALESCE IS WRONG HERE AND THAT WAS A MEASURED DEFECT, not a tidiness
+#: point.** Arm 2 below read
+#: `COALESCE(sr.csf_target_tier, sr.zt_target_stage)` under a comment claiming
+#: "COALESCE picks whichever the service kind populated". That assumes exactly
+#: one is set, and `routes/intake.py` does the opposite: `_validate_targets`'
+#: own docstring records that `submit_intake` WRITES BOTH COLUMNS for every item
+#: regardless of `service_type`, checking presence per type but range for every
+#: value. So `{"service_type": "zero_trust_cisa", "zt_target_stage": 2,
+#: "csf_target_tier": 4}` is accepted and stores both.
+#:
+#: Measured 2026-09-23 on postgres:16-alpine, exactly that intake row, a ZT
+#: deliverable with no finalize audit row:
+#:
+#:     ZT v2 -> frozen_target=4  source=updated_at
+#:
+#: The client contracted stage 2. The dashboard would resolve stage 4 -- MORE
+#: gaps than the released PDF lists -- under a non-null `target_frozen_at` whose
+#: whole meaning is "these figures agree with your report". That is #209's harm
+#: produced by #209's fix, in the arm no test covered.
+#:
+#: `seed_demo.py` already splits on `service.kind` for the same reason. The
+#: migration did not, and the two now agree.
+#:
+#: DERIVED INTO BOTH DIALECT BRANCHES from this one dict rather than hand-written
+#: twice, so a fourth kind cannot be added to one branch and missed in the other.
+#: KEYED ON THE STORED SPELLING, WHICH IS THE ENUM *NAME*, and that had to be
+#: measured rather than assumed. `Service.kind` is
+#: `SAEnum(ServiceKind, native_enum=False, length=32)`, and SQLAlchemy's `Enum`
+#: persists a Python enum by its NAME, not its value. Measured 2026-09-23 by
+#: writing one row through the ORM and reading the column back:
+#:
+#:     STORED kind = 'ZERO_TRUST_CISA'
+#:     enum .value = 'zero_trust_cisa'   .name = 'ZERO_TRUST_CISA'
+#:
+#: The first version of this mapping used the VALUES. It matched nothing, and the
+#: hand-seeded Postgres row that appeared to confirm the fix had been inserted
+#: with the value spelling -- a fixture in a state no writer can produce,
+#: validating a filter against the one input it agreed with. Three SQLite tests
+#: caught it immediately; the Postgres run did not, because I wrote its rows.
+#:
+#: BOTH SPELLINGS are listed. A false match is impossible -- name and value map to
+#: the same column for every kind -- and it removes a dependency on SQLAlchemy
+#: continuing to choose names, which a `values_callable` anywhere would change.
+_TARGET_COLUMN_BY_KIND = {
+    "NIST_CSF": "csf_target_tier",
+    "nist_csf": "csf_target_tier",
+    "ZERO_TRUST_CISA": "zt_target_stage",
+    "zero_trust_cisa": "zt_target_stage",
+    "ZERO_TRUST_DOD": "zt_target_stage",
+    "zero_trust_dod": "zt_target_stage",
+}
+
+
+def _target_case(alias: str) -> str:
+    """A SQL `CASE` picking the right intake column for the service's kind.
+
+    Kinds absent from the mapping -- `tech_debt`, `attack_coverage` -- fall
+    through to NULL, which the callers require to be non-NULL. They have no
+    engagement target of this shape, so no freeze is the correct answer and the
+    model comment says so.
+    """
+    whens = " ".join(f"WHEN '{kind}' THEN sr.{col}" for kind, col in _TARGET_COLUMN_BY_KIND.items())
+    return f"CASE {alias}.kind {whens} END"
+
+
+#: The kinds arm 2 will consider at all, as a SQL list literal.
+_KIND_IN = ", ".join(f"'{k}'" for k in _TARGET_COLUMN_BY_KIND)
 
 
 def _details_dict(raw: object) -> dict:
@@ -308,23 +419,26 @@ def upgrade() -> None:
     # this backfill has to use the same link or it is answering a different
     # question about a different row.
     #
-    # `csf_target_tier` and `zt_target_stage` are the two columns on
-    # `service_requests`; COALESCE picks whichever the service kind populated,
-    # and one pair of columns on `deliverables` receives it.
+    # THE COLUMN IS PICKED BY `services.kind`, NOT BY COALESCE, and the
+    # COALESCE version was a measured defect -- see `_TARGET_COLUMN_BY_KIND`.
+    # `submit_intake` writes BOTH intake columns for every item regardless of
+    # type, so a ZT service can carry a stray `csf_target_tier` and COALESCE
+    # froze that tier onto a ZT deliverable.
     from_updated_at = conn.execute(
         sa.text(
             "UPDATE deliverables SET frozen_target = sub.target,"
             "   frozen_target_source = 'updated_at'"
             " FROM ("
             "   SELECT d.id AS did,"
-            "          COALESCE(sr.csf_target_tier, sr.zt_target_stage) AS target"
+            f"          {_target_case('s')} AS target"
             "     FROM deliverables d"
             "     JOIN services s ON s.id = d.service_id"
             "     JOIN service_requests sr ON sr.id = s.source_request_id"
             "    WHERE d.frozen_target_source IS NULL"
             "      AND d.finalized_at IS NOT NULL"
             "      AND sr.updated_at <= d.finalized_at"
-            "      AND COALESCE(sr.csf_target_tier, sr.zt_target_stage) IS NOT NULL"
+            f"      AND s.kind IN ({_KIND_IN})"
+            f"      AND {_target_case('s')} IS NOT NULL"
             " ) AS sub"
             " WHERE deliverables.id = sub.did"
         )
@@ -335,15 +449,17 @@ def upgrade() -> None:
             # used there. Two statements, one meaning, and the dialect split is
             # stated rather than left for a reader to infer from a crash.
             "UPDATE deliverables SET frozen_target = ("
-            "   SELECT COALESCE(sr.csf_target_tier, sr.zt_target_stage)"
+            f"   SELECT {_target_case('s')}"
             "     FROM services s JOIN service_requests sr ON sr.id = s.source_request_id"
             "    WHERE s.id = deliverables.service_id"
+            f"      AND s.kind IN ({_KIND_IN})"
             "      AND sr.updated_at <= deliverables.finalized_at"
             " ), frozen_target_source = 'updated_at'"
             " WHERE frozen_target_source IS NULL AND finalized_at IS NOT NULL AND ("
-            "   SELECT COALESCE(sr.csf_target_tier, sr.zt_target_stage)"
+            f"   SELECT {_target_case('s')}"
             "     FROM services s JOIN service_requests sr ON sr.id = s.source_request_id"
             "    WHERE s.id = deliverables.service_id"
+            f"      AND s.kind IN ({_KIND_IN})"
             "      AND sr.updated_at <= deliverables.finalized_at"
             " ) IS NOT NULL"
         )

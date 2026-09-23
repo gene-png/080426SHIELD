@@ -338,9 +338,21 @@ class ZtDashboardResponse(BaseModel):
     # NOT guaranteed equal to the released document's count, and an earlier
     # draft of this comment said "matching the deliverable's". Both are
     # computed by the same engine from the same approved answers, so they agree
-    # for a given target — but the deliverable is frozen at finalize while this
+    # for a given target — and since #209 they agree for a FROZEN deliverable by
+    # construction: this figure is computed against `frozen_target`, the same
+    # stored choice the document was rendered with.
+    #
+    # THE SENTENCE THAT STOOD HERE EXPIRED WITH #209 and is corrected rather
+    # than deleted. It read: "the deliverable is frozen at finalize while this
     # is resolved per request from `ServiceRequest.zt_target_stage`, which
-    # `submit_self_assessment` can still write afterwards. Tracked in #209.
+    # `submit_self_assessment` can still write afterwards. Tracked in #209."
+    # True when written, and it pointed a reader at #209 as OPEN work in the
+    # very class this PR closes.
+    #
+    # It remains true of a deliverable that predates migration 0051 or whose
+    # backfill was declined -- `frozen_target_source IS NULL`. Those still
+    # resolve live, and `target_frozen_at` on this same response is null
+    # exactly then, which is the disclosure.
     total_gap_count: int
 
     largest_gap_pillar: str | None
