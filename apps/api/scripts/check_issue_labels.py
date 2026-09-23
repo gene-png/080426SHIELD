@@ -1,4 +1,4 @@
-"""Every OPEN issue is on the board, in exactly one place, or says why it is not.
+"""Every OPEN issue carries `mvp-blocking` plus exactly one tier, or `unowned-with-reason`.
 
 CLAUDE.md's filing rule: every new issue carries `mvp-blocking` plus one of
 `tier-1` / `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the
@@ -7,17 +7,35 @@ issue without `mvp-blocking` is not on it, and one with it and no tier "has no
 place in the ordering". Either way it is invisible to the only view used to
 decide what to work on. The rule was written down and nothing enforced it.
 
+What this checks is LABELS only. It does not read the body, so an
+`unowned-with-reason` issue whose body gives no reason passes -- a residual,
+stated here because "or says why" would be the natural misreading of the rule's
+second half.
+
+`mvp-blocking` triggers the tier check whether or not `unowned-with-reason` is
+also present: the board query returns the issue either way, so it needs a place
+in the ordering either way.
+
 `post-mvp` is a third state the rule does not name. Until it does, an issue that
 carries `post-mvp` and nothing else is reported as off the board, with the label
 named in the message so the reader knows which case it is.
 
-Exit codes, per this repo's gate convention:
-  0  every open issue satisfies the rule
-  1  at least one does not (each is listed)
-  2  could not look: REPO unset, `gh` failed, or zero issues came back
+Two modes:
+  * FULL (default): every open issue. Exit 1 if any breaks the rule.
+  * EVENT (`--issue N`): judge only issue N, and print the standing total as
+    information. A new unlabelled issue must be visible as a change, and with a
+    standing backlog a full check is red on every run, so the new one would not
+    be.
 
-Lives under `apps/api/scripts` for the reason `fire_scheduled_triggers.py`
-does: the api container mounts only `apps/api`, so it can be unit-tested.
+Input: `gh api` against `$REPO`, or `--issues-file PATH` holding the same JSON
+(a list of pages, as `gh api --paginate --slurp` prints, or a flat list). The
+file form exists so the fixture harness can run real cases without a network.
+
+Exit codes, per this repo's gate convention (D-051):
+  0  the rule holds (for every open issue, or for issue N)
+  1  it does not (each fault listed)
+  2  could not look: no REPO and no file, `gh` or the file unreadable, zero
+     issues read, or issue N not among the open issues read
 """
 
 from __future__ import annotations
@@ -26,6 +44,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 BOARD = "mvp-blocking"
 UNOWNED = "unowned-with-reason"
@@ -40,16 +59,16 @@ _MESSAGES = {
 
 def classify(labels: set[str]) -> str | None:
     """The rule's verdict on one issue's labels: None, or the fault's key."""
+    if BOARD in labels:
+        tiers = [t for t in TIERS if t in labels]
+        if not tiers:
+            return "no_tier"
+        if len(tiers) > 1:
+            return "several_tiers"
+        return None
     if UNOWNED in labels:
         return None
-    if BOARD not in labels:
-        return "off_board"
-    tiers = [t for t in TIERS if t in labels]
-    if not tiers:
-        return "no_tier"
-    if len(tiers) > 1:
-        return "several_tiers"
-    return None
+    return "off_board"
 
 
 def _gh(*args: str) -> str:
@@ -68,57 +87,98 @@ def _gh(*args: str) -> str:
     return proc.stdout
 
 
-def _open_issues(repo: str) -> list[dict]:
-    """Every open issue, every page. `--paginate --slurp` returns one JSON array
-    of pages; the REST endpoint includes pull requests, which are dropped."""
+def _flatten(data: object) -> list[dict]:
+    """A list of pages or a flat list of issues, minus pull requests."""
+    if not isinstance(data, list):
+        raise ValueError(f"expected a JSON list, got {type(data).__name__}")
+    items = [i for page in data for i in page] if data and isinstance(data[0], list) else data
+    return [i for i in items if isinstance(i, dict) and "pull_request" not in i]
+
+
+def _read_issues(issues_file: str | None) -> list[dict]:
+    if issues_file is not None:
+        return _flatten(json.loads(Path(issues_file).read_text(encoding="utf-8")))
+    repo = os.environ.get("REPO")
+    if not repo:
+        raise ValueError("REPO is not set and no --issues-file was given")
     raw = _gh("api", "--paginate", "--slurp", f"repos/{repo}/issues?state=open&per_page=100")
-    pages = json.loads(raw)
-    return [i for page in pages for i in page if "pull_request" not in i]
+    return _flatten(json.loads(raw))
 
 
-def main() -> int:
+def _fault_line(issue: dict) -> str | None:
+    labels = {label["name"] for label in issue.get("labels", [])}
+    fault = classify(labels)
+    if fault is None:
+        return None
+    extra = " (carries `post-mvp`, a state the rule does not name)" if "post-mvp" in labels else ""
+    return f"  #{issue['number']}: {_MESSAGES[fault]}{extra} -- {issue.get('title', '')}"
+
+
+def _parse(argv: list[str]) -> tuple[str | None, int | None]:
+    issues_file, issue = None, None
+    args = list(argv[1:])
+    while args:
+        flag = args.pop(0)
+        if flag == "--issues-file" and args:
+            issues_file = args.pop(0)
+        elif flag == "--issue" and args:
+            issue = int(args.pop(0))
+        else:
+            raise ValueError(f"unknown or incomplete argument: {flag!r}")
+    return issues_file, issue
+
+
+def main(argv: list[str]) -> int:
     # Issue titles are arbitrary Unicode. On a Windows console the default
     # codec is cp1252, and one title containing an arrow crashed the first
     # live run mid-report -- exit 1, which reads as a verdict. Measured
     # 2026-09-23. The runner is Linux, where this is a no-op.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    repo = os.environ.get("REPO")
-    if not repo:
-        print("check-issue-labels: REPO is not set -- could not look.", file=sys.stderr)
-        return 2
     try:
-        issues = _open_issues(repo)
-    except (RuntimeError, ValueError) as exc:
-        print(f"check-issue-labels: could not read the open issues: {exc}", file=sys.stderr)
+        issues_file, only = _parse(argv)
+        issues = _read_issues(issues_file)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f"check-issue-labels: could not read the open issues: {exc}")
         return 2
     if not issues:
         print(
             "check-issue-labels: read ZERO open issues -- could not look, not a clean "
-            "board. This repository has open issues; an empty read is a failed read.",
-            file=sys.stderr,
+            "board. This repository has open issues; an empty read is a failed read."
         )
         return 2
 
-    faults = []
-    for issue in sorted(issues, key=lambda i: i["number"]):
-        labels = {label["name"] for label in issue.get("labels", [])}
-        fault = classify(labels)
-        if fault is not None:
-            extra = (
-                " (carries `post-mvp`, a state the rule does not name)"
-                if "post-mvp" in labels
-                else ""
+    ordered = sorted(issues, key=lambda i: i["number"])
+    faults = [line for line in (_fault_line(i) for i in ordered) if line]
+
+    if only is not None:
+        mine = [i for i in issues if i["number"] == only]
+        if not mine:
+            print(
+                f"check-issue-labels: issue #{only} is not among the {len(issues)} "
+                "open issues read -- could not look."
             )
-            faults.append(f"  #{issue['number']}: {_MESSAGES[fault]}{extra} -- {issue['title']}")
+            return 2
+        line = _fault_line(mine[0])
+        print(
+            f"check-issue-labels: standing total, for information: {len(faults)} of "
+            f"{len(issues)} open issue(s) break the rule."
+        )
+        if line:
+            print(f"check-issue-labels: issue #{only} breaks the filing rule:\n{line}")
+            return 1
+        print(f"check-issue-labels: issue #{only} satisfies the filing rule.")
+        return 0
 
     if faults:
         print(
-            f"check-issue-labels: {len(faults)} of {len(issues)} open issue(s) break the filing rule:"
+            f"check-issue-labels: {len(faults)} of {len(issues)} open issue(s) "
+            "break the filing rule:"
         )
         print("\n".join(faults))
         return 1
     print(
-        f"check-issue-labels: clean -- {len(issues)} open issue(s), each on the board or unowned-with-reason."
+        f"check-issue-labels: clean -- {len(issues)} open issue(s), each on the "
+        "board or unowned-with-reason."
     )
     return 0
 
@@ -127,7 +187,7 @@ if __name__ == "__main__":
     # Duplicated verbatim from the other gates (see check_audit_evidence.py for
     # why it is not shared); tests/unit/test_gate_crash_exit_code.py runs it.
     try:
-        raise SystemExit(main())
+        raise SystemExit(main(sys.argv))
     except (SystemExit, KeyboardInterrupt):
         raise
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict

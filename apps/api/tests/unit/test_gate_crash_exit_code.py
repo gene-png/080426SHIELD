@@ -87,7 +87,7 @@ GATES = [
     # twice. `sys.argv` because `main(argv)` takes the argument list.
     ("check_merge_rule_conditions", "sys.argv"),
     # The issue-labels gate (the filing rule). Shipped with the handler.
-    ("check_issue_labels", ""),
+    ("check_issue_labels", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

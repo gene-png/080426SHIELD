@@ -3,12 +3,17 @@ name: Issue labels
 # Every OPEN issue carries `mvp-blocking` plus exactly one tier, or
 # `unowned-with-reason`. That is CLAUDE.md's filing rule, and nothing enforced
 # it: the first run of this check found 148 of 181 open issues breaking it
-# (2026-09-23), 71 of them with no labels at all -- invisible to the board,
-# which is the only view used to decide what to work on.
+# (2026-09-23) -- invisible to, or unplaced on, the board, which is the only
+# view used to decide what to work on.
 #
-# NOT a merge gate. Issue labels are not a property of a pull request, so this
-# cannot sensibly block one. It runs when labels change and daily, and it goes
-# red when the board and the rule disagree -- which is the signal. Same
+# TWO MODES, because a standing backlog makes a full check red on every run,
+# and then a newly filed unlabelled issue changes nothing anyone can see:
+#   * on an issue event: judge ONLY that issue (`--issue N`); the standing
+#     total is printed for information. A new unlabelled issue goes red on its
+#     own event, whatever the backlog.
+#   * daily and on dispatch: the full board. Red until the backlog is cleared.
+#
+# NOT a merge gate. Issue labels are not a property of a pull request. Same
 # reasoning as scheduled-triggers.yml: a non-blocking check that runs beats a
 # blocking one that gets turned off.
 
@@ -24,10 +29,19 @@ permissions:
   contents: read
   issues: read
 
+# A bulk relabel fires one event per label change. Per issue, only the latest
+# run matters; the full-board runs share one group.
+concurrency:
+  group: issue-labels-${{ github.event.issue.number || 'full' }}
+  cancel-in-progress: true
+
 jobs:
   filing-rule:
     name: Every open issue is on the board or unowned-with-reason
     runs-on: ubuntu-latest
+    # The rule covers OPEN issues; a label change on a closed one is not its
+    # business, and would otherwise be a could-not-look (exit 2).
+    if: github.event_name != 'issues' || github.event.issue.state == 'open'
     steps:
       - uses: actions/checkout@v7
 
@@ -35,7 +49,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check the triggering issue against the filing rule
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        working-directory: apps/api
+        run: python -m scripts.check_issue_labels --issue "$ISSUE"
+
       - name: Check every open issue against the filing rule
+        if: github.event_name != 'issues'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
