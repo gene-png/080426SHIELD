@@ -30,7 +30,9 @@ import type { Page } from "@playwright/test";
 const GUARD_TIMEOUT_MS = 20000;
 
 export async function acknowledgeOfflineAi(page: Page): Promise<void> {
-  const dialog = page.getByRole("alertdialog", { name: "No API key loaded" });
+  const dialog = page.getByRole("alertdialog", {
+    name: "AI is not ready to run live",
+  });
   try {
     await dialog.waitFor({ state: "visible", timeout: GUARD_TIMEOUT_MS });
   } catch {
