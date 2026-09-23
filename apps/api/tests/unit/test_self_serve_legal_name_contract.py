@@ -411,9 +411,10 @@ def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or()
     and with that anchor, ordering genuinely does not matter.
 
     The behavioural cover for what a pattern cannot reach is
-    ``test_playbook_export_renders_the_fallback_for_a_blank_name``, which
-    exercises the surface rather than the source. This test is the cheap
-    wide net; that one is the deep check on the path that actually broke.
+    ``test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts``
+    in ``test_csf_playbook_export.py``, which drives the route and reads all five
+    stored artifacts. This test is the cheap wide net; that one is the deep check
+    on the path that actually broke.
     """
     import pathlib
     import re
@@ -474,8 +475,9 @@ def test_the_deliverable_surfaces_call_the_shared_resolver() -> None:
     It is fail-CLOSED in the direction that matters, which is why it stays: an
     `ast.Attribute` call, or the import being dropped, reddens it. The
     behavioural cover is
-    `test_playbook_export_renders_the_fallback_for_a_blank_name`, which reads
-    the rendered workbook cell rather than the source.
+    `test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts`
+    (`test_csf_playbook_export.py`), which drives the route and reads the five
+    stored artifacts rather than the source.
     """
     import ast
     import pathlib

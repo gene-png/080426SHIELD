@@ -97,10 +97,10 @@ docstring.
 
 No estimate row changes; #254 owns no item, which is the gap this section
 already records under _Still to do_. The missing admin edit path is tracked in
-#449; the advisories from these rounds are #453, #454-#457, #462, #463 and
-#464.
+#449; the advisories from these rounds are #453, #454-#457, #462, #463, #464 and
+#495.
 
-**2026-09-22 — #254 implemented (`tier-1`, `client-reaching`), awaiting review.**
+**2026-09-22 — #254 implemented (`tier-1`, `client-reaching`); LANDED as #444, with follow-ups #458 and #461.** The status below is as written before it merged.
 `"(pending intake)"` was read in 17 production sites and written in none, so
 every guard against an unnamed client was dead and self-serve provisioning put
 the signup's email domain — or, on a personal mailbox, **the registrant's own

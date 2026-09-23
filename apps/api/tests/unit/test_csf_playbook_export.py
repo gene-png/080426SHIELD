@@ -188,6 +188,7 @@ def test_playbook_export_produces_downloadable_xlsx(app_client) -> None:
         assert dl.content.startswith(magic[kind]), f"{kind} wrong magic bytes"
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("stored", [None, "   "])
 def test_a_blank_legal_name_prints_the_fallback_on_all_five_playbook_artifacts(
     app_client, stored
