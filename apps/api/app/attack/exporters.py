@@ -89,7 +89,8 @@ COVERAGE_PCT_DEFINITION = (
     "status, counting those pending review."
 )
 
-#: Rendered where `Covered + Partial + Gap` is zero. `_pct` in
+#: Rendered where nothing is Covered, Partial, Gap or pending review (`_measured`).
+#: Where Covered + Partial + Gap is zero, `_pct` in
 #: `attack/analytics.py` returns 0.0 there, which is the same figure a tactic
 #: that is ALL gaps earns -- so "nothing to measure" and "nothing covered" were
 #: one number. NOT "n/a": that is the N/A (not applicable) status two columns to

@@ -262,3 +262,47 @@ def test_the_stored_summary_says_what_the_deliverable_says(app_client) -> None:
     summary = fin.json()["summary"]
     assert summary.startswith("Coverage: not measured."), summary
     assert "0.0%" not in summary, summary
+
+
+@pytest.mark.unit
+def test_the_stored_summary_carries_the_withheld_count(app_client) -> None:
+    """CLAUDE.md: a percentage over a withheld population renders the withheld
+    count beside it, everywhere. The results-list line printed "Coverage: 0.0%.
+    0 covered, 0 partial, 0 gaps ..." for a run whose every claim was withheld
+    -- indistinguishable from a client with no controls.
+
+    The world is built by direct SQL because no API writer produces it today:
+    a PATCH stamps citations (None -> []), so a hand-set status is never
+    pending. Covered over NULL citations is the pre-0044 legacy shape that
+    migration records, and `pending.is_pending_review` withholds it."""
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackCoverage
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    assessment = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()
+    ids = [_uuid.UUID(cov["id"]) for cov in assessment["coverage"][:3]]
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        db.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id.in_(ids))
+            .values(status="covered", unconfirmed_citations=None)
+        )
+        db.commit()
+    engine.dispose()
+
+    c.post(f"/attack/assessments/{assessment['id']}/approve", headers=h)
+    fin = c.post(f"/attack/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+    summary = fin.json()["summary"]
+    assert "3 pending review" in summary, summary
+    assert summary.startswith("Coverage: 0.0%."), summary

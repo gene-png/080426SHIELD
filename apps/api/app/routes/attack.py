@@ -2661,7 +2661,11 @@ def finalize_attack_deliverable(
         # The same text the deliverable's own renderers print, so the results
         # list cannot say 0.0% beside a PDF that says "not measured".
         f"Coverage: {coverage_pct_text(rollup)}. "
+        # `pending_review` beside the percentage, as every renderer carries it
+        # (#102): an all-withheld run reads 0.0%, and without the count that is
+        # indistinguishable from a client who owns no controls at all.
         f"{rollup.covered} covered, {rollup.partial} partial, {rollup.gap} gaps, "
+        f"{rollup.pending_review} pending review, "
         f"{rollup.not_applicable} N/A across {rollup.scored_count} scored techniques."
     )
 

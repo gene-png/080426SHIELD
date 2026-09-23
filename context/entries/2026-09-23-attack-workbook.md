@@ -32,7 +32,9 @@ Reconnaissance technique unscored, so its Recon tactic exported 0.0%.
   rollup does, so its length equals `rollup.unscored_count`.
 - **Coverage %:** reads **"not measured"** wherever no technique has a Covered,
   Partial or Gap status, counting those pending review, in XLSX, DOCX and PDF, overall and per tactic, and in the stored
-  `Deliverable.summary` the results list shows. It is not "n/a", which is the
+  `Deliverable.summary` the results list shows, which now also carries the
+  pending-review count, since an all-withheld run reads 0.0% and needs its
+  withheld count beside it. It is not "n/a", which is the
   N/A status two columns away: "never assessed" would have read as "not
   applicable to us". Each renderer states the formula.
 - **Text cells are safe:** model rationale, client-supplied tool names, the
@@ -52,6 +54,9 @@ the stored summary line (checked through the real finalize endpoint), and the
 label. Measured on the live-run assessment: none of the 632 rationales contain a
 redaction placeholder or begin with a formula character, so the last two
 defended cases are latent, not live.
+
+Review advisories filed rather than fixed: #493 (the finalize audit row's bare
+`coverage_pct`, and a test fixture that builds an unreachable state).
 
 ## Left alone, on purpose
 
