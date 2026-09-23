@@ -799,14 +799,14 @@ def test_the_raised_budgets_clear_what_actually_failed() -> None:
     """The registry gate proves each purpose HAS an entry, not what it is:
     re-setting a budget to the value that failed would pass it. These pin the
     values against their evidence, not against the table."""
-    # Measured 2026-09-23 on the dev stack: a live extract.capabilities failed on
-    # stop_reason=max_tokens, and its retry completed at 8117 of 8192.
-    assert llm_mod.max_output_tokens_for("extract.capabilities") > 8117
-    # One CSF tier alone is 106 rows (csf/catalog.py), which 8192 cannot hold
-    # at even ~100 tokens a row.
-    assert llm_mod.max_output_tokens_for("csf_score") > 8192
-    # Deliberately NOT raised: three short fields per capability, and a higher
-    # cap is an HTTP 400 on models whose output ceiling is 8192.
+    # Measured 2026-09-23 on the dev stack: a live extract.capabilities OVERRAN
+    # 8192 (stop_reason=max_tokens) and its retry needed 8117. The value that
+    # failed is 8192, so the bound is strictly above it.
+    assert llm_mod.max_output_tokens_for("extract.capabilities") > 8192
+    # One CSF tier alone is 106 rows (csf/catalog.py) at >= ~100 tokens a row.
+    assert llm_mod.max_output_tokens_for("csf_score") >= 106 * 100
+    # Deliberately NOT raised: three short fields per capability, so a larger
+    # budget buys nothing.
     assert llm_mod.max_output_tokens_for("zt_score") == 8192
 
 
@@ -870,3 +870,39 @@ def test_a_read_timeout_does_not_promise_that_a_retry_will_help() -> None:
 
     dropped = friendly_reason(RuntimeError("APIConnectionError: Server disconnected"))
     assert "closed the connection" in dropped, dropped
+
+
+@pytest.mark.unit
+def test_the_clamp_never_raises_a_budget_above_the_purposes_own(monkeypatch) -> None:
+    """A ceiling is a MAXIMUM. zt_score's 8192 is below gpt-4o's 16384, so the
+    clamp must leave it alone -- not lift it to the ceiling."""
+    captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
+    OpenAIProvider(model="gpt-4o-mini", api_key="sk-test").complete(
+        "p", {"k": "v", "__purpose__": "zt_score"}
+    )
+    assert captured["json"]["max_tokens"] == 8192
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "provider_cls, model, ceiling",
+    [
+        ("gemini", "gemini-2.0-flash", 8192),
+        ("openai", "gpt-4.1", 32768),
+    ],
+)
+def test_every_named_family_is_clamped(monkeypatch, provider_cls, model, ceiling) -> None:
+    """One case per row of the ceiling table not covered above, so deleting a
+    row fails a test. Ceilings are the providers' published limits."""
+    if provider_cls == "gemini":
+        captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _GEMINI_OK))
+        GeminiProvider(model=model, api_key="g-test").complete(
+            "p", {"k": "v", "__purpose__": "csf_score"}
+        )
+        assert captured["json"]["generationConfig"]["maxOutputTokens"] == ceiling
+    else:
+        captured = _install_fake_httpx(monkeypatch, _FakeResponse(200, _OPENAI_OK))
+        OpenAIProvider(model=model, api_key="sk-test").complete(
+            "p", {"k": "v", "__purpose__": "csf_score"}
+        )
+        assert captured["json"]["max_tokens"] == ceiling

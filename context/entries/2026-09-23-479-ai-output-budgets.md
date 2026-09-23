@@ -22,7 +22,7 @@ there.
 | --- | --- | --- | --- |
 | `extract.capabilities` | 8192 (default) | 64000 | measured, above |
 | `csf_score` | 8192 (default) | 64000 | **estimate**: 318 rows at 100–575 tokens each. 64000 fits only the low end; batching per tier is the real fix |
-| `zt_score` | 8192 (default) | 8192, **chosen** | 3 short fields per capability; raising it would break it on 8192/16384-ceiling models (#485) |
+| `zt_score` | 8192 (default) | 8192, **chosen** | 3 short fields per capability, so a larger budget buys nothing |
 
 `test_every_registered_job_has_a_chosen_output_budget` walks the registry through
 the public `registered_jobs()` / `get_job()`. A grep for `purpose="..."` literals
@@ -41,10 +41,13 @@ Round 1:
 Round 2 found that raising a cap **broke working configurations**, and "filed"
 was not an answer to that:
 
-- **Ceilings.** README's example OpenAI model (`gpt-4o-mini`, 16384) and
-  SMOKE_TEST's live-smoke models (`gpt-4o-mini`, `gemini-1.5-pro` at 8192) would
-  have turned a working `csf_score` smoke (364 in / 307 out) into an HTTP 400.
-  `output_cap_for` now clamps to the published ceiling of those named families,
+- **Ceilings.** A request above a model's published output ceiling is an HTTP
+  400 even for a draft that fits. The example ids in README (`gpt-4o-mini`,
+  16384) and SMOKE_TEST's setup (`gpt-4o-mini`, `gemini-1.5-pro` at 8192) worked
+  at 8192 and would have broken at 64000. (The one live-validated
+  generateContent run, `gemini-2.5-flash`, is above every cap and unaffected.)
+  `output_cap_for` now clamps to the published ceiling of named families
+  (`gpt-4o`, `gpt-4.1`, `gemini-1.5`, `gemini-2.0`),
   in the OpenAI and generateContent adapters only, and logs
   `llm_output_cap_clamped` when it does. This also stops `mitre_map` and
   `risk_synthesize` sending a 400-inducing cap to those models, which had been
@@ -53,8 +56,13 @@ was not an answer to that:
   which says "you can retry". It is our 60 s client limit, and a job too large
   for it fails again on every retry and is billed again. It now has its own copy.
 - **Values pinned.** The registry gate proves that an entry exists, not what it
-  holds; `extract.capabilities > 8117`, `csf_score > 8192` and `zt_score == 8192`
-  are now asserted against their evidence.
+  holds; `extract.capabilities > 8192` (the value that failed), `csf_score >=
+  106 * 100` and `zt_score == 8192` are now asserted against their evidence.
+
+Round 3 tightened the pins above (the first `extract` pin was `> 8117`, which
+the failing value 8192 satisfies), pinned the clamp's direction and every
+family row, dropped a timeout alternative that could never match, and
+rewrote two justifications that had gone stale.
 
 Every fix above was checked red-on-revert on its own.
 

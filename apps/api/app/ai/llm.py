@@ -252,8 +252,9 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # narrative since #64 removed three unconsumed ones. Its 2026-08-04 overrun
     # at 4096 was with those narratives, and the 2026-07-15 one at 8192 was
     # unbounded gemini thinking, now capped at _THINKING_BUDGET_TOKENS. So 8192
-    # is CHOSEN, not defaulted -- and raising it would buy nothing while
-    # breaking it on models whose output ceiling is 8192 or 16384 (#485).
+    # is CHOSEN, not defaulted: raising it buys nothing for an output this
+    # size. (It is not held down for provider ceilings -- `output_cap_for`
+    # handles those for the families it names.)
     "zt_score": _MAX_OUTPUT_TOKENS,
 }
 
@@ -273,13 +274,15 @@ def max_output_tokens_for(purpose: str | None) -> int:
     return _MAX_OUTPUT_TOKENS_BY_PURPOSE.get(purpose, _MAX_OUTPUT_TOKENS)
 
 
-# Output ceilings for the model families this repo's own documentation names
-# for the non-Anthropic adapters: README's example OpenAI model (gpt-4o-mini)
-# and SMOKE_TEST's live-smoke models (gpt-4o-mini, gemini-1.5-pro). The figures
-# are the providers' published maximum output tokens, NOT measured here. A
-# request above them is an HTTP 400, so without this clamp raising a purpose's
-# budget broke that purpose on these models even for a draft that fits -- a
-# working csf_score smoke (364 in / 307 out) would have gone to a 400.
+# Output ceilings for non-Anthropic model families whose published maximum
+# output is below the budgets in the table above. The figures are the
+# providers' published limits, NOT measured here. The families include the
+# example ids this repo's docs give (README's OpenAI example gpt-4o-mini;
+# SMOKE_TEST's setup examples gpt-4o-mini / gemini-1.5-pro). The one live-
+# validated generateContent model, gemini-2.5-flash, is above every cap and
+# is not clamped. A request above a model's ceiling is an HTTP 400 even for a
+# draft that would fit, which is what raising csf_score / extract.capabilities
+# would otherwise have done on these families where 8192 worked.
 #
 # Clamping cannot make a draft fit that does not: a clamped call that runs out
 # still stops on finishReason=MAX_TOKENS (generateContent) and fails loudly.
@@ -288,6 +291,7 @@ def max_output_tokens_for(purpose: str | None) -> int:
 # left alone rather than guessed at; #485 carries the general version.
 _OUTPUT_CEILING_BY_MODEL_FAMILY: tuple[tuple[str, int], ...] = (
     ("gpt-4o", 16384),
+    ("gpt-4.1", 32768),
     ("gemini-1.5", 8192),
     ("gemini-2.0", 8192),
 )

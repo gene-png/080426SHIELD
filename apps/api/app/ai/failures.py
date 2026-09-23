@@ -45,7 +45,9 @@ def friendly_reason(exc: BaseException) -> str:
     # too large to finish inside the limit on a non-streamed provider, every
     # retry times out the same way and is billed again -- so this copy says what
     # happened and does not promise a retry will help.
-    if re.search(r"ReadTimeout|TimeoutException", text):
+    # ReadTimeout only, deliberately: a ConnectTimeout is a case where a
+    # retry CAN help, and it keeps the generic copy below.
+    if re.search(r"ReadTimeout", text):
         return (
             "The AI provider did not finish within SHIELD's time limit for a single "
             "call, so nothing was applied. A job this large can hit that limit on "
