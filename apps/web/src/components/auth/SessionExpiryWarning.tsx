@@ -21,7 +21,8 @@ import * as React from "react";
  *
  * `sessionExpiresAt` is the refresh token's expiry: the moment past which no
  * rotation can save the session. The access token's own expiry is deliberately
- * NOT used — it is renewed silently every hour and means nothing to a user.
+ * NOT used — it is renewed silently (every 15 minutes under the compose default)
+ * and means nothing to a user.
  */
 
 /** Warning thresholds, longest first. Rendered as "5 minutes" / "1 minute". */
@@ -35,11 +36,62 @@ function minutesLabel(msRemaining: number): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+/** How often to re-read the stored expiry from `/api/session-expiry`. */
+const STORED_EXPIRY_POLL_MS = 60_000;
+
+/**
+ * The expiry stored in the session cookie, read without running any auth
+ * callback (#498). The `useSession` cache refetches only on focus, and since
+ * #487 persists rotations into the cookie, the refresh expiry rolls forward
+ * there while the cache keeps the value from sign-in. Reading
+ * `/api/auth/session` instead would refresh and extend the session, so a
+ * polling tab would never idle out; `/api/session-expiry` only decodes.
+ *
+ * Returns null until the first read lands, or if it fails -- the caller then
+ * falls back to the cached value, which is the behaviour before this existed.
+ */
+function useStoredExpiry(enabled: boolean): string | null {
+  const [stored, setStored] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const read = async () => {
+      try {
+        const res = await fetch("/api/session-expiry", { cache: "no-store" });
+        if (!res.ok) {
+          // The status is logged as a separate value, never built into a
+          // sentence (see client-surfaces-never-render-an-internal-string).
+          console.warn(
+            "[auth.session-expiry] read failed; status:",
+            res.status,
+          );
+          return;
+        }
+        const body = (await res.json()) as { sessionExpiresAt?: string | null };
+        if (!cancelled) setStored(body.sessionExpiresAt ?? null);
+      } catch (err) {
+        // Stated, not swallowed: the warning falls back to the cached expiry.
+        console.warn(
+          "[auth.session-expiry] could not read the stored expiry",
+          err,
+        );
+      }
+    };
+    void read();
+    const id = setInterval(() => void read(), STORED_EXPIRY_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [enabled]);
+  return stored;
+}
+
 export function SessionExpiryWarning(): React.JSX.Element | null {
   const { data: session } = useSession();
-  const expiresAt = session?.sessionExpiresAt
-    ? Date.parse(session.sessionExpiresAt)
-    : null;
+  const stored = useStoredExpiry(Boolean(session?.sessionExpiresAt));
+  const source = stored ?? session?.sessionExpiresAt;
+  const expiresAt = source ? Date.parse(source) : null;
 
   const [now, setNow] = React.useState(() => Date.now());
   // The largest threshold the user has already dismissed. Starts at Infinity so

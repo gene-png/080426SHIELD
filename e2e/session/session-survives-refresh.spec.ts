@@ -17,9 +17,12 @@
  * rather than trusting the flag: under the default 900 s it would pass without
  * testing anything.
  *
- * Measured locally 2026-09-23 with a 60 s TTL: with the middleware, 12 of 12
- * proxy calls over 4.2 minutes returned 200; without it, 401 from 1.7 minutes
- * and the session ended `reauth_required`.
+ * Measured locally 2026-09-23 with a 60 s TTL, using a temporary harness that
+ * made 12 calls (this spec derives its own count from the TTL, 11 at 60 s):
+ * with the middleware, 12 of 12 proxy calls over 4.2 minutes returned 200;
+ * without it, 401 from 1.7 minutes and the session ended `reauth_required`.
+ * This spec itself then passed with the fix and went red (200 then 401)
+ * against a container that had not loaded it.
  */
 import { expect, test } from "@playwright/test";
 
@@ -82,9 +85,13 @@ test("proxy-only activity survives several access-token expiries", async ({
     `proxy statuses: ${statuses.join(",")}`,
   ).toBe(true);
 
+  // A session that is GONE returns `null` here, and `null?.error` is
+  // undefined -- so assert the user is present, not only that no error is.
   const session = await page.evaluate(async () => {
     const r = await fetch("/api/auth/session", { cache: "no-store" });
-    return (await r.json())?.error ?? null;
+    const j = await r.json();
+    return { user: Boolean(j?.user), error: j?.error ?? null };
   });
-  expect(session, "the session ended with an error").toBeNull();
+  expect(session.user, "the session has no user -- it ended").toBe(true);
+  expect(session.error, "the session ended with an error").toBeNull();
 });

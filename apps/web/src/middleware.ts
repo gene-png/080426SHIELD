@@ -1,7 +1,17 @@
+import type { NextFetchEvent, NextRequest } from "next/server";
+
 import { auth } from "@/lib/auth/options";
+import {
+  readSessionToken,
+  sessionChanged,
+  sessionCookieName,
+  stripSessionCookies,
+  type SessionAfter,
+} from "@/lib/auth/session-cookie";
 
 /**
- * Persist a token refresh before any page or proxy route reads the session.
+ * Persist a token refresh -- and ONLY a token refresh -- before any page or
+ * proxy route reads the session.
  *
  * #487. The `jwt` callback in `lib/auth/options.ts` rotates the refresh token
  * whenever the access token is within `REFRESH_SKEW_MS` of expiry. A
@@ -14,25 +24,58 @@ import { auth } from "@/lib/auth/options";
  * making only proxy calls on one page lost the session at 15.8 minutes, with
  * the compose default `JWT_ACCESS_TTL_SECONDS=900`.
  *
- * The middleware-wrapper form of `auth` is the one that KEEPS those headers
- * (`handleAuth` appends the session response's cookies to the response it
- * returns). Running it here means the rotation reaches the browser before the
- * route handler runs. The handler's own `auth()` then reads the request's
- * pre-rotation cookie and refreshes again with the just-rotated token, which
- * the backend's grace window serves with the current identity (`keep_jti`), so
- * the handler still gets a working access token and the browser keeps the
- * persisted one.
+ * The middleware-wrapper form of `auth` KEEPS those headers (`handleAuth`
+ * appends the session response's cookies to the response it returns), so a
+ * rotation is persisted on THIS request's response. It reaches the browser when
+ * that response does, not before the handler runs. The handler's own `auth()`
+ * reads the request's pre-rotation cookie and refreshes again with the
+ * just-rotated token, which the backend's grace window serves with the current
+ * identity (`keep_jti`).
+ *
+ * ROTATION-ONLY. next-auth re-issues the session cookie on every call, so the
+ * first version of this file wrote it on EVERY matched response -- and a
+ * response already in flight when the user signed out in another tab put a live
+ * session back. `POST /auth/logout` revokes nothing (#392), so that was a
+ * sign-out that did not sign you out. The cookie is now written only when
+ * `sessionChanged`: a new access token, or a new error the browser must learn.
+ * A rotation that coincides with a sign-out can still race; that window is one
+ * rotation per access-token lifetime, not every request.
+ *
+ * RESIDUAL: the grace window is 60 s (`jwt_refresh_grace_seconds`). If the
+ * rotating request runs longer than that -- a live Run-AI can -- another
+ * request sent meanwhile still carries the old refresh token, and after 60 s it
+ * is rejected as reused.
  *
  * No `authorized` callback is configured, so this never redirects; access
  * control stays where it was, in the pages and proxies.
  */
-export default auth(() => undefined);
+export default async function middleware(
+  req: NextRequest,
+  event: NextFetchEvent,
+) {
+  const before = await readSessionToken(req);
+  let after: SessionAfter | null = null;
+  const run = auth((authed) => {
+    after = authed.auth
+      ? { accessToken: authed.auth.accessToken, error: authed.auth.error }
+      : null;
+    return undefined;
+  });
+  const response = (await run(req, event as never)) as Response;
+  if (!sessionChanged(before, after)) {
+    stripSessionCookies(response.headers, sessionCookieName(req));
+  }
+  return response;
+}
 
 export const config = {
   // `lib/auth/options.ts` is Node code (the OIDC exchange, `apiFetch`); the
   // Node middleware runtime is stable in Next 15.5.
   runtime: "nodejs",
-  // Everything except next-auth's own routes, which already persist cookies,
-  // and static assets, which carry no session.
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // Everything except next-auth's own routes, which already persist cookies;
+  // `/api/session-expiry`, whose polling must never count as activity (it
+  // would refresh, and an idle tab would never time out); and static assets.
+  matcher: [
+    "/((?!api/auth|api/session-expiry|_next/static|_next/image|favicon.ico).*)",
+  ],
 };
