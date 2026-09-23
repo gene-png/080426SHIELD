@@ -120,8 +120,9 @@ MANIFEST_GLOBS = (
     "**/poetry.lock",
     "**/uv.lock",
     # npm / pnpm
-    "**/package.json",
-    "package.json",
+    # `package.json` is NOT here. It moved to `PACKAGE_JSON_GLOBS`, which is
+    # content-judged, because its `scripts` block is executed by `ci.yml`.
+    # Leaving it path-approved is the hole measured on 2026-09-22.
     "**/package-lock.json",
     "package-lock.json",
     "**/pnpm-lock.yaml",
@@ -144,8 +145,18 @@ MANIFEST_GLOBS = (
 #: REMOVING THE GLOB WAS THE WRONG FIX because it re-breaks #465. So `.github/`
 #: is judged by CONTENT: every added or removed line in such a file must be a
 #: `uses: <owner>/<repo>@<ref>` bump. Anything else from a bot author is a
-#: violation. Measured on #465 -- every changed line across three workflow files
-#: is a `uses:` bump, so the real traffic passes and the dangerous edit does not.
+#: violation.
+#:
+#: THE SENTENCE THAT STOOD HERE OVER-CLAIMED: "Measured on #465 ... so the real
+#: traffic passes and the dangerous edit does not." The #465 measurement
+#: establishes the first half only. The dangerous edit was NOT measured, and
+#: three of them passed -- an owner swap, a lone added `uses:` step, and a
+#: `package.json` script injection, all exit 0 until 2026-09-23.
+#:
+#: What is measured now, both directions, with the attacks named: see the
+#: six-probe table in `.github/workflows/audit-gate.yml` beside this step, and
+#: `tests/unit/test_bot_pr_manifest_guard.py`, where each attack has a test that
+#: asserts exit 1 rather than a prose claim that it would.
 GITHUB_GLOBS = (
     ".github/workflows/*.yml",
     ".github/workflows/*.yaml",
@@ -155,16 +166,108 @@ GITHUB_GLOBS = (
 #: A `uses:` line, with or without the leading list dash. Anchored on the owner
 #: and repo so a bare `uses: ./local-action` does not qualify: a local action is
 #: in-repo code, and pointing a workflow at a different one is not a version bump.
-_USES_BUMP = re.compile(r"^[-+]\s*(?:-\s*)?uses:\s*[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@\S+\s*$")
+_USES_LINE = re.compile(
+    r"^(?P<sign>[-+])\s*(?:-\s*)?uses:\s*"
+    r"(?P<action>[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)"
+    r"@(?P<ref>[^\s#]+)"
+    # A trailing YAML comment is permitted because Dependabot writes
+    # `uses: owner/repo@<sha> # v4.1.1` whenever a workflow pins by SHA. The
+    # comment is inert to the runner. This repo pins by tag today, so the branch
+    # is unexercised here and is allowed rather than left to fail closed on the
+    # first repo that pins by digest.
+    r"(?:\s+#.*)?\s*$"
+)
+
+#: Kept as the SYMPTOM a reader arrives with, and it is the defect, not a helper.
+#:
+#: `^[-+]\s*(?:-\s*)?uses:\s*<owner>/<repo>@\S+\s*$`
+#:
+#: That is the pattern this guard shipped with, and **it never checked that
+#: anything was BUMPED.** It matched a line SHAPE, so both of these passed as
+#: "every changed line is a `uses:` bump", measured 2026-09-22 with exit 0:
+#:
+#:     -      - uses: gitleaks/gitleaks-action@v3
+#:     +      - uses: attacker/gitleaks-action@v3
+#:
+#:     +      - uses: attacker/action@v1        (a lone addition, no removal)
+#:
+#: The first swaps the OWNER of an action that runs in the job holding
+#: `pull-requests: write`; the second adds a whole step. Dependabot gets a
+#: read-only token while its PR is open, so the escalation is that the line
+#: MERGES, after which every human-triggered run executes it with the full token.
+#:
+#: **A bump is a PAIR**: the same `owner/repo` removed and added, with different
+#: refs. That is what `non_bump_lines` now requires, and it is a property of the
+#: whole hunk rather than of one line -- which is why no single-line regex could
+#: have expressed it.
+_BUMP_IS_A_PAIR_NOT_A_LINE_SHAPE = None
 
 #: Unified-diff file headers. `b/` is the post-image path, which is what a
 #: changed-file list names.
 _DIFF_FILE = re.compile(r"^diff --git a/(?P<a>\S+) b/(?P<b>\S+)$")
 
 
+#: `package.json` files, which are CONTENT-JUDGED for the same reason `.github/`
+#: files are -- and the first version of this guard judged them by PATH under the
+#: claim that "a dependency manifest has no authority over anything except which
+#: versions install, so matching the path is enough."
+#:
+#: **That claim is false against `ci.yml`**, which runs `pnpm format:check`,
+#: `pnpm -F web lint`, `typecheck`, `test` and `build` -- every one of them a
+#: SCRIPT defined in a `package.json`. Measured 2026-09-22: a changed-file list of
+#: `apps/web/package.json` + `pnpm-lock.yaml` under the bot author returned exit 0
+#: with "clean -- 2 manifest/lockfile path(s)", so one commit on a Dependabot
+#: branch turning `"build": "next build"` into `"next build && <anything>"` merges
+#: with the audit check green.
+#:
+#: `dependabot.yml`'s npm entry is `directory: "/"`, so these are routine traffic
+#: and cannot simply be removed from the allow-list.
+PACKAGE_JSON_GLOBS = ("**/package.json", "package.json")
+
+#: A JSON string VALUE that is a dependency specifier rather than a command.
+#:
+#: AN ALLOW-LIST ON THE VALUE, not a denylist on dangerous characters. A denylist
+#: is certified for the inputs its author imagined; this admits the shape
+#: Dependabot actually writes and refuses everything else, so an unanticipated
+#: value fails CLOSED to a human review rather than open.
+#:
+#: Covered: `1.2.3`, `^1.2.3`, `~1.2`, `>=1.2.3`, `v1.2.3`, `1.2.3-rc.1`,
+#: `1.2.x`, `*`, `latest`, and the `workspace:` / `catalog:` / `npm:` protocols
+#: pnpm uses. NOT covered, deliberately: anything with whitespace (`>=1 <2` is a
+#: legal range and also the shape a command takes), so a compound range comes
+#: back to a human. That is a known false positive and it is the safe direction.
+_SPECIFIER = re.compile(
+    r"^(?:"
+    r"[\^~]?(?:>=?|<=?|=)?v?\d[\w.\-+]*"
+    r"|\*|latest"
+    r"|workspace:[^\s\"]*"
+    r"|catalog:[^\s\"]*"
+    r"|npm:[^\s\"]*"
+    r")$"
+)
+
+#: A changed line in a `package.json`: `"key": "value"`, with an optional comma.
+_JSON_PAIR = re.compile(r'^[-+]\s*"(?P<key>[^"]+)"\s*:\s*"(?P<value>[^"]*)"\s*,?\s*$')
+
+
+def non_specifier_lines(lines: list[str]) -> list[str]:
+    """Changed `package.json` lines whose value is not a dependency specifier.
+
+    A structural line (`{`, `}`, `"dependencies": {`) has no string value and is
+    REPORTED rather than ignored: Dependabot does not restructure a manifest, so
+    a changed structural line means something else edited the file.
+    """
+    bad: list[str] = []
+    for ln in lines:
+        m = _JSON_PAIR.match(ln)
+        if m is None or not _SPECIFIER.match(m.group("value")):
+            bad.append(ln)
+    return bad
+
+
 def offending_paths(changed: list[str]) -> list[str]:
     """Paths a version bump has no business touching at all."""
-    allowed = MANIFEST_GLOBS + GITHUB_GLOBS
+    allowed = MANIFEST_GLOBS + GITHUB_GLOBS + PACKAGE_JSON_GLOBS
     return sorted(p for p in changed if not any(fnmatch(p, g) for g in allowed))
 
 
@@ -193,8 +296,46 @@ def changed_lines_by_file(diff: str) -> dict[str, list[str]]:
 
 
 def non_bump_lines(path: str, lines: list[str]) -> list[str]:
-    """Changed lines in a `.github/` file that are not `uses:` ref bumps."""
-    return [ln for ln in lines if not _USES_BUMP.match(ln)]
+    """Changed lines in a `.github/` file that are not part of a `uses:` ref bump.
+
+    A REF BUMP IS A PAIR, not a line shape: the same `owner/repo` must appear
+    both removed and added, with a different ref on each side. Anything else is
+    reported -- an owner swap, a lone added step, a removal with no replacement,
+    or a `uses:` line whose ref did not change.
+
+    `path` is unused and kept in the signature deliberately: every caller has it,
+    and a future rule that treats `.github/actions/**` differently from
+    `.github/workflows/*.yml` should not have to change the call sites.
+    """
+    del path  # see the docstring
+    parsed: list[tuple[str, str, str, str]] = []  # (sign, action, ref, raw)
+    unparsed: list[str] = []
+    for ln in lines:
+        m = _USES_LINE.match(ln)
+        if m is None:
+            unparsed.append(ln)
+        else:
+            parsed.append((m.group("sign"), m.group("action"), m.group("ref"), ln))
+
+    refs: dict[tuple[str, str], set[str]] = {}
+    for sign, action, ref, _raw in parsed:
+        refs.setdefault((sign, action), set()).add(ref)
+
+    bad = list(unparsed)
+    for sign, action, ref, raw in parsed:
+        other = "+" if sign == "-" else "-"
+        counterpart = refs.get((other, action))
+        if not counterpart:
+            # The action appears on one side only. An owner swap lands here
+            # TWICE, once for each side, which is what makes the message name
+            # both halves of the swap.
+            bad.append(raw)
+        elif counterpart == {ref}:
+            # Present on both sides with the same ref and nothing else: the line
+            # moved, or its indentation changed, but no version changed. Not a
+            # bump, so it is not covered by the exemption.
+            bad.append(raw)
+    return bad
 
 
 def main(argv: list[str]) -> int:
@@ -298,19 +439,27 @@ def main(argv: list[str]) -> int:
         )
         return EXIT_VIOLATION
 
-    # `.github/` FILES ARE JUDGED BY CONTENT, not by their path. See GITHUB_GLOBS:
-    # a path match cannot tell a `uses:` ref bump from a rewrite of the audit
-    # gate this exemption lives in.
+    # TWO CONTENT-JUDGED CLASSES, and they share one `--diff` read.
+    #
+    # `.github/` files: a path match cannot tell a `uses:` ref bump from a rewrite
+    # of the audit gate this exemption lives in.
+    #
+    # `package.json` files: a path match cannot tell a dependency version from a
+    # `scripts` entry, and `ci.yml` executes the scripts.
     github_paths = [p for p in changed if any(fnmatch(p, g) for g in GITHUB_GLOBS)]
-    if github_paths:
+    pkg_paths = [p for p in changed if any(fnmatch(p, g) for g in PACKAGE_JSON_GLOBS)]
+    content_paths = github_paths + pkg_paths
+    if content_paths:
         if diff_path is None:
             print(
-                f"check-bot-pr-manifest-only: this PR touches {len(github_paths)} "
-                f"file(s) under `.github/` and no --diff was given.\n"
+                f"check-bot-pr-manifest-only: this PR touches {len(content_paths)} "
+                f"content-judged file(s) "
+                f"({len(github_paths)} under `.github/`, {len(pkg_paths)} "
+                f"`package.json`) and no --diff was given.\n"
                 "  Exit 2, not a pass. Those files are permitted only when every\n"
-                "  changed line is a `uses:` ref bump, and that cannot be decided\n"
-                "  from a file list. Reading the path match alone as approval is\n"
-                "  the hole this check was extended to close.",
+                "  changed line is a `uses:` ref bump, or a dependency specifier,\n"
+                "  and neither can be decided from a file list. Reading the path\n"
+                "  match alone as approval is the hole this check exists to close.",
                 file=sys.stderr,
             )
             return EXIT_COULD_NOT_LOOK
@@ -326,7 +475,7 @@ def main(argv: list[str]) -> int:
 
         per_file = changed_lines_by_file(diff_text)
         violations: list[tuple[str, list[str]]] = []
-        for path in github_paths:
+        for path in content_paths:
             if path not in per_file:
                 print(
                     f"check-bot-pr-manifest-only: {path} is in the changed-file "
@@ -337,14 +486,48 @@ def main(argv: list[str]) -> int:
                     file=sys.stderr,
                 )
                 return EXIT_COULD_NOT_LOOK
-            extra = non_bump_lines(path, per_file[path])
+            # A ZERO-LINE DIFF IS A COULD-NOT-LOOK, NOT A PASS. A rename, a
+            # mode change, a binary file or a new empty file produces a `diff
+            # --git` header and no `+`/`-` content lines, so every content rule
+            # below is vacuously satisfied and the run prints "every changed line
+            # is a `uses:` bump" having examined ZERO lines. That is
+            # `CLAUDE.md`'s "A SELECTOR THAT SELECTS NOTHING PASSES", and the
+            # remedy there is to make the count part of the result.
+            if not per_file[path]:
+                print(
+                    f"check-bot-pr-manifest-only: {path} appears in the diff with "
+                    f"NO changed content lines.\n"
+                    "  Exit 2. A rename, a mode change, a binary file or an empty\n"
+                    "  new file reaches this branch, and a content rule over zero\n"
+                    "  lines is satisfied without looking at anything. Renaming a\n"
+                    "  workflow changes which workflows exist, so this is not a\n"
+                    "  thing to wave through.",
+                    file=sys.stderr,
+                )
+                return EXIT_COULD_NOT_LOOK
+            if path in pkg_paths:
+                extra = non_specifier_lines(per_file[path])
+            else:
+                extra = non_bump_lines(path, per_file[path])
             if extra:
                 violations.append((path, extra))
 
         if violations:
+            # PER CLASS, because one line covering two causes tells a reader that
+            # a `package.json` script change is `.github/` content and sends them
+            # to read the wrong file. `CLAUDE.md`: a guard's message must name the
+            # CAUSE, not the check, and this is the only time it is read.
+            bad_wf = [v for v in violations if v[0] in github_paths]
+            bad_pkg = [v for v in violations if v[0] in pkg_paths]
+            what = []
+            if bad_wf:
+                what.append("`.github/` content that is not a `uses:` ref bump PAIR")
+            if bad_pkg:
+                what.append("a `package.json` line that is not a dependency specifier")
             print(
                 "check-bot-pr-manifest-only: FAILED -- this bot PR changes "
-                "`.github/` content that is not a `uses:` ref bump:",
+                + " and ".join(what)
+                + ":",
                 file=sys.stderr,
             )
             for path, lines in violations:
@@ -353,21 +536,46 @@ def main(argv: list[str]) -> int:
                     print(f"        {line}", file=sys.stderr)
                 if len(lines) > 6:
                     print(f"        ... and {len(lines) - 6} more", file=sys.stderr)
-            print(
-                "\n  A workflow file is permitted on an audit-exempt PR ONLY for a\n"
-                "  version bump of an action, because that is what the\n"
-                "  github-actions updater does. Anything else there is a change to\n"
-                "  the machinery that enforces every other gate -- including the\n"
-                "  audit step this PR is exempt from -- and it must be reviewed\n"
-                "  under a human author with an audit recorded.",
-                file=sys.stderr,
-            )
+            if bad_wf:
+                print(
+                    "\n  A workflow file is permitted on an audit-exempt PR ONLY for a\n"
+                    "  ref bump of an action -- the SAME `owner/repo` removed and\n"
+                    "  added with a different ref, which is what the github-actions\n"
+                    "  updater does. An owner swap and a lone added step both match\n"
+                    "  the line SHAPE and are not bumps; that was the hole. Anything\n"
+                    "  else here is a change to the machinery enforcing every other\n"
+                    "  gate -- including the audit step this PR is exempt from.",
+                    file=sys.stderr,
+                )
+            if bad_pkg:
+                print(
+                    "\n  A `package.json` is permitted on an audit-exempt PR ONLY for a\n"
+                    "  dependency VERSION change. Its `scripts` block is executed by\n"
+                    "  `ci.yml` (`pnpm format:check`, `pnpm -F web lint`, `typecheck`,\n"
+                    "  `test`, `build`), so a script edit runs arbitrary code in CI --\n"
+                    "  which a path match cannot distinguish from a version bump.\n"
+                    "  A compound range with a space (`>=1 <2`) also lands here: that\n"
+                    "  is a known false positive and the safe direction.",
+                    file=sys.stderr,
+                )
             return EXIT_VIOLATION
 
-    manifests = len(changed) - len(github_paths)
-    detail = f"{manifests} manifest/lockfile path(s)"
+    # THE MESSAGE STATES ITS BOUND PER CLASS, because "N manifest/lockfile
+    # path(s)" over a set that silently included `package.json` is what made the
+    # path-approval hole readable as a clean result.
+    manifests = len(changed) - len(content_paths)
+    parts = [f"{manifests} path-approved manifest/lockfile path(s)"]
     if github_paths:
-        detail += f" and {len(github_paths)} `.github/` file(s) whose every changed line is a `uses:` bump"
+        parts.append(
+            f"{len(github_paths)} `.github/` file(s) whose every changed line is "
+            f"one half of a `uses:` ref bump PAIR"
+        )
+    if pkg_paths:
+        parts.append(
+            f"{len(pkg_paths)} `package.json` file(s) whose every changed line "
+            f"sets a dependency specifier rather than a script"
+        )
+    detail = ", ".join(parts)
     print(
         f"check-bot-pr-manifest-only: clean -- {detail}, so the audit exemption "
         f"still describes what this PR does."

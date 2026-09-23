@@ -106,17 +106,25 @@ BOT = "dependabot[bot]"
 EXPECTED_CONDITION = f"if: github.event.pull_request.user.login != '{BOT}'"
 
 
-def _step_block() -> str:
+def _step_block(step: str = STEP) -> str:
     """The step's own YAML, from its `- name:` to the next `- name:` or job.
 
     Sliced rather than parsed with a YAML loader on purpose: a loader drops the
     comments, and the REASON for this exemption is in the comments. A test that
     could not see them would pass over the exemption being silently rewritten
     into something unexplained.
+
+    Takes the step NAME since #469 round 2. It was hardcoded to the audit step,
+    and the consequence was exactly what CLAUDE.md's known-good-shape rule
+    predicts: the CONTENT GUARD step three lines below was pinned by two
+    substring assertions instead -- `!= 'dependabot[bot]'` present and
+    `== 'dependabot[bot]'` present -- which is the precise form review had
+    rejected one round earlier for THIS step. The machinery existed; only the
+    parameter was missing, so the weaker form looked like the available option.
     """
     src = WORKFLOW.read_text(encoding="utf-8")
-    assert src.count(f"- name: {STEP}") == 1, f"expected exactly one {STEP!r} step"
-    start = src.index(f"- name: {STEP}")
+    assert src.count(f"- name: {step}") == 1, f"expected exactly one {step!r} step"
+    start = src.index(f"- name: {step}")
     tail = src[start + 1 :]
     m = re.search(r"\n  [a-z-]+:\n|\n      - name: ", tail)
     return tail[: m.start()] if m else tail
@@ -283,4 +291,78 @@ def test_the_script_itself_is_still_author_BLIND() -> None:
             f"{token!r} appears in check_audit_evidence.py. The author check "
             f"belongs in the workflow, which is the only place the author is "
             f"known; the script judges TEXT."
+        )
+
+
+# ---------------------------------------------------------------------------
+# THE CONTENT GUARD STEP, pinned the same way the audit step is.
+#
+# #469 round 2. The guard is what makes the author-keyed exemption safe, and it
+# had NO behavioural pin: `test_bot_pr_manifest_guard.py`'s only workflow
+# assertion was the substring pair `!= '<bot>'` / `== '<bot>'`, which
+# `if: ${{ !(github.event.pull_request.user.login == 'dependabot[bot]') }}`
+# satisfies while running the guard for HUMANS only -- where it exits 0 as "not
+# applicable" -- leaving the exemption completely unbounded. `continue-on-error:
+# true` and a trailing `|| true` do the same with the condition untouched.
+# ---------------------------------------------------------------------------
+
+GUARD_STEP = "An audit-exempt bot PR must be manifest-only"
+GUARD_EXPECTED_CONDITION = f"if: github.event.pull_request.user.login == '{BOT}'"
+
+
+@pytest.mark.unit
+def test_the_guard_step_exists_and_runs_for_the_EXEMPTED_author() -> None:
+    """The step must exist and must be the one that runs for the bot.
+
+    Its condition is the MIRROR of the audit step's: the audit step runs for
+    everyone EXCEPT the bot, and this runs for the bot ONLY. Two steps, one
+    author, and between them every PR is covered by exactly one.
+    """
+    block = _step_block(GUARD_STEP)
+    condition = next((ln.strip() for ln in block.splitlines() if ln.strip().startswith("if:")), "")
+    assert condition == GUARD_EXPECTED_CONDITION, (
+        f"the guard step's condition is not the expected string.\n"
+        f"  expected: {GUARD_EXPECTED_CONDITION!r}\n"
+        f"  actual:   {condition!r}\n"
+        f"EQUALITY, for the reason the audit step's own test gives: direction is a "
+        f"property of the WHOLE expression, and a substring pair is satisfied by a "
+        f"negation that inverts the meaning. Here the inversion runs the guard for "
+        f"humans only -- where it exits 0 as 'not applicable' -- so the bot "
+        f"exemption becomes unbounded with the required check still green."
+    )
+
+
+@pytest.mark.unit
+def test_the_guard_step_cannot_be_disabled_WITHOUT_touching_the_condition() -> None:
+    """`continue-on-error` and `|| true` defeat it without editing the `if:`.
+
+    Checked separately from the condition because they are a different escape:
+    the condition test above passes unchanged while the step's non-zero exit stops
+    failing the job. A guard whose failure is swallowed is not a guard.
+    """
+    block = _step_block(GUARD_STEP)
+    assert "continue-on-error" not in block, (
+        "the guard step carries `continue-on-error`, so its refusal no longer "
+        "fails the job and the author-keyed exemption is unbounded again"
+    )
+    assert (
+        "|| true" not in block
+    ), "the guard step's command swallows its own exit code with `|| true`"
+
+
+@pytest.mark.unit
+def test_the_guard_step_actually_invokes_the_guard() -> None:
+    """And passes it BOTH inputs, since the script refuses to answer with one.
+
+    The script exits 2 when a content-judged path appears with no `--diff`. That
+    is the branch that reinstates the hole the moment the workflow forgets the
+    argument, so the workflow's side of it is asserted here rather than trusted.
+    """
+    block = _step_block(GUARD_STEP)
+    assert "check_bot_pr_is_manifest_only.py" in block, "the guard step does not invoke the guard"
+    for arg in ("--author", "--changed-files", "--diff"):
+        assert arg in block, (
+            f"the guard step does not pass {arg}. Without `--diff` the script "
+            f"exits 2 on every PR touching a workflow or a package.json, which is "
+            f"correct of the script and a broken gate."
         )

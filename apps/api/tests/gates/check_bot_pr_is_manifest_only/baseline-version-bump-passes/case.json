@@ -1,5 +1,5 @@
 {
- "incident": "The control. Manifests and lockfiles only, which is what a version bump is -- validated against all four open bot PRs (#465-#468) on 2026-09-22, every one manifests only. A guard that fails a real bump gets disabled, and then the author-versus-content hole is back with a suite that says otherwise. Its needle read 'manifests or lockfiles' and went stale when the success message was reworded for the two-allow-list split -- caught by the fixtures harness, which is the whole point of pinning the message rather than the code.",
+ "incident": "The control. A real bot version bump must pass, or the guard gets disabled and the author-versus-content hole is back with a suite that says otherwise. Validated against all four open bot PRs (#465-#468) on 2026-09-22. TWO CORRECTIONS SINCE, both caught by this harness rather than by review: its needle read 'manifests or lockfiles' and went stale when the success message was reworded; and it carried NO --diff, which only passed while `package.json` was approved by PATH. That path approval was the hole -- `ci.yml` executes `format:check`, `lint`, `typecheck`, `test` and `build`, every one a `package.json` script -- so the fixture now supplies the diff a real npm PR carries, and the case tests the passing direction of a content rule instead of the absence of one.",
  "expect": 0,
  "adversarial": false,
  "stdout_contains": "manifest/lockfile path(s)",
@@ -7,6 +7,8 @@
   "--author",
   "dependabot[bot]",
   "--changed-files",
-  "{dir}/changed.txt"
+  "{dir}/changed.txt",
+  "--diff",
+  "{dir}/diff.txt"
  ]
 }

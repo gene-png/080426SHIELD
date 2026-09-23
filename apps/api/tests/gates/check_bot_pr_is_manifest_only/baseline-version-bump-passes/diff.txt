@@ -1,0 +1,6 @@
+diff --git a/apps/web/package.json b/apps/web/package.json
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -1,1 +1,1 @@
+-    "next": "^15.5.23",
++    "next": "^15.5.24",

@@ -171,8 +171,33 @@ jobs:
       # validated only against benign traffic is certified for coverage, never
       # for restriction. So:
       #
-      #   all four real PRs, real diffs                       -> exit 0
-      #   #465's real diff + one planted `continue-on-error`   -> exit 1
+      # THE EVIDENCE BELOW REPLACES A SINGLE NEGATIVE CASE THAT DID NOT REACH
+      # THE CLAIM. It read "#465's real diff + one planted `continue-on-error`
+      # -> exit 1", and adversarial review convicted it on this paragraph's own
+      # standard: a planted `continue-on-error` is not a `uses:` line at all, so
+      # it sits entirely OUTSIDE the admitted language. It establishes that the
+      # guard refuses obviously foreign content; it never tests whether the
+      # admitted language is narrow. Three real holes lived inside it, all
+      # measured at exit 0 before the fix.
+      #
+      # Six probes, measured 2026-09-23, three of them attacks the old guard
+      # PASSED:
+      #
+      #   all four real bot PRs, real diffs                    -> exit 0
+      #   a real `uses:` bump PAIR (-@v4 / +@v7)               -> exit 0
+      #   a real dependency bump in a package.json             -> exit 0
+      #   OWNER SWAP  -gitleaks/... / +attacker/...            -> exit 1  (was 0)
+      #   LONE ADDED  +uses: attacker/action@v1, no removal    -> exit 1  (was 0)
+      #   package.json "build": "next build && curl ... | sh"  -> exit 1  (was 0)
+      #   a content-judged path with no --diff                 -> exit 2
+      #   a `.github/` diff with ZERO changed content lines    -> exit 2
+      #
+      # The three that were 0: `_USES_BUMP` matched a line SHAPE and never
+      # checked that anything was BUMPED -- a bump is a PAIR, same owner/repo
+      # with different refs, which no single-line regex can express -- and
+      # `package.json` was judged by PATH under a claim `ci.yml` falsifies,
+      # since it runs `format:check`, `lint`, `typecheck`, `test` and `build`,
+      # every one a script defined in a `package.json`.
       #
       # What the four actually touch, by file rather than by category, because
       # "manifests only" was true and misleading at once:

@@ -1,0 +1,14 @@
+{
+ "incident": "A content rule over zero lines is satisfied without looking at anything -- CLAUDE.md's 'a selector that selects nothing passes'. Exit 2 rather than 1 because the honest report is 'I examined no lines', not 'I found a violation'. Renaming a workflow changes which workflows exist.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "NO changed content lines",
+ "argv": [
+  "--author",
+  "dependabot[bot]",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--diff",
+  "{dir}/diff.txt"
+ ]
+}
