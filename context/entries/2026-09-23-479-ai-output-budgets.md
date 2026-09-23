@@ -45,8 +45,9 @@ every retry and is billed again.
 
 ## What the review rounds changed
 
-Five adversarial rounds ran before the PR opened. The findings that changed the
-code:
+Five adversarial rounds ran before the PR opened. Rounds 1–4 found the issues
+below; the fifth, at `2032e89`, found nothing blocking, and its advisories are
+#490. The findings that changed the code:
 
 - A comment claimed an unlisted purpose raises; it does not. Withdrawn.
 - A sizing test rested on an invented 100 tokens per row. Removed, and the range
