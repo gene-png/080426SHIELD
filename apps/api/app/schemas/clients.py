@@ -223,6 +223,21 @@ class CsfDashboardResponse(BaseModel):
     # "client" when the tier came from the intake choice, "default" when the
     # client never set one. Never silently conflated — see the docstring.
     target_tier_source: str
+    #: #209: the moment the engagement target behind every figure above was
+    #: FROZEN -- the finalize timestamp of the deliverable this dashboard
+    #: describes -- or null when nothing was frozen and the target was resolved
+    #: live on this request.
+    #:
+    #: NULL IS THE DISCLOSURE, not an absence. A non-null stamp says these numbers
+    #: agree with the released document by construction, because both were
+    #: computed against the same stored choice. A null says they may not: the
+    #: client's intake target can have moved since the report was rendered, and
+    #: #209 records what that looked like on a client's screen.
+    #:
+    #: It is NOT `Deliverable.frozen_target_source`. That column names how the
+    #: freeze was established and is internal provenance; this is a timestamp a
+    #: client-facing caption can be built from.
+    target_frozen_at: datetime | None
 
     total_gap_count: int
     largest_gap_function: str | None
@@ -284,6 +299,9 @@ class ZtDashboardResponse(BaseModel):
     # "client_unparseable". Never silently conflated — see the docstring.
     target_stage: int
     target_stage_source: str
+    #: The ZT twin of `CsfDashboardResponse.target_frozen_at`; see there for
+    #: why null is the disclosure rather than an absence.
+    target_frozen_at: datetime | None
 
     # How many capabilities the engagement stage above actually decided, i.e.
     # carried no usable per-capability override. ZT differs from CSF here: CSF
@@ -320,9 +338,21 @@ class ZtDashboardResponse(BaseModel):
     # NOT guaranteed equal to the released document's count, and an earlier
     # draft of this comment said "matching the deliverable's". Both are
     # computed by the same engine from the same approved answers, so they agree
-    # for a given target — but the deliverable is frozen at finalize while this
+    # for a given target — and since #209 they agree for a FROZEN deliverable by
+    # construction: this figure is computed against `frozen_target`, the same
+    # stored choice the document was rendered with.
+    #
+    # THE SENTENCE THAT STOOD HERE EXPIRED WITH #209 and is corrected rather
+    # than deleted. It read: "the deliverable is frozen at finalize while this
     # is resolved per request from `ServiceRequest.zt_target_stage`, which
-    # `submit_self_assessment` can still write afterwards. Tracked in #209.
+    # `submit_self_assessment` can still write afterwards. Tracked in #209."
+    # True when written, and it pointed a reader at #209 as OPEN work in the
+    # very class this PR closes.
+    #
+    # It remains true of a deliverable that predates migration 0051 or whose
+    # backfill was declined -- `frozen_target_source IS NULL`. Those still
+    # resolve live, and `target_frozen_at` on this same response is null
+    # exactly then, which is the disclosure.
     total_gap_count: int
 
     largest_gap_pillar: str | None
@@ -535,6 +565,18 @@ class ValueSummaryResponse(BaseModel):
     zt_services: int
     zt_targets_defaulted: int | None
     zt_targets_unusable: int | None
+    #: #209: how many summands were counted against a target read LIVE rather
+    #: than the one their released report was rendered against. Same shape and
+    #: same denominator (`zt_services`) as the two fields above, and a THIRD
+    #: fact rather than a flavour of either: a live-read target may be the
+    #: client's own current choice, so both of those stay 0 for it while the
+    #: figure still need not match the delivered document.
+    #:
+    #: Expected to be 0 on any database seeded after migration 0051, and
+    #: non-zero only for deliverables predating it or whose backfill was
+    #: declined. A field whose normal value is 0 still has to reach a screen --
+    #: `ValueLoopCard` renders it beside the other two.
+    zt_targets_computed_live: int | None
     attack_uncovered_count: int | None
     attack_uncovered_unresolved: bool
     csf_gap_count: int | None
@@ -542,6 +584,8 @@ class ValueSummaryResponse(BaseModel):
     csf_services: int
     csf_targets_defaulted: int | None
     csf_targets_unusable: int | None
+    #: The CSF twin of `zt_targets_computed_live` above.
+    csf_targets_computed_live: int | None
     has_any_data: bool
     has_unresolved: bool
 

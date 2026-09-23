@@ -5127,3 +5127,173 @@ A reader now has two places to look for narrative — `CONTEXT.md` for anything
 before this decision, `context/entries/` for anything after. That is a real
 cost and it is the price of the conflicts stopping. It shrinks as the old
 sections age out of relevance and it never grows.
+
+## D-083 — Freeze the engagement target's INPUT, and let a provenance column say a freeze happened
+
+**D-082 is deliberately skipped**, not missing: it belongs to open PR #461,
+which is routed to Gene and may land after this. A gap in an append-only log is
+recoverable by reading this sentence; a duplicate number produces the positional
+conflict D-078's gate exists to stop being misread as a collision.
+
+#209. Four surfaces resolved the client's engagement target LIVE on every
+request while the released document held the number it was rendered with. Change
+the intake target after release and the two disagree: the PDF says "37 gaps at
+target S4" and the dashboard beside it says something else, computed from the
+same approved answers. Both internally consistent, and one is a number the
+client never contracted for.
+
+### The four surfaces, and the three that are deliberately NOT surfaces
+
+`zt_dashboard`, `csf_dashboard`, `_zt_gap_total`, `_csf_gap_total` — two
+per-service dashboards and the two cross-service totals behind the home-page
+card. All four now read through one function, `_frozen_or_live_target`.
+
+Three more sites read the target live and stay that way. They are written into
+that function's docstring rather than left for the next sweeper, because **a site
+that SHOULD read live is indistinguishable from one that was missed**:
+
+| site                                    | why live is correct                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routes/{zt,csf}.py` at finalize        | the write side — this value is what gets frozen                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `routes/risk.py::_gather_findings`      | its only caller is `@router.post def generate`, so the live read happens at synthesis and is persisted with the register (0047). Freeze-at-write, reached by another route -- but **NOT the same shape as finalize**, and an earlier version of this row said it was. Finalize freezes the target the ARTIFACT used; generate freezes one read at a LATER moment, so a register and the deliverables it summarizes can state different baselines. Corrected, and filed as **#474**. |
+| `routes/zt.py:292`, `routes/csf.py:187` | admin assessment detail, describing the intake choice as it stands NOW to a consultant scoring a draft                                                                                                                                                                                                                                                                                                                                                                              |
+
+The risk.py row was settled by finding the callers, not by reasoning about them.
+#84 is on record as `risk.py` re-deriving exactly this kind of comparison inline
+where a call-site sweep came back clean.
+
+### Decision 1: freeze the resolver's INPUT, never its output
+
+`Deliverable.frozen_target` holds the client's CHOSEN value — `csf_target_tier`
+or `zt_target_stage`, a `SmallInteger | None` — and each read path runs the same
+resolver over it that it runs today.
+
+Freezing the resolved pair (number + source) was the first design and is wrong:
+it makes the figure and the caption beside it two stored values that have to be
+kept in agreement with a pure function by hand. Freezing the input makes them one
+derivation that cannot disagree. This is the standing
+derivation-over-synchronization preference, and the cost of the alternative is
+concrete — `target_stage_source` drives client copy, so a frozen `4` captioned by
+a live `default` prints "Default target" over the stage they contracted for.
+
+### Decision 2: `frozen_target_source` is a DISCRIMINATOR, and its name is a trap
+
+It sits beside `target_stage_source` / `target_tier_source` in every response and
+is nothing like them. Those are the RESOLVER's verdict (`client`, `default`,
+`client_out_of_range`, `client_unparseable`). This records HOW THE FREEZE WAS
+ESTABLISHED: `finalize`, `audit`, `updated_at`, or NULL for never-frozen.
+
+It exists because **`frozen_target IS NULL` otherwise carries two facts.** A
+client who chose no target has a legitimately NULL choice, frozen exactly; a
+deliverable predating 0051 has no freeze at all. Same bytes, opposite meanings,
+and only the second may fall back to live computation.
+
+So every read path branches on `frozen_target_source IS NULL`, never on
+`frozen_target IS NULL`. That is not a stylistic preference. Writing
+`if deliv.frozen_target is not None` is the natural way to write this function,
+it passes every other test on the branch, and it silently restores the defect for
+every client who never set a target — which is most of them. It is mutant M2 in
+the harness below and it is killed by one named test.
+
+### Decision 3: stamp at FINALIZE, not release
+
+The artifacts are rendered at finalize — the renderers run there and
+`deliverable_release.py` rebuilds nothing — so a release-time stamp would record
+a target the artifacts never used, putting the provenance and the document it
+describes in disagreement. That is #209 reintroduced by #209's own fix. Each
+re-finalize mints a new row, so per-row stamping at finalize is what 0041 already
+does.
+
+Only CSF and ZT stamp. ATT&CK and Tech Debt have no engagement target of this
+shape, so the pair stays NULL on those rows forever — a THIRD reading of NULL,
+stated at the column because a reader generalising from `parent_version`'s four
+finalize routes would file the absence as a bug.
+
+### Decision 4: the backfill's two arms have different information, and one recovers what the other cannot
+
+Migration 0051. Arm 1 reads the finalize audit row, which records the RESOLVED
+pair, so it is read backwards: `source == "client"` means the stored choice was
+usable and equal to the recorded number; `"default"` means the resolver was
+handed NULL, so NULL is frozen exactly. Arm 2 is `updated_at <= finalized_at` on
+the source request — the row has not been written since the deliverable froze, so
+the stored target IS the frozen one. Anything else is left unfrozen.
+
+**A claim in this migration's own docstring was wrong and a test found it.** It
+said `client_out_of_range` ends unfrozen. Arm 1 declines it — the audit row holds
+only the resolved default, and freezing that would relabel the client's broken
+choice as "no choice made". But arm 2 reads the raw column and recovers the
+out-of-range value VERBATIM, which is correct and strictly better: the resolver
+is deterministic, so a stored `9` reproduces both the rendered default and the
+`client_out_of_range` source exactly as the report had them. The row ends
+unfrozen only when BOTH arms decline. The docstring is corrected in place.
+
+### What the verification was, because the tests are the whole argument
+
+Six mutants, each asserted to LAND before its result was read, each required to
+turn a SPECIFICALLY NAMED test red. **6 of 6 killed.** The first run reported
+four "did not land" — the harness decoded bytes instead of using `read_text`, so
+no multi-line pattern could match a CRLF file, and the two single-line mutants
+were the two that landed. The assert is the only reason that was not read as four
+surviving mutants.
+
+The backfill is tested against rows the PRODUCT built: drive the real finalize
+route, then `downgrade 0051 -> 0050` and `upgrade` again, so the columns are
+dropped and only the backfill can put the values back. The assertion is that it
+RECOVERS WHAT FINALIZE WROTE — two producers, different code, different inputs,
+so agreement is evidence rather than tautology. A separate test asserts the
+downgrade really drops the columns, because otherwise every assertion in that
+module would pass while testing nothing.
+
+### Four existing tests changed their SETUP, and the claims did not change
+
+`test_zt_dashboard.py` ×3 and `test_csf_dashboard.py` ×1 attached the client's
+intake target AFTER the deliverable was finalized and then asserted the dashboard
+reported it. That worked only because the dashboard read live, so **the old
+method was asserting the defect** — the CSF one explicitly asserted that changing
+the intake target after release moves the gap count from 0 to 106.
+
+The intake target is now attached BEFORE finalize, which is the order the product
+produces. The CSF test's before/after became two services, which removes a hidden
+dependency on mutation ordering. Each was then mutated against the thing it
+claims and required to go red, so the repair cannot have quietly turned a
+discriminating test into one that passes for free.
+
+`_release_latest`'s docstring in `test_zt_dashboard.py` said "the dashboard reads
+the client's chosen stage live at request time, not from the frozen deliverable".
+True when written, and this decision is what expires it. Corrected in place
+rather than deleted: a reader arriving there would have taken the live read as
+intended behaviour.
+
+### The disclosure, and the gate that could not see it
+
+`target_frozen_at` on both dashboard responses, and
+`<kind>_targets_computed_live` on the value summary. Null IS the disclosure on
+the first: a stamp means the figures agree with the released document by
+construction, and its absence means they may not. The tally is a THIRD fact
+rather than a flavour of `targets_defaulted` / `targets_unusable` — a live-read
+target may well be the client's own current choice, so both of those stay 0 while
+the figure still need not match the delivered document.
+
+`check_disclosure_consumers.py` reported **25 of 25, exit 0** over all FOUR
+`(model, field)` pairs -- `CsfDashboardResponse.target_frozen_at`,
+`ZtDashboardResponse.target_frozen_at` and
+`ValueSummaryResponse.{zt,csf}_targets_computed_live` -- because its predicate is
+prefix-anchored (#373) and they match none of the eight prefixes. (This paragraph
+said "three" while saying "four fields" two sentences later.) The same count as
+before the change is what gave it away.
+
+Adding `"frozen"` and `"computed_live"` to `DISCLOSURE_SUBSTRINGS` takes it to
+**29 of 29, still exit 0**, and it goes **exit 1** when the field is removed from
+`lib/dashboards/zt.ts`.
+
+**It does NOT go red when the RENDER is deleted, and this paragraph claimed it
+did.** Measured 2026-09-23: replacing `renderedAgainstNote(data.target_frozen_at)`
+with `""` and deleting the `.concat(...)` in `CsfDashboard.tsx` leaves the gate at
+29 of 29, exit 0. `readers_for` needs only the field name and the model's subject
+in one file's text, and the `interface ZtDashboardData` declaration satisfies
+both. The red I cited came from a different mutation than the one I named.
+
+The residual is general and worse than the miscitation: **every field this gate
+checks is pre-cleared by its own TypeScript type definition**, so a green is not
+evidence that anything renders -- it would have reported #322 clean. Stated in the
+gate's docstring and filed as **#473**.

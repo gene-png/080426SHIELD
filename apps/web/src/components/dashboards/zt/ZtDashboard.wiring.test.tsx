@@ -64,6 +64,10 @@ function dashboard(
     // for the legend tests below, which read the axis and not the note; the
     // disclosure tests read the note, so they need a reachable state.
     target_stage_source: source,
+    // #209: frozen, which is what every deliverable this product builds
+    // carries. Inert for the legend tests; the disclosure lives in
+    // `zt.test.ts`, which exercises both states of it directly.
+    target_frozen_at: "2026-09-09T00:00:00Z",
     engagement_target_capability_count: 4,
     total_gap_count: 1,
     largest_gap_pillar: "Device",

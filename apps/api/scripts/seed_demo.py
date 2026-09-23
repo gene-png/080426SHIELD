@@ -90,6 +90,7 @@ from app.models import (  # noqa: E402  -- triggers metadata registration
 )
 from app.models._common import utcnow  # noqa: E402
 from app.models.capability import CapabilityDisposition  # noqa: E402
+from app.models.deliverable import FROZEN_TARGET_AT_FINALIZE  # noqa: E402
 from app.risk import exporters as risk_exporters  # noqa: E402
 from app.risk.engine import (  # noqa: E402
     Impact,
@@ -310,6 +311,33 @@ def _release(
         # future consumer of the deliverable -> parent link resolves nothing on
         # demo data. The seed builds v1 of everything (W4, migration 0041).
         parent_version=1,
+        # #209 / migration 0051, and the same argument one field down: the
+        # engagement target this report was rendered against, stamped here so a
+        # freshly seeded database carries ZERO rows in 0051's backfill branch.
+        #
+        # SPLIT ON `service.kind`, NOT STAMPED UNCONDITIONALLY. Only CSF and ZT
+        # have an engagement target of this shape; stamping the other three would
+        # assert a freeze over a field they have no concept of, which is worse
+        # than leaving it NULL because `frozen_target_source` is precisely the
+        # column that means "a freeze happened here".
+        #
+        # The VALUE is a legitimate NULL. The seed creates no intake target, so
+        # `chosen` is None for every seeded service and the dashboards resolve the
+        # engine default — exactly as they did before this migration. That is the
+        # case the source column exists for: `(None, "finalize")` is an exact
+        # record of "the client chose nothing", which a bare NULL value could not
+        # tell from a row predating 0051.
+        frozen_target=None,
+        frozen_target_source=(
+            FROZEN_TARGET_AT_FINALIZE
+            if service.kind
+            in (
+                ServiceKind.NIST_CSF,
+                ServiceKind.ZERO_TRUST_CISA,
+                ServiceKind.ZERO_TRUST_DOD,
+            )
+            else None
+        ),
         pdf_artifact_id=pdf_art.id,
         xlsx_artifact_id=xlsx_art.id,
         finalized_at=now,

@@ -42,6 +42,41 @@ runtime-verified; `SMOKE_TEST.md` was entirely unchecked._
 
 ## MVP completion path (LIVING — update as items land)
 
+**2026-09-22 — #209 implemented (`tier-1`, `client-reaching`), awaiting Gene.**
+The last open `tier-1`. Four client-facing surfaces resolved the engagement
+target LIVE on every request while the released document held the number it was
+rendered with, so changing the intake target after release put a PDF and the
+dashboard beside it on different numbers computed from the same approved
+answers. `Deliverable.frozen_target` + `frozen_target_source` (migration 0051)
+freeze the client's CHOSEN value at finalize; the read paths run the same
+resolver they ran before, so the figure and its caption stay one derivation.
+Branch `fix/209-frozen-target`; decision record **D-083**; detail in
+`context/entries/2026-09-22-209-frozen-engagement-target.md`.
+
+Routed to Gene rather than self-merged: trips merge-rule condition 4 (migration)
+and condition 6 (changes what a client dashboard shows).
+
+**No estimate row changes and no total moves** — #209 owns no item in the table
+below, as with #254. What running it found that reading it did not: the
+migration's own docstring made a claim about out-of-range targets that a test
+falsified; four existing dashboard tests were asserting the defect, because they
+attached the intake target after finalize and required the dashboard to follow
+it; and `check_disclosure_consumers.py` reported clean over all four new
+disclosure fields because its predicate is prefix-anchored (#373). All three are
+recorded in D-083 with the measurements.
+
+**The adversarial review then found a BLOCKING defect in the migration itself, and
+it is the reason this entry does not read "ready".** Arm 2's backfill chose the
+intake column by `COALESCE(csf_target_tier, zt_target_stage)`, and
+`routes/intake.py` writes BOTH columns for every item regardless of type — so a
+Zero Trust deliverable froze a stray CSF tier, measured on Postgres as
+`frozen_target=4` for a client who contracted stage 2. #209's own harm, produced
+by its fix, in the arm no test covered. Fixed by splitting on `services.kind`,
+with a regression test verified red on revert. Further findings became **#473**
+(the disclosure gate is cleared by a TypeScript type declaration, so a green is
+not evidence anything renders) and **#474** (a Risk Register and the deliverables
+it summarizes can state different engagement targets).
+
 **2026-09-22 — #254 follow-up (`tier-1` consequence, no new item).** #444
 merged on three review rounds; the fourth found that a blank `legal_name` still
 reached the organisation line of client deliverables through five exporters'

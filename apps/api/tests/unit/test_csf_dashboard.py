@@ -85,12 +85,52 @@ def _register(c: TestClient, email: str) -> dict:
     return r.json()
 
 
-def _seed_release(c: TestClient, bearer: str, *, score_tier: int = 2, release: bool = True) -> str:
+def _attach_intake_tier(svc_id: str, tier: int) -> None:
+    """Give the service a source request carrying the client's chosen tier.
+
+    #209: this must run BEFORE finalize. The deliverable freezes the engagement
+    target it was rendered against, so a tier attached afterwards describes a
+    report that was never built with it.
+    """
+    import uuid as _u
+
+    from sqlalchemy import create_engine as _ce
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    from app.models.service import Service as _Service
+    from app.models.service_request import ServiceRequest as _SR
+
+    eng = _ce(os.environ["DATABASE_URL"], future=True)
+    with _sm(bind=eng, future=True)() as s:
+        svc = s.get(_Service, _u.UUID(svc_id))
+        sr = _SR(
+            client_id=svc.client_id,
+            service_type="nist_csf",
+            requested_by=svc.opened_by,
+            csf_target_tier=tier,
+        )
+        s.add(sr)
+        s.flush()
+        svc.source_request_id = sr.id
+        s.commit()
+
+
+def _seed_release(
+    c: TestClient,
+    bearer: str,
+    *,
+    score_tier: int = 2,
+    release: bool = True,
+    intake_tier: int | None = None,
+) -> str:
     """Open a CSF service, score every subcategory, approve, finalize, release."""
     h = {"Authorization": f"Bearer {bearer}"}
     svc_id = c.post(
         "/csf/services", headers=h, json={"kind": "nist_csf", "title": "Atlas - CSF"}
     ).json()["id"]
+    # #209: on file before finalize freezes it.
+    if intake_tier is not None:
+        _attach_intake_tier(svc_id, intake_tier)
     assessment = c.post(f"/csf/services/{svc_id}/assessments", headers=h).json()
     for ans in assessment["answers"]:
         c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": score_tier})
@@ -190,59 +230,68 @@ def test_csf_dashboard_uses_the_clients_intake_target_not_the_engine_default(app
     listed a different gap set than the consultant approved and a stored target
     of 2 printed as 3. This asserts the dashboard reads the intake choice, and
     that `target_tier_source` distinguishes a real choice from a fallback.
+
+    ## THE METHOD CHANGED AT #209; THE CLAIM DID NOT (core principle 3)
+
+    This used to score ONE service, read the dashboard, then attach a source
+    request carrying tier 4 AFTER the deliverable was released, and assert the
+    dashboard moved from 3/`default` to 4/`client`. The claim it was making is
+    still the claim being made here.
+
+    **But "changing the intake target after release changes the dashboard" is
+    exactly what #209 forbids**, and it was the defect, not the feature: a client
+    could read 106 gaps at target T4 on screen beside a released PDF stating 0
+    gaps at T3, both computed from the same approved answers. So the old body
+    would now be asserting the bug.
+
+    Two services replace the before/after, which is strictly better: it removes
+    the hidden dependency on mutation ordering and states the comparison
+    directly. `intake_tier` is attached BEFORE finalize in both, which is the
+    order the product produces.
+
+    score_tier=3, NOT 2: at tier 2 every subcategory is a gap against both
+    target 3 and target 4, so the totals match and the assertion would hold by
+    equality whether or not the endpoint reads the client's tier. At tier 3 the
+    count moves 0 -> 106, which is the thing being claimed.
     """
-    import uuid as _uuid
-
-    from sqlalchemy import create_engine as _ce
-    from sqlalchemy.orm import sessionmaker as _sm
-
     c = app_client
     admin = _register(c, "admin@example.com")
     client = _register(c, "client@example.com")
     client_id = client["user"]["client_id"]
-    # score_tier=3, NOT 2: at tier 2 every subcategory is a gap against both
-    # target 3 and target 4, so the totals match and a `>=` assertion holds by
-    # equality whether or not the endpoint reads the client's tier. At tier 3
-    # the count moves 0 -> 106, which is the thing being claimed.
-    svc_id = _seed_release(c, admin["tokens"]["access_token"], score_tier=3)
+    bearer_admin = admin["tokens"]["access_token"]
+    bearer_client = client["tokens"]["access_token"]
+
+    no_choice = _seed_release(c, bearer_admin, score_tier=3)
+    chose_four = _seed_release(c, bearer_admin, score_tier=3, intake_tier=4)
 
     c.headers["X-Client-Id"] = client_id
-    before = c.get(
-        f"/clients/{client_id}/csf/{svc_id}/dashboard",
-        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
-    ).json()
-    assert before["target_tier"] == 3
-    assert before["target_tier_source"] == "default"
 
-    # Attach a source request carrying the client's chosen tier of 4.
-    from app.models.service import Service as _Service
-    from app.models.service_request import ServiceRequest as _SR
+    def dash(svc_id: str) -> dict:
+        return c.get(
+            f"/clients/{client_id}/csf/{svc_id}/dashboard",
+            headers={"Authorization": f"Bearer {bearer_client}"},
+        ).json()
 
-    eng = _ce(os.environ["DATABASE_URL"], future=True)
-    with _sm(bind=eng, future=True)() as s:
-        svc = s.get(_Service, _uuid.UUID(svc_id))
-        sr = _SR(
-            client_id=svc.client_id,
-            service_type="nist_csf",
-            requested_by=svc.opened_by,
-            csf_target_tier=4,
-        )
-        s.add(sr)
-        s.flush()
-        svc.source_request_id = sr.id
-        s.commit()
+    default = dash(no_choice)
+    assert default["target_tier"] == 3
+    assert default["target_tier_source"] == "default"
 
-    after = c.get(
-        f"/clients/{client_id}/csf/{svc_id}/dashboard",
-        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
-    ).json()
-    assert after["target_tier"] == 4, "the client's intake choice was ignored"
-    assert after["target_tier_source"] == "client"
-    assert after["target_pct"] == 100.0
-    # The gap set MOVES — the whole point of reading the client's tier. At tier
+    chosen = dash(chose_four)
+    assert chosen["target_tier"] == 4, "the client's intake choice was ignored"
+    assert chosen["target_tier_source"] == "client"
+    assert chosen["target_pct"] == 100.0
+
+    # The gap set MOVES -- the whole point of reading the client's tier. At tier
     # 3 against target 3 nothing is a gap; against target 4 everything is.
-    assert before["total_gap_count"] == 0, before["total_gap_count"]
-    assert after["total_gap_count"] > 0, after["total_gap_count"]
+    assert default["total_gap_count"] == 0, default["total_gap_count"]
+    assert chosen["total_gap_count"] > 0, chosen["total_gap_count"]
+
+    # #209, asserted here rather than only in `test_frozen_engagement_target.py`:
+    # both of these are frozen, so neither figure can drift from the report it
+    # was rendered with. Without this, the two-service construction above would
+    # be satisfied by a dashboard that still read live.
+    assert default["target_frozen_at"] is not None
+    assert chosen["target_frozen_at"] is not None
 
 
 @pytest.mark.unit

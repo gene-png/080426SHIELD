@@ -58,6 +58,13 @@ export interface CsfDashboardData {
    * Rendered, not just carried — see `targetIsAssumed` and `targetFaultNote`.
    */
   target_tier_source: string;
+  /**
+   * The ZT twin of this field, and the same disclosure — see
+   * `dashboards/zt.ts` and `renderedAgainstNote`. Both services get it in
+   * the same commit: fixing one and not the other is the half-sweep
+   * #75/#79 record making a card worse than the defect it replaced.
+   */
+  target_frozen_at: string | null;
 
   total_gap_count: number;
   largest_gap_function: string | null;
