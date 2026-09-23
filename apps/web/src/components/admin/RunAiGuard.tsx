@@ -90,17 +90,54 @@ export function RunAiGuard({
       {promptFor ? (
         <div
           role="alertdialog"
-          aria-label="No API key loaded"
+          /* NAMES NO CAUSE, deliberately. This used to read "No API key
+             loaded", which is one of FIVE reasons `ready` is false and is the
+             WRONG one in four of them -- `_ai_readiness` returns "A key is
+             loaded but ..." for the adapter, SDK and model-id branches, and
+             "... even though an environment key is present" for the mode
+             branch.
+
+             A screen-reader user heard the same false cause the sighted copy
+             gave. It stays CONSTANT rather than becoming `promptFor.detail`:
+             the accessible name is how both e2e specs select this dialog, and
+             a name that varies per branch makes it unselectable by name while
+             adding nothing a reader cannot get from the body text below. */
+          aria-label="AI is not ready to run live"
           className="mt-3 rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm"
         >
+          {/* THE SERVER'S OWN SENTENCE, not a guess at it.
+
+              This line was hardcoded to "No API key is loaded — this will
+              generate an offline response." and rendered for all five
+              not-ready causes. A consultant who HAD loaded a key read a
+              warning naming a cause they knew was false, dismissed it as
+              stale, and proceeded -- and the run served deterministic fixture
+              content into a client deliverable. `routes/admin.py` records the
+              2026-08-07 live run where exactly that happened.
+
+              `AiStatusBanner` and `LlmKeyPanel` already render `status.detail`.
+              The Management page told the truth; the modal at the point of
+              action did not, which is the one place it matters. */}
           <p className="font-semibold text-status-warning-fg">
-            No API key is loaded — this will generate an offline response.
+            {promptFor.detail}
           </p>
           <p className="mt-1 text-ink-secondary">
+            {/* The imperative that stood here -- "Load a key to run real AI."
+                -- is false for the adapter, SDK and model-id causes, where a
+                key IS loaded. A user-facing string naming an action has to name
+                a control that works TODAY, and `promptFor.detail` above now
+                carries the remedy that actually applies to this cause. What is
+                left is true of all five. */}
             Offline (fixture) output is deterministic demo content, not analysis
-            of this client&apos;s data. Load a key to run real AI.
+            of this client&apos;s data.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
+            {/* LABEL DELIBERATELY UNCHANGED. It names a control that
+                exists and works -- that panel does load a key -- and it does
+                not claim that loading one fixes THIS cause; the detail line
+                above says what the cause is. Renaming it would change nothing
+                about correctness and would break `s34-llm-key.spec.ts`, which
+                asserts this link by name. */}
             <Link
               href="/admin/management#ai-provider-key"
               className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-ink-on-accent hover:bg-brand-600"

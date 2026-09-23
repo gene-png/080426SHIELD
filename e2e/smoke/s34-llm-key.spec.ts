@@ -170,7 +170,9 @@ test("admin: Run AI warns before producing offline output, then proceeds once ac
   // which standalone had always skipped). Keep the click eager so this stays a
   // regression test for that race, not just for the happy path.
   await runAi.click();
-  const dialog = page.getByRole("alertdialog", { name: "No API key loaded" });
+  const dialog = page.getByRole("alertdialog", {
+    name: "AI is not ready to run live",
+  });
   await expect(dialog).toBeVisible({ timeout: 30_000 });
   await expect(
     dialog.getByRole("button", { name: "Continue offline" }),
