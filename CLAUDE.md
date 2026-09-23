@@ -1687,7 +1687,6 @@ Rules of the road:
   | `od -c` output grepped for `\r` | `d.count(b'\r')` |
   | a detached run's marker EXISTS | the marker's AGE |
   | a suite's exit code | which TREE, at which REVISION, it ran against |
-  | `gh`'s `MERGEABLE` on two PRs | whether they conflict with EACH OTHER |
 
   The marker row was a success record from a run a week earlier, read as the
   current one: `test -f /tmp/x.exit` tests existence, not freshness. **`rm -f`
@@ -1696,14 +1695,6 @@ Rules of the road:
   seconds earlier by a careless `git checkout -- <file>`, which restores from
   the INDEX, so unstaged work goes with the mutation being undone. **Have the
   run print the revision and cleanliness of the tree it is testing.**
-
-  **AND ONE ROOT UNDER THREE OF THEM: A TEST WHOSE INPUT WAS CHOSEN BY THE
-  THING UNDER TEST.** A mutation drawn from inside the region the tests already
-  cover; an allow-list validated only against benign traffic; a Postgres fixture
-  hand-seeded with the one spelling the filter under test already agreed with
-  (2026-09-23 -- three SQLite tests caught it in seconds, the hand-made rows did
-  not). Each is a confident green from a population that could not have gone
-  red. **Ask where the input came from before reading the result.**
 
   **PREFER A CHECK WHOSE TWO SIDES CAN ONLY AGREE IF THE THING IS TRUE.** After
   converting a file to LF, `git diff --numstat` raw versus `--ignore-cr-at-eol`
