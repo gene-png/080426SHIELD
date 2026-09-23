@@ -48,22 +48,66 @@ Three mutations, each applied to the workflow and run:
 it rather than the bot that opened the PR — so that third one is a plausible
 edit rather than a contrived one.
 
-## Human review is UNCHANGED
+## What this REMOVES, without a compensating control it does not have
 
-This removes the audit-block requirement, not review. A Dependabot PR still
-needs `gh pr review --approve` from a named human — which is branch protection
-rather than this gate, and which is attributable through the API in a way a line
-of body text never was. The audit block exists so an adversarial reviewer's
-findings are recorded; there are no findings to record about a lockfile bump,
-and a block written to satisfy the matcher is the decorative-marker defect.
+The first version of this entry said a Dependabot PR "still needs
+`gh pr review --approve` from a named human, which is branch protection and not
+this gate". Measured 2026-09-22:
 
-## LATENT, not fixed
+    gh api repos/{owner}/{repo}/branches/main/protection
+      required_pull_request_reviews.required_approving_review_count  ->  0
+      enforce_admins                                                ->  false
 
-**Zero Dependabot PRs were open when this landed.** Nothing was unblocked and
-nothing visibly changed, which is exactly why it needed tests rather than a
-manual check: an empty queue is not an exemption, and nobody would notice the
-operator flipping until a bot PR arrived and the gate silently stopped applying
-to everyone else.
+**Nothing enforces a review.** So this skip removes the only enforced check on
+these PRs and leaves a convention in its place. That is probably the right trade
+with four security updates stuck — but it has to be argued on those terms, not
+on a control that exists only in a sentence. Corroborated from a second
+direction: #468's blocker list names the audit gate and nothing else, and a
+required review would be listed there too.
+
+**Whether to turn a real review requirement on is a decision for the humans**,
+and this entry does not imply an answer. Either the convention becomes a gate,
+or the exemption is unguarded and that is recorded.
+
+## The exemption is bounded by CONTENT as well as author
+
+The skip is keyed on AUTHOR; its justification is about CONTENT. A maintainer
+can push commits to a Dependabot branch — the routine case is a bump that breaks
+something and a human fixing it in place — and `pull_request.user.login` stays
+`dependabot[bot]`. So the exemption would follow the BRANCH, and arbitrary
+human-authored code would merge with the required audit check green and no audit
+block anywhere. That is the class #93/#94/#95 record putting a client-facing
+fabricated gap on `main`, arriving through the one PR class nobody can edit.
+
+`check_bot_pr_is_manifest_only.py` runs only for the exempted author and fails
+when that PR touches anything outside the manifest and lockfile set, naming the
+paths. A human pushing code onto a bot branch is blocked instead of inheriting
+an exemption written for a version bump.
+
+Validated against all four open bot PRs — every one is manifests and lockfiles
+only, so the allow-list matches what Dependabot actually writes here rather than
+what its author guessed. The allow-list is deliberately **not** derived from
+`.github/dependabot.yml`: that file names ecosystems and directories, not the
+files an updater writes, so deriving it would encode Dependabot's internal
+behaviour — a synchronisation with something this repo does not control.
+
+## LIVE, not latent — and this entry first said the opposite
+
+It read "zero Dependabot PRs were open", which was **true when measured and
+false within the hour**. Four arrived during the session and every one is
+blocked on this exact check:
+
+    #465  github-actions group      #467  anthropic requirement
+    #466  ruff 0.16.3 -> 0.16.8     #468  npm-minor-patch group
+
+<!-- counted: gh pr list --state open --author app/dependabot --json number | jq length -> 4, 2026-09-22 -->
+
+A stuck queue you can name is a stronger justification than a hypothetical one,
+and the stale figure is exactly why rule 2 says to carry the command rather than
+the number. My first measurement was also the wrong shape — it filtered on a
+login spelling that matched nothing and returned 0, which is the
+selector-that-selects-nothing defect. `--author app/dependabot` is the form that
+works.
 
 ## What my own test got wrong, caught by running it
 

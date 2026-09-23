@@ -93,18 +93,73 @@ jobs:
       # `user.login` is on a trigger that carries no `pull_request` payload. An
       # `==` here would invert it and exempt everyone except Dependabot.
       #
-      # THE HUMAN REQUIREMENT IS UNCHANGED. This removes the audit-block
-      # requirement, not review: a Dependabot PR still needs
-      # `gh pr review --approve` from a named human, which is branch protection
-      # and not this gate. The audit block exists so an adversarial reviewer's
-      # findings are recorded; there are no findings to record about a lockfile
-      # bump, and pretending otherwise is the decorative-marker defect.
+      # WHAT THIS REMOVES, stated without a compensating control it does not
+      # have. THE FIRST VERSION OF THIS COMMENT CLAIMED ONE.
       #
-      # LATENT, NOT LIVE: zero Dependabot PRs are open as of 2026-09-22, so
-      # nothing was blocked when this landed and nothing visibly changes. The
-      # empty queue is why this is easy to get wrong and never notice -- do not
-      # read it as evidence the exemption works. `tests/unit/test_audit_gate_
-      # dependabot_exemption.py` is what checks it.
+      # It said "a Dependabot PR still needs `gh pr review --approve` from a
+      # named human, which is branch protection and not this gate". MEASURED
+      # 2026-09-22, and it is false:
+      #
+      #     gh api repos/{owner}/{repo}/branches/main/protection
+      #       required_pull_request_reviews.required_approving_review_count -> 0
+      #       enforce_admins                                                -> false
+      #
+      # Nothing enforces a review. So this step's skip removes the ONLY enforced
+      # check on these PRs and leaves a convention in its place. That is
+      # probably the right trade with four security updates stuck -- see below --
+      # but it has to be argued on those terms rather than on a control that
+      # exists only in a sentence. Whether to turn a real review requirement on
+      # is a decision for the humans, not something this workflow should imply
+      # an answer to.
+      #
+      # The audit block exists so an adversarial reviewer's findings are
+      # recorded; there are no findings to record about a version bump, and a
+      # block written to satisfy the matcher is the decorative-marker defect.
+      # The step below bounds that justification by CONTENT so it cannot be
+      # inherited by a human pushing code onto a bot branch.
+      #
+      # LIVE, NOT LATENT -- and this comment first said the opposite. It read
+      # "zero Dependabot PRs are open as of 2026-09-22", which was true when
+      # measured and false within the hour. Four are open and every one is
+      # blocked on this exact check:
+      #
+      #     #465  github-actions group      #467  anthropic requirement
+      #     #466  ruff 0.16.3 -> 0.16.8     #468  npm-minor-patch group
+      #
+      # <!-- counted: gh pr list --state open --author app/dependabot --json number | jq length -> 4, 2026-09-22 -->
+      #
+      # A stuck queue you can name is a stronger justification than a
+      # hypothetical one, and the stale figure is why rule 2 says to carry the
+      # command rather than the number.
+      # THE OTHER HALF OF THE EXEMPTION, and without it the exemption is a hole.
+      #
+      # The skip above is keyed on AUTHOR; its justification is about CONTENT
+      # ("no findings to record about a lockfile bump"). A maintainer can push
+      # commits to a Dependabot branch -- the routine case is a bump that breaks
+      # something and a human fixing it in place -- and
+      # `pull_request.user.login` stays `dependabot[bot]`. So the exemption
+      # follows the BRANCH, and arbitrary human-authored code would merge with
+      # the required audit check green and no audit block anywhere. That is the
+      # class #93/#94/#95 record putting a client-facing fabricated gap on main.
+      #
+      # This step runs ONLY for the exempted author and fails when that PR
+      # touches anything outside the manifest and lockfile set, naming the
+      # paths. A human pushing code onto a bot branch is blocked rather than
+      # inheriting an exemption written for a version bump.
+      #
+      # Its verdict lands in THIS job, so it reports under the same check the
+      # exemption belongs to -- the audit requirement and its bound are one
+      # question, unlike the merge-rule job which is a different one.
+      #
+      # Validated against all four open bot PRs (#465-#468) on 2026-09-22: every
+      # one is manifests and lockfiles only, so the allow-list matches what
+      # Dependabot actually writes here rather than what its author guessed.
+      - name: An audit-exempt bot PR must be manifest-only
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        working-directory: apps/api
+        run: |
+          python scripts/check_bot_pr_is_manifest_only.py             --author '${{ github.event.pull_request.user.login }}'             --changed-files /tmp/changed.txt
+
       - name: Require recorded audit evidence
         if: github.event.pull_request.user.login != 'dependabot[bot]'
         working-directory: apps/api

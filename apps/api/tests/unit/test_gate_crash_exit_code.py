@@ -77,6 +77,10 @@ GATES = [
     # enumeration` exists to catch and there is no reason to make it work for
     # its living twice.
     ("check_claude_md_size", "sys.argv"),
+    # The content bound on the Dependabot audit exemption. Added WITH its
+    # entry here, because `test_universe_equals_the_other_gate_enumeration`
+    # exists to catch the two lists diverging.
+    ("check_bot_pr_is_manifest_only", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'
