@@ -2,8 +2,10 @@
 
 XLSX sheets:
   - Heatmap Summary: tactic rollup (counts + coverage %)
-  - Coverage:        per-technique status + notes (all 600+ rows)
-  - Gaps:            techniques flagged as Gap, ordered by tactic
+  - Coverage:        per-technique status, rationale, the three tool lists
+                     (unconfirmed citations marked) and notes (all 600+ rows)
+  - Gaps:            techniques flagged as Gap, ordered by technique code
+  - Unscored:        techniques with no usable status, listed by code
 
 PDF:
   Executive page with overall coverage % + per-tactic table, then the
@@ -17,10 +19,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.attack.analytics import CoverageRollup
+from app.attack.analytics import CoverageRollup, TacticCoverage
 from app.attack.catalog import TACTICS, TECHNIQUES, technique_by_id
 from app.attack.coverage import CoverageStatus, coverage_label
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.pending import uncleared_tools
 from app.client_naming import org_display_name
 from app.models.attack_assessment import AttackAssessment, AttackCoverage
 
@@ -75,6 +78,99 @@ def _status_or_unscored(value: str | None) -> str:
         return "Unknown"
 
 
+#: What the percentage IS, stated in every renderer beside it. The workbook
+#: gave a bare `Coverage %` with no definition, and the formula is not the one a
+#: reader would guess: partial counts half, and N/A, unscored and withheld
+#: techniques sit outside the denominator (see `attack/analytics.py`).
+COVERAGE_PCT_DEFINITION = (
+    "Coverage % = (Covered + 0.5 x Partial) / (Covered + Partial + Gap). "
+    "N/A, Unscored and Pending review techniques are outside it; "
+    "'not measured' means no technique there has a Covered, Partial or Gap "
+    "status, counting those pending review."
+)
+
+#: Rendered where nothing is Covered, Partial, Gap or pending review (`_measured`).
+#: Where Covered + Partial + Gap is zero, `_pct` in
+#: `attack/analytics.py` returns 0.0 there, which is the same figure a tactic
+#: that is ALL gaps earns -- so "nothing to measure" and "nothing covered" were
+#: one number. NOT "n/a": that is the N/A (not applicable) status two columns to
+#: the left, and a tactic whose techniques were never assessed would read as
+#: "not applicable to us" -- the reassuring misreading. The rollup is left
+#: alone (it also feeds the dashboards); what this deliverable prints, and the
+#: deliverable's stored summary line (`coverage_pct_text`), change.
+NOT_ADDRESSABLE = "not measured"
+
+#: Suffix on a tool whose citation was INFERRED (a near-match to the client's
+#: tool list) and not yet cleared by a consultant (#102, `attack/pending.py`).
+#: A row with one confirmed tool is not pending, so without this mark an
+#: inferred tool beside a confirmed one printed exactly like a confirmed one.
+UNCONFIRMED_MARK = " (unconfirmed)"
+
+
+def _measured(t: CoverageRollup | TacticCoverage) -> bool:
+    """Whether any status-bearing claim exists here, INCLUDING withheld ones.
+
+    `pending_review` rows are Covered/Partial claims #102 holds out of
+    `covered`/`partial`. A tactic whose claims are all withheld has
+    covered + partial + gap == 0, but it was assessed: it reads 0.0% beside its
+    pending count, as the #102 note in `render_xlsx` intends -- not "never
+    assessed", which is what "not measured" says."""
+    return t.covered + t.partial + t.gap + t.pending_review > 0
+
+
+def _pct_value(t: CoverageRollup | TacticCoverage) -> float | str:
+    """The XLSX cell: the number, or NOT_ADDRESSABLE where nothing was claimed."""
+    return t.coverage_pct if _measured(t) else NOT_ADDRESSABLE
+
+
+def _pct_text(t: CoverageRollup | TacticCoverage) -> str:
+    """The DOCX/PDF text: `12.5%`, or NOT_ADDRESSABLE where nothing was claimed."""
+    return f"{t.coverage_pct}%" if _measured(t) else NOT_ADDRESSABLE
+
+
+def coverage_pct_text(rollup: CoverageRollup) -> str:
+    """The overall percentage as every surface of the deliverable states it --
+    the renderers AND the stored `Deliverable.summary` line, so the results list
+    cannot say 0.0% beside a PDF that says "not measured"."""
+    return _pct_text(rollup)
+
+
+def _tools(value: list | None, unconfirmed: frozenset[str]) -> str:
+    return "; ".join(
+        f"{t}{UNCONFIRMED_MARK}" if t in unconfirmed else str(t) for t in (value or [])
+    )
+
+
+def _safe_text_row(ws, values: list) -> None:
+    """Append a row whose strings may be model output or client input.
+
+    openpyxl stores any string starting with "=" as a FORMULA, and raises on
+    control characters -- so a rationale of `=HYPERLINK(...)` would become a
+    live formula in a Kentro-branded workbook, and one stray control byte
+    would fail the whole finalize. Illegal characters are dropped and a
+    leading "=" is kept as text.
+    """
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+    ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in values])
+    for cell in ws[ws.max_row]:
+        if isinstance(cell.value, str) and cell.value.startswith("="):
+            cell.data_type = "s"
+
+
+def _is_unscored(cov: AttackCoverage | None) -> bool:
+    """The rollup's predicate (`analytics._validated`): no row, no status, or a
+    status that is not a CoverageStatus. The Unscored sheet may not use a
+    narrower one than the count it sits beside."""
+    if cov is None or cov.status is None:
+        return True
+    try:
+        CoverageStatus(cov.status)
+    except ValueError:
+        return True
+    return False
+
+
 def _tactic_name(tactic_id: str) -> str:
     for t in TACTICS:
         if t.id == tactic_id:
@@ -103,10 +199,13 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
 
     # --- Heatmap Summary ---
     ws = wb.create_sheet("Heatmap Summary")
-    ws.append(["Engagement", ctx.client_legal_name])
-    ws.append(["Service", ctx.service_title])
+    # Client- and consultant-entered text, so through the same guard as the
+    # model's rationale.
+    _safe_text_row(ws, ["Engagement", ctx.client_legal_name])
+    _safe_text_row(ws, ["Service", ctx.service_title])
     ws.append(["Assessment version", ctx.assessment.version])
-    ws.append(["Coverage %", ctx.rollup.coverage_pct])
+    r = ctx.rollup
+    ws.append(["Coverage %", _pct_value(r)])
     ws.append(
         [
             "Scored / Total",
@@ -119,7 +218,15 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     # withheld renders 0.0% here, which without this line is indistinguishable
     # from a client who owns no controls at all.
     ws.append(["Pending review", ctx.rollup.pending_review])
-    for row in ws.iter_rows(min_row=1, max_row=6, min_col=1, max_col=1):
+    ws.append(["Coverage % means", COVERAGE_PCT_DEFINITION])
+    ws.append(
+        [
+            f"Tools marked{UNCONFIRMED_MARK}",
+            "Inferred from a near-match to the client's tool list and not yet "
+            "confirmed by a consultant.",
+        ]
+    )
+    for row in ws.iter_rows(min_row=1, max_row=8, min_col=1, max_col=1):
         for cell in row:
             cell.font = bold
     ws.append([])
@@ -154,7 +261,7 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 tc.not_applicable,
                 tc.unscored,
                 tc.pending_review,
-                tc.coverage_pct,
+                _pct_value(tc),
             ]
         )
     widths = [10, 28, 12, 14, 10, 10, 8, 8, 12, 15, 14]
@@ -169,7 +276,23 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     # destroy the thing the rule is built on. Before this column the summary tab
     # read `Covered 0 / Pending review N` while this tab listed those same N rows
     # as `Covered`: one workbook, two answers, on adjacent tabs.
-    headers2 = ["Technique", "Name", "Tactic(s)", "Type", "Status", "Pending review", "Notes"]
+    # Rationale and the three tool lists are what the run actually produced --
+    # measured 2026-09-23, 632 of 633 rows carried a rationale -- and the sheet
+    # printed none of them. Notes stays: it has its own writer (the technique
+    # panel's PATCH) and a consultant's note is not the model's rationale.
+    headers2 = [
+        "Technique",
+        "Name",
+        "Tactic(s)",
+        "Type",
+        "Status",
+        "Pending review",
+        "Rationale",
+        "Detection tools",
+        "Prevention tools",
+        "Response tools",
+        "Notes",
+    ]
     ws2.append(headers2)
     for col in range(1, len(headers2) + 1):
         cell = ws2.cell(row=1, column=col)
@@ -181,7 +304,9 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
     for tech in TECHNIQUES:
         cov = cov_by_code.get(tech.id)
         tactic_str = ", ".join(_tactic_name(t) for t in tech.tactics)
-        ws2.append(
+        unconfirmed = uncleared_tools(cov.unconfirmed_citations) if cov else frozenset()
+        _safe_text_row(
+            ws2,
             [
                 tech.id,
                 tech.name,
@@ -189,16 +314,20 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
                 "sub" if tech.is_sub_technique else "parent",
                 _status_or_unscored(cov.status if cov else None),
                 "Yes" if tech.id in ctx.pending_codes else "",
-                (cov.notes if cov and cov.notes else "") or "",
-            ]
+                (cov.rationale if cov else None) or "",
+                _tools(cov.detection_tools if cov else None, unconfirmed),
+                _tools(cov.prevention_tools if cov else None, unconfirmed),
+                _tools(cov.response_tools if cov else None, unconfirmed),
+                (cov.notes if cov else None) or "",
+            ],
         )
-    widths2 = [14, 38, 28, 8, 12, 15, 60]
+    widths2 = [14, 38, 28, 8, 12, 15, 60, 30, 30, 30, 40]
     for w, col in zip(widths2, range(1, len(widths2) + 1), strict=True):
         ws2.column_dimensions[get_column_letter(col)].width = w
 
     # --- Gaps ---
     ws3 = wb.create_sheet("Gaps")
-    headers3 = ["Technique", "Name", "Tactic(s)", "Notes"]
+    headers3 = ["Technique", "Name", "Tactic(s)", "Rationale", "Notes"]
     ws3.append(headers3)
     for col in range(1, len(headers3) + 1):
         cell = ws3.cell(row=1, column=col)
@@ -214,13 +343,34 @@ def render_xlsx(ctx: AttackDeliverableContext) -> bytes:
         except KeyError:
             tactic_str = ""
             name = cov.technique_code
-        ws3.append([cov.technique_code, name, tactic_str, cov.notes or ""])
+        _safe_text_row(
+            ws3, [cov.technique_code, name, tactic_str, cov.rationale or "", cov.notes or ""]
+        )
     if not gap_rows:
-        ws3.append(["—", "No gaps recorded", "", ""])
+        ws3.append(["—", "No gaps recorded", "", "", ""])
         ws3.cell(row=2, column=2).font = italic
-    widths3 = [14, 38, 28, 60]
+    widths3 = [14, 38, 28, 60, 40]
     for w, col in zip(widths3, range(1, len(widths3) + 1), strict=True):
         ws3.column_dimensions[get_column_letter(col)].width = w
+
+    # --- Unscored ---
+    # Iterates the CATALOGUE, as the rollup does, so a technique with no row at
+    # all is listed too and the row count equals `rollup.unscored_count`.
+    ws4 = wb.create_sheet("Unscored")
+    headers4 = ["Technique", "Name", "Tactic(s)"]
+    ws4.append(headers4)
+    for col in range(1, len(headers4) + 1):
+        cell = ws4.cell(row=1, column=col)
+        cell.font = bold
+        cell.fill = header_fill
+    unscored = [t for t in TECHNIQUES if _is_unscored(cov_by_code.get(t.id))]
+    for tech in unscored:
+        ws4.append([tech.id, tech.name, ", ".join(_tactic_name(t) for t in tech.tactics)])
+    if not unscored:
+        ws4.append(["—", "No unscored techniques", ""])
+        ws4.cell(row=2, column=2).font = italic
+    for w, col in zip([14, 38, 28], range(1, 4), strict=True):
+        ws4.column_dimensions[get_column_letter(col)].width = w
 
     out = io.BytesIO()
     wb.save(out)
@@ -250,7 +400,8 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
     add_paragraphs(
         doc,
         [
-            f"Overall coverage: {ctx.rollup.coverage_pct}%",
+            "Overall coverage: " + coverage_pct_text(ctx.rollup),
+            COVERAGE_PCT_DEFINITION,
             f"Scored: {ctx.rollup.scored_count}/"
             f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}",
             f"Covered {ctx.rollup.covered}, Partial {ctx.rollup.partial}, "
@@ -276,7 +427,7 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
                 tc.gap,
                 tc.not_applicable,
                 tc.pending_review,
-                f"{tc.coverage_pct}%",
+                _pct_text(tc),
             ]
             for tc in ctx.rollup.by_tactic
         ],
@@ -285,7 +436,49 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
     gap_rows = [c for c in ctx.coverage if c.status == CoverageStatus.GAP.value]
     gap_rows.sort(key=lambda c: c.technique_code)
     gap_rows = gap_rows[:50]
-    add_heading(doc, f"Top remediation gaps ({len(gap_rows)} of {ctx.rollup.gap} shown)")
+    # THE HEADING SAYS WHAT THE TABLE IS, and the one it replaced asserted two
+    # properties the table does not have (#480).
+    #
+    # It read `Top remediation gaps (N of M shown)`. "Top" implies a ranking, and
+    # the sort key is `technique_code` -- alphabetical, so the first fifty codes
+    # win and nothing about coverage, severity, tactic or effort enters the order.
+    # "remediation" implies a plan, and the table has two columns, Code and
+    # Technique, with no owner, effort, control or next step in it.
+    # `routes/attack.py` records a real run at 607 gaps, so a client could receive
+    # "Top remediation gaps (50 of 607 shown)" over fifty alphabetically-first
+    # codes and reasonably conclude those were the ones that mattered most.
+    #
+    # Ranked remediation is real work, designed separately and blocked on making
+    # long AI runs survive the browser. A false claim does not wait for it.
+    #
+    # The replacement says the three things the old one hid: the order, the
+    # truncation, and that this is an inventory rather than a plan. It also says
+    # WHICH FORMAT truncates -- the XLSX `Gaps` tab builds from the same list with
+    # the same sort and NO slice, so the deliverable set does not withhold these
+    # rows, this format does.
+    #
+    # THE TWINS ARE DELIBERATELY LEFT ALONE, and this is the checked answer rather
+    # than the assumed one. `csf/exporters.py` and `zt/exporters.py` carry the
+    # SAME heading text, so a sweep by string would have changed all three. They
+    # are not the same defect:
+    #
+    #   ATT&CK  sorts by `technique_code` (alphabetical); columns Code, Technique.
+    #   CSF     sorts by `-priority_score` then code; columns Code, Function,
+    #           Subcategory, Current -> Target, Priority.
+    #   ZT      sorts by `-priority_score` then code; columns Code, Pillar,
+    #           Capability, Current -> Target, Priority.
+    #
+    # CSF and ZT genuinely rank, and their tables carry a target and a priority --
+    # so "Top remediation gaps" describes what is there. ATT&CK ranks by nothing
+    # and offers no remediation column, which is why it alone is wrong on BOTH
+    # halves of its own heading. They also disclose their truncation in
+    # `_gap_plan_caption` on the line below the heading; ATT&CK discloses its own
+    # in the heading, which is why the count survives the rewording here.
+    add_heading(
+        doc,
+        f"Gap techniques, first {len(gap_rows)} of {ctx.rollup.gap} by technique code"
+        " (alphabetical, not ranked; the Gaps tab of the XLSX carries all of them)",
+    )
     if not gap_rows:
         add_paragraphs(doc, ["No techniques flagged as Gap."])
     else:
@@ -337,7 +530,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     story.append(Paragraph("Coverage summary", h2))
     story.append(
         Paragraph(
-            f"Overall coverage: <b>{ctx.rollup.coverage_pct}%</b> · "
+            f"Overall coverage: <b>{coverage_pct_text(ctx.rollup)}</b> · "
             f"Scored: <b>{ctx.rollup.scored_count}/"
             f"{ctx.rollup.scored_count + ctx.rollup.unscored_count}</b> · "
             f"Covered <b>{ctx.rollup.covered}</b>, "
@@ -348,6 +541,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
             body,
         )
     )
+    story.append(Paragraph(COVERAGE_PCT_DEFINITION, body))
 
     story.append(Paragraph("Per-tactic rollup", h2))
     tactic_table_data: list[list] = [
@@ -364,7 +558,7 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
                 tc.gap,
                 tc.not_applicable,
                 tc.pending_review,
-                f"{tc.coverage_pct}%",
+                _pct_text(tc),
             ]
         )
     # Eight columns since #102 added `Pending review`. A width list shorter than
@@ -396,7 +590,12 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     gap_rows = gap_rows[:50]
     story.append(
         Paragraph(
-            f"Top remediation gaps ({len(gap_rows)} of {ctx.rollup.gap} shown)",
+            # Same heading as the DOCX path, and they MUST move together -- see
+            # the note at the DOCX site. Half-fixing one format is how #79 got
+            # worse than the defect it replaced.
+            f"Gap techniques, first {len(gap_rows)} of {ctx.rollup.gap} by technique"
+            " code (alphabetical, not ranked; the Gaps tab of the XLSX carries all"
+            " of them)",
             h2,
         )
     )

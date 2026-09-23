@@ -1,0 +1,5 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -1,1 +1,1 @@
++      - uses: attacker/action@v1

@@ -1,0 +1,12 @@
+{
+ "incident": "The failure this gate exists for: a body that says nothing about a diff adding an alembic revision. It does not refuse the migration -- it refuses the SILENCE.",
+ "expect": 1,
+ "adversarial": false,
+ "stdout_contains": "trips condition 4",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}

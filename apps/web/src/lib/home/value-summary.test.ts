@@ -4,7 +4,9 @@ import {
   assumedTargetCount,
   assumedTargetNote,
   gapHint,
+  liveTargetNote,
   targetIsWhollyTheClients,
+  targetNotes,
   type TargetProvenance,
 } from "./value-summary";
 
@@ -27,6 +29,9 @@ function zt(over: Partial<TargetProvenance> = {}): TargetProvenance {
     services: 1,
     defaulted: 0,
     unusable: 0,
+    // #209: 0, not null -- the frozen state is the normal one, for the reason
+    // the dashboard fixtures state.
+    computedLive: 0,
     unit: "stage",
     noun: "Zero Trust reports",
     ...over,
@@ -159,6 +164,7 @@ describe("assumedTargetNote", () => {
         services: 2,
         defaulted: 2,
         unusable: 0,
+        computedLive: 0,
         unit: "tier",
         noun: "NIST CSF reports",
       }),
@@ -181,5 +187,95 @@ describe("assumedTargetNote", () => {
         /\b(ask|contact|update|set|change|confirm|re-?enter)\b/i,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #209: the live-target disclosure on the cross-service card.
+//
+// THE CASE THAT DECIDES WHETHER THIS WORKS AT ALL is `assumed === 0` with a
+// live summand. Folding this into `assumedTargetNote` -- the obvious economy --
+// returns null there, so the disclosure vanishes in the commonest case: a
+// client who chose their own target at intake. That is the "guard against
+// double-counting becomes a guard against counting" shape.
+// ---------------------------------------------------------------------------
+
+describe("liveTargetNote (#209)", () => {
+  it("says nothing when every summand was frozen", () => {
+    expect(liveTargetNote(zt({ computedLive: 0 }))).toBeNull();
+  });
+
+  it("says nothing when the figure itself does not exist", () => {
+    // null propagates rather than becoming 0, for the reason
+    // `assumedTargetCount` gives: a 0 would assert agreement with a document
+    // nobody checked.
+    expect(
+      liveTargetNote(
+        zt({ computedLive: null, defaulted: null, unusable: null }),
+      ),
+    ).toBeNull();
+  });
+
+  it("drops the denominator when every summand was live", () => {
+    expect(liveTargetNote(zt({ services: 2, computedLive: 2 }))).toBe(
+      "Counted against your target as it stands today — your released report was rendered against the stage on file at the time, so the two can differ.",
+    );
+  });
+
+  it("carries the denominator when only some were", () => {
+    expect(liveTargetNote(zt({ services: 5, computedLive: 2 }))).toBe(
+      "2 of 5 Zero Trust reports counted against your target as it stands today — your released report was rendered against the stage on file at the time, so the two can differ.",
+    );
+  });
+
+  it("speaks CSF's vocabulary when given CSF's", () => {
+    expect(
+      liveTargetNote({
+        services: 1,
+        defaulted: 0,
+        unusable: 0,
+        computedLive: 1,
+        unit: "tier",
+        noun: "NIST CSF reports",
+      }),
+    ).toContain("rendered against the tier on file");
+  });
+});
+
+describe("targetNotes composes both disclosures (#209)", () => {
+  it("renders the LIVE note when NOTHING was assumed", () => {
+    // The mutant: `targetNotes = assumedTargetNote`. It passes every other case
+    // in this block and drops the disclosure for every client who chose their
+    // own target -- most of them.
+    const note = targetNotes(
+      zt({ services: 1, defaulted: 0, unusable: 0, computedLive: 1 }),
+    );
+    expect(note).not.toBeNull();
+    expect(note).toContain("as it stands today");
+  });
+
+  it("renders the ASSUMED note when nothing was live", () => {
+    const note = targetNotes(
+      zt({ services: 1, defaulted: 1, unusable: 0, computedLive: 0 }),
+    );
+    expect(note).toContain("no stage chosen at intake");
+    expect(note).not.toContain("as it stands today");
+  });
+
+  it("renders BOTH when both apply, assumed first", () => {
+    const note = targetNotes(
+      zt({ services: 2, defaulted: 1, unusable: 0, computedLive: 1 }),
+    );
+    expect(note).toContain("no stage chosen at intake");
+    expect(note).toContain("as it stands today");
+    expect(note!.indexOf("intake")).toBeLessThan(
+      note!.indexOf("as it stands today"),
+    );
+  });
+
+  it("is null only when neither applies", () => {
+    expect(
+      targetNotes(zt({ defaulted: 0, unusable: 0, computedLive: 0 })),
+    ).toBe(null);
   });
 });

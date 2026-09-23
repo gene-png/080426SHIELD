@@ -16,6 +16,7 @@ analytics endpoint in place of scoring/gap.
 
 from __future__ import annotations
 
+import contextvars
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -48,6 +49,7 @@ from app.attack.citations import (
 )
 from app.attack.coverage import COVERAGE_DEFINITIONS, CoverageStatus
 from app.attack.exporters import build_context as build_attack_context
+from app.attack.exporters import coverage_pct_text
 from app.attack.exporters import render_docx as render_attack_docx
 from app.attack.exporters import render_pdf as render_attack_pdf
 from app.attack.exporters import render_xlsx as render_attack_xlsx
@@ -1444,7 +1446,13 @@ def _run_mitre_map_batched(
     first_error: Exception | None = None
 
     with ThreadPoolExecutor(max_workers=_MITRE_MAX_WORKERS) as pool:
-        futures = [pool.submit(_one, b) for b in batches]
+        # Each worker runs inside a COPY of the request's context. A pool thread
+        # starts with an empty one, so `correlation_id_var` read None there and
+        # every `llm_calls` row a batch wrote lost the request's correlation id
+        # -- measured 2026-09-23, 0 of 52 live mitre_map rows carried one. A
+        # fresh copy per submit, because one Context cannot be entered by two
+        # threads at once. `routes/risk.py` has the same runner and the same fix.
+        futures = [pool.submit(contextvars.copy_context().run, _one, b) for b in batches]
         for fut in as_completed(futures):
             try:
                 data = fut.result()
@@ -2657,8 +2665,14 @@ def finalize_attack_deliverable(
     )
 
     summary_line = (
-        f"Coverage: {rollup.coverage_pct}%. "
+        # The same text the deliverable's own renderers print, so the results
+        # list cannot say 0.0% beside a PDF that says "not measured".
+        f"Coverage: {coverage_pct_text(rollup)}. "
+        # `pending_review` beside the percentage, as every renderer carries it
+        # (#102): an all-withheld run reads 0.0%, and without the count that is
+        # indistinguishable from a client who owns no controls at all.
         f"{rollup.covered} covered, {rollup.partial} partial, {rollup.gap} gaps, "
+        f"{rollup.pending_review} pending review, "
         f"{rollup.not_applicable} N/A across {rollup.scored_count} scored techniques."
     )
 

@@ -110,6 +110,29 @@ def _attach_intake_target(svc_id: str, *, zt_stage: int | None) -> None:
         s.commit()
 
 
+#
+# ---------------------------------------------------------------------------
+# #209 CHANGED THE ORDERING THESE TESTS DEPEND ON, AND THE CHANGE IS STATED
+# RATHER THAN QUIETLY APPLIED (core principle 3).
+#
+# Three tests below attached the client's intake target AFTER the deliverable
+# was finalized and then asserted the dashboard reported it. That worked because
+# the dashboard resolved the target LIVE on every request -- which is the defect
+# #209 closed: it let a released report and the screen beside it state different
+# numbers for one assessment.
+#
+# The tests are NOT weakened and their claims are unchanged. What changed is the
+# setup: the intake target is now attached BEFORE finalize, which is the order
+# the product actually produces (intake, then scoring, then finalize). Each test
+# still asserts exactly what it asserted -- that the engagement target reaches
+# the dashboard, that an out-of-range one is reported rather than 500ing, that a
+# fully-overridden target is not credited to intake.
+#
+# The old ordering was testing a state the product does not build, and after
+# #209 it means something specific and correct: the report was rendered with no
+# target on file, so the dashboard shows what the report showed. That path is
+# pinned in `test_frozen_engagement_target.py`, not deleted.
+# ---------------------------------------------------------------------------
 def _seed_release(
     c: TestClient,
     bearer: str,
@@ -117,6 +140,7 @@ def _seed_release(
     release: bool,
     target_stage: int | None = 4,
     kind: str = "zero_trust_cisa",
+    intake_stage: int | None = None,
 ) -> str:
     """Open a ZT service, set every answer to current=2, approve, finalize,
     optionally release. Returns the service id.
@@ -131,6 +155,11 @@ def _seed_release(
         headers={"Authorization": f"Bearer {bearer}"},
         json={"kind": kind, "title": "Atlas - Zero Trust"},
     ).json()["id"]
+    # #209: BEFORE the assessment, so it is on file when finalize freezes it.
+    # `target_stage` above is the PER-CAPABILITY target; this is the ENGAGEMENT
+    # one, and conflating them is what #124 was.
+    if intake_stage is not None:
+        _attach_intake_target(svc_id, zt_stage=intake_stage)
     assessment = c.post(
         f"/zt/services/{svc_id}/assessments",
         headers={"Authorization": f"Bearer {bearer}"},
@@ -172,8 +201,21 @@ def _release_latest(c: TestClient, bearer: str, svc_id: str) -> None:
     """Release the deliverable `_seed_release(release=False)` already finalized.
 
     Lets a test attach the intake target BETWEEN finalize and release, which is
-    the ordering that matters: the dashboard reads the client's chosen stage
-    live at request time, not from the frozen deliverable.
+    the ordering that matters for these tests: the target reaches the dashboard
+    without having been present when the deliverable was finalized.
+
+    **THE SENTENCE THAT STOOD HERE EXPIRED WITH #209** and is corrected rather
+    than deleted, because it is exactly the "precondition that has expired"
+    shape: it read "the dashboard reads the client's chosen stage live at
+    request time, not from the frozen deliverable", which was TRUE when written
+    and is now the defect #209 closed. A reader arriving here would have taken
+    the live read as intended behaviour.
+
+    What makes these tests still valid: the deliverable is finalized BEFORE the
+    intake target exists, so `frozen_target` is NULL with source `finalize` -- an
+    exact freeze of "no choice" -- and `_frozen_or_live_target` honours it. Any
+    test here that needs the live path must clear `frozen_target_source`, and
+    `tests/unit/test_frozen_engagement_target.py` is where both paths are pinned.
     """
     h = {"Authorization": f"Bearer {bearer}"}
     deliv_id = c.get(f"/zt/services/{svc_id}/deliverables/latest", headers=h).json()["id"]
@@ -392,8 +434,7 @@ def test_dashboard_uses_the_engagement_target_when_no_per_capability_targets(
     bearer_client = client["tokens"]["access_token"]
     client_id = client["user"]["client_id"]
 
-    svc_id = _seed_release(c, bearer_admin, release=False, target_stage=None)
-    _attach_intake_target(svc_id, zt_stage=4)
+    svc_id = _seed_release(c, bearer_admin, release=False, target_stage=None, intake_stage=4)
     _release_latest(c, bearer_admin, svc_id)
 
     c.headers["X-Client-Id"] = client_id
@@ -536,8 +577,8 @@ def test_dashboard_reports_an_out_of_range_stored_target_rather_than_500ing(
         release=True,
         target_stage=None,
         kind="zero_trust_dod",
+        intake_stage=4,
     )
-    _attach_intake_target(svc_id, zt_stage=4)
 
     c.headers["X-Client-Id"] = client_id
     r = c.get(
@@ -569,8 +610,7 @@ def test_dashboard_does_not_credit_intake_for_a_fully_overridden_target(
     bearer_client = client["tokens"]["access_token"]
     client_id = client["user"]["client_id"]
 
-    svc_id = _seed_release(c, bearer_admin, release=False, target_stage=4)
-    _attach_intake_target(svc_id, zt_stage=2)
+    svc_id = _seed_release(c, bearer_admin, release=False, target_stage=4, intake_stage=2)
     _release_latest(c, bearer_admin, svc_id)
 
     c.headers["X-Client-Id"] = client_id

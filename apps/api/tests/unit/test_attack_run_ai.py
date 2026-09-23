@@ -619,3 +619,48 @@ def test_the_same_tool_spelled_two_ways_across_lists_is_not_made_ambiguous(app_c
     row = next(t for t in body["coverage"] if t["technique_code"] == code)
     assert row["detection_tools"] != [], "a citation main would have kept was rejected"
     assert body["citations_rejected"] == 0
+
+
+@pytest.mark.unit
+def test_every_batched_mitre_map_call_carries_the_requests_correlation_id(app_client) -> None:
+    """The batch workers ran without the request's context, so `llm_calls`
+    rows lost the correlation id every other row in the request carries.
+
+    Measured on the dev stack 2026-09-23: 0 of 52 live `mitre_map` rows had
+    one, against 4 of 4 `extract.capabilities` and 1 of 1 `zt_score` -- the
+    unbatched jobs. Without it a coverage edit cannot be joined to the LLM
+    calls that produced it, which is the provenance join `audit_entries` and
+    `llm_calls` both carry the column for.
+    """
+    from sqlalchemy import select
+
+    from app.models.llm_call import LLMCall
+
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["CrowdStrike Falcon"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "Acme ATT&CK"}
+    ).json()["id"]
+    c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    provider.register_static("mitre_map", LLMResponse('{"techniques": []}'))
+
+    r = c.post(
+        f"/attack/services/{svc_id}/run-ai",
+        headers={**h, "X-Request-ID": "corr-mitre-batches"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["X-Request-ID"] == "corr-mitre-batches"
+
+    with TestSession() as db:
+        ids = (
+            db.execute(select(LLMCall.correlation_id).where(LLMCall.purpose == "mitre_map"))
+            .scalars()
+            .all()
+        )
+    # More than one row, or this proves nothing about the WORKERS: a single
+    # batch could in principle run on the request thread.
+    assert len(ids) > 1, ids
+    assert set(ids) == {"corr-mitre-batches"}, ids

@@ -1,0 +1,12 @@
+{
+ "incident": "The control. A docs-only PR must pass without any declaration, or the gate reddens on the class the merge rule exists to let through unattended.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "condition 4 is not tripped",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}

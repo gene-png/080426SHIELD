@@ -276,7 +276,22 @@ def _unresolved_parent(deliv: Deliverable, *, surface: str) -> HTTPException:
     )
 
 
-def _released_parent(db: Session, model, service_id: uuid.UUID, statuses):
+class _ReleasedParent(NamedTuple):
+    """A resolved parent row AND the released deliverable it was reached through.
+
+    The deliverable is returned rather than re-resolved by the caller because
+    #209's freeze lives ON it: the cross-service cards need both, and a second
+    `_latest_released_deliverable` call would be two queries answering one
+    question -- the shape `_client_capability_inputs` was rewritten to avoid.
+    One resolution, so the parent and the frozen target cannot describe
+    different deliverables.
+    """
+
+    row: object
+    deliverable: Deliverable
+
+
+def _released_parent(db: Session, model, service_id: uuid.UUID, statuses) -> _ReleasedParent | None:
     """The parent row behind a service's RELEASED deliverable, or None when it
     cannot be resolved — the value-summary half of #114.
 
@@ -377,7 +392,7 @@ def _released_parent(db: Session, model, service_id: uuid.UUID, statuses):
             model=model.__name__,
         )
         return None
-    return row
+    return _ReleasedParent(row, deliv)
 
     # SYNCHRONIZED WITH `list_client_deliverables`, NOT DERIVED FROM IT, AND A
     # CLIENT-FACING SENTENCE DEPENDS ON THE TWO AGREEING.
@@ -492,6 +507,83 @@ def _zt_client_target_stage(db: Session, service_id: uuid.UUID) -> int | None:
     return sr.zt_target_stage if sr is not None else None
 
 
+def _frozen_or_live_target(
+    deliv: Deliverable | None, live: int | None
+) -> tuple[int | None, datetime | None]:
+    """The engagement target a deliverable was RENDERED against, or the live one.
+
+    Returns `(chosen, frozen_at)`. `frozen_at is None` means nothing was frozen
+    and the caller is looking at a live read -- and that null IS the disclosure
+    (#209): every response carrying a target carries this stamp beside it, so a
+    client comparing the screen to the PDF can see which they are reading.
+
+    #209 IS THE DEFECT THIS CLOSES. Four surfaces resolved the target LIVE on
+    every request while the released document held the number it was rendered
+    with. Change the intake target after release and the two disagree -- the PDF
+    says "37 gaps at target S4" and the dashboard beside it says something else,
+    computed from the same approved answers. Both internally consistent, and one
+    is a number the client never contracted for.
+
+    **THE BRANCH IS ON `frozen_target_source`, NEVER ON `frozen_target`.** A
+    client who chose no target freezes as `(None, "finalize")` -- an exact
+    record of "no choice" -- and a deliverable predating migration 0051 has no
+    freeze at all. Same bytes in the value column, opposite meanings, and only
+    the second may fall back to live computation. Branching on the value would
+    silently re-run the live read for every client who never set a target, which
+    is the majority of them: the defect, preserved for the commonest case, under
+    a fix that reads as complete.
+
+    The CHOSEN value is what is frozen and what comes back here, so the caller
+    runs its own resolver over it exactly as it does today. The number and its
+    caption stay one derivation rather than two stored values.
+
+    ## THE FOUR SITES, AND THE THREE DELIBERATE NON-SITES
+
+    Four callers: `zt_dashboard`, `csf_dashboard`, `_zt_gap_total`,
+    `_csf_gap_total`. A sweep for `_csf_client_target_tier(` /
+    `_zt_client_target_stage(` and for `_client_target_tier(` /
+    `_client_target_stage(` across `app/` finds three more, and every one is
+    deliberately left reading LIVE. Written here rather than left for the next
+    sweeper to re-derive, because a site that SHOULD read live is
+    indistinguishable from one that was missed.
+
+      * `routes/zt.py` and `routes/csf.py` at FINALIZE. This is the write side
+        -- the value read there is what gets frozen. Freezing a frozen value
+        would be circular.
+      * `routes/risk.py` (`_gather_findings`). Its only caller is
+        `@router.post def generate`, so the live read happens at SYNTHESIS time
+        and is persisted with the register (migration 0047) -- freeze-at-write,
+        reached by a different route. Checked by finding the callers, not by
+        assuming: #84 is on record as `risk.py` re-deriving exactly this kind of
+        comparison inline where a call-site sweep came back clean.
+
+        **IT IS NOT THE SAME SHAPE AS FINALIZE, and an earlier version of this
+        paragraph said it was, concluding the register 'is not a fifth
+        surface'.** Finalize freezes the target the ARTIFACT used; generate
+        freezes a target read live at a LATER moment. So: intake tier 4, CSF
+        finalized and released (frozen 4), `submit_self_assessment` writes tier
+        2, an admin regenerates the register -- its CSF findings are computed
+        against 2 while the released CSF report and the now-frozen CSF dashboard
+        both say 4. Two client-facing artifacts, one client, different
+        baselines, and the register's export re-reads only persisted rows so
+        nothing corrects it. `target_sources` reaches the audit row and no
+        schema, dashboard or exporter, so the baseline it used is invisible.
+
+        Out of scope here and filed: the register's own freeze is a separate
+        decision about when a register's inputs are fixed, not a read path this
+        change owns. What is corrected is the claim -- a reader who took 'not a
+        fifth surface' at face value would stop looking.
+      * `routes/zt.py::292` and `routes/csf.py::187`, which publish
+        `client_target_stage` / `client_target_tier` on an ADMIN assessment
+        detail. They describe the intake choice as it stands NOW, to a
+        consultant scoring a draft. Live is the correct reading; freezing it
+        would show an analyst a stale target while they work.
+    """
+    if deliv is not None and deliv.frozen_target_source is not None:
+        return deliv.frozen_target, deliv.finalized_at
+    return live, None
+
+
 class _KindTotal(NamedTuple):
     """A per-kind aggregate, and WHY it is absent when it is absent.
 
@@ -570,6 +662,19 @@ class _TargetedKindTotal(NamedTuple):
     `services` is the denominator and is always known: "2 reports use the
     standard target" is not actionable without knowing whether that is 2 of 2
     or 2 of 9.
+
+    `targets_computed_live` is #209's tally and sits here for the same reason the
+    other two do. A summand whose deliverable carries no frozen target is counted
+    against the client's target AS IT IS NOW, not as it was when the report was
+    rendered, and those can differ. It is a THIRD fact, not a flavour of the
+    other two: a live-computed summand may well be the client's own current
+    choice -- so `targets_defaulted` and `targets_unusable` both stay 0 for it --
+    while still not being the figure the delivered document states.
+
+    It is expected to be 0 on any database seeded after migration 0051 and
+    non-zero only for rows that predate it or that the backfill declined. A field
+    whose normal value is 0 still has to reach a screen: a disclosure nobody can
+    see is #322's shape, and `ValueLoopCard` renders the other two.
     """
 
     value: int | None
@@ -577,6 +682,7 @@ class _TargetedKindTotal(NamedTuple):
     services: int
     targets_defaulted: int | None
     targets_unusable: int | None
+    targets_computed_live: int | None
 
 
 class _TechDebtTotal(NamedTuple):
@@ -592,35 +698,44 @@ class _TechDebtTotal(NamedTuple):
 
 def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTotal:
     if not service_ids:
-        return _TargetedKindTotal(None, False, 0, None, None)
+        return _TargetedKindTotal(None, False, 0, None, None, None)
     total = 0
     defaulted = 0
     unusable = 0
+    live = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # The `found` flag this loop used to carry went with the `continue` that
         # set it. `_released_parent` now returns None where that skipped, and the
         # kind is reported UNRESOLVED rather than summed over what is left — see
         # `_KindTotal`. Do not restore the skip: it publishes a floor.
-        a = _released_parent(
+        res = _released_parent(
             db,
             CsfAssessment,
             sid,
             (CsfAssessmentStatus.APPROVED, CsfAssessmentStatus.RELEASED),
         )
-        if a is None:
+        if res is None:
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason. The target
             # tallies go with it: a prefix of an unpublished sum is not a count
             # of anything. See `_TargetedKindTotal`.
-            return _TargetedKindTotal(None, True, len(service_ids), None, None)
+            return _TargetedKindTotal(None, True, len(service_ids), None, None, None)
+        a, deliv = res.row, res.deliverable
         rows = db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
         answers: dict[str, int | None] = {r.subcategory_code: r.maturity_tier for r in rows}
         # Per-service client tier, same as the dashboard and the exporter (#79).
         # This card sits one click from the dashboard; reporting a different
         # number for the same assessment is what made the inconsistency visible.
-        tier = _csf_client_target_tier(db, sid)
+        # #209: the tier the RELEASED REPORT was rendered against, falling back
+        # to the live read only where nothing was frozen -- and counting that
+        # fallback, because a figure computed against today's target is not the
+        # figure the delivered document states. Same call as the per-service
+        # dashboard makes, so the card and the dashboard cannot disagree.
+        tier, frozen_at = _frozen_or_live_target(deliv, _csf_client_target_tier(db, sid))
+        if frozen_at is None:
+            live += 1
         # #184: resolve rather than branch on `is not None`. An unusable stored
         # tier used to reach the engine and be clamped, so this card could count
         # gaps against a target the dashboard beside it reported differently.
@@ -635,31 +750,33 @@ def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTo
             else:
                 unusable += 1
         total += csf_analyze_gaps(answers, target_tier=resolved_tier).total_gap_count
-    return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable)
+    return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable, live)
 
 
 def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTotal:
     if not service_ids:
-        return _TargetedKindTotal(None, False, 0, None, None)
+        return _TargetedKindTotal(None, False, 0, None, None, None)
     total = 0
     defaulted = 0
     unusable = 0
+    live = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
-        a = _released_parent(
+        res = _released_parent(
             db,
             ZtAssessment,
             sid,
             (ZtAssessmentStatus.APPROVED, ZtAssessmentStatus.RELEASED),
         )
-        if a is None:
+        if res is None:
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason. The target
             # tallies go with it — see `_csf_gap_total` and
             # `_TargetedKindTotal`.
-            return _TargetedKindTotal(None, True, len(service_ids), None, None)
+            return _TargetedKindTotal(None, True, len(service_ids), None, None, None)
+        a, deliv = res.row, res.deliverable
         fw = (
             ZtFrameworkCode.CISA_ZTMM_2_0
             if a.framework == ZtFramework.CISA_ZTMM_2_0
@@ -674,7 +791,12 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
         # 3 saw "0 gaps" on this card while their released report listed 37.
         # That is #79's symptom in the service #73 was filed against, and this
         # function sat directly below the CSF twin that was fixed for it.
-        stage = _zt_client_target_stage(db, sid)
+        # #209, the CSF twin's fix applied here in the same commit -- see
+        # `_csf_gap_total`. Fixing one of these two and not the other is the
+        # half-sweep this repo keeps paying for (#75/#79).
+        stage, frozen_at = _frozen_or_live_target(deliv, _zt_client_target_stage(db, sid))
+        if frozen_at is None:
+            live += 1
         # #125: resolve rather than let `zt_analyze_gaps` clamp -- it now
         # raises, and an unresolved stored value would 500 the client's own
         # dashboard.
@@ -712,7 +834,7 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
             targets=targets,
             target_stage=resolved_stage,
         ).total_gap_count
-    return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable)
+    return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable, live)
 
 
 def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
@@ -722,17 +844,22 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindT
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
-        a = _released_parent(
+        res = _released_parent(
             db,
             AttackAssessment,
             sid,
             (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
         )
-        if a is None:
+        if res is None:
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
             return _KindTotal(None, True)
+        # No `deliverable` here: an ATT&CK service has no engagement target of
+        # #209's shape, so there is nothing to freeze. Stated because the two
+        # helpers above this one DO freeze, and a reader sweeping for the twin
+        # would otherwise read this as the site that was missed.
+        a = res.row
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
@@ -767,16 +894,18 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED list.
         # See `_csf_gap_total` above for why the `found` flag went with it.
-        cl = _released_parent(
+        res = _released_parent(
             db,
             CapabilityList,
             sid,
             (CapabilityListStatus.APPROVED, CapabilityListStatus.RELEASED),
         )
-        if cl is None:
+        if res is None:
             # See `_csf_gap_total`: one unresolvable list makes the kind
             # unresolved rather than publishing a partial savings figure.
             return _TechDebtTotal(None, True, True)
+        # The row only, for the reason `_attack_gap_total` states.
+        cl = res.row
         items = (
             db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cl.id))
             .scalars()
@@ -839,8 +968,10 @@ def value_summary(
         # and once the client has closed the page the response is gone.
         zt_targets_defaulted=zt.targets_defaulted,
         zt_targets_unusable=zt.targets_unusable,
+        zt_targets_computed_live=zt.targets_computed_live,
         csf_targets_defaulted=csf.targets_defaulted,
         csf_targets_unusable=csf.targets_unusable,
+        csf_targets_computed_live=csf.targets_computed_live,
     )
     return ValueSummaryResponse(
         tech_debt_savings_usd=td.value,
@@ -851,6 +982,7 @@ def value_summary(
         zt_services=zt.services,
         zt_targets_defaulted=zt.targets_defaulted,
         zt_targets_unusable=zt.targets_unusable,
+        zt_targets_computed_live=zt.targets_computed_live,
         attack_uncovered_count=attack.value,
         attack_uncovered_unresolved=attack.unresolved,
         csf_gap_count=csf.value,
@@ -858,6 +990,7 @@ def value_summary(
         csf_services=csf.services,
         csf_targets_defaulted=csf.targets_defaulted,
         csf_targets_unusable=csf.targets_unusable,
+        csf_targets_computed_live=csf.targets_computed_live,
         has_any_data=has_any,
         has_unresolved=has_unresolved,
     )
@@ -1202,7 +1335,13 @@ def zt_dashboard(
     # applies per capability, imported rather than re-derived — #84 is on
     # record as `risk.py` re-deriving exactly this comparison inline, where a
     # complete call-site sweep reported clean over it.
-    chosen = _zt_client_target_stage(db, service_id)
+    # #209: the stage the RELEASED REPORT was rendered against, falling back
+    # to the live read only where nothing was frozen. The resolver call below
+    # is UNCHANGED -- the freeze holds the client's CHOSEN value, so the number
+    # and `target_stage_source` stay one derivation over it.
+    chosen, target_frozen_at = _frozen_or_live_target(
+        deliv, _zt_client_target_stage(db, service_id)
+    )
     target_stage, target_stage_source = zt_resolve_target_stage(fw, chosen)
     effective_targets = zt_effective_target_stages(fw, targets, target_stage)
     # NOT `gap`: the per-pillar loop below binds that name to a float.
@@ -1255,6 +1394,9 @@ def zt_dashboard(
         total_gap_count=gap_analysis.total_gap_count,
         target_stage=target_stage,
         target_stage_source=target_stage_source,
+        # #209. The two values above are uninterpretable without knowing
+        # whether they were frozen at finalize or read live a moment ago.
+        target_frozen_at=target_frozen_at.isoformat() if target_frozen_at else None,
         engagement_target_capability_count=engagement_target_capability_count,
         # #188. `target_stage_source` records a fault in the ENGAGEMENT target;
         # this records the same class of fault one level down, and it belongs
@@ -1276,6 +1418,14 @@ def zt_dashboard(
         target_pct=target.maturity_pct,
         target_stage=target_stage,
         target_stage_source=target_stage_source,
+        # #209: WHICH TARGET THIS RESPONSE USED, and null is the disclosure.
+        # Non-null means the figures above were computed against the target this
+        # deliverable was RENDERED against, so they agree with the released
+        # document by construction. Null means nothing was frozen for this row and
+        # the target was resolved live on this request, so a client comparing the
+        # two may legitimately see different numbers -- which is the fact #209 was
+        # filed for, and it now reaches the screen instead of being invisible.
+        target_frozen_at=target_frozen_at,
         engagement_target_capability_count=engagement_target_capability_count,
         # #188: taken off the SAME GapAnalysis the deliverable renders, not
         # re-derived here. A second derivation is #84's shape, and this one
@@ -1728,7 +1878,11 @@ def csf_dashboard(
     # here is that lesson applied before the same defect can be built, and
     # `target_tier_source` says which one was used so a fallback is never
     # mistaken for a decision.
-    chosen = _csf_client_target_tier(db, service_id)
+    # #209, the ZT twin's fix applied here in the same commit -- see
+    # `zt_dashboard`. The resolver call below is unchanged.
+    chosen, target_frozen_at = _frozen_or_live_target(
+        deliv, _csf_client_target_tier(db, service_id)
+    )
     # #184: one resolver, four sources. This was
     # `"client" if chosen is not None else "default"` -- keyed on whether a
     # value was OFFERED, never on whether it SURVIVED -- so a stored tier the
@@ -1780,6 +1934,9 @@ def csf_dashboard(
         # the two this endpoint is most likely to be wrong about.
         target_tier=target_tier,
         target_tier_source=target_tier_source,
+        # #209, as in `zt_dashboard`: neither is interpretable without knowing
+        # whether it was frozen at finalize or read live a moment ago.
+        target_frozen_at=target_frozen_at.isoformat() if target_frozen_at else None,
     )
     return CsfDashboardResponse(
         service_id=svc.id,
@@ -1799,6 +1956,14 @@ def csf_dashboard(
         target_label=gap.target_label,
         target_pct=target_pct,
         target_tier_source=target_tier_source,
+        # #209: WHICH TARGET THIS RESPONSE USED, and null is the disclosure.
+        # Non-null means the figures above were computed against the target this
+        # deliverable was RENDERED against, so they agree with the released
+        # document by construction. Null means nothing was frozen for this row and
+        # the target was resolved live on this request, so a client comparing the
+        # two may legitimately see different numbers -- which is the fact #209 was
+        # filed for, and it now reaches the screen instead of being invisible.
+        target_frozen_at=target_frozen_at,
         total_gap_count=gap.total_gap_count,
         largest_gap_function=largest_gap_function,
         largest_gap_pct=largest_gap_pct,

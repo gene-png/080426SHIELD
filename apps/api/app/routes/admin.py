@@ -798,6 +798,19 @@ def ai_status(
     )
 
 
+#: ADDING A NOT-READY BRANCH BELOW IS A CROSS-LANGUAGE CHANGE (#471).
+#:
+#: Every `detail` this function returns is rendered VERBATIM to a consultant
+#: at the point of action, by `apps/web/src/components/admin/RunAiGuard.tsx`.
+#: `RunAiGuard.test.tsx` drives one case per branch from a local table, so a
+#: sixth branch that nobody adds to that table ships with no copy test at all
+#: -- and the table's own set-level assertions iterate the table, so they stay
+#: green.
+#:
+#: `tests/unit/test_ai_readiness_branch_count.py` goes RED when the count here
+#: changes and names the file to update. The pointer sits on THIS side because
+#: the person editing this function never opens a `.tsx` file -- a pointer on
+#: the consuming side closes nothing.
 def _ai_readiness(db: Session, s) -> tuple[bool, str, str]:
     """Whether a live call will succeed, why not, and where the key came from.
 

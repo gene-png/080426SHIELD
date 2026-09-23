@@ -78,7 +78,7 @@ from app.models.csf_assessment import (
     CsfAssessmentStatus,
 )
 from app.models.csf_profile import CsfDimensionScore, CsfGapAction
-from app.models.deliverable import Deliverable
+from app.models.deliverable import FROZEN_TARGET_AT_FINALIZE, Deliverable
 from app.models.questionnaire import Question
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.service_request import ServiceRequest
@@ -2497,6 +2497,21 @@ def finalize_csf_deliverable(
         # parent and where that parent is already required to be APPROVED.
         # Release reads it to flip exactly this row (migration 0041).
         parent_version=assessment.version,
+        # THE ENGAGEMENT TARGET THIS REPORT WAS RENDERED AGAINST (#209,
+        # migration 0051), stamped HERE for the reason `parent_version` above is:
+        # this is where the content freezes, and a release-time stamp would
+        # record a target the artifacts never used.
+        #
+        # The CHOSEN value, never the resolved one. `resolve_target_tier` runs the same
+        # resolver over it, so the number on the screen and the caption beside it
+        # are one derivation rather than two stored values kept in agreement by
+        # hand.
+        #
+        # `FROZEN_TARGET_AT_FINALIZE` is what makes the column non-NULL even when the client chose
+        # nothing: `(None, "finalize")` is an exact freeze of "no choice", which a
+        # bare NULL value could not tell from a row predating the migration.
+        frozen_target=engagement_tier,
+        frozen_target_source=FROZEN_TARGET_AT_FINALIZE,
         pdf_artifact_id=pdf_artifact.id,
         xlsx_artifact_id=xlsx_artifact.id,
         docx_artifact_id=docx_artifact.id,

@@ -238,3 +238,74 @@ def test_attack_deliverable_invisible_to_client(app_client) -> None:
 def test_catalog_count_matches_constant() -> None:
     # Smoke - lock against accidental catalog regression.
     assert len(TECHNIQUES) >= 600
+
+
+@pytest.mark.unit
+def test_the_stored_summary_says_what_the_deliverable_says(app_client) -> None:
+    """`Deliverable.summary` is what the results list shows. It printed the
+    rollup's raw 0.0% beside a PDF that says "not measured" when nothing is
+    Covered, Partial or Gap. Driven through the real finalize endpoint."""
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    assessment = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()
+    for cov in assessment["coverage"][:3]:
+        r = c.patch(f"/attack/coverage/{cov['id']}", headers=h, json={"status": "not_applicable"})
+        assert r.status_code == 200, r.text
+    c.post(f"/attack/assessments/{assessment['id']}/approve", headers=h)
+    fin = c.post(f"/attack/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+    summary = fin.json()["summary"]
+    assert summary.startswith("Coverage: not measured."), summary
+    assert "0.0%" not in summary, summary
+
+
+@pytest.mark.unit
+def test_the_stored_summary_carries_the_withheld_count(app_client) -> None:
+    """CLAUDE.md: a percentage over a withheld population renders the withheld
+    count beside it, everywhere. The results-list line printed "Coverage: 0.0%.
+    0 covered, 0 partial, 0 gaps ..." for a run whose every claim was withheld
+    -- indistinguishable from a client with no controls.
+
+    No HAND-SET status is pending: a PATCH stamps citations (None -> []). The
+    live writer of pending rows is run-ai -- inferred, rejected and no-citation
+    entries all land uncleared, and approve has no pending check, so run-ai ->
+    approve -> finalize reaches this state on every live run with an inexact
+    citation (see test_attack_pending_persistence). Direct SQL here only
+    because this fixture has no provider handle; Covered over NULL citations
+    (the pre-0044 shape) is withheld the same way."""
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackCoverage
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    h = {"Authorization": f"Bearer {admin['tokens']['access_token']}"}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "A"}
+    ).json()["id"]
+    assessment = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()
+    ids = [_uuid.UUID(cov["id"]) for cov in assessment["coverage"][:3]]
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        db.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id.in_(ids))
+            .values(status="covered", unconfirmed_citations=None)
+        )
+        db.commit()
+    engine.dispose()
+
+    c.post(f"/attack/assessments/{assessment['id']}/approve", headers=h)
+    fin = c.post(f"/attack/services/{svc_id}/deliverables/finalize", headers=h)
+    assert fin.status_code == 201, fin.text
+    summary = fin.json()["summary"]
+    assert "3 pending review" in summary, summary
+    assert summary.startswith("Coverage: 0.0%."), summary

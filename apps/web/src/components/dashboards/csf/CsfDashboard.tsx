@@ -16,6 +16,7 @@ import {
   type CsfDashboardData,
   type CsfFunction,
 } from "@/lib/dashboards/csf";
+import { renderedAgainstNote } from "@/lib/dashboards/frozenTarget";
 
 import type { JSX } from "react";
 
@@ -139,9 +140,15 @@ export function CsfDashboard({
              had chosen a different one, so a number nobody picked read exactly
              like a number they did. */
           sub={
-            assumedTarget
+            /* #209: APPENDED to both arms, never in place of one. Which
+               target the figures were computed against is independent of
+               how that target was chosen, so an early return on either
+               branch would swallow it -- the mistake `zt.ts::targetNote`
+               has been repaired for twice. */
+            (assumedTarget
               ? `Default target — ${targetFaultNote(data.target_tier_source) ?? "the tier on file was not usable"}`
               : "Your target, chosen at intake"
+            ).concat(renderedAgainstNote(data.target_frozen_at))
           }
           accent={C.green}
         />

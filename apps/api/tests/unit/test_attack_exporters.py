@@ -11,6 +11,7 @@ from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import TECHNIQUES
 from app.attack.coverage import CoverageStatus
 from app.attack.exporters import build_context, render_docx, render_pdf, render_xlsx
+from app.attack.pending import pending_codes as attack_pending_codes
 from app.models.attack_assessment import (
     AttackAssessment,
     AttackAssessmentStatus,
@@ -58,13 +59,15 @@ def _ctx(*, default_status: str | None = "covered"):
 
 
 @pytest.mark.unit
-def test_xlsx_has_three_sheets() -> None:
+def test_xlsx_has_four_sheets() -> None:
     from openpyxl import load_workbook
 
     raw = render_xlsx(_ctx())
     assert raw[:2] == b"PK"
     wb = load_workbook(io.BytesIO(raw))
-    assert set(wb.sheetnames) == {"Heatmap Summary", "Coverage", "Gaps"}
+    # Four since the Unscored sheet: an unscored technique used to be one
+    # "Unscored" cell among 600+ rows, findable only by filtering.
+    assert set(wb.sheetnames) == {"Heatmap Summary", "Coverage", "Gaps", "Unscored"}
 
 
 @pytest.mark.unit
@@ -332,7 +335,13 @@ def test_the_gap_truncation_disclosure_is_actually_printed() -> None:
     )
     total = rollup.gap
     assert total > 50, "fixture must exceed the cap or this proves nothing"
-    expected = f"Top remediation gaps (50 of {total} shown)"
+    # THE WORDING CHANGED AT #480 AND THE PROPERTY DID NOT. The heading read
+    # "Top remediation gaps (50 of N shown)", which disclosed the truncation
+    # correctly and, in the same breath, claimed a ranking the alphabetical sort
+    # does not provide and a remediation the two-column table does not contain.
+    # This pins the DISCLOSURE -- both numbers and the literal words -- so it
+    # moves with the rewording rather than being deleted.
+    expected = f"first 50 of {total} by technique code"
 
     assert expected in _pdf_text(render_pdf(ctx))
 
@@ -341,7 +350,17 @@ def test_the_gap_truncation_disclosure_is_actually_printed() -> None:
     from docx import Document
 
     doc = Document(_io.BytesIO(render_docx(ctx)))
-    assert expected in "\n".join(p.text for p in doc.paragraphs)
+    docx_text = "\n".join(p.text for p in doc.paragraphs)
+    assert expected in docx_text
+    assert "alphabetical, not ranked" in docx_text, (
+        "the heading must say the order is NOT a ranking -- that half is the "
+        "#480 defect, and a reword keeping the counts while dropping it would "
+        "pass the assertion above"
+    )
+    assert "Top remediation gaps" not in docx_text, (
+        "the claim #480 removed is back: an alphabetical two-column list under "
+        "a heading asserting a prioritisation"
+    )
 
 
 @pytest.mark.unit
@@ -392,3 +411,301 @@ def test_the_per_technique_sheet_marks_a_withheld_row() -> None:
     # And the underlying status survives on those rows, as its rendered label
     # (`coverage_label`), which is what a reader sees.
     assert {ws.cell(row=r, column=status_col).value for r in flagged} == {"Covered"}
+
+
+# --------------------------------------------------------------------------- #
+# The workbook says what the assessment knows.
+#
+# Measured on the dev stack 2026-09-23, on the one live-run assessment there:
+# 632 of 633 rows carried a rationale and 515 a detection-tool list, and the
+# workbook exported neither; its only free-text column, Notes, was empty on
+# every row. One technique was unscored and appeared as a single cell among
+# 633. And a tactic with nothing addressable exported 0.0% -- the same figure
+# as a tactic that is all gaps.
+# --------------------------------------------------------------------------- #
+
+_RECON = "TA0043"
+
+
+def _ctx_from(rows: dict[str, dict], *, default_status: str | None = "covered"):
+    """Every catalogue technique at `default_status`, with per-code overrides."""
+    a, coverage, _ = _build_inputs(default_status=default_status)
+    for cov in coverage:
+        for field, value in rows.get(cov.technique_code, {}).items():
+            setattr(cov, field, value)
+    # Pending codes as production computes them, so a withheld row is withheld
+    # here too (routes/attack.py builds the rollup the same way).
+    rollup = compute_heatmap(
+        {c.technique_code: c.status for c in coverage}, attack_pending_codes(coverage)
+    )
+    ctx = build_context(
+        client_legal_name="Atlas Defense Solutions",
+        service_title="MITRE ATT&CK Coverage",
+        assessment=a,
+        coverage=coverage,
+        rollup=rollup,
+    )
+    return ctx, rollup
+
+
+def _sheet_rows(ws) -> list[dict]:
+    headers = [c.value for c in ws[1]]
+    return [
+        dict(zip(headers, (c.value for c in row), strict=True)) for row in ws.iter_rows(min_row=2)
+    ]
+
+
+def _xlsx(ctx):
+    from openpyxl import load_workbook
+
+    return load_workbook(io.BytesIO(render_xlsx(ctx)))
+
+
+@pytest.mark.unit
+def test_the_coverage_sheet_carries_the_rationale_and_all_three_tool_lists() -> None:
+    code = TECHNIQUES[0].id
+    ctx, _ = _ctx_from(
+        {
+            code: {
+                "rationale": "EDR telemetry detects the process tree.",
+                "detection_tools": ["CrowdStrike Falcon", "Splunk"],
+                "prevention_tools": ["Zscaler"],
+                "response_tools": ["Cortex XSOAR"],
+            }
+        }
+    )
+    row = next(r for r in _sheet_rows(_xlsx(ctx)["Coverage"]) if r["Technique"] == code)
+    assert row["Rationale"] == "EDR telemetry detects the process tree."
+    assert row["Detection tools"] == "CrowdStrike Falcon; Splunk"
+    assert row["Prevention tools"] == "Zscaler"
+    assert row["Response tools"] == "Cortex XSOAR"
+    # Notes stays: it has a writer (the technique panel's PATCH), and a
+    # consultant's note is not the model's rationale.
+    assert "Notes" in row
+
+
+@pytest.mark.unit
+def test_the_gaps_sheet_carries_the_rationale_for_each_gap() -> None:
+    code = TECHNIQUES[1].id
+    ctx, _ = _ctx_from(
+        {code: {"status": CoverageStatus.GAP.value, "rationale": "No tool observes this."}}
+    )
+    rows = _sheet_rows(_xlsx(ctx)["Gaps"])
+    assert [r["Technique"] for r in rows] == [code]
+    assert rows[0]["Rationale"] == "No tool observes this."
+
+
+@pytest.mark.unit
+def test_every_unscored_technique_is_listed_by_code_and_agrees_with_the_summary() -> None:
+    # A null status and an unrecognised one are both unscored to the rollup
+    # (`_validated`), so both must be listed -- the sheet may not use a
+    # narrower predicate than the number it sits beside.
+    null_code, bogus_code = TECHNIQUES[2].id, TECHNIQUES[3].id
+    ctx, rollup = _ctx_from({null_code: {"status": None}, bogus_code: {"status": "bogus"}})
+    listed = [r["Technique"] for r in _sheet_rows(_xlsx(ctx)["Unscored"])]
+    assert sorted(listed) == sorted([null_code, bogus_code])
+    assert len(listed) == rollup.unscored_count == 2
+
+
+@pytest.mark.unit
+def test_the_unscored_sheet_says_so_when_there_are_none() -> None:
+    ctx, rollup = _ctx_from({})
+    assert rollup.unscored_count == 0
+    rows = _sheet_rows(_xlsx(ctx)["Unscored"])
+    assert len(rows) == 1
+    assert rows[0]["Name"] == "No unscored techniques"
+
+
+def _recon_unscored_rest_gap():
+    """Reconnaissance has nothing addressable; every other tactic is all gaps.
+
+    The pair is the point: a gap-only tactic legitimately reads 0.0%, and the
+    defect was that a nothing-addressable tactic read the SAME.
+    """
+    recon = {t.id for t in TECHNIQUES if _RECON in t.tactics}
+    others = {t.id for t in TECHNIQUES if _RECON not in t.tactics}
+    assert recon and others
+    rows = {code: {"status": None} for code in recon}
+    return _ctx_from(rows, default_status=CoverageStatus.GAP.value)
+
+
+@pytest.mark.unit
+def test_a_tactic_with_nothing_addressable_reads_not_measured_not_zero_in_the_xlsx() -> None:
+    ctx, _ = _recon_unscored_rest_gap()
+    ws = _xlsx(ctx)["Heatmap Summary"]
+    header_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "Tactic")
+    headers = [c.value for c in ws[header_row]]
+    pct = headers.index("Coverage %")
+    by_tactic = {
+        row[0].value: row[pct].value for row in ws.iter_rows(min_row=header_row + 1) if row[0].value
+    }
+    other = next(t for t in by_tactic if t != _RECON)
+    assert by_tactic[other] == 0.0  # the positive half first: a real zero stays zero
+    assert by_tactic[_RECON] == "not measured"
+
+
+@pytest.mark.unit
+def test_a_tactic_with_nothing_addressable_reads_not_measured_not_zero_in_docx_and_pdf() -> None:
+    from docx import Document
+
+    ctx, _ = _recon_unscored_rest_gap()
+    doc = Document(io.BytesIO(render_docx(ctx)))
+    table = next(t for t in doc.tables if t.rows[0].cells[0].text == "Tactic")
+    header = [c.text for c in table.rows[0].cells]
+    pct = header.index("Coverage %")
+    by_tactic = {r.cells[0].text: r.cells[pct].text for r in table.rows[1:]}
+    other = next(t for t in by_tactic if t != _RECON)
+    assert by_tactic[other] == "0.0%"
+    assert by_tactic[_RECON] == "not measured"
+
+    # The PDF table is drawn; assert the Recon row's text rather than a cell.
+    text = " ".join(_pdf_text(render_pdf(ctx)).split())
+    assert "TA0043 Reconnaissance" in text
+    recon_row = text.split("TA0043 Reconnaissance", 1)[1].split("TA", 1)[0]
+    assert "not measured" in recon_row, recon_row
+    assert "0.0%" not in recon_row, recon_row
+
+
+@pytest.mark.unit
+def test_nothing_addressable_overall_reads_not_measured_in_every_renderer() -> None:
+    from docx import Document
+
+    ctx, rollup = _ctx_from({}, default_status=CoverageStatus.NOT_APPLICABLE.value)
+    assert rollup.covered + rollup.partial + rollup.gap == 0
+
+    ws = _xlsx(ctx)["Heatmap Summary"]
+    labels = {r[0].value: r[1].value for r in ws.iter_rows(max_row=12)}
+    assert labels["Coverage %"] == "not measured"
+
+    paras = [p.text for p in Document(io.BytesIO(render_docx(ctx))).paragraphs]
+    assert "Overall coverage: not measured" in paras
+    assert "Overall coverage: not measured" in " ".join(_pdf_text(render_pdf(ctx)).split())
+
+
+@pytest.mark.unit
+def test_every_renderer_defines_the_coverage_percentage() -> None:
+    from docx import Document
+
+    ctx, _ = _ctx_from({})
+    needle = "(Covered + 0.5 x Partial) / (Covered + Partial + Gap)"
+    ws = _xlsx(ctx)["Heatmap Summary"]
+    xlsx_cells = [c.value for row in ws.iter_rows(max_row=12) for c in row]
+    assert any(isinstance(v, str) and needle in v for v in xlsx_cells)
+    docx_text = "\n".join(p.text for p in Document(io.BytesIO(render_docx(ctx))).paragraphs)
+    assert needle in docx_text
+    assert needle in " ".join(_pdf_text(render_pdf(ctx)).split())
+
+
+@pytest.mark.unit
+def test_an_inferred_tool_is_marked_unconfirmed_beside_a_confirmed_one() -> None:
+    """#102. A row with one confirmed tool is NOT pending review, so its
+    inferred neighbour used to print exactly like a confirmed citation. The
+    mark comes from `pending.uncleared_tools`: inferred and not cleared."""
+    code = TECHNIQUES[4].id
+    ctx, _ = _ctx_from(
+        {
+            code: {
+                "detection_tools": ["CrowdStrike Falcon", "Splunk"],
+                "unconfirmed_citations": [
+                    {"tool": "Splunk", "cited": "splunk es", "cleared_at": None}
+                ],
+            }
+        }
+    )
+    row = next(r for r in _sheet_rows(_xlsx(ctx)["Coverage"]) if r["Technique"] == code)
+    # The row itself is not withheld (an empty cell reads back as None)...
+    assert not row["Pending review"]
+    assert row["Detection tools"] == "CrowdStrike Falcon; Splunk (unconfirmed)"
+
+
+@pytest.mark.unit
+def test_a_cleared_citation_is_not_marked() -> None:
+    code = TECHNIQUES[5].id
+    ctx, _ = _ctx_from(
+        {
+            code: {
+                "detection_tools": ["Splunk"],
+                "unconfirmed_citations": [
+                    {"tool": "Splunk", "cited": "splunk es", "cleared_at": "2026-09-23T00:00:00"}
+                ],
+            }
+        }
+    )
+    row = next(r for r in _sheet_rows(_xlsx(ctx)["Coverage"]) if r["Technique"] == code)
+    assert row["Detection tools"] == "Splunk"
+
+
+@pytest.mark.unit
+def test_model_text_cannot_become_a_formula_or_break_the_workbook() -> None:
+    """Rationale is model output and tool names come from a client upload.
+    openpyxl stores a leading "=" as a formula and raises on control bytes."""
+    code, gap_code = TECHNIQUES[6].id, TECHNIQUES[7].id
+    formula = '=HYPERLINK("http://example.test","click")'
+    ctx, _ = _ctx_from(
+        {
+            code: {"rationale": formula, "detection_tools": ["=cmd|' /C calc'!A0"]},
+            gap_code: {"status": CoverageStatus.GAP.value, "rationale": "bell" + chr(7)},
+        }
+    )
+    wb = _xlsx(ctx)
+    ws = wb["Coverage"]
+    headers = [c.value for c in ws[1]]
+    r = next(i for i in range(2, ws.max_row + 1) if ws.cell(i, 1).value == code)
+    rationale = ws.cell(r, headers.index("Rationale") + 1)
+    assert rationale.value == formula
+    assert rationale.data_type == "s"
+    assert ws.cell(r, headers.index("Detection tools") + 1).data_type == "s"
+    gap = next(x for x in _sheet_rows(wb["Gaps"]) if x["Technique"] == gap_code)
+    assert gap["Rationale"] == "bell"
+
+
+@pytest.mark.unit
+def test_a_tactic_whose_claims_are_all_pending_review_is_measured_not_unmeasured() -> None:
+    """#102 withholds a Covered claim backed only by an inferred tool, moving it
+    from `covered` into `pending_review`. Such a tactic has covered + partial +
+    gap = 0, and read "not measured" -- while its Coverage tab listed the same
+    techniques as Covered. Claims were made; they are withheld, which is 0.0%
+    beside a pending count, not "never assessed"."""
+    recon = [t.id for t in TECHNIQUES if _RECON in t.tactics]
+    rows = {
+        code: {
+            "status": CoverageStatus.COVERED.value,
+            "detection_tools": ["Inferred Tool"],
+            "unconfirmed_citations": [
+                {"tool": "Inferred Tool", "cited": "inferred", "cleared_at": None}
+            ],
+        }
+        for code in recon
+    }
+    ctx, rollup = _ctx_from(rows, default_status=CoverageStatus.GAP.value)
+    recon_tc = next(tc for tc in rollup.by_tactic if tc.tactic_id == _RECON)
+    assert recon_tc.pending_review == len(recon)  # the setup withholds, as intended
+    assert recon_tc.covered + recon_tc.partial + recon_tc.gap == 0
+
+    ws = _xlsx(ctx)["Heatmap Summary"]
+    header_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "Tactic")
+    headers = [c.value for c in ws[header_row]]
+    pct = headers.index("Coverage %")
+    by_tactic = {
+        row[0].value: row[pct].value for row in ws.iter_rows(min_row=header_row + 1) if row[0].value
+    }
+    assert by_tactic[_RECON] == 0.0
+
+
+@pytest.mark.unit
+def test_the_client_entered_header_cells_are_safe_text() -> None:
+    """Engagement (the client's legal name) and Service (a consultant-typed
+    title) were written with a bare append, past the guard the rest of the
+    workbook's free text goes through."""
+    a, coverage, rollup = _build_inputs()
+    ctx = build_context(
+        client_legal_name="Atlas" + chr(7) + " Defense",
+        service_title='=HYPERLINK("http://example.test","click")',
+        assessment=a,
+        coverage=coverage,
+        rollup=rollup,
+    )
+    ws = _xlsx(ctx)["Heatmap Summary"]
+    assert ws.cell(1, 2).value == "Atlas Defense"
+    assert ws.cell(2, 2).value == '=HYPERLINK("http://example.test","click")'
+    assert ws.cell(2, 2).data_type == "s"

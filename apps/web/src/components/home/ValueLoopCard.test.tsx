@@ -36,6 +36,10 @@ function summary(over: Partial<ValueSummary> = {}): ValueSummary {
     zt_services: 0,
     zt_targets_defaulted: null,
     zt_targets_unusable: null,
+    // #209: null for the same reason the two above are null -- the figure
+    // itself does not exist, so a 0 would assert "every figure matches your
+    // reports" over something nobody measured.
+    zt_targets_computed_live: null,
     attack_uncovered_count: null,
     attack_uncovered_unresolved: false,
     csf_gap_count: null,
@@ -43,6 +47,7 @@ function summary(over: Partial<ValueSummary> = {}): ValueSummary {
     csf_services: 0,
     csf_targets_defaulted: null,
     csf_targets_unusable: null,
+    csf_targets_computed_live: null,
     has_any_data: false,
     has_unresolved: false,
     ...over,
@@ -56,6 +61,9 @@ function ztChosen(count: number): Partial<ValueSummary> {
     zt_services: 1,
     zt_targets_defaulted: 0,
     zt_targets_unusable: 0,
+    // #209: frozen, so this helper's name stays true -- a live-read target is
+    // not "entirely the client's own choice" as the card reports it.
+    zt_targets_computed_live: 0,
     has_any_data: true,
   };
 }

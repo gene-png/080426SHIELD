@@ -1,0 +1,14 @@
+{
+ "incident": "`package.json` was judged by PATH under the claim that a dependency manifest has no authority beyond which versions install. `ci.yml` falsifies it: `format:check`, `lint`, `typecheck`, `test` and `build` are all `package.json` scripts. One commit on a bot branch keeps `user.login == dependabot[bot]`, so only the CONTENT betrays it. Exit 0 before 2026-09-23.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "dependency specifier",
+ "argv": [
+  "--author",
+  "dependabot[bot]",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--diff",
+  "{dir}/diff.txt"
+ ]
+}

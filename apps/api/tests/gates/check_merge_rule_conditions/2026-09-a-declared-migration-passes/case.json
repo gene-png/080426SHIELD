@@ -1,0 +1,12 @@
+{
+ "incident": "The passing direction of the marker, and it asserts the REASON reaches stdout: a marker whose reason nobody echoes degrades into a ritual token. THE NEEDLE WAS 'the body declares it', which is the f-string PREFIX -- emitted whatever the reason holds, so replacing `declares_migration` with `return \"x\"` left this case green. A fixture certifying a check it does not perform, in the fixture set whose job is to stop exactly that.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "two nullable columns on deliverables",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}

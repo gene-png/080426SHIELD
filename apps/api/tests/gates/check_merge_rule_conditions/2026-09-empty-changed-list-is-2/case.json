@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. An empty changed-file list means the diff did not resolve -- a shallow checkout, or the wrong base. Reading it as 'no migration' is exactly `check_audit_evidence.py`'s `is_code_change([])`, which printed 'documentation-only change, exempt' and exited 0 on input supporting neither reading.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "EMPTY",
+ "argv": [
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--body",
+  "{dir}/body.md"
+ ]
+}
