@@ -180,8 +180,17 @@ jobs:
       # admitted language is narrow. Three real holes lived inside it, all
       # measured at exit 0 before the fix.
       #
-      # Six probes, measured 2026-09-23, three of them attacks the old guard
-      # PASSED:
+      # Probes, measured 2026-09-23. Every row below except the first is
+      # exercised by a named test in `tests/unit/test_bot_pr_manifest_guard.py`
+      # or a fixture under `tests/gates/check_bot_pr_is_manifest_only/`; the
+      # first (`all four real bot PRs`) is a one-off run against live PRs and
+      # has no test behind it, which is worth knowing since it is the row that
+      # answers "does this still pass real traffic".
+      #
+      # The count that stood here said SIX above EIGHT rows -- so the
+      # date-and-measurement certificate covered six of them and a reader
+      # could not tell which two were uncertified. Deleted rather than
+      # corrected, per the rule about numbers describing a list beside them.
       #
       #   all four real bot PRs, real diffs                    -> exit 0
       #   a real `uses:` bump PAIR (-@v4 / +@v7)               -> exit 0

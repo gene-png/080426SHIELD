@@ -1,13 +1,14 @@
-# 2026-09-23 — two instrument findings, kept OUT of CLAUDE.md on purpose
+# 2026-09-23 — an instrument finding and a root cause, kept OUT of CLAUDE.md
 
 These were written into `CLAUDE.md` first, into the "prefer the most primitive
 available signal" section, and then taken back out. The reason is the finding
-below, and it is the more useful of the three.
+below, and it is the more useful of them.
 
 ## Why they are here and not there
 
-`CLAUDE.md` is 149,144 bytes against a 150,000-byte hard gate. The two lines came
-to **617 bytes**, leaving **239** — and `CLAUDE.md` is where the merge rule lives.
+`CLAUDE.md` is 149,144 bytes against a 150,000-byte hard gate
+<!-- counted: python apps/api/scripts/check_claude_md_size.py --require-canary CLAUDE.md, 2026-09-23 -->
+and the two lines came to 617 bytes, leaving 239 — and `CLAUDE.md` is where the merge rule lives.
 **D-079** records that file being unreadable from 2026-09-10 to 2026-09-22 because
 it exceeded a reader's limit, and the consequence was that the rule deciding
 whether agents may merge unattended was invisible to the agents it governs.
