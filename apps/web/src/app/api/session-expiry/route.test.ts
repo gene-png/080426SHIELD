@@ -41,6 +41,24 @@ describe("GET /api/session-expiry", () => {
     expect(body.ended).toBe(true);
   });
 
+  it("refuses LOUDLY when the cookie is under the OTHER name -- a name mismatch is not an ended session", async () => {
+    // An `http://` request whose session cookie carries the `__Secure-`
+    // prefix: the decode looks for the plain name and misses. Answering
+    // `ended` here would sign out every live session (round 8 on #499).
+    readSessionToken.mockResolvedValueOnce(null);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const res = await GET(
+      new Request("http://localhost/api/session-expiry", {
+        headers: { cookie: "__Secure-authjs.session-token=abc" },
+      }),
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).reason).toBe("session_cookie_unreadable");
+    error.mockRestore();
+  });
+
   it("refuses LOUDLY when a session cookie is present but will not decode", async () => {
     // A secret or cookie-name mismatch would otherwise read a LIVE session as
     // `ended` and sign the user out (round 7 on #499). A failed read is not an

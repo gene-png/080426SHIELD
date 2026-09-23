@@ -136,6 +136,21 @@ describe("hasSessionCookie", () => {
     expect(hasSessionCookie(req("x=1; authjs.session-token.1=b"))).toBe(true);
   });
 
+  // Round 8 on #499: a presence check that derives the SAME name the decode
+  // uses cannot see a cookie-name mismatch -- both miss, and "no cookie"
+  // reads as an ended session. Both names count, whatever the request's
+  // scheme says.
+  it("sees a session cookie under EITHER name, whatever the scheme", () => {
+    expect(hasSessionCookie(req("__Secure-authjs.session-token=a"))).toBe(true);
+    expect(
+      hasSessionCookie(
+        new Request("https://shield.example/x", {
+          headers: { cookie: "authjs.session-token.0=a" },
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("is false with no cookie, or only other cookies", () => {
     expect(hasSessionCookie(req())).toBe(false);
     expect(hasSessionCookie(req("authjs.csrf-token=z; other=1"))).toBe(false);

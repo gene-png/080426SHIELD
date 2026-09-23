@@ -169,9 +169,13 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
     return () => clearInterval(id);
   }, [reachedDeadline, serverSaysEnded, recheck]);
 
-  // Once per page: `signOut` navigates away. A failed one is retried after
+  // Once per page: `signOut` navigates away. A REJECTED one is retried after
   // DEADLINE_RECHECK_MS -- `attempt` re-runs this effect -- so a network blip
-  // cannot leave the tab on a dead session for good.
+  // cannot leave the tab on a dead session for good. `signingOut` is cleared
+  // the moment it fails, not when the retry fires, so a retry cancelled by
+  // `ended` flipping back cannot leave the page believing it is still signing
+  // out. NOT every failure rejects: a failed CSRF fetch inside `signOut`
+  // resolves and navigates to next-auth's error page instead (#502).
   const signingOut = React.useRef(false);
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
@@ -183,10 +187,8 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
       (err: unknown) => {
         // Stated, not swallowed: tried again shortly.
         console.warn("[auth.session-expiry] sign-out failed; retrying", err);
-        retry = setTimeout(() => {
-          signingOut.current = false;
-          setAttempt((n) => n + 1);
-        }, DEADLINE_RECHECK_MS);
+        signingOut.current = false;
+        retry = setTimeout(() => setAttempt((n) => n + 1), DEADLINE_RECHECK_MS);
       },
     );
     return () => {
@@ -199,7 +201,9 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
   if (serverSaysEnded) return null;
 
   const remaining = expiresAt - now;
-  if (remaining <= 0) return null; // SessionExpiryGuard owns the actual sign-out.
+  // Past the browser's own deadline but not yet `ended` by the server: say
+  // nothing. The sign-out effect above acts when the server says so.
+  if (remaining <= 0) return null;
 
   // The TIGHTEST threshold we are inside and have not dismissed. Searched
   // shortest-first: a plain `.find` over a longest-first list always returns the

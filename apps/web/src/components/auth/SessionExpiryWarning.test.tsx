@@ -212,6 +212,50 @@ describe("SessionExpiryWarning", () => {
     warn.mockRestore();
   });
 
+  it("can still sign out after a failed attempt was interrupted by the session reviving", async () => {
+    // A failed sign-out waits five seconds to retry. If `ended` flips false in
+    // that window, the pending retry is cancelled -- and must not leave the
+    // page believing a sign-out is still under way (round 8 on #499).
+    //
+    // The timing is exact on purpose: the deadline is reached at 58 s (the
+    // re-check reads `ended` and the sign-out fails), the minute poll at 60 s
+    // reads the session alive INSIDE the 5 s retry window, and the re-check
+    // at 65 s reads it ended again. A looser schedule lets the retry fire
+    // first, and the test then passes against the defect it is named for.
+    expiringIn(58_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<SessionExpiryWarning />);
+    await settle();
+
+    serverSaysEnded = true;
+    signOut.mockImplementationOnce(async () => {
+      throw new Error("network blip");
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(58_000);
+    });
+    await settle();
+    await settle();
+    expect(signOut).toHaveBeenCalledTimes(1);
+
+    serverSaysEnded = false;
+    await act(async () => {
+      vi.advanceTimersByTime(2_000); // t=60: the poll reads it alive
+    });
+    await settle();
+    await settle();
+
+    serverSaysEnded = true;
+    await act(async () => {
+      vi.advanceTimersByTime(6_000); // t=65: the re-check reads it ended
+    });
+    await settle();
+    await settle();
+    expect(signOut).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it("does not run update() when the server cannot be asked", async () => {
     // A failed read is not an answer: the cached expiry may be stale, and
     // update() on a live session would extend it.

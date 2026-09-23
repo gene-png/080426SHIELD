@@ -34,20 +34,33 @@ export function sessionCookieName(req: Request): string {
     : "authjs.session-token";
 }
 
+/** Both names next-auth can give the session cookie, whatever the scheme. */
+const SESSION_COOKIE_NAMES = [
+  "authjs.session-token",
+  "__Secure-authjs.session-token",
+] as const;
+
 /**
  * Whether the request CARRIES a session cookie, whole or chunked (`.0`, `.1`,
- * ...), decodable or not. `readSessionToken` returns null for both "no cookie"
- * and "a cookie that will not decode", and those must not be answered alike:
- * the first is a session that has ended, the second is a secret or name
- * mismatch over what may be a live one.
+ * ...), decodable or not, under EITHER name. `readSessionToken` returns null
+ * for both "no cookie" and "a cookie that will not decode", and those must not
+ * be answered alike: the first is a session that has ended, the second is a
+ * secret or name mismatch over what may be a live one.
+ *
+ * Both names, deliberately, rather than `sessionCookieName(req)`: a presence
+ * check deriving the SAME name the decode uses cannot see a name mismatch --
+ * both miss, and a live session reads as ended (round 8 on #499).
  */
 export function hasSessionCookie(req: Request): boolean {
-  const name = sessionCookieName(req);
   const header = req.headers.get("cookie") ?? "";
   return header
     .split(";")
     .map((part) => part.split("=", 1)[0].trim())
-    .some((cookie) => cookie === name || cookie.startsWith(`${name}.`));
+    .some((cookie) =>
+      SESSION_COOKIE_NAMES.some(
+        (name) => cookie === name || cookie.startsWith(`${name}.`),
+      ),
+    );
 }
 
 /** The decoded session token as it arrived, or null when there is none or it does not decode. */

@@ -68,9 +68,11 @@ tests; making `sessionChanged` always true fails the three that expect `false`.
   signs out with `reason=session_expired` when it is true, whatever the
   browser's clock says. Past its own deadline the page re-asks every 5 s
   instead of every minute. A failed sign-out is retried. With no cookie at
-  all, `ended` is true. A cookie that is PRESENT but will not decode is a 500
-  with `reason: session_cookie_unreadable`, and the page does nothing on a
-  failed read. It took four review rounds to land here:
+  all, `ended` is true. A cookie that is PRESENT but will not decode, under
+  either cookie name, is a 500 with `reason: session_cookie_unreadable`, and
+  the page does nothing on a failed read. The presence check looks for both
+  names on purpose: deriving the same name the decode uses would miss a name
+  mismatch twice and read a live session as ended. It took four review rounds to land here:
   - `update()` on the browser's clock refreshed an idle session whenever the
     browser ran ahead of the server;
   - acting on `ended` only after the browser's own deadline left a slow
@@ -100,3 +102,7 @@ several web replicas whose clocks disagree, a replica running fast ends a
 session early by the skew, which is the safe direction. And a web clock BEHIND
 the API's leaves a window, as wide as the skew, where a refresh fails as a
 generic error the guard ignores.
+
+A sign-out whose CSRF fetch fails resolves to next-auth's error page instead of
+rejecting, so the warning's retry does not see it (#502). The next page load
+recovers.
