@@ -274,11 +274,23 @@ const READINESS_BRANCHES: ReadonlyArray<{
     contradictsTheOldCopy: true,
   },
   {
-    // `vertex`, not `mistral`. `mistral` is not a member of `LLMProvider`, so the
-    // server could never interpolate it -- a fixture building a state no writer
-    // can reach, which is the shape this file's own header warns about. `vertex`
-    // IS a member and IS implemented, and reaching for a real value here is what
-    // surfaced #472: this branch is live for a provider that works.
+    // `vertex`, not `mistral`: `mistral` is not a member of `LLMProvider`, so the
+    // server could never interpolate it. Reaching for a real value here is what
+    // surfaced #472.
+    //
+    // BUT THIS ROW IS STILL UNCONSTRUCTIBLE TODAY, and review caught that the
+    // replacement has the same defect as the thing it replaced. `key_source` can
+    // only be `database` when a credential row exists, `store_key`'s single
+    // caller runs `live_validate_key` first, and that is implemented for
+    // anthropic alone -- so no vertex credential can be stored, and
+    // `_ENV_KEY_ATTR` excludes vertex from the `environment` path too. The
+    // adapter branch is therefore unreachable for EVERY provider.
+    //
+    // Kept rather than deleted: the branch exists, it is one
+    // `live_validate_key` implementation away from firing, and an untested
+    // string is what this table is for. `vertex` is the value it would
+    // interpolate first. See `test_ai_readiness_branch_count.py`, which counts
+    // BRANCHES and says so.
     label: "provider has no key-based adapter",
     body: { key_source: "database", provider: "vertex" },
     detail:
@@ -293,9 +305,13 @@ const READINESS_BRANCHES: ReadonlyArray<{
     contradictsTheOldCopy: true,
   },
   {
-    // `claude-opus-4-7` is the ONLY member of `config.py`'s
-    // `_KNOWN_PLACEHOLDER_MODELS`, so it is the only value this branch can
-    // interpolate. `your-model-here` was invented and unconstructible.
+    // `claude-opus-4-7` is the only member of `config.py`'s
+    // `_KNOWN_PLACEHOLDER_MODELS`. `your-model-here` was invented and
+    // unconstructible.
+    //
+    // NOT the only value this branch can interpolate, which is what this said:
+    // the predicate is `if not model or model in _KNOWN_PLACEHOLDER_MODELS`, so
+    // an empty `SHIELD_LLM_MODEL` reaches it and interpolates `''`.
     label: "model id is a known placeholder",
     body: { key_source: "database", model: "claude-opus-4-7" },
     detail:
@@ -379,5 +395,53 @@ describe("the warning states the server's own cause", () => {
       vi.restoreAllMocks();
     }
     expect(new Set(names).size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE DESCRIPTION WIRING, asserted because nothing asserted it.
+//
+// `aria-describedby` and the id it points at were added with no test. A typo in
+// either half is silent in assistive tech and green everywhere else -- which is
+// worse than not having it, because the entry claims the cause now reaches AT.
+// ---------------------------------------------------------------------------
+
+describe("the dialog's accessible description (#471)", () => {
+  it("points aria-describedby at the element carrying the detail", async () => {
+    const branch = READINESS_BRANCHES[3];
+    mockStatus(statusBody({ ...branch.body, detail: branch.detail }));
+    renderGuard(vi.fn());
+
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    const id = dialog.getAttribute("aria-describedby");
+    expect(id, "the dialog has no aria-describedby").toBeTruthy();
+
+    const described = document.getElementById(id!);
+    expect(
+      described,
+      `aria-describedby points at id ${id!}, which no element has`,
+    ).not.toBeNull();
+    // The whole point: the DESCRIPTION is what carries the specific cause, since
+    // the NAME has to stay constant to remain selectable.
+    expect(described!.textContent).toBe(branch.detail);
+  });
+
+  it("renders the described element inside the dialog, so it cannot outlive it", async () => {
+    // A description pointing at a node that unmounts while the dialog is open
+    // would resolve to nothing. Both live in the same `{promptFor ? (` block;
+    // this pins that rather than leaving it to a reading of the JSX.
+    const branch = READINESS_BRANCHES[0];
+    mockStatus(statusBody({ ...branch.body, detail: branch.detail }));
+    renderGuard(vi.fn());
+
+    fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+    const dialog = await screen.findByRole("alertdialog");
+    const id = dialog.getAttribute("aria-describedby")!;
+    expect(
+      dialog.querySelector(`#${id}`),
+      "the described element is not inside the dialog",
+    ).not.toBeNull();
   });
 });

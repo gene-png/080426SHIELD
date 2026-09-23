@@ -20,14 +20,20 @@ those two pages are ones you only visit once you already suspect something.
 
 ## The brief said four causes; there are five
 
-Measured against `_ai_readiness`: `:819`, `:840`, `:852`, `:860`, `:868`. The one
-missing from the brief is `provider not in ("anthropic", "openai", "gemini")` —
-"A key is loaded but provider 'X' has no runtime adapter". So it is four of five
-that mean a key is loaded, and the test drives five branches.
+Measured against `_ai_readiness`, by the sentence each returns rather than by
+line: "No API key is loaded", "so AI steps generate offline (fixture) responses
+even though an environment key is present", "has no runtime adapter", "the
+'anthropic' SDK is not importable", "is not a usable model id". The one missing
+from the brief is the adapter branch. So it is four of five that mean a key is
+loaded, and the test drives five branches.
 
-The brief's line citations for two of them were off by one (`:841`, `:869`). The
-quoted strings matched, which is the argument for quoting strings rather than
-citing lines.
+**THIS PARAGRAPH CITED FIVE LINE NUMBERS AND THIS COMMIT BROKE ALL FIVE.** They
+were correct when written; the 13-line pointer block added above `_ai_readiness`
+in the same change shifted every one of them, so `:819` now lands inside a
+docstring. Two sentences after arguing for quoted strings over line numbers —
+which is the argument, demonstrated at my own expense. Replaced with the quoted
+fragments, which cannot go stale silently. (The brief's own citations were off by
+one for two branches, which is the same mechanism a week earlier.)
 
 ## Three changes, not one
 
@@ -125,8 +131,8 @@ pass-through is exactly what kills the hardcode mutant, which is the defect.
 
 | check | result |
 | --- | --- |
-| `verify-in-worktree.sh vitest` | 753 passed, 62/62 files, 0 never collected |
-| `verify-in-worktree.sh tsc` | 0 errors |
+| `verify-in-worktree.sh vitest` | 753 passed, 62/62 files, 0 never collected (at 79195d2, 2026-09-22) |
+| `verify-in-worktree.sh tsc` | 0 errors (at 79195d2, 2026-09-22) |
 | `eslint .` (real invocation — the harness's eslint arm cannot run, #450) | exit 0, 3 pre-existing warnings |
 | `prettier@3.9.6 --check` | clean |
 
@@ -137,3 +143,57 @@ catches the `waitFor` timeout and returns — so a wrong accessible name would b
 silent there. `s34` asserts `toBeVisible()` on the same locator and fails loudly.
 That asymmetry is the "a selector that selects nothing passes" shape, and it is
 pre-existing.
+
+## Second review round, on the repairs rather than the originals
+
+**The replacement fixture value was as unconstructible as the one it replaced.**
+`vertex` + `key_source: "database"` cannot occur: `store_key`'s single caller runs
+`live_validate_key` first and that is implemented for anthropic alone, and
+`_ENV_KEY_ATTR` excludes vertex from the `environment` path. Following that
+through, `_ai_readiness`'s adapter branch is unreachable for EVERY provider — so
+the tripwire counts BRANCHES, not reachable causes, and its comment claiming "one
+per cause a consultant can be shown" is corrected. The row is kept, because the
+branch exists and is one `live_validate_key` implementation away from firing.
+
+**The tripwire regex missed the spelling the function itself demonstrates.**
+`return \(\s*
+\s*False,` cannot match `return False, detail, source` — which is
+how the ready branch two lines below is written — nor a one-line
+`return (False, ..., source)`. So a sixth cause written either way left the count
+at 5 and the test green: the precise failure it is named for. Widened to
+`return\s+\(?\s*
+?\s*False\s*,` and re-verified by planting the unparenthesized
+form, which now produces `assert 6 == 5`. My "observed in both states" evidence
+had only exercised the spelling the regex already caught.
+
+**The slice's upper-end assertion could not fail.** It read
+`assert "def _anthropic_sdk_importable" not in body`, and that function is defined
+in `config.py`, so the string is absent from `admin.py` whatever the slice
+contains — including the whole file. It was the only guard on the over-count
+direction, under a docstring promising "both ends of the slice are asserted". A
+test that cannot fail, inside the test written to stop exactly that. Now
+`def set_llm_key`, which is the next `def` and sits outside the slice by
+construction.
+
+**`aria-describedby` was asserted by nothing**, so a typo in either half would be
+silent in assistive tech and green everywhere else. Two tests added: the id
+resolves to an element, and that element carries the detail and lives inside the
+dialog. A reachable residual is recorded at the site rather than fixed —
+`IntakeDocumentsPanel.tsx` renders a guard per artifact inside a `map`, so two
+nodes can carry the same id; the consequence is duplicate-id invalidity rather
+than a wrong sentence, since every instance renders the same `status.detail`.
+
+**#472's mechanism as I filed it was false, and the true harm runs the other
+way.** I wrote that the printed remedy is destructive; pasting a key on a vertex
+deployment is refused at `set_llm_key` with a 400, so the `RuntimeError` I cited
+is unreachable. What actually happens: live vertex boots on ADC,
+`_build_provider` returns a real `VertexProvider`, nothing on the Run-AI path
+consults `ready`, and the modal's "Offline (fixture) output is deterministic demo
+content, not analysis of this client's data" precedes a **Continue offline** click
+that makes a live, billable call over the client's data. #472 is re-filed at
+`tier-1` with the corrected chain.
+
+**The shape sweep was re-scoped to this component**, leaving
+`AiStatusBanner.tsx`'s "Load an API key" CTA on every admin page and
+`ZtWorkspace.tsx`'s "a run with a real API key" standing. Filed as **#475** with
+the shape stated so the next sweep is not scoped to a file.

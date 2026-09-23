@@ -37,13 +37,31 @@ from pathlib import Path
 
 import pytest
 
-#: Every `return (False, ...)` in `_ai_readiness`, one per cause a consultant can
-#: be shown. Five as of #471: no key at all; an environment key with the mode not
-#: live; a provider with no key-based adapter; the anthropic SDK missing; a model
-#: id that is a known placeholder.
+#: Every not-ready `return` in `_ai_readiness`. Five as of #471: no key at all;
+#: an environment key with the mode not live; a provider with no key-based
+#: adapter; the anthropic SDK missing; a model id that is a known placeholder.
 #:
 #: FOUR OF THE FIVE SAY A KEY IS LOADED, which is why `RunAiGuard` renders
 #: `detail` rather than one hardcoded sentence.
+#:
+#: **A COUNT OF BRANCHES, NOT OF REACHABLE CAUSES, and an earlier version of
+#: this comment said "one per cause a consultant can be shown".** Two of the
+#: five cannot be reached on this tree:
+#:
+#:   * The ADAPTER branch needs a provider outside
+#:     `(anthropic, openai, gemini)` while a key source exists. Every path to a
+#:     key source is closed for such a provider -- `_ENV_KEY_ATTR` holds only
+#:     those three, and `store_key`'s single caller `set_llm_key` runs
+#:     `live_validate_key` first, which is implemented for anthropic alone. So
+#:     it is unreachable for EVERY provider.
+#:   * The SDK branch needs a stored anthropic key plus an image without the
+#:     SDK, which no deployment step produces.
+#:
+#: They are counted anyway, deliberately: they exist in the code, each is one
+#: `live_validate_key` implementation away from firing, and a branch that ships
+#: copy nobody has tested is the thing this file guards against. What is
+#: corrected is the CLAIM -- a reader who took "one per cause a consultant can
+#: be shown" at face value would size the user-visible surface wrong.
 EXPECTED_NOT_READY_BRANCHES = 5
 
 #: The web test that must gain a row whenever the number above changes. Named as
@@ -72,10 +90,21 @@ def test_the_not_ready_branch_count_is_what_the_web_table_covers() -> None:
     consultant will otherwise be shown a warning nobody wrote copy for.
     """
     body = _ai_readiness_source()
-    # `return (` followed by `False,` on the next line -- the shape every
-    # not-ready branch uses. Counted rather than parsed: a regex over source is
-    # enough for a count, and an AST walk would be a second thing to get wrong.
-    found = len(re.findall(r"return \(\s*\n\s*False,", body))
+    # ANY `return` whose first element is `False`, parenthesised or not, on one
+    # line or several.
+    #
+    # The first version was `return \(\s*\n\s*False,` -- the exact shape the five
+    # existing branches happen to use. It misses `return False, detail, source`,
+    # which is HOW THE READY BRANCH TWO LINES BELOW IS WRITTEN
+    # (`return True, f"Live AI configured..."`), and misses a one-line
+    # `return (False, "...", source)` that black leaves unexploded. So a sixth
+    # cause written either way left the count at 5 and this test green -- the
+    # precise failure it is named for. Measured: the old pattern matches 1 of
+    # those 3 spellings, the new one matches 3 of 3.
+    #
+    # Counted rather than parsed: a regex over source is enough for a count, and
+    # an AST walk would be a second thing to get wrong.
+    found = len(re.findall(r"return\s+\(?\s*\n?\s*False\s*,", body))
 
     assert found == EXPECTED_NOT_READY_BRANCHES, (
         f"`_ai_readiness` now has {found} not-ready branches, not "
@@ -110,7 +139,17 @@ def test_the_region_this_reads_is_actually_the_function() -> None:
     assert "Live AI configured" in body, "the slice stops before the ready return"
     # The next function after it must NOT be inside the slice, or the count is
     # over a larger region than the docstring claims.
-    assert "def _anthropic_sdk_importable" not in body, (
-        "the slice ran past the end of `_ai_readiness`, so the count above is "
-        "over more than one function"
+    #
+    # THIS ASSERTION USED `def _anthropic_sdk_importable` AND COULD NOT FAIL:
+    # that function is defined in `app/config.py`, not here, so the string is
+    # absent from `admin.py` whatever the slice contains -- including the whole
+    # file. It was the ONLY guard on the over-count direction, under a docstring
+    # promising "both ends of the slice are asserted". A test that cannot fail,
+    # inside the test written to stop exactly that.
+    #
+    # `set_llm_key` is the next `def` in this file and sits after the
+    # `@router.post(` the slice terminates on, so it is outside by construction.
+    assert "def set_llm_key" not in body, (
+        "the slice ran past the end of `_ai_readiness` into `set_llm_key`, so "
+        "the count above is over more than one function"
     )

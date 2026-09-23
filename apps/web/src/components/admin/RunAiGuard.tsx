@@ -115,7 +115,17 @@ export function RunAiGuard({
              description rather than the name. The name has to stay constant
              to remain selectable; `aria-describedby` has no such constraint,
              so there is no trade to make here -- the first version simply
-             left the specificity on the floor. */
+             left the specificity on the floor.
+
+             KNOWN RESIDUAL, reachable rather than theoretical: a page can host
+             several of these. `IntakeDocumentsPanel.tsx` renders one per
+             inventory artifact inside `docs.map(...)`, and nothing closes one
+             dialog when another opens, so two nodes can carry this id and
+             `aria-describedby` resolves to the first. The consequence is
+             duplicate-id invalidity rather than a wrong sentence -- every
+             instance renders the same `status.detail` from the same hook -- so
+             it is recorded rather than fixed here, where a unique id would need
+             threading through a component that takes none today. */
           aria-describedby="run-ai-guard-detail"
           className="mt-3 rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm"
         >
