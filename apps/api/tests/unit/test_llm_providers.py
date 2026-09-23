@@ -658,8 +658,10 @@ def test_output_cap_is_sized_per_purpose(monkeypatch) -> None:
     # The big job gets room for the whole matrix.
     assert llm_mod.max_output_tokens_for("mitre_map") >= 32000
 
-    # Everything else is unchanged — this is not a blanket raise.
-    assert llm_mod.max_output_tokens_for("csf_score") == llm_mod._MAX_OUTPUT_TOKENS
+    # A direct provider call with no purpose (no job behind it) keeps the
+    # shared default. This test used to also assert csf_score == the default,
+    # "not a blanket raise" -- that assertion pinned the defect below
+    # (test_every_registered_job_has_a_chosen_output_budget), so it is gone.
     assert llm_mod.max_output_tokens_for(None) == llm_mod._MAX_OUTPUT_TOKENS
 
     # And the provider actually applies it, keyed off the __purpose__ control key.
@@ -669,7 +671,43 @@ def test_output_cap_is_sized_per_purpose(monkeypatch) -> None:
 
     provider2, fake2 = _anthropic_with(monkeypatch, '{"ok": true}', "end_turn")
     provider2.complete("Draft it.", {"k": "v", "__purpose__": "csf_score"})
-    assert fake2.last_kwargs["max_tokens"] == llm_mod._MAX_OUTPUT_TOKENS
+    assert fake2.last_kwargs["max_tokens"] == llm_mod.max_output_tokens_for("csf_score")
+
+
+@pytest.mark.unit
+def test_every_registered_job_has_a_chosen_output_budget() -> None:
+    """Three of five jobs ran on the shared 8192 because nobody listed them.
+
+    Read from the REGISTRY at runtime, not from the tree by grep: a grep for
+    `purpose="..."` literals finds two strings and misses `mitre_map`, whose
+    purpose is its name. What reaches the provider is `job.call_purpose`, so
+    that is what must have an entry. Measured on the dev stack 2026-09-23:
+    `extract.capabilities` failed live on stop_reason=max_tokens and its retry
+    finished at 8117 of 8192.
+    """
+    from app.ai.engine import get_job, registered_jobs
+
+    names = registered_jobs()
+    assert names, "registry is empty -- this test would pass over nothing"
+    missing = sorted(
+        get_job(name).call_purpose
+        for name in names
+        if get_job(name).call_purpose not in llm_mod._MAX_OUTPUT_TOKENS_BY_PURPOSE
+    )
+    assert missing == [], f"no output budget chosen for: {missing}"
+
+
+@pytest.mark.unit
+def test_csf_score_budget_fits_a_full_working_profile() -> None:
+    """csf_score is one unbatched call: one row per (tier, subcategory), five
+    integers and a narrative each. Derived from the catalog and the three
+    valid tiers, not from the constant under test: a full Working Profile is
+    106 x 3 rows, and at ~100 tokens a row the JSON alone is ~32k before
+    adaptive thinking takes its share."""
+    from app.csf.catalog import SUBCATEGORIES
+
+    rows = len(SUBCATEGORIES) * len(("high", "moderate", "low"))
+    assert llm_mod.max_output_tokens_for("csf_score") >= rows * 100
 
 
 # --------------------------------------------------------------------------- #

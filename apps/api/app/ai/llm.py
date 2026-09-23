@@ -219,11 +219,40 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # actually generated, not on the cap, so too large costs nothing while too
     # small loses the batch and the money spent on it.
     "risk_synthesize": 32000,
+    # The three below ran on the shared 8192 until 2026-09-23 because nobody
+    # had listed them, which is why every purpose is now listed explicitly and
+    # an unlisted one raises instead of defaulting.
+    #
+    # csf_score is ONE unbatched call over the whole assessment: a full Working
+    # Profile is 106 subcategories x 3 tiers = 318 rows, each five integers and
+    # a narrative -- ~32k tokens of JSON before thinking, so 8192 could not fit
+    # even one tier. No live csf_score had ever run on the dev stack when this
+    # was sized. 64000 is the largest cap already proven accepted here
+    # (mitre_map). If a long-narrative profile still overruns it, the
+    # stop_reason guard fails loudly and the fix is batching per tier, as
+    # risk_synthesize and mitre_map already are.
+    "csf_score": 64000,
+    # extract.capabilities output scales with the uploaded inventory, which the
+    # client supplies and nothing bounds. Measured 2026-09-23 on the dev stack:
+    # one live run failed on stop_reason=max_tokens and the retry finished at
+    # 8117 of 8192.
+    "extract.capabilities": 64000,
+    # zt_score is small (37-50 capabilities, three short fields each), but it is
+    # the job that truncated at 4096 (2026-08-04) and at 8192 under unbounded
+    # gemini thinking (2026-07-15). Headroom costs nothing: output is billed on
+    # tokens generated, not on the cap.
+    "zt_score": 32000,
 }
 
 
 def max_output_tokens_for(purpose: str | None) -> int:
-    """Output-token cap for `purpose`, falling back to the shared default."""
+    """Output-token cap for `purpose`, falling back to the shared default.
+
+    The fallback is NOT how a registered job gets its budget:
+    `test_every_registered_job_has_a_chosen_output_budget` walks the job
+    registry and fails CI for any `call_purpose` missing from the table above.
+    It stays for purposes with no job behind them (direct provider calls).
+    """
     if not purpose:
         return _MAX_OUTPUT_TOKENS
     return _MAX_OUTPUT_TOKENS_BY_PURPOSE.get(purpose, _MAX_OUTPUT_TOKENS)
