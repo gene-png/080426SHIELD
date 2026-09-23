@@ -285,7 +285,49 @@ def render_docx(ctx: AttackDeliverableContext) -> bytes:
     gap_rows = [c for c in ctx.coverage if c.status == CoverageStatus.GAP.value]
     gap_rows.sort(key=lambda c: c.technique_code)
     gap_rows = gap_rows[:50]
-    add_heading(doc, f"Top remediation gaps ({len(gap_rows)} of {ctx.rollup.gap} shown)")
+    # THE HEADING SAYS WHAT THE TABLE IS, and the one it replaced asserted two
+    # properties the table does not have (#480).
+    #
+    # It read `Top remediation gaps (N of M shown)`. "Top" implies a ranking, and
+    # the sort key is `technique_code` -- alphabetical, so the first fifty codes
+    # win and nothing about coverage, severity, tactic or effort enters the order.
+    # "remediation" implies a plan, and the table has two columns, Code and
+    # Technique, with no owner, effort, control or next step in it.
+    # `routes/attack.py` records a real run at 607 gaps, so a client could receive
+    # "Top remediation gaps (50 of 607 shown)" over fifty alphabetically-first
+    # codes and reasonably conclude those were the ones that mattered most.
+    #
+    # Ranked remediation is real work, designed separately and blocked on making
+    # long AI runs survive the browser. A false claim does not wait for it.
+    #
+    # The replacement says the three things the old one hid: the order, the
+    # truncation, and that this is an inventory rather than a plan. It also says
+    # WHICH FORMAT truncates -- the XLSX `Gaps` tab builds from the same list with
+    # the same sort and NO slice, so the deliverable set does not withhold these
+    # rows, this format does.
+    #
+    # THE TWINS ARE DELIBERATELY LEFT ALONE, and this is the checked answer rather
+    # than the assumed one. `csf/exporters.py` and `zt/exporters.py` carry the
+    # SAME heading text, so a sweep by string would have changed all three. They
+    # are not the same defect:
+    #
+    #   ATT&CK  sorts by `technique_code` (alphabetical); columns Code, Technique.
+    #   CSF     sorts by `-priority_score` then code; columns Code, Function,
+    #           Subcategory, Current -> Target, Priority.
+    #   ZT      sorts by `-priority_score` then code; columns Code, Pillar,
+    #           Capability, Current -> Target, Priority.
+    #
+    # CSF and ZT genuinely rank, and their tables carry a target and a priority --
+    # so "Top remediation gaps" describes what is there. ATT&CK ranks by nothing
+    # and offers no remediation column, which is why it alone is wrong on BOTH
+    # halves of its own heading. They also disclose their truncation in
+    # `_gap_plan_caption` on the line below the heading; ATT&CK discloses its own
+    # in the heading, which is why the count survives the rewording here.
+    add_heading(
+        doc,
+        f"Gap techniques, first {len(gap_rows)} of {ctx.rollup.gap} by technique code"
+        " (alphabetical, not ranked; the Gaps tab of the XLSX carries all of them)",
+    )
     if not gap_rows:
         add_paragraphs(doc, ["No techniques flagged as Gap."])
     else:
@@ -396,7 +438,12 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
     gap_rows = gap_rows[:50]
     story.append(
         Paragraph(
-            f"Top remediation gaps ({len(gap_rows)} of {ctx.rollup.gap} shown)",
+            # Same heading as the DOCX path, and they MUST move together -- see
+            # the note at the DOCX site. Half-fixing one format is how #79 got
+            # worse than the defect it replaced.
+            f"Gap techniques, first {len(gap_rows)} of {ctx.rollup.gap} by technique"
+            " code (alphabetical, not ranked; the Gaps tab of the XLSX carries all"
+            " of them)",
             h2,
         )
     )
