@@ -46,14 +46,23 @@ ways that passes a body acknowledging nothing:
   * A sha, a version, an ordered-list item, or a changed path with an isolated
     digit: `a3137d5`, `prettier@3.9.5`, `e2e/smoke/s5-login.spec.ts`.
 
-**So the acknowledgment is an explicit MARKER, not a digit.** A denial cannot
-produce it and the template does not contain it:
+**So the acknowledgment is an explicit MARKER, not a digit.** The template does
+not contain it, and a denial IN PROSE cannot produce it:
 
     Merge-rule-condition-4: <what the migration does>
 
 Same shape as `Auto-close-approved:`, and for the same reason: that gate learned
-that a matcher looking for a number beside a word is defeated by the most
-natural honest phrasing, and a positive token is not.
+that a matcher looking for a number beside a word is defeated by the most natural
+honest phrasing, and a positive token is not.
+
+**A denial in MARKER form is a different matter, and the first version of this
+paragraph claimed it was impossible.** `Merge-rule-condition-4: n/a` matched, the
+reason was non-empty, exit 0. That is refused now by `_NOT_A_REASON`, which is a
+DENYLIST and is named as one: it is a floor over the phrasings someone reaches for
+when they have nothing to declare, not a proof that a denial cannot be written.
+The honest claim is that the marker makes a denial DELIBERATE rather than
+accidental -- the template no longer supplies one, and neither does a stray digit,
+a sha or a quoted merge rule.
 
 ## What this enforces, and what it deliberately does not
 
@@ -71,11 +80,17 @@ rather than pretending a partial glob decided it.
 ## Silent-success branches, enumerated before the first line
 
 Exits 0 only for: a changed-file list containing no migration, or one containing
-a migration whose marker the body carries with a non-empty reason. Everything
-else is 1 (the body understates) or 2 (could not look) -- an empty changed-file
-list, an unreadable input, an unknown flag, a missing argument. The empty list is
-the one that would otherwise read as "no migration", which is
-`check_audit_evidence.py`'s `is_code_change([])` shape.
+a migration whose marker the body carries with a reason that is non-empty, not a
+`<placeholder>`, and not in `_NOT_A_REASON`. Everything else is 1 (the body
+understates) or 2 (could not look) -- an empty changed-file list, an unreadable
+input, an unknown flag, a missing argument. The empty list is the one that would
+otherwise read as "no migration", which is `check_audit_evidence.py`'s
+`is_code_change([])` shape.
+
+The marker is searched for in the body with HTML comments and fenced code blocks
+REMOVED, so a marker inside either does not count -- the hazard the PR template
+records for the sibling gate. A blockquoted marker was already excluded by the
+`^[ \t]*` anchor.
 """
 
 from __future__ import annotations
@@ -110,6 +125,41 @@ _MARKER = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+#: An HTML comment block, and a fenced code block.
+#:
+#: BOTH ARE STRIPPED BEFORE THE MARKER IS SEARCHED FOR, and the first version did
+#: neither. `.github/pull_request_template.md` states the repo's own view of this
+#: hazard for the SIBLING gate: "this checker does not strip HTML comments --
+#: restore the colon and every PR passes having recorded nothing, in a body that
+#: renders no audit block at all." The new gate reproduced it.
+#:
+#: A blockquote needs no handling: `_MARKER` anchors on `^[ \t]*`, so
+#: `> Merge-rule-condition-4: x` already does not match. Checked rather than
+#: assumed.
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_CODE_FENCE = re.compile(r"^[ \t]*```.*?^[ \t]*```", re.DOTALL | re.MULTILINE)
+
+#: Reasons that are the ABSENCE of a reason wearing the marker's syntax.
+#:
+#: A DENYLIST, and named as one rather than described as an allow-list -- this
+#: file has already paid for that confusion once. It is a FLOOR: it catches the
+#: phrasings someone reaches for when they have nothing to declare, and it cannot
+#: catch every one. What it is not is a claim that a denial is impossible.
+#:
+#: THE PROSE SAID "a denial cannot produce it" IN THREE PLACES and that was false:
+#: `Merge-rule-condition-4: n/a` matched, `why` was non-empty, exit 0. The
+#: original denial test covered only the PROSE form ("This does not trip condition
+#: 4."), so the marker-shaped denial was untested. Refusing "" and accepting "n/a"
+#: is the same ritual-satisfaction outcome one character away.
+_NOT_A_REASON = frozenset(
+    {"n/a", "na", "none", "no", "nil", "nothing", "-", "--", "tbd", "todo", "x"}
+)
+
+
+def _declaration_region(body: str) -> str:
+    """The body with HTML comments and fenced code removed."""
+    return _CODE_FENCE.sub("", _HTML_COMMENT.sub("", body))
+
 
 def condition_4(changed: list[str]) -> list[str]:
     """Changed paths that are alembic revisions."""
@@ -123,11 +173,22 @@ def declares_migration(body: str) -> str | None:
     `CLAUDE.md`: an empty reason is not a reason -- the rule
     `check_test_integrity` applies to `# test-integrity:`.
     """
-    match = _MARKER.search(body)
-    if match is None:
-        return None
-    why = match.group("why").strip()
-    return why or None
+    for match in _MARKER.finditer(_declaration_region(body)):
+        why = match.group("why").strip()
+        if not why:
+            continue
+        # A PLACEHOLDER, and the gate's own failure message is where it comes
+        # from: that message prints `Merge-rule-condition-4: <what the migration
+        # does>`, and `_MARKER` allows leading whitespace, so pasting the CI
+        # output into the body -- or copying the suggested line without filling
+        # it in -- satisfied the gate. The template-boilerplate defect this
+        # narrowing was built to close, rebuilt out of its own instruction text.
+        if why.startswith("<") and why.endswith(">"):
+            continue
+        if why.lower().strip(".") in _NOT_A_REASON:
+            continue
+        return why
+    return None
 
 
 def _usage(stream) -> None:

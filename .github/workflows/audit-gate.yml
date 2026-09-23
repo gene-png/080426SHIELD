@@ -282,7 +282,7 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: printf '%s' "$PR_BODY" > /tmp/body.md
 
-      - name: Conditions 4 and 5 must be named in the body when the diff trips them
+      - name: A migration must be declared in the PR body
         working-directory: apps/api
         run: |
           python scripts/check_merge_rule_conditions.py             --changed-files /tmp/changed.txt --body /tmp/body.md

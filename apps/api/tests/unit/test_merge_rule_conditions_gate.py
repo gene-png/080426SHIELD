@@ -202,3 +202,77 @@ def test_a_migration_in_a_SUBDIRECTORY_is_still_caught(tmp_path: pathlib.Path) -
     work around: a revision filed in a subdirectory is still a revision."""
     result = _run(tmp_path, "apps/api/alembic/versions/legacy/0002_x.py\n", "No marker.\n")
     assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
+
+
+# ---------------------------------------------------------------------------
+# ROUND 2. The marker's own escape hatches, every one measured at exit 0 before
+# these existed.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_the_GATES_OWN_FAILURE_MESSAGE_does_not_satisfy_it(tmp_path: pathlib.Path) -> None:
+    """The failure text prints a line that used to pass the gate.
+
+    `check_merge_rule_conditions.py`'s own instruction reads
+    `      Merge-rule-condition-4: <what the migration does>`, and `_MARKER`
+    allows leading whitespace — so pasting the CI output into the body, or
+    copying the suggested line without filling it in, satisfied the gate with
+    `why = "<what the migration does>"`.
+
+    That is the PR-template-boilerplate defect this narrowing was built to close,
+    rebuilt out of the gate's own instruction text. A placeholder in angle
+    brackets is refused.
+    """
+    body = "      Merge-rule-condition-4: <what the migration does>\n"
+    result = _run(tmp_path, f"{MIGRATION}\n", body)
+    assert result.returncode == EXIT_VIOLATION, f"{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("why", ["n/a", "none", "no", "nil", "-", "TBD", "None."])
+def test_a_MARKER_SHAPED_denial_does_not_satisfy_it(tmp_path, why) -> None:
+    """Refusing "" and accepting "n/a" is the same outcome one character away.
+
+    The prose said "a denial cannot produce it" in three places, and the original
+    denial test covered only the PROSE form, so this was untested. `_NOT_A_REASON`
+    is a DENYLIST and is named as one — a floor over the phrasings someone reaches
+    for when they have nothing to declare, not a proof that a denial is impossible.
+    """
+    result = _run(tmp_path, f"{MIGRATION}\n", f"Merge-rule-condition-4: {why}\n")
+    assert result.returncode == EXIT_VIOLATION, f"{why!r}: {result.stdout} {result.stderr}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("body", "label"),
+    [
+        ("<!--\nMerge-rule-condition-4: x\n-->\n", "inside an HTML comment"),
+        ("```\nMerge-rule-condition-4: x\n```\n", "inside a code fence"),
+        ("> Merge-rule-condition-4: x\n", "inside a blockquote"),
+    ],
+)
+def test_a_marker_that_is_not_really_in_the_body(tmp_path, body, label) -> None:
+    """`.github/pull_request_template.md` records this hazard for the SIBLING gate:
+    "this checker does not strip HTML comments -- restore the colon and every PR
+    passes having recorded nothing". This gate reproduced it.
+
+    The blockquote case was already excluded by `_MARKER`'s `^[ \t]*` anchor and
+    is asserted rather than assumed, because "already safe" is a claim.
+    """
+    result = _run(tmp_path, f"{MIGRATION}\n", body)
+    assert result.returncode == EXIT_VIOLATION, f"{label}: {result.stdout} {result.stderr}"
+
+
+@pytest.mark.unit
+def test_a_REAL_declaration_after_a_commented_one_still_passes(tmp_path: pathlib.Path) -> None:
+    """Stripping must not make a genuine declaration unreachable.
+
+    The direction that decides whether the stripping survives: a body that quotes
+    the instruction in a comment AND then declares properly is honest, and failing
+    it would teach people to delete the comment rather than to declare.
+    """
+    body = "<!-- Merge-rule-condition-4: <what the migration does> -->\n\nMerge-rule-condition-4: adds 0051\n"
+    result = _run(tmp_path, f"{MIGRATION}\n", body)
+    assert result.returncode == EXIT_OK, f"{result.stdout}\n{result.stderr}"
+    assert "adds 0051" in result.stdout

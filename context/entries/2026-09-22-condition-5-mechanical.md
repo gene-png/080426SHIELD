@@ -1,4 +1,18 @@
-# Conditions 4 and 5 are computed from the diff now, not remembered
+# Condition 4 is computed from the diff now, not remembered
+
+> **READ THIS FIRST — 2026-09-23.** Everything from here to
+> "NARROWED TO CONDITION 4" describes a gate computing conditions 4 **and** 5.
+> **The condition-5 half was withdrawn and does not exist in the merged code.**
+> `derived_gate_paths`, `_as_path`, `EXPLICIT_CONDITION_5`, `condition_5`,
+> `merge_rule_region` and `acknowledges` are all gone; there is no repo-root
+> branch and no derived-set branch; there are now two exit-0 paths, not one.
+> The reasons are at the bottom, and the replacement is #478.
+>
+> The correction used to sit 82 lines below everything it corrected, which is
+> this repo's own rule failing: **put the discriminator where the confused
+> reader is standing**, not where the explanation lives. A reader met a
+> confident present-tense description of a control that had been removed.
+
 
 The merge rule says a PR tripping 4, 5 or 6 comes back to the human, and calls
 condition 5 "mostly a path match". A path match with an exact answer, decided
@@ -30,7 +44,7 @@ comment; a `lib/dashboards/` edit can alter a rendered number without touching a
 listed path. The rule already calls 2, 3 and 6 self-attested, and this leaves 6
 exactly as honest as it was rather than pretending a glob decided it.
 
-## The gate set is derived
+## The gate set is derived (WITHDRAWN — see the note at the top)
 
 `derived_gate_paths` runs the membership test the rule states — *does any
 workflow execute it as a gate* — over `.github/workflows/`, so a gate wired in a
@@ -72,7 +86,7 @@ would make condition 1's "all seven CI checks green" read eight, which the rule
 says to re-derive rather than let drift. So it reports, visibly, on every PR,
 and registering it is a separate decision with its own cost.
 
-## Silent-success branches, enumerated before the first line
+## Silent-success branches (SUPERSEDED — the branches below no longer exist), enumerated before the first line
 
 Empty changed-file list, missing or unreadable input, an unknown flag, no repo
 root above the script, and a derived set that comes back empty — all exit 2.
@@ -148,3 +162,51 @@ everything — and `CLAUDE.md` records what a routinely-and-correctly-ignored ru
 teaches. An informational report that never blocks, or a marker declaration of
 condition 4's shape, are the honest options. The regex is not the first thing to
 fix.
+
+## Round 2 — the marker had its own escape hatches
+
+Re-review of the narrowed branch found six blocking issues. The first is the same
+shape as the defect the narrowing was built to close.
+
+**The gate's own failure message was a body that passed it.** The instruction text
+prints `      Merge-rule-condition-4: <what the migration does>`, and `_MARKER`
+allows leading whitespace — so pasting the CI output into the body, or copying the
+suggested line without filling it in, satisfied the gate with
+`why = "<what the migration does>"`. The PR-template-boilerplate defect, rebuilt
+out of the instruction written to close it. A `<placeholder>` is refused now.
+
+**`Merge-rule-condition-4: n/a` passed**, while the docstring, this entry and a
+fixture `incident` all said "a denial cannot produce it". The denial test covered
+only the PROSE form. Refusing `""` and accepting `n/a` is the same
+ritual-satisfaction outcome one character away. `_NOT_A_REASON` refuses the
+common phrasings and **is named a DENYLIST**, because it is a floor and not a
+proof — the honest claim is that the marker makes a denial DELIBERATE rather than
+accidental.
+
+**A marker inside an HTML comment or a fenced code block passed.**
+`.github/pull_request_template.md` records this hazard for the sibling gate in as
+many words: "this checker does not strip HTML comments — restore the colon and
+every PR passes having recorded nothing". Both are stripped before the search now.
+A blockquoted marker was already excluded by the `^[ 	]*` anchor, and that is
+asserted rather than assumed.
+
+**The workflow STEP still said "Conditions 4 and 5".** The job was renamed and the
+step was not, so a green run displayed a step asserting condition 5 had been
+checked — a certificate over a proposition the gate had withdrawn.
+
+**A fixture certified a check it did not perform.**
+`2026-09-a-declared-migration-passes` claimed to assert the reason reaches stdout;
+its needle was `the body declares it`, the f-string prefix, emitted whatever the
+reason holds. `declares_migration → "x"` left it green. Now it asserts the reason.
+
+**And this entry opened by describing the withdrawn control in the present
+tense**, with the correction 82 lines below what it corrected. That is the
+put-the-discriminator-where-the-reader-is-standing rule failing in the entry
+recording a gate's withdrawal. The note is at the top now.
+
+| check | result |
+| --- | --- |
+| `pytest tests/unit/test_merge_rule_conditions_gate.py` | 30 passed |
+| `check_gate_fixtures.py` | 42 cases across 9 gates behaved as specified |
+| eight escape-hatch probes, measured | every one exit 1; two honest bodies exit 0 |
+| `ruff` / `black` / `prettier` / `check_recalled_counts` | exit 0 |
