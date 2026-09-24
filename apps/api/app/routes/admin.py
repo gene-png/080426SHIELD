@@ -862,7 +862,7 @@ def _ai_readiness(db: Session, s) -> tuple[bool, str, str, AiServes]:
         # and overwrote five of the client's own answers.
         if source == "environment":
             also = (
-                ", or load a key here to enable live AI without a redeploy"
+                " Or load a key here to enable live AI without a redeploy."
                 if keystore.accepts_runtime_key(provider)
                 else ""
             )
@@ -870,18 +870,18 @@ def _ai_readiness(db: Session, s) -> tuple[bool, str, str, AiServes]:
                 False,
                 (
                     f"SHIELD_LLM_MODE={s.shield_llm_mode!r}, so AI steps generate offline "
-                    "(fixture) responses even though an environment key is present. Set "
-                    f"SHIELD_LLM_MODE=live and restart the api{also}."
+                    "(fixture) responses even though an environment key is present. "
+                    f"{_go_live_advice(s)}{also}"
                 ),
                 source,
                 "offline",
             )
+        # Lead with a missing key only where a key is what is missing: vertex
+        # has none, and a provider with no adapter is missing the adapter.
+        lead = "No API key is loaded — " if keystore.env_key_var(provider) else ""
         return (
             False,
-            (
-                "No API key is loaded — AI steps will generate offline (fixture) "
-                f"responses. {_offline_remedy(provider)}"
-            ),
+            f"{lead}AI steps will generate offline (fixture) responses. {_offline_remedy(s)}",
             source,
             "offline",
         )
@@ -907,34 +907,60 @@ def _ai_readiness(db: Session, s) -> tuple[bool, str, str, AiServes]:
     return True, f"Live AI configured ({provider}/{model}).", source, "live"
 
 
-def _offline_remedy(provider: str) -> str:
+def _offline_remedy(s) -> str:
     """The one remedy that works for this provider, when AI is offline for want
     of a key (#472). Each branch names a control that exists and works:
 
     * a key can be loaded here -> load it;
-    * the provider takes a key, but only from the environment -> set it there;
-    * the provider needs no key and has an adapter (vertex) -> the mode;
     * the provider has no live adapter -> another provider. Telling this one to
-      go live stops the api booting.
+      go live stops the api booting;
+    * the provider takes a key, but only from the environment -> what live mode
+      needs, asked of the boot preflight;
+    * the provider needs no key (vertex) -> the same, asked of the preflight.
+
+    COUNTED: `test_ai_readiness_branch_count.py` pins the number of returns
+    here, and each is a row in `RunAiGuard.test.tsx`.
     """
     from app.ai.llm import _LIVE_ADAPTERS, has_live_adapter
 
+    provider = s.shield_llm_provider
     if keystore.accepts_runtime_key(provider):
         return "Load a key to enable live AI."
-    env_var = keystore.env_key_var(provider)
-    if env_var and has_live_adapter(provider):
+    if not has_live_adapter(provider):
         return (
-            f"A key for {provider!r} cannot be loaded here: set {env_var} and "
-            "SHIELD_LLM_MODE=live, then restart the api."
+            f"Provider {provider!r} has no live adapter yet, so AI can only run offline: "
+            f"set SHIELD_LLM_PROVIDER to one of {', '.join(sorted(_LIVE_ADAPTERS))}."
         )
-    if has_live_adapter(provider):
-        return (
-            f"Provider {provider!r} authenticates without an API key, so there is "
-            "none to load: set SHIELD_LLM_MODE=live and restart the api."
-        )
+    if keystore.env_key_var(provider):
+        return f"A key for {provider!r} cannot be loaded here. {_go_live_advice(s)}"
     return (
-        f"Provider {provider!r} has no live adapter yet, so AI can only run offline: "
-        f"set SHIELD_LLM_PROVIDER to one of {', '.join(sorted(_LIVE_ADAPTERS))}."
+        f"Provider {provider!r} authenticates without an API key, so there is none "
+        f"to load. {_go_live_advice(s)}"
+    )
+
+
+def _go_live_advice(s) -> str:
+    """ "Set SHIELD_LLM_MODE=live" is advice only if live mode would BOOT.
+
+    Round 2 on #472: round 1 prescribed the mode from a hand summary, and the
+    boot preflight also wants a project, google-auth and resolvable ADC for
+    vertex, a real model id, and the SDK -- and refuses to START the api
+    without them, taking the whole platform down rather than just AI. So this
+    asks the preflight itself, on a copy of the settings with the mode flipped,
+    and names what it would refuse first.
+
+    COUNTED with `_offline_remedy`.
+    """
+    ready, detail = s.model_copy(update={"shield_llm_mode": "live"}).live_llm_readiness()
+    if ready:
+        return "Set SHIELD_LLM_MODE=live and restart the api."
+    # The preflight phrases its causes for a process that IS live; drop that
+    # framing. If its wording changes, the sentence still reads, just longer.
+    cause = detail.removeprefix("Live mode is on but ")
+    cause = cause[:1].upper() + cause[1:]
+    return (
+        f"Live mode would not start yet: {cause} Fix that first, then set "
+        "SHIELD_LLM_MODE=live and restart the api."
     )
 
 
@@ -1009,7 +1035,11 @@ def remove_llm_key(
     db: Annotated[Session, Depends(get_db)],
     provider: str | None = None,
 ) -> None:
-    """Delete the stored key. AI drops back to offline (fixture) responses.
+    """Delete the stored key. What AI does next depends on what is left: in
+    fixture mode it drops back to offline (fixture) responses; in live mode an
+    ENVIRONMENT key takes over and Run-AI keeps calling the provider -- a
+    stored key in live mode always has one behind it, because live mode does
+    not boot without it. `GET /admin/ai-status` says which (#472).
 
     Idempotent — removing a key that isn't there is not an error, but it is
     logged as a no-op rather than reported as work that happened.

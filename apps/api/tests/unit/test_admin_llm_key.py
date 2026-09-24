@@ -20,7 +20,6 @@ Two rules the tests below exist to enforce:
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -45,7 +44,7 @@ BAD_KEY = "sk-ant-test-rejected-key-00000000"
 def app_client(tmp_path, monkeypatch) -> Iterator[tuple[TestClient, sessionmaker]]:
     db_path = tmp_path / "shield-llmkey.db"
     url = f"sqlite:///{db_path}"
-    os.environ["DATABASE_URL"] = url
+    monkeypatch.setenv("DATABASE_URL", url)
     # Pin the provider/model rather than inheriting the developer's .env — a
     # placeholder SHIELD_LLM_MODEL there would otherwise make readiness fail
     # for a reason this spec isn't about.
@@ -278,12 +277,20 @@ def test_a_live_vertex_deployment_reports_live_not_offline(app_client, monkeypat
     assert "offline" not in body["detail"].lower()
 
 
+def _adc(monkeypatch, resolvable: bool) -> None:
+    import app.config as config_mod
+
+    monkeypatch.setattr(config_mod, "_google_auth_importable", lambda: True)
+    monkeypatch.setattr(config_mod, "_adc_resolvable", lambda: resolvable)
+
+
 def test_vertex_in_fixture_mode_is_offline_and_does_not_prescribe_a_key(app_client, monkeypatch):
-    # Loading a key BREAKS vertex (`_build_provider` refuses a stored key for
-    # it), so the remedy must be the mode, never "load a key".
+    # "Load a key" names a control that cannot work for vertex -- it has no
+    # key, and the validator refuses one -- so the remedy is the mode.
     c, _ = app_client
     h = _admin(c)
     _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="shield-test-project")
+    _adc(monkeypatch, resolvable=True)
     body = _status(c, h)
     assert body["serves"] == "offline", body
     assert body["ready"] is False
@@ -410,3 +417,73 @@ def test_only_a_provider_whose_key_can_be_validated_here_can_be_configured(app_c
     assert _status(c, h)["can_configure"] is True  # anthropic, the fixture's pin
     _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="shield-test-project")
     assert _status(c, h)["can_configure"] is False
+
+
+# --- #472 round 2: "set SHIELD_LLM_MODE=live" is advice only if live would BOOT
+#
+# Round 1 prescribed the mode for vertex from a hand summary. The boot
+# preflight (`live_llm_readiness`) also wants a project, google-auth and
+# resolvable ADC, and refuses to START the api without them -- so following the
+# advice took the whole platform down, not just AI. The remedy now asks the
+# preflight itself.
+
+
+def test_vertex_without_a_project_is_told_what_live_mode_is_missing(app_client, monkeypatch):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="")
+    _adc(monkeypatch, resolvable=True)
+    body = _status(c, h)
+    assert body["serves"] == "offline", body
+    assert "GCP_PROJECT_ID" in body["detail"], body["detail"]
+    assert "would not start" in body["detail"], body["detail"]
+
+
+def test_vertex_without_resolvable_credentials_is_told_so(app_client, monkeypatch):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="shield-test-project")
+    _adc(monkeypatch, resolvable=False)
+    body = _status(c, h)
+    assert "Application Default Credentials" in body["detail"], body["detail"]
+    assert "would not start" in body["detail"], body["detail"]
+
+
+def test_vertex_that_would_boot_is_told_plainly_to_go_live(app_client, monkeypatch):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="shield-test-project")
+    _adc(monkeypatch, resolvable=True)
+    body = _status(c, h)
+    assert "would not start" not in body["detail"], body["detail"]
+    assert "Set SHIELD_LLM_MODE=live and restart the api." in body["detail"], body["detail"]
+
+
+def test_an_environment_key_with_a_placeholder_model_is_not_told_to_go_live_blind(
+    app_client, monkeypatch
+):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(
+        monkeypatch,
+        anthropic_api_key="sk-ant-env-key-0000000000000000",
+        shield_llm_model="claude-opus-4-7",
+    )
+    body = _status(c, h)
+    assert body["key_source"] == "environment"
+    assert "would not start" in body["detail"], body["detail"]
+    assert "claude-opus-4-7" in body["detail"], body["detail"]
+
+
+@pytest.mark.parametrize(
+    ("provider", "project"), [("vertex", "shield-test-project"), ("bedrock", "")]
+)
+def test_a_provider_with_no_key_does_not_lead_with_a_missing_key(
+    app_client, monkeypatch, provider, project
+):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider=provider, gcp_project_id=project)
+    _adc(monkeypatch, resolvable=True)
+    body = _status(c, h)
+    assert not body["detail"].startswith("No API key is loaded"), body["detail"]

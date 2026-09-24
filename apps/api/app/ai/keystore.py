@@ -40,19 +40,14 @@ _ENV_KEY_ATTR = {
 }
 
 
-def accepts_api_key(provider: str) -> bool:
-    """Whether ``provider`` authenticates with an API key at all -- from the
-    environment, that is. Vertex does not: it uses ADC.
+def env_key_var(provider: str) -> str | None:
+    """The environment variable that carries ``provider``'s key, or None for a
+    provider that takes no key (vertex uses ADC).
 
     NOT whether a key can be LOADED here: that is ``accepts_runtime_key``, and
     confusing the two told openai and gemini admins to paste a key the
     validator then refused (#472).
     """
-    return provider in _ENV_KEY_ATTR
-
-
-def env_key_var(provider: str) -> str | None:
-    """The environment variable that carries ``provider``'s key, if it has one."""
     attr = _ENV_KEY_ATTR.get(provider)
     return attr.upper() if attr else None
 

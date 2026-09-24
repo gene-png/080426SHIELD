@@ -63,6 +63,11 @@ describe("LlmKeyPanel's removal notice (#472)", () => {
     );
     expect(screen.getByText(/Key removed/)).not.toHaveTextContent(/offline/i);
     expect(screen.getByText(/Key removed/)).toHaveTextContent(/still live/i);
+    // Not "on the environment key": for vertex it would be ADC. The detail
+    // above says which (round 2 on #472).
+    expect(screen.getByText(/Key removed/)).not.toHaveTextContent(
+      /environment key/i,
+    );
   });
 
   it("says offline when the call really is offline now", async () => {
@@ -79,5 +84,47 @@ describe("LlmKeyPanel's removal notice (#472)", () => {
     await waitFor(() =>
       expect(screen.getByText(/Key removed/)).toHaveTextContent(/offline/i),
     );
+  });
+});
+
+// #472 round 2: the panel's paste form rendered for every provider, directly
+// under server copy saying a key cannot be loaded here -- a control that
+// cannot work, beside the sentence saying so.
+describe("LlmKeyPanel's paste form", () => {
+  function stubStatus(body: Record<string, unknown>) {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }
+
+  it("is offered where a key can be loaded here", async () => {
+    stubStatus(status({ key_source: "none", ready: false, serves: "offline" }));
+    render(<LlmKeyPanel />);
+    expect(
+      await screen
+        .findByRole("textbox", { name: "Provider API key" })
+        .catch(() => screen.findByLabelText("Provider API key")),
+    ).toBeInTheDocument();
+  });
+
+  it("is withheld where one cannot, and says so", async () => {
+    stubStatus(
+      status({
+        provider: "openai",
+        key_source: "none",
+        ready: false,
+        serves: "offline",
+        can_configure: false,
+      }),
+    );
+    render(<LlmKeyPanel />);
+    expect(
+      await screen.findByText(/cannot be loaded here/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Provider API key")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save key" })).toBeNull();
   });
 });

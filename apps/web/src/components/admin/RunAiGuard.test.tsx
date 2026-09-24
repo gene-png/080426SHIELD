@@ -277,7 +277,16 @@ const READINESS_BRANCHES: ReadonlyArray<{
     label: "no key, for a provider that authenticates without one",
     body: { key_source: "none", provider: "vertex", can_configure: false },
     detail:
-      "No API key is loaded — AI steps will generate offline (fixture) responses. Provider 'vertex' authenticates without an API key, so there is none to load: set SHIELD_LLM_MODE=live and restart the api.",
+      "AI steps will generate offline (fixture) responses. Provider 'vertex' authenticates without an API key, so there is none to load. Set SHIELD_LLM_MODE=live and restart the api.",
+    serves: "offline",
+  },
+  {
+    // #472 round 2: "set it live" is advice only if live mode would BOOT. The
+    // server asks the boot preflight and, when it would refuse, says why.
+    label: "a keyless provider that live mode would refuse to start",
+    body: { key_source: "none", provider: "vertex", can_configure: false },
+    detail:
+      "AI steps will generate offline (fixture) responses. Provider 'vertex' authenticates without an API key, so there is none to load. Live mode would not start yet: GCP_PROJECT_ID is not set (Vertex provider). Fix that first, then set SHIELD_LLM_MODE=live and restart the api.",
     serves: "offline",
   },
   {
@@ -286,7 +295,7 @@ const READINESS_BRANCHES: ReadonlyArray<{
     label: "no key, for a provider whose key only the environment can carry",
     body: { key_source: "none", provider: "openai", can_configure: false },
     detail:
-      "No API key is loaded — AI steps will generate offline (fixture) responses. A key for 'openai' cannot be loaded here: set OPENAI_API_KEY and SHIELD_LLM_MODE=live, then restart the api.",
+      "No API key is loaded — AI steps will generate offline (fixture) responses. A key for 'openai' cannot be loaded here. Live mode would not start yet: OPENAI_API_KEY is not set. Fix that first, then set SHIELD_LLM_MODE=live and restart the api.",
     serves: "offline",
   },
   {
@@ -295,14 +304,28 @@ const READINESS_BRANCHES: ReadonlyArray<{
     label: "no key, for a provider with no live adapter",
     body: { key_source: "none", provider: "bedrock", can_configure: false },
     detail:
-      "No API key is loaded — AI steps will generate offline (fixture) responses. Provider 'bedrock' has no live adapter yet, so AI can only run offline: set SHIELD_LLM_PROVIDER to one of anthropic, gemini, openai, vertex.",
+      "AI steps will generate offline (fixture) responses. Provider 'bedrock' has no live adapter yet, so AI can only run offline: set SHIELD_LLM_PROVIDER to one of anthropic, gemini, openai, vertex.",
     serves: "offline",
   },
   {
     label: "env key but mode is not live",
     body: { key_source: "environment", mode: "fixture", can_configure: true },
     detail:
-      "SHIELD_LLM_MODE='fixture', so AI steps generate offline (fixture) responses even though an environment key is present. Set SHIELD_LLM_MODE=live and restart the api, or load a key here to enable live AI without a redeploy.",
+      "SHIELD_LLM_MODE='fixture', so AI steps generate offline (fixture) responses even though an environment key is present. Set SHIELD_LLM_MODE=live and restart the api. Or load a key here to enable live AI without a redeploy.",
+    serves: "offline",
+  },
+  {
+    // The same branch for a provider whose key cannot be loaded here: no
+    // "or load a key" (round 2 on #472).
+    label: "env key, mode not live, key not loadable here",
+    body: {
+      key_source: "environment",
+      mode: "fixture",
+      provider: "openai",
+      can_configure: false,
+    },
+    detail:
+      "SHIELD_LLM_MODE='fixture', so AI steps generate offline (fixture) responses even though an environment key is present. Set SHIELD_LLM_MODE=live and restart the api.",
     serves: "offline",
   },
   {

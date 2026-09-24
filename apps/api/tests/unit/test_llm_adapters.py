@@ -48,3 +48,21 @@ def test_the_question_is_asked_of_more_than_one_answer() -> None:
     """A selector that selects nothing passes: both answers must occur."""
     answers = {has_live_adapter(p) for p in get_args(LLMProvider)}
     assert answers == {True, False}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("provider", get_args(LLMProvider))
+def test_has_live_adapter_matches_the_boot_preflight_too(provider: str) -> None:
+    """The preflight carries a THIRD hand-written provider list, and it is the
+    one that decides whether the api boots. So `has_live_adapter` is pinned
+    against it as well (round 2 on #472)."""
+    settings = Settings(
+        shield_llm_mode="live",
+        shield_llm_provider=provider,
+        shield_llm_model="some-real-model",
+    )
+    _ready, detail = settings.live_llm_readiness()
+    assert has_live_adapter(provider) is ("has no live adapter" not in detail), (
+        provider,
+        detail,
+    )

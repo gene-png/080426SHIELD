@@ -29,12 +29,14 @@ function removalNotice(next: AiStatus | null): string {
     return "Key removed. The AI status could not be re-read — refresh the page to see what AI will do now.";
   }
   if (next.serves === "live") {
-    return "Key removed. AI is still live, on the environment key.";
+    // Not "on the environment key": for vertex it would be ADC. The detail
+    // above names what AI is running on.
+    return "Key removed. AI is still live.";
   }
   if (next.serves === "offline") {
     return "Key removed. AI steps will generate offline responses again.";
   }
-  return "Key removed. Run AI will fail until the cause below is fixed.";
+  return "Key removed. Run AI will fail until the cause above is fixed.";
 }
 
 export function LlmKeyPanel({
@@ -146,24 +148,38 @@ export function LlmKeyPanel({
       ) : null}
 
       <form onSubmit={(e) => void onSave(e)} className="flex flex-wrap gap-2">
-        <input
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={
-            hasStoredKey ? "Paste a new key to replace" : "Paste API key"
-          }
-          aria-label="Provider API key"
-          autoComplete="off"
-          className="min-w-[18rem] flex-1 rounded-md border border-border bg-surface-card px-3 py-2 font-mono text-sm"
-        />
-        <button
-          type="submit"
-          disabled={busy || !key.trim()}
-          className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {busy ? "Validating…" : hasStoredKey ? "Replace key" : "Save key"}
-        </button>
+        {/* #472 round 2: the paste form renders only where a key can be
+            LOADED here (`can_configure`). For openai and gemini the validator
+            refuses a pasted key, and vertex has none -- the form stood under
+            server copy saying so. Remove stays: a stored key can always be
+            removed, and the build-refusal copy tells the admin to. */}
+        {status?.can_configure ? (
+          <>
+            <input
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={
+                hasStoredKey ? "Paste a new key to replace" : "Paste API key"
+              }
+              aria-label="Provider API key"
+              autoComplete="off"
+              className="min-w-[18rem] flex-1 rounded-md border border-border bg-surface-card px-3 py-2 font-mono text-sm"
+            />
+            <button
+              type="submit"
+              disabled={busy || !key.trim()}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? "Validating…" : hasStoredKey ? "Replace key" : "Save key"}
+            </button>
+          </>
+        ) : status ? (
+          <p className="text-sm text-ink-secondary">
+            A key for {status.provider} cannot be loaded here — see the detail
+            above for what this provider needs.
+          </p>
+        ) : null}
         {hasStoredKey ? (
           confirmingRemove ? (
             <span className="flex items-center gap-2">

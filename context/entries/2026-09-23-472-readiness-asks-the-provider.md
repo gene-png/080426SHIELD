@@ -34,15 +34,24 @@ stored one.
     branches on, and today it covers anthropic alone.
   - openai and gemini take their key from the environment.
   - vertex needs no key, so its remedy is the mode.
+  - Wherever the remedy is "set SHIELD_LLM_MODE=live", it comes from the boot
+    preflight: `_go_live_advice` runs `live_llm_readiness` on a copy of the
+    settings with the mode flipped, and when that would refuse it says why.
+    Round 2 of review caught the earlier version telling vertex to go live
+    without a project, which stops the api booting.
   - A provider with no live adapter (`azure_openai`, `bedrock`, `local`) is
     told to switch provider. Telling it to go live stops the api booting.
 
   `llm.has_live_adapter` summarises `_build_provider`'s if-chain, and
   `test_llm_adapters.py` pins that summary against the chain for every member
-  of `LLMProvider`.
+  of `LLMProvider`, and against the preflight's own provider list.
 - **`can_configure` tells the truth.** It was hardcoded `True`. It is now
-  `accepts_runtime_key`, and the guard's "Load a key" link and the banner's
-  "Load an API key" link show only when it is true.
+  `accepts_runtime_key`. Three things show only when it is true: the guard's
+  "Load a key" link, the banner's "Load an API key" link, and the key panel's
+  paste form. The panel keeps Remove for a stored key either way.
+- **The remedy copy is counted.** It lives in two helpers outside
+  `_ai_readiness`, so `test_ai_readiness_branch_count.py` now also pins each
+  helper's number of returns, and each return has a web-table row.
 - **The key panel's removal notice** comes from the status read after the
   removal. It used to say "offline again" even when an environment key kept
   Run-AI live.
