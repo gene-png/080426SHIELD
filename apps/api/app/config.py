@@ -5,7 +5,8 @@ No setting may be hardcoded. Every external service and security knob is here.
 
 from __future__ import annotations
 
-from functools import cache, lru_cache
+import time
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field
@@ -47,7 +48,11 @@ def _google_auth_importable() -> bool:
     return find_spec("google.auth") is not None
 
 
-@cache
+#: How long a resolved-or-not ADC answer is reused. See `_adc_resolvable`.
+_ADC_CACHE_SECONDS = 60.0
+_adc_cache: tuple[float, bool] | None = None
+
+
 def _adc_resolvable() -> bool:
     """True if Application Default Credentials resolve for the Vertex provider.
 
@@ -55,15 +60,37 @@ def _adc_resolvable() -> bool:
     monkeypatching it. Returns a bool and never raises: the loud failure is
     raised by ``assert_safe_for_runtime`` when this is false.
 
-    NOT network-free, which is what this said. It fetches no token, but with no
-    credentials ``google.auth.default()`` falls through to pinging the GCE
-    metadata server: measured 3.2-3.9 s in the api container on 2026-09-23.
-    That was harmless once at boot, and not once ``/admin/ai-status`` asked the
-    preflight on every read (#472). So the answer is CACHED for the process: a
-    credential change needs a restart to take effect in live mode anyway, and
-    until then the status may describe the credentials as they were at the
-    first read.
+    NOT network-free, which is what this said. It fetches no token, but when
+    no credentials are configured at all (``GOOGLE_APPLICATION_CREDENTIALS``
+    unset, no gcloud file) ``google.auth.default()`` falls through to pinging
+    the GCE metadata server: measured 3.2-3.9 s in the api container on
+    2026-09-23. Under compose's own setting, the variable points at a mounted
+    path, and a missing file fails fast (0.35 s the first time, the import, then
+    about 0). That cost was harmless once at boot, and not once
+    ``/admin/ai-status`` asked the preflight on every read (#472).
+
+    So the answer is reused for ``_ADC_CACHE_SECONDS``. It is SHORT on purpose,
+    because the readiness copy acts on it in both directions: an admin who
+    follows "run gcloud auth application-default login" should see the status
+    change within a minute, and one who revokes credentials should not be told
+    to go live for long on a stale "resolvable".
     """
+    global _adc_cache
+    now = time.monotonic()
+    if _adc_cache is not None and now - _adc_cache[0] < _ADC_CACHE_SECONDS:
+        return _adc_cache[1]
+    result = _probe_adc()
+    _adc_cache = (now, result)
+    return result
+
+
+def _reset_adc_cache() -> None:
+    """Forget the cached ADC answer (tests)."""
+    global _adc_cache
+    _adc_cache = None
+
+
+def _probe_adc() -> bool:
     try:
         import google.auth
         from google.auth.exceptions import GoogleAuthError
@@ -71,7 +98,10 @@ def _adc_resolvable() -> bool:
         return False
     try:
         credentials, _project = google.auth.default(scopes=[_GCP_CLOUD_PLATFORM_SCOPE])
-    except GoogleAuthError:
+    except (GoogleAuthError, OSError, ValueError):
+        # OSError: an unreadable credentials file (the container runs as a
+        # different uid from the host that wrote it). ValueError: a malformed
+        # one. Either is "not resolvable", never a 500 from the status route.
         return False
     return credentials is not None
 

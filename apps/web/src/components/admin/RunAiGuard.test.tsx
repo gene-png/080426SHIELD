@@ -434,7 +434,9 @@ describe("the warning states the server's own cause", () => {
   // #472 round 1: "Load a key" was rendered for every cause, including
   // providers whose key the validator refuses and one that has no key at all.
   // `can_configure` is the server's answer to "can a key be loaded here".
-  it("offers Load a key only where a key can be loaded here", async () => {
+  // Round 4: and only where the call is OFFLINE. A missing SDK or a
+  // placeholder model is "broken", and no key fixes either.
+  it("offers Load a key only where a key can be loaded here and would help", async () => {
     const both = new Set(READINESS_BRANCHES.map((b) => b.body.can_configure));
     expect(both).toEqual(new Set([true, false]));
 
@@ -445,7 +447,9 @@ describe("the warning states the server's own cause", () => {
       await screen.findByRole("alertdialog");
       const offered =
         screen.queryByRole("link", { name: "Load a key" }) !== null;
-      expect(offered, branch.label).toBe(branch.body.can_configure === true);
+      expect(offered, branch.label).toBe(
+        branch.body.can_configure === true && branch.serves === "offline",
+      );
       unmount();
       vi.restoreAllMocks();
     }

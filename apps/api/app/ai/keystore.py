@@ -11,8 +11,9 @@ resolved. Three rules hold everywhere in this module:
    audit ``details`` blob.
 3. **Database beats environment.** A key pasted through the UI overrides
    ``ANTHROPIC_API_KEY`` and friends while it is stored. Removing it falls BACK
-   to the environment key when there is one (``effective_key``), so in live mode
-   Run-AI keeps calling the provider; ``GET /admin/ai-status`` says which (#472).
+   to the environment key when there is one -- ``llm._build_provider``'s live
+   branch reads it -- so in live mode Run-AI keeps calling the provider;
+   ``GET /admin/ai-status`` says which (#472).
 """
 
 from __future__ import annotations

@@ -94,7 +94,7 @@ export function TechDebtWorkspace({
    */
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
-  const { status: aiStatus } = useAiStatus();
+  const { settled: aiSettled } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
@@ -487,14 +487,22 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 // unannounced. When AI is not live (and the admin hasn't already
                 // acknowledged it) the file is just listed — the guarded
                 // "Extract from this" button below is then the way in.
-                if (
-                  aiStatus &&
-                  !aiStatus.ready &&
-                  !hasAcknowledgedOffline(aiStatus)
-                ) {
-                  return;
-                }
-                void runExtraction(a.id);
+                //
+                // #509: decided on a SETTLED status. This read `status`, null
+                // while the request is in flight, and a null ran the extraction
+                // -- reachable since #472 made the first status read slow. A
+                // status that cannot be read at all does not auto-run either;
+                // the guarded button, which fails open on an outage, remains.
+                void aiSettled().then((s) => {
+                  if (s === null) {
+                    console.warn(
+                      "[tech-debt] AI status unreadable; not auto-extracting",
+                    );
+                    return;
+                  }
+                  if (!s.ready && !hasAcknowledgedOffline(s)) return;
+                  void runExtraction(a.id);
+                });
               }}
               accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             />

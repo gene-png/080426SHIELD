@@ -180,8 +180,10 @@ export function RunAiGuard({
                 (`can_configure`, #472 round 1): for vertex there is no key, and
                 for openai and gemini the validator refuses a pasted one, so
                 the link named a control that cannot work beside a detail
-                telling the admin not to use it. */}
-            {promptFor.can_configure ? (
+                telling the admin not to use it. And only when the call is
+                OFFLINE (round 4): a missing SDK or a placeholder model is
+                "broken", and no key fixes either. */}
+            {promptFor.can_configure && promptFor.serves === "offline" ? (
               <Link
                 href="/admin/management#ai-provider-key"
                 className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-ink-on-accent hover:bg-brand-600"

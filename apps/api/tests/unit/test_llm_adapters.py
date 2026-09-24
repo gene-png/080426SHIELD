@@ -60,6 +60,9 @@ def test_has_live_adapter_matches_the_boot_preflight_too(provider: str) -> None:
         shield_llm_mode="live",
         shield_llm_provider=provider,
         shield_llm_model="some-real-model",
+        # Pinned, so vertex stops at the project check and never reaches the
+        # real ADC probe (round 4 on #472: tests are hermetic).
+        gcp_project_id="",
     )
     _ready, detail = settings.live_llm_readiness()
     assert has_live_adapter(provider) is ("has no live adapter" not in detail), (
@@ -69,13 +72,12 @@ def test_has_live_adapter_matches_the_boot_preflight_too(provider: str) -> None:
 
 
 @pytest.mark.unit
-def test_the_adc_probe_runs_once_per_process(monkeypatch) -> None:
-    """Round 3 on #472: with no credentials, `google.auth.default()` pings the
-    GCE metadata server -- measured 3.2-3.9 s in the api container on
-    2026-09-23 -- and `/admin/ai-status` now asks the preflight on every read
-    for vertex in fixture mode, so every admin page load paid it. The probe's
-    answer is cached for the process: a credential change needs a restart to
-    go live anyway."""
+def test_the_adc_probe_is_reused_briefly_then_asked_again(monkeypatch) -> None:
+    """Round 3 on #472: with no credentials configured, `google.auth.default()`
+    pings the GCE metadata server (measured 3.2-3.9 s), and `/admin/ai-status`
+    asks the preflight on every read for vertex in fixture mode. Round 4: a
+    process-lifetime cache then kept a stale answer after the admin followed the
+    advice. So the answer is reused for a SHORT window and re-asked after it."""
     google_auth = pytest.importorskip("google.auth")
     import app.config as config_mod
 
@@ -85,11 +87,34 @@ def test_the_adc_probe_runs_once_per_process(monkeypatch) -> None:
         calls.append(1)
         raise google_auth.exceptions.DefaultCredentialsError("none")
 
+    clock = [1000.0]
     monkeypatch.setattr(google_auth, "default", fake_default)
-    config_mod._adc_resolvable.cache_clear()
+    monkeypatch.setattr(config_mod.time, "monotonic", lambda: clock[0])
+    config_mod._reset_adc_cache()
     try:
         assert config_mod._adc_resolvable() is False
         assert config_mod._adc_resolvable() is False
+        assert len(calls) == 1, "a second read inside the window probed again"
+        clock[0] += config_mod._ADC_CACHE_SECONDS + 1
+        assert config_mod._adc_resolvable() is False
+        assert len(calls) == 2, "the answer outlived its window"
     finally:
-        config_mod._adc_resolvable.cache_clear()
-    assert len(calls) == 1, calls
+        config_mod._reset_adc_cache()
+
+
+@pytest.mark.unit
+def test_an_unreadable_credentials_file_is_not_resolvable_rather_than_an_error(
+    monkeypatch,
+) -> None:
+    google_auth = pytest.importorskip("google.auth")
+    import app.config as config_mod
+
+    def unreadable(*args, **kwargs):
+        raise PermissionError("[Errno 13] Permission denied: '/gcloud/adc.json'")
+
+    monkeypatch.setattr(google_auth, "default", unreadable)
+    config_mod._reset_adc_cache()
+    try:
+        assert config_mod._adc_resolvable() is False
+    finally:
+        config_mod._reset_adc_cache()

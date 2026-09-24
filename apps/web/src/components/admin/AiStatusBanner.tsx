@@ -30,7 +30,8 @@ export function AiStatusBanner(): JSX.Element | null {
       <span>
         <span className="font-semibold">AI is not live.</span> {status.detail}
       </span>
-      {status.can_configure ? (
+      {/* Only where a key can be loaded AND would help (#472). */}
+      {status.can_configure && status.serves === "offline" ? (
         <Link
           href="/admin/management#ai-provider-key"
           className="rounded-md border border-status-warning-border bg-surface-card px-3 py-1 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"

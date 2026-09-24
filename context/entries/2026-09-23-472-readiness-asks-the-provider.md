@@ -46,9 +46,16 @@ stored one.
   `test_llm_adapters.py` pins that summary against the chain for every member
   of `LLMProvider`, and against the preflight's own provider list.
 - **`can_configure` tells the truth.** It was hardcoded `True`. It is now
-  `accepts_runtime_key`. Three things show only when it is true: the guard's
-  "Load a key" link, the banner's "Load an API key" link, and the key panel's
-  paste form. The panel keeps Remove for a stored key either way.
+  `accepts_runtime_key`. The guard's "Load a key" link and the banner's "Load
+  an API key" link show only when it is true AND the call is offline. For a
+  broken state (a missing SDK, a placeholder model) no key helps. The key
+  panel's paste form shows when it is true, or when the status could not be
+  read, since the server validates the key anyway. The panel keeps Remove for
+  a stored key either way.
+- **Tech Debt's auto-extraction on upload waits for a SETTLED status** (#509,
+  which this branch made reachable). It read `status`, which is null while the
+  request is in flight, and a null ran the extraction. That window became real
+  once the first status read could be slow.
 - **The remedy copy is counted.** It lives in two helpers outside
   `_ai_readiness`, so `test_ai_readiness_branch_count.py` now also pins each
   helper's number of returns, and each return has a web-table row.
@@ -96,8 +103,11 @@ Round 1 of review found these blockers, all fixed:
 
 The guard acts on the status it read when the page loaded. A key loaded by
 another admin afterwards turns an acknowledged offline run into a live one
-(#504). ADC is resolved at boot and, since round 2, on the first status read
-in fixture mode. Round 3 measured that probe at 3.2-3.9 s with no credentials
-(it pings the GCE metadata server), so the answer is cached for the process.
-Credentials that change after that still read as they were until a restart.
+(#504). A second trigger for the same race is this branch's own advice to set
+the mode live and restart: pages opened before the restart keep the status
+they loaded. ADC is resolved at boot and on status reads in fixture mode. With
+no credentials configured at all, the probe pings the GCE metadata server,
+measured at 3.2-3.9 s. Under compose's own setting a missing file fails fast.
+The answer is reused for 60 seconds, so it goes stale briefly rather than for
+the life of the process.
 The copy residuals from round 3 are filed as #511.

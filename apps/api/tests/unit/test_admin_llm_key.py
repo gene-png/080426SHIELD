@@ -417,6 +417,7 @@ def test_only_a_provider_whose_key_can_be_validated_here_can_be_configured(app_c
     h = _admin(c)
     assert _status(c, h)["can_configure"] is True  # anthropic, the fixture's pin
     _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="shield-test-project")
+    _adc(monkeypatch, resolvable=True)  # hermetic: never the real probe
     assert _status(c, h)["can_configure"] is False
 
 

@@ -70,7 +70,7 @@ export function LlmKeyPanel({
       setNotice(
         next.ready
           ? "Key validated and saved. Live AI is on."
-          : "Key saved, but AI still isn't live — see the detail below.",
+          : "Key saved, but AI still isn't live — see the detail above.",
       );
       onChanged?.();
     } catch (err) {
