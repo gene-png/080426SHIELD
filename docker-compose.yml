@@ -115,12 +115,15 @@ services:
     # withdrawal -- Chainguard withdrawing or gating this free image would
     # repeat the outage exactly. Only a copy this repo controls (a mirror)
     # closes that, tracked in #522.
-    # MinIO has stopped publishing public images. Pinning an OLD quay tag was
-    # rejected by the repo owner on 2026-09-24: CVE-2025-62506 was reported
-    # against MinIO and, per the owner, its maintainers declined to patch it in
-    # the containers, so a historical image would ship a known unpatched CVE
-    # into a FedRAMP-track product. (Cached quay images on a dev machine carry it
-    # too.) NOT checked here: that the release pinned below contains the fix.
+    # MinIO has stopped publishing public images, and NO PUBLIC MINIO CONTAINER
+    # EVER CARRIED THE FIX for CVE-2025-62506 (GHSA-jjjj-jwhf-8rgr, IAM
+    # privilege escalation, CVSS 8.1). The fix is in RELEASE.2025-10-15T17-29-55Z.
+    # The last public community container predates it: quay's `:latest` was
+    # RELEASE.2025-09-07T16-13-09Z (`minio --version` in the cached image,
+    # 2026-09-24). So pinning an old quay tag, rejected by the repo owner on
+    # 2026-09-24, would have shipped a known unpatched CVE into a FedRAMP-track
+    # product. CACHED QUAY IMAGES ON DEV MACHINES ARE VULNERABLE. The release
+    # pinned below, RELEASE.2026-09-22T19-25-18Z, is after the fix.
     #
     # Chainguard publishes MinIO free, public and unauthenticated (measured by
     # pulling; its own documentation says it rebuilds from source, which is not
