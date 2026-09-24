@@ -213,6 +213,18 @@ def test_selecting_addopts_narrow_the_selected_set_and_are_findings(
         assert f"{M}::{name}: CI never runs it" in out, out
 
 
+def test_pytest_addopts_in_the_environment_narrows_only_the_selected_set(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    # Review of 701f032: `-o addopts=` does not reach PYTEST_ADDOPTS, so the
+    # "everything" run inherited the same --deselect and the gate stayed clean.
+    root = _project(tmp_path, {M: MARKED})
+    monkeypatch.setenv("PYTEST_ADDOPTS", f"--deselect {M}::test_a")
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert f"{M}::test_a: CI never runs it" in out, out
+
+
 def test_a_config_file_nearer_the_tests_is_the_one_pytest_applies(tmp_path, capsys) -> None:
     # Review of adaf082: pytest walks up from `tests/unit` and the first config
     # file wins, so a `tests/pytest.ini` beats the root one. A gate that read

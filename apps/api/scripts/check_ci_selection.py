@@ -43,8 +43,11 @@ addopts to get a parseable stdout and then tried to READ the config to make up
 for it; review of adaf082 showed pytest looks in more places than any reader
 of named files would (the reason this is a derivation now).
 
-The "everything" collection clears addopts (`-o addopts=`), because a
-`--deselect` or `-k` there is exactly what it must not inherit.
+The "everything" collection clears addopts (`-o addopts=`) AND removes
+`PYTEST_ADDOPTS` from its environment, because a `--deselect` or `-k` in
+either is exactly what it must not inherit. `-o addopts=` alone does not
+reach the variable: pytest prepends it to the arguments before the ini is
+read (review of 701f032).
 
 EXIT CODES (D-051): 0 every collected test is selected or baselined; 1 at
 least one finding; 2 could not look -- the collector failed (including a
@@ -97,6 +100,8 @@ def _collect(root: Path, args: tuple[str, ...], *, clear_addopts: bool) -> set[s
         out = probe_dir / "ids.txt"
         env = dict(os.environ)
         env[_PROBE_OUT] = str(out)
+        if clear_addopts:
+            env.pop("PYTEST_ADDOPTS", None)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [tmp, env.get("PYTHONPATH")]))
         clear = ("-o", "addopts=") if clear_addopts else ()
         cmd = [

@@ -63,6 +63,9 @@ or listing, a malformed baseline, or a workflow that does not parse exits 2.
   config files in the test directories. The SELECTED collection now runs CI's
   argv with the config left alone, and a probe plugin reports what pytest
   itself collected: a derivation, not a reader.
+- **(Review of 701f032.) `PYTEST_ADDOPTS` reached both collections**, because
+  pytest prepends it before the ini is read and `-o addopts=` does not clear
+  it. The unselected collection now runs without it.
 
 ## The backlog, allowed with reasons rather than hidden
 
