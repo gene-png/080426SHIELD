@@ -17,6 +17,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
+import { formatInstantUtc } from "@/lib/dates";
 
 const SELF_ASSESSMENT_TYPES: ServiceType[] = [
   "nist_csf",
@@ -56,8 +57,9 @@ export function IntakeSubmitted({ state }: IntakeSubmittedProps): JSX.Element {
     ).values(),
   );
 
+  // UTC, naming the zone, like every other surface showing this instant.
   const submittedAt = state.intake_completed_at
-    ? new Date(state.intake_completed_at).toLocaleString()
+    ? formatInstantUtc(state.intake_completed_at)
     : null;
 
   // UX finding 6: the confirmation said "received" but gave the client nothing

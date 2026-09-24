@@ -15,7 +15,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
-import { formatDateOnly } from "@/lib/dates";
+import { formatDateOnly, formatInstantUtc } from "@/lib/dates";
 import { listArtifacts, type ArtifactSummary } from "@/lib/intake/artifacts";
 import { isNamedOrg } from "@/lib/org-name";
 
@@ -111,10 +111,9 @@ export function Step6Review({
     <div className="flex flex-col gap-6">
       {alreadySubmittedAt ? (
         <div className="rounded-md border border-status-success-border bg-status-success-bg px-4 py-3 text-sm text-status-success-fg">
-          Intake was submitted on{" "}
-          {new Date(alreadySubmittedAt).toLocaleString()}. You can re-edit
-          earlier steps and re-submit; the admin queue will surface the most
-          recent version.
+          Intake was submitted on {formatInstantUtc(alreadySubmittedAt)}. You
+          can re-edit earlier steps and re-submit; the admin queue will surface
+          the most recent version.
         </div>
       ) : null}
 

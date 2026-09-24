@@ -22,6 +22,7 @@ import type {
 } from "@/lib/attack/types";
 
 import type { JSX } from "react";
+import { formatInstantUtc } from "@/lib/dates";
 
 export interface AttackDeliverableCardProps {
   serviceId: string;
@@ -30,14 +31,8 @@ export interface AttackDeliverableCardProps {
   onChange: (next: AttackDeliverable) => void;
 }
 
-function fmtTime(value: string | null): string {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-}
+// UTC, naming the zone -- the same instant the admin deliverables table shows.
+const fmtTime = formatInstantUtc;
 
 function describeError(err: unknown): string {
   if (err instanceof AttackProxyError) {

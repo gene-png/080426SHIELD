@@ -19,6 +19,7 @@ import {
 import type { ZtAssessmentStatus, ZtDeliverable } from "@/lib/zt/types";
 
 import type { JSX } from "react";
+import { formatInstantUtc } from "@/lib/dates";
 
 export interface ZtDeliverableCardProps {
   serviceId: string;
@@ -27,14 +28,8 @@ export interface ZtDeliverableCardProps {
   onChange: (next: ZtDeliverable) => void;
 }
 
-function fmtTime(value: string | null): string {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-}
+// UTC, naming the zone -- the same instant the admin deliverables table shows.
+const fmtTime = formatInstantUtc;
 
 function describeError(err: unknown): string {
   if (err instanceof ZtProxyError) {
