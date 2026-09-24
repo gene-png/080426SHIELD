@@ -239,7 +239,8 @@ route → engine.run_job(purpose, payload, client_id)
   refresh TTL is the only idle bound, counted from the last rotation; see
   `docs/security.md`.
 - Refresh rotation: single active refresh jti per user; a replayed token is
-  rejected (`reason=refresh_reused`). Forced re-auth ceiling: `auth_time`
+  rejected (`reason=refresh_reused`) once the 60-second grace window
+  (`jwt_refresh_grace_seconds`) has passed. Forced re-auth ceiling: `auth_time`
   claim, 24h default (`reason=reauth_required`). See D-020.
 - Account lockout (10 failures / 15 min) and per-IP + per-account rate limits
   on login/register, checked before Argon2 work (T3). Second-factor failures

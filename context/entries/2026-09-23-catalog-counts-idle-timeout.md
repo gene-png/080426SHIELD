@@ -32,13 +32,17 @@ knob for the same control would be two values that can disagree.
 `docs/security.md` now says so, including the parts a reader could miss.
 The bound is counted from the last token rotation, not the last activity, so
 under compose (access 900, refresh 1800) an idle session gets 15-30 minutes.
-At the config defaults (access 3600, refresh 86400) it gets 23-24 hours: no
-tighter than the daily ceiling, so **outside compose there is no idle control
-beyond the ceiling.** And on `main`, a session whose refresh has lapsed is not
+At the config defaults (access 3600, refresh 86400) a rotation always pushes
+the refresh expiry past the daily ceiling, so the ceiling fires first:
+**outside compose there is no idle bound below the 24-hour ceiling.** Round 2
+of review corrected an earlier "23-24 hours" here, a bound that never takes
+effect. And on `main`, a session whose refresh has lapsed is not
 signed out: the page stays up and its calls fail. PR #499 adds that. Round 1
 of review caught the first version of this calling the control "Implemented".
 Whether SHIELD needs a real idle control outside compose is the owner's
-decision, filed as #516.
+decision, filed as #516. The decision to delete rather than wire, and what
+it supersedes in D-020, is D-084. `routes/auth.py`'s docstring, which stated
+the spec's figures as shipped, now says what ships.
 
 The same subject was stated in the README's risk-acceptance log ("a 30-minute
 refresh-token TTL that functions as the idle timeout") and in

@@ -5427,3 +5427,34 @@ The residual is general and worse than the miscitation: **every field this gate
 checks is pre-cleared by its own TypeScript type definition**, so a green is not
 evidence that anything renders -- it would have reported #322 clean. Stated in the
 gate's docstring and filed as **#473**.
+
+## D-084 — The idle limit is the refresh-token expiry, and outside compose there is none below the ceiling
+
+**2026-09-23 · admin** · branch `fix/catalog-counts-idle-timeout`
+
+**Supersedes the idle clause of D-020**, which recorded "the 30-minute
+refresh-token TTL already IS the idle timeout ... We document that rather than
+invent a second timer". It also supersedes the idle-timeout entry in the
+compensating-control lists that relied on it.
+
+**What changed underneath D-020.** On 2026-08-08, `jwt_refresh_ttl_seconds`
+was raised from 1800 to 86400, so that a refresh token would not expire before
+the access token it renews. `config.py` records why. From then on, the premise
+held only where compose or `.env.example` sets the TTL back to 1800. The idle
+bound is also counted from the last token ROTATION, not the last activity:
+
+- under compose (access 900, refresh 1800), an idle session gets 15-30 minutes;
+- at the config defaults (access 3600, refresh 86400), a rotation always
+  pushes the refresh expiry past the daily ceiling, so the ceiling fires first.
+  **There is no idle bound below 24 hours.**
+
+**Decided: `shield_idle_timeout_seconds` is deleted, not wired.** It was
+defined in config, compose and `.env.example`, and read by nothing. On a
+FedRAMP track that reads to an assessor as an implemented idle-session
+control. Wiring it as a second knob beside the refresh TTL would create two
+values that can disagree about one control. `docs/security.md` states the idle
+bound as **Partial**, with both deployments' figures.
+
+**Not decided here, and filed as #516:** whether SHIELD needs a real idle
+control outside compose. The options are a shorter default refresh TTL, or a
+last-activity check independent of token lifetimes. That is the owner's call.

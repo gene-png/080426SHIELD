@@ -3,7 +3,11 @@
 Master Spec §2 + §4.5:
   - Email + password only for v1 (MFA + email verification deferred behind
     feature flags).
-  - 15-minute access JWT, refresh JWT, 30-minute idle, daily forced re-auth.
+  - The spec asks for a 15-minute access JWT, a refresh JWT, a 30-minute idle
+    limit and a daily forced re-auth. What ships is in `docs/security.md`: the
+    TTLs are 15 and 30 minutes only under compose, the idle limit is the
+    refresh expiry counted from the last rotation, and at the config defaults
+    only the daily ceiling bounds a session (D-084).
   - Account lockout: 10 failed attempts in 15 minutes
     (`SHIELD_ACCOUNT_LOCKOUT_*`).
 
