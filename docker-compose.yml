@@ -95,49 +95,81 @@ services:
 
   minio:
     restart: unless-stopped
-    # quay.io, NOT Docker Hub. `minio/minio` and `minio/mc` stopped being
-    # pullable from Docker Hub -- `pull access denied ... repository does not
-    # exist or may require 'docker login'`, measured 2026-09-19 both on a dev
-    # machine and on the GitHub runner. Both stack jobs died before running
-    # anything -- E2E at its `Compose up` step, Demo at `Demo reset (--demo
-    # overlay)`, which has no step of that name -- so every open PR went red at
-    # once, in 6-14 seconds, on a fact about a third party rather than about
-    # the change.
+    # CHAINGUARD, PINNED BY DIGEST. Two outages, one root cause: CI's stack
+    # start depends on a third party's PUBLIC REPOSITORY, and nothing in this
+    # repo controls whether it stays public.
+    #   - 2026-09-19: `minio/minio` and `minio/mc` vanished from Docker Hub;
+    #     compose moved to quay.io, still on `:latest`.
+    #   - 2026-09-24: both vanished from quay.io too, and every E2E and Demo job
+    #     -- on `main` and on every PR -- died at stack start.
+    # BOTH WERE REPOSITORY WITHDRAWALS, NOT TAG CHANGES, so a digest pin would
+    # not have survived either. Measured 2026-09-24: the exact digests this dev
+    # machine had been running answer 401 from quay.io and "repository does not
+    # exist" from Docker Hub, while the same probe gets 200 from repositories
+    # known to exist (library/redis, keycloak/keycloak).
     #
-    # quay.io is MinIO's own registry and carries both images. Verified by
-    # pulling each before this edit, rather than by reading that it should
-    # work.
+    # So the pin below fixes the OTHER half: a floating `:latest` let a
+    # supplier change what CI runs with no change in this repo. Pinning makes
+    # every change to what runs a reviewed commit. It does NOT protect against
+    # withdrawal -- Chainguard withdrawing or gating this free image would
+    # repeat the outage exactly. Only a copy this repo controls (a mirror)
+    # closes that, tracked in #522.
+    # MinIO has stopped publishing public images. Pinning an OLD quay tag was
+    # rejected by the repo owner on 2026-09-24: CVE-2025-62506 was reported
+    # against MinIO and, per the owner, its maintainers declined to patch it in
+    # the containers, so a historical image would ship a known unpatched CVE
+    # into a FedRAMP-track product. (Cached quay images on a dev machine carry it
+    # too.) NOT checked here: that the release pinned below contains the fix.
     #
-    # The tag stays `:latest`, and an earlier version of this comment gave two
-    # false reasons for caring. Corrected, because the deferred pinning
-    # decision gets made against this paragraph:
+    # Chainguard publishes MinIO free, public and unauthenticated (measured by
+    # pulling; its own documentation says it rebuilds from source, which is not
+    # measured here). The free tier offers only `latest` / `latest-dev` tags, so
+    # the pin is the DIGEST; the tag in front of it is ignored by Docker and kept
+    # only to say which variant it is. `-dev`, because the distroless `latest`
+    # has no shell and no HTTP client, and this service's healthcheck and the
+    # `createbuckets` job below both need one.
     #
-    # NOT "this would have arrived as a dependabot PR if it were pinned".
-    # `.github/dependabot.yml` declares pip, npm and github-actions and has NO
-    # `docker` ecosystem, so no image in this file is on any automated update
-    # path -- pinning costs zero automated updates here, because there are
-    # zero.
+    # WHAT IS PINNED (both read 2026-09-24):
+    #   minio         RELEASE.2026-09-22T19-25-18Z (`minio --version`), built
+    #                 2026-09-24T03:05:08Z
+    #   minio-client  built 2026-09-24T03:05:08Z; `mc --version` reports only
+    #                 DEVELOPMENT.GOGET. The build time matching the server's to
+    #                 the second is real, read separately from each digest
+    # The digests are the identity; these lines say what they contain.
     #
-    # NOT "the floating tag is why it was a surprise". The failure was
-    # `repository does not exist`: a removed Docker Hub repo fails identically
-    # and just as suddenly for a digest, a pinned release tag or `:latest`.
-    # No form of pinning would have pre-announced it.
+    # A DIGEST PIN IS ONLY AS DURABLE AS THE REGISTRY'S RETENTION, and no
+    # documented free-tier retention guarantee is relied on here. Measured
+    # instead, 2026-09-24, for BOTH images: ten superseded digests of each,
+    # sampled from the registry's signature tags (first page of each tag list;
+    # `latest` and `latest-dev` builds not told apart), all still resolve --
+    # `minio` built 2025-10-24 to 2026-09-13, `minio-client` 2025-11-06 to
+    # 2026-09-23. Evidence, not a promise. If a pin answers "manifest unknown",
+    # re-pin to a current digest -- do NOT move back to `:latest`. If the
+    # REPOSITORY answers 401, that is the withdrawal above, and the remedy is
+    # the mirror, not a new tag.
     #
-    # What a pin actually buys is a named version and a reviewable change.
-    # What it costs is real and unstated until now: a digest must be obtained
-    # out-of-band, is unverifiable by anyone reading the diff, and freezes
-    # MinIO's security fixes behind manual work with no updater to nag. The
-    # trade is genuine; it was mis-stated in both directions. Not decided here.
+    # TO UPDATE -- BOTH images, together:
+    #   docker pull cgr.dev/chainguard/minio:latest-dev
+    #   docker pull cgr.dev/chainguard/minio-client:latest-dev
+    # take each one's `docker image inspect --format '{{index .RepoDigests 0}}'`,
+    # rewrite WHAT IS PINNED above (`minio --version`; the build date from
+    # `docker buildx imagetools inspect --format '{{json .Image}}'`), and bring
+    # the stack up once before committing. No automated updater watches this file
+    # (dependabot.yml has no docker ecosystem), so this is manual -- which is the
+    # cost of a pin, paid on purpose.
     #
-    # What `:latest` resolved to when this was written, recorded because the
-    # tag itself describes nothing: RELEASE.2025-09-07T16-13-09Z. Measured
-    # 2026-09-19 against the running container, along with the two surfaces
-    # nothing else checks -- the console answers HTTP 200 on :9001 (six
-    # documents assert it and no spec, gate or healthcheck touches it, so a
-    # console-less release line would have gone quietly wrong) and
-    # /minio/health/live answers 200 on :9000. Both are quay's image, not
-    # Docker Hub's.
-    image: quay.io/minio/minio:latest
+    # `user: "0:0"`: Chainguard runs as uid 65532, and a named volume at /data is
+    # created root-owned, so the server refuses it ("file access denied",
+    # measured). Root is exactly what the quay image ran as, so nothing
+    # regresses, and existing dev volumes keep working. Running non-root would
+    # need every existing minio-data volume migrated.
+    #
+    # Verified 2026-09-24 against the digests pinned below, on a fresh volume:
+    # the server starts, the health
+    # endpoint and the console on :9001 both answer, and `createbuckets`' exact
+    # command creates the bucket and is idempotent on a second run.
+    image: cgr.dev/chainguard/minio:latest-dev@sha256:4b862594d23cb20ae0fbeb93311ed312a5b566ecba2293220b204c89ef3c1fe2
+    user: "0:0"
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-shield-minio}
@@ -145,7 +177,15 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # wget, not curl: the Chainguard image has no curl.
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:9000/minio/health/live",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -157,9 +197,10 @@ services:
   # and S3Storage assumes it already exists, so without this the first upload
   # fails with NoSuchBucket -> 500. Idempotent (--ignore-existing); exits 0.
   createbuckets:
-    # quay.io, for the same reason and with the same trade as `minio` above --
-    # see the block on that service; this line had no pointer to it.
-    image: quay.io/minio/mc:latest
+    # Chainguard, pinned by digest, for the reasons in the block on `minio`
+    # above. `-dev` for the `sh` this entrypoint runs in. Update it WITH `minio`,
+    # never alone -- see TO UPDATE there.
+    image: cgr.dev/chainguard/minio-client:latest-dev@sha256:614e083a12c6dc779f13f97e01b13afda4021a8ce3f4021a2fcf23ec86f46837
     depends_on:
       minio:
         condition: service_healthy
@@ -212,7 +253,12 @@ services:
 
   mailhog:
     restart: unless-stopped
-    image: mailhog/mailhog:latest
+    # Pinned by digest for the tag-drift half of the reason in the block on
+    # `minio`; like that pin, it does not protect against withdrawal (#522).
+    # `v1.0.1` is MailHog's last release (2020), and on 2026-09-24 `:latest`
+    # resolved to the same manifest digest, so this pin changes nothing that
+    # runs.
+    image: mailhog/mailhog:v1.0.1@sha256:8d76a3d4ffa32a3661311944007a415332c4bb855657f4f6c57996405c009bea
     ports:
       - "1025:1025"
       - "8025:8025"
