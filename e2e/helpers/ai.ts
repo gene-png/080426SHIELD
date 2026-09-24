@@ -46,16 +46,37 @@ export async function acknowledgeOfflineAi(page: Page): Promise<void> {
 }
 
 /**
- * The upload's own response, to learn the new artifact's id. Register it
- * BEFORE `setInputFiles`, like any `waitForResponse`.
+ * What one Tech Debt upload can lead to, watched from BEFORE it happens.
+ *
+ * Call it before `setInputFiles`, like any `waitForResponse`. Both waiters are
+ * registered here on purpose: the page can start an extraction the moment the
+ * upload responds, and a request waiter registered after reading that
+ * response -- even one `await` later -- can miss it, then click the button
+ * too (a second extraction) or throw that nothing started.
  */
-export function waitForUpload(page: Page): Promise<Response> {
-  return page.waitForResponse(
+export interface UploadWatch {
+  upload: Promise<Response>;
+  extractSent: Promise<"extracting" | "neither">;
+}
+
+export function watchUpload(page: Page): UploadWatch {
+  const upload = page.waitForResponse(
     (r) =>
       r.request().method() === "POST" &&
       /\/api\/proxy\/artifacts\/?$/.test(new URL(r.url()).pathname),
     { timeout: 120000 },
   );
+  const extractSent = page
+    .waitForRequest(
+      (r) =>
+        r.url().includes("/capability-lists/extract") && r.method() === "POST",
+      { timeout: 120000 },
+    )
+    .then(
+      () => "extracting" as const,
+      () => "neither" as const,
+    );
+  return { upload, extractSent };
 }
 
 /**
@@ -75,17 +96,18 @@ export function waitForUpload(page: Page): Promise<Response> {
  * or "one more button than before", which cannot tell a panel still loading
  * from a loaded one -- can extract an older upload into this spec's service.
  *
- * It waits for whichever comes first: an extraction request (the page started
- * one itself), or that row's button. It fails LOUDLY, naming the cause, when
- * neither happens, rather than leaving the caller to time out on a response
- * and blame the API.
+ * It waits for whichever comes first: an extraction request seen since
+ * `watchUpload` (the page started one itself), or that row's button. It fails
+ * LOUDLY, naming the cause, when neither happens within 60 s of the upload
+ * responding, rather than leaving the caller to time out on a response and
+ * blame the API.
  */
 export async function extractAfterUpload(
   page: Page,
   extractDone: Promise<Response>,
-  uploadDone: Promise<Response>,
+  watch: UploadWatch,
 ): Promise<Response> {
-  const upload = await uploadDone;
+  const upload = await watch.upload;
   if (!upload.ok()) {
     throw new Error(`the upload itself failed: HTTP ${upload.status()}`);
   }
@@ -94,16 +116,8 @@ export async function extractAfterUpload(
     has: page.locator(`a[href="/api/proxy/artifacts/${id}/download"]`),
   });
   const button = row.getByRole("button", { name: "Extract from this" });
-  const extractSent = page.waitForRequest(
-    (r) =>
-      r.url().includes("/capability-lists/extract") && r.method() === "POST",
-    { timeout: 60000 },
-  );
   const first = await Promise.race([
-    extractSent.then(
-      () => "extracting" as const,
-      () => "neither" as const,
-    ),
+    watch.extractSent,
     button.waitFor({ state: "visible", timeout: 60000 }).then(
       () => "button" as const,
       () => "neither" as const,
