@@ -115,7 +115,8 @@ services:
     # withdrawal -- Chainguard withdrawing or gating this free image would
     # repeat the outage exactly. Only a copy this repo controls (a mirror)
     # closes that, tracked in #522.
-    # MinIO has stopped publishing public images, and THE QUAY `:latest` CACHED
+    # Both MinIO repositories stopped answering (Docker Hub 2026-09-19, quay.io
+    # 2026-09-24), and THE QUAY `:latest` CACHED
     # ON A DEV MACHINE PREDATES THE FIX for CVE-2025-62506 (GHSA-jjjj-jwhf-8rgr, IAM
     # privilege escalation, CVSS 8.1). Docker Hub's last build was not read; that
     # repository no longer answers. The fix is MinIO PR #21642, merge
@@ -133,11 +134,20 @@ services:
     # the fix, so ancestry alone was not enough. The fix's only functional line,
     # `sessionPolicyArgs.DenyOnly = false`, is present at df34868a88cc directly
     # after `IsOwner = false` in BOTH patched functions,
-    # isAllowedBySessionPolicyForServiceAccount and isAllowedBySessionPolicy. No
-    # line sets it true. The lines the fix removed are comments. This trusts the
-    # commit id the build embeds; it is not a scan of the binary.
+    # isAllowedBySessionPolicyForServiceAccount and isAllowedBySessionPolicy.
+    # Those are the file's only two assignments to DenyOnly (grep
+    # `DenyOnly\s*[:=]`), and cmd/iam.go is the PR's only non-test file. The lines
+    # the fix removed are comments.
     #
-    # Cached quay images on dev machines carry the CVE. Exploiting it needs a
+    # THE ADVISORY AGREES FROM THE OTHER DIRECTION. The global advisory record
+    # and OSV GO-2025-4034 give the first patched version as the Go
+    # pseudo-version 0.0.0-20251015170045-c1a49490c78e, whose trailing segment
+    # IS the fix commit traced above. The advisory names the commit, and the
+    # ancestry check finds that commit under the pin. This trusts the commit id
+    # the build embeds; it is not a scan of the binary.
+    #
+    # The cached quay image carries the CVE (and OSV reports its commit,
+    # 07c3a429bfed, as affected). Another machine's cache may differ. Exploiting it needs a
     # restricted service or STS account with an inline session policy (per the
     # advisory), and this stack configures root credentials only. So removing
     # them is hygiene, not an incident.
