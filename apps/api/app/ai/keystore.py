@@ -41,13 +41,32 @@ _ENV_KEY_ATTR = {
 
 
 def accepts_api_key(provider: str) -> bool:
-    """Whether ``provider`` authenticates with an API key at all.
+    """Whether ``provider`` authenticates with an API key at all -- from the
+    environment, that is. Vertex does not: it uses ADC.
 
-    Vertex does not: it uses ADC, and ``_build_provider`` refuses a stored key
-    for it. Anything that tells an admin to "load a key" must ask this first,
-    or it prescribes a remedy that breaks a working deployment (#472).
+    NOT whether a key can be LOADED here: that is ``accepts_runtime_key``, and
+    confusing the two told openai and gemini admins to paste a key the
+    validator then refused (#472).
     """
     return provider in _ENV_KEY_ATTR
+
+
+def env_key_var(provider: str) -> str | None:
+    """The environment variable that carries ``provider``'s key, if it has one."""
+    attr = _ENV_KEY_ATTR.get(provider)
+    return attr.upper() if attr else None
+
+
+def accepts_runtime_key(provider: str) -> bool:
+    """Whether a key for ``provider`` can be LOADED here, through
+    ``POST /admin/llm-key``.
+
+    That route stores only what ``live_validate_key`` validates, and this is
+    the predicate ``live_validate_key`` itself branches on -- one answer for
+    both, so "Load a key" cannot be offered for a provider the validator
+    refuses (#472). Anthropic alone today.
+    """
+    return provider == "anthropic"
 
 
 def _fernet(settings: Settings) -> Fernet:
@@ -162,7 +181,7 @@ def live_validate_key(provider: str, model: str, api_key: str) -> tuple[bool, st
     surface as a readable refusal in the admin UI, not a 500. Deliberately
     tiny: one token of output is enough to prove the credential is accepted.
     """
-    if provider == "anthropic":
+    if accepts_runtime_key(provider):
         try:
             import anthropic
         except ImportError:

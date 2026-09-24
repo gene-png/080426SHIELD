@@ -796,7 +796,7 @@ def ai_status(
         model=s.shield_llm_model,
         ready=ready,
         detail=detail,
-        can_configure=True,
+        can_configure=keystore.accepts_runtime_key(s.shield_llm_provider),
         key_source=source,
         serves=serves,
     )
@@ -861,30 +861,27 @@ def _ai_readiness(db: Session, s) -> tuple[bool, str, str, AiServes]:
         # run, where a Zero Trust Run-AI served fixture output with no warning
         # and overwrote five of the client's own answers.
         if source == "environment":
+            also = (
+                ", or load a key here to enable live AI without a redeploy"
+                if keystore.accepts_runtime_key(provider)
+                else ""
+            )
             return (
                 False,
                 (
                     f"SHIELD_LLM_MODE={s.shield_llm_mode!r}, so AI steps generate offline "
                     "(fixture) responses even though an environment key is present. Set "
-                    "SHIELD_LLM_MODE=live and restart the api, or load a key here to "
-                    "enable live AI without a redeploy."
+                    f"SHIELD_LLM_MODE=live and restart the api{also}."
                 ),
                 source,
                 "offline",
             )
-        # "Load a key" is a remedy ONLY for a provider that takes one. For
-        # vertex it converts a working deployment into a hard failure.
-        remedy = (
-            "Load a key to enable live AI."
-            if keystore.accepts_api_key(provider)
-            else (
-                f"Provider {provider!r} authenticates without an API key, so do not "
-                "load one: set SHIELD_LLM_MODE=live and restart the api."
-            )
-        )
         return (
             False,
-            f"No API key is loaded — AI steps will generate offline (fixture) responses. {remedy}",
+            (
+                "No API key is loaded — AI steps will generate offline (fixture) "
+                f"responses. {_offline_remedy(provider)}"
+            ),
             source,
             "offline",
         )
@@ -908,6 +905,37 @@ def _ai_readiness(db: Session, s) -> tuple[bool, str, str, AiServes]:
             "broken",
         )
     return True, f"Live AI configured ({provider}/{model}).", source, "live"
+
+
+def _offline_remedy(provider: str) -> str:
+    """The one remedy that works for this provider, when AI is offline for want
+    of a key (#472). Each branch names a control that exists and works:
+
+    * a key can be loaded here -> load it;
+    * the provider takes a key, but only from the environment -> set it there;
+    * the provider needs no key and has an adapter (vertex) -> the mode;
+    * the provider has no live adapter -> another provider. Telling this one to
+      go live stops the api booting.
+    """
+    from app.ai.llm import _LIVE_ADAPTERS, has_live_adapter
+
+    if keystore.accepts_runtime_key(provider):
+        return "Load a key to enable live AI."
+    env_var = keystore.env_key_var(provider)
+    if env_var and has_live_adapter(provider):
+        return (
+            f"A key for {provider!r} cannot be loaded here: set {env_var} and "
+            "SHIELD_LLM_MODE=live, then restart the api."
+        )
+    if has_live_adapter(provider):
+        return (
+            f"Provider {provider!r} authenticates without an API key, so there is "
+            "none to load: set SHIELD_LLM_MODE=live and restart the api."
+        )
+    return (
+        f"Provider {provider!r} has no live adapter yet, so AI can only run offline: "
+        f"set SHIELD_LLM_PROVIDER to one of {', '.join(sorted(_LIVE_ADAPTERS))}."
+    )
 
 
 @router.post(
@@ -965,7 +993,7 @@ def set_llm_key(
         model=s.shield_llm_model,
         ready=ready,
         detail=detail,
-        can_configure=True,
+        can_configure=keystore.accepts_runtime_key(s.shield_llm_provider),
         key_source=source,
         serves=serves,
     )

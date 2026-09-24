@@ -2,7 +2,12 @@
 import * as React from "react";
 
 import { useAiStatus } from "@/lib/admin/aiStatus";
-import { removeLlmKey, setLlmKey, type AiStatus } from "@/lib/admin/client";
+import {
+  fetchAiStatus,
+  removeLlmKey,
+  setLlmKey,
+  type AiStatus,
+} from "@/lib/admin/client";
 
 import type { JSX } from "react";
 
@@ -18,6 +23,20 @@ import type { JSX } from "react";
  * what makes the offline warning reappear the first time Run AI is used after
  * a key is removed (see `aiStatusKey` in aiStatus.ts).
  */
+/** What removing the stored key actually did, from the status read after it. */
+function removalNotice(next: AiStatus | null): string {
+  if (next === null) {
+    return "Key removed. The AI status could not be re-read — refresh the page to see what AI will do now.";
+  }
+  if (next.serves === "live") {
+    return "Key removed. AI is still live, on the environment key.";
+  }
+  if (next.serves === "offline") {
+    return "Key removed. AI steps will generate offline responses again.";
+  }
+  return "Key removed. Run AI will fail until the cause below is fixed.";
+}
+
 export function LlmKeyPanel({
   onChanged,
 }: {
@@ -68,9 +87,19 @@ export function LlmKeyPanel({
     try {
       await removeLlmKey();
       setConfirmingRemove(false);
-      setOverride(null);
-      refresh();
-      setNotice("Key removed. AI steps will generate offline responses again.");
+      // #472 round 1: "offline again" was said whatever happened next. In live
+      // mode an ENVIRONMENT key takes over and Run-AI keeps calling the
+      // provider, so the notice comes from the status read AFTER the removal.
+      let next: AiStatus | null = null;
+      try {
+        next = await fetchAiStatus();
+      } catch (err) {
+        // Stated, not swallowed: the key IS removed; only the re-read failed.
+        console.warn("[llm-key] status re-read after removal failed", err);
+      }
+      setOverride(next);
+      if (next === null) refresh();
+      setNotice(removalNotice(next));
       onChanged?.();
     } catch (err) {
       setError(

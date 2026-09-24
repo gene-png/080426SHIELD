@@ -10,8 +10,9 @@ Vertex authenticates with ADC and has no key, so a WORKING live Vertex
 deployment reported "No API key is loaded — AI steps will generate offline
 (fixture) responses. Load a key to enable live AI." The Run-AI guard then
 offered "Continue offline", and the run it started went to Google with the
-client's data. Following the printed remedy instead broke the deployment,
-because `_build_provider` refuses a stored key for vertex.
+client's data. The printed remedy named a control that cannot work: vertex
+has no key, the validator refuses one, and `_build_provider` would refuse a
+stored one.
 
 ## What changed
 
@@ -26,9 +27,25 @@ because `_build_provider` refuses a stored key for vertex.
   `ready` is `serves == "live"`. A build refusal is passed through as
   "Run-AI will fail: <the refusal>", never as offline. That also corrects live
   mode with no key, which used to promise fixtures that nothing serves.
-- **"Load a key" is prescribed only for a provider that takes one**
-  (`keystore.accepts_api_key`). For vertex in fixture mode the remedy is the
-  mode.
+- **Each offline remedy names a control that works for that provider**
+  (`_offline_remedy`):
+  - "Load a key" appears only where a key can be LOADED here. That is
+    `keystore.accepts_runtime_key`, the predicate `live_validate_key` itself
+    branches on, and today it covers anthropic alone.
+  - openai and gemini take their key from the environment.
+  - vertex needs no key, so its remedy is the mode.
+  - A provider with no live adapter (`azure_openai`, `bedrock`, `local`) is
+    told to switch provider. Telling it to go live stops the api booting.
+
+  `llm.has_live_adapter` summarises `_build_provider`'s if-chain, and
+  `test_llm_adapters.py` pins that summary against the chain for every member
+  of `LLMProvider`.
+- **`can_configure` tells the truth.** It was hardcoded `True`. It is now
+  `accepts_runtime_key`, and the guard's "Load a key" link and the banner's
+  "Load an API key" link show only when it is true.
+- **The key panel's removal notice** comes from the status read after the
+  removal. It used to say "offline again" even when an environment key kept
+  Run-AI live.
 - **Web.** `AiStatus.serves`. `RunAiGuard` offers "Continue offline", and the
   sentence describing fixture output, only when `serves` is `offline`. A
   broken configuration is told there is no fallback. `hasAcknowledgedOffline`
@@ -54,8 +71,17 @@ Red-on-revert, one mutation at a time, each confirmed applied:
 
 The last one first **survived**. `serves` was also part of the
 acknowledgement's storage key, so either guard alone was enough and neither
-could be tested. The key no longer carries it, so the explicit check is the one
-guard.
+could be tested. The key no longer carries it. The check is still a RATCHET
+rather than the only guard: no reachable offline state shares a storage key
+with a reachable broken state today, and the check keeps that true if either
+changes.
+
+Round 1 of review found these blockers, all fixed:
+- the "set it live" remedy for a provider with no adapter;
+- "Load a key" offered where the validator refuses a key;
+- the removal notice;
+- a test that asked `hasAcknowledgedOffline` about a write it refuses before
+  looking, and so could not fail. It now reads the storage.
 
 ## Residual
 

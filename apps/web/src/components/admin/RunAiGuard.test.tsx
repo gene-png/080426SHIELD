@@ -18,7 +18,8 @@ function statusBody(over: Record<string, unknown> = {}) {
     provider: "anthropic",
     model: "claude-opus-5",
     ready: false,
-    // admin.py:819, verbatim. It was an abbreviation invented here, which is
+    // `_ai_readiness`'s no-key branch, verbatim. It was an abbreviation
+    // invented here, which is
     // the fixture-from-the-parser shape: a fixture written to what the reader
     // expects cannot express the reader and the server disagreeing.
     detail:
@@ -239,9 +240,8 @@ describe("RunAiGuard (issue 2)", () => {
 // ONE CASE WOULD PROVE NOTHING. A component that hardcodes whatever string it
 // is handed passes any single case; that is the mutation-sampling problem --
 // drawing the expected value from inside the region already covered. So every
-// branch is driven, and the discriminating ones are the four whose text
-// contains "A key is loaded" / "key is present", which the old component could
-// never produce.
+// branch is driven, and every row's text is one the old hardcoded sentence
+// could never produce.
 //
 // The strings are copied from `routes/admin.py::_ai_readiness`, not from what
 // the component does with them. **That is a hand duplication across a language
@@ -265,23 +265,42 @@ const READINESS_BRANCHES: ReadonlyArray<{
   serves: "offline" | "broken";
 }> = [
   {
-    label: "no key, for a provider that takes one",
-    body: { key_source: "none" },
+    label: "no key, for a provider whose key can be loaded here",
+    body: { key_source: "none", can_configure: true },
     detail:
       "No API key is loaded — AI steps will generate offline (fixture) responses. Load a key to enable live AI.",
     serves: "offline",
   },
   {
-    // #472: "Load a key" BREAKS a keyless provider, so its remedy is the mode.
+    // #472: "Load a key" names a control that cannot work for vertex -- it
+    // has no key, and the validator refuses one -- so its remedy is the mode.
     label: "no key, for a provider that authenticates without one",
-    body: { key_source: "none", provider: "vertex" },
+    body: { key_source: "none", provider: "vertex", can_configure: false },
     detail:
-      "No API key is loaded — AI steps will generate offline (fixture) responses. Provider 'vertex' authenticates without an API key, so do not load one: set SHIELD_LLM_MODE=live and restart the api.",
+      "No API key is loaded — AI steps will generate offline (fixture) responses. Provider 'vertex' authenticates without an API key, so there is none to load: set SHIELD_LLM_MODE=live and restart the api.",
+    serves: "offline",
+  },
+  {
+    // #472 round 1: openai uses a key, but only from the environment -- the
+    // validator refuses a pasted one.
+    label: "no key, for a provider whose key only the environment can carry",
+    body: { key_source: "none", provider: "openai", can_configure: false },
+    detail:
+      "No API key is loaded — AI steps will generate offline (fixture) responses. A key for 'openai' cannot be loaded here: set OPENAI_API_KEY and SHIELD_LLM_MODE=live, then restart the api.",
+    serves: "offline",
+  },
+  {
+    // #472 round 1: telling a provider with no adapter to go live stops the
+    // api booting.
+    label: "no key, for a provider with no live adapter",
+    body: { key_source: "none", provider: "bedrock", can_configure: false },
+    detail:
+      "No API key is loaded — AI steps will generate offline (fixture) responses. Provider 'bedrock' has no live adapter yet, so AI can only run offline: set SHIELD_LLM_PROVIDER to one of anthropic, gemini, openai, vertex.",
     serves: "offline",
   },
   {
     label: "env key but mode is not live",
-    body: { key_source: "environment", mode: "fixture" },
+    body: { key_source: "environment", mode: "fixture", can_configure: true },
     detail:
       "SHIELD_LLM_MODE='fixture', so AI steps generate offline (fixture) responses even though an environment key is present. Set SHIELD_LLM_MODE=live and restart the api, or load a key here to enable live AI without a redeploy.",
     serves: "offline",
@@ -294,14 +313,23 @@ const READINESS_BRANCHES: ReadonlyArray<{
     // unimplemented provider -- are stopped at boot by the preflight. So this
     // row is reachable only past both, and is kept because the branch exists.
     label: "the provider build refuses",
-    body: { key_source: "database", provider: "vertex", mode: "live" },
+    body: {
+      key_source: "database",
+      provider: "vertex",
+      mode: "live",
+      can_configure: false,
+    },
     detail:
       "Run-AI will fail: A runtime API key is stored but provider 'vertex' has no key-based adapter (vertex uses ADC). Remove the stored key or switch SHIELD_LLM_PROVIDER.",
     serves: "broken",
   },
   {
     label: "anthropic SDK not importable",
-    body: { key_source: "database", provider: "anthropic" },
+    body: {
+      key_source: "database",
+      provider: "anthropic",
+      can_configure: true,
+    },
     detail:
       "Run-AI will fail: the 'anthropic' SDK is not importable in the api image.",
     serves: "broken",
@@ -311,12 +339,21 @@ const READINESS_BRANCHES: ReadonlyArray<{
     // `_KNOWN_PLACEHOLDER_MODELS`. An empty `SHIELD_LLM_MODEL` reaches this
     // branch too, and interpolates `''`.
     label: "model id is a known placeholder",
-    body: { key_source: "database", model: "claude-opus-4-7" },
+    body: {
+      key_source: "database",
+      model: "claude-opus-4-7",
+      can_configure: true,
+    },
     detail:
       "Run-AI will fail: SHIELD_LLM_MODEL='claude-opus-4-7' is not a usable model id — set a current model id and restart the api.",
     serves: "broken",
   },
 ];
+
+/** A row whose copy says nothing about a missing key, found by label. */
+const REFUSED = READINESS_BRANCHES.find(
+  (b) => b.label === "the provider build refuses",
+)!;
 
 /** The status the server sends for one table row. */
 function branchStatus(branch: (typeof READINESS_BRANCHES)[number]) {
@@ -349,12 +386,9 @@ describe("the warning states the server's own cause", () => {
   // promises the call stays offline, so it is offered on exactly the branches
   // where that is true.
   it("offers Continue offline on exactly the branches where the call IS offline (#472)", async () => {
-    expect(
-      READINESS_BRANCHES.filter((b) => b.serves === "offline"),
-    ).toHaveLength(3);
-    expect(
-      READINESS_BRANCHES.filter((b) => b.serves === "broken"),
-    ).toHaveLength(3);
+    // Both kinds present, or the loop below proves one half only.
+    expect(READINESS_BRANCHES.some((b) => b.serves === "offline")).toBe(true);
+    expect(READINESS_BRANCHES.some((b) => b.serves === "broken")).toBe(true);
 
     for (const branch of READINESS_BRANCHES) {
       mockStatus(branchStatus(branch));
@@ -374,6 +408,31 @@ describe("the warning states the server's own cause", () => {
     }
   });
 
+  // #472 round 1: "Load a key" was rendered for every cause, including
+  // providers whose key the validator refuses and one that has no key at all.
+  // `can_configure` is the server's answer to "can a key be loaded here".
+  it("offers Load a key only where a key can be loaded here", async () => {
+    const both = new Set(READINESS_BRANCHES.map((b) => b.body.can_configure));
+    expect(both).toEqual(new Set([true, false]));
+
+    for (const branch of READINESS_BRANCHES) {
+      mockStatus(branchStatus(branch));
+      const { unmount } = renderGuard(vi.fn());
+      fireEvent.click(screen.getByRole("button", { name: "Run AI" }));
+      await screen.findByRole("alertdialog");
+      const offered =
+        screen.queryByRole("link", { name: "Load a key" }) !== null;
+      expect(offered, branch.label).toBe(branch.body.can_configure === true);
+      unmount();
+      vi.restoreAllMocks();
+    }
+  });
+
+  // A RATCHET, and says so: from `_build_provider`, "offline" needs fixture
+  // mode with no runtime key (source none/environment) and a fixture-mode
+  // "broken" needs one (source database), so no reachable offline state and
+  // broken state share a storage key today. The explicit `serves` check keeps
+  // that true if the key or the states change.
   it("does not let an earlier offline acknowledgement wave through a broken configuration", async () => {
     // Same mode, provider, key source and `ready` as an acknowledged offline
     // state; only `serves` differs. The acknowledgement was a promise about
@@ -401,7 +460,7 @@ describe("the warning states the server's own cause", () => {
   it("never asserts a missing key in the copy or the accessible name", async () => {
     // The accessible name is what a screen reader announces and what both e2e
     // specs select by. It named a cause that is wrong four times in five.
-    const branch = READINESS_BRANCHES[3];
+    const branch = REFUSED;
     mockStatus(branchStatus(branch));
     renderGuard(vi.fn());
 
@@ -443,7 +502,7 @@ describe("the warning states the server's own cause", () => {
 
 describe("the dialog's accessible description (#471)", () => {
   it("points aria-describedby at the element carrying the detail", async () => {
-    const branch = READINESS_BRANCHES[3];
+    const branch = REFUSED;
     mockStatus(branchStatus(branch));
     renderGuard(vi.fn());
 

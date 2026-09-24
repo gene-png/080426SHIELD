@@ -49,8 +49,8 @@ def app_client(tmp_path, monkeypatch) -> Iterator[tuple[TestClient, sessionmaker
     # Pin the provider/model rather than inheriting the developer's .env — a
     # placeholder SHIELD_LLM_MODEL there would otherwise make readiness fail
     # for a reason this spec isn't about.
-    os.environ["SHIELD_LLM_PROVIDER"] = "anthropic"
-    os.environ["SHIELD_LLM_MODEL"] = "claude-opus-5"
+    monkeypatch.setenv("SHIELD_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("SHIELD_LLM_MODEL", "claude-opus-5")
     # Pin the mode and the ENVIRONMENT key too. A developer's .env carries a
     # real ANTHROPIC_API_KEY, which made `key_source` read "environment" and
     # failed every test asserting "none" -- ambient config, not the code.
@@ -352,3 +352,61 @@ def test_a_placeholder_model_is_broken(app_client, monkeypatch):
     body = _status(c, h)
     assert body["serves"] == "broken", body
     assert "usable model id" in body["detail"]
+
+
+# --- #472 round 1: "can a key be loaded HERE" is not "does it use a key" ---
+#
+# The first cut asked "does this provider use an API key" and treated every
+# "no" as "keyless, so set the mode live". For a provider with NO live adapter
+# that advice stops the api booting; for openai and gemini, which do use a key,
+# "Load a key" named a control that refuses them (`live_validate_key` admits
+# anthropic alone).
+
+
+@pytest.mark.parametrize("provider", ["azure_openai", "bedrock", "local"])
+def test_a_provider_with_no_live_adapter_is_not_told_to_go_live(app_client, monkeypatch, provider):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider=provider)
+    body = _status(c, h)
+    assert body["serves"] == "offline", body
+    assert "SHIELD_LLM_MODE=live" not in body["detail"], body["detail"]
+    assert "load a key" not in body["detail"].lower(), body["detail"]
+    assert "no live adapter" in body["detail"], body["detail"]
+    assert body["can_configure"] is False
+
+
+@pytest.mark.parametrize(
+    ("provider", "env_var"), [("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY")]
+)
+def test_a_key_provider_that_cannot_take_a_key_here_is_pointed_at_the_environment(
+    app_client, monkeypatch, provider, env_var
+):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider=provider)
+    body = _status(c, h)
+    assert body["serves"] == "offline", body
+    assert "load a key" not in body["detail"].lower(), body["detail"]
+    assert env_var in body["detail"], body["detail"]
+    assert body["can_configure"] is False
+
+
+def test_an_environment_key_that_cannot_be_replaced_here_is_not_offered_a_paste(
+    app_client, monkeypatch
+):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider="openai", openai_api_key="sk-openai-env-0000")
+    body = _status(c, h)
+    assert body["key_source"] == "environment"
+    assert body["serves"] == "offline", body
+    assert "load a key" not in body["detail"].lower(), body["detail"]
+
+
+def test_only_a_provider_whose_key_can_be_validated_here_can_be_configured(app_client, monkeypatch):
+    c, _ = app_client
+    h = _admin(c)
+    assert _status(c, h)["can_configure"] is True  # anthropic, the fixture's pin
+    _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="shield-test-project")
+    assert _status(c, h)["can_configure"] is False

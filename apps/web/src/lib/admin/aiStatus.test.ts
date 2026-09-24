@@ -42,7 +42,10 @@ describe("hasAcknowledgedOffline", () => {
   });
 
   it("cannot be set for a broken configuration either", () => {
+    // Read the STORAGE, not `hasAcknowledgedOffline` -- which refuses a broken
+    // status before it looks, so asking it could not tell a write that was
+    // refused from one that happened (round 1 on #472).
     acknowledgeOffline(status({ serves: "broken" }));
-    expect(hasAcknowledgedOffline(status({ serves: "broken" }))).toBe(false);
+    expect(window.sessionStorage.length).toBe(0);
   });
 });

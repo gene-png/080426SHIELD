@@ -47,6 +47,9 @@ class AdminAiStatus(BaseModel):
     detail: str
     # Issue 2: whether this deployment can accept a pasted key at runtime, and
     # where the current key came from ("database" | "environment" | "none").
+    # #472: `can_configure` was always true; it is now whether the configured
+    # provider's key can be LOADED here (`keystore.accepts_runtime_key`), so a
+    # "Load a key" control is never offered for a key the validator refuses.
     # The UI uses these to decide whether to offer "Load a key", and to reset
     # its "I acknowledged offline mode" flag when the key changes.
     can_configure: bool = False
