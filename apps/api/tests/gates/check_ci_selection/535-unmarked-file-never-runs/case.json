@@ -8,5 +8,5 @@
   "--baseline",
   "{dir}/baseline.json"
  ],
- "stdout_contains": "test_unmarked.py: 1 of 1"
+ "stdout_contains": "tests/unit/test_unmarked.py::test_never_selected: CI never runs it"
 }

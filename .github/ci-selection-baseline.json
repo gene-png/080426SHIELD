@@ -1,10 +1,21 @@
 {
   "tests/unit/test_admin_removal.py": {
-    "unselected": 8,
-    "reason": "#500: the whole file is unmarked, so CI's `pytest -m unit tests/unit` has never run it. Mark it (and fix what fails) or delete it; lower this entry as it shrinks."
+    "reason": "#500: the whole file is unmarked, so CI's `pytest -m unit tests/unit` has never run it. Mark it (and fix what fails) or delete it; remove each id as it is fixed.",
+    "tests": [
+      "tests/unit/test_admin_removal.py::test_admin_cannot_deactivate_their_own_account",
+      "tests/unit/test_admin_removal.py::test_archive_client_hides_it_from_the_list_but_retains_the_row",
+      "tests/unit/test_admin_removal.py::test_archive_client_writes_an_audit_row",
+      "tests/unit/test_admin_removal.py::test_archiving_an_unknown_client_is_a_typed_404",
+      "tests/unit/test_admin_removal.py::test_client_role_user_cannot_archive_a_client",
+      "tests/unit/test_admin_removal.py::test_deactivate_user_blocks_sign_in_and_reactivate_restores_it",
+      "tests/unit/test_admin_removal.py::test_deactivate_user_writes_an_audit_row",
+      "tests/unit/test_admin_removal.py::test_list_users_for_a_client"
+    ]
   },
   "tests/unit/test_self_assessment.py": {
-    "unselected": 1,
-    "reason": "#500: one test in an otherwise-marked file carries no unit mark. Mark it or delete it, then remove this entry."
+    "reason": "#500: one test in an otherwise-marked file carries no unit mark. Mark it or delete it, then remove this entry.",
+    "tests": [
+      "tests/unit/test_self_assessment.py::test_client_fills_and_submits_zt"
+    ]
   }
 }

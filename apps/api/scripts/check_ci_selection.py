@@ -1,33 +1,44 @@
 """Every test in `tests/unit` must be one CI actually runs (#540).
 
 WHY THIS EXISTS. A test that exists, is believed to run, and does not is worse
-than a vacuous one, because a vacuous test at least reports. Two instances on
-2026-09-24: the #535/#536 leak tests shipped with no `unit` mark, so CI's
-`pytest -m unit tests/unit` would have selected 0 of their 61 tests while every
-local run -- which named the file directly -- passed; and #483, Playwright specs
-gated on variables no workflow sets (`check_e2e_env_gates.py` is that half).
-`check_test_integrity.py` catches tests that cannot fail. Nothing caught tests
-that never run.
+than a vacuous one, because a vacuous test at least reports. Both instances
+turned up on 2026-09-24: the #535/#536 leak tests shipped with no `unit` mark,
+so CI's `pytest -m unit tests/unit` would have selected 0 of their 61 tests
+while every local run -- which named the file directly -- passed; and #483,
+Playwright specs gated on variables no workflow sets (`check_e2e_env_gates.py`
+is that half). `check_test_integrity.py` catches tests that cannot fail.
+Nothing caught tests that never run.
 
-WHAT IT DOES. Collects `tests/unit` twice with the real pytest, once with CI's
-exact selector (`CI_SELECTOR`) and once with none, and compares per file. Every
-test collected but not selected is a finding, unless the file is in the
-baseline with a count and a REASON. The baseline ratchets: a file whose
-unselected count grew is a finding, and so is one that SHRANK -- lower the
-entry or delete it, so the backlog is visible and only ever goes down.
+WHAT IT DOES. Collects `tests/unit` twice with the real pytest -- once with
+CI's exact selector (`CI_SELECTOR`), once with none -- as NODE IDS, and every
+test collected but not selected is a finding unless its node id is in the
+baseline under a file entry with a REASON.
+
+WHY NODE IDS, NOT COUNTS. A per-file count let a new never-run test replace
+an old one with no finding: mark one, add another, the count stays the same
+(review of e8424dd). Each unselected test is named, so one cannot stand in for
+another.
+
+THE BASELINE RATCHETS. A baselined node id that is now selected, or no longer
+exists, is a finding too: delete it from the baseline, so the backlog is
+visible and only ever goes down.
 
 WHY IT RUNS PYTEST RATHER THAN READING MARKS. The question is what CI's
 selector selects, and only the selector can answer it: a mark can come from a
 module `pytestmark`, a class, a decorator, a conftest hook or a plugin. Reading
 source would be a second implementation of pytest's selection, free to drift.
-`test_the_gates_selector_is_the_one_ci_runs` pins `CI_SELECTOR` to ci.yml.
+`CI_SELECTOR` is pinned to ci.yml's exact `run:` line by a test that parses
+the workflow and requires equality, not a substring -- a `-k` or `--deselect`
+appended in CI would otherwise narrow CI while this certified the wider set.
+
+`-o addopts=` is passed so the output is one node id per line. The repo's
+addopts are reporting flags only (`-ra -q`); measured 2026-09-24, clearing them
+selected the same 7942 tests CI's addopts do.
 
 EXIT CODES (D-051): 0 every collected test is selected or baselined; 1 at
-least one finding; 2 could not look -- the collector failed, collected nothing,
-printed a format this does not parse, the baseline is missing or malformed, or
-an argument is unknown. An empty or unreadable collection is NEVER clean: the
-first count behind this gate grepped `::` against `file: N` output and read
-zero for everything.
+least one finding; 2 could not look -- the collector failed, collected
+nothing, printed no node ids, the baseline is missing or malformed, or an
+argument is unknown. An empty or unreadable collection is NEVER clean.
 
 LIMITS. Only `tests/unit`; `tests/live` is opt-in by design. A test that is
 selected but SKIPS at runtime is not seen here (a runtime skip is not a
@@ -45,52 +56,39 @@ from pathlib import Path
 CI_SELECTOR = ("-m", "unit", "tests/unit")
 _ALL = ("tests/unit",)
 
-_COUNT_LINE = re.compile(r"^(?P<file>\S+\.py): (?P<n>\d+)$")
-_NODE_LINE = re.compile(r"^(?P<file>\S+\.py)::\S")
+_NODE_LINE = re.compile(r"^(?P<file>[^\s:]+\.py)::\S")
 
 
-def parse_collection(output: str) -> dict[str, int]:
-    """Per-file test counts from `pytest --collect-only -q`, in either format.
-
-    pytest prints `path: N` per file in quiet collect mode on this version and
-    node ids (`path::name`) on others. Anything else is ignored, so output in
-    neither format parses to {} -- which the caller treats as could-not-look,
-    never as "zero tests".
-    """
-    counts: dict[str, int] = {}
+def parse_node_ids(output: str) -> set[str]:
+    """Node ids from `pytest --collect-only -q -o addopts=`. Anything else is ignored."""
+    ids: set[str] = set()
     for raw in output.splitlines():
         line = raw.strip().replace("\\", "/")
-        m = _COUNT_LINE.match(line)
-        if m:
-            counts[m.group("file")] = counts.get(m.group("file"), 0) + int(m.group("n"))
-            continue
-        m = _NODE_LINE.match(line)
-        if m:
-            counts[m.group("file")] = counts.get(m.group("file"), 0) + 1
-    return counts
+        if _NODE_LINE.match(line):
+            ids.add(line)
+    return ids
 
 
 class CouldNotLook(Exception):
     """The gate could not establish the answer. Maps to exit 2, never 0 or 1."""
 
 
-def _collect(root: Path, args: tuple[str, ...]) -> dict[str, int]:
+def _collect(root: Path, args: tuple[str, ...]) -> set[str]:
+    cmd = [
+        sys.executable, "-m", "pytest", "--collect-only", "-q",
+        "-o", "addopts=", "-p", "no:cacheprovider", *args,
+    ]  # fmt: skip
     proc = subprocess.run(  # noqa: S603  # nosec B603 - fixed argv, no untrusted input
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *args],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
+        cmd, cwd=root, capture_output=True, text=True, encoding="utf-8", check=False
     )
-    # 5 = "no tests collected" for the selected run is legitimate only if the
-    # unselected run also collects nothing, which the caller refuses anyway.
+    # 5 = no tests collected: legitimate for the SELECTED run (every file then
+    # becomes a finding), and refused for the unselected run by the caller.
     if proc.returncode not in (0, 5):
         raise CouldNotLook(
             f"`pytest --collect-only {' '.join(args)}` exited {proc.returncode} in {root}:\n"
             + (proc.stdout + proc.stderr).strip()[-2000:]
         )
-    return parse_collection(proc.stdout)
+    return parse_node_ids(proc.stdout)
 
 
 def _load_baseline(path: Path) -> dict[str, dict]:
@@ -101,48 +99,45 @@ def _load_baseline(path: Path) -> dict[str, dict]:
     if not isinstance(data, dict):
         raise CouldNotLook(f"baseline {path} must be a JSON object")
     for name, entry in data.items():
+        tests = entry.get("tests") if isinstance(entry, dict) else None
         if (
             not isinstance(entry, dict)
-            or not isinstance(entry.get("unselected"), int)
             or not str(entry.get("reason", "")).strip()
+            or not isinstance(tests, list)
+            or not tests
+            or not all(isinstance(t, str) and t.startswith(f"{name}::") for t in tests)
         ):
             raise CouldNotLook(
-                f"baseline entry {name!r} needs an integer `unselected` and a non-empty `reason`"
+                f"baseline entry {name!r} needs a non-empty `reason` and a non-empty "
+                f"`tests` list of node ids under {name}::"
             )
     return data
 
 
 def evaluate(
-    everything: dict[str, int], selected: dict[str, int], baseline: dict[str, dict]
+    everything: set[str], selected: set[str], baseline: dict[str, dict]
 ) -> tuple[list[str], list[str]]:
     """(findings, allowed) -- allowed lines are printed on every run."""
+    unselected = everything - selected
+    baselined = {t: f for f, e in baseline.items() for t in e["tests"]}
     findings: list[str] = []
-    allowed: list[str] = []
-    for file in sorted(set(everything) | set(baseline)):
-        total = everything.get(file, 0)
-        gap = total - selected.get(file, 0)
-        entry = baseline.get(file)
-        if entry is None:
-            if gap > 0:
-                findings.append(
-                    f"{file}: {gap} of {total} tests are never run by CI "
-                    f"(`pytest {' '.join(CI_SELECTOR)}` does not select them). Mark them, "
-                    "or baseline the file with a reason."
-                )
-            continue
-        allowed_n = entry["unselected"]
-        if gap > allowed_n:
-            findings.append(
-                f"{file}: {gap} of {total} tests unselected, but the baseline allows "
-                f"{allowed_n} -- the backlog GREW."
-            )
-        elif gap < allowed_n:
-            findings.append(
-                f"{file}: {gap} unselected, baseline says {allowed_n} -- shrink the "
-                "baseline entry (or delete it at 0), so the backlog only goes down."
-            )
-        else:
-            allowed.append(f"{file}: {gap} of {total} unselected, baselined: {entry['reason']}")
+    new = sorted(unselected - set(baselined))
+    for test in new:
+        findings.append(
+            f"{test}: CI never runs it (`pytest {' '.join(CI_SELECTOR)}` does not select "
+            "it). Mark it, or baseline it with a reason."
+        )
+    for test in sorted(set(baselined) - unselected):
+        state = "now selected" if test in selected else "no longer exists"
+        findings.append(
+            f"{test}: baselined, but {state} -- delete it from the baseline so the "
+            "backlog only goes down."
+        )
+    allowed = [
+        f"{f}: {len([t for t in e['tests'] if t in unselected])} never-run test(s), "
+        f"baselined: {e['reason']}"
+        for f, e in sorted(baseline.items())
+    ]
     return findings, allowed
 
 
@@ -171,23 +166,23 @@ def main(argv: list[str]) -> int:
         selected = _collect(root, CI_SELECTOR)
         if not everything:
             raise CouldNotLook(
-                "collected ZERO tests, or printed a format this does not parse -- "
-                "an empty collection is not a clean one"
+                "collected ZERO node ids -- nothing collected, or a format this does not "
+                "parse. An empty collection is not a clean one."
             )
     except CouldNotLook as exc:
         print(f"check-ci-selection: could not look -- {exc}")
         return 2
 
     findings, allowed = evaluate(everything, selected, baseline)
-    total, chosen = sum(everything.values()), sum(selected.values())
     for line in allowed:
         print(f"  baselined: {line}")
+    summary = f"CI selects {len(selected & everything)} of {len(everything)} collected tests"
     if findings:
-        print(f"check-ci-selection: {len(findings)} finding(s); CI selects {chosen} of {total}:")
+        print(f"check-ci-selection: {len(findings)} finding(s); {summary}:")
         for line in findings:
             print(f"  {line}")
         return 1
-    print(f"check-ci-selection: clean -- CI selects {chosen} of {total} collected tests.")
+    print(f"check-ci-selection: clean -- {summary}.")
     return 0
 
 

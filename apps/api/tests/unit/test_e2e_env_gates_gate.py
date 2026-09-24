@@ -9,6 +9,7 @@ specs have self-skipped on every CI run. Written BEFORE the check.
 from __future__ import annotations
 
 import json
+import pathlib
 import textwrap
 from pathlib import Path
 
@@ -17,6 +18,8 @@ import pytest
 # The DOTTED form, deliberately: see test_leave_row_oracle_anchors.py for why a
 # bare `from scripts import ...` sorts differently in the container and in CI.
 import scripts.check_e2e_env_gates as gate
+
+from tests._paths import find_workflows_dir
 
 pytestmark = pytest.mark.unit
 
@@ -134,9 +137,83 @@ def test_an_unknown_argument_is_could_not_look(capsys) -> None:
 def test_the_live_repo_matches_483(capsys) -> None:
     # The real tree, not a fixture: every variable this check reports must be
     # an EXEMPTED one today. If E2E_PERF or E2E_OIDC is ever set in CI, the
-    # exemption goes stale and this goes red, which is the point.
-    root = Path(__file__).resolve().parents[4]
-    code = gate.main(["gate", "--root", str(root)])
+    # exemption goes stale and this goes red, which is the point. Skipped only
+    # with no `.github/workflows` above this file (the api container).
+    wf = find_workflows_dir(pathlib.Path(__file__).resolve())
+    if wf is None:
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+    code = gate.main(["gate", "--root", str(wf.parent.parent)])
     out = capsys.readouterr().out
     assert code == 0, out
     assert "E2E_PERF" in out and "E2E_OIDC" in out, out
+
+
+# --- review of e8424dd: what counts as SET, and what counts as a gate -----------
+
+COMMENT_ONLY = """
+    jobs:
+      e2e:
+        steps:
+          # E2E_PERF=1 opts the perf spec in
+          - run: npx playwright test
+"""
+DISABLED = """
+    jobs:
+      e2e:
+        steps:
+          - env:
+              E2E_PERF: "0"
+            run: npx playwright test
+"""
+RUN_EXPORT = """
+    jobs:
+      e2e:
+        steps:
+          - run: |
+              export E2E_PERF=1   # opt the perf spec in
+              npx playwright test
+"""
+JOB_ENV = """
+    jobs:
+      e2e:
+        env:
+          E2E_PERF: "1"
+        steps:
+          - run: npx playwright test
+"""
+
+
+def test_a_comment_mentioning_the_variable_is_not_setting_it(tmp_path, capsys) -> None:
+    # Review of e8424dd: raw-text matching counted ci.yml's own comment
+    # "# SHIELD_DEMO_SMOKE=1 opts the demo-journey spec in" as a setting.
+    code, out = _run(_repo(tmp_path, {"perf.spec.ts": GATED}, COMMENT_ONLY, {}), capsys)
+    assert code == 1, out
+    assert "E2E_PERF: read by" in out, out
+
+
+def test_a_disabling_value_is_not_setting_it(tmp_path, capsys) -> None:
+    code, out = _run(_repo(tmp_path, {"perf.spec.ts": GATED}, DISABLED, {}), capsys)
+    assert code == 1, out
+
+
+@pytest.mark.parametrize("workflow", [RUN_EXPORT, JOB_ENV], ids=["run-export", "job-env"])
+def test_a_run_script_export_or_job_env_counts_as_set(tmp_path, capsys, workflow: str) -> None:
+    code, out = _run(_repo(tmp_path, {"perf.spec.ts": GATED}, workflow, {}), capsys)
+    assert code == 0, out
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        'test("x", () => { test.skip(!process.env["E2E_PERF"], "no"); });',
+        'const { E2E_PERF } = process.env; test("x", () => { test.skip(!E2E_PERF, "no"); });',
+        'test.describe.skip("x", () => { if (process.env.E2E_PERF) {} });',
+        'test("x", ({}, testInfo) => { testInfo.fixme(!process.env.E2E_PERF, "no"); });',
+        'test("x", () => { test.skip (!process.env.E2E_PERF, "no"); });',
+    ],
+    ids=["index-read", "destructure", "describe-skip", "testinfo-fixme", "spaced-skip"],
+)
+def test_other_spellings_of_a_gate_are_seen(tmp_path, capsys, spec: str) -> None:
+    code, out = _run(_repo(tmp_path, {"perf.spec.ts": spec}, UNSET_WORKFLOW, {}), capsys)
+    assert code == 1, out
+    assert "E2E_PERF" in out, out

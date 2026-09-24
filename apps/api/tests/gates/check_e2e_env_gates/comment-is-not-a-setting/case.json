@@ -1,0 +1,10 @@
+{
+ "incident": "Review of e8424dd: raw-text matching counted ci.yml's own comment '# SHIELD_DEMO_SMOKE=1 opts the demo-journey spec in' as setting the variable, so deleting the real env line would have left the gate clean while the spec self-skipped forever. A comment is not a setting.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}"
+ ],
+ "stdout_contains": "E2E_PERF: read by"
+}

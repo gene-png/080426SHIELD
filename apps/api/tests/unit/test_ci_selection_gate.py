@@ -1,6 +1,6 @@
 """The CI-selection gate (#540): a test that exists but CI never runs is a finding.
 
-Written BEFORE the gate. Two instances in one day prompted it: the #535/#536
+Written BEFORE the gate. Both instances turned up in one day: the #535/#536
 leak tests shipped unmarked, so CI's `pytest -m unit tests/unit` would have
 selected 0 of their 61 tests, and local runs that named the file directly
 passed; and #483, Playwright specs gated on environment variables no workflow
@@ -11,6 +11,7 @@ tests that never run.
 from __future__ import annotations
 
 import json
+import pathlib
 import textwrap
 from pathlib import Path
 
@@ -19,8 +20,13 @@ import pytest
 # The DOTTED form, deliberately: see test_leave_row_oracle_anchors.py for why a
 # bare `from scripts import ...` sorts differently in the container and in CI.
 import scripts.check_ci_selection as gate
+import yaml
+
+from tests._paths import find_workflows_dir
 
 pytestmark = pytest.mark.unit
+
+_WORKFLOWS_DIR = find_workflows_dir(pathlib.Path(__file__).resolve())
 
 
 def _project(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -44,6 +50,7 @@ UNMARKED = """
     def test_d(): pass
     def test_e(): pass
 """
+U = "tests/unit/test_u.py"
 
 
 def _baseline(tmp_path: Path, entries: dict) -> Path:
@@ -52,115 +59,143 @@ def _baseline(tmp_path: Path, entries: dict) -> Path:
     return p
 
 
-# --- parsing: the collector's output, in both formats pytest prints ----------
+def _run(root: Path, base: Path, capsys) -> tuple[int, str]:
+    code = gate.main(["gate", "--root", str(root), "--baseline", str(base)])
+    return code, capsys.readouterr().out
 
 
-def test_parse_reads_the_per_file_count_format() -> None:
-    out = "tests/unit/test_x.py: 3\ntests/unit/test_y.py: 12\n"
-    assert gate.parse_collection(out) == {"tests/unit/test_x.py": 3, "tests/unit/test_y.py": 12}
+# --- parsing --------------------------------------------------------------------
 
 
-def test_parse_reads_the_node_id_format() -> None:
-    out = "tests/unit/test_x.py::test_a\ntests/unit/test_x.py::test_b[1]\ntests/unit/test_y.py::test_c\n"
-    assert gate.parse_collection(out) == {"tests/unit/test_x.py": 2, "tests/unit/test_y.py": 1}
+def test_parse_reads_node_ids() -> None:
+    out = "tests/unit/test_x.py::test_a\ntests/unit/test_x.py::test_b[1]\ntests/unit/test_y.py::C::t\n"
+    assert gate.parse_node_ids(out) == {
+        "tests/unit/test_x.py::test_a",
+        "tests/unit/test_x.py::test_b[1]",
+        "tests/unit/test_y.py::C::t",
+    }
 
 
-def test_parse_of_unrecognised_output_is_empty_not_a_guess() -> None:
-    # The author's own first count grepped for `::` against `file: N` output
-    # and read 0 for everything. An unparseable collection must never become a
-    # count of zero that reads as "nothing unselected".
-    assert gate.parse_collection("collected 5 items\n\n5 tests collected in 0.1s\n") == {}
+def test_parse_of_the_per_file_count_format_is_empty_not_a_guess() -> None:
+    # The gate asks for node ids. The `file: N` form (what pytest prints with
+    # the repo's addopts) must parse to NOTHING, which the caller turns into
+    # could-not-look -- never a count that reads as "nothing unselected".
+    assert gate.parse_node_ids("tests/unit/test_x.py: 3\n\n3 tests collected\n") == set()
 
 
-# --- the verdict --------------------------------------------------------------
+# --- the verdict ------------------------------------------------------------------
 
 
-def test_an_unmarked_file_is_a_finding_naming_the_file_and_count(tmp_path, capsys) -> None:
-    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED, "tests/unit/test_u.py": UNMARKED})
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(_baseline(tmp_path, {}))])
-    out = capsys.readouterr().out
+def test_an_unmarked_test_is_a_finding_naming_it(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED, U: UNMARKED})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 1, out
-    assert "tests/unit/test_u.py" in out and "3 of 3" in out, out
+    assert f"{U}::test_c: CI never runs it" in out, out
 
 
 def test_all_marked_is_clean_and_says_what_it_counted(tmp_path, capsys) -> None:
     root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(_baseline(tmp_path, {}))])
-    out = capsys.readouterr().out
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 0, out
-    assert "2 of 2" in out, out
+    assert "CI selects 2 of 2" in out, out
 
 
-def test_a_baselined_file_with_a_reason_passes_and_is_still_printed(tmp_path, capsys) -> None:
-    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED, "tests/unit/test_u.py": UNMARKED})
-    base = _baseline(
-        tmp_path, {"tests/unit/test_u.py": {"unselected": 3, "reason": "#500: unmarked"}}
-    )
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(base)])
-    out = capsys.readouterr().out
+def _entry(*names: str) -> dict:
+    return {U: {"reason": "#500: unmarked", "tests": [f"{U}::{n}" for n in names]}}
+
+
+def test_baselined_tests_pass_and_are_still_printed(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED, U: UNMARKED})
+    code, out = _run(root, _baseline(tmp_path, _entry("test_c", "test_d", "test_e")), capsys)
     assert code == 0, out
-    assert "tests/unit/test_u.py" in out and "#500: unmarked" in out, out
+    assert U in out and "#500: unmarked" in out, out
 
 
-def test_a_baselined_file_that_GREW_is_a_finding(tmp_path, capsys) -> None:
-    root = _project(tmp_path, {"tests/unit/test_u.py": UNMARKED})
-    base = _baseline(tmp_path, {"tests/unit/test_u.py": {"unselected": 2, "reason": "#500"}})
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(base)])
-    assert code == 1, capsys.readouterr().out
-
-
-def test_a_baseline_entry_that_SHRANK_is_a_finding_so_the_backlog_ratchets(
-    tmp_path, capsys
-) -> None:
-    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
-    base = _baseline(tmp_path, {"tests/unit/test_m.py": {"unselected": 2, "reason": "#500"}})
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(base)])
-    out = capsys.readouterr().out
+def test_a_new_never_run_test_cannot_hide_behind_a_baselined_count(tmp_path, capsys) -> None:
+    # Review of e8424dd: with a per-file COUNT, marking one old test and adding
+    # one new unmarked test kept the count and passed. Node ids name each test.
+    root = _project(tmp_path, {U: "def test_c(): pass\ndef test_new(): pass\n"})
+    code, out = _run(root, _baseline(tmp_path, _entry("test_c", "test_d")), capsys)
     assert code == 1, out
-    assert "shrink" in out.lower(), out
+    assert f"{U}::test_new: CI never runs it" in out, out
 
 
-def test_a_baseline_entry_without_a_reason_is_refused(tmp_path, capsys) -> None:
-    root = _project(tmp_path, {"tests/unit/test_u.py": UNMARKED})
-    base = _baseline(tmp_path, {"tests/unit/test_u.py": {"unselected": 3, "reason": "  "}})
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(base)])
-    assert code == 2, capsys.readouterr().out
+def test_a_baselined_test_now_gone_is_a_finding_so_the_backlog_ratchets(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {U: "def test_c(): pass\n"})
+    code, out = _run(root, _baseline(tmp_path, _entry("test_c", "test_gone")), capsys)
+    assert code == 1, out
+    assert f"{U}::test_gone: baselined, but no longer exists" in out, out
 
 
-# --- could not look: never clean (D-051) --------------------------------------
+def test_a_baselined_test_now_selected_is_a_finding(tmp_path, capsys) -> None:
+    marked_c = "import pytest\npytestmark = pytest.mark.unit\ndef test_c(): pass\n"
+    root = _project(tmp_path, {U: marked_c})
+    code, out = _run(root, _baseline(tmp_path, _entry("test_c")), capsys)
+    assert code == 1, out
+    assert f"{U}::test_c: baselined, but now selected" in out, out
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {U: {"reason": "  ", "tests": [f"{U}::test_c"]}},
+        {U: {"reason": "r", "tests": []}},
+        {U: {"reason": "r", "tests": [True]}},
+        {U: {"reason": "r", "tests": ["tests/unit/other.py::test_c"]}},
+        {U: {"reason": "r", "unselected": 3}},
+    ],
+    ids=["blank-reason", "empty-list", "non-string", "wrong-file", "old-count-shape"],
+)
+def test_a_malformed_baseline_entry_is_refused(tmp_path, capsys, entry: dict) -> None:
+    root = _project(tmp_path, {U: UNMARKED})
+    code, out = _run(root, _baseline(tmp_path, entry), capsys)
+    assert code == 2, out
+
+
+# --- could not look: never clean (D-051) -------------------------------------------
 
 
 def test_the_wrong_directory_is_could_not_look_not_clean(tmp_path, capsys) -> None:
-    # #524's shape: a cwd-relative path that resolves to nothing must not read
-    # as "nothing unselected".
-    code = gate.main(["gate", "--root", str(tmp_path), "--baseline", str(_baseline(tmp_path, {}))])
-    assert code == 2, capsys.readouterr().out
+    code, out = _run(tmp_path, _baseline(tmp_path, {}), capsys)
+    assert code == 2, out
 
 
 def test_an_empty_collection_is_could_not_look(tmp_path, capsys) -> None:
     root = _project(tmp_path, {"tests/unit/__init__.py": ""})
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(_baseline(tmp_path, {}))])
-    assert code == 2, capsys.readouterr().out
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 2, out
 
 
 def test_a_missing_baseline_is_could_not_look(tmp_path, capsys) -> None:
     root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
-    code = gate.main(["gate", "--root", str(root), "--baseline", str(tmp_path / "absent.json")])
-    assert code == 2, capsys.readouterr().out
+    code, out = _run(root, tmp_path / "absent.json", capsys)
+    assert code == 2, out
 
 
 def test_an_unknown_argument_is_could_not_look(capsys) -> None:
     assert gate.main(["gate", "--baselin", "x"]) == 2
 
 
-# --- the selector is CI's, not a copy that can drift from it -------------------
+# --- the selector is CI's EXACT line, not a substring that can drift -----------
 
 
-def test_the_gates_selector_is_the_one_ci_runs() -> None:
-    ci = (Path(__file__).resolve().parents[4] / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
-    assert f"run: pytest {' '.join(gate.CI_SELECTOR)}" in ci, (
-        f"ci.yml no longer runs `pytest {' '.join(gate.CI_SELECTOR)}`; the gate "
-        "would be certifying a selector CI does not use"
-    )
+def test_the_gates_selector_is_exactly_the_one_ci_runs() -> None:
+    # Review of e8424dd: a substring pin stayed green if CI appended `-k` or
+    # `--deselect`, narrowing CI while the gate certified the wider set. Parse
+    # the workflow; require the ONE pytest-over-tests/unit step to be equal.
+    #
+    # Skipped ONLY with no `.github/workflows` above this file at all -- the
+    # api container, which mounts apps/api alone. A checkout that has the
+    # directory but not ci.yml fails loudly below (the pattern
+    # test_audit_gate_collects_only_this_branch.py records).
+    if _WORKFLOWS_DIR is None:
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+    ci = yaml.safe_load((_WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    runs = [
+        str(step.get("run", "")).strip()
+        for job in ci["jobs"].values()
+        for step in job.get("steps", [])
+        if str(step.get("run", "")).strip().startswith("pytest ")
+        and "tests/unit" in str(step.get("run", ""))
+    ]
+    assert runs == [f"pytest {' '.join(gate.CI_SELECTOR)}"], runs
