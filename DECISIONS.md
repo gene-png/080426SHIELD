@@ -5536,8 +5536,10 @@ literal name rules, and the reason is RULE CLASS, written into
   line could join tokens that were never one thing (#135: the contact hint must
   not reach across prose for its evidence).
 - These two rules match a KNOWN LITERAL from the tenant's own rows. "Acme
-  Holdings" across a line break is unambiguously "Acme Holdings", so that false
-  positive cannot occur.
+  Holdings" across a line break is almost always "Acme Holdings". The false
+  positive is rare here and costs only context: a heading ending "Atlas" above a
+  line opening "Defense in depth" becomes "[CLIENT] in depth" (review of
+  `a409aea`).
 - The asymmetry decides it anyway. A miss is the client's name reaching a third
   party. An over-match is the model seeing [CLIENT] instead of context, on a
   pipeline where it only suggests.
@@ -5628,5 +5630,10 @@ red under five seeds.
 - Red-on-revert with `scripts/red-on-revert.sh --expect`, one fix at a time:
   - reverting the anchors turns exactly the 7 #536 rows red;
   - reverting the separator join turns the separator rows red, plus the partial-miss row and the one edge row that combines both defects;
-  - both mutations also turn the invoke-level test red;
-  - removing the gate's new signature turns its 4 detection tests red.
+  - after Decision 3, reverting `\s+` to `_HSPACE+` turns the 10 line-break rows and the CRLF hint row red;
+  - deleting the hint path's hoisted anchors in `_hint_patterns` turns `test_a_word_edged_hint_still_needs_a_word_boundary`'s 3 rows red.
+
+**Whitespace runs, measured because review suspected superlinear cost (`a409aea`).** At a fixed ~190 KB, growing the whitespace run between a name's words from 500 to 50,000 characters made the branch FASTER (752, 614, 492 ms). So cost is linear in text size, not in run length. On that pathological input it is about 2x `main`, and `main` redacted none of the names.
+
+- both mutations also turn the invoke-level test red;
+- removing the gate's new signature turns its 4 detection tests red.

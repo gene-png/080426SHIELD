@@ -81,7 +81,7 @@ _RE_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 # place rather than a property each pattern re-asserts.
 #
 # The address rules, the phone rule and (as a superset) the CAGE class are
-# built from it. TWO EXCEPTIONS, and only the first is harmless:
+# built from it. TWO EXCEPTIONS, both deliberate:
 #
 # 1. `_RE_CONTACT_HINT` keeps three bare `\s` (the `--` delimiter and the
 #    state-ZIP hint). Provably equivalent to `_HSPACE` where it is used
@@ -93,10 +93,14 @@ _RE_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 #    line with `strip()` applied, at that one call site. A split on "\n"
 #    alone, or any second caller, breaks it: convert the three to `_HSPACE`
 #    first.
-# 2. The org-name and name-hint rules (`redact_org_name`, `_redact_names`)
-#    match literal text built with `re.escape`, whose escaped space matches
-#    U+0020 only. A name separated by a no-break space, a line wrap or two
-#    spaces is NOT redacted, and the count records zero -- measured, #535.
+# 2. The two LITERAL-NAME rules (`redact_org_name`, `_redact_names`) join a
+#    stored name's words with `\s+`, NOT `_HSPACE+`, ON PURPOSE -- do not
+#    "fix" this as an inconsistency (owner decision, D-088; the reason is in
+#    `_literal_pattern`). `_HSPACE` guards SHAPE rules, which could join
+#    tokens across a line that were never one thing; these match a known
+#    literal from the tenant's own rows, and a miss sends the client's name to
+#    a third party. They once matched a literal U+0020 only, so a no-break
+#    space, a line wrap or two spaces leaked the name with a zero count (#535).
 #
 # An earlier version of this note said `_RE_PHONE` and `_RE_CAGE` "still
 # contain `\s` and still cross line breaks", which was true when written and
@@ -1167,8 +1171,10 @@ def _literal_pattern(needle: str, *, anchored: bool = True) -> str:
       tokens that were never one thing (#135 -- the contact hint must not reach
       across prose for its evidence). These two rules match a KNOWN LITERAL
       from the tenant's own rows: "Acme Holdings" across a line break is
-      unambiguously "Acme Holdings", so the false positive `_HSPACE` guards
-      against cannot occur. And the asymmetry decides it anyway: a miss is the
+      almost always "Acme Holdings". The false positive `_HSPACE` guards
+      against is rare here and costs only context -- a heading ending "Atlas"
+      above a line opening "Defense in depth" becomes "[CLIENT] in depth" --
+      and the asymmetry decides it anyway: a miss is the
       client's name reaching a third party; an over-match is the model seeing
       [CLIENT] instead of context, on a pipeline where it only suggests. PDF and
       Word extraction feed the Tech Debt payload, so wrapped names are real.
