@@ -390,5 +390,10 @@ def test_the_reauth_refusal_does_not_name_a_period(app_client: TestClient) -> No
     r = app_client.post("/auth/refresh", json={"refresh_token": stale})
     assert r.status_code == 401, r.text
     message = r.json()["error"]["message"]
-    assert "daily" not in message.lower(), message
+    # No period in any spelling: not "daily", and not "12-hour" or "24 h"
+    # either -- the value is configurable, so any figure here goes stale.
+    lowered = message.lower()
+    for word in ("daily", "hour", "day"):
+        assert word not in lowered, (word, message)
+    assert not any(ch.isdigit() for ch in message), message
     assert "sign in again" in message.lower(), message

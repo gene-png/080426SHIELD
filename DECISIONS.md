@@ -302,7 +302,7 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
 - **Forced re-auth ceiling (real):** access + refresh tokens now carry an
   `auth_time` claim (original login time) that rides forward unchanged across
   refreshes. `/auth/refresh` rejects a refresh whose session age exceeds
-  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h) with a typed 401
+  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h; **12 h since D-084**) with a typed 401
   `reason=reauth_required` (D-016 envelope).
 - **Refresh-token rotation (real):** each refresh mints a new refresh token and
   stores its jti on the user (`users.active_refresh_jti`, additive/nullable
@@ -5460,7 +5460,9 @@ hours)** in config, compose and `.env.example`. The setting was already wired
 (`refresh()` in `routes/auth.py`, with a `ge=300` floor), so this is one value,
 with no new code and no new UX. Twelve hours covers a working day with
 overrun, and halves the overnight window in which a stolen session stays
-usable. The refusal message stops saying "daily".
+usable. The refusal message stops saying "daily". An existing dev `.env` copied
+from the old `.env.example` keeps 86400 until edited, because compose and
+`Settings` both prefer it; CI has no `.env` and gets 43200.
 
 **What that number does NOT do, stated so it implies nothing more.** It
 bounds session AGE, counted from the original sign-in, and no activity

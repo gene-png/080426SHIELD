@@ -33,8 +33,9 @@ knob for the same control would be two values that can disagree.
 The bound is counted from the last token rotation, not the last activity, so
 under compose (access 900, refresh 1800) an idle session gets 15-30 minutes.
 At the config defaults (access 3600, refresh 86400) a rotation always pushes
-the refresh expiry past the daily ceiling, so the ceiling fires first:
-**outside compose there is no idle bound below the 24-hour ceiling.** Round 2
+the refresh expiry past the ceiling (24 h when this section was written, 12 h
+since D-084, below), so the ceiling fires first: **outside compose there is
+no idle bound below the ceiling.** Round 2
 of review corrected an earlier "23-24 hours" here, a bound that never takes
 effect. And on `main`, a session whose refresh has lapsed is not
 signed out: the page stays up and its calls fail. PR #499 adds that. Round 1
@@ -76,3 +77,8 @@ it would invite a rewrite.
 
 Pinned by `test_auth_reauth.py`: the default is 12 h, taken from the decision
 rather than the constant, and the refusal names no period.
+
+**An existing dev `.env` keeps the old value.** Developers copy
+`.env.example`, which said 86400 until this change, and both compose and
+`Settings` prefer `.env`. So a machine set up earlier still runs a 24-hour
+ceiling until its `.env` is edited. CI runs with no `.env`, so it gets 43200.
