@@ -10,8 +10,10 @@ import { OIDC_EXCHANGE_ERROR, REAUTH_REQUIRED_ERROR } from "@/lib/auth/errors";
  * the dead session and routes to sign-in with a friendly reason banner instead
  * of letting every proxy call 401 silently:
  *
- *  - `REAUTH_REQUIRED_ERROR` — the daily forced-reauth ceiling / rotated-token
- *    signal set in the NextAuth refresh callback → `?reason=session_expired`.
+ *  - `REAUTH_REQUIRED_ERROR` — the session is over: the backend refused a
+ *    refresh (forced-reauth ceiling, rotated-out token), or the jwt callback
+ *    found the session's end already passed (ceiling or idle-lapsed refresh
+ *    expiry) → `?reason=session_expired`. See `lib/auth/errors.ts`.
  *  - `OIDC_EXCHANGE_ERROR` — a Keycloak sign-in reached the app but the backend
  *    refused the exchange (no local account, unverified email, sub mismatch, …)
  *    set in the jwt callback → `?reason=oidc_exchange_failed`. Without this a

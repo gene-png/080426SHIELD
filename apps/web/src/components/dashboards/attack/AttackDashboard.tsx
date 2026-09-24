@@ -1,9 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import * as React from "react";
 
+import { DashShell } from "@/components/dashboards/shared";
 import {
   blindSpots,
   dprCoverage,
@@ -49,12 +49,6 @@ const panel: React.CSSProperties = {
   border: `1px solid ${C.border}`,
   borderRadius: 16,
 };
-
-const DATE_FMT = new Intl.DateTimeFormat("en-US", {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-});
 
 function ChartSkeleton(): JSX.Element {
   return <div style={{ height: 320 }} aria-hidden />;
@@ -251,11 +245,6 @@ export function AttackDashboard({
     status: statusFilter,
   });
 
-  const releasedLabel = (() => {
-    const d = new Date(data.released_at);
-    return Number.isNaN(d.getTime()) ? "—" : DATE_FMT.format(d);
-  })();
-
   const input: React.CSSProperties = {
     background: C.bg2,
     color: C.text,
@@ -266,379 +255,322 @@ export function AttackDashboard({
     outline: "none",
   };
 
+  // The shell -- back link, title, and the released badge -- is DashShell's,
+  // shared with the other four dashboards. ATT&CK carried a PRIVATE copy of
+  // the badge and its formatter, so fixing the shared one (the release date
+  // pinned to UTC) left this one wrong while the other four re-tested clean.
   return (
-    <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
+    <DashShell
+      title={data.service_title}
+      subtitle="MITRE ATT&CK Coverage · Detect / Prevent / Respond posture"
+      releasedAt={data.released_at}
+      version={data.deliverable_version}
+      footer="SHIELD · Confidential · Coverage as of the released assessment."
+    >
+      {/* KPIs */}
       <div
-        style={{ maxWidth: 1440, margin: "0 auto", padding: "28px 24px 56px" }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 16,
+          marginBottom: 20,
+        }}
+        className="dash-kpis"
       >
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 16,
-            marginBottom: 22,
-          }}
-        >
-          <div>
-            <Link
-              href="/results"
-              style={{ color: C.accent2, fontSize: 12, textDecoration: "none" }}
-            >
-              ← Back to results
-            </Link>
-            <h1 style={{ margin: "6px 0 0", fontSize: 22, fontWeight: 700 }}>
-              {data.service_title}
-            </h1>
-            <p style={{ margin: "2px 0 0", fontSize: 13, color: C.muted }}>
-              MITRE ATT&amp;CK Coverage · Detect / Prevent / Respond posture
-            </p>
-          </div>
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              background: "rgba(99,102,241,.12)",
-              border: "1px solid rgba(99,102,241,.35)",
-              color: "#c7d2fe",
-              padding: "6px 12px",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 999,
-                background: C.green,
-                boxShadow: "0 0 0 4px rgba(16,185,129,.18)",
-              }}
-            />
-            Released {releasedLabel} · v{data.deliverable_version}
-          </div>
-        </div>
+        <KpiCard
+          label="Techniques evaluated"
+          value={String(k.evaluated)}
+          sub="Coverage assessed this engagement"
+        />
+        <KpiCard
+          label="Fully covered"
+          value={`${k.covered.n} · ${k.covered.pct}%`}
+          sub="Detection + prevention + response present"
+          accent={C.green}
+        />
+        <KpiCard
+          label="Partially covered"
+          value={`${k.partial.n} · ${k.partial.pct}%`}
+          sub="One or two triad legs present"
+          accent={C.amber}
+        />
+        <KpiCard
+          label="Blind spots"
+          value={`${k.blindSpots.n} · ${k.blindSpots.pct}%`}
+          sub="No meaningful coverage"
+          accent={C.red}
+        />
+      </div>
 
-        {/* KPIs */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 16,
-            marginBottom: 20,
-          }}
-          className="dash-kpis"
-        >
-          <KpiCard
-            label="Techniques evaluated"
-            value={String(k.evaluated)}
-            sub="Coverage assessed this engagement"
-          />
-          <KpiCard
-            label="Fully covered"
-            value={`${k.covered.n} · ${k.covered.pct}%`}
-            sub="Detection + prevention + response present"
-            accent={C.green}
-          />
-          <KpiCard
-            label="Partially covered"
-            value={`${k.partial.n} · ${k.partial.pct}%`}
-            sub="One or two triad legs present"
-            accent={C.amber}
-          />
-          <KpiCard
-            label="Blind spots"
-            value={`${k.blindSpots.n} · ${k.blindSpots.pct}%`}
-            sub="No meaningful coverage"
-            accent={C.red}
-          />
-        </div>
-
-        {/* Charts */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 18,
-            marginBottom: 18,
-          }}
-          className="dash-charts"
-        >
-          <Section
-            title="Coverage by tactic"
-            desc="Where the kill chain is strong and where it breaks."
-          >
-            <div style={{ position: "relative", height: 340 }}>
-              <TacticBarChart byTactic={data.rollup.by_tactic} />
-            </div>
-          </Section>
-          <Section
-            title="Overall coverage mix"
-            desc={
-              (data.rollup.pending_review ?? 0) > 0
-                ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
-                  `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
-                  `held out of this figure pending evidence review, so it is a percentage of what can be ` +
-                  `claimed today — not of the whole catalogue.`
-                : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`
-            }
-          >
-            <div style={{ position: "relative", height: 340 }}>
-              <CoverageMixDonut rollup={data.rollup} />
-            </div>
-          </Section>
-        </div>
-
-        {/* DPR triad */}
+      {/* Charts */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 18,
+          marginBottom: 18,
+        }}
+        className="dash-charts"
+      >
         <Section
-          title="Detect · Prevent · Respond posture"
-          desc="A technique is fully covered only when all three legs are present."
+          title="Coverage by tactic"
+          desc="Where the kill chain is strong and where it breaks."
+        >
+          <div style={{ position: "relative", height: 340 }}>
+            <TacticBarChart byTactic={data.rollup.by_tactic} />
+          </div>
+        </Section>
+        <Section
+          title="Overall coverage mix"
+          desc={
+            (data.rollup.pending_review ?? 0) > 0
+              ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
+                `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
+                `held out of this figure pending evidence review, so it is a percentage of what can be ` +
+                `claimed today — not of the whole catalogue.`
+              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`
+          }
+        >
+          <div style={{ position: "relative", height: 340 }}>
+            <CoverageMixDonut rollup={data.rollup} />
+          </div>
+        </Section>
+      </div>
+
+      {/* DPR triad */}
+      <Section
+        title="Detect · Prevent · Respond posture"
+        desc="A technique is fully covered only when all three legs are present."
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: 14,
+          }}
+          className="dash-triad"
+        >
+          <TriadCard
+            title="Detect"
+            leg={dpr.detect}
+            total={dpr.total}
+            color={C.accent2}
+            desc="Telemetry catches the technique — EDR, NDR, SIEM, or audit logs."
+          />
+          <TriadCard
+            title="Prevent"
+            leg={dpr.prevent}
+            total={dpr.total}
+            color={C.accent}
+            desc="A control reduces the chance the technique succeeds."
+          />
+          <TriadCard
+            title="Respond"
+            leg={dpr.respond}
+            total={dpr.total}
+            color={C.green}
+            desc="An automated playbook or runbook fires — not just manual triage."
+          />
+        </div>
+      </Section>
+
+      {/* Blind spots */}
+      {blind.length > 0 ? (
+        <Section
+          title="What you're blind to today"
+          pill={`${blind.length} uncovered`}
+          desc="Techniques with no meaningful detection, prevention, or response."
         >
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
+              gridTemplateColumns: "repeat(2, 1fr)",
               gap: 14,
             }}
-            className="dash-triad"
+            className="dash-blind"
           >
-            <TriadCard
-              title="Detect"
-              leg={dpr.detect}
-              total={dpr.total}
-              color={C.accent2}
-              desc="Telemetry catches the technique — EDR, NDR, SIEM, or audit logs."
-            />
-            <TriadCard
-              title="Prevent"
-              leg={dpr.prevent}
-              total={dpr.total}
-              color={C.accent}
-              desc="A control reduces the chance the technique succeeds."
-            />
-            <TriadCard
-              title="Respond"
-              leg={dpr.respond}
-              total={dpr.total}
-              color={C.green}
-              desc="An automated playbook or runbook fires — not just manual triage."
-            />
-          </div>
-        </Section>
-
-        {/* Blind spots */}
-        {blind.length > 0 ? (
-          <Section
-            title="What you're blind to today"
-            pill={`${blind.length} uncovered`}
-            desc="Techniques with no meaningful detection, prevention, or response."
-          >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, 1fr)",
-                gap: 14,
-              }}
-              className="dash-blind"
-            >
-              {blind.map((t) => (
+            {blind.map((t) => (
+              <div
+                key={t.code}
+                style={{
+                  background: C.bg2,
+                  border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${C.red}`,
+                  borderRadius: 12,
+                  padding: "16px 18px",
+                }}
+              >
                 <div
-                  key={t.code}
                   style={{
-                    background: C.bg2,
-                    border: `1px solid ${C.border}`,
-                    borderLeft: `3px solid ${C.red}`,
-                    borderRadius: 12,
-                    padding: "16px 18px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 10,
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          fontFamily: "ui-monospace, Menlo, monospace",
-                          fontSize: 11,
-                          color: C.muted,
-                        }}
-                      >
-                        {t.code}
-                      </div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>
-                        {t.name}
-                      </div>
-                    </div>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        textTransform: "uppercase",
-                        letterSpacing: ".08em",
-                        padding: "3px 8px",
-                        borderRadius: 999,
-                        background: "rgba(239,68,68,.18)",
-                        color: "#fecaca",
-                      }}
-                    >
-                      {t.tactic_name}
-                    </span>
-                  </div>
-                  {t.rationale ? (
+                  <div>
                     <div
                       style={{
-                        fontSize: 12.5,
-                        color: C.muted,
-                        lineHeight: 1.55,
-                        marginTop: 8,
-                      }}
-                    >
-                      {t.rationale}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </Section>
-        ) : null}
-
-        {/* Technique matrix */}
-        <Section
-          title="Per-technique coverage matrix"
-          pill={`${data.techniques.length} techniques`}
-        >
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-              marginBottom: 12,
-            }}
-          >
-            <input
-              aria-label="Search techniques"
-              placeholder="Search technique ID, name, or tool…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              style={{ ...input, flex: 1, minWidth: 260 }}
-            />
-            <select
-              aria-label="Filter by tactic"
-              value={tactic}
-              onChange={(e) => setTactic(e.target.value)}
-              style={input}
-            >
-              <option value="">All tactics</option>
-              {tactics.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Filter by coverage"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              style={input}
-            >
-              <option value="">All coverage</option>
-              <option value="covered">Covered</option>
-              <option value="partial">Partial</option>
-              <option value="gap">Uncovered</option>
-              <option value="not_applicable">N/A</option>
-            </select>
-          </div>
-          <div
-            style={{
-              maxHeight: 560,
-              overflowY: "auto",
-              border: `1px solid ${C.border}`,
-              borderRadius: 10,
-            }}
-          >
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                fontSize: 12.5,
-              }}
-            >
-              <thead>
-                <tr>
-                  {[
-                    "ID",
-                    "Technique",
-                    "Tactic",
-                    "Coverage",
-                    "D·P·R",
-                    "Detection",
-                    "Prevention",
-                    "Response",
-                  ].map((h) => (
-                    <th
-                      key={h}
-                      style={{
-                        position: "sticky",
-                        top: 0,
-                        background: C.bg2,
-                        color: C.muted,
-                        textAlign: "left",
-                        padding: "10px 12px",
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        letterSpacing: ".06em",
+                        fontFamily: "ui-monospace, Menlo, monospace",
                         fontSize: 11,
-                        borderBottom: `1px solid ${C.border}`,
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((t) => (
-                  <MatrixRow key={t.code} t={t} />
-                ))}
-                {rows.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={8}
-                      style={{
-                        padding: 16,
                         color: C.muted,
-                        textAlign: "center",
                       }}
                     >
-                      No techniques match your filters.
-                    </td>
-                  </tr>
+                      {t.code}
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>
+                      {t.name}
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: ".08em",
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      background: "rgba(239,68,68,.18)",
+                      color: "#fecaca",
+                    }}
+                  >
+                    {t.tactic_name}
+                  </span>
+                </div>
+                {t.rationale ? (
+                  <div
+                    style={{
+                      fontSize: 12.5,
+                      color: C.muted,
+                      lineHeight: 1.55,
+                      marginTop: 8,
+                    }}
+                  >
+                    {t.rationale}
+                  </div>
                 ) : null}
-              </tbody>
-            </table>
+              </div>
+            ))}
           </div>
         </Section>
+      ) : null}
 
-        <footer
+      {/* Technique matrix */}
+      <Section
+        title="Per-technique coverage matrix"
+        pill={`${data.techniques.length} techniques`}
+      >
+        <div
           style={{
-            color: C.muted,
-            fontSize: 11.5,
-            textAlign: "center",
-            marginTop: 24,
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 12,
           }}
         >
-          SHIELD · Confidential · Coverage as of the released assessment.
-        </footer>
-      </div>
+          <input
+            aria-label="Search techniques"
+            placeholder="Search technique ID, name, or tool…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ ...input, flex: 1, minWidth: 260 }}
+          />
+          <select
+            aria-label="Filter by tactic"
+            value={tactic}
+            onChange={(e) => setTactic(e.target.value)}
+            style={input}
+          >
+            <option value="">All tactics</option>
+            {tactics.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter by coverage"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={input}
+          >
+            <option value="">All coverage</option>
+            <option value="covered">Covered</option>
+            <option value="partial">Partial</option>
+            <option value="gap">Uncovered</option>
+            <option value="not_applicable">N/A</option>
+          </select>
+        </div>
+        <div
+          style={{
+            maxHeight: 560,
+            overflowY: "auto",
+            border: `1px solid ${C.border}`,
+            borderRadius: 10,
+          }}
+        >
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: 12.5,
+            }}
+          >
+            <thead>
+              <tr>
+                {[
+                  "ID",
+                  "Technique",
+                  "Tactic",
+                  "Coverage",
+                  "D·P·R",
+                  "Detection",
+                  "Prevention",
+                  "Response",
+                ].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      position: "sticky",
+                      top: 0,
+                      background: C.bg2,
+                      color: C.muted,
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: ".06em",
+                      fontSize: 11,
+                      borderBottom: `1px solid ${C.border}`,
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((t) => (
+                <MatrixRow key={t.code} t={t} />
+              ))}
+              {rows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={8}
+                    style={{
+                      padding: 16,
+                      color: C.muted,
+                      textAlign: "center",
+                    }}
+                  >
+                    No techniques match your filters.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </Section>
 
       {/* Narrow screens: collapse the multi-column grids. */}
       <style>{`
@@ -647,7 +579,7 @@ export function AttackDashboard({
           .dash-charts, .dash-triad, .dash-blind { grid-template-columns: 1fr !important; }
         }
       `}</style>
-    </div>
+    </DashShell>
   );
 }
 

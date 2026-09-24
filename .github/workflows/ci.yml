@@ -671,6 +671,40 @@ jobs:
         working-directory: e2e
         run: npx playwright test
 
+      # #487: a user working on one page was signed out once the access token
+      # expired, because a server-side `auth()` rotated the refresh token and
+      # discarded the new one. The regression spec needs to span several
+      # expiries, so it runs AFTER the main suite against api+web recreated
+      # with a 60 s access TTL. Only these two services change; the database
+      # and its seed carry over. The spec itself fails if the TTL is not short,
+      # so a skipped recreate cannot turn into a vacuous pass.
+      - name: Recreate api and web with a 60-second access token (#487)
+        env:
+          NEXTAUTH_SECRET: ci-only-not-a-real-secret-1234567890
+          JWT_ACCESS_TTL_SECONDS: "60"
+        run: |
+          docker compose up -d --force-recreate api web
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/health >/dev/null && curl -sf http://localhost:3000 >/dev/null; then
+              echo "api and web up after ${i} attempt(s)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::api/web did not come back after the short-TTL recreate"
+          docker compose logs api web
+          exit 1
+
+      - name: Session survives several access-token expiries (#487)
+        working-directory: e2e
+        env:
+          E2E_SESSION_TTL: "1"
+        # Its own output dir: Playwright empties `test-results/` at the start of
+        # every run, which would delete the main suite's retry traces before the
+        # upload step below.
+        # ONLY the TTL spec: the sign-out race spec assumes no rotation is due
+        # (true at the default TTL, in the main suite) and a 60 s TTL breaks that.
+        run: npx playwright test session/session-survives-refresh.spec.ts --output test-results-487
+
       - name: Upload Playwright report and traces
         if: always()
         uses: actions/upload-artifact@v7
@@ -679,6 +713,7 @@ jobs:
           path: |
             e2e/playwright-report/
             e2e/test-results/
+            e2e/test-results-487/
           retention-days: 7
           if-no-files-found: ignore
 

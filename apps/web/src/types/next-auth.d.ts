@@ -9,8 +9,9 @@ declare module "next-auth" {
     accessToken?: string;
     error?: string;
     /**
-     * When this session can no longer be renewed — the refresh token's expiry.
-     * Past it no rotation can help and the user WILL be signed out, so it is the
+     * When this session ENDS: the earlier of the refresh token's expiry and the
+     * forced re-auth ceiling (`reauthAt`), as `sessionEndsAt` computes it. Past
+     * it no rotation can help and the user WILL be signed out, so it is the
      * only honest thing to count down to in the UI.
      */
     sessionExpiresAt?: string;
@@ -21,6 +22,8 @@ declare module "next-auth" {
     refreshToken?: string;
     accessExpiresAt?: string;
     refreshExpiresAt?: string;
+    /** The forced re-auth ceiling (#498). */
+    reauthAt?: string;
   }
 }
 
@@ -31,6 +34,7 @@ declare module "next-auth/jwt" {
     refreshToken?: string;
     accessExpiresAt?: string;
     refreshExpiresAt?: string;
+    reauthAt?: string;
     error?: string;
   }
 }

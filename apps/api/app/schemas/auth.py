@@ -34,6 +34,12 @@ class TokenPairResponse(BaseModel):
     token_type: str = "bearer"  # noqa: S105 - OAuth 2.0 token_type field, not a credential
     access_expires_at: datetime
     refresh_expires_at: datetime
+    # #498. When the forced re-auth ceiling ends this session: the login's
+    # `auth_time` plus `shield_forced_reauth_seconds`. `refresh_expires_at`
+    # rolls forward on every rotation and this does not, so a session's real
+    # end is the EARLIER of the two. Additive and optional: no consumer branches
+    # on its presence (grepped before it was added).
+    reauth_at: datetime | None = None
 
 
 class LoginResult(BaseModel):
@@ -53,6 +59,7 @@ class LoginResult(BaseModel):
     token_type: str = "bearer"  # noqa: S105 - OAuth 2.0 token_type field, not a credential
     access_expires_at: datetime | None = None
     refresh_expires_at: datetime | None = None
+    reauth_at: datetime | None = None
     mfa_required: bool = False
     mfa_pending_token: str | None = None  # noqa: S105 - short-lived JWT, not a static credential
     # Set when SHIELD_AUTH_REQUIRE_MFA is on and the user has NOT yet enrolled.

@@ -6,10 +6,14 @@
  */
 
 /**
- * Stamped on the NextAuth session token when the daily forced-reauth ceiling
- * is hit or the refresh token was rotated out (backend reason
- * `reauth_required` / `refresh_reused`). The UI treats it as "sign in again"
- * with friendly copy, distinct from a generic refresh failure.
+ * Stamped on the NextAuth session token when the session is over. Three
+ * causes: the backend refused a refresh (`reauth_required` for the daily
+ * forced-reauth ceiling, `refresh_reused` for a rotated-out token), OR the
+ * `jwt` callback found the session's end already passed -- the ceiling or an
+ * idle-lapsed refresh expiry -- and ended it WITHOUT calling the backend, so
+ * that cause leaves no `auth.reauth_required` line in the API logs. The UI
+ * treats it as "sign in again" with friendly copy, distinct from a generic
+ * refresh failure.
  */
 export const REAUTH_REQUIRED_ERROR = "reauth_required";
 

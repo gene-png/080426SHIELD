@@ -29,3 +29,29 @@ export function parseDateOnly(value: string | null | undefined): Date | null {
   const date = new Date(Number(y), Number(mo) - 1, Number(d));
   return Number.isNaN(date.getTime()) ? null : date;
 }
+
+// An INSTANT -- released, finalized, submitted, requested -- in UTC, with the
+// zone named, for the surfaces that show a time of day: the four deliverable
+// cards and the intake screens. The date-only surfaces showing the SAME
+// instants carry their own UTC formatters -- `dashboards/shared.tsx`,
+// `DeliverablesTable`, `IntakeOrgIndex`, `HomeDashboard`, `ResultsList` -- and
+// the lint rule keeps each of those naming its zone. Change the display zone in
+// all of them or in none, or one release reads as two days again. Unlike
+// `formatDateOnly`, which is right to use the viewer's zone for a calendar date.
+const INSTANT_FMT = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
+
+/** Format an instant in UTC, naming the zone; "—" for none, the raw text if unparseable. */
+export function formatInstantUtc(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : INSTANT_FMT.format(d);
+}

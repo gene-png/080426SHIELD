@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DeliverableCard } from "./DeliverableCard";
 import type { Deliverable } from "@/lib/tech_debt/types";
@@ -98,5 +98,35 @@ describe("DeliverableCard finalize gate", () => {
       />,
     );
     expect(finalizeButton()).toBeDisabled();
+  });
+});
+
+describe("DeliverableCard's release time", () => {
+  const savedTz = process.env.TZ;
+  afterEach(() => {
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+    vi.resetModules();
+  });
+
+  // The admin deliverables table shows this release in UTC; the card must
+  // agree, not show the viewer's day beside it (timezone round 1).
+  it("shows the release in UTC, and says so, west of UTC", async () => {
+    // Set the zone, THEN import: the shared formatter is built at import.
+    process.env.TZ = "America/Los_Angeles";
+    vi.resetModules();
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(
+      "America/Los_Angeles",
+    );
+    const { DeliverableCard: Fresh } = await import("./DeliverableCard");
+    render(
+      <Fresh
+        serviceId="s1"
+        capabilityListStatus="released"
+        deliverable={deliverable({ released_at: "2026-09-23T01:30:00Z" })}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Released Sep 23, 2026.*UTC/)).toBeTruthy();
   });
 });

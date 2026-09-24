@@ -1,0 +1,91 @@
+# 2026-09-23: Release dates read the same day for every reader (UTC)
+
+Branch `fix/timezone-utc`, base `f231b0e`.
+
+## What was wrong
+
+The client dashboards' "Released …" badge formatted an instant in the
+VIEWER's zone. A release at 02:00 UTC read as the day before for anyone west
+of UTC, so one release read as different days to different readers, and as a
+different day from the UTC the API stores. No `Intl.DateTimeFormat` in
+`apps/web/src` named a zone.
+
+It was two copies of the same defect. The other dashboards use `DashShell`'s badge.
+`AttackDashboard.tsx` carried a private badge and formatter. Pinning the shared
+one alone fixes those, leaves ATT&CK wrong, and re-tests clean on the
+dashboard the report came from.
+
+No exporter prints the release date. The dates the server does stamp are
+already UTC: a deliverable's file name at finalize (`utcnow().date()`) and the
+CSF playbook's "Generated" line.
+
+## What changed
+
+- **`dashboards/shared.tsx`**: the badge's formatter is pinned to
+  `timeZone: "UTC"`. `DashShell` takes an optional `footer`, so ATT&CK keeps
+  its own wording.
+- **`AttackDashboard.tsx`**: its private formatter and badge are gone, and it
+  renders inside `DashShell` like the others.
+- **The twins**: `DeliverablesTable`, `IntakeOrgIndex`, `HomeDashboard` and
+  `ResultsList` format the same instants. Three of them show `released_at`;
+  `IntakeOrgIndex` shows `intake_completed_at`. Each is pinned.
+- **Their twins in turn.** Pinning the admin table alone made one release
+  read as two days to one consultant. The admin deliverable cards and the
+  intake screens show the same `released_at`, `finalized_at` and
+  `intake_completed_at` through `toLocaleString`, in the viewer's zone. Round
+  1 of review caught this. Those sites now go through
+  `lib/dates.ts::formatInstantUtc`, which is UTC and names the zone, so every
+  surface showing one of those instants agrees:
+  - the four cards (`DeliverableCard` and its CSF, ZT and ATT&CK siblings);
+  - `IntakeQueue`, `IntakeSubmitted` and `Step6Review`. `IntakeQueue` also
+    covers each card's "Requested" time. The requests from the latest submit
+    carry the same instant as "Submitted", so in the viewer's zone the two
+    read as different days on one screen. Round 2 of review caught that.
+
+  `formatInstantUtc` spells the month ("Sep 23, 2026, 1:30:00 AM UTC"), as
+  the date-only surfaces do. A numeric month reads as a different day to a
+  day-first reader.
+- **The gate**: `apps/web/eslint/intl-timezone.js`, installed by
+  `eslint.config.js` for product code, refuses any `Intl.DateTimeFormat`, with
+  or without `new`, whose arguments carry no `timeZone` in an object literal.
+  It fails closed on options it cannot see into. Tests are exempt, because they
+  read the ambient zone on purpose. On its first run it found exactly the four
+  `Intl.DateTimeFormat` twins (`DeliverablesTable`, `IntakeOrgIndex`,
+  `HomeDashboard`, `ResultsList`). It cannot see the cards or the intake
+  screens: they used `toLocaleString`, which is out of its reach.
+
+## Proof
+
+The tests set `TZ` before importing the module, because the formatter is built
+at import, and they assert that the zone took. The runner's own zone is UTC,
+where a pinned and an unpinned formatter print the same day.
+
+| mutation | goes red |
+| --- | --- |
+| the shared formatter unpinned | both `formatDate` tests (west and east of UTC) and ATT&CK's badge test |
+| ATT&CK back on its own badge | ATT&CK's badge test |
+| the rule unwired from `eslint.config.js` | the wiring test, which lints through the real config |
+| the instant helper unpinned | its own test and `DeliverableCard`'s |
+| `DeliverableCard` back on `toLocaleString` | `DeliverableCard`'s |
+| the helper's month numeric again | both of those |
+
+The other call sites of `formatInstantUtc` have no zone test of their own.
+The lint rule cannot see a revert to `toLocaleString`. Filed as #510.
+
+## Residual
+
+`toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` on a `Date` also
+use the viewer's zone, and a syntax rule cannot tell a date from a price
+there. Filed as #507. What remains after this branch: message and inbox
+times, the audit log, and document upload dates (`IntakeDocumentsPanel`,
+`IntakeQueue`). These
+are times where the viewer's own clock is arguably the right answer, which is
+a product decision.
+
+The date-only surfaces show the UTC day without naming the zone, while the
+cards name it. Whether they should is a product decision, filed as #512.
+
+The lint rule matches the literal spellings every product site uses, and its
+header lists the spellings it cannot see.
+`lib/dates.ts::formatDateOnly` is correct as it is: it builds calendar dates at
+local midnight and formats them locally.

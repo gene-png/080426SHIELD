@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { formatDateOnly } from "./dates";
+import { formatDateOnly, formatInstantUtc } from "./dates";
 
 /**
  * A deadline entered as 2027-06-30 was rendering as 6/29/2027 for anyone west
@@ -9,6 +9,22 @@ import { formatDateOnly } from "./dates";
  * then formatting it in local time.
  */
 describe("formatDateOnly", () => {
+  // THE ZONE IS SET, or these prove nothing. The runner is UTC, where the
+  // defect -- `new Date(value).toLocaleDateString()` -- prints the right day
+  // anyway. `toLocaleDateString` reads the zone at call time, so no re-import
+  // is needed; the precondition asserts the zone took (timezone round 3).
+  const savedTz = process.env.TZ;
+  beforeEach(() => {
+    process.env.TZ = "America/Chicago";
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(
+      "America/Chicago",
+    );
+  });
+  afterEach(() => {
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+  });
+
   it("keeps a bare calendar date on its own day", () => {
     expect(formatDateOnly("2027-06-30")).toBe("6/30/2027");
   });
@@ -28,5 +44,43 @@ describe("formatDateOnly", () => {
     expect(formatDateOnly(null)).toBeNull();
     expect(formatDateOnly("")).toBeNull();
     expect(formatDateOnly("not-a-date")).toBeNull();
+  });
+});
+
+/**
+ * Instants -- released, finalized, submitted -- are formatted in UTC and SAY
+ * so, on every surface that shows them. Round 1 of review on the timezone
+ * branch: pinning the admin table to UTC while the admin card beside it still
+ * used the viewer's zone made one release read as two days to one consultant.
+ */
+describe("formatInstantUtc", () => {
+  const savedTz = process.env.TZ;
+  afterEach(() => {
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+    vi.resetModules();
+  });
+
+  it("prints the UTC day and names the zone, wherever the viewer is", async () => {
+    // The formatter is built at IMPORT, so the zone is set first and the module
+    // re-imported: imported statically, it was built in the runner's UTC and
+    // this passed with the pin removed (caught by red-on-revert).
+    process.env.TZ = "America/Los_Angeles";
+    vi.resetModules();
+    // The precondition: the zone took, or this proves nothing in a UTC runner.
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(
+      "America/Los_Angeles",
+    );
+    const { formatInstantUtc: fresh } = await import("./dates");
+    const text = fresh("2026-09-23T01:30:00Z");
+    // The month is SPELLED: "9/10/2026" reads as 9 October to a day-first
+    // reader, and the table and dashboards already say "Sep 23, 2026".
+    expect(text).toMatch(/Sep 23, 2026/);
+    expect(text).toMatch(/UTC/);
+  });
+
+  it("returns an em dash for no value and the raw text for a bad one", () => {
+    expect(formatInstantUtc(null)).toBe("—");
+    expect(formatInstantUtc("not-a-date")).toBe("not-a-date");
   });
 });
