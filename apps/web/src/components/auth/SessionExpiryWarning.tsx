@@ -19,9 +19,11 @@ import * as React from "react";
  * five-minute notice does NOT suppress the one-minute one — that is the point
  * at which "I'll deal with it" stops being a safe answer.
  *
- * `sessionExpiresAt` is the refresh token's expiry: the moment past which no
- * rotation can save the session. The access token's own expiry is deliberately
- * NOT used — it is renewed silently every hour and means nothing to a user.
+ * `sessionExpiresAt` is the EARLIER of the refresh token's expiry and the
+ * forced re-auth ceiling (`reauth_at`): the moment past which no rotation can
+ * save the session, and at which the `jwt` callback ends it. The access token's own expiry is deliberately
+ * NOT used — it is renewed silently (every 15 minutes under the compose default)
+ * and means nothing to a user.
  */
 
 /** Warning thresholds, longest first. Rendered as "5 minutes" / "1 minute". */
@@ -35,11 +37,95 @@ function minutesLabel(msRemaining: number): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+/** How often to re-read the stored expiry from `/api/session-expiry`. */
+const STORED_EXPIRY_POLL_MS = 60_000;
+
+/** How often to re-ask the server once the browser thinks the end has come. */
+const DEADLINE_RECHECK_MS = 5_000;
+
+/** What `/api/session-expiry` answered. */
+interface StoredExpiry {
+  sessionExpiresAt: string | null;
+  /** Decided on the SERVER's clock, the one the `jwt` callback ends it on. */
+  ended: boolean;
+}
+
+/**
+ * The expiry stored in the session cookie, read without running any auth
+ * callback (#498). The `useSession` cache refetches only on focus, and since
+ * #487 persists rotations into the cookie, the refresh expiry rolls forward
+ * there while the cache keeps the value from sign-in. Reading
+ * `/api/auth/session` instead would refresh and extend the session, so a
+ * polling tab would never idle out; `/api/session-expiry` only decodes.
+ *
+ * `stored` is null until the first successful read, or while every read has
+ * failed; the caller then falls back to the cached value, which is the
+ * behaviour before this existed. After a success, a failed read keeps the last
+ * stored value. `recheck` reads again now.
+ */
+function useStoredExpiry(enabled: boolean): {
+  stored: StoredExpiry | null;
+  recheck: () => void;
+} {
+  const [stored, setStored] = React.useState<StoredExpiry | null>(null);
+  const live = React.useRef(true);
+  React.useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+
+  const recheck = React.useCallback(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/session-expiry", { cache: "no-store" });
+        if (!res.ok) {
+          // The status is logged as a separate value, never built into a
+          // sentence (see client-surfaces-never-render-an-internal-string).
+          console.warn(
+            "[auth.session-expiry] read failed; status:",
+            res.status,
+          );
+          return;
+        }
+        const body = (await res.json()) as {
+          sessionExpiresAt?: string | null;
+          ended?: boolean;
+        };
+        if (live.current) {
+          setStored({
+            sessionExpiresAt: body.sessionExpiresAt ?? null,
+            ended: body.ended === true,
+          });
+        }
+      } catch (err) {
+        // Stated, not swallowed: the warning falls back to the cached expiry.
+        console.warn(
+          "[auth.session-expiry] could not read the stored expiry",
+          err,
+        );
+      }
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    if (!enabled) return;
+    recheck();
+    const id = setInterval(recheck, STORED_EXPIRY_POLL_MS);
+    return () => clearInterval(id);
+  }, [enabled, recheck]);
+
+  return { stored, recheck };
+}
+
 export function SessionExpiryWarning(): React.JSX.Element | null {
   const { data: session } = useSession();
-  const expiresAt = session?.sessionExpiresAt
-    ? Date.parse(session.sessionExpiresAt)
-    : null;
+  const { stored, recheck } = useStoredExpiry(
+    Boolean(session?.sessionExpiresAt),
+  );
+  const source = stored?.sessionExpiresAt ?? session?.sessionExpiresAt;
+  const expiresAt = source ? Date.parse(source) : null;
 
   const [now, setNow] = React.useState(() => Date.now());
   // The largest threshold the user has already dismissed. Starts at Infinity so
@@ -55,10 +141,69 @@ export function SessionExpiryWarning(): React.JSX.Element | null {
     return () => clearInterval(id);
   }, [expiresAt]);
 
+  // When the session ends, the page has to learn it. `useSession` refetches
+  // only on focus, so without this a user who never leaves the page watched
+  // the countdown vanish and then typed into 401s with no sign-out and no
+  // reason.
+  //
+  // Only the SERVER's `ended` (from `/api/session-expiry`, decided on the
+  // clock the `jwt` callback uses) triggers the sign-out, whatever the
+  // browser's clock says: acting on the browser's clock either refreshed a
+  // live session (round 5 on #499) or left a dead one under a countdown
+  // (round 6). The browser's clock only decides when to re-ask sooner than
+  // the minute poll.
+  //
+  // It signs out DIRECTLY, with the reason the guard would give, rather than
+  // asking `update()` to have the guard do it (rounds 4-6): `update()`
+  // resolves `undefined` while a fetch is in flight and `null` both for "no
+  // session" and for a failed fetch, and next-auth drops a null -- so a tab
+  // whose cookie was gone looped on it for good (round 7).
+  const reachedDeadline =
+    expiresAt !== null && !Number.isNaN(expiresAt) && now >= expiresAt;
+  const serverSaysEnded = stored?.ended === true;
+
+  React.useEffect(() => {
+    if (!reachedDeadline || serverSaysEnded) return;
+    recheck();
+    const id = setInterval(recheck, DEADLINE_RECHECK_MS);
+    return () => clearInterval(id);
+  }, [reachedDeadline, serverSaysEnded, recheck]);
+
+  // Once per page: `signOut` navigates away. A REJECTED one is retried after
+  // DEADLINE_RECHECK_MS -- `attempt` re-runs this effect -- so a network blip
+  // cannot leave the tab on a dead session for good. `signingOut` is cleared
+  // the moment it fails, not when the retry fires, so a retry cancelled by
+  // `ended` flipping back cannot leave the page believing it is still signing
+  // out. NOT every failure rejects: a failed CSRF fetch inside `signOut`
+  // resolves and navigates to next-auth's error page instead (#502).
+  const signingOut = React.useRef(false);
+  const [attempt, setAttempt] = React.useState(0);
+  React.useEffect(() => {
+    if (!serverSaysEnded || signingOut.current) return;
+    signingOut.current = true;
+    console.info("[auth.session-expiry] the server says ended; signing out");
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    signOut({ callbackUrl: "/sign-in?reason=session_expired" }).catch(
+      (err: unknown) => {
+        // Stated, not swallowed: tried again shortly.
+        console.warn("[auth.session-expiry] sign-out failed; retrying", err);
+        signingOut.current = false;
+        retry = setTimeout(() => setAttempt((n) => n + 1), DEADLINE_RECHECK_MS);
+      },
+    );
+    return () => {
+      if (retry !== undefined) clearTimeout(retry);
+    };
+  }, [serverSaysEnded, attempt]);
+
   if (expiresAt === null || Number.isNaN(expiresAt)) return null;
+  // The session is over; a countdown would claim time the user does not have.
+  if (serverSaysEnded) return null;
 
   const remaining = expiresAt - now;
-  if (remaining <= 0) return null; // SessionExpiryGuard owns the actual sign-out.
+  // Past the browser's own deadline but not yet `ended` by the server: say
+  // nothing. The sign-out effect above acts when the server says so.
+  if (remaining <= 0) return null;
 
   // The TIGHTEST threshold we are inside and have not dismissed. Searched
   // shortest-first: a plain `.find` over a longest-first list always returns the

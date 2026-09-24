@@ -137,11 +137,21 @@ def _issue_pair(
         refresh_jti=str(refresh_payload.jti),
         auth_time=refresh_payload.auth_time.isoformat() if refresh_payload.auth_time else None,
     )
+    # Anchored to the refresh token's `auth_time` -- the login time, carried
+    # forward on every refresh -- which is what `refresh()` enforces the
+    # ceiling against. Stated on the wire so the web can count down to the
+    # session's real end (#498).
+    reauth_at = (
+        refresh_payload.auth_time + timedelta(seconds=get_settings().shield_forced_reauth_seconds)
+        if refresh_payload.auth_time is not None
+        else None
+    )
     return TokenPairResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         access_expires_at=access_payload.exp,
         refresh_expires_at=refresh_payload.exp,
+        reauth_at=reauth_at,
     )
 
 
@@ -152,6 +162,7 @@ def _login_result_from_pair(pair: TokenPairResponse) -> LoginResult:
         refresh_token=pair.refresh_token,
         access_expires_at=pair.access_expires_at,
         refresh_expires_at=pair.refresh_expires_at,
+        reauth_at=pair.reauth_at,
     )
 
 
