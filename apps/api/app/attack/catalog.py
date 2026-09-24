@@ -4,9 +4,9 @@ Per D-007: encode the full Enterprise matrix rather than a curated
 subset. The catalog is reference data; only the engagement's coverage
 status per technique lands in `attack_coverage` rows.
 
-Counts are what the tables below hold, so they are not written here. This
-header said "196 parent techniques / 411 sub-techniques / 607 total" and all
-three were wrong. Measured on 2026-09-23: 14 tactics, 193 parents, 440
+Counts are whatever the tables below hold; this header does not keep them
+current. It said "196 parent techniques / 411 sub-techniques / 607 total", and
+all three were wrong. A dated measurement, 2026-09-23: 14 tactics, 193 parents, 440
 sub-techniques, 633 techniques in `TECHNIQUES`. `_RAW_TECHNIQUES` holds 636
 rows, because three parents appear under more than one tactic and
 `_dedupe_and_merge` folds them together. Re-derive rather than trust that, in the api container:

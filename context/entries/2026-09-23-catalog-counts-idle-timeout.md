@@ -2,7 +2,7 @@
 
 Branch `fix/catalog-counts-idle-timeout`, base `f231b0e`.
 
-## `attack/catalog.py` stated wrong counts
+## `attack/catalog.py` stated wrong counts (#183)
 
 The module header said 196 parent techniques, 411 sub-techniques and 607 in
 total, for an "ATT&CK Enterprise v15 baseline". Measured on 2026-09-23, the
@@ -29,9 +29,21 @@ when the session is idle. A session idle for longer than
 `jwt_refresh_ttl_seconds` since its last rotation cannot be renewed. A second
 knob for the same control would be two values that can disagree.
 
-`docs/security.md` now says so, including the part a reader could miss.
-Compose sets that TTL to 1800 (30 minutes). The config default outside compose
-is 86400 (24 hours). The README's settings table and the Keycloak README are
+`docs/security.md` now says so, including the parts a reader could miss.
+The bound is counted from the last token rotation, not the last activity, so
+under compose (access 900, refresh 1800) an idle session gets 15-30 minutes.
+At the config defaults (access 3600, refresh 86400) it gets 23-24 hours: no
+tighter than the daily ceiling, so **outside compose there is no idle control
+beyond the ceiling.** And on `main`, a session whose refresh has lapsed is not
+signed out: the page stays up and its calls fail. PR #499 adds that. Round 1
+of review caught the first version of this calling the control "Implemented".
+Whether SHIELD needs a real idle control outside compose is the owner's
+decision, filed as #516.
+
+The same subject was stated in the README's risk-acceptance log ("a 30-minute
+refresh-token TTL that functions as the idle timeout") and in
+`docs/architecture.md`. Both are corrected, and so is the access-TTL row beside
+the idle row, which said the config does not hold 900 when compose does. The README's settings table and the Keycloak README are
 corrected to match. `Settings` ignores unknown variables, so an `.env` that
 still sets `SHIELD_IDLE_TIMEOUT_SECONDS` boots unchanged. `SPRINT_3.md` still
 names the setting; it is a closed sprint's plan and is not edited.
