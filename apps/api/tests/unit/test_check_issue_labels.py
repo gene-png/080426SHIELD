@@ -1,9 +1,9 @@
 """The issue-labels gate: every OPEN issue carries `mvp-blocking` plus exactly one
-tier, or `unowned-with-reason`.
+tier, or `unowned-with-reason`, or `post-mvp`.
 
 CLAUDE.md (the filing rule): every new issue carries `mvp-blocking` plus one of
 `tier-1` / `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the
-body. An issue without `mvp-blocking` is not on the board; one with it and no
+body, OR `post-mvp`. An issue without `mvp-blocking` is not on the board; one with it and no
 tier "has no place in the ordering". Nothing enforced that, so both happened.
 The gate checks LABELS only -- it does not read the body.
 
@@ -11,6 +11,10 @@ The table was written BEFORE the predicate, from the rule's text. The rows
 mixing `unowned-with-reason` with `mvp-blocking` were added after review found
 the first predicate let that pair skip the tier check, which is the one
 combination the order of the `if`s decides.
+
+The `post-mvp` rows changed on 2026-09-24, when the rule named `post-mvp` as a
+third legitimate state (D-086). They were written as `off_board` from the
+rule's text as it then stood, and they flip because the rule did.
 """
 
 from __future__ import annotations
@@ -46,8 +50,20 @@ _TABLE = [
     (set(), "off_board"),
     ({"tier-3"}, "off_board"),
     ({"bug"}, "off_board"),
-    # post-mvp is a state the rule does not name.
-    ({"tier-3", "post-mvp"}, "off_board"),
+    # Deliberately deferred past the MVP: the third state (D-086). A tier is
+    # allowed and not required -- the deferral is the decision.
+    ({"post-mvp"}, None),
+    ({"tier-3", "post-mvp"}, None),
+    # ...and NOT together with `mvp-blocking`: "blocks the MVP" and "deferred
+    # past it" contradict each other, whatever the tiers. Unlike
+    # `unowned-with-reason` + `mvp-blocking` above, which is a coherent state
+    # (a blocker nobody owns). The live instance this guards against is a
+    # half-done move to `post-mvp` that forgot to remove `mvp-blocking`.
+    ({"mvp-blocking", "post-mvp", "tier-3"}, "deferred_on_board"),
+    ({"mvp-blocking", "post-mvp"}, "deferred_on_board"),
+    ({"mvp-blocking", "post-mvp", "tier-2", "tier-3"}, "deferred_on_board"),
+    # A label that merely CONTAINS the word is not the state.
+    ({"not-post-mvp"}, "off_board"),
 ]
 
 
@@ -88,7 +104,7 @@ def test_a_clean_board_exits_zero_and_says_how_many_it_read(monkeypatch, capsys)
         [[_issue(1, "mvp-blocking", "tier-1"), _issue(2, "unowned-with-reason")]],
     )
     assert code == 0
-    assert "clean -- 2 open issue(s)" in out
+    assert "clean -- 2 open issue(s), each on the board, unowned-with-reason, or post-mvp" in out
 
 
 @pytest.mark.unit
@@ -99,6 +115,26 @@ def test_a_violation_exits_one_and_names_the_issue_and_the_fault(monkeypatch, ca
     assert code == 1
     assert "#9: carries `mvp-blocking` but no tier" in out
     assert "#7" not in out
+
+
+@pytest.mark.unit
+def test_a_post_mvp_issue_is_clean_and_the_off_board_message_names_all_three_states(
+    monkeypatch, capsys
+) -> None:
+    code, out = _run(monkeypatch, capsys, [[_issue(1, "post-mvp", "tier-3"), _issue(2, "tier-3")]])
+    assert code == 1
+    assert "#1" not in out
+    assert (
+        "#2: carries neither `mvp-blocking` + a tier, nor `unowned-with-reason`, "
+        "nor `post-mvp`, so it is not on the board" in out
+    )
+
+
+@pytest.mark.unit
+def test_a_deferred_issue_still_on_the_board_names_both_labels(monkeypatch, capsys) -> None:
+    code, out = _run(monkeypatch, capsys, [[_issue(4, "mvp-blocking", "post-mvp", "tier-2")]])
+    assert code == 1
+    assert "#4: carries both `mvp-blocking` and `post-mvp`" in out
 
 
 @pytest.mark.unit

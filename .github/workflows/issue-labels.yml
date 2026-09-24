@@ -1,8 +1,8 @@
 name: Issue labels
 
 # Every OPEN issue carries `mvp-blocking` plus exactly one tier, or
-# `unowned-with-reason`. That is CLAUDE.md's filing rule, and nothing enforced
-# it: the first run of this check found 148 of 181 open issues breaking it
+# `unowned-with-reason`, or `post-mvp` (the third state since D-086). That is
+# CLAUDE.md's filing rule, and nothing enforced it: the first run of this check found 148 of 181 open issues breaking it
 # (2026-09-23) -- invisible to, or unplaced on, the board, which is the only
 # view used to decide what to work on.
 #
@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   filing-rule:
-    name: Every open issue is on the board or unowned-with-reason
+    name: Every open issue is on the board, unowned-with-reason, or post-mvp
     runs-on: ubuntu-latest
     # The rule covers OPEN issues; a label change on a closed one is not its
     # business, and would otherwise be a could-not-look (exit 2).
