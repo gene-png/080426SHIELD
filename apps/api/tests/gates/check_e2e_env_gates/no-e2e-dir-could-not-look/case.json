@@ -1,0 +1,10 @@
+{
+ "incident": "No e2e/ directory: the wrong root must be could-not-look, never an empty clean scan (D-051).",
+ "expect": 2,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}"
+ ],
+ "stdout_contains": "could not look"
+}

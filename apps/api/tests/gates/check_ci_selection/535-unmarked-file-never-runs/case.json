@@ -1,0 +1,12 @@
+{
+ "incident": "#540, first instance: the #535/#536 leak tests shipped with no unit mark, so CI's `pytest -m unit tests/unit` would have selected 0 of their 61 tests while every local run -- which named the file directly -- passed. An unmarked file must be a finding, named with its count.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}",
+  "--baseline",
+  "{dir}/baseline.json"
+ ],
+ "stdout_contains": "test_unmarked.py: 1 of 1"
+}

@@ -1,0 +1,11 @@
+{
+  "E2E_API_URL": {
+    "reason": "Configuration with a default (`?? \"http://localhost:8000\"` in session-survives-refresh.spec.ts), not a skip gate. That spec's real gate is E2E_SESSION_TTL, which ci.yml sets."
+  },
+  "E2E_OIDC": {
+    "reason": "#483: s26-oidc-login.spec.ts, a smoke spec, has never run in CI because no workflow sets this. Set it in a step with the OIDC stack up, or delete the spec; remove this entry either way."
+  },
+  "E2E_PERF": {
+    "reason": "#483: perf-admin-management.spec.ts (the screen #111 is about) has never run in CI because no workflow sets this. Set it in a scheduled job, or delete the spec; remove this entry either way."
+  }
+}

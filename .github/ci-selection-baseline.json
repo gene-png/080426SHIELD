@@ -1,0 +1,10 @@
+{
+  "tests/unit/test_admin_removal.py": {
+    "unselected": 8,
+    "reason": "#500: the whole file is unmarked, so CI's `pytest -m unit tests/unit` has never run it. Mark it (and fix what fails) or delete it; lower this entry as it shrinks."
+  },
+  "tests/unit/test_self_assessment.py": {
+    "unselected": 1,
+    "reason": "#500: one test in an otherwise-marked file carries no unit mark. Mark it or delete it, then remove this entry."
+  }
+}

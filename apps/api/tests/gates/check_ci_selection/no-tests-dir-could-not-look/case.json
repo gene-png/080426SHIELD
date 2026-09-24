@@ -1,0 +1,12 @@
+{
+ "incident": "#524's shape: run from a directory with no tests/unit, a cwd-relative gate must not read 'nothing unselected'. Could-not-look is 2.",
+ "expect": 2,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}",
+  "--baseline",
+  "{dir}/baseline.json"
+ ],
+ "stdout_contains": "could not look"
+}
