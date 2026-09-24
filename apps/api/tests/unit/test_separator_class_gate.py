@@ -292,3 +292,56 @@ def test_an_escape_mentioned_in_a_docstring_or_comment_is_not_a_call() -> None:
 def test_an_aliased_escape_is_still_caught(src: str) -> None:
     code, findings = check(src)
     assert code == 1, findings
+
+
+# --- review of ab80a13: the second signature's own holes ----------------------
+
+
+@pytest.mark.unit
+def test_a_file_that_tokenizes_but_does_not_parse_is_could_not_look_not_a_violation() -> None:
+    # "x = = 1" tokenizes cleanly and fails ast.parse. It used to come back as
+    # a `re.escape` finding with exit 1 -- the wrong cause AND the wrong code.
+    code, findings = check("x = = 1\n")
+    assert code == 2, findings
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "src",
+    [
+        "import re\ndef f(h):\n    return '|'.join(map(re.escape, h))\n",
+        "import re\ndef f(x):\n    esc = re.escape\n    return esc(x)\n",
+        "from re import escape\ndef f(h):\n    return list(map(escape, h))\n",
+    ],
+    ids=["map-reference", "alias-assignment", "from-import-reference"],
+)
+def test_escape_passed_as_a_value_is_caught_not_only_when_called(src: str) -> None:
+    code, findings = check(src)
+    assert code == 1, findings
+
+
+@pytest.mark.unit
+def test_a_nested_function_named_like_the_constructor_is_not_exempt() -> None:
+    src = (
+        "import re\n"
+        "def g(x):\n"
+        "    def _literal_pattern(y):\n"
+        "        return re.escape(y)\n"
+        "    return _literal_pattern(x)\n"
+    )
+    code, findings = check(src)
+    assert code == 1, findings
+
+
+@pytest.mark.unit
+def test_a_second_module_level_constructor_is_a_finding() -> None:
+    src = (
+        "import re\n"
+        "def _literal_pattern(y):\n"
+        "    return re.escape(y)\n"
+        "def _literal_pattern(y):\n"
+        "    return re.escape(y)\n"
+    )
+    code, findings = check(src)
+    assert code == 1, findings
+    assert any("more than one" in f for f in findings), findings

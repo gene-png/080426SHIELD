@@ -1179,31 +1179,48 @@ def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
 
 
 def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
-    """Replace exact-match names from `name_hints` (case-insensitive)."""
-    hints = [h for h in name_hints if h and len(h) >= 2 and h.strip()]
+    """Replace exact-match names from `name_hints` (case-insensitive).
+
+    NORMALISED FIRST. `_literal_pattern` ignores a hint's leading, trailing and
+    repeated whitespace, so the filter, the dedupe and the length comparison
+    must see the same normalised string. Sorting the STORED hints let
+    "Dana" + padding outrank "Dana Whitfield" (review of ab80a13).
+
+    THE LONGEST MATCH WINS, DECIDED ON THE TEXT, not by alternation order.
+    Python's alternation is leftmost-first, then first-listed: a partial hint
+    that matches further LEFT wins however the list is sorted. "(Dana" matched
+    at position 0 of "(Dana Whitfield)", one character before "Dana Whitfield"
+    could start, and published "[NAME] Whitfield" under an output that reads as
+    a completed redaction. That is worse than no match, because no match is
+    visibly a leak and a partial one looks finished -- the same failure as the
+    suite rule's `Suite B 201` -> `[ADDRESS] 201`. So every hint's matches are
+    found on the ORIGINAL text, the longest non-overlapping spans are kept, and
+    only then is anything replaced. Placeholders are never rescanned, so a hint
+    like "name" cannot match inside "[NAME]".
+    """
+    hints = sorted({" ".join(h.split()) for h in name_hints if h})
+    hints = [h for h in hints if len(h) >= 2]
     if not hints:
         return text, 0
-    # LONGEST FIRST. Python's alternation is first-match-wins, not
-    # longest-match-wins, so a dictionary containing both `Dana` and
-    # `Dana Whitfield` in that order rewrote "Dana Whitfield" to
-    # "[NAME] Whitfield" -- publishing the surname under an output that reads
-    # as a completed redaction. Which order the hints arrived in depended on
-    # database row order, and a security boundary must not depend on that.
-    #
-    # Same failure shape as the suite rule's `Suite B 201` -> `[ADDRESS] 201`:
-    # a partial match is worse than no match, because no match is visibly a
-    # leak and a partial one looks finished.
-    hints = sorted(set(hints), key=len, reverse=True)
-    # Each alternative carries its OWN anchors: `\b(?:a|b)\b` had #536's
-    # trailing-`\b` defect for every hint ending in a non-word character.
-    pat = re.compile(
-        "(?:" + "|".join(_literal_pattern(h) for h in hints) + ")",
-        re.IGNORECASE,
-    )
-    count = _count_replacements(pat, text)
-    if count == 0:
+    spans: set[tuple[int, int]] = set()
+    for hint in hints:
+        pat = re.compile(_literal_pattern(hint), re.IGNORECASE)
+        spans.update((m.start(), m.end()) for m in pat.finditer(text))
+    if not spans:
         return text, 0
-    return pat.sub(PLACEHOLDER_NAME, text), count
+    chosen: list[tuple[int, int]] = []
+    for start, end in sorted(spans, key=lambda s: (s[0] - s[1], s[0])):
+        if all(end <= c_start or start >= c_end for c_start, c_end in chosen):
+            chosen.append((start, end))
+    chosen.sort()
+    parts: list[str] = []
+    pos = 0
+    for start, end in chosen:
+        parts.append(text[pos:start])
+        parts.append(PLACEHOLDER_NAME)
+        pos = end
+    parts.append(text[pos:])
+    return "".join(parts), len(chosen)
 
 
 def redact_for_ai(

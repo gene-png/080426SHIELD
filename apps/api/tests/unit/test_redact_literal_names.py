@@ -103,7 +103,9 @@ EDGE_CASES = [
 @pytest.mark.parametrize(("legal_name", "text"), EDGE_CASES)
 def test_org_name_with_a_non_word_edge_is_redacted(legal_name: str, text: str) -> None:
     out, counts = redact_for_ai(text, mode="strict", client_org_name=legal_name)
-    assert "Acme" not in out and "ACME" not in out, out
+    for token in re.findall(r"[A-Za-z]+", legal_name):
+        # test-integrity: needles are every word of the STORED input name, not of the output
+        assert token not in out, (token, out)
     assert counts.get("client_org") == 1, counts
 
 
@@ -156,3 +158,64 @@ def test_a_name_wrapped_across_a_line_is_redacted() -> None:
     )
     assert "Atlas" not in out, out
     assert counts.get("client_org") == 1, counts
+
+
+# --- review of ab80a13: two partial-match regressions the fix introduced ------
+#
+# Both publish a SURNAME under an output that reads as a completed redaction,
+# which is worse than no match. Main got both right; the new token-joined,
+# conditionally-anchored patterns got both wrong until the name rule stopped
+# depending on alternation order.
+
+
+def test_a_padded_short_hint_cannot_publish_the_surname() -> None:
+    # "Dana" + 12 spaces is 16 characters, LONGER than "Dana Whitfield" (14)
+    # as stored, so a sort on stored length put it first DETERMINISTICALLY, and
+    # its pattern (whitespace dropped) matched "Dana" alone. (With 10 spaces the
+    # lengths tie and `set()` order decides, which varies by hash seed, so the
+    # test passed or failed by process.)
+    out, counts = redact_for_ai(
+        "Signed by Dana Whitfield.",
+        mode="strict",
+        name_hints=["Dana" + " " * 12, "Dana Whitfield"],
+    )
+    assert "Whitfield" not in out and "Dana" not in out, out
+    assert counts.get("name") == 1, counts
+
+
+def test_a_punctuation_led_hint_cannot_split_a_longer_name() -> None:
+    # "(Dana" has no leading anchor, so it matches at position 0, LEFT of where
+    # "Dana Whitfield" can start. Python's alternation takes the leftmost match
+    # before the longest, so longest-first ordering could not prevent it.
+    out, counts = redact_for_ai(
+        "(Dana Whitfield) signed.",
+        mode="strict",
+        name_hints=["Dana Whitfield", "(Dana"],
+    )
+    assert "Whitfield" not in out and "Dana" not in out, out
+    assert counts.get("name") == 1, counts
+
+
+@pytest.mark.parametrize(
+    "hints",
+    [
+        ["Dana", "Dana Whitfield"],
+        ["Dana Whitfield", "Dana"],
+        ["Whitfield", "Dana", "Dana Whitfield"],
+    ],
+    ids=["short-first", "long-first", "three"],
+)
+def test_the_full_name_wins_whatever_order_the_hints_arrive_in(hints: list[str]) -> None:
+    out, counts = redact_for_ai("Signed by Dana\u00a0Whitfield.", mode="strict", name_hints=hints)
+    assert out == "Signed by [NAME].", out
+    assert counts.get("name") == 1, counts
+
+
+def test_a_hint_that_is_one_character_after_normalising_is_dropped() -> None:
+    # " J" is two characters as stored and one after `_literal_pattern` drops
+    # its whitespace. The length filter must see the normalised form, or every
+    # standalone "J" in the payload becomes [NAME].
+    text = "Plan J ships on Tuesday."
+    out, counts = redact_for_ai(text, mode="strict", name_hints=[" J"])
+    assert out == text
+    assert "name" not in counts, counts

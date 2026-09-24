@@ -5528,6 +5528,38 @@ Applied to `main`'s `redact.py`, it fires on both real sites, `redact_org_name` 
 
 `_HSPACE` excludes line breaks by design, so the address rule cannot cross a line. So a legal name WRAPPED across a line ("Atlas\nDefense") still egresses. For an exact multi-word literal, crossing a line does not carry the address rule's over-match risk, so `\s+` would close the wrap case too. The patch follows the owner's spec (`_HSPACE+`), and the case is pinned by a test marked `xfail(strict=True)` that names this decision, so it cannot start passing silently.
 
+### Review found two regressions the first version of this fix introduced
+
+Both published a SURNAME under an output that reads as a completed redaction,
+which is worse than no match:
+
+- **Sorting on stored length.** `_redact_names` sorted hints by their stored
+  length, but `_literal_pattern` drops whitespace. "Dana" + 12 spaces outranked
+  "Dana Whitfield" and matched "Dana" alone.
+- **Leftmost match.** A punctuation-led hint has no leading anchor, so "(Dana"
+  matched at position 0 of "(Dana Whitfield)", left of where the full name can
+  start. Python's alternation takes the leftmost match before the longest, so no
+  ordering prevents it.
+
+`main` redacted both correctly. **So `_redact_names` no longer relies on
+alternation order.** It normalises hints, finds every hint's matches on the
+ORIGINAL text, keeps the longest non-overlapping spans, and only then replaces.
+Placeholders are never rescanned.
+
+The same review closed three holes in the gate's new signature:
+
+- `re.escape` passed as a value (`map(re.escape, hints)`) was invisible, so the
+  gate now flags references, not only calls;
+- a file that tokenizes but does not parse came back as a finding with exit 1,
+  and is now exit 2;
+- a nested or duplicate `_literal_pattern` was exempt, and only one module-level
+  constructor is now.
+
+Each was proven red-on-revert with a named test. The first padded-hint test used
+10 spaces, which TIES "Dana Whitfield" at 14 characters, so `set()` order (which
+varies by hash seed) decided whether it failed. It was made deterministic and run
+red under five seeds.
+
 ### Relation to #158
 
 #158's bare `\s` in `_RE_CONTACT_HINT` is the BENIGN instance of the same family. It is harmless only because its input is a stripped single line from `str.splitlines()`. #535 is the live instance: the same kind of mismatch, on free text. **Whether a separator mismatch is safe is a property of the input, not of the pattern.**

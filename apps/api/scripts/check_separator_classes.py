@@ -46,8 +46,9 @@ WHAT IT CANNOT CATCH, stated so a clean run is not read as more than it is:
     no static gate sees it.
 
 EXIT CODES, per this repo's fail-closed convention (D-051):
-  0 - no enumerated whitespace class
-  1 - at least one found
+  0 - no enumerated whitespace class, and no `re.escape` outside the one
+      module-level `_literal_pattern` (the second signature, #535)
+  1 - at least one of either found
   2 - could not read the file (an unreadable input is NOT a pass)
 """
 
@@ -136,7 +137,12 @@ def check(source: str) -> tuple[int, list[str]]:
                 + " or `_HSPACE`"
             )
 
-    findings.extend(_data_escapes_outside_the_constructor(source))
+    try:
+        findings.extend(_data_escapes_outside_the_constructor(source))
+    except SyntaxError as exc:
+        # Tokenizes but does not parse (`x = = 1`). "I could not look" is 2,
+        # never a finding: it used to come back as a `re.escape` violation.
+        return 2, [f"cannot parse for the re.escape check: {exc}"]
     if findings:
         return 1, findings
     return 0, []
@@ -155,22 +161,24 @@ def _data_escapes_outside_the_constructor(source: str) -> list[str]:
     The separator lives in data, but the place data BECOMES a pattern is
     source, and it is precise: `re.escape`. So data may become a pattern in
     exactly one function, `_literal_pattern`, which joins the needle's tokens
-    with `_HSPACE+` and anchors conditionally. Any other call is a finding.
+    with `_HSPACE+` and anchors conditionally. Any other REFERENCE is a finding.
 
     Resolved by the AST, not by text, so a docstring or comment that MENTIONS
-    `re.escape(` is not a call, and `from re import escape` or `import re as r`
+    `re.escape(` is not a reference, and `from re import escape` or `import re as r`
     are still caught. WHAT IT CANNOT SEE: data interpolated into a pattern
     WITHOUT `re.escape` (an f-string of a raw variable) -- a regex injection,
     a different and worse defect, which this file does not do today -- and
     `getattr(re, "escape")`.
 
-    Only called after the tokenize pass succeeded, so the source parses as far
-    as tokenize reaches; a SyntaxError here is still reported, never swallowed.
+    A REFERENCE is the unit, not a call: `map(re.escape, hints)` and
+    `esc = re.escape` pass it as a value and were invisible to a call-only
+    check (review of ab80a13). The exemption covers only the body of ONE
+    MODULE-LEVEL `_literal_pattern`; a nested function or method of that name is
+    not exempt, and a second module-level definition is itself a finding.
+
+    Raises SyntaxError when the source does not parse; `check` maps that to 2.
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        return [f"cannot parse for the re.escape check: {exc}"]
+    tree = ast.parse(source)
 
     re_aliases = {"re"}
     escape_names: set[str] = set()
@@ -184,30 +192,61 @@ def _data_escapes_outside_the_constructor(source: str) -> list[str]:
                 if alias.name == "escape":
                     escape_names.add(alias.asname or "escape")
 
-    def is_escape_call(call: ast.Call) -> bool:
-        f = call.func
-        if isinstance(f, ast.Attribute) and f.attr == "escape":
-            return isinstance(f.value, ast.Name) and f.value.id in re_aliases
-        return isinstance(f, ast.Name) and f.id in escape_names
-
     findings: list[str] = []
+    constructors = [
+        n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == _CONSTRUCTOR
+    ]
+    if len(constructors) > 1:
+        lines = ", ".join(str(n.lineno) for n in constructors)
+        findings.append(
+            f"line {constructors[1].lineno}: more than one module-level `{_CONSTRUCTOR}` "
+            f"(lines {lines}); the exemption is for exactly one constructor"
+        )
+    exempt = {id(n) for n in ast.walk(constructors[0])} if constructors else set()
 
-    def visit(node: ast.AST, enclosing: str | None) -> None:
-        for child in ast.iter_child_nodes(node):
-            name = enclosing
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                name = child.name
-            if isinstance(child, ast.Call) and is_escape_call(child) and name != _CONSTRUCTOR:
-                where = f"in `{name}`" if name else "at module level"
-                findings.append(
-                    f"line {child.lineno}: `re.escape` {where} turns DATA into a pattern "
-                    f"outside `{_CONSTRUCTOR}` -- a separator in that data is matched "
-                    "as a literal U+0020 (#535). Build the pattern with "
-                    f"`{_CONSTRUCTOR}` instead."
-                )
-            visit(child, name)
+    def enclosing_name(target: ast.AST) -> str | None:
+        found: str | None = None
 
-    visit(tree, None)
+        def walk(node: ast.AST, current: str | None) -> bool:
+            nonlocal found
+            for child in ast.iter_child_nodes(node):
+                name = current
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = child.name
+                if child is target:
+                    found = name
+                    return True
+                if walk(child, name):
+                    return True
+            return False
+
+        walk(tree, None)
+        return found
+
+    for node in ast.walk(tree):
+        is_ref = (
+            isinstance(node, ast.Attribute)
+            and node.attr == "escape"
+            and isinstance(node.value, ast.Name)
+            and node.value.id in re_aliases
+        ) or (
+            isinstance(node, ast.Name)
+            and node.id in escape_names
+            and isinstance(node.ctx, ast.Load)
+        )
+        if not is_ref or id(node) in exempt:
+            continue
+        name = enclosing_name(node)
+        where = f"in `{name}`" if name else "at module level"
+        findings.append(
+            f"line {node.lineno}: `re.escape` {where} turns DATA into a pattern "
+            f"outside `{_CONSTRUCTOR}` -- a separator in that data is matched "
+            "as a literal U+0020 (#535). Build the pattern with "
+            f"`{_CONSTRUCTOR}` instead."
+        )
+    findings.sort(key=lambda f: int(f.split(":")[0].split()[1]))
     return findings
 
 
