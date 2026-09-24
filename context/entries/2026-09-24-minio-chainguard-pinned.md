@@ -12,10 +12,22 @@ Docker Hub, and compose moved to quay.io, still on `:latest`. MinIO has stopped
 publishing public images. Machines that still run the stack are running
 cached copies.
 
-## The root cause is the tag, not the registry
+## The root cause is the repository, and the pin fixes only the tag
 
-A third-party `:latest` in CI. It let a supplier's decision break every PR at
-once, with nothing in the repo changing. The fix pins what lands.
+**Corrected before merge.** The first version of this PR said the root cause
+was "a third-party `:latest` in CI". The adversarial review challenged that,
+and a measurement settled it. Both outages were REPOSITORY withdrawals. On
+2026-09-24 the exact digests this dev machine had been running answered 401
+from quay.io and "repository does not exist" from Docker Hub, while the same
+probe got 200 from repositories known to exist. A digest pin would not have
+survived either outage.
+
+The root cause is that CI's stack start depends on a third party's public
+repository staying public. The digest pin fixes a different, real defect: a
+floating `:latest` let a supplier change what CI runs with no change in this
+repo. Withdrawal is not closed by this PR. If Chainguard withdraws or gates
+the free image, the outage repeats exactly. Only a copy this repo controls
+closes that, tracked in #522.
 
 ## What changed
 
@@ -28,16 +40,18 @@ once, with nothing in the repo changing. The fix pins what lands.
   `RELEASE.2026-09-22T19-25-18Z`. The client reports no version
   (`DEVELOPMENT.GOGET`), so its build date, 2026-09-24T03:05:08Z, identifies it.
   The compose comment's update procedure covers both images, together.
-- **Retention was measured, not assumed.** A digest pin lasts only as long as
-  the registry keeps the digest. Ten superseded `minio` digests, built between
-  2025-10-24 and 2026-09-13, all still resolved on 2026-09-24. That is evidence,
-  not a promise. If a pin stops resolving, re-pin; if it recurs, mirror.
+- **Retention was measured for both images, not assumed.** A digest pin lasts
+  only as long as the registry keeps the digest. Ten superseded digests of each
+  image all still resolved on 2026-09-24. The `minio` digests were built
+  2025-10-24 to 2026-09-13, and the `minio-client` digests 2025-11-06 to
+  2026-09-23. That is evidence, not a promise.
 - `-dev` variants, because the distroless images have no shell and no HTTP
   client. The healthcheck and the bucket job both need one.
 - The healthcheck uses `wget`, because the image has no `curl`.
 - `mailhog` is pinned by digest too (`v1.0.1`, its last release). On
   2026-09-24 `:latest` was the same manifest, so nothing that runs changes.
-  It was the last third-party `:latest` in compose.
+  It was the last third-party `:latest` in compose. Other floating tags remain
+  (#522).
 - `user: "0:0"` on `minio`. Chainguard runs as uid 65532, and a named volume
   at `/data` is created root-owned, so the server refused it ("file access
   denied", measured). Root is what the quay image ran as.
