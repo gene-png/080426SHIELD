@@ -56,6 +56,23 @@ stored one.
   which this branch made reachable). It read `status`, which is null while the
   request is in flight, and a null ran the extraction. That window became real
   once the first status read could be slow.
+- **An upload is never extracted twice by the page.** Once the auto-extraction
+  waits for the status, a user could click "Extract from this" while it was
+  settling, and the page then extracted the same file again. The e2e suite
+  found this on this branch. `runExtraction` now records each artifact it
+  starts, and the deferred automatic path skips a recorded one. Manual
+  re-extraction still works, and `TechDebtWorkspace.upload.test.tsx` pins both
+  halves.
+- **The e2e upload helper waits for whichever path the page takes.** The
+  Tech Debt specs that upload (s4, s37, s39) used to check the button once with
+  `isVisible()`. They passed
+  only because of #509's bug. `watchUpload` / `extractAfterUpload` in
+  `e2e/helpers/ai.ts` now:
+  - count extraction requests from before the upload;
+  - target the uploaded file's row by its artifact id;
+  - click only when nothing has started;
+  - fail loudly, naming the cause, when neither path appears, or when two
+    extractions were sent.
 - **The remedy copy is counted.** It lives in two helpers outside
   `_ai_readiness`, so `test_ai_readiness_branch_count.py` now also pins each
   helper's number of returns, and each return has a web-table row.

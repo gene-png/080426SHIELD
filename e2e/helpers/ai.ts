@@ -1,4 +1,4 @@
-import type { Page, Response } from "@playwright/test";
+import type { Page, Request, Response } from "@playwright/test";
 
 /**
  * Acknowledge the offline Run-AI guard if it appears.
@@ -48,15 +48,20 @@ export async function acknowledgeOfflineAi(page: Page): Promise<void> {
 /**
  * What one Tech Debt upload can lead to, watched from BEFORE it happens.
  *
- * Call it before `setInputFiles`, like any `waitForResponse`. Both waiters are
- * registered here on purpose: the page can start an extraction the moment the
- * upload responds, and a request waiter registered after reading that
+ * Call it before `setInputFiles`, like any `waitForResponse`. The extraction
+ * requests are counted from here on purpose: the page can start an extraction
+ * the moment the upload responds, and a waiter registered after reading that
  * response -- even one `await` later -- can miss it, then click the button
  * too (a second extraction) or throw that nothing started.
+ *
+ * `extractSent` has NO timeout and never rejects. Only the button's own wait
+ * may decide that nothing happened; a request waiter timing out on its own
+ * clock would end that wait early and report the wrong window.
  */
 export interface UploadWatch {
   upload: Promise<Response>;
-  extractSent: Promise<"extracting" | "neither">;
+  extractSent: Promise<"extracting">;
+  extractionsSent: () => number;
 }
 
 export function watchUpload(page: Page): UploadWatch {
@@ -66,22 +71,26 @@ export function watchUpload(page: Page): UploadWatch {
       /\/api\/proxy\/artifacts\/?$/.test(new URL(r.url()).pathname),
     { timeout: 120000 },
   );
-  const extractSent = page
-    .waitForRequest(
-      (r) =>
-        r.url().includes("/capability-lists/extract") && r.method() === "POST",
-      { timeout: 120000 },
-    )
-    .then(
-      () => "extracting" as const,
-      () => "neither" as const,
-    );
-  return { upload, extractSent };
+  let sent = 0;
+  let markSent: () => void = () => {};
+  const extractSent = new Promise<"extracting">((resolve) => {
+    markSent = () => resolve("extracting");
+  });
+  page.on("request", (r: Request) => {
+    if (
+      r.url().includes("/capability-lists/extract") &&
+      r.method() === "POST"
+    ) {
+      sent += 1;
+      markSent();
+    }
+  });
+  return { upload, extractSent, extractionsSent: () => sent };
 }
 
 /**
  * After a Tech Debt upload, get the extraction to run, whichever way the page
- * offers it.
+ * offers it -- exactly once.
  *
  * With AI live (or offline and already acknowledged) the upload starts the
  * extraction itself. Offline and unacknowledged, it only lists the file, and
@@ -101,6 +110,16 @@ export function watchUpload(page: Page): UploadWatch {
  * LOUDLY, naming the cause, when neither happens within 60 s of the upload
  * responding, rather than leaving the caller to time out on a response and
  * blame the API.
+ *
+ * The row's button renders whatever the AI status, so with AI live it can
+ * win the race while the page is about to extract on its own. So the count
+ * is read again just before clicking, the click is bounded, and a click that
+ * could not land because the page started an extraction meanwhile is not an
+ * error. What stays open: an automatic extraction that starts AND finishes
+ * inside the click's window, after which the click lands as a second one.
+ * That can only happen with AI live or acknowledged, which CI never is --
+ * fixture mode reports not-ready and every test starts unacknowledged -- and
+ * it fails LOUDLY below rather than passing over two extractions.
  */
 export async function extractAfterUpload(
   page: Page,
@@ -130,9 +149,23 @@ export async function extractAfterUpload(
         `for an error before suspecting the extraction API`,
     );
   }
-  if (first === "button") {
-    await button.click();
-    await acknowledgeOfflineAi(page);
+  if (first === "button" && watch.extractionsSent() === 0) {
+    let clicked = true;
+    try {
+      await button.click({ timeout: 15000 });
+    } catch (err) {
+      if (watch.extractionsSent() === 0) throw err;
+      clicked = false;
+    }
+    if (clicked) await acknowledgeOfflineAi(page);
   }
-  return extractDone;
+  const response = await extractDone;
+  if (watch.extractionsSent() > 1) {
+    throw new Error(
+      `uploaded artifact ${id}: ${watch.extractionsSent()} extraction ` +
+        `requests were sent where one was meant -- the page started one ` +
+        `itself while this helper clicked "Extract from this"`,
+    );
+  }
+  return response;
 }
