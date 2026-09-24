@@ -38,10 +38,13 @@ grep -q "EVERY agent definition carries this line" CLAUDE.md ||
   echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
 # Only when the layer IS present: on a pre-layer branch the two lines above
 # already name the cause, and this one would contradict them.
-test -f .claude/agents/clients-dev.md &&
+# An `if`, not an `&&` chain: a false chain as the block's last command
+# makes the HEALTHY state exit 1 (measured). The block is read by its output.
+if test -f .claude/agents/clients-dev.md &&
   grep -q "EVERY agent definition carries this line" CLAUDE.md &&
-  ! grep -q "prettier-hook.sh --print-version" CLAUDE.md &&
+  ! grep -q "prettier-hook.sh --print-version" CLAUDE.md; then
   echo "HALT: CLAUDE.md predates D-087 (the lockfile-read format step), so its format command pins a version CI does not use. The agent layer IS here; the branch is behind main, and rebasing onto main is the remedy (Gene's call)."
+fi
 ```
 
 If it says HALT: **stop and report.** Do not proceed against the injected copy,
