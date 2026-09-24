@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { countExtractButtons, extractAfterUpload } from "../helpers/ai";
+import { extractAfterUpload, waitForUpload } from "../helpers/ai";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -62,7 +62,7 @@ test("the workspace discloses what the extraction dropped, and the row can be re
       r.request().method() === "POST",
     { timeout: 120000 },
   );
-  const buttonsBefore = await countExtractButtons(page);
+  const uploadDone = waitForUpload(page);
   await page
     .locator('input[type="file"]')
     .first()
@@ -74,7 +74,7 @@ test("the workspace discloses what the extraction dropped, and the row can be re
   const extractResponse = await extractAfterUpload(
     page,
     extractDone,
-    buttonsBefore,
+    uploadDone,
   );
   const list = (await extractResponse.json()) as {
     id: string;

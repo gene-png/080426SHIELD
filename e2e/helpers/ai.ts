@@ -46,21 +46,16 @@ export async function acknowledgeOfflineAi(page: Page): Promise<void> {
 }
 
 /**
- * How many "Extract from this" buttons the documents panel shows, once that
- * number has held steady for a second. Read while the panel is still loading,
- * a service's EXISTING documents would arrive later and look like the upload.
+ * The upload's own response, to learn the new artifact's id. Register it
+ * BEFORE `setInputFiles`, like any `waitForResponse`.
  */
-export async function countExtractButtons(page: Page): Promise<number> {
-  const buttons = page.getByRole("button", { name: "Extract from this" });
-  let last = await buttons.count();
-  const deadline = Date.now() + 15000;
-  while (Date.now() < deadline) {
-    await page.waitForTimeout(1000);
-    const now = await buttons.count();
-    if (now === last) return now;
-    last = now;
-  }
-  return last;
+export function waitForUpload(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" &&
+      /\/api\/proxy\/artifacts\/?$/.test(new URL(r.url()).pathname),
+    { timeout: 120000 },
+  );
 }
 
 /**
@@ -75,35 +70,54 @@ export async function countExtractButtons(page: Page): Promise<number> {
  * once, immediately: they passed only because the upload used to beat the
  * status request and auto-extract on a null status, which was #509's bug.
  *
- * `buttonsBefore` is `countExtractButtons` taken just before the upload. The
- * panel lists documents newest first, but a service that already holds
- * documents shows their buttons at once, so waiting for "a button" would
- * extract an OLD file. This waits for one MORE button than before -- the new
- * upload's -- and clicks the first, which is the newest.
+ * It targets THE UPLOADED FILE's row, by the artifact id in its Download link.
+ * The documents panel lists every document for the CLIENT, so "a button" --
+ * or "one more button than before", which cannot tell a panel still loading
+ * from a loaded one -- can extract an older upload into this spec's service.
  *
- * It waits for whichever comes first: the extraction response, or that new
- * button. If it is the button, it clicks and acknowledges offline mode.
+ * It waits for whichever comes first: an extraction request (the page started
+ * one itself), or that row's button. It fails LOUDLY, naming the cause, when
+ * neither happens, rather than leaving the caller to time out on a response
+ * and blame the API.
  */
 export async function extractAfterUpload(
   page: Page,
   extractDone: Promise<Response>,
-  buttonsBefore: number,
+  uploadDone: Promise<Response>,
 ): Promise<Response> {
-  const buttons = page.getByRole("button", { name: "Extract from this" });
-  const newButtonListed = (async () => {
-    const deadline = Date.now() + 60000;
-    while (Date.now() < deadline) {
-      if ((await buttons.count()) > buttonsBefore) return "button" as const;
-      await page.waitForTimeout(250);
-    }
-    return "neither" as const;
-  })();
+  const upload = await uploadDone;
+  if (!upload.ok()) {
+    throw new Error(`the upload itself failed: HTTP ${upload.status()}`);
+  }
+  const { id } = (await upload.json()) as { id: string };
+  const row = page.locator("li").filter({
+    has: page.locator(`a[href="/api/proxy/artifacts/${id}/download"]`),
+  });
+  const button = row.getByRole("button", { name: "Extract from this" });
+  const extractSent = page.waitForRequest(
+    (r) =>
+      r.url().includes("/capability-lists/extract") && r.method() === "POST",
+    { timeout: 60000 },
+  );
   const first = await Promise.race([
-    extractDone.then(() => "extracted" as const),
-    newButtonListed,
+    extractSent.then(
+      () => "extracting" as const,
+      () => "neither" as const,
+    ),
+    button.waitFor({ state: "visible", timeout: 60000 }).then(
+      () => "button" as const,
+      () => "neither" as const,
+    ),
   ]);
+  if (first === "neither") {
+    throw new Error(
+      `uploaded artifact ${id}: no extraction started and its row never ` +
+        `offered "Extract from this" within 60 s -- check the documents panel ` +
+        `for an error before suspecting the extraction API`,
+    );
+  }
   if (first === "button") {
-    await buttons.first().click();
+    await button.click();
     await acknowledgeOfflineAi(page);
   }
   return extractDone;

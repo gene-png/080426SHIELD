@@ -183,4 +183,19 @@ describe("the deferred auto-extraction and a manual one", () => {
     });
     expect(extractCapabilities).toHaveBeenCalledTimes(1);
   });
+
+  it("still lets the user extract the same file again by hand", async () => {
+    // The guard is for the DEFERRED auto path only. Discard a draft, then
+    // "Extract from this" on the same file, must still extract; a check moved
+    // into runExtraction would silently break that.
+    await uploadWhileStatusLoads();
+    for (let i = 0; i < 2; i++) {
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "extract by hand" }),
+        );
+      });
+    }
+    expect(extractCapabilities).toHaveBeenCalledTimes(2);
+  });
 });
