@@ -1,0 +1,3 @@
+{"incident": "The passing half: an issue on the board with one tier, an unowned-with-reason issue, and a pull request (which the REST issues endpoint returns and which carries no board labels) -- all satisfy the rule.",
+ "expect": 0, "stdout_contains": "clean -- 2 open issue(s)",
+ "argv": ["--issues-file", "{dir}/issues.json"]}
