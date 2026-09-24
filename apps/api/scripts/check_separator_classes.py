@@ -46,13 +46,15 @@ WHAT IT CANNOT CATCH, stated so a clean run is not read as more than it is:
     no static gate sees it.
 
 EXIT CODES, per this repo's fail-closed convention (D-051):
-  0 - no enumerated whitespace class
-  1 - at least one found
+  0 - no enumerated whitespace class, and no `re.escape` outside the one
+      module-level `_literal_pattern` (the second signature, #535)
+  1 - at least one of either found
   2 - could not read the file (an unreadable input is NOT a pass)
 """
 
 from __future__ import annotations
 
+import ast
 import io
 import re
 import sys
@@ -63,6 +65,9 @@ _DEFAULT_TARGET = Path("apps/api/app/ai/redact.py")
 
 # A character class: `[` ... `]`, not escaped, no nested `]`.
 _CHAR_CLASS = re.compile(r"(?<!\\)\[\^?((?:[^]\\]|\\.)*)\]")
+
+# The ONE function allowed to turn data into a pattern (#535).
+_CONSTRUCTOR = "_literal_pattern"
 
 # Written on the line or the line above, with a reason. An empty marker is not a
 # reason -- same convention as `check_test_integrity`'s `# test-integrity:`.
@@ -132,9 +137,118 @@ def check(source: str) -> tuple[int, list[str]]:
                 + " or `_HSPACE`"
             )
 
+    try:
+        findings.extend(_data_escapes_outside_the_constructor(source))
+    except SyntaxError as exc:
+        # Tokenizes but does not parse (`x = = 1`). "I could not look" is 2,
+        # never a finding: it used to come back as a `re.escape` violation.
+        return 2, [f"cannot parse for the re.escape check: {exc}"]
     if findings:
         return 1, findings
     return 0, []
+
+
+def _data_escapes_outside_the_constructor(source: str) -> list[str]:
+    """The SECOND signature: a separator the code RECEIVES rather than writes.
+
+    The class-literal scan above protects separators written in source. #535's
+    space arrived from the DATABASE -- a stored legal name -- and `re.escape`
+    turned it into a literal U+0020, so a no-break space between the words
+    never matched and the client's name egressed with `counts == {}`. No class
+    ever appeared in source, so the scan above could not see it: the third
+    instance of the shape it exists to stop, after D-058 and item 10.
+
+    The separator lives in data, but the place data BECOMES a pattern is
+    source, and it is precise: `re.escape`. So data may become a pattern in
+    exactly one function, `_literal_pattern`, which joins the needle's tokens
+    with `\\s+` and anchors conditionally. Any other REFERENCE is a finding.
+
+    Resolved by the AST, not by text, so a docstring or comment that MENTIONS
+    `re.escape(` is not a reference, and `from re import escape` or `import re as r`
+    are still caught. WHAT IT CANNOT SEE: data interpolated into a pattern
+    WITHOUT `re.escape` (an f-string of a raw variable) -- a regex injection,
+    a different and worse defect, which this file does not do today --
+    `getattr(re, "escape")`, and a bare `escape` reached through
+    `from re import *`.
+
+    A REFERENCE is the unit, not a call: `map(re.escape, hints)` and
+    `esc = re.escape` pass it as a value and were invisible to a call-only
+    check (review of ab80a13). The exemption covers only the body of ONE
+    MODULE-LEVEL `_literal_pattern`; a nested function or method of that name is
+    not exempt, and a second module-level definition is itself a finding.
+
+    Raises SyntaxError when the source does not parse; `check` maps that to 2.
+    """
+    tree = ast.parse(source)
+
+    re_aliases = {"re"}
+    escape_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "re":
+                    re_aliases.add(alias.asname or "re")
+        elif isinstance(node, ast.ImportFrom) and node.module == "re":
+            for alias in node.names:
+                if alias.name == "escape":
+                    escape_names.add(alias.asname or "escape")
+
+    findings: list[str] = []
+    constructors = [
+        n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == _CONSTRUCTOR
+    ]
+    if len(constructors) > 1:
+        lines = ", ".join(str(n.lineno) for n in constructors)
+        findings.append(
+            f"line {constructors[1].lineno}: more than one module-level `{_CONSTRUCTOR}` "
+            f"(lines {lines}); the exemption is for exactly one constructor"
+        )
+    exempt = {id(n) for n in ast.walk(constructors[0])} if constructors else set()
+
+    def enclosing_name(target: ast.AST) -> str | None:
+        found: str | None = None
+
+        def walk(node: ast.AST, current: str | None) -> bool:
+            nonlocal found
+            for child in ast.iter_child_nodes(node):
+                name = current
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = child.name
+                if child is target:
+                    found = name
+                    return True
+                if walk(child, name):
+                    return True
+            return False
+
+        walk(tree, None)
+        return found
+
+    for node in ast.walk(tree):
+        is_ref = (
+            isinstance(node, ast.Attribute)
+            and node.attr == "escape"
+            and isinstance(node.value, ast.Name)
+            and node.value.id in re_aliases
+        ) or (
+            isinstance(node, ast.Name)
+            and node.id in escape_names
+            and isinstance(node.ctx, ast.Load)
+        )
+        if not is_ref or id(node) in exempt:
+            continue
+        name = enclosing_name(node)
+        where = f"in `{name}`" if name else "at module level"
+        findings.append(
+            f"line {node.lineno}: `re.escape` {where} turns DATA into a pattern "
+            f"outside `{_CONSTRUCTOR}` -- a separator in that data is matched "
+            "as a literal U+0020 (#535). Build the pattern with "
+            f"`{_CONSTRUCTOR}` instead."
+        )
+    findings.sort(key=lambda f: int(f.split(":")[0].split()[1]))
+    return findings
 
 
 def main(argv: list[str]) -> int:
@@ -192,18 +306,28 @@ def main(argv: list[str]) -> int:
         print(f"check-separator-classes: clean ({target})")
         return 0
 
-    print("check-separator-classes: enumerated whitespace class in the egress path")
+    # Two signatures, two causes, and a guard's message names the CAUSE.
+    written = [f for f in findings if "re.escape" not in f]
+    received = [f for f in findings if "re.escape" in f]
+    print("check-separator-classes: separator defect in the egress path")
     print()
     for finding in findings:
         print(f"  {target}:{finding}")
-    print()
-    print("`\\s` matches 19 horizontal whitespace characters. A hand-written list")
-    print("drops the ones nobody pictures -- thin, narrow-no-break, ideographic --")
-    print("and those are exactly what PDF and Word extraction emit. Build the class")
-    print("from `_HSPACE` (which is `\\s` minus the line breaks), or, if the literal")
-    print("space really is intended, say why:")
-    print()
-    print('    _FOO = r"[ .-]"  # separator-class: ASCII-only on purpose because <reason>')
+    if written:
+        print()
+        print("A SEPARATOR THE CODE WRITES: `\\s` matches 19 horizontal whitespace")
+        print("characters. A hand-written list drops the ones nobody pictures -- thin,")
+        print("narrow-no-break, ideographic -- and those are exactly what PDF and Word")
+        print("extraction emit. Build the class from `_HSPACE` (which is `\\s` minus the")
+        print("line breaks), or, if the literal space really is intended, say why:")
+        print()
+        print('    _FOO = r"[ .-]"  # separator-class: ASCII-only on purpose because <reason>')
+    if received:
+        print()
+        print("A SEPARATOR THE CODE RECEIVES: `re.escape` turns the space in stored")
+        print("data (a legal name, a user's display name) into a literal U+0020, so the")
+        print("same words joined by a no-break space never match (#535). Build the")
+        print(f"pattern with `{_CONSTRUCTOR}`, the one function allowed to do this.")
     return 1
 
 

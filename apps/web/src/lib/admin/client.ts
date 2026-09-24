@@ -70,6 +70,11 @@ export interface AiStatus {
   detail: string;
   can_configure: boolean;
   key_source: "database" | "environment" | "none";
+  /**
+   * What a Run-AI will do right now (#472): call the provider, serve canned
+   * fixture output, or fail. `ready` is `serves === "live"`.
+   */
+  serves: "live" | "offline" | "broken";
 }
 
 export async function fetchAiStatus(): Promise<AiStatus> {
@@ -93,7 +98,11 @@ export async function setLlmKey(apiKey: string): Promise<AiStatus> {
   return (await res.json()) as AiStatus;
 }
 
-/** Issue 2: remove the stored key. AI drops back to offline responses. */
+/**
+ * Issue 2: remove the stored key. NOT necessarily offline afterwards: in live
+ * mode an environment key takes over and Run-AI stays live (#472). Re-read
+ * the status to know which.
+ */
 export async function removeLlmKey(): Promise<void> {
   const res = await fetch("/api/proxy/admin/llm-key", { method: "DELETE" });
   if (!res.ok) throw new Error(await _detail(res));

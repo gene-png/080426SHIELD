@@ -37,31 +37,27 @@ from pathlib import Path
 
 import pytest
 
-#: Every not-ready `return` in `_ai_readiness`. Five as of #471: no key at all;
-#: an environment key with the mode not live; a provider with no key-based
-#: adapter; the anthropic SDK missing; a model id that is a known placeholder.
+#: Every not-ready `return` in `_ai_readiness`. Five as of #472, in two kinds:
 #:
-#: FOUR OF THE FIVE SAY A KEY IS LOADED, which is why `RunAiGuard` renders
-#: `detail` rather than one hardcoded sentence.
+#:   * OFFLINE (`serves: "offline"`, canned fixture output): an environment key
+#:     with the mode not live; and no key at all. Their REMEDIES come from
+#:     `_offline_remedy` and `_go_live_advice`, whose returns are counted
+#:     separately below, because this slice ends before them.
+#:   * BROKEN (`serves: "broken"`, Run-AI fails): the provider build refuses
+#:     (`_build_provider`'s own message, passed through); the anthropic SDK is
+#:     missing; the model id is a known placeholder.
 #:
-#: **A COUNT OF BRANCHES, NOT OF REACHABLE CAUSES, and an earlier version of
-#: this comment said "one per cause a consultant can be shown".** Two of the
-#: five cannot be reached on this tree:
+#: **A COUNT OF BRANCHES, NOT OF REACHABLE CAUSES.** Two cannot be reached
+#: through the product today: the build refusal needs a state the boot
+#: preflight stops (live mode without a key, an unimplemented provider) or a
+#: stored key for vertex (`live_validate_key` admits anthropic alone); and the
+#: SDK branch needs an image without the SDK. They are counted anyway,
+#: deliberately: each exists in the code, and a branch that ships copy nobody
+#: tested is what this file guards against.
 #:
-#:   * The ADAPTER branch needs a provider outside
-#:     `(anthropic, openai, gemini)` while a key source exists. Every path to a
-#:     key source is closed for such a provider -- `_ENV_KEY_ATTR` holds only
-#:     those three, and `store_key`'s single caller `set_llm_key` runs
-#:     `live_validate_key` first, which is implemented for anthropic alone. So
-#:     it is unreachable for EVERY provider.
-#:   * The SDK branch needs a stored anthropic key plus an image without the
-#:     SDK, which no deployment step produces.
-#:
-#: They are counted anyway, deliberately: they exist in the code, each is one
-#: `live_validate_key` implementation away from firing, and a branch that ships
-#: copy nobody has tested is the thing this file guards against. What is
-#: corrected is the CLAIM -- a reader who took "one per cause a consultant can
-#: be shown" at face value would size the user-visible surface wrong.
+#: #472 replaced the old "provider has no runtime adapter" branch, which asked
+#: whether a provider was in a hardcoded list, with the build refusal, which
+#: asks the provider Run-AI would actually build. The count did not move.
 EXPECTED_NOT_READY_BRANCHES = 5
 
 #: The web test that must gain a row whenever the number above changes. Named as
@@ -71,9 +67,13 @@ WEB_TABLE = "apps/web/src/components/admin/RunAiGuard.test.tsx (READINESS_BRANCH
 
 
 def _ai_readiness_source() -> str:
+    return _function_source("_ai_readiness")
+
+
+def _function_source(name: str) -> str:
     admin = Path(__file__).resolve().parents[2] / "app" / "routes" / "admin.py"
     text = admin.read_text(encoding="utf-8")
-    start = text.index("def _ai_readiness")
+    start = text.index(f"def {name}(")
     # The next top-level `def` or `@router` ends the function. Anchored at column
     # zero so a nested def cannot truncate the region early.
     rest = text[start + 1 :]
@@ -152,4 +152,32 @@ def test_the_region_this_reads_is_actually_the_function() -> None:
     assert "def set_llm_key" not in body, (
         "the slice ran past the end of `_ai_readiness` into `set_llm_key`, so "
         "the count above is over more than one function"
+    )
+
+
+#: The remedy copy lives in two helpers OUTSIDE `_ai_readiness` (#472), which
+#: the count above cannot see: the slice ends at the next top-level `def`.
+#: Each `return` here is a distinct shape of sentence a consultant reads, and
+#: each has a row in the web table. `_offline_remedy`: load a key; switch
+#: provider (no adapter); an environment-only key; a keyless provider.
+#: `_go_live_advice`: live would boot; live would not, and why.
+EXPECTED_REMEDY_RETURNS = {"_offline_remedy": 4, "_go_live_advice": 2}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", sorted(EXPECTED_REMEDY_RETURNS))
+def test_the_remedy_shapes_are_what_the_web_table_covers(name: str) -> None:
+    """RED when a remedy shape is added, naming the file that must follow.
+
+    Round 2 on #472: moving the remedies into helpers took them out of the
+    region the branch count reads, so a fifth remedy would have shipped with no
+    copy test -- the case this file exists for.
+    """
+    body = _function_source(name)
+    assert body.strip(), f"the `{name}` region came back empty"
+    found = len(re.findall(r"^\s+return\b", body, re.MULTILINE))
+    assert found == EXPECTED_REMEDY_RETURNS[name], (
+        f"`{name}` now has {found} returns, not {EXPECTED_REMEDY_RETURNS[name]}. "
+        f"Each is a sentence a consultant reads; give it a row in {WEB_TABLE} "
+        f"and update the constant here in the same commit."
     )
