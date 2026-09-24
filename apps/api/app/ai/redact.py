@@ -1140,13 +1140,22 @@ def _literal_pattern(needle: str, *, anchored: bool = True) -> str:
     Two things `rf"\b{re.escape(needle)}\b"` got wrong, both measured live:
 
     * #535 -- `re.escape` turns the stored name's space into a literal U+0020,
-      so a no-break space, a narrow no-break space or two spaces between the
-      words never matched. The needle is split on whitespace and its tokens
-      rejoined with `_HSPACE+`, the separator `_PHONE_SEP`, `_CAGE_SEP` and
-      `_STREET_SEP` already use. `str.split()` also splits a no-break space
-      stored IN the name. `_HSPACE` excludes line breaks by design, so a name
-      wrapped across a line still does not match -- a residual pinned by an
-      `xfail(strict=True)` test pending the owner's call.
+      so a no-break space, a narrow no-break space, two spaces or a line wrap
+      between the words never matched. The needle is split on whitespace and
+      its tokens rejoined with `\s+`. `str.split()` also splits a no-break
+      space stored IN the name.
+
+      `\s+`, NOT `_HSPACE+`, ON PURPOSE -- this is a rule-class difference, not
+      an inconsistency to "fix" (owner decision, D-088). `_HSPACE` exists for
+      SHAPE rules: an address or contact pattern that crossed a line could join
+      tokens that were never one thing (#135 -- the contact hint must not reach
+      across prose for its evidence). These two rules match a KNOWN LITERAL
+      from the tenant's own rows: "Acme Holdings" across a line break is
+      unambiguously "Acme Holdings", so the false positive `_HSPACE` guards
+      against cannot occur. And the asymmetry decides it anyway: a miss is the
+      client's name reaching a third party; an over-match is the model seeing
+      [CLIENT] instead of context, on a pipeline where it only suggests. PDF and
+      Word extraction feed the Tech Debt payload, so wrapped names are real.
     * #536 -- `\b` needs a word character on one side, so after a final "."
       it fails before a space, a comma or the end of the text: "Acme Holdings,
       Inc." could never be redacted anywhere. The anchors are now CONDITIONAL:
@@ -1157,7 +1166,7 @@ def _literal_pattern(needle: str, *, anchored: bool = True) -> str:
     Callers must pass a needle with at least one non-space character.
     """
     tokens = needle.split()
-    body = (_HSPACE + "+").join(re.escape(t) for t in tokens)
+    body = r"\s+".join(re.escape(t) for t in tokens)
     if not anchored:
         return body
     starts_word, ends_word = _literal_edges(needle)
@@ -1257,10 +1266,12 @@ def _hint_patterns(hints: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
     WHY GROUPED, and why not one alternation. The anchors are conditional, so
     they can only be hoisted OUT of the alternation -- which is what lets the
     engine use its literal-prefix fast path -- for hints that share them.
-    Anchors inside every alternative were measured at 27x slower than hoisted
-    ones, over 500 hints and 262 KB. A single alternation across shapes would
-    let the first shape to match at a position win rather than the longest,
-    so "Acme" could beat "Acme Corp." and publish "Corp.". Each group is
+    The SCAN ALONE with anchors inside every alternative was measured 27x
+    slower than with them hoisted (0.27 s against 0.01 s, 500 hints over
+    262 KB); end to end that was about 6x slower than `main` (D-088). A
+    single alternation across shapes would let the first shape to match at a
+    position win rather than the longest, so "Acme" could beat "Acme Corp."
+    and publish "Corp.". Each group is
     scanned separately and `_redact_names` takes the union.
 
     CACHED because `redact_payload` calls `redact_for_ai` for every string in

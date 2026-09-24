@@ -5509,7 +5509,7 @@ The client's legal name reached the LLM provider verbatim, and `llm_calls.redact
 
 `redact.py::_literal_pattern(needle)` is the only function that turns data into regex source. It:
 
-- splits the needle on whitespace and rejoins the `re.escape`d tokens with `_HSPACE+`. The name rules now follow the same discipline as `_PHONE_SEP`, `_CAGE_SEP` and `_STREET_SEP`;
+- splits the needle on whitespace and rejoins the `re.escape`d tokens with `\s+` (first `_HSPACE+`; Decision 3 below records why literal names cross line breaks while the shape rules `_PHONE_SEP`, `_CAGE_SEP` and `_STREET_SEP` do not);
 - anchors conditionally: `(?<!\w)` only when the needle starts with a word character, `(?!\w)` only when it ends with one. A word-edged name still cannot match inside a longer word.
 
 `redact_org_name` and `_redact_names` both use it. `\b(?:a|b)\b` had #536's defect for every hint; how `_redact_names` now combines hints is below, under the review rounds.
@@ -5524,9 +5524,36 @@ Applied to `main`'s `redact.py`, it fires on both real sites, `redact_org_name` 
 
 **What it still cannot see:** data interpolated into a pattern WITHOUT `re.escape` (an f-string of a raw variable). That would be a regex injection, a different and worse defect, which `redact.py` does not do today. A grep of every `re.compile` in the file found exactly two runtime-built patterns, both via `re.escape`. It also cannot see `getattr(re, "escape")` or a bare `escape` reached through `from re import *`.
 
-### Decision 3, pending the owner: line breaks
+### Decision 3, the owner's: literal names use `\s+`, not `_HSPACE+`
 
-`_HSPACE` excludes line breaks by design, so the address rule cannot cross a line. So a legal name WRAPPED across a line ("Atlas\nDefense") still egresses. For an exact multi-word literal, crossing a line does not carry the address rule's over-match risk, so `\s+` would close the wrap case too. The patch follows the owner's spec (`_HSPACE+`), and the case is pinned by a test marked `xfail(strict=True)` that names this decision, so it cannot start passing silently.
+The first version joined name tokens with `_HSPACE+`, so a legal name WRAPPED
+across a line ("Atlas\nDefense") still egressed. It was pinned by a test marked
+`xfail(strict=True)` pending this decision. The owner decided `\s+` for both
+literal name rules, and the reason is RULE CLASS, written into
+`_literal_pattern` so nobody reverts it as an inconsistency:
+
+- `_HSPACE` exists for SHAPE rules. An address or contact pattern that crossed a
+  line could join tokens that were never one thing (#135: the contact hint must
+  not reach across prose for its evidence).
+- These two rules match a KNOWN LITERAL from the tenant's own rows. "Acme
+  Holdings" across a line break is unambiguously "Acme Holdings", so that false
+  positive cannot occur.
+- The asymmetry decides it anyway. A miss is the client's name reaching a third
+  party. An over-match is the model seeing [CLIENT] instead of context, on a
+  pipeline where it only suggests.
+- PDF and Word extraction feed the Tech Debt payload, so wrapped names are real.
+
+**Measured before landing, because this is the shape of the 49x regression:**
+
+- single-spaced text: at or below `main` at every size;
+- 500 hints over 262 KB: 474 ms against 668 ms;
+- line-break-heavy text, 500 hints over 336 KB: 777 ms against 968 ms. It
+  redacted 18,496 names where `main` redacted 3,674, the other ~80% being names
+  split across lines that `main` let through.
+
+No bound on line-break runs was added, because the measurement did not ask for
+one. The xfail became a sweep over the 10 characters `str.splitlines()` breaks
+on, for org names, plus a hint case; reverting to `_HSPACE+` turns all 11 red.
 
 ### Review found two regressions the first version of this fix introduced
 
@@ -5543,7 +5570,9 @@ which is worse than no match:
 
 `main` redacted both correctly. **So `_redact_names` no longer relies on
 alternation order.** It normalises hints, finds every hint's matches on the
-ORIGINAL text, keeps the longest non-overlapping spans, and only then replaces.
+ORIGINAL text, keeps the longest non-overlapping spans, and only then replaces
+(the state at `4f042f3`; the second review round below replaced "longest" with
+the union).
 Placeholders are never rescanned.
 
 The same review closed three holes in the gate's new signature:
@@ -5576,7 +5605,10 @@ red under five seeds.
   redacts strictly more, and a merged run is one removal.
 - **The span search was slow.** Measured with 500 hints over 262 KB:
   - one pattern per hint: 49x slower than `main`;
-  - anchors inside every alternative: still about 6x.
+  - anchors inside every alternative: still about 6x slower than `main`
+    END TO END. The scan ALONE with anchors inside every alternative was 27x
+    slower than with them hoisted (0.27 s against 0.01 s), which is the figure
+    `_hint_patterns` cites. They measure different things.
     Hints are now grouped by anchor shape, so the anchors can be hoisted out of
     the alternation. Each group is one cached pattern, and a hint can start only
     inside a region its group's leftmost scan matched, so only those positions

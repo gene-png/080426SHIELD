@@ -399,10 +399,12 @@ def test_no_surface_turns_a_nullable_name_into_a_display_string_with_a_bare_or()
     ``(org|org_name)`` and ``(org_name|org)`` both match ``org_name or "X"``.
     What fixed ``org_name`` was ADDING it, not moving it.
 
-    Ordering IS load-bearing where the shorter alternative COMPLETES the match
-    -- ``redact.py``'s ``_redact_names`` builds an alternation in which a bare
-    first name plus a word boundary succeeds and swallows the longer full name.
-    That is a different precondition, and reaching for a known-good shape
+    Ordering WAS load-bearing where the shorter alternative COMPLETES the match
+    -- ``redact.py``'s ``_redact_names`` built an alternation in which a bare
+    first name plus a word boundary succeeded and swallowed the longer full
+    name. Since D-088 it no longer does: every hint's matches are found on the
+    text and overlapping spans are merged, so hint order decides nothing there.
+    It was a different precondition, and reaching for a known-good shape
     without checking which property made it correct is what produced the false
     sentence above.
 

@@ -161,7 +161,7 @@ def _data_escapes_outside_the_constructor(source: str) -> list[str]:
     The separator lives in data, but the place data BECOMES a pattern is
     source, and it is precise: `re.escape`. So data may become a pattern in
     exactly one function, `_literal_pattern`, which joins the needle's tokens
-    with `_HSPACE+` and anchors conditionally. Any other REFERENCE is a finding.
+    with `\\s+` and anchors conditionally. Any other REFERENCE is a finding.
 
     Resolved by the AST, not by text, so a docstring or comment that MENTIONS
     `re.escape(` is not a reference, and `from re import escape` or `import re as r`

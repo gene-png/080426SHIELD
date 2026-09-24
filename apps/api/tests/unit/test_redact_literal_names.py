@@ -144,25 +144,38 @@ def test_a_word_edged_name_still_needs_a_word_boundary(text: str) -> None:
     assert "client_org" not in counts, counts
 
 
-# --- the decision this surfaces, pinned so it cannot pass silently -------------
+# --- line breaks: literal names use `\s`, not `_HSPACE` (owner decision, D-088) -
+
+LINE_BREAKS = [
+    ch
+    for ch in map(chr, range(sys.maxunicode + 1))
+    if re.match(r"\s", ch) and len(("a" + ch + "b").splitlines()) == 2
+]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RESIDUAL BY DECISION (#535): names are joined with `_HSPACE+`, which "
-        "excludes line breaks, so a legal name WRAPPED across a line still "
-        "egresses. Whether literal names should use `\\s+` is the owner's call. "
-        "strict=True: if this starts passing, the decision changed and this "
-        "marker must go."
-    ),
-)
-def test_a_name_wrapped_across_a_line_is_redacted() -> None:
+def test_the_line_break_set_is_the_other_half_of_backslash_s() -> None:
+    assert len(LINE_BREAKS) == 10  # test-integrity: pinned count of the language's own set
+    assert "\n" in LINE_BREAKS and "\u2028" in LINE_BREAKS
+
+
+@pytest.mark.parametrize("brk", LINE_BREAKS, ids=_ids(LINE_BREAKS))
+def test_a_name_wrapped_across_a_line_is_redacted(brk: str) -> None:
+    # A known literal from the tenant's own rows, so crossing a line cannot
+    # join tokens that were never one name -- unlike the shape rules `_HSPACE`
+    # guards. This was an xfail(strict) residual until the owner decided it.
     out, counts = redact_for_ai(
-        "Report for Atlas\nDefense on Tuesday.", mode="strict", client_org_name="Atlas Defense"
+        f"Report for Atlas{brk}Defense on Tuesday.", mode="strict", client_org_name="Atlas Defense"
     )
-    assert "Atlas" not in out, out
+    assert "Atlas" not in out and "Defense" not in out, out
     assert counts.get("client_org") == 1, counts
+
+
+def test_a_hint_wrapped_across_a_line_is_redacted() -> None:
+    out, counts = redact_for_ai(
+        "Signed by Dana\r\nWhitfield today.", mode="strict", name_hints=["Dana Whitfield"]
+    )
+    assert "Whitfield" not in out, out
+    assert counts.get("name") == 1, counts
 
 
 # --- review of ab80a13: two partial-match regressions the fix introduced ------
@@ -251,3 +264,18 @@ def test_a_shorter_hint_in_an_earlier_anchor_group_cannot_beat_a_longer_one() ->
     )
     assert "Acme" not in out and "Labs" not in out, out
     assert counts.get("name") == 1, counts
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Danae signed.", "Adana signed.", "Dana_ops signed."],
+    ids=["suffix", "prefix", "underscore"],
+)
+def test_a_word_edged_hint_still_needs_a_word_boundary(text: str) -> None:
+    # The hint path's twin of the org-name boundary test above. Its anchors are
+    # hoisted into `_hint_patterns`, a different constructor, and review of
+    # 3bf4237 found that deleting them turned nothing red: a hint "Dana" would
+    # silently rewrite "Danae" in every AI input (the #130 class).
+    out, counts = redact_for_ai(text, mode="strict", name_hints=["Dana"])
+    assert out == text
+    assert "name" not in counts, counts
