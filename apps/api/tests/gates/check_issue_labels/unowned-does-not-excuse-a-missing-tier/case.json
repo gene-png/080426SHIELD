@@ -1,0 +1,3 @@
+{"incident": "Found by review of the first version: unowned-with-reason was checked first and returned clean, so an issue carrying mvp-blocking and unowned-with-reason with NO tier passed. A reasonable reader would call it compliant -- it carries the rule's escape label -- but the board query still returns it, with no place in the ordering, which is the exact harm the rule names.",
+ "expect": 1, "adversarial": true, "stdout_contains": "#5: carries `mvp-blocking` but no tier",
+ "argv": ["--issues-file", "{dir}/issues.json"]}
