@@ -65,9 +65,8 @@ stored one.
   halves.
 - **The e2e upload helper waits for whichever path the page takes.** The
   Tech Debt specs that upload (s4, s37, s39) used to check the button once with
-  `isVisible()`. They passed
-  only because of #509's bug. `watchUpload` / `extractAfterUpload` in
-  `e2e/helpers/ai.ts` now:
+  `isVisible()`. They passed only because of #509's bug. `watchUpload` /
+  `extractAfterUpload` in `e2e/helpers/ai.ts` now:
   - count extraction requests from before the upload;
   - target the uploaded file's row by its artifact id;
   - click only when nothing has started;
