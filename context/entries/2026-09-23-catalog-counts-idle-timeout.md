@@ -1,4 +1,4 @@
-# 2026-09-23: Two small honesty fixes (the ATT&CK catalog's counts; an idle timeout that was never read)
+# 2026-09-23: Two small honesty fixes (the ATT&CK catalog's counts; an idle timeout that was never read), and a 12-hour re-auth ceiling
 
 Branch `fix/catalog-counts-idle-timeout`, base `f231b0e`.
 
@@ -54,3 +54,25 @@ the idle row, which said the config does not hold 900 when compose does. The REA
 corrected to match. `Settings` ignores unknown variables, so an `.env` that
 still sets `SHIELD_IDLE_TIMEOUT_SECONDS` boots unchanged. `SPRINT_3.md` still
 names the setting; it is a closed sprint's plan and is not edited.
+
+## The forced re-auth ceiling drops from 24 h to 12 h (the owner's call on #516)
+
+Instead of any of the idle-control options, the owner lowered the session
+setting that was already wired: `shield_forced_reauth_seconds`, from 86400 to
+43200, in config, compose and `.env.example`. That is one value, with no new
+code and no new UX. It covers a working day with overrun and halves the
+overnight window. The refusal message no longer says "daily".
+
+**It bounds session AGE, not idle time.** It is counted from the original
+sign-in, and no activity extends it. A laptop left open for twenty minutes is
+not locked by it, and D-084 says so rather than letting the number imply more.
+
+The real idle control stays #516, with a trigger rather than a date: before
+the first client engagement carrying an assessment requirement, or once the
+session code (#499, #498, landed 2026-09-24) has been quiet for a month. The
+reason for waiting is rework. That middleware still documents a live
+residual around the 60-second grace window, and a second timing rule on top of
+it would invite a rewrite.
+
+Pinned by `test_auth_reauth.py`: the default is 12 h, taken from the decision
+rather than the constant, and the refusal names no period.

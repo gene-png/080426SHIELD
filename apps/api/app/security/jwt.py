@@ -49,7 +49,7 @@ class TokenPayload:
     jti: uuid.UUID
     exp: datetime
     # Original login time (Sprint 3 T2). Rides forward unchanged across
-    # refreshes so /auth/refresh can enforce the daily forced-reauth ceiling
+    # refreshes so /auth/refresh can enforce the forced-reauth ceiling (12 h by default, D-084)
     # against the original login, not the last refresh. Optional so tokens
     # minted before this claim existed still parse (C0).
     auth_time: datetime | None = None

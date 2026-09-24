@@ -6,8 +6,9 @@ Master Spec §2 + §4.5:
   - The spec asks for a 15-minute access JWT, a refresh JWT, a 30-minute idle
     limit and a daily forced re-auth. What ships is in `docs/security.md`: the
     TTLs are 15 and 30 minutes only under compose, the idle limit is the
-    refresh expiry counted from the last rotation, and at the config defaults
-    only the daily ceiling bounds a session (D-084).
+    refresh expiry counted from the last rotation, and the forced re-auth
+    ceiling is 12 h, a session-AGE bound, which at the config defaults is the
+    only thing bounding a session (D-084).
   - Account lockout: 10 failed attempts in 15 minutes
     (`SHIELD_ACCOUNT_LOCKOUT_*`).
 
@@ -686,7 +687,7 @@ def refresh(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
                     "reason": "reauth_required",
-                    "message": "Your session has reached its daily limit. Please sign in again.",
+                    "message": "Your session has reached its time limit. Please sign in again.",
                 },
             )
 

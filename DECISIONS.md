@@ -315,7 +315,8 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
   TTL already IS the idle timeout — an idle session cannot refresh past it. We
   document that rather than invent a second timer. **SUPERSEDED by D-084
   (2026-09-23):** the default refresh TTL has been 24 hours since 2026-08-08,
-  so outside compose there is no idle bound below the daily ceiling.
+  so outside compose there is no idle bound below the forced re-auth ceiling
+  (12 h since D-084).
 - **Dead flags fail loudly:** `assert_safe_for_runtime` now refuses to boot if
   `SHIELD_AUTH_REQUIRE_MFA` or `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` is true,
   because the enrollment/challenge and email-verification flows do not exist.
@@ -5430,9 +5431,9 @@ checks is pre-cleared by its own TypeScript type definition**, so a green is not
 evidence that anything renders -- it would have reported #322 clean. Stated in the
 gate's docstring and filed as **#473**.
 
-## D-084 — The idle limit is the refresh-token expiry, and outside compose there is none below the ceiling
+## D-084 — Two session settings: the dead idle timeout is deleted, and the forced re-auth ceiling drops to 12 hours
 
-**2026-09-23 · admin** · branch `fix/catalog-counts-idle-timeout`
+**2026-09-23 · admin**, decided by the owner on 2026-09-24 · branch `fix/catalog-counts-idle-timeout`
 
 **Supersedes the idle clause of D-020**, which recorded "the 30-minute
 refresh-token TTL already IS the idle timeout ... We document that rather than
@@ -5444,19 +5445,34 @@ was raised from 1800 to 86400, so that a refresh token would not expire before
 the access token it renews. `config.py` records why. From then on, the premise
 held only where compose or `.env.example` sets the TTL back to 1800. The idle
 bound is also counted from the last token ROTATION, not the last activity:
+under compose (access 900, refresh 1800) an idle session gets 15-30 minutes,
+and at the config defaults the forced re-auth ceiling fires before any
+refresh expiry.
 
-- under compose (access 900, refresh 1800), an idle session gets 15-30 minutes;
-- at the config defaults (access 3600, refresh 86400), a rotation always
-  pushes the refresh expiry past the daily ceiling, so the ceiling fires first.
-  **There is no idle bound below 24 hours.**
-
-**Decided: `shield_idle_timeout_seconds` is deleted, not wired.** It was
+**Decision 1: `shield_idle_timeout_seconds` is deleted, not wired.** It was
 defined in config, compose and `.env.example`, and read by nothing. On a
 FedRAMP track that reads to an assessor as an implemented idle-session
 control. Wiring it as a second knob beside the refresh TTL would create two
-values that can disagree about one control. `docs/security.md` states the idle
-bound as **Partial**, with both deployments' figures.
+values that can disagree about one control.
 
-**Not decided here, and filed as #516:** whether SHIELD needs a real idle
-control outside compose. The options are a shorter default refresh TTL, or a
-last-activity check independent of token lifetimes. That is the owner's call.
+**Decision 2: `shield_forced_reauth_seconds` drops from 86400 to 43200 (12
+hours)** in config, compose and `.env.example`. The setting was already wired
+(`refresh()` in `routes/auth.py`, with a `ge=300` floor), so this is one value,
+with no new code and no new UX. Twelve hours covers a working day with
+overrun, and halves the overnight window in which a stolen session stays
+usable. The refusal message stops saying "daily".
+
+**What that number does NOT do, stated so it implies nothing more.** It
+bounds session AGE, counted from the original sign-in, and no activity
+extends it. It is not an idle control. **A laptop left open for twenty minutes
+is not locked by it**, and outside compose there is still no idle bound below
+the 12-hour ceiling. `docs/security.md` states the idle bound as **Partial**.
+
+**Not built here, and why: the real idle control is #516.** The reason for
+waiting is rework, not priority. The session code (#499, #498) landed
+2026-09-24, and its middleware still documents a live residual around the
+60-second refresh grace window. A second timing rule layered onto code whose
+author is still describing its open edges is how this becomes a rewrite.
+**#516 has a trigger, not a date:** build it before the first client
+engagement that carries an assessment requirement, or once the session code
+has been quiet for a month, whichever comes first.

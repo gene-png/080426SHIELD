@@ -143,8 +143,10 @@ class Settings(BaseSettings):
     # MUST comfortably exceed jwt_access_ttl_seconds. At the old 1800 against a
     # 3600 access TTL the refresh token would die half an hour BEFORE the token
     # it exists to renew, guaranteeing a hard logout with no recovery path.
-    # 86400 aligns it with shield_forced_reauth_seconds, so the daily ceiling —
-    # not an incidental TTL — is what actually bounds a session.
+    # 86400 once aligned it with shield_forced_reauth_seconds. Since D-084 the
+    # ceiling defaults to 43200, so the refresh TTL is no longer what bounds a
+    # session at the defaults: a rotation pushes the refresh expiry past the
+    # ceiling, and the ceiling fires first.
     jwt_refresh_ttl_seconds: int = Field(default=86400, ge=300)
     # Rotation grace. A refresh token is single-use, but a browser routinely
     # fires several requests at once when the access token expires, and every
@@ -161,7 +163,10 @@ class Settings(BaseSettings):
     jwt_mfa_pending_ttl_seconds: int = Field(default=300, ge=60)
     shield_account_lockout_max_attempts: int = Field(default=10, ge=1)
     shield_account_lockout_window_seconds: int = Field(default=900, ge=60)
-    shield_forced_reauth_seconds: int = Field(default=86400, ge=300)
+    # Session AGE, not idle time: counted from the original sign-in, and no
+    # activity extends it. 12 h (D-084): a working day with overrun, half the
+    # overnight window of the old 24 h. The idle control is #516.
+    shield_forced_reauth_seconds: int = Field(default=43200, ge=300)
 
     # Rate limiting (Sprint 3 T3). Fixed-window per-IP + per-account on the auth
     # endpoints and per-client on the expensive run-AI path. Defaults are
