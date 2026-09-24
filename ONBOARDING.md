@@ -86,7 +86,8 @@ docker compose exec -T api pytest -m unit -q
 # 2. web typecheck (in-container):
 docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"
 # 3. formatting (host; use the version pnpm-lock.yaml resolves):
-npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+v=$(scripts/prettier-hook.sh --print-version)
+npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 # 4. python lint/format (in-container, CI-parity — pins ruff==0.15.20 black==26.5.1):
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 # 5. web unit tests (vitest, in-container):

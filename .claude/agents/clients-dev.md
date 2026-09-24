@@ -36,8 +36,8 @@ test -f .claude/agents/clients-dev.md ||
   echo "HALT: no clients-dev.md here. You are on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
 grep -q "EVERY agent definition carries this line" CLAUDE.md ||
   echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
-grep -q "prettier@3.9.6" CLAUDE.md ||
-  echo "HALT: CLAUDE.md pins the WRONG prettier. Running it reformats against"\n       " a version CI does not use. Same cause as above"
+grep -q "prettier-hook.sh --print-version" CLAUDE.md ||
+  echo "HALT: CLAUDE.md predates the lockfile-read format step. Running it reformats against"\n       " a version CI does not use. Same cause as above"
 ```
 
 If it says HALT: **stop and report.** Do not proceed against the injected copy,
@@ -237,8 +237,9 @@ an oversight to everyone who finds it later.
 
 ```bash
 export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"
-npx -y prettier@3.9.6 --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
-npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+v=$(scripts/prettier-hook.sh --print-version)
+npx -y "prettier@${v:?}" --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 docker compose exec -T api sh -lc "cd /app && python -m scripts.check_test_integrity tests"

@@ -312,8 +312,9 @@ double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is FINE and is the
 replacement for `-w` — its `&&` is inside a single quoted argument handed to the
 container's shell, which both host shells pass through untouched.
 
-**Exactly one command in this section needs rewriting for PowerShell:**
-`cd e2e && npx playwright test [file]`. Run it as two lines there. The others use
+**Commands here that need rewriting for PowerShell:**
+`cd e2e && npx playwright test [file]` (run it as two lines), and the format
+check, whose `${v:?}` and bash hook have no PowerShell form. The others use
 the `sh -lc` shape, including the MANDATORY pre-commit lint, and work as written.
 
 **The rule, and it binds every command block in this file: a block that claims it
@@ -352,16 +353,18 @@ recorded with a real exit code and a real date, and was the minority outcome
 - e2e (host, not docker): `cd e2e && npx playwright test [file]` — base URL
   `http://localhost:3000`, chromium, serialized (shared seeded DB). Full suite
   ~17 min.
-- Format check (MANDATORY before every commit; CI enforces it). CI runs
-  `pnpm install --frozen-lockfile` then `pnpm format:check`, so the LOCKFILE
-  decides the version, not `package.json`'s range. The command READS it, because
-  a number written here went stale (it said 3.9.6 while the lockfile said 3.9.8).
-  From the repo root:
-  `npx -y "prettier@$(node -p "(require('fs').readFileSync('pnpm-lock.yaml','utf8').match(/^  prettier@([0-9.]+):/m)||[,'LOCKFILE-HAS-NO-PRETTIER'])[1]")" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"`
-  **Run in Git Bash and PowerShell 5.1 on 2026-09-24, in both directions.** It
-  resolved 3.9.8 from this lockfile. Against a lockfile with no prettier, it
-  exited 1 with npm's `ETARGET` naming the sentinel, rather than silently
-  installing the latest. `--write` the same glob to fix, then re-check.
+- Format check (MANDATORY before every commit; CI enforces it). CI installs
+  `--frozen-lockfile`, so the LOCKFILE decides prettier's version. Read it with
+  the pre-commit hook's own reader, which takes the ROOT IMPORTER's entry
+  (never the alphabetical `packages:` list, whose first entry is the LOWEST,
+  #311) and refuses when it cannot read. From the repo root, **Git Bash only**:
+
+      v=$(scripts/prettier-hook.sh --print-version)
+      npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+
+  **Run 2026-09-24, both directions:** it read 3.9.8 and `--check` exited 0.
+  With no lockfile the hook refused, `${v:?}` exited 1, and `npx` never ran.
+  `--write` the same glob to fix, then re-check.
 - Python lint/format (in-container, CI-parity — MANDATORY before every commit
   that touches `apps/api`): `docker compose exec -T api sh -lc "cd /app && ruff
   check --no-cache . && black --check ."`. Compose bind-mounts the root
@@ -935,17 +938,12 @@ recorded with a real exit code and a real date, and was the minority outcome
   one, check what it was accidentally catching.** The tell: the "wrong"
   behaviour and the only correct behaviour for some input come from the same
   line. It is the twin-sweep rule's cousin: that one asks where else the defect
-  is, this one asks what else it is doing. The `2nd Floor` instance is in D-087.
+  is, this one asks what else it is doing. Say which one a fix is: "adds
+  coverage that never existed" is not "preserves coverage". Instance: D-087.
 - **A redaction/validation corpus drawn from your own assumptions cannot falsify
-  them — and seed data is somebody's assumptions too.** #130 lived for months
-  under a green suite because every name-shaped string in `seed_demo.py` and
-  `fixtures.py` passes the address rule clean, so an address assertion built on
-  seed data passes forever. Then, fixing it, a hand-written corpus of "real
-  product names" certified a pattern carrying six leak regressions, because the
-  <!-- counted: historical -->
-  author writes addresses correctly spaced and the failing class was malformed
-  input (`PO Box99`, `Suite400`) arriving from OCR and exported spreadsheets.
-  <!-- counted: historical -->
+  them — and seed data is somebody's assumptions too.** A suite built on seed
+  data, or on a corpus the rule's author wrote, passes forever over the class
+  the author never writes; the #130 instances are in D-087.
 
   #72's shape pointed at test DATA rather than test code, with the same fix:
   **enumerate the CLASSES and require a row per class.** The classes a
@@ -2238,20 +2236,20 @@ Rules of the road:
   The tiers are a judgement about client-facing consequence, not effort:
   **tier-1** is live, unmitigated wrongness a client can reach — a number they
   never asked for, presented as one they did; **tier-2** is client-facing with a
-  mitigation shipped, or no wrong number delivered; **tier-3** is correctness no
-  client reads. Label to the SHIPPED state rather than the threat model, and say
+  mitigation shipped, or no wrong number delivered; **tier-3** is wrongness that
+  changes nothing about what the client ends up with. Label to the SHIPPED state rather than the threat model, and say
   on the issue which you did, so the call can be overturned instead of inherited.
 
-  **The test is CONSEQUENCE, not audience.** tier-3 means the falsehood changes
-  nothing about what the client ends up with, not that the screen is internal.
-  A consultant acting on a false screen is the last step of the DELIVERY path,
-  so it counts as client-facing. #70 and #74 are tier-2 even though every CSF
+  **The test is CONSEQUENCE, not audience:** an internal screen is not tier-3 by
+  that fact. A consultant acting on a false screen is the last step of the
+  DELIVERY path, so its consequence reaches the client. #70 and #74 are tier-2 even though every CSF
   and ATT&CK deliverable states its own coverage. A false "done" can still make
   a consultant release work they would not have released, so do not re-derive
   tier-3 from that measurement. The path is the delivery path, not any human. A
   reviewer or developer misled by a false gate is not on it, and what the gate
   lets through is tiered on its own merits (D-087). **A label's name is not its
-  test:** `mvp-blocking` means "on the board", not "blocks the MVP".
+  test:** `mvp-blocking` means "on the board", not "blocks the MVP". The scale
+  has no term yet for compliance-record consequence (#528, D-087).
 
   Search before filing, knowing the search finds only what earlier filers
   labelled: #184 and #286 are the same defect, filed twice (D-086).
