@@ -79,16 +79,23 @@ _RE_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 # is built from it, so "the rule does not cross a line" is one definition in one
 # place rather than a property each pattern re-asserts.
 #
-# Every separator in the module is built from it -- the address rules, the phone
-# rule, and (as a superset) the CAGE class -- EXCEPT `_RE_CONTACT_HINT`, which
-# keeps three bare `\s` (the `--` delimiter and the state-ZIP hint). That is
-# provably harmless, not merely unproven (#158). Its one call site searches
-# `nxt.strip()`, where every `nxt` comes from `text.splitlines(keepends=True)`.
-# `splitlines()` breaks on exactly the ten characters `_HSPACE` excludes, so none
-# can be INSIDE a line, and `strip()` removes the one `keepends` leaves at the
-# end. A candidate therefore holds no character on which `\s` and `_HSPACE`
-# differ, and the two match identically there. If that call site ever searches
-# unsplit text, this stops holding: convert the three to `_HSPACE` first.
+# The address rules, the phone rule and (as a superset) the CAGE class are
+# built from it. TWO EXCEPTIONS, and only the first is harmless:
+#
+# 1. `_RE_CONTACT_HINT` keeps three bare `\s` (the `--` delimiter and the
+#    state-ZIP hint). Provably equivalent to `_HSPACE` where it is used
+#    (#158): its one call site searches `nxt.strip()`, where every `nxt` is a
+#    line from `text.splitlines(keepends=True)`. `splitlines()` breaks on
+#    exactly the ten characters `_HSPACE` excludes, so none can be inside a
+#    line, and `strip()` removes the break `keepends` leaves at the end (two
+#    characters for `\r\n`). The proof holds ONLY for a `str.splitlines()`
+#    line with `strip()` applied, at that one call site. A split on "\n"
+#    alone, or any second caller, breaks it: convert the three to `_HSPACE`
+#    first.
+# 2. The org-name and name-hint rules (`redact_org_name`, `_redact_names`)
+#    match literal text built with `re.escape`, whose escaped space matches
+#    U+0020 only. A name separated by a no-break space, a line wrap or two
+#    spaces is NOT redacted, and the count records zero -- measured, #535.
 #
 # An earlier version of this note said `_RE_PHONE` and `_RE_CAGE` "still
 # contain `\s` and still cross line breaks", which was true when written and
