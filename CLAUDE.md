@@ -314,8 +314,8 @@ container's shell, which both host shells pass through untouched.
 
 **Known to need rewriting for PowerShell:** `cd e2e && npx playwright test
 [file]` (run it as two lines). The format check was run in Git Bash only.
-Lines not in the `sh -lc` shape (`export PATH`, the pytest and seed lines)
-are unmeasured there; the default below applies.
+Lines not in the `sh -lc` shape (e.g. `export PATH`, the pytest and seed
+lines) are unmeasured there; the default below applies.
 
 **The rule, and it binds every command block in this file: a block that claims it
 runs anywhere carries the SHELLS it was actually run in and the DATE it was run.**
@@ -2321,9 +2321,9 @@ order. Each is a RECORD whose instruction is already stated in one line above
 it, so moving it loses no rule:
 
 1. **The `## Environment gotchas` redaction-subsystem narratives** — the
-   `_HSPACE` subtraction, the address-corpus classes, the over-match that was
-   the only coverage, the LEAVE-table oracle percentages. The rules are one
-   sentence each; the stories belong under D-058.
+   `_HSPACE` subtraction and the LEAVE-table oracle percentages. The rules are
+   one sentence each; the stories belong under D-058. (The over-match and
+   address-corpus stories already moved, to D-087, on 2026-09-24.)
 2. **The worked examples under `Rules of the road`** — the sweep shape
    statement, the subagent-citation arithmetic, the stash-archive PowerShell
    measurements. All have a live D-number or issue already holding them.

@@ -36,7 +36,11 @@ test -f .claude/agents/attack-dev.md ||
   echo "HALT: no attack-dev.md here. You are on a branch cut BEFORE the agent layer. Not a rebase failure -- there was nothing to rebase onto"
 grep -q "EVERY agent definition carries this line" CLAUDE.md ||
   echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
-grep -q "prettier-hook.sh --print-version" CLAUDE.md ||
+# Only when the layer IS present: on a pre-layer branch the two lines above
+# already name the cause, and this one would contradict them.
+test -f .claude/agents/attack-dev.md &&
+  grep -q "EVERY agent definition carries this line" CLAUDE.md &&
+  ! grep -q "prettier-hook.sh --print-version" CLAUDE.md &&
   echo "HALT: CLAUDE.md predates D-087 (the lockfile-read format step), so its format command pins a version CI does not use. The agent layer IS here; the branch is behind main, and rebasing onto main is the remedy (Gene's call)."
 ```
 

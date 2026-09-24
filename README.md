@@ -236,6 +236,7 @@ docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 
 # Formatting (the version pnpm-lock.yaml resolves; CI enforces it)
+# Git Bash only (see CLAUDE.md's format step)
 v=$(scripts/prettier-hook.sh --print-version)
 npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 
