@@ -199,3 +199,41 @@ def test_the_gates_selector_is_exactly_the_one_ci_runs() -> None:
         and "tests/unit" in str(step.get("run", ""))
     ]
     assert runs == [f"pytest {' '.join(gate.CI_SELECTOR)}"], runs
+
+
+# --- addopts: a selection channel the collections clear (review of 324dc15) ----
+
+
+def _with_ini_addopts(root: Path, addopts: str) -> None:
+    ini = root / "pytest.ini"
+    ini.write_text(ini.read_text(encoding="utf-8") + f"addopts = {addopts}\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "addopts",
+    ['--deselect "tests/unit/test_m.py::test_a"', "-k 'not slow'", "--ignore=tests/unit/x.py"],
+    ids=["deselect", "k-filter", "ignore"],
+)
+def test_selecting_addopts_are_could_not_look(tmp_path, capsys, addopts: str) -> None:
+    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
+    _with_ini_addopts(root, addopts)
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 2, out
+    assert "not reporting flags" in out, out
+
+
+def test_selecting_addopts_in_pyproject_are_could_not_look(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
+    (root / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\naddopts = "-ra -q -m unit"\n', encoding="utf-8"
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 2, out
+    assert "not reporting flags" in out and "'-m'" in out, out
+
+
+def test_reporting_only_addopts_still_look(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
+    _with_ini_addopts(root, "-ra -q")
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out

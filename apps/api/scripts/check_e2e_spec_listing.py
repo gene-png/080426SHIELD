@@ -14,9 +14,13 @@ every `*.spec.ts` under `e2e/` (outside `node_modules`). `--list` applies the
 config's selection exactly as a run would, without starting a browser or the
 stack. Standard library only, because the E2E job installs no Python packages.
 
-LIMITS: `--list` cannot see a test that SKIPS at runtime (that is
-`check_e2e_env_gates.py`); and it describes the E2E job's main run, not the
-Demo job's `npx playwright test demo/`, which is a subset.
+LIMITS: it compares FILES, not tests -- a config `grep`/`grepInvert` that
+drops some tests in a file still lists the file, so that file passes. `--list`
+cannot see a test that SKIPS at runtime; `check_e2e_env_gates.py` covers only
+the skips keyed on an environment variable, so an unconditional `test.skip()`
+or `test.describe.skip` is listed, never runs, and neither gate reports it.
+And it describes the E2E job's main run, not the Demo job's
+`npx playwright test demo/`, which is a subset.
 
 EXIT CODES (D-051): 0 every spec on disk is listed; 1 at least one is not; 2
 could not look -- the list file is missing, names no spec, or has no

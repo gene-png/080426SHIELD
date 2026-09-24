@@ -31,32 +31,44 @@ source would be a second implementation of pytest's selection, free to drift.
 the workflow and requires equality, not a substring -- a `-k` or `--deselect`
 appended in CI would otherwise narrow CI while this certified the wider set.
 
-`-o addopts=` is passed so the output is one node id per line. The repo's
-addopts are reporting flags only (`-ra -q`); measured 2026-09-24, clearing them
-selected the same 7942 tests CI's addopts do.
+`-o addopts=` is passed so the output is one node id per line. That is only
+sound while the configured addopts are REPORTING flags, because CI's run
+applies them and these collections do not: a `--deselect`, `-k`, `-m` or
+`--ignore` there would narrow CI while this certified the wider set (review
+of 324dc15). So the gate READS the addopts -- `[tool.pytest.ini_options]` in
+`pyproject.toml` and `[pytest]` in `pytest.ini` -- and refuses to look (exit
+2) if any token is not a reporting flag (`-q`, `-v`, `-r<chars>`).
 
 EXIT CODES (D-051): 0 every collected test is selected or baselined; 1 at
 least one finding; 2 could not look -- the collector failed, collected
-nothing, printed no node ids, the baseline is missing or malformed, or an
-argument is unknown. An empty or unreadable collection is NEVER clean.
+nothing, printed no node ids, the configured addopts carry a non-reporting
+flag or do not parse, the baseline is missing or malformed, or an argument
+is unknown. An empty or unreadable collection is NEVER clean.
 
 LIMITS. Only `tests/unit`; `tests/live` is opt-in by design. A test that is
 selected but SKIPS at runtime is not seen here (a runtime skip is not a
-selection question).
+selection question). A module-level `pytest.skip(..., allow_module_level=True)`
+removes the file from BOTH collections, so it shrinks the denominator rather
+than producing a finding. `PYTEST_ADDOPTS` set on CI's pytest step but not on
+this one is not seen.
 """
 
 from __future__ import annotations
 
+import configparser
 import json
 import re
+import shlex
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 CI_SELECTOR = ("-m", "unit", "tests/unit")
 _ALL = ("tests/unit",)
 
 _NODE_LINE = re.compile(r"^(?P<file>[^\s:]+\.py)::\S")
+_REPORTING_FLAG = re.compile(r"-(?:q+|v+|r[a-zA-Z]+)|--quiet|--verbose")
 
 
 def parse_node_ids(output: str) -> set[str]:
@@ -89,6 +101,38 @@ def _collect(root: Path, args: tuple[str, ...]) -> set[str]:
             + (proc.stdout + proc.stderr).strip()[-2000:]
         )
     return parse_node_ids(proc.stdout)
+
+
+def configured_addopts(root: Path) -> list[str]:
+    """Every addopts token from `pytest.ini` and `pyproject.toml` under `root`."""
+    tokens: list[str] = []
+    ini = root / "pytest.ini"
+    if ini.is_file():
+        cp = configparser.ConfigParser()
+        try:
+            cp.read(ini, encoding="utf-8")
+        except configparser.Error as exc:
+            raise CouldNotLook(f"{ini} does not parse: {exc}") from exc
+        tokens += shlex.split(cp.get("pytest", "addopts", fallback=""))
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            doc = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise CouldNotLook(f"{pyproject} does not parse: {exc}") from exc
+        raw = doc.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("addopts", "")
+        tokens += shlex.split(raw) if isinstance(raw, str) else [str(t) for t in raw]
+    return tokens
+
+
+def _refuse_selecting_addopts(root: Path) -> None:
+    bad = [t for t in configured_addopts(root) if not _REPORTING_FLAG.fullmatch(t)]
+    if bad:
+        raise CouldNotLook(
+            f"addopts under {root} carry {bad}, which are not reporting flags. CI's run "
+            "applies them and this gate's collections clear them, so its answer would "
+            "not be CI's. Move selection into ci.yml's `run:` line, or extend the gate."
+        )
 
 
 def _load_baseline(path: Path) -> dict[str, dict]:
@@ -161,6 +205,7 @@ def main(argv: list[str]) -> int:
         root, baseline_path = _parse(argv)
         if not (root / "tests" / "unit").is_dir():
             raise CouldNotLook(f"{root / 'tests' / 'unit'} does not exist -- wrong directory?")
+        _refuse_selecting_addopts(root)
         baseline = _load_baseline(baseline_path)
         everything = _collect(root, _ALL)
         selected = _collect(root, CI_SELECTOR)
