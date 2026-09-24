@@ -292,7 +292,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
     }
   }
 
+  // Artifacts whose extraction has started on this page. The upload's
+  // deferred auto-extraction consults it: a user who clicked "Extract from
+  // this" while the AI status was still settling must not get a second
+  // extraction once it settles (found by the e2e suite on #472).
+  const extractionStarted = React.useRef(new Set<string>());
+
   async function runExtraction(artifactId: string): Promise<void> {
+    extractionStarted.current.add(artifactId);
     setExtracting(true);
     setExtractError(null);
     listSeq.current += 1;
@@ -501,6 +508,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
                     return;
                   }
                   if (!s.ready && !hasAcknowledgedOffline(s)) return;
+                  if (extractionStarted.current.has(a.id)) return;
                   void runExtraction(a.id);
                 });
               }}

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { countExtractButtons, extractAfterUpload } from "../helpers/ai";
 import { atlasServiceId } from "../helpers/ids";
 
 /**
@@ -54,6 +54,7 @@ async function uploadAndExtract(page: Page): Promise<void> {
       r.request().method() === "POST",
     { timeout: 120000 },
   );
+  const buttonsBefore = await countExtractButtons(page);
   await page
     .locator('input[type="file"]')
     .first()
@@ -63,14 +64,7 @@ async function uploadAndExtract(page: Page): Promise<void> {
       buffer: Buffer.from(INVENTORY_CSV),
     });
   // Offline: the upload lists the file; extraction is an explicit click.
-  const extractBtn = page
-    .getByRole("button", { name: "Extract from this" })
-    .first();
-  if (await extractBtn.isVisible().catch(() => false)) {
-    await extractBtn.click();
-    await acknowledgeOfflineAi(page);
-  }
-  await extractDone;
+  await extractAfterUpload(page, extractDone, buttonsBefore);
 }
 
 test("tech-debt extract builds the dashboard, and editing a cell clears the AI-confidence badge", async ({

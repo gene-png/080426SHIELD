@@ -67,7 +67,18 @@ vi.mock("./ConsolidationPlanCard", () => ({
 }));
 vi.mock("./DeliverableCard", () => ({ DeliverableCard: () => null }));
 vi.mock("./DiscardDraftButton", () => ({ DiscardDraftButton: () => null }));
-vi.mock("./IntakeDocumentsPanel", () => ({ IntakeDocumentsPanel: () => null }));
+// Stands in for the guarded "Extract from this" button: a manual extraction.
+vi.mock("./IntakeDocumentsPanel", () => ({
+  IntakeDocumentsPanel: ({
+    onExtract,
+  }: {
+    onExtract: (artifactId: string) => void;
+  }) => (
+    <button type="button" onClick={() => onExtract("artifact-1")}>
+      extract by hand
+    </button>
+  ),
+}));
 vi.mock("./OverlapDashboard", () => ({ OverlapDashboard: () => null }));
 vi.mock("./ProgressStages", () => ({ ProgressStages: () => null }));
 vi.mock("./SecurityClassificationQueue", () => ({
@@ -153,5 +164,23 @@ describe("auto-extraction on upload waits for a settled AI status (#509)", () =>
       "[tech-debt] AI status unreadable; not auto-extracting",
     );
     warn.mockRestore();
+  });
+});
+
+// The deferred decision must not repeat an extraction the user already ran.
+// Found by the e2e suite: a user who clicks "Extract from this" while the
+// status is still settling got a SECOND extraction when it settled, because by
+// then the acknowledgement they had just given made the auto path eligible.
+describe("the deferred auto-extraction and a manual one", () => {
+  it("does not extract again when the user already extracted by hand", async () => {
+    await uploadWhileStatusLoads();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "extract by hand" }));
+    });
+    expect(extractCapabilities).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      settle(status({ ready: true, serves: "live", key_source: "database" }));
+    });
+    expect(extractCapabilities).toHaveBeenCalledTimes(1);
   });
 });
