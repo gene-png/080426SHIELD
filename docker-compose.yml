@@ -115,12 +115,43 @@ services:
     # withdrawal -- Chainguard withdrawing or gating this free image would
     # repeat the outage exactly. Only a copy this repo controls (a mirror)
     # closes that, tracked in #522.
-    # MinIO has stopped publishing public images. Pinning an OLD quay tag was
-    # rejected by the repo owner on 2026-09-24: CVE-2025-62506 was reported
-    # against MinIO and, per the owner, its maintainers declined to patch it in
-    # the containers, so a historical image would ship a known unpatched CVE
-    # into a FedRAMP-track product. (Cached quay images on a dev machine carry it
-    # too.) NOT checked here: that the release pinned below contains the fix.
+    # Both MinIO repositories stopped answering (Docker Hub 2026-09-19, quay.io
+    # 2026-09-24), and THE QUAY `:latest` CACHED
+    # ON A DEV MACHINE PREDATES THE FIX for CVE-2025-62506 (GHSA-jjjj-jwhf-8rgr, IAM
+    # privilege escalation, CVSS 8.1). Docker Hub's last build was not read; that
+    # repository no longer answers. The fix is MinIO PR #21642, merge
+    # commit c1a49490c78e, in RELEASE.2025-10-15T17-29-55Z. The cached quay
+    # `:latest` is RELEASE.2025-09-07T16-13-09Z, built 2025-09-07 (`minio
+    # --version` and `docker image inspect`, 2026-09-24). So pinning an old quay tag, rejected by the repo
+    # owner on 2026-09-24, would have shipped a known unpatched CVE into a
+    # FedRAMP-track product. Third-party rebuilds (Chainguard, below) can carry
+    # it.
+    #
+    # THE PIN CARRIES THE FIX, checked against the code rather than the release
+    # date, 2026-09-24. The pinned binary reports commit-id df34868a88cc.
+    # GitHub's compare of c1a49490c78e...df34868a88cc answered "ahead 57, behind
+    # 0" (the reverse compare answered "behind"). cmd/iam.go changed again after
+    # the fix, so ancestry alone was not enough. The fix's only functional line,
+    # `sessionPolicyArgs.DenyOnly = false`, is present at df34868a88cc directly
+    # after `IsOwner = false` in BOTH patched functions,
+    # isAllowedBySessionPolicyForServiceAccount and isAllowedBySessionPolicy.
+    # Those are the file's only two assignments to DenyOnly (grep
+    # `DenyOnly\s*[:=]`), and cmd/iam.go is the PR's only non-test file. The lines
+    # the fix removed are comments.
+    #
+    # THE ADVISORY AGREES FROM THE OTHER DIRECTION. The global advisory record
+    # and OSV GO-2025-4034 give the first patched version as the Go
+    # pseudo-version 0.0.0-20251015170045-c1a49490c78e, whose trailing segment
+    # IS the fix commit traced above. The advisory names the commit, and the
+    # ancestry check finds that commit under the pin. This trusts the commit id
+    # the build embeds; it is not a scan of the binary.
+    #
+    # The cached quay image carries the CVE, checked by commit: its commit,
+    # 07c3a429bfed, is 13 behind the fix and 0 ahead (GitHub compare,
+    # 2026-09-24). Another machine's cache may differ. Exploiting it needs a
+    # restricted service or STS account with an inline session policy (per the
+    # advisory), and this stack configures root credentials only. So removing
+    # them is hygiene, not an incident.
     #
     # Chainguard publishes MinIO free, public and unauthenticated (measured by
     # pulling; its own documentation says it rebuilds from source, which is not
