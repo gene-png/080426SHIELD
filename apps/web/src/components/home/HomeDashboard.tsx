@@ -75,10 +75,13 @@ export interface HomeDashboardProps {
 /** The independently-rendering panels of the client home page (#236). */
 export type HomePanel = "deliverables" | "engagements" | "messages" | "value";
 
+// UTC, like the dashboards' released badge (`dashboards/shared.tsx`): the
+// same release must read as the same day on every page, for every reader.
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",
   day: "numeric",
+  timeZone: "UTC",
 });
 
 function formatDate(iso: string | null): string {

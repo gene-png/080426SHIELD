@@ -6,6 +6,7 @@
 // (eslint-plugin-react 7.37.5 calls the removed context.getFilename(), and
 // Next's parser trips eslint-scope's missing scopeManager.addGlobals).
 const nextCoreWebVitals = require("eslint-config-next/core-web-vitals");
+const intlTimeZone = require("./eslint/intl-timezone.js");
 
 /** @type {import("eslint").Linter.Config[]} */
 module.exports = [
@@ -21,4 +22,13 @@ module.exports = [
   // a deliberate lint tightening: every violation is fixed in source, so no
   // rule is configured off here. The default severities from
   // eslint-config-next/core-web-vitals now stand.
+  //
+  // Every Intl.DateTimeFormat in product code names its zone (see the module).
+  // Tests are exempt: they read the ambient zone on purpose, to prove a pinned
+  // formatter ignores it.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}"],
+    ...intlTimeZone,
+  },
 ];

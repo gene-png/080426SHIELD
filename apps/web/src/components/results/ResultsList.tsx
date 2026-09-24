@@ -44,10 +44,13 @@ export interface ClientDeliverableListResponse {
   items: ClientDeliverable[];
 }
 
+// UTC, like the dashboards' released badge (`dashboards/shared.tsx`): the
+// same release must read as the same day on every page, for every reader.
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",
   day: "numeric",
+  timeZone: "UTC",
 });
 
 function formatReleased(iso: string | null): string {

@@ -121,6 +121,71 @@ def test_refresh_within_window_carries_auth_time_forward(app_client: TestClient)
     assert rotated.auth_time == original.auth_time
 
 
+@pytest.mark.unit
+def test_every_pair_states_its_reauth_deadline_and_a_refresh_does_not_move_it(
+    app_client: TestClient,
+) -> None:
+    """#498. The web counts down to the session's END, which is the EARLIER of
+    the refresh token's expiry and the forced re-auth ceiling. The refresh
+    expiry rolls forward on every rotation; the ceiling does not. Without the
+    deadline on the wire the web could only see the rolling one, and a user
+    active all day would be signed out at the ceiling with no warning.
+
+    Expected value derived from the rule (login time + ceiling), not read off
+    the response: the login's `auth_time` claim is the anchor the refresh
+    endpoint itself enforces."""
+    from app.config import get_settings
+    from app.security.jwt import verify_token
+
+    ceiling = timedelta(seconds=get_settings().shield_forced_reauth_seconds)
+    body = _register(app_client)
+    login = verify_token(body["tokens"]["refresh_token"], expected_type="refresh")
+    assert login.auth_time is not None
+    expected = login.auth_time + ceiling
+
+    stated = datetime.fromisoformat(body["tokens"]["reauth_at"])
+    assert abs((stated - expected).total_seconds()) < 1, (stated, expected)
+
+    # The refresh half needs a login that is NOT "just now": refreshed
+    # milliseconds after registering, a ceiling re-anchored on the refresh
+    # time lands within a second of the right one and passes (round 9 on
+    # #499). So refresh a token -- the ACTIVE jti, so rotation accepts it --
+    # whose login was an hour ago; a refresh-anchored ceiling is then off by
+    # an hour.
+    import uuid as _uuid
+
+    from app.security.jwt import issue_token
+
+    an_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+    older, _ = issue_token(
+        subject=_uuid.UUID(body["user"]["id"]),
+        role=body["user"]["role"],
+        typ="refresh",
+        auth_time=an_hour_ago,
+        jti=login.jti,
+    )
+    r = app_client.post("/auth/refresh", json={"refresh_token": older})
+    assert r.status_code == 200, r.text
+    after_refresh = datetime.fromisoformat(r.json()["reauth_at"])
+    anchored = an_hour_ago + ceiling
+    assert abs((after_refresh - anchored).total_seconds()) < 1, (
+        "a refresh moved the ceiling off the login time",
+        after_refresh,
+        anchored,
+    )
+
+
+@pytest.mark.unit
+def test_login_states_the_reauth_deadline_too(app_client: TestClient) -> None:
+    _register(app_client, email="login@example.com")
+    r = app_client.post(
+        "/auth/login",
+        json={"email": "login@example.com", "password": "correct horse battery staple!"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["reauth_at"] is not None
+
+
 # -----------------------------------------------------------------------------
 # (b) Refresh-token rotation
 # -----------------------------------------------------------------------------
