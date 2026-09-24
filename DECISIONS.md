@@ -5443,9 +5443,17 @@ in one of three states:
 - **unowned:** `unowned-with-reason`, with the reason in the body;
 - **deferred:** `post-mvp`, deliberately deferred past the MVP.
 
-A deferred issue may carry a tier, and need not. An issue carrying
-`mvp-blocking` still needs exactly one tier, whatever else it carries: the board
-query returns it, so it needs a place in the ordering.
+A deferred issue may carry a tier, and need not.
+
+**The states are alternatives.** `mvp-blocking` together with `post-mvp` is a
+fault of its own (`deferred_on_board`): "blocks the MVP" and "deferred past it"
+contradict each other. The case it catches is a half-done move. CONTEXT.md and
+DELIVERY_PLAN.md already direct one (#185's label "should move to `post-mvp`"),
+and adding `post-mvp` without removing `mvp-blocking` would otherwise pass. No
+open issue carried both on 2026-09-24, so this costs nothing today. It is the
+author's call, raised by review, and can be overturned. It differs deliberately
+from `unowned-with-reason` + `mvp-blocking`, which stays legal: a blocker nobody
+owns is a coherent state.
 
 ### Why a rule change and not a relabelling
 
@@ -5468,7 +5476,9 @@ Measured with the gate itself, 2026-09-24, on the live board
 "post-MVP", "later" and "deferred" are observed by nothing. This decision does
 not change that. It makes a deferral a legitimate FILING state, visible to
 `label:post-mvp`. It does not make it an alarm. A deferred issue that must come
-back carries `Trigger-date:`, which is the mechanism that fires.
+back needs the `scheduled-trigger` label AND both body lines, `Trigger-date:` and
+`Trigger-reason:`. The script lists only labelled issues, so a date line on an
+unlabelled issue never fires, and nothing says so.
 
 **The gate does not check the deferral is reasoned.** The same residual as
 `unowned-with-reason`: labels only, not the body.

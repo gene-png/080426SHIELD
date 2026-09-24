@@ -3,7 +3,7 @@ tier, or `unowned-with-reason`, or `post-mvp`.
 
 CLAUDE.md (the filing rule): every new issue carries `mvp-blocking` plus one of
 `tier-1` / `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the
-body. An issue without `mvp-blocking` is not on the board; one with it and no
+body, OR `post-mvp`. An issue without `mvp-blocking` is not on the board; one with it and no
 tier "has no place in the ordering". Nothing enforced that, so both happened.
 The gate checks LABELS only -- it does not read the body.
 
@@ -54,10 +54,14 @@ _TABLE = [
     # allowed and not required -- the deferral is the decision.
     ({"post-mvp"}, None),
     ({"tier-3", "post-mvp"}, None),
-    # ...but on the board, the board's rule still applies: the query returns
-    # it, so it needs exactly one place in the ordering.
-    ({"mvp-blocking", "post-mvp"}, "no_tier"),
-    ({"mvp-blocking", "post-mvp", "tier-2", "tier-3"}, "several_tiers"),
+    # ...and NOT together with `mvp-blocking`: "blocks the MVP" and "deferred
+    # past it" contradict each other, whatever the tiers. Unlike
+    # `unowned-with-reason` + `mvp-blocking` above, which is a coherent state
+    # (a blocker nobody owns). The live instance this guards against is a
+    # half-done move to `post-mvp` that forgot to remove `mvp-blocking`.
+    ({"mvp-blocking", "post-mvp", "tier-3"}, "deferred_on_board"),
+    ({"mvp-blocking", "post-mvp"}, "deferred_on_board"),
+    ({"mvp-blocking", "post-mvp", "tier-2", "tier-3"}, "deferred_on_board"),
     # A label that merely CONTAINS the word is not the state.
     ({"not-post-mvp"}, "off_board"),
 ]
@@ -124,6 +128,13 @@ def test_a_post_mvp_issue_is_clean_and_the_off_board_message_names_all_three_sta
         "#2: carries neither `mvp-blocking` + a tier, nor `unowned-with-reason`, "
         "nor `post-mvp`, so it is not on the board" in out
     )
+
+
+@pytest.mark.unit
+def test_a_deferred_issue_still_on_the_board_names_both_labels(monkeypatch, capsys) -> None:
+    code, out = _run(monkeypatch, capsys, [[_issue(4, "mvp-blocking", "post-mvp", "tier-2")]])
+    assert code == 1
+    assert "#4: carries both `mvp-blocking` and `post-mvp`" in out
 
 
 @pytest.mark.unit

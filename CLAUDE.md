@@ -2233,7 +2233,8 @@ Rules of the road:
   Every new issue carries, at creation: `mvp-blocking` + one of `tier-1` /
   `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the body, OR
   `post-mvp` — deliberately deferred past the MVP, a decision rather than a
-  backlog, and not a trigger: one that must come back carries `Trigger-date:`.
+  backlog, and not a trigger: one that must come back gets the
+  `scheduled-trigger` label and its `Trigger-date:` / `Trigger-reason:` lines.
   "Untriaged" is not a fourth option, because nothing ever comes back
   to triage it. `gh label list` is the authority for what exists, and
   `check_issue_labels.py` enforces the labels, not the reason (D-086).

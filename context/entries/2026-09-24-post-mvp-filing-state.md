@@ -6,10 +6,12 @@ Branch `feat/post-mvp-label-state`, base `0a831a7`.
 
 - **CLAUDE.md's filing rule** names `post-mvp` as a third legitimate state,
   beside `mvp-blocking` + a tier and `unowned-with-reason`. It is a decision,
-  not a backlog, and not a trigger: one that must come back carries
-  `Trigger-date:`.
+  not a backlog, and not a trigger: one that must come back gets the
+  `scheduled-trigger` label with `Trigger-date:` and `Trigger-reason:` lines.
 - **`check_issue_labels.py`** accepts `post-mvp` off the board, with or
-  without a tier. With `mvp-blocking`, the tier check still applies. The
+  without a tier. `post-mvp` together with `mvp-blocking` is a new fault,
+  `deferred_on_board`: the states are alternatives, and the pair is what a
+  half-done move leaves behind. No open issue carried both. The
   off-board message names all three states. The special-case suffix that
   called `post-mvp` "a state the rule does not name" is gone.
 - **The filing rule's incident paragraph** (#184/#286) moved to D-086, to pay
@@ -27,4 +29,4 @@ Branch `feat/post-mvp-label-state`, base `0a831a7`.
 ## Residual
 
 Nothing puts deferred issues in front of anyone. `label:post-mvp` finds them,
-and only a `Trigger-date:` brings one back.
+and only the `scheduled-trigger` label, with both of its lines, brings one back.

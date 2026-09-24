@@ -12,10 +12,15 @@ What this checks is LABELS only. It does not read the body, so an
 stated here because "or says why" would be the natural misreading of the rule's
 second half.
 
-`mvp-blocking` triggers the tier check whether or not `unowned-with-reason` or
-`post-mvp` is also present: the board query returns the issue either way, so it
-needs a place in the ordering either way. Off the board, a tier is allowed and
-not required.
+`mvp-blocking` triggers the tier check whether or not `unowned-with-reason` is
+also present: the board query returns the issue either way, so it needs a place
+in the ordering either way. An unowned blocker is a coherent state.
+
+`mvp-blocking` together with `post-mvp` is NOT: "blocks the MVP" and "deferred
+past it" contradict each other, whatever the tiers, so the pair is its own
+fault and is reported before any tier check. The case it catches is a half-done
+move to `post-mvp` that forgot to remove `mvp-blocking`. Off the board,
+`post-mvp` allows a tier and does not require one.
 
 Two modes:
   * FULL (default): every open issue. Exit 1 if any breaks the rule.
@@ -51,6 +56,10 @@ TIERS = ("tier-1", "tier-2", "tier-3")
 _MESSAGES = {
     "no_tier": f"carries `{BOARD}` but no tier, so it has no place in the ordering",
     "several_tiers": f"carries `{BOARD}` and more than one tier",
+    "deferred_on_board": (
+        f"carries both `{BOARD}` and `{DEFERRED}`: on the board and deferred past "
+        "the MVP at once -- remove one"
+    ),
     "off_board": (
         f"carries neither `{BOARD}` + a tier, nor `{UNOWNED}`, nor `{DEFERRED}`, "
         "so it is not on the board"
@@ -60,6 +69,8 @@ _MESSAGES = {
 
 def classify(labels: set[str]) -> str | None:
     """The rule's verdict on one issue's labels: None, or the fault's key."""
+    if BOARD in labels and DEFERRED in labels:
+        return "deferred_on_board"
     if BOARD in labels:
         tiers = [t for t in TIERS if t in labels]
         if not tiers:
