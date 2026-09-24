@@ -103,25 +103,45 @@ services:
     #   - 2026-09-24: both vanished from quay.io too (`mc` answers 401, `minio`
     #     "no such manifest"), and every E2E and Demo job -- on `main` and on
     #     every PR -- died at stack start, on a fact about a third party.
-    # MinIO has stopped publishing public images. Pinning an OLD quay tag is not
-    # an option either: CVE-2025-62506 was reported against MinIO and the
-    # maintainers declined to patch it in the containers, so a historical image
-    # ships a known unpatched CVE into a FedRAMP-track product. (Cached images on
-    # a dev machine carry it too.)
+    # MinIO has stopped publishing public images. Pinning an OLD quay tag was
+    # rejected by the repo owner on 2026-09-24: CVE-2025-62506 was reported
+    # against MinIO and, per the owner, its maintainers declined to patch it in
+    # the containers, so a historical image would ship a known unpatched CVE
+    # into a FedRAMP-track product. (Cached quay images on a dev machine carry it
+    # too.) NOT checked here: that the release pinned below contains the fix.
     #
-    # Chainguard builds MinIO from source daily and publishes it free, public and
-    # unauthenticated. The free tier offers only `latest` / `latest-dev` tags, so
+    # Chainguard publishes MinIO free, public and unauthenticated (measured by
+    # pulling; its own documentation says it rebuilds from source, which is not
+    # measured here). The free tier offers only `latest` / `latest-dev` tags, so
     # the pin is the DIGEST; the tag in front of it is ignored by Docker and kept
     # only to say which variant it is. `-dev`, because the distroless `latest`
     # has no shell and no HTTP client, and this service's healthcheck and the
-    # `createbuckets` job below both need one. The digest pins MinIO
-    # RELEASE.2026-09-22T19-25-18Z (`minio --version` in the image, 2026-09-24).
+    # `createbuckets` job below both need one.
     #
-    # TO UPDATE: `docker pull cgr.dev/chainguard/minio:latest-dev`, take
-    # `docker image inspect --format '{{index .RepoDigests 0}}'`, record the new
-    # `minio --version` here, and bring the stack up once before committing. No
-    # automated updater watches this file (dependabot.yml has no docker
-    # ecosystem), so this is manual -- which is the cost of a pin, paid on purpose.
+    # WHAT IS PINNED (both read 2026-09-24):
+    #   minio         RELEASE.2026-09-22T19-25-18Z (`minio --version`), built
+    #                 2026-09-24T03:05:08Z
+    #   minio-client  built 2026-09-24T03:05:08Z; `mc --version` reports only
+    #                 DEVELOPMENT.GOGET, so the build date is the identity
+    #
+    # A DIGEST PIN IS ONLY AS DURABLE AS THE REGISTRY'S RETENTION, and no
+    # documented free-tier retention guarantee is relied on here. Measured
+    # instead, 2026-09-24: ten superseded `minio` digests sampled from the
+    # registry's signature tags (first page of its tag list), built
+    # between 2025-10-24 and 2026-09-13, all still resolve. Evidence, not a
+    # promise. If a pin ever answers "manifest unknown", do NOT move back to
+    # `:latest` -- re-pin to a current digest, and if it recurs, mirror both
+    # images into a registry this repo owns.
+    #
+    # TO UPDATE -- BOTH images, together:
+    #   docker pull cgr.dev/chainguard/minio:latest-dev
+    #   docker pull cgr.dev/chainguard/minio-client:latest-dev
+    # take each one's `docker image inspect --format '{{index .RepoDigests 0}}'`,
+    # rewrite WHAT IS PINNED above (`minio --version`; the build date from
+    # `docker buildx imagetools inspect --format '{{json .Image}}'`), and bring
+    # the stack up once before committing. No automated updater watches this file
+    # (dependabot.yml has no docker ecosystem), so this is manual -- which is the
+    # cost of a pin, paid on purpose.
     #
     # `user: "0:0"`: Chainguard runs as uid 65532, and a named volume at /data is
     # created root-owned, so the server refuses it ("file access denied",
@@ -162,7 +182,8 @@ services:
   # fails with NoSuchBucket -> 500. Idempotent (--ignore-existing); exits 0.
   createbuckets:
     # Chainguard, pinned by digest, for the reasons in the block on `minio`
-    # above. `-dev` for the `sh` this entrypoint runs in.
+    # above. `-dev` for the `sh` this entrypoint runs in. Update it WITH `minio`,
+    # never alone -- see TO UPDATE there.
     image: cgr.dev/chainguard/minio-client:latest-dev@sha256:614e083a12c6dc779f13f97e01b13afda4021a8ce3f4021a2fcf23ec86f46837
     depends_on:
       minio:

@@ -20,11 +20,18 @@ once, with nothing in the repo changing. The fix pins what lands.
 ## What changed
 
 - `minio` and `createbuckets` use `cgr.dev/chainguard/minio` and
-  `cgr.dev/chainguard/minio-client`. These are built from source daily, and are
-  free, public and unauthenticated.
+  `cgr.dev/chainguard/minio-client`. These are free, public and unauthenticated
+  (measured by pulling). Chainguard says it rebuilds them from source; that was
+  not measured.
 - **Pinned by digest.** The free tier offers only `latest` / `latest-dev`, so
   the digest is the pin. The server digest is MinIO
-  `RELEASE.2026-09-22T19-25-18Z`.
+  `RELEASE.2026-09-22T19-25-18Z`. The client reports no version
+  (`DEVELOPMENT.GOGET`), so its build date, 2026-09-24T03:05:08Z, identifies it.
+  The compose comment's update procedure covers both images, together.
+- **Retention was measured, not assumed.** A digest pin lasts only as long as
+  the registry keeps the digest. Ten superseded `minio` digests, built between
+  2025-10-24 and 2026-09-13, all still resolved on 2026-09-24. That is evidence,
+  not a promise. If a pin stops resolving, re-pin; if it recurs, mirror.
 - `-dev` variants, because the distroless images have no shell and no HTTP
   client. The healthcheck and the bucket job both need one.
 - The healthcheck uses `wget`, because the image has no `curl`.
@@ -37,8 +44,9 @@ once, with nothing in the repo changing. The fix pins what lands.
 
 ## Rejected: pinning an old quay tag
 
-CVE-2025-62506 was reported against MinIO, and its maintainers declined to
-patch it in the containers. A historical image would ship a known, unpatched
+The repo owner's decision, 2026-09-24. CVE-2025-62506 was reported against
+MinIO, and per the owner its maintainers declined to patch it in the containers.
+Not checked here: that the pinned release contains the fix. A historical image would ship a known, unpatched
 CVE into a FedRAMP-track product. The cached quay images on dev machines carry
 it too. That is worth knowing, but not urgent.
 
