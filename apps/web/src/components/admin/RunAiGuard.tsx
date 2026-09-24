@@ -20,8 +20,9 @@ import type { JSX } from "react";
  * Wraps any Run-AI control. When AI is ready, or the admin already
  * acknowledged offline mode for THIS configuration, the child renders
  * untouched and the click goes straight through — no extra step in the happy
- * path. Otherwise the first click shows a choice: load a key, or knowingly
- * continue and get a canned offline response.
+ * path. Otherwise the first click shows what a Run-AI will do instead and
+ * the controls that apply: load a key where one can be loaded here, and
+ * knowingly continue ONLY when the result is canned offline output (#472).
  *
  * The acknowledgement is scoped to the current configuration (see
  * `aiStatusKey`), so removing the key invalidates it: the next Run-AI in the
@@ -100,8 +101,8 @@ export function RunAiGuard({
           role="alertdialog"
           /* NAMES NO CAUSE, deliberately. This used to read "No API key
              loaded", which is one of FIVE reasons `ready` is false and is the
-             WRONG one in four of them -- `_ai_readiness` returns "A key is
-             loaded but ..." for the adapter, SDK and model-id branches, and
+             WRONG one for most of them -- `_ai_readiness` returns "Run-AI will
+             fail: ..." for the build-refusal, SDK and model-id branches, and
              "... even though an environment key is present" for the mode
              branch.
 
@@ -150,44 +151,60 @@ export function RunAiGuard({
           </p>
           <p className="mt-1 text-ink-secondary">
             {/* The imperative that stood here -- "Load a key to run real AI."
-                -- is false for the adapter, SDK and model-id causes, where a
-                key IS loaded. A user-facing string naming an action has to name
-                a control that works TODAY, and `promptFor.detail` above now
-                carries the SERVER'S remedy for this cause rather than one
-                guess for every cause.
+                -- is false for the causes where a key IS loaded. A user-facing
+                string naming an action has to name a control that works
+                TODAY, and `promptFor.detail` above carries the SERVER'S remedy
+                for this cause rather than one guess for every cause.
 
-                NOT "the remedy that applies", which is what this said and is
-                false for at least one branch: on a `vertex` deployment the
-                server itself prints "No API key is loaded ... Load a key",
-                and following it BREAKS live AI, because vertex uses ADC and
-                `_build_provider` then refuses. Tracked in #472; not fixable
-                here, because the string is the server's.
-
-                The sentence below is true of all five regardless: it says
-                what fixture output IS, and claims nothing about the cause. */}
-            Offline (fixture) output is deterministic demo content, not analysis
-            of this client&apos;s data.
+                #472: the server now derives that remedy from the provider it
+                would build, so a keyless provider (vertex) is no longer told
+                to load a key, and states what a Run-AI will DO in `serves`.
+                This sentence describes fixture output, so it is shown only
+                when the call really is offline; a broken configuration is told
+                there is no fallback instead. */}
+            {promptFor.serves === "offline" ? (
+              <>
+                Offline (fixture) output is deterministic demo content, not
+                analysis of this client&apos;s data.
+              </>
+            ) : (
+              <>
+                There is no offline fallback for this: Run AI will fail until it
+                is fixed.
+              </>
+            )}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {/* LABEL DELIBERATELY UNCHANGED. It names a control that
-                exists and works -- that panel does load a key -- and it does
-                not claim that loading one fixes THIS cause; the detail line
-                above says what the cause is. Renaming it would change nothing
-                about correctness and would break `s34-llm-key.spec.ts`, which
-                asserts this link by name. */}
-            <Link
-              href="/admin/management#ai-provider-key"
-              className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-ink-on-accent hover:bg-brand-600"
-            >
-              Load a key
-            </Link>
-            <button
-              type="button"
-              onClick={continueOffline}
-              className="rounded-md border border-border bg-surface-card px-3 py-1.5 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"
-            >
-              Continue offline
-            </button>
+            {/* LABEL DELIBERATELY UNCHANGED; `s34-llm-key.spec.ts` asserts
+                this link by name. SHOWN only where a key can be loaded here
+                (`can_configure`, #472 round 1): for vertex there is no key, and
+                for openai and gemini the validator refuses a pasted one, so
+                the link named a control that cannot work beside a detail
+                telling the admin not to use it. And only when the call is
+                OFFLINE (round 4): a missing SDK or a placeholder model is
+                "broken", and no key fixes either. */}
+            {promptFor.can_configure && promptFor.serves === "offline" ? (
+              <Link
+                href="/admin/management#ai-provider-key"
+                className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-ink-on-accent hover:bg-brand-600"
+              >
+                Load a key
+              </Link>
+            ) : null}
+            {/* #472: "Continue offline" promises the call stays offline.
+                On a live Vertex deployment the server used to report not-ready,
+                this button was offered, and the "offline" run sent the client's
+                data to Google. It is offered ONLY when the server says a
+                Run-AI serves canned output. */}
+            {promptFor.serves === "offline" ? (
+              <button
+                type="button"
+                onClick={continueOffline}
+                className="rounded-md border border-border bg-surface-card px-3 py-1.5 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"
+              >
+                Continue offline
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setPromptFor(null)}

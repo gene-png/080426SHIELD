@@ -94,7 +94,7 @@ export function TechDebtWorkspace({
    */
   const { messages: refreshMessages, begin: beginRefresh } =
     useRefreshFailures();
-  const { status: aiStatus } = useAiStatus();
+  const { settled: aiSettled } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
@@ -292,7 +292,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
     }
   }
 
+  // Artifacts whose extraction has started on this page. The upload's
+  // deferred auto-extraction consults it: a user who clicked "Extract from
+  // this" while the AI status was still settling must not get a second
+  // extraction once it settles (found by the e2e suite on #472).
+  const extractionStarted = React.useRef(new Set<string>());
+
   async function runExtraction(artifactId: string): Promise<void> {
+    extractionStarted.current.add(artifactId);
     setExtracting(true);
     setExtractError(null);
     listSeq.current += 1;
@@ -487,14 +494,23 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 // unannounced. When AI is not live (and the admin hasn't already
                 // acknowledged it) the file is just listed — the guarded
                 // "Extract from this" button below is then the way in.
-                if (
-                  aiStatus &&
-                  !aiStatus.ready &&
-                  !hasAcknowledgedOffline(aiStatus)
-                ) {
-                  return;
-                }
-                void runExtraction(a.id);
+                //
+                // #509: decided on a SETTLED status. This read `status`, null
+                // while the request is in flight, and a null ran the extraction
+                // -- reachable since #472 made the first status read slow. A
+                // status that cannot be read at all does not auto-run either;
+                // the guarded button, which fails open on an outage, remains.
+                void aiSettled().then((s) => {
+                  if (s === null) {
+                    console.warn(
+                      "[tech-debt] AI status unreadable; not auto-extracting",
+                    );
+                    return;
+                  }
+                  if (!s.ready && !hasAcknowledgedOffline(s)) return;
+                  if (extractionStarted.current.has(a.id)) return;
+                  void runExtraction(a.id);
+                });
               }}
               accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             />

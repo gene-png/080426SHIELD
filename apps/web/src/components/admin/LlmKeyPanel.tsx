@@ -2,7 +2,12 @@
 import * as React from "react";
 
 import { useAiStatus } from "@/lib/admin/aiStatus";
-import { removeLlmKey, setLlmKey, type AiStatus } from "@/lib/admin/client";
+import {
+  fetchAiStatus,
+  removeLlmKey,
+  setLlmKey,
+  type AiStatus,
+} from "@/lib/admin/client";
 
 import type { JSX } from "react";
 
@@ -18,6 +23,22 @@ import type { JSX } from "react";
  * what makes the offline warning reappear the first time Run AI is used after
  * a key is removed (see `aiStatusKey` in aiStatus.ts).
  */
+/** What removing the stored key actually did, from the status read after it. */
+function removalNotice(next: AiStatus | null): string {
+  if (next === null) {
+    return "Key removed. The AI status could not be re-read — refresh the page to see what AI will do now.";
+  }
+  if (next.serves === "live") {
+    // Not "on the environment key": for vertex it would be ADC. The detail
+    // above names what AI is running on.
+    return "Key removed. AI is still live.";
+  }
+  if (next.serves === "offline") {
+    return "Key removed. AI steps will generate offline responses again.";
+  }
+  return "Key removed. Run AI will fail until the cause above is fixed.";
+}
+
 export function LlmKeyPanel({
   onChanged,
 }: {
@@ -25,7 +46,7 @@ export function LlmKeyPanel({
 }): JSX.Element {
   // Shares the shell banner's loader rather than running a second effect of
   // its own — one place decides how AI status is fetched.
-  const { status: loaded, refresh } = useAiStatus();
+  const { status: loaded, phase, refresh } = useAiStatus();
   // A save/remove returns fresh status; prefer it until the next refresh lands.
   const [override, setOverride] = React.useState<AiStatus | null>(null);
   const status = override ?? loaded;
@@ -49,7 +70,7 @@ export function LlmKeyPanel({
       setNotice(
         next.ready
           ? "Key validated and saved. Live AI is on."
-          : "Key saved, but AI still isn't live — see the detail below.",
+          : "Key saved, but AI still isn't live — see the detail above.",
       );
       onChanged?.();
     } catch (err) {
@@ -68,9 +89,19 @@ export function LlmKeyPanel({
     try {
       await removeLlmKey();
       setConfirmingRemove(false);
-      setOverride(null);
-      refresh();
-      setNotice("Key removed. AI steps will generate offline responses again.");
+      // #472 round 1: "offline again" was said whatever happened next. In live
+      // mode an ENVIRONMENT key takes over and Run-AI keeps calling the
+      // provider, so the notice comes from the status read AFTER the removal.
+      let next: AiStatus | null = null;
+      try {
+        next = await fetchAiStatus();
+      } catch (err) {
+        // Stated, not swallowed: the key IS removed; only the re-read failed.
+        console.warn("[llm-key] status re-read after removal failed", err);
+      }
+      setOverride(next);
+      if (next === null) refresh();
+      setNotice(removalNotice(next));
       onChanged?.();
     } catch (err) {
       setError(
@@ -95,10 +126,14 @@ export function LlmKeyPanel({
           }
         >
           {status === null
-            ? "Checking…"
+            ? phase === "error"
+              ? "Unknown"
+              : "Checking…"
             : status.ready
               ? "Live AI on"
-              : "Offline"}
+              : status.serves === "broken"
+                ? "Not working"
+                : "Offline"}
         </span>
         {status ? (
           <span className="text-ink-secondary">
@@ -112,27 +147,50 @@ export function LlmKeyPanel({
         <p className="max-w-prose text-sm text-ink-secondary">
           {status.detail}
         </p>
+      ) : phase === "error" ? (
+        <p role="alert" className="max-w-prose text-sm text-status-danger-fg">
+          The AI status could not be read, so what Run AI will do is unknown. A
+          key pasted here is still checked against the provider before it is
+          saved.
+        </p>
       ) : null}
 
       <form onSubmit={(e) => void onSave(e)} className="flex flex-wrap gap-2">
-        <input
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={
-            hasStoredKey ? "Paste a new key to replace" : "Paste API key"
-          }
-          aria-label="Provider API key"
-          autoComplete="off"
-          className="min-w-[18rem] flex-1 rounded-md border border-border bg-surface-card px-3 py-2 font-mono text-sm"
-        />
-        <button
-          type="submit"
-          disabled={busy || !key.trim()}
-          className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {busy ? "Validating…" : hasStoredKey ? "Replace key" : "Save key"}
-        </button>
+        {/* #472 round 2: the paste form renders only where a key can be
+            LOADED here (`can_configure`). For openai and gemini the validator
+            refuses a pasted key, and vertex has none -- the form stood under
+            server copy saying so. Remove stays: a stored key can always be
+            removed, and the build-refusal copy tells the admin to. */}
+        {/* A FAILED status read is neither "loading" nor "cannot load a
+            key here": offer the form, because the server validates the key
+            anyway (round 3 on #472). */}
+        {status?.can_configure || (status === null && phase === "error") ? (
+          <>
+            <input
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={
+                hasStoredKey ? "Paste a new key to replace" : "Paste API key"
+              }
+              aria-label="Provider API key"
+              autoComplete="off"
+              className="min-w-[18rem] flex-1 rounded-md border border-border bg-surface-card px-3 py-2 font-mono text-sm"
+            />
+            <button
+              type="submit"
+              disabled={busy || !key.trim()}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? "Validating…" : hasStoredKey ? "Replace key" : "Save key"}
+            </button>
+          </>
+        ) : status ? (
+          <p className="text-sm text-ink-secondary">
+            A key for {status.provider} cannot be loaded here — see the detail
+            above for what this provider needs.
+          </p>
+        ) : null}
         {hasStoredKey ? (
           confirmingRemove ? (
             <span className="flex items-center gap-2">

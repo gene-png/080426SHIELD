@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
@@ -46,10 +47,18 @@ class AdminAiStatus(BaseModel):
     detail: str
     # Issue 2: whether this deployment can accept a pasted key at runtime, and
     # where the current key came from ("database" | "environment" | "none").
+    # #472: `can_configure` was always true; it is now whether the configured
+    # provider's key can be LOADED here (`keystore.accepts_runtime_key`), so a
+    # "Load a key" control is never offered for a key the validator refuses.
     # The UI uses these to decide whether to offer "Load a key", and to reset
     # its "I acknowledged offline mode" flag when the key changes.
     can_configure: bool = False
     key_source: str = "none"
+    # #472: what a Run-AI will actually do right now -- call the provider
+    # (`live`), serve canned fixture output (`offline`), or fail (`broken`).
+    # `ready` is `serves == "live"`; the split matters to the Run-AI guard,
+    # which may offer "Continue offline" ONLY when the call really is offline.
+    serves: Literal["live", "offline", "broken"]
 
 
 class AdminUserSummary(BaseModel):
