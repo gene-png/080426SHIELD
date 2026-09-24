@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { REAUTH_REQUIRED_ERROR } from "@/lib/auth/errors";
+
 /**
  * `/api/session-expiry` reports when the session ENDS: the earlier of the
  * rolling refresh expiry and the fixed re-auth ceiling (#498). Only the cookie
@@ -90,6 +92,32 @@ describe("GET /api/session-expiry", () => {
       await GET(new Request("http://localhost/api/session-expiry"))
     ).json();
     expect(body.ended).toBe(true);
+  });
+
+  it("says the session has ended when the backend REFUSED a refresh, though its end is ahead", async () => {
+    // The middleware writes REAUTH_REQUIRED_ERROR into the cookie; every proxy
+    // call is a 401 from then on. The refresh expiry it carries is still in
+    // the future, so the clock alone would keep the page waiting for it.
+    readSessionToken.mockResolvedValueOnce({
+      refreshExpiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
+      // What the jwt callback writes on a `reauth_required` refusal.
+      error: REAUTH_REQUIRED_ERROR,
+    });
+    const body = await (
+      await GET(new Request("http://localhost/api/session-expiry"))
+    ).json();
+    expect(body.ended).toBe(true);
+  });
+
+  it("does NOT say ended for a generic refresh error, which the next callback retries", async () => {
+    readSessionToken.mockResolvedValueOnce({
+      refreshExpiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
+      error: "RefreshAccessTokenError",
+    });
+    const body = await (
+      await GET(new Request("http://localhost/api/session-expiry"))
+    ).json();
+    expect(body.ended).toBe(false);
   });
 
   it("says the session has NOT ended while its end is still ahead", async () => {

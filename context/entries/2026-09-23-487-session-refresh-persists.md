@@ -67,8 +67,13 @@ tests; making `sessionChanged` always true fails the three that expect `false`.
   returns `ended`, decided by the same rule the callback uses, and the warning
   signs out with `reason=session_expired` when it is true, whatever the
   browser's clock says. Past its own deadline the page re-asks every 5 s
-  instead of every minute. A failed sign-out is retried. With no cookie at
-  all, `ended` is true. A cookie that is PRESENT but will not decode, under
+  instead of every minute. A failed sign-out is retried. `ended` is also true
+  when the backend REFUSED a refresh: the middleware writes that terminal
+  error into the cookie, and every proxy call is a 401 from then on, while
+  the refresh expiry it carries is still ahead. With no cookie at all,
+  `ended` is true: a cookie that expired or was cleared. A sign-out in
+  another tab broadcasts, and this tab's session drops before it can ask
+  (#503). A cookie that is PRESENT but will not decode, under
   either cookie name, is a 500 with `reason: session_cookie_unreadable`, and
   the page does nothing on a failed read. The presence check looks for both
   names on purpose: deriving the same name the decode uses would miss a name

@@ -146,10 +146,33 @@ def test_every_pair_states_its_reauth_deadline_and_a_refresh_does_not_move_it(
     stated = datetime.fromisoformat(body["tokens"]["reauth_at"])
     assert abs((stated - expected).total_seconds()) < 1, (stated, expected)
 
-    r = app_client.post("/auth/refresh", json={"refresh_token": body["tokens"]["refresh_token"]})
+    # The refresh half needs a login that is NOT "just now": refreshed
+    # milliseconds after registering, a ceiling re-anchored on the refresh
+    # time lands within a second of the right one and passes (round 9 on
+    # #499). So refresh a token -- the ACTIVE jti, so rotation accepts it --
+    # whose login was an hour ago; a refresh-anchored ceiling is then off by
+    # an hour.
+    import uuid as _uuid
+
+    from app.security.jwt import issue_token
+
+    an_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+    older, _ = issue_token(
+        subject=_uuid.UUID(body["user"]["id"]),
+        role=body["user"]["role"],
+        typ="refresh",
+        auth_time=an_hour_ago,
+        jti=login.jti,
+    )
+    r = app_client.post("/auth/refresh", json={"refresh_token": older})
     assert r.status_code == 200, r.text
     after_refresh = datetime.fromisoformat(r.json()["reauth_at"])
-    assert abs((after_refresh - expected).total_seconds()) < 1, "a refresh moved the ceiling"
+    anchored = an_hour_ago + ceiling
+    assert abs((after_refresh - anchored).total_seconds()) < 1, (
+        "a refresh moved the ceiling off the login time",
+        after_refresh,
+        anchored,
+    )
 
 
 @pytest.mark.unit

@@ -14,11 +14,10 @@ import { SessionExpiryWarning } from "./SessionExpiryWarning";
 
 // Resolves like the real one; `signOut` returns a Promise.
 const signOut = vi.fn(async (..._args: unknown[]) => undefined);
-const update = vi.fn(async () => null);
 let sessionData: { sessionExpiresAt?: string } | null = null;
 
 vi.mock("next-auth/react", () => ({
-  useSession: () => ({ data: sessionData, update }),
+  useSession: () => ({ data: sessionData }),
   signOut: (...args: unknown[]) => signOut(...args),
 }));
 
@@ -44,7 +43,6 @@ beforeEach(() => {
   vi.useFakeTimers();
   signOut.mockReset();
   signOut.mockImplementation(async () => undefined);
-  update.mockClear();
   sessionData = null;
   storedExpiry = null;
   serverSaysEnded = false;
@@ -143,7 +141,6 @@ describe("SessionExpiryWarning", () => {
     });
     await settle();
     expect(signOut).toHaveBeenCalledTimes(1);
-    expect(update).not.toHaveBeenCalled();
   });
 
   it("does NOT act on the browser's clock alone -- a browser ahead of the server must not end or extend a live session", async () => {
@@ -159,7 +156,6 @@ describe("SessionExpiryWarning", () => {
       vi.advanceTimersByTime(30_000);
     });
     await settle();
-    expect(update).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
   });
 
@@ -256,7 +252,41 @@ describe("SessionExpiryWarning", () => {
     warn.mockRestore();
   });
 
-  it("does not run update() when the server cannot be asked", async () => {
+  it("does not start a second sign-out while one is still in flight", async () => {
+    // What `signingOut` is for. The first sign-out never settles; `ended`
+    // flips false at the 60 s poll and true again at the 65 s re-check, which
+    // re-runs the effect. Without the flag that starts a second, concurrent
+    // sign-out. Same exact schedule as the reviving test above.
+    expiringIn(58_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
+    render(<SessionExpiryWarning />);
+    await settle();
+
+    serverSaysEnded = true;
+    signOut.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+    await act(async () => {
+      vi.advanceTimersByTime(58_000);
+    });
+    await settle();
+    await settle();
+    expect(signOut).toHaveBeenCalledTimes(1);
+
+    serverSaysEnded = false;
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+    });
+    await settle();
+    await settle();
+    serverSaysEnded = true;
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    await settle();
+    await settle();
+    expect(signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not sign out when the server cannot be asked", async () => {
     // A failed read is not an answer: the cached expiry may be stale, and
     // update() on a live session would extend it.
     fetchMock.mockImplementation(async () => new Response("", { status: 500 }));
@@ -268,16 +298,23 @@ describe("SessionExpiryWarning", () => {
       vi.advanceTimersByTime(30_000);
     });
     await settle();
-    expect(update).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it("does not ask the server while time remains", async () => {
+  it("does not sign out while time remains, whatever the stored expiry says", async () => {
+    // Was "does not ask the server while time remains", asserting only on
+    // update() -- which the component no longer calls, so it could not fail
+    // (round 9 on #499). What must not happen while time remains is a
+    // sign-out, and only the decode-only route may be read.
     expiringIn(30 * 60_000);
+    storedExpiry = sessionData!.sessionExpiresAt!;
     render(<SessionExpiryWarning />);
     await settle();
-    expect(update).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith("/api/session-expiry", {
+      cache: "no-store",
+    });
   });
 
   it("offers a way to re-authenticate without losing the reason", () => {

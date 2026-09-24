@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { REAUTH_REQUIRED_ERROR } from "@/lib/auth/errors";
 import {
   hasSessionCookie,
   readSessionToken,
@@ -53,15 +54,21 @@ export async function GET(req: Request): Promise<Response> {
   return NextResponse.json(
     {
       // The EARLIER of the rolling refresh expiry and the fixed re-auth
-      // ceiling -- the same rule the session callback uses. No `error` field:
-      // nothing reads one, and a decode-only read would not see a fresh one.
+      // ceiling -- the same rule the session callback uses.
       sessionExpiresAt:
         sessionEndsAt(token?.refreshExpiresAt, token?.reauthAt) ?? null,
-      // No cookie at all is a session that HAS ended (an undecodable one was
-      // refused above): the warning signs such a tab out rather than waiting
-      // for an end that already happened.
+      // Ended when: there is no cookie at all (an undecodable one was refused
+      // above) -- a cookie that expired or was cleared without a sign-out
+      // broadcast; a sign-out in another tab broadcasts, and this tab's
+      // session then drops before it ever asks (#503). When its end has passed. Or
+      // when the backend REFUSED a refresh: the middleware writes that
+      // terminal error into the cookie, every proxy call is a 401 from then
+      // on, and the refresh expiry it carries is still in the future (round 9
+      // on #499). Not the generic RefreshAccessTokenError, which the next
+      // callback retries.
       ended:
         token === null ||
+        token.error === REAUTH_REQUIRED_ERROR ||
         sessionHasEnded(token.refreshExpiresAt, token.reauthAt),
     },
     { headers: { "Cache-Control": "no-store" } },
