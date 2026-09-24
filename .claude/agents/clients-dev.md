@@ -28,16 +28,16 @@ Both track branches were cut before the agent layer existed, so until that layer
 is merged to `main` and your branch is rebased onto it, the `CLAUDE.md` and
 `.claude/agents/` you check out are stale — missing numbers rules 4 and 5, the
 agent-definition re-read rule, the `.claude/settings.json` ownership rows, and
-carrying `prettier@3.9.5` where CI resolves `3.9.6`. This file would not exist
+carrying `prettier@3.9.5` where CI then resolved `3.9.6` (2026-08-30). This file would not exist
 there at all. Run this first:
 
 ```bash
 test -f .claude/agents/clients-dev.md ||
-  echo "HALT: no clients-dev.md here. You are on a branch cut BEFORE the"\n       " agent layer. Not a rebase failure -- there was nothing to rebase onto"
+  echo "HALT: no clients-dev.md here. You are on a branch cut BEFORE the agent layer. Not a rebase failure -- there was nothing to rebase onto"
 grep -q "EVERY agent definition carries this line" CLAUDE.md ||
   echo "HALT: CLAUDE.md lacks the agent-definition rule. Same cause as above"
 grep -q "prettier-hook.sh --print-version" CLAUDE.md ||
-  echo "HALT: CLAUDE.md predates the lockfile-read format step. Running it reformats against"\n       " a version CI does not use. Same cause as above"
+  echo "HALT: CLAUDE.md predates D-087 (the lockfile-read format step), so its format command pins a version CI does not use. The agent layer IS here; the branch is behind main, and rebasing onto main is the remedy (Gene's call)."
 ```
 
 If it says HALT: **stop and report.** Do not proceed against the injected copy,

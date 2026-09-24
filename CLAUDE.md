@@ -312,10 +312,10 @@ double); and no `-w <dir>`.** `sh -lc "cd <dir> && ..."` is FINE and is the
 replacement for `-w` — its `&&` is inside a single quoted argument handed to the
 container's shell, which both host shells pass through untouched.
 
-**Commands here that need rewriting for PowerShell:**
-`cd e2e && npx playwright test [file]` (run it as two lines), and the format
-check, whose `${v:?}` and bash hook have no PowerShell form. The others use
-the `sh -lc` shape, including the MANDATORY pre-commit lint, and work as written.
+**Known to need rewriting for PowerShell:** `cd e2e && npx playwright test
+[file]` (run it as two lines). The format check was run in Git Bash only.
+Lines not in the `sh -lc` shape (`export PATH`, the pytest and seed lines)
+are unmeasured there; the default below applies.
 
 **The rule, and it binds every command block in this file: a block that claims it
 runs anywhere carries the SHELLS it was actually run in and the DATE it was run.**

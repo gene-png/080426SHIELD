@@ -5565,8 +5565,8 @@ An in-container `pnpm format:check` was tried first and rejected. It flagged 177
 files on a tree CI passes. The reason is NOT that the working tree holds build
 output CI lacks. `.prettierignore` already excludes `.next/` and
 `pnpm-lock.yaml`, but the web container never mounts `.prettierignore`: compose
-mounts only `apps/web`, `packages`, `package.json`, `pnpm-workspace.yaml` and the
-lockfile. So the container ignores nothing and cannot see `apps/api`, `e2e/`,
+mounts `apps/web`, `packages`, `package.json`, `pnpm-workspace.yaml`, the
+lockfile and `web-install-if-stale.sh`, and never `.prettierignore`. So the container ignores nothing and cannot see `apps/api`, `e2e/`,
 `docs/` or `.github/`. It is not CI parity, however clean the tree.
 
 ### Record moved here from CLAUDE.md, to pay for the tier clause

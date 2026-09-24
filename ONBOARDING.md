@@ -131,8 +131,10 @@ walking the checklist below.
 3. **Edit your runtime copy**: set `working_dir` to your absolute repo path
    and `expected_gh_user` to your GitHub login. The loop halts on either
    being wrong. Confirm the `gates` array's command strings match YOUR
-   OS/Docker/Node layout — the six gates themselves are the invariant. Known
-   trap: gate 3 (prettier) discovers Node via the **winget** package path
+   OS/Docker/Node layout — the six gates themselves are the invariant.
+   **Replace gate 3's hardcoded `prettier@3.9.6`** with CLAUDE.md's
+   lockfile-read format command (D-087); every staged queue pins a version
+   the lockfile has since passed. Known trap: gate 3 (prettier) discovers Node via the **winget** package path
    (`$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS…`); if you
    installed Node any other way (.msi, nvm), replace the `NODE_DIR` discovery
    with your node dir — or drop it if `npx` is already on the gate shell's

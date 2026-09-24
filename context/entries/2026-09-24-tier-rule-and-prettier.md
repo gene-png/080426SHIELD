@@ -16,13 +16,22 @@ Decision: D-087.
   `scripts/prettier-hook.sh --print-version`, the hook's root-importer reader,
   which refuses when it cannot read. It is Git Bash only, and says so. It used
   to say 3.9.6 while the lockfile said 3.9.8.
-- **The same stale pin, everywhere else it was written:**
-  - both dev agents' Step 0 guard (re-keyed onto the new command, which the old
-    CLAUDE.md lacks) and their Gates blocks;
-  - `README.md`, `ONBOARDING.md` and `docs/development.md`.
+- **The same stale pin, at every site that tells someone what to do:**
+  - both dev agents' Step 0 guard, re-keyed and given its own cause (the agent
+    layer IS present, and the branch is behind `main`);
+  - both dev agents' Gates blocks;
+  - `README.md`, `ONBOARDING.md` (the command, and "replace gate 3's hardcoded
+    prettier" when copying a staged queue), `docs/development.md`;
+  - `BUILD_REPORT.md`'s "Repo format" row, `CONTEXT.md`'s queue-gate note, and
+    `context/gene.md`'s standing gate list.
 
-  The committed sprint-queue files for sprints 3-9 are left as written:
-  they are closed sprints' plans of record.
+  **Swept by the literal `3.9.6`, not by the subject**, which is how the first
+  pass missed four of these; review found them. What still says `3.9.6` is a
+  record, not an instruction, and is left as written. That is the staged
+  sprint-queue JSONs (closed sprints' plans of record), the dated
+  measurements in `context/gene.md` and `DELIVERY_PLAN.md`, and
+  `tests/gates/prettier_hook.sh`'s fixtures, which are test data. The rationale in `scripts/prettier-hook.sh`
+  and `.pre-commit-config.yaml` is now dated (2026-08-30).
 - **D-086's rationale is corrected by D-087**, not edited: `mvp-blocking` is
   board membership. The gate's docstring and a test comment are corrected in
   place.
