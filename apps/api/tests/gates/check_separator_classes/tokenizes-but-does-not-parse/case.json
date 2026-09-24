@@ -1,0 +1,7 @@
+{
+ "incident": "Review of ab80a13: the re.escape signature parses with ast, and a SyntaxError there came back as an ordinary finding -- exit 1, printed under 'A SEPARATOR THE CODE RECEIVES (#535)'. The wrong cause and the wrong exit code under D-051. 'x = = 1' tokenizes cleanly, so the existing unreadable-not-python case (which fails at tokenize) could never reach that branch. Could-not-look is 2.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "cannot parse",
+ "argv": ["{dir}/redact.py"]
+}
