@@ -115,9 +115,10 @@ services:
     # withdrawal -- Chainguard withdrawing or gating this free image would
     # repeat the outage exactly. Only a copy this repo controls (a mirror)
     # closes that, tracked in #522.
-    # MinIO has stopped publishing public images, and NO CONTAINER PUBLISHED BY
-    # MINIO ITSELF EVER CARRIED THE FIX for CVE-2025-62506 (GHSA-jjjj-jwhf-8rgr,
-    # IAM privilege escalation, CVSS 8.1). The fix is MinIO PR #21642, merge
+    # MinIO has stopped publishing public images, and ITS LAST PUBLIC QUAY
+    # `:latest` PREDATES THE FIX for CVE-2025-62506 (GHSA-jjjj-jwhf-8rgr, IAM
+    # privilege escalation, CVSS 8.1). Docker Hub's last build was not read; that
+    # repository no longer answers. The fix is MinIO PR #21642, merge
     # commit c1a49490c78e, in RELEASE.2025-10-15T17-29-55Z. MinIO's last public
     # community container predates it: quay's `:latest` was
     # RELEASE.2025-09-07T16-13-09Z (`minio --version` in an image cached on a dev
@@ -126,11 +127,13 @@ services:
     # FedRAMP-track product. Third-party rebuilds (Chainguard, below) can carry
     # it.
     #
-    # THE PIN CARRIES THE FIX, checked by ancestry rather than by release date.
-    # The pinned binary reports commit-id df34868a88cc, and GitHub's compare of
-    # c1a49490c78e...df34868a88cc answered "ahead 57, behind 0" on 2026-09-24,
-    # with the reverse compare answering "behind". That trusts the commit id the
-    # build embeds; it is not a scan of the binary.
+    # THE PIN CARRIES THE FIX, checked against the code rather than the release
+    # date, 2026-09-24. The pinned binary reports commit-id df34868a88cc.
+    # GitHub's compare of c1a49490c78e...df34868a88cc answered "ahead 57, behind
+    # 0" (the reverse compare answered "behind"), and all 18 lines the fix added
+    # to cmd/iam.go are present in that file at df34868a88cc. cmd/iam.go did
+    # change after the fix, which is why ancestry alone was not enough. This
+    # trusts the commit id the build embeds; it is not a scan of the binary.
     #
     # Cached quay images on dev machines carry the CVE. Exploiting it needs a
     # restricted service or STS account with an inline session policy (per the
