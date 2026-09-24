@@ -40,8 +40,9 @@ function tone(open: number): StatusTone {
   return "neutral";
 }
 
-// UTC, like the dashboards' released badge (`dashboards/shared.tsx`): the
-// same release must read as the same day on every page, for every reader.
+// UTC, like every surface showing an instant (`lib/dates.ts::formatInstantUtc`):
+// the intake-submitted time must read as the same day here and on the intake
+// page itself, for every reader.
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",

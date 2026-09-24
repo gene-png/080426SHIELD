@@ -36,8 +36,8 @@ export const panel: React.CSSProperties = {
 // read as different days to different people, and as a different day from the
 // UTC the API stores. (No exporter prints the release date; the one date an
 // export stamps -- the CSF playbook's -- is UTC too.) Every
-// `Intl.DateTimeFormat` in `apps/web/src` must name its zone: the lint rule in
-// `eslint.config.js` refuses one that does not.
+// `Intl.DateTimeFormat` in product code must name its zone: the lint rule in
+// `eslint.config.js` refuses one that does not (see its escapes).
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",

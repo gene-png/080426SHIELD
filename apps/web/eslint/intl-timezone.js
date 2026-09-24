@@ -6,8 +6,14 @@
 // different readers, and a different day from the UTC the API stores. The
 // shared badge was pinned to UTC; ATT&CK carried a private copy that was not.
 //
-// A RULE OVER EVERY CONSTRUCTION, not a check of one file: a gate scoped to the
-// shared formatter would have been green through both reports.
+// A RULE OVER EVERY FILE, not a check of one: a gate scoped to the shared
+// formatter would have been green through both reports. It matches the
+// LITERAL spellings `Intl.DateTimeFormat(...)` and `new Intl.DateTimeFormat(...)`,
+// which is how every product call site is written. Known escapes, none in the
+// tree when this was written: an alias (`const { DateTimeFormat } = Intl`),
+// `globalThis.Intl` / `window.Intl`, a computed member (`Intl["DateTimeFormat"]`),
+// a `timeZone` key anywhere else in the call's arguments, and
+// `timeZone: undefined`. Tests are exempt (see `eslint.config.js`).
 //
 // Fails closed on options it cannot see into (a variable, a spread): a zone it
 // cannot SEE is a zone it cannot vouch for. Write the object literal, or

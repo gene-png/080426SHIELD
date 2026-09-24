@@ -29,3 +29,26 @@ export function parseDateOnly(value: string | null | undefined): Date | null {
   const date = new Date(Number(y), Number(mo) - 1, Number(d));
   return Number.isNaN(date.getTime()) ? null : date;
 }
+
+// An INSTANT -- released, finalized, submitted -- in UTC, with the zone named.
+// Every surface that shows one of these goes through here, so the admin card
+// and the admin table cannot show one release as two days (the dashboards'
+// badge is pinned to UTC too). Unlike `formatDateOnly`, which is right to use
+// the viewer's zone for a calendar date.
+const INSTANT_FMT = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
+
+/** Format an instant in UTC, naming the zone; "—" for none, the raw text if unparseable. */
+export function formatInstantUtc(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : INSTANT_FMT.format(d);
+}

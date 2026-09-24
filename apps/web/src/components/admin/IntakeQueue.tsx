@@ -38,7 +38,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
-import { formatDateOnly } from "@/lib/dates";
+import { formatDateOnly, formatInstantUtc } from "@/lib/dates";
 
 type ServiceRequestRow = AdminIntakeQueueResponse["service_requests"][number];
 
@@ -455,8 +455,9 @@ export function IntakeQueue({ clientId }: { clientId: string }): JSX.Element {
   }
 
   const c = state.client;
+  // UTC, naming the zone: the intake index shows this instant in UTC too.
   const submittedAt = state.intake_completed_at
-    ? new Date(state.intake_completed_at).toLocaleString()
+    ? formatInstantUtc(state.intake_completed_at)
     : null;
   // D-080: the condition is the NULL, not a sentinel string. This asks
   // "has anyone named this org", which is what it always meant -- and now

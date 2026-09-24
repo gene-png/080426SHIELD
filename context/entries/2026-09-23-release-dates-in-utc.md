@@ -26,8 +26,17 @@ playbook's, is already UTC.
 - **`AttackDashboard.tsx`**: its private formatter and badge are gone, and it
   renders inside `DashShell` like the others.
 - **The twins**: `DeliverablesTable`, `IntakeOrgIndex`, `HomeDashboard` and
-  `ResultsList` format the same instants, two of them the same `released_at`.
-  Each is pinned.
+  `ResultsList` format the same instants. Three of them show `released_at`;
+  `IntakeOrgIndex` shows `intake_completed_at`. Each is pinned.
+- **Their twins in turn.** Pinning the admin table alone made one release
+  read as two days to one consultant. The admin deliverable cards and the
+  intake screens show the same `released_at`, `finalized_at` and
+  `intake_completed_at` through `toLocaleString`, in the viewer's zone. Round
+  1 of review caught this. Those sites now go through
+  `lib/dates.ts::formatInstantUtc`, which is UTC and names the zone, so every
+  surface showing one of those instants agrees:
+  - the four cards (`DeliverableCard` and its CSF, ZT and ATT&CK siblings);
+  - `IntakeQueue`, `IntakeSubmitted` and `Step6Review`.
 - **The gate**: `apps/web/eslint/intl-timezone.js`, installed by
   `eslint.config.js` for product code, refuses any `Intl.DateTimeFormat`, with
   or without `new`, whose arguments carry no `timeZone` in an object literal.
@@ -50,7 +59,13 @@ where a pinned and an unpinned formatter print the same day.
 ## Residual
 
 `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` on a `Date` also
-use the viewer's zone. That includes the admin deliverable cards' release
-time. A syntax rule cannot tell a date from a price there. Filed as #507.
+use the viewer's zone, and a syntax rule cannot tell a date from a price
+there. Filed as #507. What remains after this branch: request times, message
+and inbox times, the audit log, and a capability table's date column. These
+are times where the viewer's own clock is arguably the right answer, which is
+a product decision.
+
+The lint rule matches the literal spellings every product site uses, and its
+header lists the spellings it cannot see.
 `lib/dates.ts::formatDateOnly` is correct as it is: it builds calendar dates at
 local midnight and formats them locally.
