@@ -1324,6 +1324,12 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     #     plus ONE hint that breaks the prefix (the worst case):
     #       H = 1: 548, 493, 555   H = 16: 8155, 7816, 7812
     #       H = 64: 32583, 31274, 33356   -- about 32 s per MB
+    #     worst case again, text shrunk as H grows (T in chars):
+    #       H = 256, T = 10000: 122655, 120371, 110358
+    #       H = 1024, T = 4000: 532059, 458297, 448235
+    #     -- LINEAR in H, 430-460 ns per hint per character, and flat in T
+    #     (H = 256 at T = 2500-20000: 103k-118k). The hoisted best case is
+    #     mildly SUPERLINEAR in H (2.5, 3.3, 6.9 ns per hint at 64, 256, 1024).
     # The pre-#542 pattern (U+0020 only, `\b` anchors) measured 11-45 ns per
     # character on the one-hint shapes -- and redacted none of the dashes.
     #
