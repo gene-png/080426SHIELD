@@ -1125,6 +1125,37 @@ def _redact_addresses(text: str) -> tuple[str, int]:
     return _RE_ADDRESS.sub(PLACEHOLDER_ADDRESS, text), count
 
 
+def _literal_pattern(needle: str) -> str:
+    r"""Regex source for a DATA-SUPPLIED literal: a stored legal name or a name hint.
+
+    The only place in this module where data becomes a pattern, so the only
+    place `re.escape` may appear (`check_separator_classes.py` enforces that).
+    Two things `rf"\b{re.escape(needle)}\b"` got wrong, both measured live:
+
+    * #535 -- `re.escape` turns the stored name's space into a literal U+0020,
+      so a no-break space, a narrow no-break space or two spaces between the
+      words never matched. The needle is split on whitespace and its tokens
+      rejoined with `_HSPACE+`, the separator `_PHONE_SEP`, `_CAGE_SEP` and
+      `_STREET_SEP` already use. `str.split()` also splits a no-break space
+      stored IN the name. `_HSPACE` excludes line breaks by design, so a name
+      wrapped across a line still does not match -- a residual pinned by an
+      `xfail(strict=True)` test pending the owner's call.
+    * #536 -- `\b` needs a word character on one side, so after a final "."
+      it fails before a space, a comma or the end of the text: "Acme Holdings,
+      Inc." could never be redacted anywhere. The anchors are now CONDITIONAL:
+      `(?<!\w)` only when the needle starts with a word character, `(?!\w)`
+      only when it ends with one. A word-edged name still cannot match inside
+      a longer word; a punctuation-edged one needs no anchor on that side.
+
+    Callers must pass a needle with at least one non-space character.
+    """
+    tokens = needle.split()
+    body = (_HSPACE + "+").join(re.escape(t) for t in tokens)
+    head = r"(?<!\w)" if re.match(r"\w", tokens[0]) else ""
+    tail = r"(?!\w)" if re.match(r"\w", tokens[-1][-1]) else ""
+    return head + body + tail
+
+
 def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
     """Replace the client's legal name (case-insensitive, whole-token).
 
@@ -1140,7 +1171,7 @@ def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
     """
     if not org_name.strip():
         return text, 0
-    pat = re.compile(rf"\b{re.escape(org_name)}\b", re.IGNORECASE)
+    pat = re.compile(_literal_pattern(org_name), re.IGNORECASE)
     count = _count_replacements(pat, text)
     if count == 0:
         return text, 0
@@ -1149,7 +1180,7 @@ def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
 
 def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     """Replace exact-match names from `name_hints` (case-insensitive)."""
-    hints = [h for h in name_hints if h and len(h) >= 2]
+    hints = [h for h in name_hints if h and len(h) >= 2 and h.strip()]
     if not hints:
         return text, 0
     # LONGEST FIRST. Python's alternation is first-match-wins, not
@@ -1163,8 +1194,10 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # a partial match is worse than no match, because no match is visibly a
     # leak and a partial one looks finished.
     hints = sorted(set(hints), key=len, reverse=True)
+    # Each alternative carries its OWN anchors: `\b(?:a|b)\b` had #536's
+    # trailing-`\b` defect for every hint ending in a non-word character.
     pat = re.compile(
-        r"\b(?:" + "|".join(re.escape(h) for h in hints) + r")\b",
+        "(?:" + "|".join(_literal_pattern(h) for h in hints) + ")",
         re.IGNORECASE,
     )
     count = _count_replacements(pat, text)

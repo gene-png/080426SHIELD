@@ -5493,3 +5493,51 @@ else, and that issue carried no labels, so it appeared in no query. #184 and
 #286 are the same defect, and the older, better-written one was the invisible
 one. Search-before-filing is real, and not sufficient on its own: it can only
 find what previous filers labelled.
+
+## D-088 — The separator gate protects separators the code RECEIVES, not only the ones it writes
+
+**D-087 is not skipped by this entry.** It belongs to PR #539 and D-085 to PR #517, both open when this was written. The gap is recoverable by reading this sentence.
+
+### What broke, measured live (#535, #536, both tier-1)
+
+The client's legal name reached the LLM provider verbatim, and `llm_calls.redacted_counts` recorded `{}`. So the egress record said nothing was removed. Measured on `main` at `5783fae` through `redact_payload`, the function `LLMClient.invoke` calls. The leak is client-to-provider, not cross-tenant (the owner's classification is recorded on both issues), and it is live: a runtime-loaded key makes egress real in the default configuration (D-037), `legal_name` accepts any string, and no AI route requires the preview.
+
+- **#535:** `re.escape(org_name)` turns the stored name's space into a literal U+0020. A no-break space, a narrow no-break space or two spaces between the words never matched. The same held for every name hint.
+- **#536:** the pattern was anchored `\b...\b`. A `\b` after a final `.` needs a word character next, so "Acme Holdings, Inc." (most incorporated names) could never be redacted anywhere.
+
+### Decision 1: data becomes a pattern in exactly one place
+
+`redact.py::_literal_pattern(needle)` is the only function that turns data into regex source. It:
+
+- splits the needle on whitespace and rejoins the `re.escape`d tokens with `_HSPACE+`. The name rules now follow the same discipline as `_PHONE_SEP`, `_CAGE_SEP` and `_STREET_SEP`;
+- anchors conditionally: `(?<!\w)` only when the needle starts with a word character, `(?!\w)` only when it ends with one. A word-edged name still cannot match inside a longer word.
+
+`redact_org_name` and `_redact_names` both use it. Each hint in the alternation carries its own anchors, because `\b(?:a|b)\b` had #536's defect for every hint.
+
+### Decision 2: the gate's premise is widened, and this is the part worth keeping
+
+`check_separator_classes.py` existed to stop exactly this shape, and its docstring records two prior leaks: D-058's `[ \t\xa0]` and item 10's `_PHONE_SEP`. #535 is the third instance, and the gate was structurally blind to it. Its signature looks for a character class in SOURCE. Here the whitespace arrived from the DATABASE, so no class ever appeared.
+
+**A source-scanning gate cannot see a separator that lives in data. It CAN see the point where data becomes a pattern, because that point is source, and it is precise: `re.escape`.** So the gate gains a second signature, resolved by the AST rather than by text: any call to `re.escape` (or to `escape` imported from `re`, or `re` under an alias) outside `_literal_pattern` is a finding. A docstring or comment that merely mentions it is not. Each signature prints its own cause: "a separator the code WRITES" versus "a separator the code RECEIVES".
+
+Applied to `main`'s `redact.py`, it fires on both real sites, `redact_org_name` and `_redact_names`, and on nothing else. Fixture cases in `tests/gates/check_separator_classes/` pin both directions.
+
+**What it still cannot see:** data interpolated into a pattern WITHOUT `re.escape` (an f-string of a raw variable). That would be a regex injection, a different and worse defect, which `redact.py` does not do today. A grep of every `re.compile` in the file found exactly two runtime-built patterns, both via `re.escape`. It also cannot see `getattr(re, "escape")`.
+
+### Decision 3, pending the owner: line breaks
+
+`_HSPACE` excludes line breaks by design, so the address rule cannot cross a line. So a legal name WRAPPED across a line ("Atlas\nDefense") still egresses. For an exact multi-word literal, crossing a line does not carry the address rule's over-match risk, so `\s+` would close the wrap case too. The patch follows the owner's spec (`_HSPACE+`), and the case is pinned by a test marked `xfail(strict=True)` that names this decision, so it cannot start passing silently.
+
+### Relation to #158
+
+#158's bare `\s` in `_RE_CONTACT_HINT` is the BENIGN instance of the same family. It is harmless only because its input is a stripped single line from `str.splitlines()`. #535 is the live instance: the same kind of mismatch, on free text. **Whether a separator mismatch is safe is a property of the input, not of the pattern.**
+
+### Proof
+
+- New tests, written first and red on `main`: 38 separator rows, 7 edge rows and a partial-miss row, with separators computed from the language (`\s` minus what `str.splitlines()` breaks on), never imported from `redact.py`.
+- An `LLMClient.invoke` test asserts both what the provider received and the ledger's `redacted_counts`.
+- Red-on-revert with `scripts/red-on-revert.sh --expect`, one fix at a time:
+  - reverting the anchors turns exactly the 7 #536 rows red;
+  - reverting the separator join turns the separator rows red, plus the partial-miss row and the one edge row that combines both defects;
+  - both mutations also turn the invoke-level test red;
+  - removing the gate's new signature turns its 4 detection tests red.
