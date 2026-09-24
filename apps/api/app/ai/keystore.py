@@ -10,8 +10,9 @@ resolved. Three rules hold everywhere in this module:
    decrypt at call time. Nothing surfaces it to an endpoint, a log line, or an
    audit ``details`` blob.
 3. **Database beats environment.** A key pasted through the UI overrides
-   ``ANTHROPIC_API_KEY`` and friends, so removing it through the UI is a real
-   removal rather than a silent fallback to whatever the container booted with.
+   ``ANTHROPIC_API_KEY`` and friends while it is stored. Removing it falls BACK
+   to the environment key when there is one (``effective_key``), so in live mode
+   Run-AI keeps calling the provider; ``GET /admin/ai-status`` says which (#472).
 """
 
 from __future__ import annotations

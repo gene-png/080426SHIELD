@@ -5,7 +5,7 @@ No setting may be hardcoded. Every external service and security knob is here.
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache, lru_cache
 from typing import Literal
 
 from pydantic import Field
@@ -47,14 +47,23 @@ def _google_auth_importable() -> bool:
     return find_spec("google.auth") is not None
 
 
+@cache
 def _adc_resolvable() -> bool:
     """True if Application Default Credentials resolve for the Vertex provider.
 
     Isolated as a module-level helper so the boot preflight is unit-testable by
-    monkeypatching it. Resolving ADC only discovers the credential source (env
-    var, gcloud config, metadata server) — it does NOT fetch a token, so this is
-    a cheap, network-free probe. Returns a bool and never raises: the loud
-    failure is raised by ``assert_safe_for_runtime`` when this is false."""
+    monkeypatching it. Returns a bool and never raises: the loud failure is
+    raised by ``assert_safe_for_runtime`` when this is false.
+
+    NOT network-free, which is what this said. It fetches no token, but with no
+    credentials ``google.auth.default()`` falls through to pinging the GCE
+    metadata server: measured 3.2-3.9 s in the api container on 2026-09-23.
+    That was harmless once at boot, and not once ``/admin/ai-status`` asked the
+    preflight on every read (#472). So the answer is CACHED for the process: a
+    credential change needs a restart to take effect in live mode anyway, and
+    until then the status may describe the credentials as they were at the
+    first read.
+    """
     try:
         import google.auth
         from google.auth.exceptions import GoogleAuthError
@@ -321,10 +330,11 @@ class Settings(BaseSettings):
         Returns ``(ready, human_detail)`` and NEVER raises — the single source of
         truth shared by the boot preflight (which wraps a false result in a loud
         ``RuntimeError``) and T5's ``/ready`` keycloak probe. This is a
-        config-SHAPE check only: like ``live_llm_readiness`` it makes NO network
-        call (the api has no ``depends_on: keycloak`` and must not crash-loop on a
-        cold ``compose up`` — a Keycloak outage surfaces as a runtime 503, not a
-        boot failure). ``keycloak_jwks_url`` is the fetch endpoint; ``iss``/``aud``
+        config-SHAPE check only: it makes NO network call -- unlike
+        ``live_llm_readiness``, whose vertex leg resolves ADC. The api has no
+        ``depends_on: keycloak`` and must not crash-loop on a cold ``compose up``:
+        a Keycloak outage surfaces as a runtime 503, not a boot failure.
+        ``keycloak_jwks_url`` is the fetch endpoint; ``iss``/``aud``
         are the pinned claim values.
         """
         issuer = self.keycloak_issuer.strip()

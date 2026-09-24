@@ -46,7 +46,7 @@ export function LlmKeyPanel({
 }): JSX.Element {
   // Shares the shell banner's loader rather than running a second effect of
   // its own — one place decides how AI status is fetched.
-  const { status: loaded, refresh } = useAiStatus();
+  const { status: loaded, phase, refresh } = useAiStatus();
   // A save/remove returns fresh status; prefer it until the next refresh lands.
   const [override, setOverride] = React.useState<AiStatus | null>(null);
   const status = override ?? loaded;
@@ -126,7 +126,9 @@ export function LlmKeyPanel({
           }
         >
           {status === null
-            ? "Checking…"
+            ? phase === "error"
+              ? "Unknown"
+              : "Checking…"
             : status.ready
               ? "Live AI on"
               : status.serves === "broken"
@@ -145,6 +147,12 @@ export function LlmKeyPanel({
         <p className="max-w-prose text-sm text-ink-secondary">
           {status.detail}
         </p>
+      ) : phase === "error" ? (
+        <p role="alert" className="max-w-prose text-sm text-status-danger-fg">
+          The AI status could not be read, so what Run AI will do is unknown. A
+          key pasted here is still checked against the provider before it is
+          saved.
+        </p>
       ) : null}
 
       <form onSubmit={(e) => void onSave(e)} className="flex flex-wrap gap-2">
@@ -153,7 +161,10 @@ export function LlmKeyPanel({
             refuses a pasted key, and vertex has none -- the form stood under
             server copy saying so. Remove stays: a stored key can always be
             removed, and the build-refusal copy tells the admin to. */}
-        {status?.can_configure ? (
+        {/* A FAILED status read is neither "loading" nor "cannot load a
+            key here": offer the form, because the server validates the key
+            anyway (round 3 on #472). */}
+        {status?.can_configure || (status === null && phase === "error") ? (
           <>
             <input
               type="password"

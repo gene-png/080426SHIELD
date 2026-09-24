@@ -128,3 +128,20 @@ describe("LlmKeyPanel's paste form", () => {
     expect(screen.queryByRole("button", { name: "Save key" })).toBeNull();
   });
 });
+
+// Round 3 on #472: when the status read FAILED the panel said "Checking…"
+// forever and, gated on `can_configure`, withheld the one control that can
+// load a key. A failed read is not "still loading", and not "cannot load".
+describe("LlmKeyPanel when the status cannot be read", () => {
+  it("says so, and still offers the paste form (the server validates the key)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 500 }),
+    );
+    render(<LlmKeyPanel />);
+    expect(
+      await screen.findByText(/status could not be read/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Checking…")).toBeNull();
+    expect(screen.getByLabelText("Provider API key")).toBeInTheDocument();
+  });
+});

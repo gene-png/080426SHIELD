@@ -66,3 +66,30 @@ def test_has_live_adapter_matches_the_boot_preflight_too(provider: str) -> None:
         provider,
         detail,
     )
+
+
+@pytest.mark.unit
+def test_the_adc_probe_runs_once_per_process(monkeypatch) -> None:
+    """Round 3 on #472: with no credentials, `google.auth.default()` pings the
+    GCE metadata server -- measured 3.2-3.9 s in the api container on
+    2026-09-23 -- and `/admin/ai-status` now asks the preflight on every read
+    for vertex in fixture mode, so every admin page load paid it. The probe's
+    answer is cached for the process: a credential change needs a restart to
+    go live anyway."""
+    google_auth = pytest.importorskip("google.auth")
+    import app.config as config_mod
+
+    calls = []
+
+    def fake_default(*args, **kwargs):
+        calls.append(1)
+        raise google_auth.exceptions.DefaultCredentialsError("none")
+
+    monkeypatch.setattr(google_auth, "default", fake_default)
+    config_mod._adc_resolvable.cache_clear()
+    try:
+        assert config_mod._adc_resolvable() is False
+        assert config_mod._adc_resolvable() is False
+    finally:
+        config_mod._adc_resolvable.cache_clear()
+    assert len(calls) == 1, calls

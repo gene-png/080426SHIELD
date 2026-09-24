@@ -96,5 +96,8 @@ Round 1 of review found these blockers, all fixed:
 
 The guard acts on the status it read when the page loaded. A key loaded by
 another admin afterwards turns an acknowledged offline run into a live one
-(#504). The ADC check is the boot preflight's alone: credentials that stop
-resolving after boot still read `live`.
+(#504). ADC is resolved at boot and, since round 2, on the first status read
+in fixture mode. Round 3 measured that probe at 3.2-3.9 s with no credentials
+(it pings the GCE metadata server), so the answer is cached for the process.
+Credentials that change after that still read as they were until a restart.
+The copy residuals from round 3 are filed as #511.

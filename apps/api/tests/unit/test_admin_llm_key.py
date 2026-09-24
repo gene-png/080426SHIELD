@@ -6,7 +6,8 @@ admin had no way to see that AI was offline, and no way to fix it without a
 redeploy. This pins the replacement contract:
 
   * ``POST   /admin/llm-key``  validate, then store the key ENCRYPTED
-  * ``DELETE /admin/llm-key``  remove it and fall back to fixture mode
+  * ``DELETE /admin/llm-key``  remove it; AI falls back to the environment key
+    if there is one (still live in live mode), else to fixture output (#472)
   * ``GET    /admin/ai-status`` reports readiness AND where the key came from
 
 Two rules the tests below exist to enforce:
