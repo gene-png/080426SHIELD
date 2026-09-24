@@ -64,25 +64,6 @@ def _run(root: Path, base: Path, capsys) -> tuple[int, str]:
     return code, capsys.readouterr().out
 
 
-# --- parsing --------------------------------------------------------------------
-
-
-def test_parse_reads_node_ids() -> None:
-    out = "tests/unit/test_x.py::test_a\ntests/unit/test_x.py::test_b[1]\ntests/unit/test_y.py::C::t\n"
-    assert gate.parse_node_ids(out) == {
-        "tests/unit/test_x.py::test_a",
-        "tests/unit/test_x.py::test_b[1]",
-        "tests/unit/test_y.py::C::t",
-    }
-
-
-def test_parse_of_the_per_file_count_format_is_empty_not_a_guess() -> None:
-    # The gate asks for node ids. The `file: N` form (what pytest prints with
-    # the repo's addopts) must parse to NOTHING, which the caller turns into
-    # could-not-look -- never a count that reads as "nothing unselected".
-    assert gate.parse_node_ids("tests/unit/test_x.py: 3\n\n3 tests collected\n") == set()
-
-
 # --- the verdict ------------------------------------------------------------------
 
 
@@ -201,7 +182,7 @@ def test_the_gates_selector_is_exactly_the_one_ci_runs() -> None:
     assert runs == [f"pytest {' '.join(gate.CI_SELECTOR)}"], runs
 
 
-# --- addopts: a selection channel the collections clear (review of 324dc15) ----
+# --- config is pytest's to apply, wherever it lives (reviews of 324dc15, adaf082) --
 
 
 def _with_ini_addopts(root: Path, addopts: str) -> None:
@@ -209,31 +190,69 @@ def _with_ini_addopts(root: Path, addopts: str) -> None:
     ini.write_text(ini.read_text(encoding="utf-8") + f"addopts = {addopts}\n", encoding="utf-8")
 
 
+M = "tests/unit/test_m.py"
+
+
 @pytest.mark.parametrize(
-    "addopts",
-    ['--deselect "tests/unit/test_m.py::test_a"', "-k 'not slow'", "--ignore=tests/unit/x.py"],
+    ("addopts", "dropped"),
+    [
+        (f"--deselect {M}::test_a", ["test_a"]),
+        ("-k 'not test_b'", ["test_b"]),
+        (f"--ignore={M}", ["test_a", "test_b"]),
+    ],
     ids=["deselect", "k-filter", "ignore"],
 )
-def test_selecting_addopts_are_could_not_look(tmp_path, capsys, addopts: str) -> None:
-    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
+def test_selecting_addopts_narrow_the_selected_set_and_are_findings(
+    tmp_path, capsys, addopts: str, dropped: list[str]
+) -> None:
+    root = _project(tmp_path, {M: MARKED})
     _with_ini_addopts(root, addopts)
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
-    assert code == 2, out
-    assert "not reporting flags" in out, out
+    assert code == 1, out
+    for name in dropped:
+        assert f"{M}::{name}: CI never runs it" in out, out
 
 
-def test_selecting_addopts_in_pyproject_are_could_not_look(tmp_path, capsys) -> None:
-    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
-    (root / "pyproject.toml").write_text(
-        '[tool.pytest.ini_options]\naddopts = "-ra -q -m unit"\n', encoding="utf-8"
+def test_a_config_file_nearer_the_tests_is_the_one_pytest_applies(tmp_path, capsys) -> None:
+    # Review of adaf082: pytest walks up from `tests/unit` and the first config
+    # file wins, so a `tests/pytest.ini` beats the root one. A gate that read
+    # named files at the root would certify the wider set.
+    root = _project(tmp_path, {M: MARKED})
+    (root / "tests" / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    unit: fast\naddopts = -k 'not test_a'\n", encoding="utf-8"
     )
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
-    assert code == 2, out
-    assert "not reporting flags" in out and "'-m'" in out, out
+    assert code == 1, out
+    # That file is pytest's rootdir now, so node ids are relative to `tests/`.
+    assert "  unit/test_m.py::test_a: CI never runs it" in out, out
 
 
-def test_reporting_only_addopts_still_look(tmp_path, capsys) -> None:
-    root = _project(tmp_path, {"tests/unit/test_m.py": MARKED})
+@pytest.mark.skipif(
+    int(pytest.__version__.split(".")[0]) < 9, reason="native [tool.pytest] is pytest 9+"
+)
+def test_native_toml_addopts_are_applied(tmp_path, capsys) -> None:
+    # Review of adaf082: `[tool.pytest]` (not `ini_options`) was unread.
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / M).write_text(textwrap.dedent(MARKED), encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest]\nmarkers = ["unit: fast"]\n'
+        f'addopts = ["-q", "--deselect", "{M}::test_b"]\n',
+        encoding="utf-8",
+    )
+    code, out = _run(tmp_path, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert f"{M}::test_b: CI never runs it" in out, out
+
+
+def test_reporting_only_addopts_are_clean(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED})
     _with_ini_addopts(root, "-ra -q")
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 0, out
+    assert "CI selects 2 of 2" in out, out
+
+
+def test_a_broken_conftest_is_could_not_look(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED, "tests/unit/conftest.py": "raise RuntimeError('x')\n"})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 2, out

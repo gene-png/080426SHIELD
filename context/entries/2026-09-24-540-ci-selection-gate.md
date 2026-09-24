@@ -56,9 +56,13 @@ or listing, a malformed baseline, or a workflow that does not parse exits 2.
   `check_e2e_spec_listing.py`.
 - **PyYAML is declared** (dev extras), rather than arriving transitively
   (bandit, `uvicorn[standard]`).
-- **(Review of 324dc15.) The collections clear addopts, which CI applies.** A
-  `--deselect` added there would have narrowed CI with the gate still clean.
-  The gate now reads addopts and exits 2 on anything but reporting flags.
+- **(Reviews of 324dc15 and adaf082.) The collections cleared addopts, which
+  CI applies.** A `--deselect` there would have narrowed CI with the gate
+  still clean. Reading named config files to make up for it was the second
+  attempt, and it missed native `[tool.pytest]`, `tox.ini`, `setup.cfg` and
+  config files in the test directories. The SELECTED collection now runs CI's
+  argv with the config left alone, and a probe plugin reports what pytest
+  itself collected: a derivation, not a reader.
 
 ## The backlog, allowed with reasons rather than hidden
 
@@ -76,6 +80,7 @@ or listing, a malformed baseline, or a workflow that does not parse exits 2.
   the spec, nor the exact value the spec needs.
 - A selected test that skips at runtime is not a selection question.
 - A module-level `pytest.skip(..., allow_module_level=True)` drops the file
-  from both collections: a smaller denominator, not a finding.
+  from both collections: a smaller denominator, not a finding (#543). So does
+  a conftest hook that deselects.
 - The listing compares spec FILES; an unconditional `test.skip()` is listed and
   never runs, and neither Playwright gate reports it.

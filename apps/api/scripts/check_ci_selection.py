@@ -31,108 +31,94 @@ source would be a second implementation of pytest's selection, free to drift.
 the workflow and requires equality, not a substring -- a `-k` or `--deselect`
 appended in CI would otherwise narrow CI while this certified the wider set.
 
-`-o addopts=` is passed so the output is one node id per line. That is only
-sound while the configured addopts are REPORTING flags, because CI's run
-applies them and these collections do not: a `--deselect`, `-k`, `-m` or
-`--ignore` there would narrow CI while this certified the wider set (review
-of 324dc15). So the gate READS the addopts -- `[tool.pytest.ini_options]` in
-`pyproject.toml` and `[pytest]` in `pytest.ini` -- and refuses to look (exit
-2) if any token is not a reporting flag (`-q`, `-v`, `-r<chars>`).
+THE SELECTED SET IS PYTEST'S OWN ANSWER, NOT A RECONSTRUCTION OF IT. The
+selected collection runs CI's exact argv with the configuration LEFT ALONE, so
+whatever pytest applies -- addopts in whichever config file it finds (`pytest.toml`,
+`pytest.ini`, `pyproject.toml` in ini or native `[tool.pytest]` form, `tox.ini`,
+`setup.cfg`, in any directory it walks), `PYTEST_ADDOPTS`, conftest hooks --
+narrows this set exactly as it narrows CI. A small probe plugin
+(`_PROBE_SOURCE`, loaded with `-p`) writes `session.items` to a file, so the
+answer does not depend on how stdout is formatted. An earlier version cleared
+addopts to get a parseable stdout and then tried to READ the config to make up
+for it; review of adaf082 showed pytest looks in more places than any reader
+of named files would (the reason this is a derivation now).
+
+The "everything" collection clears addopts (`-o addopts=`), because a
+`--deselect` or `-k` there is exactly what it must not inherit.
 
 EXIT CODES (D-051): 0 every collected test is selected or baselined; 1 at
-least one finding; 2 could not look -- the collector failed, collected
-nothing, printed no node ids, the configured addopts carry a non-reporting
-flag or do not parse, the baseline is missing or malformed, or an argument
-is unknown. An empty or unreadable collection is NEVER clean.
+least one finding; 2 could not look -- the collector failed (including a
+configured option this cannot honour, e.g. `--lf` with the cache disabled),
+the probe reported nothing, the unselected collection is empty, the baseline
+is missing or malformed, or an argument is unknown. An empty or unreadable collection is NEVER clean.
 
 LIMITS. Only `tests/unit`; `tests/live` is opt-in by design. A test that is
 selected but SKIPS at runtime is not seen here (a runtime skip is not a
 selection question). A module-level `pytest.skip(..., allow_module_level=True)`
 removes the file from BOTH collections, so it shrinks the denominator rather
-than producing a finding. `PYTEST_ADDOPTS` set on CI's pytest step but not on
-this one is not seen.
+than producing a finding. A conftest hook that deselects applies to BOTH
+collections, so it is invisible too. `PYTEST_ADDOPTS` or other environment
+set on CI's pytest step but not on this one is not seen.
 """
 
 from __future__ import annotations
 
-import configparser
 import json
-import re
-import shlex
+import os
 import subprocess
 import sys
-import tomllib
+import tempfile
 from pathlib import Path
 
 CI_SELECTOR = ("-m", "unit", "tests/unit")
 _ALL = ("tests/unit",)
 
-_NODE_LINE = re.compile(r"^(?P<file>[^\s:]+\.py)::\S")
-_REPORTING_FLAG = re.compile(r"-(?:q+|v+|r[a-zA-Z]+)|--quiet|--verbose")
+_PROBE_NAME = "_ci_selection_probe"
+_PROBE_OUT = "CHECK_CI_SELECTION_OUT"
+_PROBE_SOURCE = f"""\
+import os
 
 
-def parse_node_ids(output: str) -> set[str]:
-    """Node ids from `pytest --collect-only -q -o addopts=`. Anything else is ignored."""
-    ids: set[str] = set()
-    for raw in output.splitlines():
-        line = raw.strip().replace("\\", "/")
-        if _NODE_LINE.match(line):
-            ids.add(line)
-    return ids
+def pytest_collection_finish(session):
+    with open(os.environ["{_PROBE_OUT}"], "w", encoding="utf-8") as fh:
+        fh.write("\\n".join(item.nodeid for item in session.items))
+"""
 
 
 class CouldNotLook(Exception):
     """The gate could not establish the answer. Maps to exit 2, never 0 or 1."""
 
 
-def _collect(root: Path, args: tuple[str, ...]) -> set[str]:
-    cmd = [
-        sys.executable, "-m", "pytest", "--collect-only", "-q",
-        "-o", "addopts=", "-p", "no:cacheprovider", *args,
-    ]  # fmt: skip
-    proc = subprocess.run(  # noqa: S603  # nosec B603 - fixed argv, no untrusted input
-        cmd, cwd=root, capture_output=True, text=True, encoding="utf-8", check=False
-    )
-    # 5 = no tests collected: legitimate for the SELECTED run (every file then
-    # becomes a finding), and refused for the unselected run by the caller.
-    if proc.returncode not in (0, 5):
-        raise CouldNotLook(
-            f"`pytest --collect-only {' '.join(args)}` exited {proc.returncode} in {root}:\n"
-            + (proc.stdout + proc.stderr).strip()[-2000:]
+def _collect(root: Path, args: tuple[str, ...], *, clear_addopts: bool) -> set[str]:
+    """Node ids pytest collects for `args`, as reported by the probe plugin."""
+    with tempfile.TemporaryDirectory() as tmp:
+        probe_dir = Path(tmp)
+        (probe_dir / f"{_PROBE_NAME}.py").write_text(_PROBE_SOURCE, encoding="utf-8")
+        out = probe_dir / "ids.txt"
+        env = dict(os.environ)
+        env[_PROBE_OUT] = str(out)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [tmp, env.get("PYTHONPATH")]))
+        clear = ("-o", "addopts=") if clear_addopts else ()
+        cmd = [
+            sys.executable, "-m", "pytest", "--collect-only", "-p", "no:cacheprovider",
+            "-p", _PROBE_NAME, *clear, *args,
+        ]  # fmt: skip
+        proc = subprocess.run(  # noqa: S603  # nosec B603 - fixed argv, no untrusted input
+            cmd, cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", check=False
         )
-    return parse_node_ids(proc.stdout)
-
-
-def configured_addopts(root: Path) -> list[str]:
-    """Every addopts token from `pytest.ini` and `pyproject.toml` under `root`."""
-    tokens: list[str] = []
-    ini = root / "pytest.ini"
-    if ini.is_file():
-        cp = configparser.ConfigParser()
-        try:
-            cp.read(ini, encoding="utf-8")
-        except configparser.Error as exc:
-            raise CouldNotLook(f"{ini} does not parse: {exc}") from exc
-        tokens += shlex.split(cp.get("pytest", "addopts", fallback=""))
-    pyproject = root / "pyproject.toml"
-    if pyproject.is_file():
-        try:
-            doc = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError as exc:
-            raise CouldNotLook(f"{pyproject} does not parse: {exc}") from exc
-        raw = doc.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("addopts", "")
-        tokens += shlex.split(raw) if isinstance(raw, str) else [str(t) for t in raw]
-    return tokens
-
-
-def _refuse_selecting_addopts(root: Path) -> None:
-    bad = [t for t in configured_addopts(root) if not _REPORTING_FLAG.fullmatch(t)]
-    if bad:
-        raise CouldNotLook(
-            f"addopts under {root} carry {bad}, which are not reporting flags. CI's run "
-            "applies them and this gate's collections clear them, so its answer would "
-            "not be CI's. Move selection into ci.yml's `run:` line, or extend the gate."
-        )
+        # 5 = no tests collected: legitimate for the SELECTED run (every test then
+        # becomes a finding), and refused for the unselected run by the caller.
+        if proc.returncode not in (0, 5):
+            raise CouldNotLook(
+                f"`pytest --collect-only {' '.join(clear + args)}` exited {proc.returncode} "
+                f"in {root}:\n" + (proc.stdout + proc.stderr).strip()[-2000:]
+            )
+        if not out.is_file():
+            raise CouldNotLook(
+                f"the probe plugin wrote nothing for `{' '.join(args)}` -- it did not load, "
+                "so there is no answer to read"
+            )
+        return {line for line in out.read_text(encoding="utf-8").splitlines() if line}
 
 
 def _load_baseline(path: Path) -> dict[str, dict]:
@@ -205,14 +191,12 @@ def main(argv: list[str]) -> int:
         root, baseline_path = _parse(argv)
         if not (root / "tests" / "unit").is_dir():
             raise CouldNotLook(f"{root / 'tests' / 'unit'} does not exist -- wrong directory?")
-        _refuse_selecting_addopts(root)
         baseline = _load_baseline(baseline_path)
-        everything = _collect(root, _ALL)
-        selected = _collect(root, CI_SELECTOR)
+        everything = _collect(root, _ALL, clear_addopts=True)
+        selected = _collect(root, CI_SELECTOR, clear_addopts=False)
         if not everything:
             raise CouldNotLook(
-                "collected ZERO node ids -- nothing collected, or a format this does not "
-                "parse. An empty collection is not a clean one."
+                "collected ZERO tests with no selector. An empty collection is not a " "clean one."
             )
     except CouldNotLook as exc:
         print(f"check-ci-selection: could not look -- {exc}")
