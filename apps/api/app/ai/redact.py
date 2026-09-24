@@ -1290,62 +1290,38 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # there. `pos` does not slice, so `(?<!\w)` still sees the previous
     # character.
     #
-    # THE COST IS O(H * L * T), measured rather than argued: T the text
-    # length, L the longest hint in CHARACTERS, H the hints sharing one
-    # anchor group (`_hint_patterns` compiles each group as ONE alternation).
-    # Linear in the text for fixed H and L. Three drafts of this comment
-    # understated it -- word count instead of characters, then no H, then an
-    # H measured only in its best case (reviews of 9021eb1, e5fe1c9, 3774074).
+    # THE BOUND IS O(H * L * T): T the text length, L the longest hint in
+    # characters, H the hints in one anchor group (`_hint_patterns` compiles
+    # each group as ONE alternation). H and T were measured; the L factor is
+    # argued from the code, not measured -- every series used L of about 250.
     #
-    # Where it comes from. Inside a region, every position a hint could begin
-    # at gets a `match` that compares up to L characters; for a hint that can
-    # begin almost anywhere (punctuation-edged, so no `(?<!\w)`, or
-    # `a-a-a-...`, or words split by spaces) that is nearly every position.
-    # At each position every alternative that FAILS pays for the prefix it
-    # matched first -- UNLESS every alternative in the group shares that
-    # prefix, in which case CPython's parser hoists it out of the alternation
-    # and it is paid once. One hint that breaks the shared prefix restores the
-    # full H factor. Alternatives are tried longest-first and the first that
-    # matches wins, but a word-end `(?!\w)` failing after it backtracks into
-    # the rest. A whitespace position itself is rejected at once (a normalised
-    # hint never starts with a space); matches starting earlier in a region
-    # re-cross a whitespace run through `\s+`, which stays inside the L * T
-    # term only while the run is no longer than the region it sits in.
+    # Why each factor. Inside a region, every position a hint could begin at
+    # gets a `match` comparing up to L characters. At each position, every
+    # alternative that fails pays for the prefix it matched first. CPython's
+    # parser hoists a prefix shared by ALL alternatives, but only up to the
+    # first `\s+` (a repeat does not compare equal; parsed and seen in the api
+    # image's Python 3.12.13), so it helps only when the
+    # hints share part of their FIRST word, and a hint that breaks the shared
+    # prefix costs only from the point where it breaks. A word-end `(?!\w)`
+    # failing after the longest match backtracks into the rest.
     #
-    # Measured 2026-09-24, ns per character observed:
-    #   one hint, L = 255, 1 MB, five runs per shape (host, Python 3.13):
-    #     128 words, "a a ... a"          1957, 2441, 3168, 3015, 3409
-    #     same hint, chunked text        3371, 2730, 3002, 2018, 2730
-    #     one word, 255 dashes           1557, 1476, 1417, 1390, 1392
-    #   H near-miss hints of ~250 dashes over 200 KB of dashes, three runs
-    #   (api image, Python 3.12.13):
-    #     all sharing the prefix (hoisted, the BEST case):
-    #       H = 1: 4, 2, 2   H = 16: 126, 109, 98   H = 64: 302, 204, 201
-    #     plus ONE hint that breaks the prefix (the worst case):
-    #       H = 1: 548, 493, 555   H = 16: 8155, 7816, 7812
-    #       H = 64: 32583, 31274, 33356   -- about 32 s per MB
-    #     worst case again, text shrunk as H grows (T in chars):
-    #       H = 256, T = 10000: 122655, 120371, 110358
-    #       H = 1024, T = 4000: 532059, 458297, 448235
-    #     -- LINEAR in H, 430-460 ns per hint per character, and flat in T
-    #     (H = 256 at T = 2500-20000: 103k-118k). The hoisted best case is
-    #     mildly SUPERLINEAR in H (2.5, 3.3, 6.9 ns per hint at 64, 256, 1024).
-    # The pre-#542 pattern (U+0020 only, `\b` anchors) measured 11-45 ns per
-    # character on the one-hint shapes -- and redacted none of the dashes.
+    # Measured worst case, 2026-09-24, api image (Python 3.12.13): hints of
+    # about 250 characters sharing a prefix plus one that breaks it at the
+    # first character, H = 1 to 1024 -- 427-556 ns per hint per character,
+    # about 32 s per MB at H = 64. Every run is on #546.
     #
     # L IS BOUNDED BY THE SCHEMA, NOT HERE. Hints come from
-    # `name_hints_for_tenant` only: `User.display_name`, a 255-character
-    # column, and email local parts, which `EmailStr` keeps under 254 because
-    # it refuses any whole address over 254 (email-validator 2.3.0, measured
-    # in the api image; it does NOT enforce the 64-character local-part limit).
-    # `Client.legal_name` goes to `redact_org_name`: no per-position loop, but
-    # its scan has the same L term, and `String(255)` bounds that too. A hint
-    # source WITHOUT a CHARACTER cap lifts the bound, and must be capped in
-    # characters or come with a cap here.
+    # `name_hints_for_tenant` only: `User.display_name` (255 characters) and
+    # email local parts, which `EmailStr` keeps under 254 by refusing any
+    # address over 254 (email-validator 2.3.0, measured). `Client.legal_name`
+    # goes to `redact_org_name` -- no per-position loop, but its scan has the
+    # same L term, also bounded at 255. A hint source without a CHARACTER cap
+    # lifts the bound, and must be capped or come with a cap here.
     #
-    # H IS BOUNDED BY NOTHING: up to two hints per user in the tenant, and
-    # users set their own display names. Filed as #546 rather than capped,
-    # because a cap on hints is a cap on what gets redacted.
+    # H IS BOUNDED BY NOTHING: up to two hints per tenant user, and users set
+    # their own display names. Filed as #546, not capped: a cap on hints is a
+    # cap on what gets redacted. A stall does NOT stop egress -- the request
+    # runs on after the caller gives up (measured, #546).
     spans: list[tuple[int, int]] = []
     for pat in _hint_patterns(hints):
         for region in pat.finditer(text):
