@@ -323,15 +323,33 @@ never the problem. Treating everything you found as blocking was.
 
 ## Reporting
 
-### Deliver the report with `SendMessage`. Your plain text reaches nobody.
+### Deliver the report through a delivery TOOL. Your plain text reaches nobody.
 
 **This is first because a report that is not delivered is worse than no report:
 the dispatcher sees you go idle, and idle reads as done.**
 
 Your plain-text output is NOT transmitted to the agent that dispatched you.
-Finish by calling `SendMessage` with the report as the `message`, addressed to
-whoever dispatched you — `main` when you were spawned from a main conversation,
-otherwise the team-lead name your prompt gives you.
+Finish by calling a tool that carries the report, and pick it in this order:
+
+1. **The hand-back tool your dispatch or system instructions name**, if they
+   name one (a `SubagentHandback`-style call). The harness that spawned you
+   knows its own return path; this file does not.
+2. **Otherwise `SendMessage`**, with the report as the `message`, addressed to
+   whoever dispatched you — `main` when you were spawned from a main
+   conversation, otherwise the team-lead name your prompt gives you.
+
+**Name the channel you used in your report's first line.** When this file and
+your dispatch disagree about the channel, that disagreement is a RUN-FINDING:
+report it, do not resolve it quietly.
+
+**Why the order, measured 2026-09-24:** this section used to name `SendMessage`
+alone. Four reviewers dispatched through the Agent tool on #545 and a follow-up
+were each told by the harness that only its hand-back call reaches the caller.
+Each used the hand-back, each report arrived, and each flagged the
+contradiction with this file. The rule that survives is the one this section
+was always about -- a TOOL call, never plain text. The tool's NAME is a
+property of the harness, which is why it comes from the dispatch first (#215
+records definitions going stale against the world; this is an instance).
 
 **End every report with a terminator on its own final line:**
 
@@ -375,8 +393,8 @@ signals. The reports were recovered only because the dispatcher asked each
 agent directly instead of reading idle as delivery.
 
 **A compact contract and a terminator both help and neither is the fix.** They
-bound the size and they make a cut visible. Only calling `SendMessage` makes
-the report exist for the reader.
+bound the size and they make a cut visible. Only a delivery-tool call makes the
+report exist for the reader.
 
 Rank by severity — could this reach a client, corrupt data, or cost money.
 
