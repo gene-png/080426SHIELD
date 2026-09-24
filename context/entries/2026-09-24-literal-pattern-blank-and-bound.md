@@ -23,18 +23,29 @@ Red-on-revert: deleting the raise turned every blank-needle case red.
 ## The cost, measured and written at the loop
 
 The owner asked for one adversarial measurement before the performance
-question closed. The results, on 1 MB of text with one hint:
+question closed. The results:
 
 - A whitespace run between two occurrences of a hint, or inside one, is linear
   in the text.
-- A hint of k whitespace-separated tokens costs O(k × T), where T is the text
-  length. The scan pays it, because each `\s+` join makes a near-miss run to
-  the hint's last token. The per-position loop pays it too, because inside a
-  region every position can start a full match.
-- The reachable worst case is k = 128: every hint and legal name comes from a
-  255-character column. That measured about 1.6 µs per character on main,
-  against 8.5–254 ns per character for the pre-#542 pattern on the same text.
+- A hint of L characters costs O(L × T), where T is the text length.
+  - The per-position loop pays it: inside a region, every position where the
+    hint could begin gets a match that compares up to L characters.
+  - A near-miss makes the scan pay a similar term when the hint has many `\s+`
+    joins.
+- **The first draft of the comment said words, not characters.** The review of
+  9021eb1 disproved it: a one-word hint of 255 dashes measured 1.4–1.6 µs per
+  character.
+- At L = 255, over 1 MB and five runs per shape, the observed spread was
+  1.4–3.4 µs per character. The pre-#542 pattern measured 11–45 ns per
+  character on the same shapes.
+- The reachable limit is L = 318, not 255. Display names and legal names are
+  255-character columns. But an email local part is bounded only by the
+  320-character `User.email`, because `EmailStr` does not enforce the
+  64-character local-part limit (65 was accepted). L = 318 was not measured;
+  the cost scales with L.
+  - An earlier figure of "1.6 µs worst case" was a single best-of-three reading
+    and understated the spread.
 
-The comment above the loop in `_redact_names` carries the numbers. It also
-says the bound depends on those column caps, and that a hint source without
-one lifts it.
+The comment above the loop in `_redact_names` carries the observed sets. It
+also says the bound depends on those column caps being in characters, and that
+a hint source without one lifts it.

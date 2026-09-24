@@ -1171,7 +1171,7 @@ class BlankRedactionLiteralError(StarletteHTTPException):
                 "reason": "redaction_blank_literal",
                 "message": (
                     "The redactor was given a blank name to remove "
-                    f"({needle!r}), so the AI call was stopped and nothing was sent."
+                    f"({needle!r}), so redaction stopped and nothing was sent."
                 ),
             },
         )
@@ -1290,27 +1290,34 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # there. `pos` does not slice, so `(?<!\w)` still sees the previous
     # character.
     #
-    # THE COST IS O(k * T), measured rather than argued (owner review of #542):
-    # T the text length, k the most whitespace-separated tokens in any one
-    # hint. Linear in the text for a fixed k, but NOT in k. Two parts pay it:
-    # the scan, because each `\s+` join makes a near-miss run to its last
-    # token before failing, and this loop, because inside a region EVERY
-    # position can begin a full k-token match. A whitespace run between two
-    # occurrences of a hint, or inside one, costs O(T) -- the literal first
-    # token rejects every whitespace position at once.
+    # THE COST IS O(L * T), measured rather than argued: T the text length,
+    # L the longest hint in CHARACTERS. Not its word count -- the first draft
+    # of this comment said words, and a one-word hint of 255 dashes disproved
+    # it (review of 9021eb1). Linear in the text for a fixed L. The term comes
+    # from THIS loop: inside a region, every position the hint could begin at
+    # gets a `match` that compares up to L characters, and for a hint that can
+    # begin almost anywhere -- punctuation-edged, so no `(?<!\w)`, or
+    # `a-a-a-...`, or words split by spaces -- that is nearly every position.
+    # A near-miss costs the SCAN a similar term when the hint has many `\s+`
+    # joins. A whitespace run between or inside occurrences of a hint costs
+    # O(T): the hint's first character rejects every whitespace position.
     #
-    # Measured 2026-09-24 on d11613e, 1 MB of text, one hint:
-    #   k = 10    ~0.5 us/char
-    #   k = 128   ~1.6 us/char worst case (~1.6 s per MB); the pre-#542
-    #             pattern, U+0020 only, was 8.5-254 ns/char on the same text
-    #   k = 1000  ~9 us/char
+    # Measured 2026-09-24 on this branch, 1 MB of text, one hint of L = 255,
+    # five runs per shape, ns per character observed:
+    #   128 words, "a a ... a"      1957, 2441, 3168, 3015, 3409
+    #   same hint, chunked text    3371, 2730, 3002, 2018, 2730
+    #   one word, 255 dashes       1557, 1476, 1417, 1390, 1392
+    # The pre-#542 pattern (U+0020 only, `\b` anchors) measured 11-45 ns per
+    # character on the same shapes -- and redacted none of the dashes.
     #
-    # k IS BOUNDED BY THE SCHEMA, NOT HERE: every hint and legal name this
-    # function or `redact_org_name` receives today comes from a column capped
-    # at 255 characters (`User.display_name`, `Client.legal_name`; email local
-    # parts are shorter), and 255 characters hold at most 128 tokens. A hint
-    # source WITHOUT that cap -- a request field, a free-text column -- lifts
-    # the bound, and must either be capped or come with a cap here.
+    # L IS BOUNDED BY THE SCHEMA, NOT HERE. `User.display_name` and
+    # `Client.legal_name` are 255-character columns. An email local part is
+    # bounded only by `User.email`, a 320-character column -- `EmailStr` does
+    # not enforce the 64-character local-part limit (65 measured accepted,
+    # 2026-09-24) -- so L <= 318 through that source, above the 255 measured
+    # here; the cost scales with L. A hint source WITHOUT a CHARACTER cap -- a
+    # request field, a free-text column -- lifts the bound, and must either be
+    # capped in characters or come with a cap here.
     spans: list[tuple[int, int]] = []
     for pat in _hint_patterns(hints):
         for region in pat.finditer(text):
