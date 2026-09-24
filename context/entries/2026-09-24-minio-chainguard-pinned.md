@@ -28,6 +28,9 @@ once, with nothing in the repo changing. The fix pins what lands.
 - `-dev` variants, because the distroless images have no shell and no HTTP
   client. The healthcheck and the bucket job both need one.
 - The healthcheck uses `wget`, because the image has no `curl`.
+- `mailhog` is pinned by digest too (`v1.0.1`, its last release). On
+  2026-09-24 `:latest` was the same manifest, so nothing that runs changes.
+  It was the last third-party `:latest` in compose.
 - `user: "0:0"` on `minio`. Chainguard runs as uid 65532, and a named volume
   at `/data` is created root-owned, so the server refused it ("file access
   denied", measured). Root is what the quay image ran as.
