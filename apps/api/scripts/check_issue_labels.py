@@ -1,8 +1,8 @@
-"""Every OPEN issue carries `mvp-blocking` plus exactly one tier, or `unowned-with-reason`.
+"""Every OPEN issue carries `mvp-blocking` plus exactly one tier, `unowned-with-reason`, or `post-mvp`.
 
 CLAUDE.md's filing rule: every new issue carries `mvp-blocking` plus one of
 `tier-1` / `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the
-body. The board is `is:issue is:open label:mvp-blocking` ordered by tier, so an
+body, OR `post-mvp` -- deliberately deferred past the MVP (D-086). The board is `is:issue is:open label:mvp-blocking` ordered by tier, so an
 issue without `mvp-blocking` is not on it, and one with it and no tier "has no
 place in the ordering". Either way it is invisible to the only view used to
 decide what to work on. The rule was written down and nothing enforced it.
@@ -12,13 +12,10 @@ What this checks is LABELS only. It does not read the body, so an
 stated here because "or says why" would be the natural misreading of the rule's
 second half.
 
-`mvp-blocking` triggers the tier check whether or not `unowned-with-reason` is
-also present: the board query returns the issue either way, so it needs a place
-in the ordering either way.
-
-`post-mvp` is a third state the rule does not name. Until it does, an issue that
-carries `post-mvp` and nothing else is reported as off the board, with the label
-named in the message so the reader knows which case it is.
+`mvp-blocking` triggers the tier check whether or not `unowned-with-reason` or
+`post-mvp` is also present: the board query returns the issue either way, so it
+needs a place in the ordering either way. Off the board, a tier is allowed and
+not required.
 
 Two modes:
   * FULL (default): every open issue. Exit 1 if any breaks the rule.
@@ -48,12 +45,16 @@ from pathlib import Path
 
 BOARD = "mvp-blocking"
 UNOWNED = "unowned-with-reason"
+DEFERRED = "post-mvp"
 TIERS = ("tier-1", "tier-2", "tier-3")
 
 _MESSAGES = {
     "no_tier": f"carries `{BOARD}` but no tier, so it has no place in the ordering",
     "several_tiers": f"carries `{BOARD}` and more than one tier",
-    "off_board": f"carries neither `{BOARD}` + a tier nor `{UNOWNED}`, so it is not on the board",
+    "off_board": (
+        f"carries neither `{BOARD}` + a tier, nor `{UNOWNED}`, nor `{DEFERRED}`, "
+        "so it is not on the board"
+    ),
 }
 
 
@@ -66,7 +67,7 @@ def classify(labels: set[str]) -> str | None:
         if len(tiers) > 1:
             return "several_tiers"
         return None
-    if UNOWNED in labels:
+    if UNOWNED in labels or DEFERRED in labels:
         return None
     return "off_board"
 
@@ -110,8 +111,7 @@ def _fault_line(issue: dict) -> str | None:
     fault = classify(labels)
     if fault is None:
         return None
-    extra = " (carries `post-mvp`, a state the rule does not name)" if "post-mvp" in labels else ""
-    return f"  #{issue['number']}: {_MESSAGES[fault]}{extra} -- {issue.get('title', '')}"
+    return f"  #{issue['number']}: {_MESSAGES[fault]} -- {issue.get('title', '')}"
 
 
 def _parse(argv: list[str]) -> tuple[str | None, int | None]:
@@ -184,7 +184,7 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"check-issue-labels: clean -- {len(issues)} open issue(s), each on the "
-        "board or unowned-with-reason."
+        "board, unowned-with-reason, or post-mvp."
     )
     return 0
 

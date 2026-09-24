@@ -2231,9 +2231,12 @@ Rules of the road:
   what to work on — not a slow record, an unreachable one.
 
   Every new issue carries, at creation: `mvp-blocking` + one of `tier-1` /
-  `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the body.
-  "Untriaged" is not a third option, because nothing ever comes back to triage
-  it. `gh label list` is the authority for what exists.
+  `tier-2` / `tier-3`, OR `unowned-with-reason` with the reason in the body, OR
+  `post-mvp` — deliberately deferred past the MVP, a decision rather than a
+  backlog, and not a trigger: one that must come back carries `Trigger-date:`.
+  "Untriaged" is not a fourth option, because nothing ever comes back
+  to triage it. `gh label list` is the authority for what exists, and
+  `check_issue_labels.py` enforces the labels, not the reason (D-086).
 
   The tiers are a judgement about client-facing consequence, not effort:
   **tier-1** is live, unmitigated wrongness a client can reach — a number they
@@ -2242,12 +2245,8 @@ Rules of the road:
   client reads. Label to the SHIPPED state rather than the threat model, and say
   on the issue which you did, so the call can be overturned instead of inherited.
 
-  **Measured 2026-09-10, and the cost was a duplicate.** A CSF silent-clamp
-  defect was found, searched for on the board, not found, and filed. It had been
-  filed eight days earlier by someone else — and that issue carried no labels,
-  so it appeared in no query. #184 and #286 are the same defect, and the older,
-  better-written one was the invisible one. So search-before-filing is real and
-  not sufficient on its own: it can only find what previous filers labelled.
+  Search before filing, knowing the search finds only what earlier filers
+  labelled: #184 and #286 are the same defect, filed twice (D-086).
 
 - **Write rich PR descriptions** (see PR #16 for the format: summary, task
   table, test plan, known follow-ups). The other person's agents orient from

@@ -5427,3 +5427,59 @@ The residual is general and worse than the miscitation: **every field this gate
 checks is pre-cleared by its own TypeScript type definition**, so a green is not
 evidence that anything renders -- it would have reported #322 clean. Stated in the
 gate's docstring and filed as **#473**.
+
+## D-086 — `post-mvp` is the filing rule's third legitimate state
+
+**D-084 and D-085 are not skipped by this entry.** D-084 is referenced by #469's
+entry and not yet written (#520). D-085 belongs to PR #517, which is open. The
+gap is recoverable by reading this sentence.
+
+### Decision
+
+The repo owner's decision, 2026-09-24. An open issue satisfies the filing rule
+in one of three states:
+
+- **on the board:** `mvp-blocking` + exactly one tier;
+- **unowned:** `unowned-with-reason`, with the reason in the body;
+- **deferred:** `post-mvp`, deliberately deferred past the MVP.
+
+A deferred issue may carry a tier, and need not. An issue carrying
+`mvp-blocking` still needs exactly one tier, whatever else it carries: the board
+query returns it, so it needs a place in the ordering.
+
+### Why a rule change and not a relabelling
+
+The #497 gate's first full run reported every issue that carried `post-mvp`
+and no `mvp-blocking` as off the board. There were 33 of them, each labelled
+`tier-3` + `post-mvp`: the owner's deliberate deferrals, not strays. Relabelling
+33 issues would have moved them onto a board they had been taken off on
+purpose, or left the gate red over a correct decision. The owner chose to name
+the state instead.
+
+Measured with the gate itself, 2026-09-24, on the live board
+(`REPO=gene-png/080426SHIELD python -m scripts.check_issue_labels`, from
+`apps/api`): 148 faults before this change and 115 after. The 33 cleared are the
+`post-mvp` issues. The 115 remaining are a triage backlog, handled separately:
+`tier-3` issues missing `mvp-blocking`, plus issues with no tier and no state.
+
+### What `post-mvp` is NOT
+
+**It is not a trigger.** `fire_scheduled_triggers.py` exists because
+"post-MVP", "later" and "deferred" are observed by nothing. This decision does
+not change that. It makes a deferral a legitimate FILING state, visible to
+`label:post-mvp`. It does not make it an alarm. A deferred issue that must come
+back carries `Trigger-date:`, which is the mechanism that fires.
+
+**The gate does not check the deferral is reasoned.** The same residual as
+`unowned-with-reason`: labels only, not the body.
+
+### Record moved here from CLAUDE.md
+
+To pay for the new clause under the size gate, the filing rule's incident
+paragraph moved here, per the size ratchet's split. Measured 2026-09-10, the
+cost was a duplicate. A CSF silent-clamp defect was found, searched for on the
+board, not found, and filed. It had been filed eight days earlier by someone
+else, and that issue carried no labels, so it appeared in no query. #184 and
+#286 are the same defect, and the older, better-written one was the invisible
+one. Search-before-filing is real, and not sufficient on its own: it can only
+find what previous filers labelled.
