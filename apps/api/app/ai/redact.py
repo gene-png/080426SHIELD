@@ -45,6 +45,7 @@ Modes:
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
@@ -1125,7 +1126,13 @@ def _redact_addresses(text: str) -> tuple[str, int]:
     return _RE_ADDRESS.sub(PLACEHOLDER_ADDRESS, text), count
 
 
-def _literal_pattern(needle: str) -> str:
+def _literal_edges(needle: str) -> tuple[bool, bool]:
+    """Does the needle start / end with a word character? Decides its anchors."""
+    tokens = needle.split()
+    return bool(re.match(r"\w", tokens[0])), bool(re.match(r"\w", tokens[-1][-1]))
+
+
+def _literal_pattern(needle: str, *, anchored: bool = True) -> str:
     r"""Regex source for a DATA-SUPPLIED literal: a stored legal name or a name hint.
 
     The only place in this module where data becomes a pattern, so the only
@@ -1151,8 +1158,11 @@ def _literal_pattern(needle: str) -> str:
     """
     tokens = needle.split()
     body = (_HSPACE + "+").join(re.escape(t) for t in tokens)
-    head = r"(?<!\w)" if re.match(r"\w", tokens[0]) else ""
-    tail = r"(?!\w)" if re.match(r"\w", tokens[-1][-1]) else ""
+    if not anchored:
+        return body
+    starts_word, ends_word = _literal_edges(needle)
+    head = r"(?<!\w)" if starts_word else ""
+    tail = r"(?!\w)" if ends_word else ""
     return head + body + tail
 
 
@@ -1186,7 +1196,7 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     must see the same normalised string. Sorting the STORED hints let
     "Dana" + padding outrank "Dana Whitfield" (review of ab80a13).
 
-    THE LONGEST MATCH WINS, DECIDED ON THE TEXT, not by alternation order.
+    EVERY MATCH COUNTS, DECIDED ON THE TEXT, not by alternation order.
     Python's alternation is leftmost-first, then first-listed: a partial hint
     that matches further LEFT wins however the list is sorted. "(Dana" matched
     at position 0 of "(Dana Whitfield)", one character before "Dana Whitfield"
@@ -1194,33 +1204,79 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     a completed redaction. That is worse than no match, because no match is
     visibly a leak and a partial one looks finished -- the same failure as the
     suite rule's `Suite B 201` -> `[ADDRESS] 201`. So every hint's matches are
-    found on the ORIGINAL text, the longest non-overlapping spans are kept, and
+    found on the ORIGINAL text, overlapping spans are MERGED (the union), and
     only then is anything replaced. Placeholders are never rescanned, so a hint
     like "name" cannot match inside "[NAME]".
     """
-    hints = sorted({" ".join(h.split()) for h in name_hints if h})
-    hints = [h for h in hints if len(h) >= 2]
+    hints = tuple(sorted({" ".join(h.split()) for h in name_hints if h}))
+    hints = tuple(h for h in hints if len(h) >= 2)
     if not hints:
         return text, 0
-    spans: set[tuple[int, int]] = set()
-    for hint in hints:
-        pat = re.compile(_literal_pattern(hint), re.IGNORECASE)
-        spans.update((m.start(), m.end()) for m in pat.finditer(text))
+    # CANDIDATES COME ONLY FROM WHERE A PLAIN SCAN MATCHED. For each pattern, a
+    # hint can only START inside a region that pattern's leftmost scan
+    # matched: had it started anywhere else, the scan (which resumes where each
+    # match ends) would have found it there. So `match` is asked only at
+    # positions INSIDE matched regions, and returns the longest hint starting
+    # there. `pos` does not slice, so `(?<!\w)` still sees the previous
+    # character.
+    spans: list[tuple[int, int]] = []
+    for pat in _hint_patterns(hints):
+        for region in pat.finditer(text):
+            for position in range(region.start(), region.end()):
+                m = pat.match(text, position)
+                if m and m.end() > position:
+                    spans.append((position, m.end()))
     if not spans:
         return text, 0
-    chosen: list[tuple[int, int]] = []
-    for start, end in sorted(spans, key=lambda s: (s[0] - s[1], s[0])):
-        if all(end <= c_start or start >= c_end for c_start, c_end in chosen):
-            chosen.append((start, end))
-    chosen.sort()
+    # THE UNION of overlapping spans, not the longest one. Choosing a winner
+    # still published part of a chained name: hints "Dana Whitfield" and
+    # "Whitfield Jones" over "Dana Whitfield Jones" kept one span and left
+    # "Dana [NAME]" (review of 4f042f3). A merged run redacts strictly more and
+    # is ONE removal, so the count keeps its unit (one removal is one).
+    spans.sort()
+    merged: list[list[int]] = []
+    for start, end in spans:
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
     parts: list[str] = []
     pos = 0
-    for start, end in chosen:
+    for start, end in merged:
         parts.append(text[pos:start])
         parts.append(PLACEHOLDER_NAME)
         pos = end
     parts.append(text[pos:])
-    return "".join(parts), len(chosen)
+    return "".join(parts), len(merged)
+
+
+@functools.lru_cache(maxsize=256)
+def _hint_patterns(hints: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    """One compiled pattern per anchor shape, cached on the normalised hints.
+
+    WHY GROUPED, and why not one alternation. The anchors are conditional, so
+    they can only be hoisted OUT of the alternation -- which is what lets the
+    engine use its literal-prefix fast path -- for hints that share them.
+    Anchors inside every alternative were measured at 27x slower than hoisted
+    ones, over 500 hints and 262 KB. A single alternation across shapes would
+    let the first shape to match at a position win rather than the longest,
+    so "Acme" could beat "Acme Corp." and publish "Corp.". Each group is
+    scanned separately and `_redact_names` takes the union.
+
+    CACHED because `redact_payload` calls `redact_for_ai` for every string in
+    a payload with the same hints. Compiling per string cost a compile per
+    hint per string (review of 4f042f3).
+    """
+    groups: dict[tuple[bool, bool], list[str]] = {}
+    for hint in sorted(hints, key=len, reverse=True):
+        groups.setdefault(_literal_edges(hint), []).append(hint)
+    patterns = []
+    for (starts_word, ends_word), members in sorted(groups.items()):
+        head = r"(?<!\w)" if starts_word else ""
+        tail = r"(?!\w)" if ends_word else ""
+        body = "|".join(_literal_pattern(h, anchored=False) for h in members)
+        patterns.append(re.compile(head + "(?:" + body + ")" + tail, re.IGNORECASE))
+    return tuple(patterns)
 
 
 def redact_for_ai(

@@ -32,6 +32,11 @@ import pytest
 
 from app.ai.redact import redact_for_ai
 
+# CI runs `pytest -m unit`. Without this mark every test in this file was
+# DESELECTED there -- found by review of 4f042f3, after local runs that named
+# the file directly had passed.
+pytestmark = pytest.mark.unit
+
 # Every character `\s` matches that is NOT a line break by `str.splitlines()`.
 HORIZONTAL = [
     ch
@@ -219,3 +224,30 @@ def test_a_hint_that_is_one_character_after_normalising_is_dropped() -> None:
     out, counts = redact_for_ai(text, mode="strict", name_hints=[" J"])
     assert out == text
     assert "name" not in counts, counts
+
+
+def test_chained_hints_redact_the_whole_run_not_one_winner() -> None:
+    # Review of 4f042f3: choosing the longest span dropped the overlapping one
+    # and published "Dana [NAME]". Overlapping spans are MERGED, so the run is
+    # one removal and nothing of it survives.
+    out, counts = redact_for_ai(
+        "Signed by Dana Whitfield Jones today.",
+        mode="strict",
+        name_hints=["Dana Whitfield", "Whitfield Jones"],
+    )
+    assert out == "Signed by [NAME] today.", out
+    assert counts.get("name") == 1, counts
+
+
+def test_a_shorter_hint_in_an_earlier_anchor_group_cannot_beat_a_longer_one() -> None:
+    # Hints are grouped by anchor shape so anchors can be hoisted. "(Acme." has
+    # non-word characters at BOTH ends; "(Acme. Labs" ends with a word
+    # character, so it is in a LATER group. One alternation across groups would
+    # try the earlier group first and publish "Labs". Each group is scanned on
+    # its own and the spans are merged. (The obvious pair, "Acme" and "Acme
+    # Corp.", cannot fail this way: there the longer hint's group comes first.)
+    out, counts = redact_for_ai(
+        "Signed by (Acme. Labs today.", mode="strict", name_hints=["(Acme.", "(Acme. Labs"]
+    )
+    assert "Acme" not in out and "Labs" not in out, out
+    assert counts.get("name") == 1, counts

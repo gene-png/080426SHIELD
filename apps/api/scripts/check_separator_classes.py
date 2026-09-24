@@ -167,8 +167,9 @@ def _data_escapes_outside_the_constructor(source: str) -> list[str]:
     `re.escape(` is not a reference, and `from re import escape` or `import re as r`
     are still caught. WHAT IT CANNOT SEE: data interpolated into a pattern
     WITHOUT `re.escape` (an f-string of a raw variable) -- a regex injection,
-    a different and worse defect, which this file does not do today -- and
-    `getattr(re, "escape")`.
+    a different and worse defect, which this file does not do today --
+    `getattr(re, "escape")`, and a bare `escape` reached through
+    `from re import *`.
 
     A REFERENCE is the unit, not a call: `map(re.escape, hints)` and
     `esc = re.escape` pass it as a value and were invisible to a call-only
