@@ -8,7 +8,8 @@ import type { JSX } from "react";
 
 /**
  * Issue 2: warn an admin — on every admin page, including right after sign-in —
- * that AI will produce offline (fixture) output, and point at the fix.
+ * that AI is not live: a Run-AI will produce offline (fixture) output, or, since
+ * #472, fail outright. `status.detail` says which, and what fixes it.
  *
  * Previously this rendered on exactly one of the five workspaces and offered no
  * way to resolve the problem, so an admin could work for a whole session
