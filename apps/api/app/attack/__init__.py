@@ -1,7 +1,8 @@
 """MITRE ATT&CK Enterprise coverage module (Phase 5 stage 5).
 
 The full ATT&CK Enterprise matrix lives in `app.attack.catalog` as
-immutable code data: 14 tactics, ~196 techniques, ~411 sub-techniques.
+immutable code data (its docstring says how to count it; the counts once
+written here were wrong).
 Per D-007 (Decisions log) we encode the complete matrix rather than a
 curated subset.
 

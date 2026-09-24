@@ -188,7 +188,7 @@ Every variable in [`.env.example`](.env.example) is required. Summary:
 | LLM            | `SHIELD_LLM_PROVIDER`, `SHIELD_LLM_MODEL`, `SHIELD_LLM_MODE`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GCP_PROJECT_ID` + `GCP_REGION` (`vertex`/ADC) | `MODE=fixture` for offline tests                                 |
 | Feature flags  | `SHIELD_AUTH_REQUIRE_MFA`, `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY`, `SHIELD_EMAIL_DELIVERY_ENABLED`                                                                        | All `false` for v1                                               |
 | Redaction      | `SHIELD_REDACTION_MODE`                                                                                                                                               | `strict` in prod; `off` forbidden outside dev                    |
-| Sessions       | `JWT_ACCESS_TTL_SECONDS`, `JWT_REFRESH_TTL_SECONDS`, `SHIELD_ACCOUNT_LOCKOUT_*`, `SHIELD_IDLE_TIMEOUT_SECONDS`, `SHIELD_FORCED_REAUTH_SECONDS`                        | Compensating controls (MFA enforcement is optional, default off) |
+| Sessions       | `JWT_ACCESS_TTL_SECONDS`, `JWT_REFRESH_TTL_SECONDS`, `SHIELD_ACCOUNT_LOCKOUT_*`, `SHIELD_FORCED_REAUTH_SECONDS`                                                       | Compensating controls (MFA enforcement is optional, default off) |
 | Mail           | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                                                                                                                                 | MailHog locally                                                  |
 
 ### LLM providers

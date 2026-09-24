@@ -161,7 +161,6 @@ class Settings(BaseSettings):
     jwt_mfa_pending_ttl_seconds: int = Field(default=300, ge=60)
     shield_account_lockout_max_attempts: int = Field(default=10, ge=1)
     shield_account_lockout_window_seconds: int = Field(default=900, ge=60)
-    shield_idle_timeout_seconds: int = Field(default=1800, ge=60)
     shield_forced_reauth_seconds: int = Field(default=86400, ge=300)
 
     # Rate limiting (Sprint 3 T3). Fixed-window per-IP + per-account on the auth
