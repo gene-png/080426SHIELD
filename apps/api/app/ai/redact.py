@@ -1290,34 +1290,48 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # there. `pos` does not slice, so `(?<!\w)` still sees the previous
     # character.
     #
-    # THE COST IS O(L * T), measured rather than argued: T the text length,
-    # L the longest hint in CHARACTERS. Not its word count -- the first draft
-    # of this comment said words, and a one-word hint of 255 dashes disproved
-    # it (review of 9021eb1). Linear in the text for a fixed L. The term comes
-    # from THIS loop: inside a region, every position the hint could begin at
-    # gets a `match` that compares up to L characters, and for a hint that can
-    # begin almost anywhere -- punctuation-edged, so no `(?<!\w)`, or
-    # `a-a-a-...`, or words split by spaces -- that is nearly every position.
-    # A near-miss costs the SCAN a similar term when the hint has many `\s+`
-    # joins. A whitespace run between or inside occurrences of a hint costs
-    # O(T): the hint's first character rejects every whitespace position.
+    # THE COST IS O(H * L * T), measured rather than argued: T the text
+    # length, L the longest hint in CHARACTERS, H the hints sharing one
+    # anchor group (`_hint_patterns` compiles each group as ONE alternation).
+    # Linear in the text for fixed H and L. Two drafts of this comment were
+    # wrong: it said word count, disproved by a one-word hint of 255 dashes;
+    # then it left H out, because every measurement used one hint (reviews of
+    # 9021eb1 and e5fe1c9).
     #
-    # Measured 2026-09-24 on this branch, 1 MB of text, one hint of L = 255,
-    # five runs per shape, ns per character observed:
-    #   128 words, "a a ... a"      1957, 2441, 3168, 3015, 3409
-    #   same hint, chunked text    3371, 2730, 3002, 2018, 2730
-    #   one word, 255 dashes       1557, 1476, 1417, 1390, 1392
+    # Where it comes from. Inside a region, every position the hint could
+    # begin at gets a `match` that compares up to L characters -- for a hint
+    # that can begin almost anywhere (punctuation-edged, so no `(?<!\w)`, or
+    # `a-a-a-...`, or words split by spaces) that is nearly every position.
+    # And at any position, each alternative that FAILS pays for the prefix it
+    # matched first, so H near-miss hints sharing a long prefix multiply the
+    # cost; when the longest alternative matches, the rest are never tried. A
+    # whitespace run between or inside occurrences costs O(T): a normalised
+    # hint never starts with a space.
+    #
+    # Measured 2026-09-24, 1 MB of text, ns per character observed:
+    #   one hint, L = 255, five runs per shape (host):
+    #     128 words, "a a ... a"          1957, 2441, 3168, 3015, 3409
+    #     same hint, chunked text        3371, 2730, 3002, 2018, 2730
+    #     one word, 255 dashes           1557, 1476, 1417, 1390, 1392
+    #   H near-miss hints sharing a ~250-dash prefix, three runs (api image):
+    #     H = 1: 8, 7, 7   H = 4: 36, 35, 55   H = 16: 198, 164, 153
+    #     H = 64: 626, 550, 604
+    #   H all-matching dash hints: 1300-1450 at H = 1, 4 and 16 alike.
     # The pre-#542 pattern (U+0020 only, `\b` anchors) measured 11-45 ns per
-    # character on the same shapes -- and redacted none of the dashes.
+    # character on the one-hint shapes -- and redacted none of the dashes.
     #
-    # L IS BOUNDED BY THE SCHEMA, NOT HERE. `User.display_name` and
-    # `Client.legal_name` are 255-character columns. An email local part is
-    # bounded only by `User.email`, a 320-character column -- `EmailStr` does
-    # not enforce the 64-character local-part limit (65 measured accepted,
-    # 2026-09-24) -- so L <= 318 through that source, above the 255 measured
-    # here; the cost scales with L. A hint source WITHOUT a CHARACTER cap -- a
-    # request field, a free-text column -- lifts the bound, and must either be
+    # L IS BOUNDED BY THE SCHEMA, NOT HERE. Hints come from
+    # `name_hints_for_tenant` only: `User.display_name`, a 255-character
+    # column, and email local parts, which `EmailStr` keeps under 254 because
+    # it refuses any whole address over 254 (email-validator 2.3.0, measured
+    # in the api image; it does NOT enforce the 64-character local-part limit).
+    # `Client.legal_name` goes to `redact_org_name`, which has no per-position
+    # loop. A hint source WITHOUT a CHARACTER cap lifts the bound, and must be
     # capped in characters or come with a cap here.
+    #
+    # H IS BOUNDED BY NOTHING: up to two hints per user in the tenant. Filed
+    # rather than capped here, because a cap on hints is a cap on what gets
+    # redacted; #546.
     spans: list[tuple[int, int]] = []
     for pat in _hint_patterns(hints):
         for region in pat.finditer(text):

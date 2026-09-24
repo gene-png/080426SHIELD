@@ -27,25 +27,30 @@ question closed. The results:
 
 - A whitespace run between two occurrences of a hint, or inside one, is linear
   in the text.
-- A hint of L characters costs O(L × T), where T is the text length.
-  - The per-position loop pays it: inside a region, every position where the
-    hint could begin gets a match that compares up to L characters.
-  - A near-miss makes the scan pay a similar term when the hint has many `\s+`
-    joins.
-- **The first draft of the comment said words, not characters.** The review of
-  9021eb1 disproved it: a one-word hint of 255 dashes measured 1.4–1.6 µs per
-  character.
-- At L = 255, over 1 MB and five runs per shape, the observed spread was
-  1.4–3.4 µs per character. The pre-#542 pattern measured 11–45 ns per
-  character on the same shapes.
-- The reachable limit is L = 318, not 255. Display names and legal names are
-  255-character columns. But an email local part is bounded only by the
-  320-character `User.email`, because `EmailStr` does not enforce the
-  64-character local-part limit (65 was accepted). L = 318 was not measured;
-  the cost scales with L.
-  - An earlier figure of "1.6 µs worst case" was a single best-of-three reading
-    and understated the spread.
+- The cost is O(H × L × T). T is the text length, L the longest hint in
+  characters, and H the number of hints sharing one anchor group, which is
+  compiled as a single alternation.
+  - Inside a region, every position where a hint could begin gets a match that
+    compares up to L characters.
+  - At each position, every alternative that fails pays for the prefix it
+    matched first. So near-miss hints sharing a long prefix multiply the cost.
+- **Two drafts of the comment were wrong, and review caught each.**
+  - The first said word count. A one-word hint of 255 dashes measured 1.4–1.6 µs
+    per character.
+  - The second left out H, because every measurement used one hint. Near-miss
+    hints sharing a ~250-dash prefix measured 550–630 ns per character at
+    H = 64, against 7–8 at H = 1.
+- **L is bounded: 255 characters.** Hints come only from `display_name`, a
+  255-character column, and email local parts, which `EmailStr` keeps under 254
+  because it refuses any address over 254. That was measured in the api image
+  with email-validator 2.3.0. An earlier draft said 318; it is wrong.
+  `legal_name` goes to `redact_org_name`, which has no per-position loop.
+- **At L = 255 with one hint**, over 1 MB and five runs per shape, the observed
+  spread was 1.4–3.4 µs per character. The pre-#542 pattern measured 11–45 ns
+  per character on the same shapes.
+- **H is bounded by nothing.** Each user in a tenant contributes up to two
+  hints. It is filed as #546 rather than capped here, because a cap on hints
+  is a cap on what gets redacted.
 
-The comment above the loop in `_redact_names` carries the observed sets. It
-also says the bound depends on those column caps being in characters, and that
-a hint source without one lifts it.
+The comment above the loop in `_redact_names` carries the observed sets and
+both bounds.
