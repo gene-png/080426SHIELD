@@ -313,7 +313,9 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
   concurrent multi-device sessions become a requirement.
 - **Idle timeout (documented, not new machinery):** the 30-minute refresh-token
   TTL already IS the idle timeout — an idle session cannot refresh past it. We
-  document that rather than invent a second timer.
+  document that rather than invent a second timer. **SUPERSEDED by D-084
+  (2026-09-23):** the default refresh TTL has been 24 hours since 2026-08-08,
+  so outside compose there is no idle bound below the daily ceiling.
 - **Dead flags fail loudly:** `assert_safe_for_runtime` now refuses to boot if
   `SHIELD_AUTH_REQUIRE_MFA` or `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` is true,
   because the enrollment/challenge and email-verification flows do not exist.

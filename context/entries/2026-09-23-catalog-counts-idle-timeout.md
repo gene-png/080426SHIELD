@@ -44,9 +44,12 @@ decision, filed as #516. The decision to delete rather than wire, and what
 it supersedes in D-020, is D-084. `routes/auth.py`'s docstring, which stated
 the spec's figures as shipped, now says what ships.
 
-The same subject was stated in the README's risk-acceptance log ("a 30-minute
+The same subject was stated in `SECURITY.md`'s posture table (which round 3
+of review found after the entry said the sweep was done), in the README's
+risk-acceptance log ("a 30-minute
 refresh-token TTL that functions as the idle timeout") and in
-`docs/architecture.md`. Both are corrected, and so is the access-TTL row beside
+`docs/architecture.md`. All three are corrected, D-020's idle bullet points
+at D-084, and so is the access-TTL row beside
 the idle row, which said the config does not hold 900 when compose does. The README's settings table and the Keycloak README are
 corrected to match. `Settings` ignores unknown variables, so an `.env` that
 still sets `SHIELD_IDLE_TIMEOUT_SECONDS` boots unchanged. `SPRINT_3.md` still
