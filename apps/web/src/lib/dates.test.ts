@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { formatDateOnly, formatInstantUtc } from "./dates";
 
@@ -9,6 +9,22 @@ import { formatDateOnly, formatInstantUtc } from "./dates";
  * then formatting it in local time.
  */
 describe("formatDateOnly", () => {
+  // THE ZONE IS SET, or these prove nothing. The runner is UTC, where the
+  // defect -- `new Date(value).toLocaleDateString()` -- prints the right day
+  // anyway. `toLocaleDateString` reads the zone at call time, so no re-import
+  // is needed; the precondition asserts the zone took (timezone round 3).
+  const savedTz = process.env.TZ;
+  beforeEach(() => {
+    process.env.TZ = "America/Chicago";
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(
+      "America/Chicago",
+    );
+  });
+  afterEach(() => {
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+  });
+
   it("keeps a bare calendar date on its own day", () => {
     expect(formatDateOnly("2027-06-30")).toBe("6/30/2027");
   });

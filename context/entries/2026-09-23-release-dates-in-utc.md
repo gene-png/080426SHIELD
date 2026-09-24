@@ -15,8 +15,9 @@ It was two copies of the same defect. The other dashboards use `DashShell`'s bad
 one alone fixes those, leaves ATT&CK wrong, and re-tests clean on the
 dashboard the report came from.
 
-No exporter prints the release date. The one date an export stamps, the CSF
-playbook's, is already UTC.
+No exporter prints the release date. The dates the server does stamp are
+already UTC: a deliverable's file name at finalize (`utcnow().date()`) and the
+CSF playbook's "Generated" line.
 
 ## What changed
 
@@ -37,9 +38,9 @@ playbook's, is already UTC.
   surface showing one of those instants agrees:
   - the four cards (`DeliverableCard` and its CSF, ZT and ATT&CK siblings);
   - `IntakeQueue`, `IntakeSubmitted` and `Step6Review`. `IntakeQueue` also
-    covers each card's "Requested" time: a submit creates those requests in
-    the same transaction, so it is the same instant as "Submitted". Round 2
-    of review caught those two disagreeing on one screen.
+    covers each card's "Requested" time. The requests from the latest submit
+    carry the same instant as "Submitted", so in the viewer's zone the two
+    read as different days on one screen. Round 2 of review caught that.
 
   `formatInstantUtc` spells the month ("Sep 23, 2026, 1:30:00 AM UTC"), as
   the date-only surfaces do. A numeric month reads as a different day to a
@@ -76,10 +77,13 @@ The lint rule cannot see a revert to `toLocaleString`. Filed as #510.
 `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` on a `Date` also
 use the viewer's zone, and a syntax rule cannot tell a date from a price
 there. Filed as #507. What remains after this branch: message and inbox
-times, the audit log, document upload dates (`IntakeDocumentsPanel`,
-`IntakeQueue`), and a capability table's date column. These
+times, the audit log, and document upload dates (`IntakeDocumentsPanel`,
+`IntakeQueue`). These
 are times where the viewer's own clock is arguably the right answer, which is
 a product decision.
+
+The date-only surfaces show the UTC day without naming the zone, while the
+cards name it. Whether they should is a product decision, filed as #512.
 
 The lint rule matches the literal spellings every product site uses, and its
 header lists the spellings it cannot see.

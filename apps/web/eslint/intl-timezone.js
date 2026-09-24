@@ -13,7 +13,10 @@
 // tree when this was written: an alias (`const { DateTimeFormat } = Intl`),
 // `globalThis.Intl` / `window.Intl`, a computed member (`Intl["DateTimeFormat"]`),
 // a `timeZone` key anywhere else in the call's arguments, and
-// `timeZone: undefined`. Tests are exempt (see `eslint.config.js`).
+// `timeZone: undefined`. And by reach: the rule runs on
+// `apps/web/src/**/*.{ts,tsx}` only, so a `.js` file there, or
+// `packages/design-system` (which has no lint script), is not checked. Tests
+// are exempt (see `eslint.config.js`).
 //
 // Fails closed on options it cannot see into (a variable, a spread): a zone it
 // cannot SEE is a zone it cannot vouch for. Write the object literal, or

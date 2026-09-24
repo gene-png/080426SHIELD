@@ -317,9 +317,11 @@ function ServiceRequestCard({
           />
         ) : null}
         <CardDescription>
-          {/* UTC like the "Submitted" time above: a submit creates these
-              requests in the same transaction, so the two are one instant
-              (timezone round 2). */}
+          {/* UTC like the "Submitted" time above. The requests the LATEST
+              submit created carry that same instant (same transaction; the
+              seconds can differ by one), so in the viewer's zone the two read
+              as different days on one screen (timezone round 2). Requests
+              from earlier submits carry their own, earlier times. */}
           Requested {formatInstantUtc(s.requested_at)} by{" "}
           <span className="font-medium text-ink-primary">
             {s.requested_by.display_name ?? s.requested_by.email}
