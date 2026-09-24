@@ -31,10 +31,18 @@ export const panel: React.CSSProperties = {
   borderRadius: 16,
 };
 
+// PINNED TO UTC. The released date is an instant. In the viewer's zone a
+// release at 02:00 UTC read as the day before west of UTC, so one release
+// read as different days to different people, and as a different day from the
+// UTC the API stores. (No exporter prints the release date; the one date an
+// export stamps -- the CSF playbook's -- is UTC too.) Every
+// `Intl.DateTimeFormat` in `apps/web/src` must name its zone: the lint rule in
+// `eslint.config.js` refuses one that does not.
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",
   day: "numeric",
+  timeZone: "UTC",
 });
 
 export function formatDate(iso: string): string {
@@ -48,12 +56,15 @@ export function DashShell({
   subtitle,
   releasedAt,
   version,
+  footer = "SHIELD · Confidential · Figures as of the released assessment.",
   children,
 }: {
   title: string;
   subtitle: string;
   releasedAt: string;
   version: number;
+  /** The closing line; ATT&CK says "Coverage", the others "Figures". */
+  footer?: string;
   children: React.ReactNode;
 }): JSX.Element {
   return (
@@ -120,7 +131,7 @@ export function DashShell({
             marginTop: 24,
           }}
         >
-          SHIELD · Confidential · Figures as of the released assessment.
+          {footer}
         </footer>
       </div>
     </div>
