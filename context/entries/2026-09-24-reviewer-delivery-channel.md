@@ -13,8 +13,7 @@ opening line. Any disagreement about the channel is a run-finding: between
 the file, its injected copy, the dispatcher's prose and the tool the system
 names, or a tool that changed its name. Step 0 now says the `tools:` line is a
 floor, because the harness adds its hand-back tool without the line naming it.
-The four reviews are the #545 rounds in that PR's audit section; every review
-dispatched since has reported the same.
+The four reviews are the #545 rounds in that PR's audit section; every review dispatched since, through 2026-09-24, reported the same.
 
 This is a live instance of #215, where agent definitions go stale against the
 world with nothing checking them. The owner labelled #215 mvp-blocking and

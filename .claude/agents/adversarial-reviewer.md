@@ -354,8 +354,7 @@ for delivery and is exactly the drift nobody else can see.
 alone. Four reviewers dispatched through the Agent tool were each told by the
 harness that only its hand-back call reaches the caller -- the four #545
 rounds recorded in that PR's `## Adversarial audit` section (324dc15,
-adaf082, 701f032, d3aeaaf). Every review dispatched since has reported the
-same.
+adaf082, 701f032, d3aeaaf). Every review dispatched since, through 2026-09-24, reported the same.
 Each used the hand-back, each report arrived, and each flagged the
 contradiction with this file. The rule that survives is the one this section
 was always about -- a TOOL call, never plain text. The tool's NAME is a
