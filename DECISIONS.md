@@ -5493,3 +5493,73 @@ else, and that issue carried no labels, so it appeared in no query. #184 and
 #286 are the same defect, and the older, better-written one was the invisible
 one. Search-before-filing is real, and not sufficient on its own: it can only
 find what previous filers labelled.
+
+## D-087 — Tiers measure consequence along the delivery path; `mvp-blocking` means board membership
+
+The repo owner's rulings during triage, 2026-09-24. CLAUDE.md's tier paragraph
+carries the rule in brief; this entry carries the reasoning and the evidence.
+
+### 1. Consequence, not audience
+
+tier-3 means the falsehood changes nothing about what the client ends up with.
+It does not mean the screen is internal.
+
+**The measurement that argues the other way is real, and it is not enough.**
+The CSF exporter states `answered_subcategories/total_subcategories` and
+`coverage_pct` in the XLSX, and in the Maturity summary of the DOCX and PDF
+(`csf/exporters.py`). ATT&CK's `coverage_pct_text` is the percentage "as every
+surface of the deliverable states it" (`attack/exporters.py`). So a deliverable
+built after a false "done" is visibly thin, not falsely full. The drafting pass
+proposed tier-3 for #70 and #74 on exactly that basis.
+
+**The owner overruled it.** A falsehood that deceives the consultant into
+releasing work they would not have released has a client-facing consequence.
+The consultant is a path, not an exemption. Anyone who re-runs the exporter
+measurement will re-derive tier-3, and CLAUDE.md's line exists to stop that.
+
+### 2. The path is the DELIVERY path, not any human
+
+A consultant is the last step before the client. A reviewer or developer is not
+on the delivery path. A false gate that misleads them is tiered by what the gate
+does, and a defect the gate lets through is tiered on its own merits when it is
+found. Without this bound the rule swallows the backlog and the scale stops
+discriminating. #106, #107, #143, #161 and #170 stay tier-3 on this basis.
+
+### 3. The scale has no term for compliance consequence (#528)
+
+#53 (the `llm_calls` egress record is lost on rollback) is tier-2 by the
+owner's call. No client reads that record, but an assessor does, on a FedRAMP
+Moderate/High track. The scale's audience-shaped tier-3 would take every such
+defect off the board. The fix to the scale is #528, and it is not decided here.
+
+### 4. Correction to D-086: `mvp-blocking` is board membership
+
+D-086 justified the `deferred_on_board` fault by reading `mvp-blocking` as its
+name, "blocks the MVP". Its definition is board membership: the board is
+`is:issue is:open label:mvp-blocking`. The fault stands, on the right ground:
+"on the board" contradicts "deferred off it". That is the second label in two
+days whose name implies a different test than its definition. The first was
+`tier-3` read as "internal screen". CLAUDE.md's tier paragraph now names the
+class: a label's name is not its test. D-086 is left as written, and this entry
+corrects it. The gate's docstring and the test comment are corrected in place.
+
+### 5. The format step reads prettier's version from the lockfile
+
+CLAUDE.md's MANDATORY format step said `3.9.6` while `pnpm-lock.yaml` resolved
+`3.9.8`. Every author following it formatted with a different tool from CI's.
+The command now reads the version at run time. It was run in Git Bash and in
+PowerShell 5.1, in both directions (see CLAUDE.md). An in-container
+`pnpm format:check` was tried first and rejected: on a working tree it flags
+gitignored build output (`apps/web/.next`) that CI's clean checkout never has.
+Measured: 177 files flagged on a tree CI would pass.
+
+### Record moved here from CLAUDE.md, to pay for the tier clause
+
+The over-match rule's instance, per the size ratchet's prepared cut list (item
+1). `suite_pat`'s `\bFl` ate the `oor` in "Floor", and that bug was the sole
+reason `2nd Floor` got any redaction at all. The pattern has no branch for a
+value PRECEDING its keyword, so tightening `Fl` silently removed coverage
+nobody knew existed. Nothing fails when this happens: no test knew the coverage
+was there, because it was never intended. On #130 the honest framing was "adds
+coverage that never existed and closes a live leak", not "preserves coverage
+through a fix".

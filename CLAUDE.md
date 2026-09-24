@@ -352,13 +352,16 @@ recorded with a real exit code and a real date, and was the minority outcome
 - e2e (host, not docker): `cd e2e && npx playwright test [file]` — base URL
   `http://localhost:3000`, chromium, serialized (shared seeded DB). Full suite
   ~17 min.
-- Format check (MANDATORY before every commit — CI enforces it, the Sprint 2
-  loop shipped unformatted files it only caught at CI): run host prettier at the
-  version `pnpm-lock.yaml` resolves (`3.9.6` today, from `package.json`'s
-  `^3.9.6`) so local and CI agree — CI runs `pnpm install --frozen-lockfile`
-  then `pnpm format:check`, so the LOCKFILE decides, not the range —
-  `npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"`
-  from the repo root. `--write` the same glob to fix, then re-check.
+- Format check (MANDATORY before every commit; CI enforces it). CI runs
+  `pnpm install --frozen-lockfile` then `pnpm format:check`, so the LOCKFILE
+  decides the version, not `package.json`'s range. The command READS it, because
+  a number written here went stale (it said 3.9.6 while the lockfile said 3.9.8).
+  From the repo root:
+  `npx -y "prettier@$(node -p "(require('fs').readFileSync('pnpm-lock.yaml','utf8').match(/^  prettier@([0-9.]+):/m)||[,'LOCKFILE-HAS-NO-PRETTIER'])[1]")" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"`
+  **Run in Git Bash and PowerShell 5.1 on 2026-09-24, in both directions.** It
+  resolved 3.9.8 from this lockfile. Against a lockfile with no prettier, it
+  exited 1 with npm's `ETARGET` naming the sentinel, rather than silently
+  installing the latest. `--write` the same glob to fix, then re-check.
 - Python lint/format (in-container, CI-parity — MANDATORY before every commit
   that touches `apps/api`): `docker compose exec -T api sh -lc "cd /app && ruff
   check --no-cache . && black --check ."`. Compose bind-mounts the root
@@ -929,17 +932,10 @@ recorded with a real exit code and a real date, and was the minority outcome
   two things can meet" is a measurement, not a deduction.
 
 - **An over-match can be the ONLY thing covering a legitimate case. Before fixing
-  one, check what it was accidentally catching.** `suite_pat`'s `\bFl` ate the
-  `oor` in "Floor", and that bug was the sole reason `2nd Floor` got any
-  redaction at all — the pattern has no branch for a value PRECEDING its
-  keyword, so tightening `Fl` silently removed coverage nobody knew existed.
-  Nothing fails when this happens: no test knew the coverage was there, because
-  it was never intended. **The tell is that the "wrong" behaviour and the only
-  correct behaviour for some input are produced by the same line.** Cousin of
-  the twin-sweep rule — that one asks where else the defect is, this one asks
-  what else the defect is doing. Say which one a fix is: on #130 the honest
-  framing was "adds coverage that never existed and closes a live leak", not
-  "preserves coverage through a fix".
+  one, check what it was accidentally catching.** The tell: the "wrong"
+  behaviour and the only correct behaviour for some input come from the same
+  line. It is the twin-sweep rule's cousin: that one asks where else the defect
+  is, this one asks what else it is doing. The `2nd Floor` instance is in D-087.
 - **A redaction/validation corpus drawn from your own assumptions cannot falsify
   them — and seed data is somebody's assumptions too.** #130 lived for months
   under a green suite because every name-shaped string in `seed_demo.py` and
@@ -2245,6 +2241,17 @@ Rules of the road:
   mitigation shipped, or no wrong number delivered; **tier-3** is correctness no
   client reads. Label to the SHIPPED state rather than the threat model, and say
   on the issue which you did, so the call can be overturned instead of inherited.
+
+  **The test is CONSEQUENCE, not audience.** tier-3 means the falsehood changes
+  nothing about what the client ends up with, not that the screen is internal.
+  A consultant acting on a false screen is the last step of the DELIVERY path,
+  so it counts as client-facing. #70 and #74 are tier-2 even though every CSF
+  and ATT&CK deliverable states its own coverage. A false "done" can still make
+  a consultant release work they would not have released, so do not re-derive
+  tier-3 from that measurement. The path is the delivery path, not any human. A
+  reviewer or developer misled by a false gate is not on it, and what the gate
+  lets through is tiered on its own merits (D-087). **A label's name is not its
+  test:** `mvp-blocking` means "on the board", not "blocks the MVP".
 
   Search before filing, knowing the search finds only what earlier filers
   labelled: #184 and #286 are the same defect, filed twice (D-086).
