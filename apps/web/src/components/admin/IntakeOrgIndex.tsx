@@ -40,9 +40,9 @@ function tone(open: number): StatusTone {
   return "neutral";
 }
 
-// UTC, like every surface showing an instant (`lib/dates.ts::formatInstantUtc`):
-// the intake-submitted time must read as the same day here and on the intake
-// page itself, for every reader.
+// UTC, like `lib/dates.ts::formatInstantUtc`, which the intake page itself
+// uses for the same instant: the submitted day must read the same on both, for
+// every reader.
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",

@@ -36,13 +36,22 @@ playbook's, is already UTC.
   `lib/dates.ts::formatInstantUtc`, which is UTC and names the zone, so every
   surface showing one of those instants agrees:
   - the four cards (`DeliverableCard` and its CSF, ZT and ATT&CK siblings);
-  - `IntakeQueue`, `IntakeSubmitted` and `Step6Review`.
+  - `IntakeQueue`, `IntakeSubmitted` and `Step6Review`. `IntakeQueue` also
+    covers each card's "Requested" time: a submit creates those requests in
+    the same transaction, so it is the same instant as "Submitted". Round 2
+    of review caught those two disagreeing on one screen.
+
+  `formatInstantUtc` spells the month ("Sep 23, 2026, 1:30:00 AM UTC"), as
+  the date-only surfaces do. A numeric month reads as a different day to a
+  day-first reader.
 - **The gate**: `apps/web/eslint/intl-timezone.js`, installed by
   `eslint.config.js` for product code, refuses any `Intl.DateTimeFormat`, with
   or without `new`, whose arguments carry no `timeZone` in an object literal.
   It fails closed on options it cannot see into. Tests are exempt, because they
   read the ambient zone on purpose. On its first run it found exactly the four
-  twins above.
+  `Intl.DateTimeFormat` twins (`DeliverablesTable`, `IntakeOrgIndex`,
+  `HomeDashboard`, `ResultsList`). It cannot see the cards or the intake
+  screens: they used `toLocaleString`, which is out of its reach.
 
 ## Proof
 
@@ -55,13 +64,20 @@ where a pinned and an unpinned formatter print the same day.
 | the shared formatter unpinned | both `formatDate` tests (west and east of UTC) and ATT&CK's badge test |
 | ATT&CK back on its own badge | ATT&CK's badge test |
 | the rule unwired from `eslint.config.js` | the wiring test, which lints through the real config |
+| the instant helper unpinned | its own test and `DeliverableCard`'s |
+| `DeliverableCard` back on `toLocaleString` | `DeliverableCard`'s |
+| the helper's month numeric again | both of those |
+
+The other call sites of `formatInstantUtc` have no zone test of their own.
+The lint rule cannot see a revert to `toLocaleString`. Filed as #510.
 
 ## Residual
 
 `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` on a `Date` also
 use the viewer's zone, and a syntax rule cannot tell a date from a price
-there. Filed as #507. What remains after this branch: request times, message
-and inbox times, the audit log, and a capability table's date column. These
+there. Filed as #507. What remains after this branch: message and inbox
+times, the audit log, document upload dates (`IntakeDocumentsPanel`,
+`IntakeQueue`), and a capability table's date column. These
 are times where the viewer's own clock is arguably the right answer, which is
 a product decision.
 

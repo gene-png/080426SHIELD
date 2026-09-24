@@ -57,7 +57,9 @@ describe("formatInstantUtc", () => {
     );
     const { formatInstantUtc: fresh } = await import("./dates");
     const text = fresh("2026-09-23T01:30:00Z");
-    expect(text).toMatch(/9\/23\/2026/);
+    // The month is SPELLED: "9/10/2026" reads as 9 October to a day-first
+    // reader, and the table and dashboards already say "Sep 23, 2026".
+    expect(text).toMatch(/Sep 23, 2026/);
     expect(text).toMatch(/UTC/);
   });
 

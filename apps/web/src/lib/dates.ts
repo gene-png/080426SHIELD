@@ -30,14 +30,17 @@ export function parseDateOnly(value: string | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// An INSTANT -- released, finalized, submitted -- in UTC, with the zone named.
-// Every surface that shows one of these goes through here, so the admin card
-// and the admin table cannot show one release as two days (the dashboards'
-// badge is pinned to UTC too). Unlike `formatDateOnly`, which is right to use
-// the viewer's zone for a calendar date.
+// An INSTANT -- released, finalized, submitted, requested -- in UTC, with the
+// zone named, for the surfaces that show a time of day: the four deliverable
+// cards and the intake screens. The date-only surfaces showing the SAME
+// instants carry their own UTC formatters -- `dashboards/shared.tsx`,
+// `DeliverablesTable`, `IntakeOrgIndex`, `HomeDashboard`, `ResultsList` -- and
+// the lint rule keeps each of those naming its zone. Change the display zone in
+// all of them or in none, or one release reads as two days again. Unlike
+// `formatDateOnly`, which is right to use the viewer's zone for a calendar date.
 const INSTANT_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
-  month: "numeric",
+  month: "short",
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",

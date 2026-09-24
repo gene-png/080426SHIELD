@@ -317,7 +317,10 @@ function ServiceRequestCard({
           />
         ) : null}
         <CardDescription>
-          Requested {new Date(s.requested_at).toLocaleString()} by{" "}
+          {/* UTC like the "Submitted" time above: a submit creates these
+              requests in the same transaction, so the two are one instant
+              (timezone round 2). */}
+          Requested {formatInstantUtc(s.requested_at)} by{" "}
           <span className="font-medium text-ink-primary">
             {s.requested_by.display_name ?? s.requested_by.email}
           </span>

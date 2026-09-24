@@ -127,6 +127,6 @@ describe("DeliverableCard's release time", () => {
         onChange={vi.fn()}
       />,
     );
-    expect(screen.getByText(/Released 9\/23\/2026.*UTC/)).toBeTruthy();
+    expect(screen.getByText(/Released Sep 23, 2026.*UTC/)).toBeTruthy();
   });
 });
