@@ -98,7 +98,9 @@ export function LlmKeyPanel({
             ? "Checking…"
             : status.ready
               ? "Live AI on"
-              : "Offline"}
+              : status.serves === "broken"
+                ? "Not working"
+                : "Offline"}
         </span>
         {status ? (
           <span className="text-ink-secondary">

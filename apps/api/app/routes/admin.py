@@ -17,7 +17,7 @@ import binascii
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select
@@ -67,6 +67,9 @@ from app.schemas.intake import ClientProfileResponse
 from app.security.email_domains import domain_of, is_generic_provider, is_reserved_domain
 
 logger = logging.getLogger(__name__)
+
+#: What a Run-AI will do right now (#472); see `AdminAiStatus.serves`.
+AiServes = Literal["live", "offline", "broken"]
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -786,7 +789,7 @@ def ai_status(
     action (and reset its "offline acknowledged" flag when that changes).
     """
     s = get_settings()
-    ready, detail, source = _ai_readiness(db, s)
+    ready, detail, source, serves = _ai_readiness(db, s)
     return AdminAiStatus(
         mode=s.shield_llm_mode,
         provider=s.shield_llm_provider,
@@ -795,6 +798,7 @@ def ai_status(
         detail=detail,
         can_configure=True,
         key_source=source,
+        serves=serves,
     )
 
 
@@ -811,79 +815,99 @@ def ai_status(
 #: changes and names the file to update. The pointer sits on THIS side because
 #: the person editing this function never opens a `.tsx` file -- a pointer on
 #: the consuming side closes nothing.
-def _ai_readiness(db: Session, s) -> tuple[bool, str, str]:
-    """Whether a live call will succeed, why not, and where the key came from.
+def _ai_readiness(db: Session, s) -> tuple[bool, str, str, AiServes]:
+    """Whether a Run-AI will call the provider, why not, where the key came
+    from, and what it will do instead: serve canned output, or fail.
 
-    `Settings.live_llm_readiness()` (the boot preflight, D-026) only ever looks
-    at the environment, so it cannot see a key pasted at runtime. Rather than
-    patch around its message strings, this re-checks the same preconditions
-    against the effective key: key present, an adapter exists, the SDK is
-    importable, and the model id is real.
+    THE ANSWER COMES FROM THE PROVIDER RUN-AI WOULD BUILD (#472), through the
+    same `LLMClient.from_db` every AI route uses -- not from whether a key
+    exists. The key question cannot describe a provider that authenticates
+    without one: a working Vertex deployment (ADC, no key) reported "No API key
+    is loaded -- AI steps will generate offline (fixture) responses", and the
+    Run-AI guard offered "Continue offline" over a call that went to Google
+    with the client's data.
+
+    `Settings.live_llm_readiness()` (the boot preflight, D-026) looks only at
+    the environment and cannot see a key pasted at runtime, so the checks the
+    build does not make -- the SDK, and a model id that is a known placeholder
+    -- are made here, against the provider that was actually built.
     """
+    from app.ai.fixtures import RuntimeFixtureProvider
+    from app.ai.llm import AnthropicProvider, LLMClient
     from app.config import _KNOWN_PLACEHOLDER_MODELS, _anthropic_sdk_importable
 
     provider = s.shield_llm_provider
     source = keystore.key_source(db, provider=provider, settings=s)
 
-    if source == "none":
+    try:
+        built = LLMClient.from_db(db, s).provider
+    except RuntimeError as exc:
+        # `_build_provider` refuses loudly -- a missing key in live mode, a
+        # stored key for a provider with no key-based adapter, an unimplemented
+        # provider. Each Run-AI would raise the same thing, so say THAT, never
+        # "offline": nothing falls back to fixtures on this path.
+        logger.warning("admin.ai_readiness.broken provider=%s cause=%s", provider, exc)
         return (
             False,
-            (
-                "No API key is loaded — AI steps will generate offline (fixture) "
-                "responses. Load a key to enable live AI."
-            ),
+            f"Run-AI will fail: {exc}",
             source,
+            "broken",
         )
 
-    # A key alone is not enough. `_build_provider` promotes the LIVE adapter only
-    # for a RUNTIME key (source 'database', pasted through POST /admin/llm-key) —
-    # that is the explicit "bring AI online without a redeploy" path. An
-    # ENVIRONMENT key with SHIELD_LLM_MODE=fixture still falls through to the
-    # fixture provider, so the call is canned no matter what this function says.
-    #
-    # Reporting ready=true there is not a cosmetic inaccuracy: AiStatusBanner
-    # renders nothing when ready, and RunAiGuard.decide() proceeds immediately
-    # when ready, so both protections silently disable themselves. Found in the
-    # 2026-08-07 live run, where a Zero Trust Run-AI served fixture output with
-    # no warning and overwrote five of the client's own answers.
-    if source != "database" and s.shield_llm_mode != "live":
+    if isinstance(built, RuntimeFixtureProvider):
+        # An ENVIRONMENT key with SHIELD_LLM_MODE=fixture still serves fixtures:
+        # only a RUNTIME key promotes the live adapter. Reporting ready there
+        # disabled both AiStatusBanner and RunAiGuard in the 2026-08-07 live
+        # run, where a Zero Trust Run-AI served fixture output with no warning
+        # and overwrote five of the client's own answers.
+        if source == "environment":
+            return (
+                False,
+                (
+                    f"SHIELD_LLM_MODE={s.shield_llm_mode!r}, so AI steps generate offline "
+                    "(fixture) responses even though an environment key is present. Set "
+                    "SHIELD_LLM_MODE=live and restart the api, or load a key here to "
+                    "enable live AI without a redeploy."
+                ),
+                source,
+                "offline",
+            )
+        # "Load a key" is a remedy ONLY for a provider that takes one. For
+        # vertex it converts a working deployment into a hard failure.
+        remedy = (
+            "Load a key to enable live AI."
+            if keystore.accepts_api_key(provider)
+            else (
+                f"Provider {provider!r} authenticates without an API key, so do not "
+                "load one: set SHIELD_LLM_MODE=live and restart the api."
+            )
+        )
         return (
             False,
-            (
-                f"SHIELD_LLM_MODE={s.shield_llm_mode!r}, so AI steps generate offline "
-                "(fixture) responses even though an environment key is present. Set "
-                "SHIELD_LLM_MODE=live and restart the api, or load a key here to "
-                "enable live AI without a redeploy."
-            ),
+            f"No API key is loaded — AI steps will generate offline (fixture) responses. {remedy}",
             source,
+            "offline",
         )
 
-    if provider not in ("anthropic", "openai", "gemini"):
+    if isinstance(built, AnthropicProvider) and not _anthropic_sdk_importable():
         return (
             False,
-            (
-                f"A key is loaded but provider {provider!r} has no runtime adapter — "
-                "use anthropic, openai, or gemini."
-            ),
+            "Run-AI will fail: the 'anthropic' SDK is not importable in the api image.",
             source,
-        )
-    if provider == "anthropic" and not _anthropic_sdk_importable():
-        return (
-            False,
-            "A key is loaded but the 'anthropic' SDK is not importable in the api image.",
-            source,
+            "broken",
         )
     model = s.shield_llm_model.strip()
     if not model or model in _KNOWN_PLACEHOLDER_MODELS:
         return (
             False,
             (
-                f"A key is loaded, but SHIELD_LLM_MODEL={s.shield_llm_model!r} is not a "
+                f"Run-AI will fail: SHIELD_LLM_MODEL={s.shield_llm_model!r} is not a "
                 "usable model id — set a current model id and restart the api."
             ),
             source,
+            "broken",
         )
-    return True, f"Live AI configured ({provider}/{model}).", source
+    return True, f"Live AI configured ({provider}/{model}).", source, "live"
 
 
 @router.post(
@@ -934,7 +958,7 @@ def set_llm_key(
     db.commit()
     logger.info("admin.llm_key.stored provider=%s by=%s", provider, admin.id)
 
-    ready, detail, source = _ai_readiness(db, s)
+    ready, detail, source, serves = _ai_readiness(db, s)
     return AdminAiStatus(
         mode=s.shield_llm_mode,
         provider=s.shield_llm_provider,
@@ -943,6 +967,7 @@ def set_llm_key(
         detail=detail,
         can_configure=True,
         key_source=source,
+        serves=serves,
     )
 
 

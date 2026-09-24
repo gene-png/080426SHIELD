@@ -31,13 +31,18 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+#: Every test here is a unit test. Without this, `pytest -m unit` -- CI's
+#: command -- deselected the whole file, and five of its tests had been failing
+#: on any machine with an Anthropic key in its environment without CI noticing.
+pytestmark = pytest.mark.unit
+
 PASSWORD = "correct horse battery staple!"
 GOOD_KEY = "sk-ant-test-valid-key-000000000000"
 BAD_KEY = "sk-ant-test-rejected-key-00000000"
 
 
 @pytest.fixture()
-def app_client(tmp_path) -> Iterator[tuple[TestClient, sessionmaker]]:
+def app_client(tmp_path, monkeypatch) -> Iterator[tuple[TestClient, sessionmaker]]:
     db_path = tmp_path / "shield-llmkey.db"
     url = f"sqlite:///{db_path}"
     os.environ["DATABASE_URL"] = url
@@ -46,6 +51,11 @@ def app_client(tmp_path) -> Iterator[tuple[TestClient, sessionmaker]]:
     # for a reason this spec isn't about.
     os.environ["SHIELD_LLM_PROVIDER"] = "anthropic"
     os.environ["SHIELD_LLM_MODEL"] = "claude-opus-5"
+    # Pin the mode and the ENVIRONMENT key too. A developer's .env carries a
+    # real ANTHROPIC_API_KEY, which made `key_source` read "environment" and
+    # failed every test asserting "none" -- ambient config, not the code.
+    monkeypatch.setenv("SHIELD_LLM_MODE", "fixture")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
 
     from app.config import get_settings as _get_settings
 
@@ -220,3 +230,125 @@ def test_an_empty_key_is_rejected_before_any_provider_call(app_client):
     r = c.post("/admin/llm-key", headers=h, json={"api_key": "   "})
     assert r.status_code in (400, 422)
     assert _status(c, h)["key_source"] == "none"
+
+
+# --- #472: readiness asks the provider, not the keystore -------------------
+#
+# `_ai_readiness` decided "configured" by asking whether an API key existed. A
+# Vertex deployment authenticates with ADC and has no key, so a WORKING live
+# deployment reported "No API key is loaded -- AI steps will generate offline
+# (fixture) responses", and the Run-AI guard offered "Continue offline" over a
+# call that went to Google with the client's data. The status now comes from
+# the provider Run-AI would actually build, and says which of three things a
+# Run-AI will do: `live`, `offline` (canned fixtures), or `broken` (fail).
+
+
+def _pin(monkeypatch, **attrs) -> None:
+    from app.config import get_settings
+
+    for name, value in attrs.items():
+        monkeypatch.setattr(get_settings(), name, value, raising=False)
+
+
+def _store_raw_key(session_factory, provider: str) -> None:
+    """Store a key WITHOUT the validator, for states no validator admits."""
+    from app.ai import keystore
+
+    db = session_factory()
+    try:
+        keystore.store_key(db, provider=provider, api_key=GOOD_KEY, actor_user_id=None)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_a_live_vertex_deployment_reports_live_not_offline(app_client, monkeypatch):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(
+        monkeypatch,
+        shield_llm_mode="live",
+        shield_llm_provider="vertex",
+        shield_llm_model="gemini-2.5-pro",
+        gcp_project_id="shield-test-project",
+    )
+    body = _status(c, h)
+    assert body["serves"] == "live", body
+    assert body["ready"] is True, body["detail"]
+    assert "offline" not in body["detail"].lower()
+
+
+def test_vertex_in_fixture_mode_is_offline_and_does_not_prescribe_a_key(app_client, monkeypatch):
+    # Loading a key BREAKS vertex (`_build_provider` refuses a stored key for
+    # it), so the remedy must be the mode, never "load a key".
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_provider="vertex", gcp_project_id="shield-test-project")
+    body = _status(c, h)
+    assert body["serves"] == "offline", body
+    assert body["ready"] is False
+    assert "load a key" not in body["detail"].lower(), body["detail"]
+    assert "SHIELD_LLM_MODE=live" in body["detail"]
+
+
+def test_a_stored_key_on_vertex_reports_broken_with_the_real_cause(app_client, monkeypatch):
+    c, sessions = app_client
+    h = _admin(c)
+    _pin(
+        monkeypatch,
+        shield_llm_mode="live",
+        shield_llm_provider="vertex",
+        gcp_project_id="shield-test-project",
+    )
+    _store_raw_key(sessions, "vertex")
+    body = _status(c, h)
+    assert body["serves"] == "broken", body
+    assert body["ready"] is False
+    assert "Run-AI will fail" in body["detail"], body["detail"]
+    assert "no key-based adapter" in body["detail"], body["detail"]
+
+
+def test_live_mode_with_no_key_is_broken_not_offline(app_client, monkeypatch):
+    # The old copy said "AI steps will generate offline (fixture) responses"
+    # here. In live mode nothing falls back to fixtures: the call fails.
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_mode="live")
+    body = _status(c, h)
+    assert body["serves"] == "broken", body
+    assert "offline" not in body["detail"].lower(), body["detail"]
+
+
+def test_no_key_in_fixture_mode_is_offline(app_client):
+    c, _ = app_client
+    h = _admin(c)
+    body = _status(c, h)
+    assert body["serves"] == "offline", body
+    assert "No API key is loaded" in body["detail"]
+
+
+def test_an_environment_key_in_fixture_mode_is_offline(app_client, monkeypatch):
+    c, _ = app_client
+    h = _admin(c)
+    _pin(monkeypatch, anthropic_api_key="sk-ant-env-key-0000000000000000")
+    body = _status(c, h)
+    assert body["key_source"] == "environment"
+    assert body["serves"] == "offline", body
+
+
+def test_a_stored_valid_key_is_live(app_client):
+    c, _ = app_client
+    h = _admin(c)
+    r = c.post("/admin/llm-key", headers=h, json={"api_key": GOOD_KEY})
+    assert r.json()["serves"] == "live", r.json()
+    assert _status(c, h)["serves"] == "live"
+
+
+def test_a_placeholder_model_is_broken(app_client, monkeypatch):
+    c, sessions = app_client
+    h = _admin(c)
+    _pin(monkeypatch, shield_llm_model="claude-opus-4-7")
+    _store_raw_key(sessions, "anthropic")
+    body = _status(c, h)
+    assert body["serves"] == "broken", body
+    assert "usable model id" in body["detail"]

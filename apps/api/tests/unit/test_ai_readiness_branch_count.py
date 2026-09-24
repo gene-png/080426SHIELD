@@ -37,31 +37,27 @@ from pathlib import Path
 
 import pytest
 
-#: Every not-ready `return` in `_ai_readiness`. Five as of #471: no key at all;
-#: an environment key with the mode not live; a provider with no key-based
-#: adapter; the anthropic SDK missing; a model id that is a known placeholder.
+#: Every not-ready `return` in `_ai_readiness`. Five as of #472, in two kinds:
 #:
-#: FOUR OF THE FIVE SAY A KEY IS LOADED, which is why `RunAiGuard` renders
-#: `detail` rather than one hardcoded sentence.
+#:   * OFFLINE (`serves: "offline"`, canned fixture output): an environment key
+#:     with the mode not live; and no key at all, whose remedy depends on
+#:     whether the provider takes a key -- ONE return, TWO rows in the web
+#:     table, because its copy has two shapes.
+#:   * BROKEN (`serves: "broken"`, Run-AI fails): the provider build refuses
+#:     (`_build_provider`'s own message, passed through); the anthropic SDK is
+#:     missing; the model id is a known placeholder.
 #:
-#: **A COUNT OF BRANCHES, NOT OF REACHABLE CAUSES, and an earlier version of
-#: this comment said "one per cause a consultant can be shown".** Two of the
-#: five cannot be reached on this tree:
+#: **A COUNT OF BRANCHES, NOT OF REACHABLE CAUSES.** Two cannot be reached
+#: through the product today: the build refusal needs a state the boot
+#: preflight stops (live mode without a key, an unimplemented provider) or a
+#: stored key for vertex (`live_validate_key` admits anthropic alone); and the
+#: SDK branch needs an image without the SDK. They are counted anyway,
+#: deliberately: each exists in the code, and a branch that ships copy nobody
+#: tested is what this file guards against.
 #:
-#:   * The ADAPTER branch needs a provider outside
-#:     `(anthropic, openai, gemini)` while a key source exists. Every path to a
-#:     key source is closed for such a provider -- `_ENV_KEY_ATTR` holds only
-#:     those three, and `store_key`'s single caller `set_llm_key` runs
-#:     `live_validate_key` first, which is implemented for anthropic alone. So
-#:     it is unreachable for EVERY provider.
-#:   * The SDK branch needs a stored anthropic key plus an image without the
-#:     SDK, which no deployment step produces.
-#:
-#: They are counted anyway, deliberately: they exist in the code, each is one
-#: `live_validate_key` implementation away from firing, and a branch that ships
-#: copy nobody has tested is the thing this file guards against. What is
-#: corrected is the CLAIM -- a reader who took "one per cause a consultant can
-#: be shown" at face value would size the user-visible surface wrong.
+#: #472 replaced the old "provider has no runtime adapter" branch, which asked
+#: whether a provider was in a hardcoded list, with the build refusal, which
+#: asks the provider Run-AI would actually build. The count did not move.
 EXPECTED_NOT_READY_BRANCHES = 5
 
 #: The web test that must gain a row whenever the number above changes. Named as

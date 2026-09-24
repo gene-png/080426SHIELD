@@ -24,7 +24,15 @@ export function aiStatusKey(s: AiStatus): string {
   return `shield.ai-offline-ack:${s.mode}:${s.provider}:${s.key_source}:${s.ready}`;
 }
 
+/**
+ * An acknowledgement is a promise that the call stays OFFLINE, so it counts
+ * only while `serves` is `"offline"` (#472). A broken configuration fails
+ * rather than serving canned output, and a live one needs no acknowledgement.
+ * Checked here rather than in a caller, because two callers read it: the
+ * Run-AI guard and Tech Debt's auto-extraction on upload.
+ */
 export function hasAcknowledgedOffline(s: AiStatus): boolean {
+  if (s.serves !== "offline") return false;
   if (typeof window === "undefined") return false;
   try {
     return window.sessionStorage.getItem(aiStatusKey(s)) === "1";
@@ -36,6 +44,7 @@ export function hasAcknowledgedOffline(s: AiStatus): boolean {
 }
 
 export function acknowledgeOffline(s: AiStatus): void {
+  if (s.serves !== "offline") return;
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(aiStatusKey(s), "1");

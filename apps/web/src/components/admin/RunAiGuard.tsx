@@ -150,23 +150,28 @@ export function RunAiGuard({
           </p>
           <p className="mt-1 text-ink-secondary">
             {/* The imperative that stood here -- "Load a key to run real AI."
-                -- is false for the adapter, SDK and model-id causes, where a
-                key IS loaded. A user-facing string naming an action has to name
-                a control that works TODAY, and `promptFor.detail` above now
-                carries the SERVER'S remedy for this cause rather than one
-                guess for every cause.
+                -- is false for the causes where a key IS loaded. A user-facing
+                string naming an action has to name a control that works
+                TODAY, and `promptFor.detail` above carries the SERVER'S remedy
+                for this cause rather than one guess for every cause.
 
-                NOT "the remedy that applies", which is what this said and is
-                false for at least one branch: on a `vertex` deployment the
-                server itself prints "No API key is loaded ... Load a key",
-                and following it BREAKS live AI, because vertex uses ADC and
-                `_build_provider` then refuses. Tracked in #472; not fixable
-                here, because the string is the server's.
-
-                The sentence below is true of all five regardless: it says
-                what fixture output IS, and claims nothing about the cause. */}
-            Offline (fixture) output is deterministic demo content, not analysis
-            of this client&apos;s data.
+                #472: the server now derives that remedy from the provider it
+                would build, so a keyless provider (vertex) is no longer told
+                to load a key, and states what a Run-AI will DO in `serves`.
+                This sentence describes fixture output, so it is shown only
+                when the call really is offline; a broken configuration is told
+                there is no fallback instead. */}
+            {promptFor.serves === "offline" ? (
+              <>
+                Offline (fixture) output is deterministic demo content, not
+                analysis of this client&apos;s data.
+              </>
+            ) : (
+              <>
+                There is no offline fallback for this: Run AI will fail until it
+                is fixed.
+              </>
+            )}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {/* LABEL DELIBERATELY UNCHANGED. It names a control that
@@ -181,13 +186,20 @@ export function RunAiGuard({
             >
               Load a key
             </Link>
-            <button
-              type="button"
-              onClick={continueOffline}
-              className="rounded-md border border-border bg-surface-card px-3 py-1.5 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"
-            >
-              Continue offline
-            </button>
+            {/* #472: "Continue offline" promises the call stays offline.
+                On a live Vertex deployment the server used to report not-ready,
+                this button was offered, and the "offline" run sent the client's
+                data to Google. It is offered ONLY when the server says a
+                Run-AI serves canned output. */}
+            {promptFor.serves === "offline" ? (
+              <button
+                type="button"
+                onClick={continueOffline}
+                className="rounded-md border border-border bg-surface-card px-3 py-1.5 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"
+              >
+                Continue offline
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setPromptFor(null)}

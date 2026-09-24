@@ -40,6 +40,16 @@ _ENV_KEY_ATTR = {
 }
 
 
+def accepts_api_key(provider: str) -> bool:
+    """Whether ``provider`` authenticates with an API key at all.
+
+    Vertex does not: it uses ADC, and ``_build_provider`` refuses a stored key
+    for it. Anything that tells an admin to "load a key" must ask this first,
+    or it prescribes a remedy that breaks a working deployment (#472).
+    """
+    return provider in _ENV_KEY_ATTR
+
+
 def _fernet(settings: Settings) -> Fernet:
     """Derive the encryption key from the deployment's JWT signing secret.
 

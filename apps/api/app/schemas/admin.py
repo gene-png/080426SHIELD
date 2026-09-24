@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
@@ -50,6 +51,11 @@ class AdminAiStatus(BaseModel):
     # its "I acknowledged offline mode" flag when the key changes.
     can_configure: bool = False
     key_source: str = "none"
+    # #472: what a Run-AI will actually do right now -- call the provider
+    # (`live`), serve canned fixture output (`offline`), or fail (`broken`).
+    # `ready` is `serves == "live"`; the split matters to the Run-AI guard,
+    # which may offer "Continue offline" ONLY when the call really is offline.
+    serves: Literal["live", "offline", "broken"]
 
 
 class AdminUserSummary(BaseModel):
