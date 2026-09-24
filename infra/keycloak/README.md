@@ -4,7 +4,7 @@
 
 ## What the realm provides
 
-- **Realm:** `shield`. SSO session idle = 30 min, max = 24 h (Master Spec §4.5). The API's own idle limit is different in two ways: it is the refresh-token expiry (`JWT_REFRESH_TTL_SECONDS`), 1800 only under compose, and it is counted from the last token rotation, while Keycloak counts from activity. The API's ceiling is `SHIELD_FORCED_REAUTH_SECONDS`, 12 h since D-084, shorter than Keycloak's 24 h max. See `docs/security.md`.
+- **Realm:** `shield`. SSO session idle = 30 min, max = 24 h (Master Spec §4.5). The API's own idle limit is different in two ways: it is the refresh-token expiry (`JWT_REFRESH_TTL_SECONDS`), 1800 only under compose, and it is counted from the last token rotation, while Keycloak counts from activity. The API's ceiling is `SHIELD_FORCED_REAUTH_SECONDS`, 12 h since D-085, shorter than Keycloak's 24 h max. See `docs/security.md`.
 - **Realm roles:** `admin` (Kentro consultant), `reviewer` (read-only auditor), `client` (default).
 - **Clients:**
   - `shield-web` — public OIDC client with PKCE (S256). Maps realm roles into the access token as `roles` and includes `shield-api` in the `aud` claim so the API can validate without an extra lookup.

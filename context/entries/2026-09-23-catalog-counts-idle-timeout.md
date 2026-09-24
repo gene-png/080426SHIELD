@@ -34,7 +34,7 @@ The bound is counted from the last token rotation, not the last activity, so
 under compose (access 900, refresh 1800) an idle session gets 15-30 minutes.
 At the config defaults (access 3600, refresh 86400) a rotation always pushes
 the refresh expiry past the ceiling (24 h when this section was written, 12 h
-since D-084, below), so the ceiling fires first: **outside compose there is
+since D-085, below), so the ceiling fires first: **outside compose there is
 no idle bound below the ceiling.** Round 2
 of review corrected an earlier "23-24 hours" here, a bound that never takes
 effect. And on `main`, a session whose refresh has lapsed is not
@@ -42,7 +42,7 @@ signed out: the page stays up and its calls fail. PR #499 adds that. Round 1
 of review caught the first version of this calling the control "Implemented".
 Whether SHIELD needs a real idle control outside compose is the owner's
 decision, filed as #516. The decision to delete rather than wire, and what
-it supersedes in D-020, is D-084. `routes/auth.py`'s docstring, which stated
+it supersedes in D-020, is D-085. `routes/auth.py`'s docstring, which stated
 the spec's figures as shipped, now says what ships.
 
 The same subject was stated in `SECURITY.md`'s posture table (which round 3
@@ -50,7 +50,7 @@ of review found after the entry said the sweep was done), in the README's
 risk-acceptance log ("a 30-minute
 refresh-token TTL that functions as the idle timeout") and in
 `docs/architecture.md`. All three are corrected, D-020's idle bullet points
-at D-084, and so is the access-TTL row beside
+at D-085, and so is the access-TTL row beside
 the idle row, which said the config does not hold 900 when compose does. The README's settings table and the Keycloak README are
 corrected to match. `Settings` ignores unknown variables, so an `.env` that
 still sets `SHIELD_IDLE_TIMEOUT_SECONDS` boots unchanged. `SPRINT_3.md` still
@@ -66,7 +66,7 @@ overnight window. The refusal message no longer says "daily".
 
 **It bounds session AGE, not idle time.** It is counted from the original
 sign-in, and no activity extends it. A laptop left open for twenty minutes is
-not locked by it, and D-084 says so rather than letting the number imply more.
+not locked by it, and D-085 says so rather than letting the number imply more.
 
 The real idle control stays #516, with a trigger rather than a date: before
 the first client engagement carrying an assessment requirement, or once the

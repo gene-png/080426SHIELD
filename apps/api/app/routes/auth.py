@@ -8,7 +8,7 @@ Master Spec §2 + §4.5:
     TTLs are 15 and 30 minutes only under compose, the idle limit is the
     refresh expiry counted from the last rotation, and the forced re-auth
     ceiling is 12 h, a session-AGE bound, which at the config defaults is the
-    only thing bounding a session (D-084).
+    only thing bounding a session (D-085).
   - Account lockout: 10 failed attempts in 15 minutes
     (`SHIELD_ACCOUNT_LOCKOUT_*`).
 

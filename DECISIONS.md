@@ -302,7 +302,7 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
 - **Forced re-auth ceiling (real):** access + refresh tokens now carry an
   `auth_time` claim (original login time) that rides forward unchanged across
   refreshes. `/auth/refresh` rejects a refresh whose session age exceeds
-  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h; **12 h since D-084**) with a typed 401
+  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h; **12 h since D-085**) with a typed 401
   `reason=reauth_required` (D-016 envelope).
 - **Refresh-token rotation (real):** each refresh mints a new refresh token and
   stores its jti on the user (`users.active_refresh_jti`, additive/nullable
@@ -313,10 +313,10 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
   concurrent multi-device sessions become a requirement.
 - **Idle timeout (documented, not new machinery):** the 30-minute refresh-token
   TTL already IS the idle timeout — an idle session cannot refresh past it. We
-  document that rather than invent a second timer. **SUPERSEDED by D-084
+  document that rather than invent a second timer. **SUPERSEDED by D-085
   (2026-09-23):** the default refresh TTL has been 24 hours since 2026-08-08,
   so outside compose there is no idle bound below the forced re-auth ceiling
-  (12 h since D-084).
+  (12 h since D-085).
 - **Dead flags fail loudly:** `assert_safe_for_runtime` now refuses to boot if
   `SHIELD_AUTH_REQUIRE_MFA` or `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` is true,
   because the enrollment/challenge and email-verification flows do not exist.
@@ -5431,9 +5431,13 @@ checks is pre-cleared by its own TypeScript type definition**, so a green is not
 evidence that anything renders -- it would have reported #322 clean. Stated in the
 gate's docstring and filed as **#473**.
 
-## D-084 — Two session settings: the dead idle timeout is deleted, and the forced re-auth ceiling drops to 12 hours
+## D-085 — Two session settings: the dead idle timeout is deleted, and the forced re-auth ceiling drops to 12 hours
 
-**2026-09-23 · admin**, decided by the owner on 2026-09-24 · branch `fix/catalog-counts-idle-timeout`
+**2026-09-23 · admin**, decided by the owner on 2026-09-24
+
+_Numbered D-085, not D-084:_ `context/entries/2026-09-22-dependabot-audit-exemption.md`
+(#469) already points at a D-084 for its lesson, which has not been written yet.
+Taking the number would have sent that pointer to an unrelated decision. · branch `fix/catalog-counts-idle-timeout`
 
 **Supersedes the idle clause of D-020**, which recorded "the 30-minute
 refresh-token TTL already IS the idle timeout ... We document that rather than

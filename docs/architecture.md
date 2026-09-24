@@ -242,7 +242,7 @@ route → engine.run_job(purpose, payload, client_id)
   rejected (`reason=refresh_reused`). The one exception: the IMMEDIATELY
   previous token is still honoured for `jwt_refresh_grace_seconds` (60 s by
   default) after a rotation, so concurrent requests converge. Forced re-auth ceiling: `auth_time`
-  claim, 12 h default since D-084 (`reason=reauth_required`). See D-020.
+  claim, 12 h default since D-085 (`reason=reauth_required`). See D-020.
 - Account lockout (10 failures / 15 min) and per-IP + per-account rate limits
   on login/register, checked before Argon2 work (T3). Second-factor failures
   (MFA verify / verify-login) feed the SAME lockout counter as password
