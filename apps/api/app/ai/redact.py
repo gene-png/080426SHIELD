@@ -1296,7 +1296,9 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # argued from the code, not measured -- every series used L of about 250.
     #
     # Why each factor. Inside a region, every position a hint could begin at
-    # gets a `match` comparing up to L characters. At each position, every
+    # gets a `match` comparing up to L characters -- plus any whitespace run
+    # a `\s+` join consumes, which only the token just before the run
+    # starts, so it adds O(H * T) once amortised. At each position, every
     # alternative that fails pays for the prefix it matched first. CPython's
     # parser hoists a prefix shared by ALL alternatives, but only up to the
     # first `\s+` (a repeat does not compare equal; parsed and seen in the api
@@ -1305,10 +1307,11 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # prefix costs only from the point where it breaks. A word-end `(?!\w)`
     # failing after the longest match backtracks into the rest.
     #
-    # Measured worst case, 2026-09-24, api image (Python 3.12.13): hints of
-    # about 250 characters sharing a prefix plus one that breaks it at the
-    # first character, H = 1 to 1024 -- 427-556 ns per hint per character,
-    # about 32 s per MB at H = 64. Every run is on #546.
+    # Measured worst case, 2026-09-24, api image (Python 3.12.13): N hints
+    # of about 250 characters sharing a prefix, plus one more that breaks it
+    # at the first character, N = 1 to 1024 -- 427-556 ns per sharing hint
+    # per character. At N = 64 that is 31-33 us per character over 200 KB,
+    # about 32 s per MB by extrapolation. Every run is on #546.
     #
     # L IS BOUNDED BY THE SCHEMA, NOT HERE. Hints come from
     # `name_hints_for_tenant` only: `User.display_name` (255 characters) and

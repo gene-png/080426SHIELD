@@ -31,8 +31,13 @@ bound, which factors were measured, and where the runs are.
   as a single alternation.
 - **H and T were measured; L was argued from the code.** Every series used
   hints of about 250 characters, so L was never varied.
-- **The measured worst case is 427–556 ns per hint per character**, for H = 1
-  to 1024, in the api image. H = 64 is about 32 s per MB.
+- **The measured worst case is 427–556 ns per sharing hint per character**,
+  for N = 1 to 1024 hints sharing a prefix plus one hint that breaks it, in
+  the api image. At N = 64 that is about 32 s per MB, extrapolated from runs
+  on 200 KB.
+- **A `\s+` join can consume a whitespace run of any length**, so one match
+  can be longer than L. Only the token before a run starts it, so this adds
+  O(H × T) once amortised, inside the bound.
 - **Prefix hoisting only helps within the first word.** CPython hoists a
   prefix shared by every alternative, but only up to the first `\s+`.
 - **L is bounded at 255 by the schema.** Hints come from `display_name`, and
