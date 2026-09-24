@@ -146,8 +146,9 @@ services:
     # ancestry check finds that commit under the pin. This trusts the commit id
     # the build embeds; it is not a scan of the binary.
     #
-    # The cached quay image carries the CVE (and OSV reports its commit,
-    # 07c3a429bfed, as affected). Another machine's cache may differ. Exploiting it needs a
+    # The cached quay image carries the CVE, checked by commit: its commit,
+    # 07c3a429bfed, is 13 behind the fix and 0 ahead (GitHub compare,
+    # 2026-09-24). Another machine's cache may differ. Exploiting it needs a
     # restricted service or STS account with an inline session policy (per the
     # advisory), and this stack configures root credentials only. So removing
     # them is hygiene, not an incident.
