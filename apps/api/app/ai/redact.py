@@ -50,6 +50,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 RedactionMode = Literal["strict", "standard", "off"]
 
 # ---------------------------------------------------------------------------
@@ -1146,9 +1148,46 @@ def _redact_addresses(text: str) -> tuple[str, int]:
     return _RE_ADDRESS.sub(PLACEHOLDER_ADDRESS, text), count
 
 
+class BlankRedactionLiteralError(StarletteHTTPException):
+    """A literal-name rule was handed a needle with nothing to match.
+
+    Unreachable through today's callers -- `redact_org_name` returns early on a
+    blank name and `_redact_names` drops hints shorter than two characters after
+    normalising -- and that is exactly why it is a raise rather than a sentence:
+    the only protection was caller discipline written in a docstring, and a
+    blank needle then died as a bare IndexError at `tokens[0]`, which is not a
+    typed error under D-016 (owner review of #542).
+
+    RAISED, never skipped: this sits on the egress path, so stopping is the
+    fail-closed answer. Skipping the needle would redact less and say nothing.
+    Mapped by the global HTTPException handler to the typed envelope, as
+    `MissingFixtureError` is.
+    """
+
+    def __init__(self, needle: str) -> None:
+        super().__init__(
+            status_code=500,
+            detail={
+                "reason": "redaction_blank_literal",
+                "message": (
+                    "The redactor was given a blank name to remove "
+                    f"({needle!r}), so the AI call was stopped and nothing was sent."
+                ),
+            },
+        )
+
+
+def _needle_tokens(needle: str) -> list[str]:
+    """The needle's whitespace-separated tokens; a blank needle raises, typed."""
+    tokens = needle.split()
+    if not tokens:
+        raise BlankRedactionLiteralError(needle)
+    return tokens
+
+
 def _literal_edges(needle: str) -> tuple[bool, bool]:
     """Does the needle start / end with a word character? Decides its anchors."""
-    tokens = needle.split()
+    tokens = _needle_tokens(needle)
     return bool(re.match(r"\w", tokens[0])), bool(re.match(r"\w", tokens[-1][-1]))
 
 
@@ -1185,9 +1224,9 @@ def _literal_pattern(needle: str, *, anchored: bool = True) -> str:
       only when it ends with one. A word-edged name still cannot match inside
       a longer word; a punctuation-edged one needs no anchor on that side.
 
-    Callers must pass a needle with at least one non-space character.
+    A needle with no non-space character raises `BlankRedactionLiteralError`.
     """
-    tokens = needle.split()
+    tokens = _needle_tokens(needle)
     body = r"\s+".join(re.escape(t) for t in tokens)
     if not anchored:
         return body
@@ -1250,6 +1289,28 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # positions INSIDE matched regions, and returns the longest hint starting
     # there. `pos` does not slice, so `(?<!\w)` still sees the previous
     # character.
+    #
+    # THE COST IS O(k * T), measured rather than argued (owner review of #542):
+    # T the text length, k the most whitespace-separated tokens in any one
+    # hint. Linear in the text for a fixed k, but NOT in k. Two parts pay it:
+    # the scan, because each `\s+` join makes a near-miss run to its last
+    # token before failing, and this loop, because inside a region EVERY
+    # position can begin a full k-token match. A whitespace run between two
+    # occurrences of a hint, or inside one, costs O(T) -- the literal first
+    # token rejects every whitespace position at once.
+    #
+    # Measured 2026-09-24 on d11613e, 1 MB of text, one hint:
+    #   k = 10    ~0.5 us/char
+    #   k = 128   ~1.6 us/char worst case (~1.6 s per MB); the pre-#542
+    #             pattern, U+0020 only, was 8.5-254 ns/char on the same text
+    #   k = 1000  ~9 us/char
+    #
+    # k IS BOUNDED BY THE SCHEMA, NOT HERE: every hint and legal name this
+    # function or `redact_org_name` receives today comes from a column capped
+    # at 255 characters (`User.display_name`, `Client.legal_name`; email local
+    # parts are shorter), and 255 characters hold at most 128 tokens. A hint
+    # source WITHOUT that cap -- a request field, a free-text column -- lifts
+    # the bound, and must either be capped or come with a cap here.
     spans: list[tuple[int, int]] = []
     for pat in _hint_patterns(hints):
         for region in pat.finditer(text):
