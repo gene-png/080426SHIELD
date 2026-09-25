@@ -49,7 +49,7 @@ function label(key: string, kind: string | undefined): string {
 
 const DOT: Record<StageState, string> = {
   complete: "bg-brand-600 border-brand-600",
-  current: "bg-white border-brand-600 ring-2 ring-brand-200",
+  current: "bg-white border-brand-600 ring-2 ring-brand-300",
   pending: "bg-slate-100 border-slate-300",
 };
 

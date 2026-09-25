@@ -182,7 +182,7 @@ function DownloadLink({
   return (
     <a
       href={`/api/proxy/artifacts/${id}/download`}
-      className="rounded-md border border-border-default px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-muted"
+      className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-sunken"
     >
       {label}
       {filename ? (
@@ -335,6 +335,10 @@ export function RiskRegisterDashboard(): JSX.Element {
   // on it fails as a timeout rather than as an assertion.
   const blocking = gate?.synthesizable_missing ?? [];
   const blockedFromGenerating = Boolean(gate?.unlocked) && blocking.length > 0;
+  // #556: blocks too, with its own sentence and remedy -- see the type.
+  const catalogMismatch = gate?.unlocked
+    ? (gate.attack_catalog_mismatch ?? null)
+    : null;
   // Inputs that existed, were not approved, did not BLOCK (the unlock rule was
   // satisfied without them) and therefore contributed nothing. The `??` guards
   // `register` being null before anything is generated -- not an absent field,
@@ -417,6 +421,16 @@ export function RiskRegisterDashboard(): JSX.Element {
         </p>
       ) : null}
 
+      {catalogMismatch !== null ? (
+        <p
+          className="text-sm font-medium text-status-warning-fg"
+          data-testid="risk-register-attack-catalog-mismatch"
+        >
+          A new register cannot be generated from the ATT&amp;CK mapping.{" "}
+          {catalogMismatch} Anything already generated below is unaffected.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink-primary">
@@ -446,7 +460,9 @@ export function RiskRegisterDashboard(): JSX.Element {
               <button
                 type="button"
                 onClick={onClick}
-                disabled={busy !== null}
+                // #556: a stale ATT&CK input's only outcome is the 409 the
+                // banner above already explains, so the button is not offered.
+                disabled={busy !== null || catalogMismatch !== null}
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
               >
                 {busy === "generate"
@@ -462,7 +478,7 @@ export function RiskRegisterDashboard(): JSX.Element {
               type="button"
               onClick={onExport}
               disabled={busy !== null}
-              className="rounded-md border border-border-default px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-muted disabled:opacity-50"
+              className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:opacity-50"
             >
               {busy === "export" ? "Exporting…" : "Export XLSX / PDF / Word"}
             </button>

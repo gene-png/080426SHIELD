@@ -2,9 +2,10 @@
 
 ## Before anything else: is your copy of this file COMPLETE?
 
-**This file must end with the line `<!-- CLAUDE-MD-CANARY: v1 -->`. If you
-cannot see that marker at the end of what you received, YOUR COPY IS
-TRUNCATED. Stop.** Say so, name the last heading you did receive, and do not
+**This file must end with the line `CLAUDE-MD-CANARY: v2`. If you cannot see
+that marker at the end of what you received, YOUR COPY IS TRUNCATED. Stop.**
+(Plain text on purpose: context injection drops a whole-line HTML comment, so
+the v1 marker, `<!-- ... -->`, was missing from every injected copy, #459.) Say so, name the last heading you did receive, and do not
 apply the merge rule or any condition test until someone confirms which clauses
 you are missing. A truncated governance file is a control that does not exist.
 
@@ -747,7 +748,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   **A checker's "nothing to complain about" branch and its "I could not look"
   branch must not be the same branch.** Every gate in this repo returns a
   distinct non-zero (2) for unreadable input, separate from the 1 it returns for
-  a real violation.
+  a real violation (D-090).
 
   **Recorded because this is the one case where writing it down demonstrably
   worked.** `check_issue_references.py` was written months later by someone who
@@ -1605,8 +1606,10 @@ Rules of the road:
   **Who may decide a PR ships without it: the human dev at the keyboard, by
   name, in the PR body.** Never an agent, never by inference from silence, never
   the author when the author is an agent. That authorisation is prose and
-  nothing checks it — `enforce_admins` is false and both devs are admins, so
-  either can already merge past a red gate. **The checkable version is a GitHub
+  nothing checks it: the audit gate reads only that the lines exist. (Admins
+  could merge past a red gate until `enforce_admins` was turned on; `true` on
+  2026-09-25 by `gh api repos/gene-png/080426SHIELD/branches/main/protection
+  --jq .enforce_admins.enabled`, #595.) **The checkable version is a GitHub
   review approval** (`gh pr review --approve`) from the named human. A blocked
   PR waits, and its issue gets a comment saying it is blocked on tooling.
 
@@ -2201,7 +2204,8 @@ Rules of the road:
   Do none of this **while an agent holds the shared tree**.
 - **Branch + PR for anything that changes behaviour or states a rule. Two
   exceptions go direct to `main`, and they are exceptions because practice
-  already worked this way.**
+  already worked this way.** (A direct push may now be refused since
+  `enforce_admins` went on: #596, derived from the API, untested.)
 
   1. **`context/*.md`** — the personal status files. Owner-write-only by
      convention, read by the other dev for awareness, stale within hours.
@@ -2341,4 +2345,4 @@ Stop.** Say so, name the last heading you did receive, and do not apply the
 merge rule or any condition test until someone confirms which clauses you are
 missing. A truncated governance file is a control that does not exist.
 
-<!-- CLAUDE-MD-CANARY: v1 -->
+CLAUDE-MD-CANARY: v2

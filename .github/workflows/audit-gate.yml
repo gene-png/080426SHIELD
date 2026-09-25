@@ -83,8 +83,9 @@ jobs:
       # Dependabot PR has a body Dependabot wrote, and nobody can edit it into
       # compliance without taking over authorship of the PR -- so the gate is
       # RED BY CONSTRUCTION for that entire class, and the only ways to clear it
-      # are to merge past a red required check or to close the PR and redo the
-      # bump by hand. Both are worse than the exemption: the first teaches that
+      # are to merge past a red required check (since 2026-09-25, with
+      # enforce_admins on, that first means switching the setting off) or to
+      # close the PR and redo the bump by hand. Both are worse than the exemption: the first teaches that
       # a red gate is negotiable, and the second is how security bumps sit
       # unmerged.
       #
@@ -109,6 +110,11 @@ jobs:
       #     gh api repos/{owner}/{repo}/branches/main/protection
       #       required_pull_request_reviews.required_approving_review_count -> 0
       #       enforce_admins                                                -> false
+      #
+      # RE-MEASURED 2026-09-25: the review count is still 0, and
+      # enforce_admins is now TRUE (#595). That changes nothing below: the
+      # skip does not make anything red, it removes a check, so it works the
+      # same whoever merges.
       #
       # Nothing enforces a review. So this step's skip removes the ONLY enforced
       # check on these PRs and leaves a convention in its place. That is
@@ -227,6 +233,39 @@ jobs:
         if: github.event.pull_request.user.login != 'dependabot[bot]'
         working-directory: apps/api
         run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
+
+  merge-rule-text:
+    # INTERIM, until CODEOWNERS covers the governance files (#572). A PR that
+    # changes the BYTES of CLAUDE.md's `## The merge rule` section -- the
+    # conditions, the condition-5 path list, anything in it -- goes RED here,
+    # every time those bytes change, so a human reads the change before
+    # anything merges on it. There is no label and no opt-out marker;
+    # editing this workflow step is a stated limit (#572, #585). Red means
+    # "the rule changed", not "the PR is wrong". Green means only "the section's bytes are
+    # unchanged". It sees bytes, not meaning: a change that leaves the bytes
+    # identical while altering how the section is read (an HTML-comment wrap,
+    # a second rule under a variant heading, an edit to this step) is out of
+    # scope. It catches edits, not evasion (#585).
+    #
+    # NOT a required check: that is the owner's branch-protection setting. And
+    # a PR editing this step can neuter it, because the workflow runs from the
+    # PR; that stays open until CODEOWNERS covers .github/workflows/ (#572).
+    name: Merge rule text (red means it changed; a human must read it)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The gate reads CLAUDE.md at the merge base, so it needs history and
+          # `origin/<base>`. A shallow clone makes that read fail, which the
+          # gate reports as could-not-look (exit 2) -- red, never green.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Has this PR changed the merge rule's text?
+        run: python apps/api/scripts/check_merge_rule_text.py --range "origin/${{ github.base_ref }}..HEAD" --repo .
 
   # A SEPARATE JOB, for the reason the one below already gives: a merge-rule
   # failure must not report as "Adversarial audit recorded" failing. Two

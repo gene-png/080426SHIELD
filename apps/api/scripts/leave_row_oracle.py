@@ -148,7 +148,7 @@ here.
     correctness, and a re-anchor can land on a different unique line and
     measure a different rule. `check_anchors` says so in its own output.
 
-EXIT CODES, per this repo's fail-closed convention (D-051). EVERY flag given
+EXIT CODES, per this repo's fail-closed convention (D-090). EVERY flag given
 runs and the WORST code is returned -- `--check-registry` runs the registry and
 label checks, `--check-anchors` runs the anchor check, and passing both runs
 all three. So a 1 or a 2 can come from any check that was asked for, and the
@@ -1226,5 +1226,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"leave-row-oracle: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

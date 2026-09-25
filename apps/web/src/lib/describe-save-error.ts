@@ -99,6 +99,20 @@ export function serverReasonCode(err: unknown): string | null {
 }
 
 /**
+ * #556 (the owner's decision): a client report WITHHELD because it was built
+ * over an ATT&CK assessment scored against another catalog. The API answers a
+ * typed 409 carrying the client sentence. ONE predicate for every page that
+ * must tell this refusal apart from a failure -- the ATT&CK and Risk dashboards,
+ * and the Results page's probe -- so none of them can drift into treating it as
+ * a crash. Keyed on the status AND the code: a 409 of any other reason is still
+ * an error.
+ */
+export function isCatalogWithheld(err: unknown): boolean {
+  if (!hasPayload(err) || err.status !== 409) return false;
+  return serverReasonCode(err) === "attack_catalog_mismatch";
+}
+
+/**
  * The codes whose MESSAGE a dashboard must not show in place of its own copy.
  *
  * Exactly one, and it is the ordinary case: a report that has not been

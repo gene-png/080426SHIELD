@@ -47,7 +47,7 @@ export function WorkflowStep({
               done
                 ? "bg-status-success-fg text-ink-on-accent"
                 : blockedReason
-                  ? "bg-surface-muted text-ink-tertiary"
+                  ? "bg-surface-sunken text-ink-tertiary"
                   : "bg-brand-500 text-ink-on-accent"
             }`}
           >

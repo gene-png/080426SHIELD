@@ -48,7 +48,7 @@ LIMITS, stated so a clean run is not read as more than it is:
   * Only `*.spec.ts` is scanned. A spec renamed out of that pattern -- #560's
     own mechanism -- leaves CI with every gate green (#579).
 
-EXIT CODES (D-051): 0 every gate variable is set or exempted; 1 a finding; 2
+EXIT CODES (D-090): 0 every gate variable is set or exempted; 1 a finding; 2
 could not look -- no `e2e/` or no spec files under it, no workflows, a
 workflow that does not parse, an unreadable or malformed exemptions file, or
 an unknown argument.
@@ -248,5 +248,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-e2e-env-gates: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc
