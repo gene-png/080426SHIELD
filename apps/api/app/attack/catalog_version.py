@@ -158,11 +158,14 @@ def is_stale_risk_register(db: Session, provenance: dict | None) -> bool:
     unconfirmed:
 
       * None -- a pre-0047 register, which records no inputs;
-      * a dict with no `inputs` list -- `seed_demo.py` writes `{"excluded": []}`,
-        the "reassuring bucket" `routes/risk.py` warns about: it looks like a
-        clean record and names nothing it was built from;
-      * no ATT&CK input -- generating requires one (`_gate`), so a register
-        without it records nothing to vouch for;
+      * a dict with no `inputs` list -- `seed_demo.py` wrote `{"excluded": []}`
+        until #556 (it now writes `_provenance_snapshot`), and registers seeded
+        before that still carry it. It is the "reassuring bucket" `routes/risk.py`
+        warns about: it looks like a clean record and names nothing it was
+        built from;
+      * no ATT&CK input -- generating requires one (`_gate`), so no writer
+        produces this; such provenance is corruption or a hand-written shape,
+        not evidence of independence from ATT&CK;
       * an ATT&CK input with a bad id, a missing assessment, or a stale one.
 
     `_provenance_snapshot` writes at most one input per kind, so one ATT&CK input
