@@ -370,8 +370,8 @@ def test_an_unreachable_database_cannot_look(monkeypatch, tmp_path, capsys) -> N
     )
     monkeypatch.setattr(mod, "__file__", str(tmp_path / "scripts" / "x.py"))
     assert mod.main() == EXIT_COULD_NOT_LOOK
-    # The message AND the cause it reports. A bare `"could not look"` is in all
-    # four branches, so it would not distinguish this one from the three above.
+    # The message AND the cause it reports. A bare `"could not look"` is in every
+    # could-not-look branch, so it would not distinguish this one from the others.
     err = capsys.readouterr().err
     assert "the database was unreachable" in err
     assert "OSError: connection refused" in err

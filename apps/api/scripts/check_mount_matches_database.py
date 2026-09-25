@@ -81,6 +81,7 @@ And the paths that do not:
   * **the versions directory is missing or empty** — exit 2. This is "I could
     not look": with no revisions to compare against, every database would look
     wrong. It must not share an exit with either answer.
+  * **`DATABASE_URL` is unset** — exit 2: there is no database to read.
   * **the database cannot be reached** — exit 2, same reason. `depends_on`
     waits for `service_healthy`, so this should not happen; if it does, the
     honest report is that the check did not run, not that the pair is fine.
