@@ -41,7 +41,7 @@ a rename that drops the script suffix entirely -- `a.spec.ts~`,
 out of CI with this gate and the env gate both green (#605). That is the
 floor this gate stops at, by decision, rather than listing every file.
 
-EXIT CODES (D-051): 0 every script file on disk is listed or declared; 1 at
+EXIT CODES (D-090): 0 every script file on disk is listed or declared; 1 at
 least one is neither, or a declaration is stale or names a listed file; 2
 could not look -- the list file is missing, names no spec, or has no `Total:`
 line; no script files on disk; the declarations file is missing or malformed;
@@ -192,5 +192,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-e2e-spec-listing: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

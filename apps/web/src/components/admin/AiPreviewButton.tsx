@@ -66,7 +66,7 @@ export function AiPreviewButton({
         onClick={() => void onPreview()}
         disabled={busy || disabled}
         data-testid="ai-preview-button"
-        className="rounded-md border border-border-default px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
       >
         {busy ? "Building preview…" : "Preview what will be sent"}
       </button>
@@ -79,7 +79,7 @@ export function AiPreviewButton({
 
       {preview ? (
         <div
-          className="flex flex-col gap-2 rounded-md border border-border-default bg-surface-muted p-3"
+          className="flex flex-col gap-2 rounded-md border border-border bg-surface-sunken p-3"
           data-testid="ai-preview-result"
         >
           <p className="text-sm text-ink-secondary" aria-live="polite">
@@ -103,7 +103,7 @@ export function AiPreviewButton({
             .
           </p>
           <pre
-            className="max-h-64 overflow-auto rounded bg-surface-default p-2 text-xs text-ink-secondary"
+            className="max-h-64 overflow-auto rounded bg-surface-card p-2 text-xs text-ink-secondary"
             data-testid="ai-preview-payload"
           >
             {JSON.stringify(preview.payload, null, 2)}
