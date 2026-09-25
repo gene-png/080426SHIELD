@@ -86,10 +86,11 @@ GATES = [
     # lists diverging and there is no reason to make it work for its living
     # twice. `sys.argv` because `main(argv)` takes the argument list.
     ("check_merge_rule_conditions", "sys.argv"),
+    # The interim merge-rule-text gate (#572). Added WITH its entry here, next to
+    # its condition-4 sibling rather than at the end, where #581's entry lands.
+    ("check_merge_rule_text", "sys.argv"),
     # The issue-labels gate (the filing rule). Shipped with the handler.
     ("check_issue_labels", "sys.argv"),
-    # The interim merge-rule-text gate (#572). Added WITH its entry here.
-    ("check_merge_rule_text", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'
