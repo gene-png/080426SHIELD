@@ -228,6 +228,39 @@ jobs:
         working-directory: apps/api
         run: python -m scripts.check_audit_evidence --changed-files /tmp/changed.txt --body /tmp/body.md
 
+  merge-rule-text:
+    # INTERIM, until CODEOWNERS covers the governance files (#572). A PR that
+    # changes the BYTES of CLAUDE.md's `## The merge rule` section -- the
+    # conditions, the condition-5 path list, anything in it -- goes RED here,
+    # every time those bytes change, so a human reads the change before
+    # anything merges on it. There is no label and no opt-out marker;
+    # editing this workflow step is a stated limit (#572, #585). Red means
+    # "the rule changed", not "the PR is wrong". Green means only "the section's bytes are
+    # unchanged". It sees bytes, not meaning: a change that leaves the bytes
+    # identical while altering how the section is read (an HTML-comment wrap,
+    # a second rule under a variant heading, an edit to this step) is out of
+    # scope. It catches edits, not evasion (#585).
+    #
+    # NOT a required check: that is the owner's branch-protection setting. And
+    # a PR editing this step can neuter it, because the workflow runs from the
+    # PR; that stays open until CODEOWNERS covers .github/workflows/ (#572).
+    name: Merge rule text (red means it changed; a human must read it)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The gate reads CLAUDE.md at the merge base, so it needs history and
+          # `origin/<base>`. A shallow clone makes that read fail, which the
+          # gate reports as could-not-look (exit 2) -- red, never green.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Has this PR changed the merge rule's text?
+        run: python apps/api/scripts/check_merge_rule_text.py --range "origin/${{ github.base_ref }}..HEAD" --repo .
+
   # A SEPARATE JOB, for the reason the one below already gives: a merge-rule
   # failure must not report as "Adversarial audit recorded" failing. Two
   # different questions, two different checks.
