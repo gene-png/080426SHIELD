@@ -183,7 +183,7 @@ def main(argv: list[str]) -> int:
         return 2
     if old == new:
         print(
-            "check-merge-rule-text: the merge rule's text is unchanged "
+            "check-merge-rule-text: the merge rule section's bytes are unchanged "
             f"({len(new.splitlines())} lines compared). This says nothing about "
             "the gates, records or agent files it relies on."
         )
@@ -203,7 +203,7 @@ def main(argv: list[str]) -> int:
         if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
     ]
     print(
-        f"check-merge-rule-text: this PR CHANGES the merge rule ({len(changed)} line(s)). "
+        f"check-merge-rule-text: this PR CHANGES the merge rule section's bytes ({len(changed)} line(s)). "
         "A human must read it before anything merges on it (#572):"
     )
     for line in changed:

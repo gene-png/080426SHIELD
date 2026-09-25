@@ -1,4 +1,4 @@
-"""check_merge_rule_text.py: a change to the merge rule's text is always red (#572).
+"""check_merge_rule_text.py: a change to the merge rule section's bytes is always red (#572).
 
 The fixtures under tests/gates/check_merge_rule_text/ exercise the file mode.
 These pin the --range mode, which is what CI runs, against real repositories.
@@ -65,7 +65,7 @@ def test_range_a_change_outside_the_section_is_green(tmp_path, capsys) -> None:
     r = _repo(tmp_path, RULE.replace("- run things", "- run other things"))
     rc, out = _run(r, capsys)
     assert rc == 0, out
-    assert "the merge rule's text is unchanged" in out, out
+    assert "the merge rule section's bytes are unchanged" in out, out
 
 
 def test_range_a_renamed_heading_is_could_not_look(tmp_path, capsys) -> None:
