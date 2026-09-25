@@ -262,7 +262,7 @@ def test_an_empty_file_is_a_could_not_look_under_require_canary(tmp_path: Path) 
 def test_trailing_whitespace_on_the_marker_is_not_a_missing_marker(tmp_path: Path) -> None:
     """A guard must name the CAUSE, not the check.
 
-    The comparison was exact, so `"<!-- CLAUDE-MD-CANARY: v1 --> "` was reported
+    The comparison was exact, so the v1 marker with a trailing space was reported
     as "has NO canary marker" and then printed the marker it claimed was absent.
     A developer opens the file, sees exactly that string on exactly that line,
     and debugs in the wrong direction. Found by the adversarial reviewer.
@@ -271,3 +271,26 @@ def test_trailing_whitespace_on_the_marker_is_not_a_missing_marker(tmp_path: Pat
     f = tmp_path / "CLAUDE.md"
     f.write_text(f"# x\n\n{mod.CANARY} \n", encoding="utf-8")
     assert _run("--require-canary", str(f)).returncode == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "last_line",
+    ["<!-- CLAUDE-MD-CANARY: v2 -->", "<!-- CLAUDE-MD-CANARY: v1 -->", "CLAUDE-MD-CANARY: v1"],
+    ids=["v2-in-a-comment", "the-v1-comment", "bare-v1"],
+)
+def test_a_wrapped_or_older_canary_is_named_as_such(tmp_path: Path, last_line: str) -> None:
+    """#459: injection drops a whole-line HTML comment, so a marker in a comment
+    is invisible to the readers it exists for. The gate names that cause."""
+    f = tmp_path / "CLAUDE.md"
+    f.write_text("# x" + chr(10) + chr(10) + last_line + chr(10), encoding="utf-8")
+    done = _run("--require-canary", str(f))
+    assert done.returncode == 2
+    assert "canary is not the bare marker line" in done.stdout, done.stdout
+
+
+@pytest.mark.unit
+def test_the_canary_is_not_an_html_comment() -> None:
+    """The reason for v2, pinned: a comment-wrapped constant would reintroduce #459."""
+    mod = _load()
+    assert "<!--" not in mod.CANARY and "-->" not in mod.CANARY

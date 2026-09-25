@@ -130,7 +130,9 @@ silently.
 
 `CLAUDE.md` therefore ends with a canary marker and an instruction to stop if
 you cannot read it. `--require-canary` asserts the marker is the **last
-non-empty line**.
+non-empty line**, and that it is the bare text line: context injection drops a
+whole-line HTML comment, which is why v1 (`<!-- ... -->`) never reached an
+injected copy (#459), so a wrapped or older marker is exit 2 with that cause.
 
 **BE PRECISE ABOUT WHAT THAT PROVES, BECAUSE IT IS NOT TRUNCATION DETECTION.**
 This gate reads the file from DISK, where truncation never happens, so it
@@ -187,7 +189,12 @@ SOFT_LIMIT_BYTES = 135_000
 
 #: The marker that must be the LAST non-empty line of a canary-bearing file.
 #: A reader that cannot see it has been truncated and is told to stop.
-CANARY = "<!-- CLAUDE-MD-CANARY: v1 -->"
+#:
+#: PLAIN TEXT, not an HTML comment (#459). Context injection drops a comment
+#: that stands on its own line, so v1 (`<!-- CLAUDE-MD-CANARY: v1 -->`) was
+#: absent from every injected copy, and every agent obeying step 0a stopped on
+#: a whole file. The marker is only useful on the path readers actually take.
+CANARY = "CLAUDE-MD-CANARY: v2"
 
 #: The budget `CLAUDE.md` sets for itself, reported but NOT enforced. Enforcing
 #: it today would put the repo permanently red, which teaches everyone to route
@@ -347,6 +354,13 @@ def main(argv: list[str]) -> int:
                 print(f"check-claude-md-size: {target} is empty, so it carries no canary.")
                 return 2
             stripped = [ln.strip() for ln in tail]
+            if CANARY not in stripped and any("CLAUDE-MD-CANARY" in ln for ln in stripped):
+                print(f"check-claude-md-size: {target}'s canary is not the bare marker line.")
+                print(f"  expected the last non-empty line to be exactly: {CANARY}")
+                print("  A marker wrapped in an HTML comment, or an older version, is dropped")
+                print("  by context injection or is not the one readers are told to look for")
+                print("  (#459).")
+                return 2
             if CANARY not in stripped:
                 print(f"check-claude-md-size: {target} has NO canary marker.")
                 print(f"  expected the last non-empty line to be: {CANARY}")
