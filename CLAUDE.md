@@ -1604,7 +1604,7 @@ Rules of the road:
 
   **This rule is unenforceable and unobservable, and is written down anyway.**
   W8b — the reviewer as a CI job — would bind it and is deferred. Do not read it
-  as a mechanism. D-057 reverses part of D-054; **D-079** carries what the drift
+  as a mechanism. D-057 reverses part of D-054, and carries what the drift
   cost. If running it conflicts with another instruction, **say so out loud
   rather than resolving it quietly** — that silent resolution is the exact
   failure D-054 was written about.
