@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A PR that changes the merge rule's text goes red, every time (interim, #572).
+"""A PR that changes the merge rule section's bytes goes red, every time (interim, #572).
 
 WHY THIS EXISTS. The merge rule in CLAUDE.md decides when an agent may merge
 without the owner. A PR can edit the rule and, under the rule as it then
@@ -8,7 +8,7 @@ conditions are not a listed path (#572). Until CODEOWNERS covers the
 governance files (the owner's decision, after the bot account exists), this
 makes every change to the rule's text VISIBLE as a red check, so a human reads
 it before anything merges on it. There is no label and no escape of any kind:
-a change to the rule is always red.
+a change to the section's bytes is always red.
 
 WHAT IT COMPARES. The BYTES of CLAUDE.md's `## The merge rule` section -- from
 that heading to the `## Real commands` heading, which includes `### Condition
@@ -19,8 +19,8 @@ WHAT IS PINNED, checked separately in the base's CLAUDE.md and in the head's,
 so the gate knows which text is the rule:
   * the start: EXACTLY ONE `## The merge rule` heading (a decoy copy would
     otherwise be read instead of the real section);
-  * the end: EXACTLY ONE `## Real commands` heading, and it must be the FIRST
-    `## ` line after the start. Any other `## ` line in between -- above the
+  * the end: EXACTLY ONE `## Real commands` heading, below the start, and it
+    must be the FIRST `## ` line after the start. Any other `## ` line in between -- above the
     path list, inside it, lower down, or at column 0 inside a code fence --
     would end the section early, so the text after it would compare green
     (reviews of 6fcc02f and 2ae1650);
@@ -34,6 +34,10 @@ heading is could-not-look, so it is red too); git cannot read the base or the
 head; CLAUDE.md is missing; or a bad argument.
 
 LIMITS, stated so a green is not read as more than it is:
+  * It sees bytes, not meaning. A change that leaves the section's bytes
+    identical while altering how it is read (wrapping it in an HTML comment,
+    adding a second rule under a variant heading elsewhere, or editing this
+    workflow step) is out of scope. It catches edits, not evasion (#585).
   * It enforces VISIBILITY, not a signature. A red check can still be merged
     past by anyone the branch settings allow; it only guarantees the change is
     not silent.
@@ -85,6 +89,11 @@ def section(text: str, where: str) -> str:
             "that ends the merge rule's section must occur exactly once"
         )
     m = starts[0]
+    if ends[0].start() < m.start():
+        raise CouldNotLook(
+            f"`## Real commands` comes BEFORE `## The merge rule` in CLAUDE.md at {where}: "
+            "the heading that ends the section precedes it, so where the section ends is unknown"
+        )
     rest = text[m.end() :]
     nxt = _NEXT.search(rest)
     if nxt is None or m.end() + nxt.start() != ends[0].start():

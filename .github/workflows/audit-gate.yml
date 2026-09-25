@@ -230,11 +230,15 @@ jobs:
 
   merge-rule-text:
     # INTERIM, until CODEOWNERS covers the governance files (#572). A PR that
-    # changes the text of CLAUDE.md's `## The merge rule` section -- the
+    # changes the BYTES of CLAUDE.md's `## The merge rule` section -- the
     # conditions, the condition-5 path list, anything in it -- goes RED here,
-    # every time, with no label or escape, so a human reads the change before
-    # anything merges on it. Red means "the rule changed", not "the PR is
-    # wrong". Green means only "the rule's text is unchanged".
+    # every time those bytes change, with no label or escape, so a human reads
+    # the change before anything merges on it. Red means "the rule changed",
+    # not "the PR is wrong". Green means only "the section's bytes are
+    # unchanged". It sees bytes, not meaning: a change that leaves the bytes
+    # identical while altering how the section is read (an HTML-comment wrap,
+    # a second rule under a variant heading, an edit to this step) is out of
+    # scope. It catches edits, not evasion (#585).
     #
     # NOT a required check: that is the owner's branch-protection setting. And
     # a PR editing this step can neuter it, because the workflow runs from the

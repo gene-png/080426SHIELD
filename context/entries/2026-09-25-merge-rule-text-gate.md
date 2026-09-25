@@ -1,4 +1,4 @@
-# 2026-09-25: a change to the merge rule's text is always red (interim, #572)
+# 2026-09-25: a change to the merge rule section's bytes is always red (interim, #572)
 
 Branch `track1/merge-rule-text`, branch-start base `06fa7ce`. The owner's
 decision, with his changes to the proposal on #572.
@@ -35,7 +35,11 @@ governance files, the change is made VISIBLE instead.
 
 ## Limits
 
-It enforces visibility, not a signature. It does not see a semantic change
+It sees bytes, not meaning. A change that leaves the section's bytes
+identical while altering how it is read (wrapping it in an HTML comment,
+adding a second rule under a variant heading elsewhere, or editing this
+workflow step) is out of scope. It catches edits, not evasion (#585). It
+enforces visibility, not a signature. It does not see a semantic change
 outside the section (a cited D-record, an agent file, a gate's code). A PR
 editing its own workflow step can neuter it until CODEOWNERS covers
 `.github/workflows/` and the bot account exists (#572).
@@ -77,3 +81,14 @@ editing its own workflow step can neuter it until CODEOWNERS covers
 - Red on revert, six mutations, each red on its named tests or fixtures: the
   start count, the subsection check, the terminator identity, the terminator
   count, a universal-newline file read, and `_git` with `text=True`.
+
+## After the third review (`b80cefe`)
+
+- A `## Real commands` heading ABOVE the merge rule now gets its own message
+  (the terminator precedes the rule) instead of blaming an interposed heading
+  or the end of the file, with a fixture, red on revert.
+- Evasion shapes that keep the bytes identical (an HTML-comment wrap, a
+  case-variant second rule) are NOT pinned, by the coordinator's call: the
+  gate catches edits, not evasion, and each pin invites the next shape. They
+  are a stated limit above and in the docstring and workflow comment, and are
+  filed as #585.
