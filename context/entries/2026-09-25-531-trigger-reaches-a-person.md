@@ -40,18 +40,32 @@ expected green and will not open the tracking issue.
 - **Ignored triggers are reported.** An issue labelled `trigger-fired`, still
   open and untouched for `STALE_AFTER_DAYS` (14), is reported, and the run
   fails on it. An item that fires and is ignored is back to being untracked.
-- **Every failure's cause reaches the log.** `main` catches any exception,
-  writes its type and message to `TRIGGER_LOG`, and then:
-  - exits 2 for could-not-look (the truncation refusal, a `gh` failure);
+- **The cause of every failure that raises reaches the log.** `main` catches
+  any exception, writes its type and message to `TRIGGER_LOG`, and then:
+  - exits 2 for could-not-look;
   - re-raises a finding, which exits 1.
+
+  Every refusal raises, so every refusal reaches the log. That covers:
+  - bad arguments;
+  - an unset `REPO`;
+  - the truncation refusal;
+  - a `gh` failure.
 
   Before this, only `_log` wrote the log. A refusal or a `gh` failure reached
   stderr alone, so the tracking issue would have said "the weekly run failed"
-  over a log with no cause in it.
+  over a log with no cause in it. A process killed outright writes nothing,
+  and the report then says the log is missing.
+- **Findings survive a mid-run `gh` failure.** Stale findings are computed from
+  the listing before any issue is acted on. If `gh` fails partway through the
+  loop, the findings collected so far are logged before the run exits 2.
 - **`--report-failure LOG` puts a failure in front of a person.** It comments
   on the open issue titled "Scheduled triggers: the weekly run failed". If
   none is open, it creates one with `mvp-blocking` and `tier-3`, so it is on
   the board. The comment carries the run URL and the tail of the log.
+- **`--exercise-report LOG` only ever opens its own issue.** It is the same
+  report, for the workflow's dispatch-only live test. While a tracking issue
+  is open, it exits 2 and names that issue, instead of commenting "EXERCISE
+  ... close this issue" on a real failure record.
 - **Arguments.** An unknown or incomplete argument exits 2.
 
 `.github/workflows/scheduled-triggers.yml`:
@@ -60,12 +74,12 @@ expected green and will not open the tracking issue.
   `--report-failure` on it.
 - If that step itself fails, the run is red and reported to nobody, which was
   the state before this change. The workflow says so beside the step.
-- A dispatch input, `exercise_failure_report`, runs `--report-failure` once,
+- A dispatch input, `exercise_failure_report`, runs `--exercise-report` once,
   live, with a log that says EXERCISE.
 
 ## Verified
 
-- The targeted file passes: 29 tests, in `docker run --rm` of
+- The targeted file passes: 36 tests, in `docker run --rm` of
   `shield-v2-api:latest`.
 - Wiring is tested through `main()`, with `_gh` replaced by one serving
   `issue list`. The `gh`-failure case keeps the real `_gh` and replaces only
@@ -84,10 +98,15 @@ expected green and will not open the tracking issue.
   - the stale check's call in `main`;
   - `--limit` drifting from the refusal;
   - the cause-logging lines, one for each branch;
-  - could-not-look returning 1.
-- `--report-failure` has not been run against GitHub. Its `gh` calls have no
-  live run behind them until someone dispatches `exercise_failure_report`, or
-  a real failure happens.
+  - could-not-look returning 1;
+  - the exercise refusal;
+  - the `--exercise-report` dispatch;
+  - the board labels on create;
+  - logging findings before a mid-loop failure;
+  - bad arguments bypassing the log.
+- The report has not been run against GitHub. Its `gh` calls have no live
+  run behind them until someone dispatches `exercise_failure_report`, or a
+  real failure happens.
 
 ## Limits
 
@@ -98,4 +117,4 @@ expected green and will not open the tracking issue.
   and a second one is opened.
 - A `gh` failure while acting (commenting, labelling) exits 2, the same as one
   while reading. Some triggers may already have fired in that run. The log
-  lists each `fired:` line written before the failure.
+  lists each `fired:` line and the findings written before the failure.

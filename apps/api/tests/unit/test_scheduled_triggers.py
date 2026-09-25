@@ -207,9 +207,12 @@ def fake_gh(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("REPO", "owner/repo")
     monkeypatch.setenv("TRIGGER_LOG", str(log_path))
 
-    def use(issues: list[dict]) -> Path:
+    def use(issues: list[dict], fail_on: tuple[str, str] | None = None) -> Path:
         def gh(*args: str) -> str:
             calls.append(args)
+            if args[:2] == fail_on:
+                # What the real `_gh` raises on a non-zero exit.
+                raise triggers.CouldNotLook(f"gh {' '.join(args[:2])} failed: HTTP 502")
             return json.dumps(issues) if args[:2] == ("issue", "list") else ""
 
         monkeypatch.setattr(triggers, "_gh", gh)
@@ -269,3 +272,78 @@ def test_a_gh_failure_reaches_the_log_and_exits_2(monkeypatch, tmp_path: Path) -
     assert main([]) == 2
     assert "gh issue list --repo owner/repo" in log_path.read_text("utf-8")
     assert "HTTP 502: Bad Gateway" in log_path.read_text("utf-8")
+
+
+def _labels_of(call: tuple[str, ...]) -> list[str]:
+    return [call[i + 1] for i, a in enumerate(call) if a == "--label"]
+
+
+@pytest.mark.unit
+def test_report_failure_opens_the_tracking_issue_with_the_board_labels(fake_gh, tmp_path) -> None:
+    """Through main(): an issue without the board labels is invisible to the
+    only view used to decide what to work on."""
+    fake_gh([])  # no tracking issue open
+    log = tmp_path / "run.log"
+    log.write_text("ValueError: something\n", encoding="utf-8")
+    assert main(["--report-failure", str(log)]) == 0
+    (create,) = [c for c in fake_gh.calls if c[:2] == ("issue", "create")]
+    assert _labels_of(create) == ["mvp-blocking", "tier-3"]
+    assert create[create.index("--title") + 1] == "Scheduled triggers: the weekly run failed"
+
+
+@pytest.mark.unit
+def test_the_exercise_refuses_while_a_tracking_issue_is_open(fake_gh, tmp_path) -> None:
+    """It would otherwise comment "EXERCISE ... close this issue" on a real
+    failure record, and a dev following that closes the real one."""
+    log_path = fake_gh([{"number": 7, "title": "Scheduled triggers: the weekly run failed"}])
+    exercise_log = tmp_path / "exercise.log"
+    exercise_log.write_text("EXERCISE, not a failure.\n", encoding="utf-8")
+    assert main(["--exercise-report", str(exercise_log)]) == 2
+    assert not [c for c in fake_gh.calls if c[:2] in {("issue", "comment"), ("issue", "create")}]
+    assert "tracking issue #7 is open, so the exercise will not run" in log_path.read_text("utf-8")
+
+
+@pytest.mark.unit
+def test_the_exercise_opens_its_own_issue_when_none_is_open(fake_gh, tmp_path) -> None:
+    fake_gh([])
+    exercise_log = tmp_path / "exercise.log"
+    exercise_log.write_text("EXERCISE, not a failure.\n", encoding="utf-8")
+    assert main(["--exercise-report", str(exercise_log)]) == 0
+    (create,) = [c for c in fake_gh.calls if c[:2] == ("issue", "create")]
+    assert "EXERCISE, not a failure." in create[create.index("--body") + 1]
+    assert _labels_of(create) == ["mvp-blocking", "tier-3"]
+
+
+@pytest.mark.unit
+def test_a_gh_failure_mid_loop_keeps_the_findings_already_collected(fake_gh) -> None:
+    """#145 is malformed; #200 is due, and commenting on it fails. The run is
+    could-not-look, and #145's finding still reaches the log."""
+    due = "Trigger-date: 2020-01-01\nTrigger-reason: x\n"
+    log_path = fake_gh(
+        [_issue(145, body="`Trigger-date` is below\n"), _issue(200, body=due)],
+        fail_on=("issue", "comment"),
+    )
+    assert main([]) == 2
+    log = log_path.read_text("utf-8")
+    assert "findings collected before the failure:\n  #145: mentions `Trigger-date`" in log
+    assert "could not look -- CouldNotLook: gh issue comment failed: HTTP 502" in log
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("argv", "repo", "needle"),
+    [
+        (["--nope"], "owner/repo", "unknown or incomplete arguments: ['--nope']"),
+        ([], None, "REPO is not set"),
+        (["--report-failure", "x.log"], None, "REPO is not set"),
+    ],
+)
+def test_every_refusal_reaches_the_log(argv, repo, needle, monkeypatch, tmp_path) -> None:
+    log_path = tmp_path / "triggers.log"
+    monkeypatch.setenv("TRIGGER_LOG", str(log_path))
+    if repo is None:
+        monkeypatch.delenv("REPO", raising=False)
+    else:
+        monkeypatch.setenv("REPO", repo)
+    assert main(argv) == 2
+    assert needle in log_path.read_text("utf-8")

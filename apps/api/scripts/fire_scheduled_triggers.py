@@ -259,13 +259,18 @@ def _log(line: str) -> None:
             f.write(line + "\n")
 
 
-def report_failure(log_path: str) -> int:
-    """`--report-failure LOG`: file or update the tracking issue (#531)."""
+def report_failure(log_path: str, *, exercise: bool = False) -> int:
+    """`--report-failure LOG`: file or update the tracking issue (#531).
+
+    `exercise=True` (`--exercise-report LOG`, the workflow's dispatch-only
+    live test) only ever OPENS its own issue. While a tracking issue is open it
+    refuses: commenting "EXERCISE ... close this issue" on a real failure
+    record is how a real failure gets closed by someone following instructions.
+    """
     repo = os.environ.get("REPO")
     run_url = os.environ.get("RUN_URL", "(run URL not set)")
     if not repo:
-        print("REPO is not set — refusing to guess which repository.", file=sys.stderr)
-        return 2
+        raise CouldNotLook("REPO is not set — refusing to guess which repository.")
     try:
         with open(log_path, encoding="utf-8") as f:
             log = f.read()
@@ -286,6 +291,12 @@ def report_failure(log_path: str) -> int:
         )
     )
     action, args = failure_report(existing, log, run_url)
+    if exercise and action == "comment":
+        raise CouldNotLook(
+            f"tracking issue #{args[0]} is open, so the exercise will not run: it only "
+            "opens its own issue, and would otherwise comment on a real failure record. "
+            f"Resolve and close #{args[0]} first."
+        )
     if action == "comment":
         _gh("issue", "comment", args[0], "--repo", repo, "--body", args[1])
         print(f"commented on #{args[0]}")
@@ -311,12 +322,16 @@ def report_failure(log_path: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run, and make every failure's CAUSE reach `TRIGGER_LOG` (#531).
+    """Run, and make the CAUSE of every failure that raises reach `TRIGGER_LOG`
+    (#531).
 
     The failure report quotes that log, and `_log` is the only writer to it. So
     without this, a truncation refusal or a `gh` failure reached stderr only,
     and the tracking issue said "the weekly run failed" over a log of success
-    lines, or over none. Could-not-look exits 2; a finding re-raises (exit 1).
+    lines, or over none. Every refusal in `_main` raises, bad arguments and an
+    unset `REPO` included, so each reaches the log. Could-not-look exits 2; a
+    finding re-raises (exit 1). A process killed outright writes nothing, and
+    the report says the log is missing.
     """
     try:
         return _main(argv)
@@ -331,15 +346,15 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args[:1] == ["--report-failure"] and len(args) == 2:
+    if len(args) == 2 and args[0] == "--report-failure":
         return report_failure(args[1])
+    if len(args) == 2 and args[0] == "--exercise-report":
+        return report_failure(args[1], exercise=True)
     if args:
-        print(f"unknown or incomplete arguments: {args!r}", file=sys.stderr)
-        return 2
+        raise CouldNotLook(f"unknown or incomplete arguments: {args!r}")
     repo = os.environ.get("REPO")
     if not repo:
-        print("REPO is not set — refusing to guess which repository.", file=sys.stderr)
-        return 2
+        raise CouldNotLook("REPO is not set — refusing to guess which repository.")
 
     raw = _gh(
         "issue",
@@ -357,47 +372,21 @@ def _main(argv: list[str] | None) -> int:
     )
     issues = not_truncated(json.loads(raw))
     today = date.today()
-    fired, problems = 0, []
+    # Stale findings first: they read only the listing, and computing them up
+    # front means a `gh` failure mid-loop cannot drop them.
+    fired, problems = 0, stale_fired(issues, today)
 
-    for issue in issues:
-        number = issue["number"]
-        names = {label["name"] for label in issue.get("labels", [])}
-        if FIRED in names:
-            continue
-        try:
-            due, reason = parse_trigger(issue.get("body") or "")
-        except ValueError as exc:
-            # Collected, not raised inline: one malformed issue must not stop the
-            # others from firing. Raised at the end so it cannot pass silently.
-            problems.append(f"#{number}: {exc}")
-            continue
-        if due > today:
-            continue
+    try:
+        for issue in issues:
+            if _fire_if_due(issue, repo, today, problems):
+                fired += 1
+    except CouldNotLook:
+        # Findings already collected are not lost with the run: logged, then
+        # the could-not-look goes on to `main`.
+        if problems:
+            _log("findings collected before the failure:\n  " + "\n  ".join(problems))
+        raise
 
-        _gh(
-            "issue",
-            "comment",
-            str(number),
-            "--repo",
-            repo,
-            "--body",
-            (
-                f"**Scheduled trigger fired** — this was deferred to `{due.isoformat()}`, "
-                f"which has passed.\n\n> {reason}\n\n"
-                "Nothing has been reopened, reprioritised or blocked. This is the "
-                "alarm clock the issue set for itself, so the decision lands on a "
-                "known date instead of being rediscovered by accident.\n\n"
-                "Act on it or push the date out deliberately by editing "
-                "`Trigger-date:` and removing the `trigger-fired` label — but do "
-                "one of the two, because an item that fires and is ignored is back "
-                "to being untracked."
-            ),
-        )
-        _gh("issue", "edit", str(number), "--repo", repo, "--add-label", FIRED)
-        _log(f"fired: #{number} ({issue['title'][:60]})")
-        fired += 1
-
-    problems += stale_fired(issues, today)
     _log(f"scheduled triggers: {len(issues)} labelled, {fired} fired.")
     if problems:
         message = (
@@ -406,6 +395,46 @@ def _main(argv: list[str] | None) -> int:
         )
         raise ValueError(message)  # `main` logs it, once
     return 0
+
+
+def _fire_if_due(issue: dict, repo: str, today: date, problems: list[str]) -> bool:
+    """Comment on and label one issue if its trigger has passed. A malformed
+    trigger is appended to `problems`, not raised: one bad issue must not stop
+    the others from firing, and `_main` raises them all at the end."""
+    number = issue["number"]
+    names = {label["name"] for label in issue.get("labels", [])}
+    if FIRED in names:
+        return False
+    try:
+        due, reason = parse_trigger(issue.get("body") or "")
+    except ValueError as exc:
+        problems.append(f"#{number}: {exc}")
+        return False
+    if due > today:
+        return False
+
+    _gh(
+        "issue",
+        "comment",
+        str(number),
+        "--repo",
+        repo,
+        "--body",
+        (
+            f"**Scheduled trigger fired** — this was deferred to `{due.isoformat()}`, "
+            f"which has passed.\n\n> {reason}\n\n"
+            "Nothing has been reopened, reprioritised or blocked. This is the "
+            "alarm clock the issue set for itself, so the decision lands on a "
+            "known date instead of being rediscovered by accident.\n\n"
+            "Act on it or push the date out deliberately by editing "
+            "`Trigger-date:` and removing the `trigger-fired` label — but do "
+            "one of the two, because an item that fires and is ignored is back "
+            "to being untracked."
+        ),
+    )
+    _gh("issue", "edit", str(number), "--repo", repo, "--add-label", FIRED)
+    _log(f"fired: #{number} ({issue['title'][:60]})")
+    return True
 
 
 if __name__ == "__main__":
