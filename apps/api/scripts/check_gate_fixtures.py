@@ -101,7 +101,7 @@ DEFERRED: dict[str, str] = {
     "compose_unchanged.py": (
         "Reads a git RANGE -- the merge base and the head -- and a fixture here is "
         "a static directory, not a repository, so no case can give it a range. "
-        "Both states are covered by `tests/unit/test_compose_unchanged.py`, which "
+        "All three states are covered by `tests/unit/test_compose_unchanged.py`, which "
         "builds a real throwaway repository per case: 0 for a comments-only compose "
         "diff, 1 for content changes Python equality would hide, 2 for an "
         "unparseable file and for bad arguments, each naming its state on the first "

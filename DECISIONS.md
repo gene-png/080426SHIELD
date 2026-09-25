@@ -5855,12 +5855,29 @@ rare-and-red design as the merge-rule text gate (#582). The owner's own figure
 was four touching, two comments-only; the re-derivation below found three and
 one, and this record uses the re-derived figure:
 
-    # Git Bash, from the repo root; prints each compose-touching commit and the
-    # tool's exit (the loop's own status is its last grep's, so ignore it).
-    for c in $(git log --first-parent --format=%h -80 ef94f4f); do git diff --name-only "$c^" "$c" | grep -qE '^docker-compose[^/]*\.ya?ml$' && echo "$c $(python apps/api/scripts/compose_unchanged.py --repo . "$c^..$c" >/dev/null; echo $?)"; done
-    # -> 59484a9 1 / adc2217 0 / f36d7a5 1   (run 2026-09-25)
-    git log --first-parent --format=%s -80 ef94f4f | grep -cE '\(#[0-9]+\)$'
-    # -> 71 of the 80 are PR merges
+    # Git Bash, from the repo root, as a script (`bash file.sh`): it fails
+    # loudly on an empty or failed `git log` and says how many it iterated.
+    set -euo pipefail
+    commits=$(git log --first-parent --format=%h -80 ef94f4f)
+    n=0
+    for c in $commits; do
+      n=$((n + 1))
+      files=$(git diff --name-only "$c^" "$c")
+      if grep -E '^docker-compose[^/]*\.ya?ml$' <<<"$files" >/dev/null; then
+        rc=0
+        python apps/api/scripts/compose_unchanged.py --repo . "$c^..$c" >/dev/null || rc=$?
+        echo "$c $rc"
+      fi
+    done
+    echo "iterated $n commits"
+    prs=$(git log --first-parent --format=%s -80 ef94f4f | grep -cE '\(#[0-9]+\)$')
+    echo "$prs of them are PR merges"
+    # Run 2026-09-25, exit 0:
+    #   59484a9 1
+    #   adc2217 0
+    #   f36d7a5 1
+    #   iterated 80 commits
+    #   71 of them are PR merges
 
 **Why the node tree, not the loaded object.** PyYAML reads YAML 1.1, and
 Python's `==` is loose, so `on` to `yes` (both True) and `1` to `1.0` compare

@@ -16,6 +16,8 @@ import pytest
 # The DOTTED form, deliberately: see test_leave_row_oracle_anchors.py.
 import scripts.compose_unchanged as tool
 
+from tests._paths import find_workflows_dir
+
 pytestmark = pytest.mark.unit
 
 BASE = "services:\n  api:\n    image: api:1\n    environment:\n      FLAG: on\n      N: 1\n"
@@ -166,10 +168,23 @@ def _compose_step() -> tuple[dict, dict]:
     """The compose job and its tool step, PARSED from audit-gate.yml (not restated)."""
     import yaml
 
-    wf = pathlib.Path(__file__).resolve().parents[4] / ".github" / "workflows" / "audit-gate.yml"
-    if not wf.is_file():
-        pytest.skip(f"no workflow at {wf} (the api image mounts apps/api only)")
-    job = yaml.safe_load(wf.read_text(encoding="utf-8"))["jobs"]["compose-content-changed"]
+    # Not `parents[4]`: inside the api container this file is
+    # /app/tests/unit/x.py, with four parents, and that raised IndexError before
+    # any skip (#314). Skip ONLY when no `.github/workflows` exists above this
+    # file at all (the container); a checkout that has the directory and not
+    # the file or the job is RED, not skipped.
+    wf_dir = find_workflows_dir(pathlib.Path(__file__).resolve())
+    if wf_dir is None:
+        pytest.skip(
+            "no .github/workflows directory above this file -- expected inside the "
+            "api container, which mounts apps/api at /app (#314); CI's python job "
+            "runs this on a full checkout"
+        )
+    wf = wf_dir / "audit-gate.yml"
+    assert wf.is_file(), f"{wf} is missing, so the compose job cannot be checked"
+    jobs = yaml.safe_load(wf.read_text(encoding="utf-8"))["jobs"]
+    assert "compose-content-changed" in jobs, f"no compose-content-changed job in {wf}"
+    job = jobs["compose-content-changed"]
     steps = [s for s in job["steps"] if "compose_unchanged.py" in str(s.get("run", ""))]
     assert len(steps) == 1, steps
     return job, steps[0]
