@@ -68,13 +68,20 @@ does not exit when a brace group fails because of a command that failed while
 `-e` was ignored, so `{ pytest && echo ok; }` then `git push` pushes. A
 `( ... )` subshell's failure does exit, so its body's end is terminal.
 
-A gate as an `if` condition (round 5): only the plain `if gate` / `if ! gate`
-shape is modelled. The branch that runs when the gate FAILS (the else-branch
-of `if gate`, the then-branch of `if ! gate`) must end in a literal failing
-`exit N` / `return N`, or `exit $?` in the else-branch of `if gate` only (in
-the then-branch of `if ! gate`, `$?` is the negation's status, 0). No such
-branch, an `elif` chain, or a gate inside a compound condition (`&&`, `||`,
-a pipe) is an R2 finding. `while` / `until` conditions are NOT modelled.
+A gate as an `if` condition (rounds 5 and 6): only the plain `if gate` /
+`if ! gate` shape is modelled. The branch that runs when the gate FAILS (the
+else-branch of `if gate`, the then-branch of `if ! gate`) must be EXACTLY one
+of:
+  - zero or more simple `echo` / `printf` statements, then a literal failing
+    `exit N` / `return N` (N % 256 != 0), last -- the SAME closed grammar as
+    R2's `{ echo...; exit N; }` rescue, from one function;
+  - `exit $?` / `return $?` as the SOLE statement of the else-branch of
+    `if gate`. Never after another statement (`$?` is then that statement's),
+    and never under `if !` (`$?` is then the negation's, 0).
+Any nested compound in the failure branch (if, while, until, for, case, a
+subshell, a group), no such branch, an `elif` chain, or a gate inside a
+compound condition (`&&`, `||`, a pipe) is an R2 finding. `while` / `until`
+conditions are NOT modelled.
 A `var=$?` capture counts only when nothing but `;` or a newline separates it
 from the gate: read across `else`, `fi`, `done` or `;;` it is refused.
 
@@ -485,9 +492,15 @@ def _is_status_exit(words: list[str]) -> bool:
     return len(words) == 2 and words[0] in ("exit", "return") and words[1] == "$?"
 
 
-def _group_is_whitelisted(body: str) -> bool:
-    """Exactly `{ <echo/printf statements>; exit N; }`: one exit, at top level, last."""
-    stmts = statements(body)
+def _echoes_then_failure(stmts: list[list[str]]) -> bool:
+    """The ONE closed grammar for "report, then fail": zero or more simple
+    echo/printf statements, then a literal failing `exit N` / `return N`, last.
+
+    Shared by the `{ ...; }` rescue and the `if` failure branch, so the two
+    cannot drift apart. A statement that is not a simple echo/printf -- any
+    nested compound (if, while, until, for, case, a subshell, a group) or a
+    command substitution -- fails it.
+    """
     if not stmts or not _literal_failure(stmts[-1]):
         return False
     for s in stmts[:-1]:
@@ -497,6 +510,11 @@ def _group_is_whitelisted(body: str) -> bool:
             if tok in _GROUP_FORBIDDEN or "$(" in tok or _group_body(tok) is not None:
                 return False
     return True
+
+
+def _group_is_whitelisted(body: str) -> bool:
+    """Exactly `{ <echo/printf statements>; exit N; }`: one exit, at top level, last."""
+    return _echoes_then_failure(statements(body))
 
 
 def _capture_is_whitelisted(var: str, nxt: list[str]) -> bool:
@@ -546,17 +564,21 @@ def _failure_branch(pairs: list, idx: int, negated: bool):
 
 
 def _if_failure_kept(pairs: list, idx: int, negated: bool) -> bool:
-    """Does the failure branch END in a whitelisted exit?
+    """Is the failure branch EXACTLY the `{ echo...; exit N; }` grammar?
 
-    `exit $?` counts only in the else-branch of `if gate`: in the then-branch
-    of `if ! gate`, `$?` is the NEGATION's status, which is 0 when the gate
-    failed (measured, and recorded in audit-gate.yml).
+    Zero or more simple echo/printf statements, then a literal failing
+    `exit N` / `return N` (`_echoes_then_failure`), or `exit $?` / `return $?`
+    as the SOLE statement of the else-branch of `if gate`. Anything after
+    another statement reads that statement's `$?` (`echo ...; exit $?` exits
+    echo's 0); in the then-branch of `if ! gate`, `$?` is the NEGATION's
+    status, 0 when the gate failed (measured, recorded in audit-gate.yml).
     """
     branch = _failure_branch(pairs, idx, negated)
     if not isinstance(branch, list) or not branch:
         return False
-    last = branch[-1]
-    return _literal_failure(last) or (not negated and _is_status_exit(last))
+    if not negated and len(branch) == 1 and _is_status_exit(branch[0]):
+        return True
+    return _echoes_then_failure(branch)
 
 
 def _rescue(element: list[list[str]], nxt: list[str], errexit: bool) -> bool:

@@ -98,8 +98,9 @@ Red-on-revert, one mutation per fix, 13 of 13 red. Two tests first stayed
 green under their mutation: one ended in a newline, so a different raise
 fired, and one had inner quotes that balanced naively. Both were
 strengthened, and the second then exposed a real defect (shlex re-reading a
-substitution's quotes), fixed in the same pass. Self-scan: 65 workflow steps,
-2 hook entries, 13 `.sh` files, 1 CLAUDE.md block; none of R1-R4.
+substitution's quotes), fixed in the same pass. Self-scan (at that round's
+head): 65 workflow steps, 2 hook entries, 13 `.sh` files, 1 CLAUDE.md block;
+none of R1-R4.
 
 ## Limits
 
@@ -194,8 +195,10 @@ coordinator's direction: stop refining and use an explicit whitelist.
 ## After round 5 of the review: a floor, not a whitelist
 
 At the coordinator's direction the gate stops claiming to be a whitelist. What
-is true: it checks the shapes it recognizes, it is strict about those, and
-everything it does not recognize is listed as a limit rather than judged.
+it does: it checks the shapes it recognizes, and the shapes it does not
+recognize are listed as limits rather than judged. (This paragraph said "it is
+strict about those" at `8f57741`, and round 6 showed the `if` rule was not; see
+below.)
 
 - **The first `||` after the gate is the rescue.** When the gate fails, `&&`
   short-circuits to the first `||`, so the element after THAT one is what runs,
@@ -225,5 +228,32 @@ everything it does not recognize is listed as a limit rather than judged.
   accepted after a negation, a capture across `fi` accepted). The compound one
   first stayed green, because its only case had no else-branch; a
   discriminating case (`if pytest || true; then :; else exit 1; fi`) was added.
-- Self-scan: 66 workflow steps, 2 hook entries, 13 `.sh` files, 1 CLAUDE.md
-  block; none of R1-R4.
+- Self-scan at `8f57741`: 66 workflow steps, 2 hook entries, 13 `.sh` files,
+  1 CLAUDE.md block; none of R1-R4.
+
+## After round 6 of the review (`89bbdc8`)
+
+Round 6 ran `analyse()` and found the round-5 `if` rule looser than R2's: it
+checked only the failure branch's LAST statement. So
+`else echo "tests failed"; exit $?` passed (the `$?` is echo's 0), and so did
+a failure branch whose exit sat inside a nested `if` or `while`.
+
+- **The failure branch now uses R2's grammar, from the same function**
+  (`_echoes_then_failure`): zero or more simple `echo` / `printf` statements,
+  then a literal failing `exit N` / `return N`, last. `exit $?` / `return $?`
+  is allowed only as the SOLE statement of the else-branch of `if gate`. Any
+  nested compound in the failure branch is a finding. With that, the gate is
+  strict about the `if` shapes it recognizes, and the sentence above is true
+  of the tree at this round's head.
+- New finding tests, in `test_the_failure_branch_is_the_closed_echo_then_exit_grammar`:
+  the reviewer's cases and `if ! pytest; then while false; do exit 1; done;
+  fi`. The kept cases `if ! pytest; then echo x; exit 1; fi` and
+  `if pytest; then :; else exit $?; fi` still pass.
+- Red on revert: five mutations, each red on its named test (the round-5
+  last-statement rule restored, `exit $?` after another statement, `exit $?`
+  under `if !`, echoes refused before the exit, the sole `exit $?` refused).
+  Round 5's mutations still go red where their anchors survive; the `$?`
+  after a negation anchor was rewritten by this round and is replaced by the
+  `if !` mutation above.
+- Self-scan on the merged tree (`89bbdc8` plus this round): 66 workflow steps,
+  2 hook entries, 14 `.sh` files, 1 CLAUDE.md block; none of R1-R4.

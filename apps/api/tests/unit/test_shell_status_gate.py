@@ -404,6 +404,21 @@ def test_an_if_whose_failure_branch_does_not_exit_is_a_finding(script: str) -> N
 @pytest.mark.parametrize(
     "script",
     [
+        # Round 6: each gave 0 findings at 89bbdc8. `$?` after echo is echo's 0.
+        'if pytest; then echo ok; else echo "tests failed"; exit $?; fi',
+        # A nested compound in the failure branch: its exit is conditional.
+        'if ! pytest; then if [ "$CI" ]; then exit 1; fi; fi',
+        'if pytest; then :; else if [ "$CI" ]; then exit 1; fi; fi',
+        "if ! pytest; then while false; do exit 1; done; fi",
+    ],
+)
+def test_the_failure_branch_is_the_closed_echo_then_exit_grammar(script: str) -> None:
+    assert _rules(script + "\ngit push") == ["R2 swallow"]
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
         "if ! pytest; then echo failed; exit 1; fi",
         "if pytest; then echo ok; else echo failed; exit 3; fi",
         "if pytest; then :; else exit $?; fi",  # $? is the gate's in the else-branch
