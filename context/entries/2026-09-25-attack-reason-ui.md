@@ -1,4 +1,4 @@
-# 2026-09-25: the ATT&CK workspace edits a row's reason and narrative (#554 slice 4)
+# 2026-09-25: the ATT&CK workspace edits a row's reason code (#554 slice 4)
 
 Branch `track2/attack-reason-ui`, from `main` at `2028f38`.
 
@@ -14,18 +14,14 @@ Branch `track2/attack-reason-ui`, from `main` at `2028f38`.
   reason is the release gate's job (#557), and that gate is c3 of #554, not yet
   built; the label promises nothing about it (D-076). The chosen code's
   definition is shown under the select.
-- **A narrative field** ("What could not be established") shows for an
-  `unable_to_determine` row, or any row already carrying a narrative, and saves
-  on blur. It shows a live "N / 8000" count. There is no browser cap: an
-  over-long narrative is kept whole, the count says how far over, and it is not
-  saved until it is shortened, so a paste is never cut. Clearing it sends
-  null. The box is controlled, and resyncs from the stored value only when that
-  value differs from what the box last saved. A successful save never resets
-  it under the cursor; a refused save shows the stored value again.
+- **No narrative editor.** One was built here and removed after four review
+  rounds: it only shows on rows no writer can produce yet (D-092 Decision 5),
+  and each round found the next hole. It moves to #615, with the slice that
+  makes `unable_to_determine` writable, and #615 carries the review rounds'
+  findings as acceptance criteria. The coordinator's call, overturnable.
 - **The API stores a blank narrative as NULL**, since the web is not the only
-  writer and the release gate will ask whether one exists. No writer can produce that status yet (D-092 Decision 5), so today
-  it only ever shows a stored narrative.
-- The new controls keep a visible focus ring. The existing Notes box uses
+  writer and the release gate will ask whether one exists.
+- The Reason select keeps a visible focus ring. The existing Notes box uses
   `focus:outline-hidden`, which CLAUDE.md records as cancelling it; that is not
   copied, and not changed here.
 

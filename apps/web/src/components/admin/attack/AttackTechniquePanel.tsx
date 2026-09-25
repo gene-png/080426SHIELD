@@ -106,8 +106,9 @@ function citationLine(c: UnconfirmedCitation): string {
 }
 
 /**
- * #554: the reason for the row's status, from the codes that status takes, and
- * the narrative an unverified row carries.
+ * #554: the reason for the row's status, from the codes that status takes.
+ * (The narrative editor for an unverified row is NOT here: it moved to #615,
+ * with the slice that makes that status writable.)
  *
  * Offered only for a status that HAS codes (Partial, N/A), and only those
  * codes, so the pairing the vocabulary forbids -- N/A with
@@ -135,10 +136,7 @@ function ReasonField({
   const offered = reasonCodes.filter((r) => r.status === status);
   const current = coverage?.reason_code ?? null;
   const chosen = offered.find((r) => r.code === current) ?? null;
-  const showNarrative =
-    (status as string | null) === "unable_to_determine" ||
-    Boolean(coverage?.narrative);
-  if (offered.length === 0 && !showNarrative) return null;
+  if (offered.length === 0) return null;
   return (
     <div className="flex flex-col gap-3">
       {offered.length > 0 ? (
@@ -173,104 +171,7 @@ function ReasonField({
           ) : null}
         </label>
       ) : null}
-      {showNarrative ? (
-        <NarrativeField
-          techniqueId={techniqueId}
-          coverage={coverage}
-          readOnly={readOnly}
-          onPatch={onPatch}
-        />
-      ) : null}
     </div>
-  );
-}
-
-/** The API's `narrative` max_length (`schemas/attack.py`), mirrored here. */
-const NARRATIVE_MAX = 8000;
-
-/**
- * #554: what could not be established, for an unverified row.
- *
- * CONTROLLED, and resynced from the stored value only when that value differs
- * from what this box last saved. A successful save leaves the stored value
- * equal to it, so the box is never reset under the consultant's cursor (#603
- * round 2). A refused save rolls the stored value back to something else, and
- * the box shows it, so unsaved text never looks kept. Switching technique
- * always resyncs.
- *
- * The cap is VISIBLE and never cuts. There is no `maxLength`: a paste that
- * runs over keeps every character, the count says how far over, and blur does
- * NOT save while it is over, so the text stays in the box for the consultant
- * to shorten. A browser cap would drop text in silence, and the API's 422
- * would be the only sign.
- *
- * ACCEPTED, stated: if another session changes this row's narrative while it
- * is being typed here, the box resyncs to that value and the unsaved typing is
- * lost. Nothing polls or pushes a row's changes to an open workspace today, so
- * one user cannot reach it; a live-update feature would have to revisit this.
- */
-function NarrativeField({
-  techniqueId,
-  coverage,
-  readOnly,
-  onPatch,
-}: {
-  techniqueId: string;
-  coverage: AttackCoverageRow | null;
-  readOnly: boolean;
-  onPatch: (patch: AttackCoveragePatch) => void | Promise<void>;
-}): JSX.Element {
-  const stored = coverage?.narrative ?? null;
-  const [draft, setDraft] = React.useState(stored ?? "");
-  const lastSaved = React.useRef<string | null>(stored);
-  const rowId = coverage?.id ?? null;
-  const lastRowId = React.useRef<string | null>(rowId);
-  React.useEffect(() => {
-    if (rowId !== lastRowId.current || stored !== lastSaved.current) {
-      lastRowId.current = rowId;
-      lastSaved.current = stored;
-      setDraft(stored ?? "");
-    }
-  }, [rowId, stored]);
-  const over = draft.length - NARRATIVE_MAX;
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
-        What could not be established
-      </span>
-      <textarea
-        aria-label={`What could not be established for ${techniqueId}`}
-        value={draft}
-        disabled={readOnly}
-        rows={3}
-        onChange={(e) => setDraft(e.currentTarget.value)}
-        onBlur={() => {
-          // Over the limit: keep the text, save nothing, and let the count
-          // say why. Never truncate on the consultant's behalf.
-          if (over > 0) return;
-          const v = draft.trim();
-          const next = v === "" ? null : v;
-          if (next === (stored ?? null)) return;
-          // Cleared means NONE, never "": a blank string would read as a
-          // narrative given to any check that asks whether one exists.
-          lastSaved.current = next;
-          void onPatch({ narrative: next });
-        }}
-        className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
-      />
-      <span
-        data-testid="narrative-count"
-        className={
-          over > 0
-            ? "text-xs font-medium text-status-warning-fg"
-            : "text-xs text-ink-tertiary"
-        }
-      >
-        {over > 0
-          ? `${draft.length} / ${NARRATIVE_MAX}: ${over} over; shorten it, it will not be saved.`
-          : `${draft.length} / ${NARRATIVE_MAX}`}
-      </span>
-    </label>
   );
 }
 

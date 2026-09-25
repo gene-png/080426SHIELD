@@ -267,10 +267,9 @@ class AttackCoveragePatch(BaseModel):
     # #554. Validated against the row's resulting status in `patch_coverage`,
     # typed, rather than as an enum here: a code's validity depends on the status.
     reason_code: str | None = Field(default=None, max_length=48)
-    # The web mirrors this limit as NARRATIVE_MAX in
-    # `apps/web/src/components/admin/attack/AttackTechniquePanel.tsx` (a live
-    # count, and no save while over). Change both, or the box and the API
-    # disagree about what can be saved.
+    # No web editor exists yet. The narrative editor (#615) must mirror this
+    # limit -- counting code points of the TRIMMED value, the measure applied
+    # to what is stored -- and whoever changes it here must change it there.
     narrative: str | None = Field(default=None, max_length=8000)
 
 
