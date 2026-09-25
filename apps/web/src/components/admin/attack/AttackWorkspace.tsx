@@ -171,12 +171,20 @@ export function AttackWorkspace({
       const next = await fetchHeatmap(serviceId);
       setHeatmap(next);
       heatmapAttempt.clear();
-    } catch {
+    } catch (err) {
       // NON-BLOCKING IS NOT SILENT. The old comment was true and is
       // why this survived: a panel's own loading state cannot be told
       // apart from a slow network.
+      //
+      // #556: an assessment scored against another ATT&CK catalog is REFUSED
+      // (409 `attack_catalog_mismatch`), and "reload to try again" would be
+      // false advice for it -- no reload fixes a stale assessment. Keyed on the
+      // reason's VALUE, never its presence (CLAUDE.md, #317), so every other
+      // failure keeps the sentence below.
       heatmapAttempt.note(
-        "Couldn't refresh the coverage heatmap. What is shown may be out of date; reload to try again.",
+        errorReason(err) === "attack_catalog_mismatch"
+          ? describeError(err)
+          : "Couldn't refresh the coverage heatmap. What is shown may be out of date; reload to try again.",
       );
     }
   }, [serviceId, beginRefresh]);
@@ -517,6 +525,11 @@ export function AttackWorkspace({
             title="Draft the mapping with AI"
             description="Claude suggests a coverage status and the detection / prevention / response tooling for each technique, using only this client's approved Tech Debt capability list. It drafts; you decide. Locked rows are never touched."
             done={runResult !== null || scoredCount > 0}
+            blockedReason={
+              assessment.catalog_current !== true
+                ? "This assessment was scored against a different ATT&CK catalog than the current one, so the AI cannot draft over it."
+                : null
+            }
           >
             <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
@@ -527,7 +540,12 @@ export function AttackWorkspace({
                     <button
                       type="button"
                       onClick={onClick}
-                      disabled={busy !== null || readOnly}
+                      disabled={
+                        busy !== null ||
+                        readOnly ||
+                        // #556: the API refuses it; the step says why.
+                        assessment.catalog_current !== true
+                      }
                       className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {busy === "run" ? "Running…" : "Run AI"}
@@ -582,31 +600,50 @@ export function AttackWorkspace({
             description="Click any cell to set its coverage status, cite the tooling that provides it, and record your rationale. This is the judgement the client is paying for — the AI draft is a starting point, not an answer. Lock a row to protect it from future AI runs."
             done={assessment.status !== "draft"}
           >
-            <div className="flex flex-col gap-4">
-              <AttackTechniquePanel
-                technique={selectedTechnique}
-                coverage={selectedCoverage}
-                coverageDefinitions={catalog.coverage_definitions}
-                readOnly={readOnly}
-                onPatch={(patch) => {
-                  if (!selectedCoverage) return;
-                  return onPatch(selectedCoverage.id, patch);
-                }}
-                onConfirmCitations={() => {
-                  if (!selectedCoverage) return;
-                  return onConfirmCitations(selectedCoverage.id);
-                }}
-              />
-              <AttackMatrix
-                catalog={catalog}
-                coverageByCode={coverageByCode}
-                heatmapByTactic={heatmapByTactic}
-                onSelectTechnique={(code) => setSelectedCode(code)}
-                selectedCode={selectedCode}
-                showSubTechniques={showSubs}
-                onToggleSubTechniques={setShowSubs}
-              />
-            </div>
+            {assessment.catalog_current !== true ? (
+              // #556: the rows are keyed by technique ID, and an ID can mean a
+              // different technique in the current catalog (T1558 and T1649
+              // swapped names in the list this replaced). Drawing them into the
+              // current matrix would relabel answers by ID (D-091), and codes the
+              // catalog no longer has would silently vanish from the grid.
+              <p
+                role="status"
+                data-testid="attack-stale-catalog"
+                className="rounded-md border border-status-warning-fg/40 bg-surface-sunken p-3 text-sm text-status-warning-fg"
+              >
+                {`This assessment was scored against ${
+                  assessment.catalog_version
+                    ? `ATT&CK v${assessment.catalog_version}`
+                    : "an ATT&CK catalog that was never recorded"
+                }, not the current one. Its ${assessment.coverage.length} rows are not shown against the current technique names, because a technique ID can name a different technique in the current catalog.`}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <AttackTechniquePanel
+                  technique={selectedTechnique}
+                  coverage={selectedCoverage}
+                  coverageDefinitions={catalog.coverage_definitions}
+                  readOnly={readOnly}
+                  onPatch={(patch) => {
+                    if (!selectedCoverage) return;
+                    return onPatch(selectedCoverage.id, patch);
+                  }}
+                  onConfirmCitations={() => {
+                    if (!selectedCoverage) return;
+                    return onConfirmCitations(selectedCoverage.id);
+                  }}
+                />
+                <AttackMatrix
+                  catalog={catalog}
+                  coverageByCode={coverageByCode}
+                  heatmapByTactic={heatmapByTactic}
+                  onSelectTechnique={(code) => setSelectedCode(code)}
+                  selectedCode={selectedCode}
+                  showSubTechniques={showSubs}
+                  onToggleSubTechniques={setShowSubs}
+                />
+              </div>
+            )}
           </WorkflowStep>
 
           <WorkflowStep
@@ -615,9 +652,16 @@ export function AttackWorkspace({
             description="Locks the coverage matrix so the deliverable is generated from a fixed set of scores. Approving does not release anything to the client — that is the last step."
             done={assessment.status !== "draft"}
             blockedReason={
-              scoredCount === 0
-                ? "Nothing has been scored yet. Run the AI draft or score techniques by hand in step 2 first."
-                : null
+              // #556: the API refuses to approve an assessment scored against
+              // another ATT&CK catalog; say so here instead of offering a button
+              // whose only outcome is that refusal. `!== true` on purpose: an
+              // absent field reads as NOT current -- missing data defaults to
+              // unconfirmed, never to confirmed.
+              assessment.catalog_current !== true
+                ? "This assessment was scored against a different ATT&CK catalog than the current one, so it cannot be approved."
+                : scoredCount === 0
+                  ? "Nothing has been scored yet. Run the AI draft or score techniques by hand in step 2 first."
+                  : null
             }
           >
             <button
@@ -626,7 +670,8 @@ export function AttackWorkspace({
               disabled={
                 busy !== null ||
                 assessment.status !== "draft" ||
-                scoredCount === 0
+                scoredCount === 0 ||
+                assessment.catalog_current !== true
               }
               className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -645,9 +690,11 @@ export function AttackWorkspace({
             title="Generate and release the deliverable"
             description="Renders the PDF and XLSX from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
             blockedReason={
-              assessment.status === "draft"
-                ? "Approve the assessment in step 3 before generating a deliverable from it."
-                : null
+              assessment.catalog_current !== true
+                ? "This assessment was scored against a different ATT&CK catalog than the current one, so no deliverable can be generated or released from it."
+                : assessment.status === "draft"
+                  ? "Approve the assessment in step 3 before generating a deliverable from it."
+                  : null
             }
           >
             <div className="flex flex-col gap-3">
@@ -657,6 +704,7 @@ export function AttackWorkspace({
                 assessmentStatus={assessment.status}
                 deliverable={deliverable}
                 onChange={setDeliverable}
+                catalogStale={assessment.catalog_current !== true}
               />
             </div>
           </WorkflowStep>

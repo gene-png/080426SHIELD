@@ -56,6 +56,7 @@ function gate(over: Partial<RiskGate> = {}): RiskGate {
     missing: [],
     not_finalized: [],
     synthesizable_missing: [],
+    attack_catalog_mismatch: null,
     ...over,
   };
 }
@@ -156,6 +157,37 @@ describe("RiskRegisterDashboard tier-less entries disclosure", () => {
     getActiveClientId.mockResolvedValue("c1");
     getClientName.mockResolvedValue("Atlas");
     fetchRiskGate.mockResolvedValue(gate());
+  });
+
+  it("says why a stale ATT&CK input blocks generating, not 'approve these' (#556)", async () => {
+    const sentence =
+      "This assessment was scored against an ATT&CK catalog that was never recorded, not the current ATT&CK v19.2 catalog.";
+    fetchRiskGate.mockResolvedValue(
+      gate({ attack_catalog_mismatch: sentence }),
+    );
+    await loaded();
+
+    const banner = await screen.findByTestId(
+      "risk-register-attack-catalog-mismatch",
+    );
+    expect(banner.textContent).toContain(sentence);
+    // It is already approved: the approve-these banner must not claim it.
+    expect(screen.queryByTestId("risk-register-unapproved-sources")).toBeNull();
+    // And Generate, whose only outcome would be the 409, is not offered.
+    expect(
+      screen.getByRole("button", { name: /^(Generate|Regenerate)$/ }),
+    ).toBeDisabled();
+  });
+
+  it("offers Generate when the ATT&CK input is current", async () => {
+    fetchRiskGate.mockResolvedValue(gate({ attack_catalog_mismatch: null }));
+    await loaded();
+    expect(
+      screen.queryByTestId("risk-register-attack-catalog-mismatch"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^(Generate|Regenerate)$/ }),
+    ).not.toBeDisabled();
   });
 
   it("says so when entries reached the register with no tier", async () => {
