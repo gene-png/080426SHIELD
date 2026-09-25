@@ -243,11 +243,19 @@ run_web_script() {
 # status must be one the tool gives as a verdict. Anything else is
 # could-not-look, with the likeliest cause named.
 #
+# AND A NON-ZERO VERDICT STATUS NEEDS VERDICT-SHAPED OUTPUT. The scripts line
+# prints BEFORE the tool starts, and exit 1 is also Node's code for an uncaught
+# exception: a typescript lib that fails to load, or a vitest config that
+# throws, exits 1 having judged nothing. So exit 1/2 counts only beside a line
+# the tool prints when it has judged something (`error TS`, a `Test Files`
+# summary, an eslint problem line). Exit 0 needs no such line.
+#
 # $1 = label, $2 = script name, $3 = captured output, $4 = status,
-# $5... = the statuses this tool uses for a verdict. Returns 0 if it ran.
+# $5 = an ERE a non-zero verdict must match in the output,
+# $6... = the statuses this tool uses for a verdict. Returns 0 if it ran.
 require_ran() {
-  local label="$1" name="$2" out="$3" status="$4" s cause
-  shift 4
+  local label="$1" name="$2" out="$3" status="$4" verdict="$5" s cause
+  shift 5
   if printf '%s\n' "$out" | grep -qF "$NO_SCRIPT_MARKER"; then
     cause="its apps/web script could not be read"
   elif ! printf '%s\n' "$out" | grep -qF "verify-in-worktree: apps/web package.json scripts.$name = "; then
@@ -258,12 +266,19 @@ require_ran() {
     esac
   else
     for s in "$@"; do
-      [ "$status" -eq "$s" ] && return 0
+      if [ "$status" -eq "$s" ]; then
+        [ "$status" -eq 0 ] && return 0
+        printf '%s\n' "$out" | grep -qE "$verdict" && return 0
+        cause="the tool exited $status without producing a verdict (no line matching '$verdict'): a crash, not findings"
+        break
+      fi
     done
-    case "$status" in
-      126 | 127) cause="the tool was not found or not executable (exit $status): is the node_modules volume empty?" ;;
-      *) if [ "$status" -gt 128 ]; then cause="killed by signal $((status - 128))"; else cause="exit $status is not a verdict this tool gives"; fi ;;
-    esac
+    if [ -z "${cause:-}" ]; then
+      case "$status" in
+        126 | 127) cause="the tool was not found or not executable (exit $status): is the node_modules volume empty?" ;;
+        *) if [ "$status" -gt 128 ]; then cause="killed by signal $((status - 128))"; else cause="exit $status is not a verdict this tool gives"; fi ;;
+      esac
+    fi
   fi
   echo "verify-in-worktree: $label -- COULD NOT LOOK: $cause. No bound is printed, because nothing is known to have run." >&2
   return 1
@@ -315,7 +330,7 @@ tsc() {
   out="$(run_web_script typecheck 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
-  if ! require_ran tsc typecheck "$out" "$status" 0 1 2; then return 2; fi
+  if ! require_ran tsc typecheck "$out" "$status" 'error TS[0-9]+' 0 1 2; then return 2; fi
   local total outside
   total="$(printf '%s
 ' "$out" | grep -c 'error TS' || true)"
@@ -356,7 +371,7 @@ vitest() {
   out="$(run_web_script test 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
-  if ! require_ran vitest test "$out" "$status" 0 1; then return 2; fi
+  if ! require_ran vitest test "$out" "$status" 'Test Files' 0 1; then return 2; fi
 
   local found ran uncollected
   found="$(count_test_files)"
@@ -434,7 +449,7 @@ eslint() {
   printf '%s\n' "$out"
   # ESLint's exit 2 is a configuration or crash error, not a verdict, so only
   # 0 and 1 count as having looked.
-  if ! require_ran eslint lint "$out" "$status" 0 1; then return 2; fi
+  if ! require_ran eslint lint "$out" "$status" '[0-9]+:[0-9]+[[:space:]]+(error|warning)|[0-9]+ problems?' 0 1; then return 2; fi
   echo "verify-in-worktree: eslint -- ran apps/web's \`lint\` script (what \`pnpm -F web lint\` runs), exit $status"
   return "$status"
 }
@@ -445,7 +460,7 @@ eslint() {
 lint_status() {
   local out s
   out="$(run_web_script lint 2>&1)" && s=0 || s=$?
-  require_ran "self-test lint" lint "$out" "$s" 0 1 || return 2
+  require_ran "self-test lint" lint "$out" "$s" '[0-9]+:[0-9]+[[:space:]]+(error|warning)|[0-9]+ problems?' 0 1 || return 2
   echo "$s"
 }
 
@@ -477,7 +492,7 @@ self_test() {
   echo "self-test: the mount must SEE this worktree, so make it fail on purpose"
   local baseline out st
   out="$(run_web_script typecheck 2>&1)" && st=0 || st=$?
-  require_ran "self-test tsc baseline" typecheck "$out" "$st" 0 1 2 || return 2
+  require_ran "self-test tsc baseline" typecheck "$out" "$st" 'error TS[0-9]+' 0 1 2 || return 2
   baseline="$(appsweb_errors "$out")"
   echo "self-test: baseline apps/web errors: ${baseline} (packages/* excluded -- see #175)"
   if [ "$baseline" -ne 0 ]; then
@@ -493,7 +508,7 @@ self_test() {
   local mutated
   out="$(run_web_script typecheck 2>&1)" && st=0 || st=$?
   rm -f "$WORKTREE/$probe"
-  require_ran "self-test tsc mutated" typecheck "$out" "$st" 0 1 2 || return 2
+  require_ran "self-test tsc mutated" typecheck "$out" "$st" 'error TS[0-9]+' 0 1 2 || return 2
   mutated="$(appsweb_errors "$out")"
   if [ "$mutated" -eq 0 ]; then
     echo "self-test: FAILED -- a deliberate type error did not turn this red." >&2

@@ -57,6 +57,19 @@ case "$STUB_MODE" in
   noline-exit1) echo "docker: invalid reference format" >&2; exit 1 ;;
   ran-tool-missing) echo "verify-in-worktree: apps/web package.json scripts.$last = tool"; exit 127 ;;
   ran-clean) echo "verify-in-worktree: apps/web package.json scripts.$last = tool"; exit 0 ;;
+  ran-verdict)
+    # A REAL non-zero verdict, in each tool's own shape.
+    echo "verify-in-worktree: apps/web package.json scripts.$last = tool"
+    case "$last" in
+      typecheck) echo "src/lib/a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'."; exit 2 ;;
+      test) echo " FAIL  src/a.test.ts > does a thing"; echo " Test Files  1 failed | 1 passed (2)"; exit 1 ;;
+      lint) echo "  1:5  error  Parsing error: Expression expected"; echo "✖ 1 problem (1 error, 0 warnings)"; exit 1 ;;
+    esac ;;
+  ran-crash)
+    # The scripts line printed, then the tool CRASHED: exit 1, no verdict output.
+    echo "verify-in-worktree: apps/web package.json scripts.$last = tool"
+    echo "Error: Cannot find module 'typescript/lib/tsc.js'" >&2
+    exit 1 ;;
   slow)
     echo "verify-in-worktree: apps/web package.json scripts.$last = tool"
     # The first call (the baseline) is quick and clean; the second -- made
@@ -106,12 +119,33 @@ run ran-clean eslint
 if [ "$rc" -ne 0 ]; then echo "FAIL: a clean lint run exited $rc, expected 0." >&2; fail=1; fi
 case "$out" in *"ran apps/web"*"exit 0"*) : ;; *) echo "FAIL: a clean lint run printed no bound." >&2; echo "$out" | sed 's/^/      | /' >&2; fail=1 ;; esac
 
+# 3b. POSITIVE CONTROLS FOR A REAL NON-ZERO VERDICT. Without these, dropping a
+#     verdict code from an arm's list left this gate green while real type
+#     errors printed COULD NOT LOOK.
+run ran-verdict tsc
+if [ "$rc" -ne 2 ]; then echo "FAIL: tsc with a real type error exited $rc, expected its own 2." >&2; fail=1; fi
+case "$out" in *"tsc -- 1 error(s)"*) : ;; *) echo "FAIL: tsc with a real type error printed no bound." >&2; echo "$out" | sed 's/^/      | /' >&2; fail=1 ;; esac
+run ran-verdict vitest
+if [ "$rc" -ne 1 ]; then echo "FAIL: vitest with a failing test exited $rc, expected its own 1." >&2; fail=1; fi
+case "$out" in *"test files ran"*) : ;; *) echo "FAIL: vitest with a failing test printed no bound." >&2; echo "$out" | sed 's/^/      | /' >&2; fail=1 ;; esac
+run ran-verdict eslint
+if [ "$rc" -ne 1 ]; then echo "FAIL: eslint with a finding exited $rc, expected its own 1." >&2; fail=1; fi
+case "$out" in *"ran apps/web"*"exit 1"*) : ;; *) echo "FAIL: eslint with a finding printed no bound." >&2; fail=1 ;; esac
+
+# 3c. A CRASH IS NOT A VERDICT. The scripts line prints before the tool starts,
+#     and exit 1 is also Node's code for an uncaught exception.
+expect_refusal ran-crash tsc "error(s)" "without producing a verdict"
+expect_refusal ran-crash vitest "test files ran" "without producing a verdict"
+expect_refusal ran-crash eslint "ran apps/web" "without producing a verdict"
+
 # 4. The self-test names the cause, not the mount.
-run notfound --self-test
-case "$out" in
-  *"is not reading"*) echo "FAIL: the self-test blamed the mount for a missing tool." >&2; fail=1 ;;
-esac
-case "$out" in *"COULD NOT LOOK"*) : ;; *) echo "FAIL: the self-test printed no COULD NOT LOOK for a missing tool." >&2; fail=1 ;; esac
+for mode in notfound ran-crash; do
+  run "$mode" --self-test
+  case "$out" in
+    *"is not reading"*) echo "FAIL: the self-test ($mode) blamed the mount." >&2; fail=1 ;;
+  esac
+  case "$out" in *"COULD NOT LOOK"*) : ;; *) echo "FAIL: the self-test ($mode) printed no COULD NOT LOOK." >&2; fail=1 ;; esac
+done
 
 # 5. TERM while the probe exists: exit 143, no probe left behind.
 rm -f "$TMP/count"

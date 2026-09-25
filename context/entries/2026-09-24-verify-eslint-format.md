@@ -81,3 +81,15 @@ tool missing from an empty volume (127). tsc printed "0 error(s)" and vitest
   line check (so the exit-1 case was added), and the self-test's baseline and mutated checks
   each covered the other (so the mutation removes both).
 - `--all` stopping at the first red arm is #566.
+
+## Re-review of `513ae88`: exit 1 is also a crash
+
+The scripts line prints BEFORE the tool starts, and exit 1 is also Node's code
+for an uncaught exception. So a typescript lib that fails to load printed
+"tsc -- 0 error(s)" over it. A non-zero verdict status now needs
+verdict-shaped output: `error TS` for tsc, a `Test Files` summary for vitest,
+a problem line for eslint. Otherwise the arm reports "the tool exited N
+without producing a verdict". The stub gate adds positive controls for REAL
+non-zero verdicts (tsc 2, vitest 1, eslint 1), each printing its bound and
+passing its status through, and the crash negative in every arm and in the
+self-test. Red on revert: seven mutations, each red.
