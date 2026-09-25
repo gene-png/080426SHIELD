@@ -75,7 +75,7 @@ def test_r2_or_echo_swallows() -> None:
     assert _rules('pytest -m unit || echo "skipped"') == ["R2 swallow"]
 
 
-@pytest.mark.parametrize("rescue", ["exit 1", "return 2", "false"])
+@pytest.mark.parametrize("rescue", ["exit 1", "false"])
 def test_r2_is_not_a_capture(rescue: str) -> None:
     assert _rules(f"pytest -m unit || {rescue}\necho done") == []
 
@@ -249,7 +249,7 @@ def test_exit_zero_after_or_is_143_in_another_spelling(script: str) -> None:
 
 @pytest.mark.parametrize(
     "rescue",
-    ["exit $?", "exit 3", "return 1", "{ echo x; exit 3; }", "{ printf 'x'; echo y; exit 1; }"],
+    ["exit $?", "exit 3", "{ echo x; exit 3; }", "{ printf 'x'; echo y; exit 1; }"],
 )
 def test_whitelisted_rescues(rescue: str) -> None:
     assert _rules(f"pytest || {rescue}\necho after") == []
@@ -315,10 +315,28 @@ def test_a_rescue_that_does_not_visibly_keep_the_failure_is_a_finding(script: st
 
 @pytest.mark.parametrize(
     "propagate",
-    ['exit "$rc"', "return $rc", '[ "$rc" -ne 0 ] && exit "$rc"', '[ "$rc" -eq 0 ] || exit "$rc"'],
+    ['exit "$rc"', '[ "$rc" -ne 0 ] && exit "$rc"', '[ "$rc" -eq 0 ] || exit "$rc"'],
 )
 def test_a_capture_counts_only_when_the_next_statement_propagates_it(propagate: str) -> None:
     assert _rules(f"pytest || rc=$?\n{propagate}\necho after") == []
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "pytest || return 1",
+        "pytest || return $?",
+        "pytest || { echo x; return 1; }",
+        "pytest || rc=$?" + chr(10) + "return $rc",
+        "if ! pytest; then echo x; return 1; fi",
+        "if pytest; then :; else return $?; fi",
+    ],
+)
+def test_return_is_never_a_rescue(script: str) -> None:
+    # Round 7, measured: `bash -c 'false || return 1; echo after'` prints
+    # "can only `return' from a function" and then runs `echo after`, rc 0.
+    # Earlier rounds pinned `return` as a rescue; that expectation was wrong.
+    assert _rules(script + chr(10) + "git push") == ["R2 swallow"]
 
 
 # --- round 4: the whitelist. Each case below was a rescue under an earlier model. ---

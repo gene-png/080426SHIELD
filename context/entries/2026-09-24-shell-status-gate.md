@@ -204,9 +204,9 @@ below.)
   short-circuits to the first `||`, so the element after THAT one is what runs,
   and it must be the statement's last element. `gate || exit 0 || exit 1`
   exits 0, and is now a finding.
-- **A gate as an `if` condition is checked.** Only the plain `if gate` /
-  `if ! gate` shape is modelled. The branch that runs on failure must end in a
-  literal failing `exit N` / `return N`, or `exit $?` in the else-branch of
+- **A gate as an `if` condition is checked** (at `8f57741`; tightened in
+  rounds 6 and 7 below). Only the plain `if gate` / `if ! gate` shape is
+  modelled. The branch that runs on failure must end in a literal failing `exit N` / `return N`, or `exit $?` in the else-branch of
   `if gate` only: in the then-branch of `if ! gate`, `$?` is the negation's
   status, 0. No such branch, an `elif` chain, or a compound condition
   (`if pytest || true`) is a finding. The repo's own scripts pass unchanged.
@@ -239,7 +239,7 @@ checked only the failure branch's LAST statement. So
 a failure branch whose exit sat inside a nested `if` or `while`.
 
 - **The failure branch now uses R2's grammar, from the same function**
-  (`_echoes_then_failure`): zero or more simple `echo` / `printf` statements,
+  (`_echoes_then_failure`; at `be5f823`, and `return` was dropped in round 7): zero or more simple `echo` / `printf` statements,
   then a literal failing `exit N` / `return N`, last. `exit $?` / `return $?`
   is allowed only as the SOLE statement of the else-branch of `if gate`. Any
   nested compound in the failure branch is a finding. With that, the gate is
@@ -257,3 +257,26 @@ a failure branch whose exit sat inside a nested `if` or `while`.
   `if !` mutation above.
 - Self-scan on the merged tree (`89bbdc8` plus this round): 66 workflow steps,
   2 hook entries, 14 `.sh` files, 1 CLAUDE.md block; none of R1-R4.
+
+## After round 7 of the review (`be5f823`)
+
+Round 7 ran bash: `bash -c 'false || return 1; echo after'` prints "can only
+`return' from a function", then runs `echo after`, and exits 0 (2 under
+`-e`). So `return` at a script's top level does not exit, and every form that
+accepted it was a hole, PRE-EXISTING since round 2.
+
+- **`return` is dropped from every accepted form**: the `||` rescue, the
+  `{ ...; }` group, the `if` failure branch, `exit $?`, and the capture's next
+  statement. Functions are already an unmodelled limit, so no in-scope shape
+  needed it.
+- **Three pinned expectations were WRONG, not strict**, and were said to be
+  before they changed: `return 2` in `test_r2_is_not_a_capture`, `return 1` in
+  `test_whitelisted_rescues`, and `return $rc` in the capture test. They move
+  to `test_return_is_never_a_rescue` as findings, with
+  `if ! pytest; then echo x; return 1; fi` and the other return forms.
+- Red on revert: three mutations (`return N`, `return $?`, `return $var`
+  accepted again), each red on that test. Round 6's mutations still go red.
+- Limits added to the docstring: a keyword used as an argument (`exit 1 fi`)
+  can make a branch look like it ends in an exit; a backtick substitution is
+  read as a word (only `$(` is refused).
+- Self-scan at this round's head: clean.

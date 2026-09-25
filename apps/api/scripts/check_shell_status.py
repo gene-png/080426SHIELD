@@ -38,14 +38,14 @@ and `docker compose exec|run [opts] SERVICE` are looked through.
                 element after the FIRST `||` following the gate (`&&` in
                 between short-circuits to it), and it must be the statement's
                 last element: `gate || exit 0 || exit 1` exits 0. Allowed:
-                  - exactly `exit N` / `return N`, N a literal, N % 256 != 0;
-                  - exactly `exit $?` / `return $?`;
+                  - exactly `exit N`, N a literal, N % 256 != 0;
+                  - exactly `exit $?`;
                   - `false`, only while errexit is on;
                   - exactly `{ echo/printf ...; exit N; }`: echo or printf
                     statements, then one exit, last, at top level, with no
                     if/then/&&/||/nested group/$( inside;
                   - `var=$?` whose NEXT statement is exactly `exit $var`,
-                    `return $var`, `[ "$var" -ne 0 ] && exit "$var"` or
+                    `[ "$var" -ne 0 ] && exit "$var"` or
                     `[ "$var" -eq 0 ] || exit "$var"`.
                 Any other right side is a finding. A false positive costs rewriting
                 a script into one of these shapes; a false negative costs the
@@ -73,9 +73,9 @@ A gate as an `if` condition (rounds 5 and 6): only the plain `if gate` /
 else-branch of `if gate`, the then-branch of `if ! gate`) must be EXACTLY one
 of:
   - zero or more simple `echo` / `printf` statements, then a literal failing
-    `exit N` / `return N` (N % 256 != 0), last -- the SAME closed grammar as
+    `exit N` (N % 256 != 0), last -- the SAME closed grammar as
     R2's `{ echo...; exit N; }` rescue, from one function;
-  - `exit $?` / `return $?` as the SOLE statement of the else-branch of
+  - `exit $?` as the SOLE statement of the else-branch of
     `if gate`. Never after another statement (`$?` is then that statement's),
     and never under `if !` (`$?` is then the negation's, 0).
 Any nested compound in the failure branch (if, while, until, for, case, a
@@ -97,7 +97,9 @@ are not modelled (only the body's own statements); a gate ending an if/case
 branch is taken to reach the compound's status, so code after the compound is
 not checked; `"$( ... )"` inside double quotes is read as one word, so a gate
 there is unseen; `then`, `do`, `fi`, `done` and `else` split a statement
-wherever they appear as words, not only in keyword position; `docker run IMAGE cmd` is
+wherever they appear as words, not only in keyword position, so a keyword used
+as an argument (`exit 1 fi`) can make a branch look like it ends in an exit;
+`return` is never accepted as a rescue (outside a function it does not exit); `docker run IMAGE cmd` is
 not looked through; a wrapper not named above hides the gate; `set -e` inside
 a function or subshell is not scoped; an unquoted `$(gate)` inside `echo`,
 `export` or `local` (the builtin's 0 replaces the gate's status); a
@@ -477,29 +479,34 @@ _ECHOES = {"echo", "printf"}
 _GROUP_FORBIDDEN = {"if", "then", "||", "&&", "{", "(", "exit", "return"}
 
 
+# `return` is NOT accepted anywhere. Outside a function, bash prints "can only
+# `return' from a function" and CONTINUES with status 1 (rc 2 under -e only), so
+# `gate || return 1; git push` pushes. Functions are an unmodelled limit, so
+# nothing in scope needs it (round 7, measured with bash -c).
 def _literal_failure(words: list[str]) -> bool:
-    """`exit N` / `return N`: exactly two words, N a literal the SHELL sees as non-zero."""
+    """`exit N`: exactly two words, N a literal the SHELL sees as non-zero."""
     return (
         len(words) == 2
-        and words[0] in ("exit", "return")
+        and words[0] == "exit"
         and bool(re.fullmatch(r"[0-9]+", words[1]))
         and int(words[1]) % 256 != 0
     )
 
 
 def _is_status_exit(words: list[str]) -> bool:
-    """`exit $?` / `return $?`: exactly those two words."""
-    return len(words) == 2 and words[0] in ("exit", "return") and words[1] == "$?"
+    """`exit $?`: exactly those two words."""
+    return len(words) == 2 and words[0] == "exit" and words[1] == "$?"
 
 
 def _echoes_then_failure(stmts: list[list[str]]) -> bool:
     """The ONE closed grammar for "report, then fail": zero or more simple
-    echo/printf statements, then a literal failing `exit N` / `return N`, last.
+    echo/printf statements, then a literal failing `exit N`, last.
 
     Shared by the `{ ...; }` rescue and the `if` failure branch, so the two
     cannot drift apart. A statement that is not a simple echo/printf -- any
     nested compound (if, while, until, for, case, a subshell, a group) or a
-    command substitution -- fails it.
+    `$(` command substitution -- fails it. A BACKTICK substitution is not
+    refused: it is read as an ordinary word (a stated limit).
     """
     if not stmts or not _literal_failure(stmts[-1]):
         return False
@@ -520,7 +527,7 @@ def _group_is_whitelisted(body: str) -> bool:
 def _capture_is_whitelisted(var: str, nxt: list[str]) -> bool:
     """The NEXT statement propagates the captured status, in exactly one of these shapes."""
     ref = ("$" + var, "${" + var + "}")
-    if len(nxt) == 2 and nxt[0] in ("exit", "return") and nxt[1] in ref:
+    if len(nxt) == 2 and nxt[0] == "exit" and nxt[1] in ref:
         return True
     # `[ "$var" -ne 0 ] && exit "$var"` or `[ "$var" -eq 0 ] || exit "$var"`
     return (
@@ -567,8 +574,9 @@ def _if_failure_kept(pairs: list, idx: int, negated: bool) -> bool:
     """Is the failure branch EXACTLY the `{ echo...; exit N; }` grammar?
 
     Zero or more simple echo/printf statements, then a literal failing
-    `exit N` / `return N` (`_echoes_then_failure`), or `exit $?` / `return $?`
-    as the SOLE statement of the else-branch of `if gate`. Anything after
+    `exit N` (`_echoes_then_failure`), or `exit $?` as the SOLE statement of
+    the else-branch of `if gate`. Never `return`: at a script's top level it
+    does not exit. Anything after
     another statement reads that statement's `$?` (`echo ...; exit $?` exits
     echo's 0); in the then-branch of `if ! gate`, `$?` is the NEGATION's
     status, 0 when the gate failed (measured, recorded in audit-gate.yml).
@@ -653,7 +661,7 @@ def analyse(
         last_stmt = terminal
         nxt_stmt = stmts[idx + 1] if idx + 1 < len(stmts) else []
         # The next statement propagates the status, in a WHITELISTED shape only:
-        # `exit $?` / `return $?`, or `var=$?` followed by a whitelisted
+        # `exit $?`, or `var=$?` followed by a whitelisted
         # propagation of `$var`. A printed or merely tested `$?` is not kept.
         after = stmts[idx + 2] if idx + 2 < len(stmts) else []
         # The flat token list reads `gate` then `fi` then `rc=$?` as adjacent; a
