@@ -157,7 +157,7 @@ output names which:
   1 - --check-registry: a LEAVE table has no registered guards, OR a table
       declared not-LEAVE holds rows the redactor leaves alone
   2 - could not look. The oracle could not run (baseline not green, a mutation
-      would not compile, the source could not be restored); the label check
+      would not compile, an anchor miscounts); the label check
       could not classify a table (an undeclared unreadable table, a stale
       UNREADABLE_NOT_LEAVE declaration, or a declaration pointing at a table
       that no longer exists); an ANCHOR IS STALE OR AMBIGUOUS under
@@ -174,8 +174,8 @@ output names which:
 
 from __future__ import annotations
 
-import importlib
 import sys
+import types
 from collections.abc import Callable
 from pathlib import Path
 
@@ -319,12 +319,6 @@ class CannotMeasure(Exception):
     violation. They are also unreachable from the `__main__` crash handler,
     which re-raises `SystemExit` by design.
     """
-
-
-class _Abort(Exception):
-    """An early exit from the mutation loop. Raised INSTEAD of `return 2`
-    inside the `try`, so control reaches the restore check below the `finally`
-    rather than leaving with the verdict computed and unread (#161)."""
 
 
 def _original() -> str:
@@ -628,17 +622,40 @@ def leave_rows():
     return [(table, rid, text) for table, pairs in tables for rid, text in pairs]
 
 
-def _evaluate(rows):
-    """Row keys whose text was ALTERED -- the LEAVE assertion would fail."""
-    import app.ai.redact as R
+#: The module name each variant is compiled under. Never `app.ai.redact`: the
+#: real module, the one the running API imports, is never replaced or reloaded.
+_VARIANT = "_leave_row_oracle_redact_variant"
 
-    importlib.reload(R)
-    failing = set()
-    for table, rid, text in rows:
-        out, _ = R.redact_for_ai(text, mode="strict")
-        if out != text:
-            failing.add((table, rid))
-    return failing
+
+def _evaluate(rows, source: str):
+    """Row keys whose text the redactor compiled from `source` ALTERS.
+
+    `source` is compiled as a module of its own and never written anywhere.
+    Until #161 this function reloaded `app.ai.redact` after the caller had
+    WRITTEN the mutation into `redact.py`: the file the api container
+    bind-mounts, which `uvicorn --reload` serves live. A Run-AI mid-run would
+    have egressed through a redactor with a guard removed, and a restore that
+    failed left it that way. Compiling in memory removes the whole class: there
+    is no write, so there is nothing to restore.
+
+    Registered in `sys.modules` for the duration only, because a module that
+    resolves annotations or dataclass fields looks itself up there.
+    """
+    module = types.ModuleType(_VARIANT)
+    module.__file__ = str(REDACT)
+    sys.modules[_VARIANT] = module
+    try:
+        # S102/B102: `source` is this repository's own redact.py with one
+        # anchored edit applied by this script; no external input reaches it.
+        exec(compile(source, str(REDACT), "exec"), module.__dict__)  # noqa: S102  # nosec B102
+        failing = set()
+        for table, rid, text in rows:
+            out, _ = module.redact_for_ai(text, mode="strict")
+            if out != text:
+                failing.add((table, rid))
+        return failing
+    finally:
+        sys.modules.pop(_VARIANT, None)
 
 
 def _module_context(module) -> dict:
@@ -973,8 +990,8 @@ def check_registry_and_labels() -> int:
 #: The alternative considered and rejected was listing `--check-anchors` in the
 #: other branch's allow-list: that tree does not implement it, so the argument
 #: would be ACCEPTED and then fall through to the default path, which is the
-#: full oracle, which WRITES `redact.py`. A silent write to the redactor is not
-#: a fix for a red CI.
+#: full oracle -- a multi-minute run nobody asked for, reported as the flag's
+#: result. (It also WROTE `redact.py` until #161; it now compiles in memory.)
 _FLAGS: dict[str, Callable[[], int]] = {
     "--check-registry": check_registry_and_labels,
     "--check-anchors": check_anchors,
@@ -1042,7 +1059,11 @@ def main(argv: list[str]) -> int:
     if selected:
         return max(_FLAGS[flag]() for flag in selected)
 
-    # THE DEFAULT PATH: the full oracle, which WRITES `redact.py`.
+    # THE DEFAULT PATH: the full oracle. It READS `redact.py` once and compiles
+    # every variant in memory (`_evaluate`); it never writes the file. It used
+    # to write each mutation into `redact.py` and restore it in a `finally`,
+    # and three early exits skipped the report of a failed restore (#161). The
+    # write was the root: the file is bind-mounted into the running api.
     #
     # `rows` is collected HERE rather than at the top of `main`, where it
     # used to be. Every flagged path above returns without needing it, and
@@ -1050,8 +1071,7 @@ def main(argv: list[str]) -> int:
     # anchors resolve still imported and walked every truth table.
     rows = leave_rows()
     original = _original()
-    REDACT.write_text(original, encoding="utf-8")
-    if _evaluate(rows):
+    if _evaluate(rows, original):
         print("leave-row-oracle: BASELINE NOT GREEN -- some LEAVE rows already fail.")
         print("Nothing measured. Fix the tree first; a red baseline makes every")
         print("mutation result meaningless.")
@@ -1081,85 +1101,61 @@ def main(argv: list[str]) -> int:
 
     killed_by: dict = {}
     protected_alone: set = set()
-    aborted = False
-    try:
-        for name, old, new in muts:
-            n = original.count(old)
-            if n != 1:
-                print(f"  !! {name}: anchor appears {n} times, not 1 -- cannot measure")
-                raise _Abort
-            REDACT.write_text(original.replace(old, new), encoding="utf-8")
-            try:
-                failing = _evaluate(rows)
-            except Exception as exc:
-                # NOT a skip. A mutation that will not compile silently removes
-                # a guard from the measurement and inflates `unrelated`.
-                print(f"  !! {name} did not compile: {type(exc).__name__}: {str(exc)[:70]}")
-                raise _Abort from exc
-            print(f"  {name:48} flips {len(failing):3}{'   <- unexercised' if not failing else ''}")
-            for key in failing:
-                killed_by.setdefault(key, []).append(name)
-
-        # All guards off at once. Whatever still survives THIS was never in the
-        # risk class, so no guard could have been what saved it.
-        mutated = original
-        for _name, old, new in muts:
-            mutated = mutated.replace(old, new)
-        REDACT.write_text(mutated, encoding="utf-8")
+    for name, old, new in muts:
+        n = original.count(old)
+        if n != 1:
+            print(f"  !! {name}: anchor appears {n} times, not 1 -- cannot measure")
+            return 2
         try:
-            all_off_failing = _evaluate(rows)
+            failing = _evaluate(rows, original.replace(old, new))
         except Exception as exc:
-            print(f"  !! all-guards-off variant did not compile: {type(exc).__name__}: {exc}")
-            raise _Abort from exc
+            # NOT a skip. A mutation that will not compile silently removes
+            # a guard from the measurement and inflates `unrelated`.
+            print(f"  !! {name} did not compile: {type(exc).__name__}: {str(exc)[:70]}")
+            return 2
+        print(f"  {name:48} flips {len(failing):3}{'   <- unexercised' if not failing else ''}")
+        for key in failing:
+            killed_by.setdefault(key, []).append(name)
 
-        # ALL GUARDS OFF EXCEPT ONE, for each guard in turn. A row that survives
-        # such a variant is protected by that guard ALONE, which separates
-        # "defended in depth by several guards" from "pinning nothing".
-        #
-        # Without this the oracle PUNISHES redundant protection, and it did:
-        # after the B3/B9 fix, `Flat network segmentation is the core finding`
-        # is protected by the no-separator digit requirement AND by the shared
-        # terminal guard, so removing either alone leaves the other -- and the
-        # row was reported as pinning nothing on the round it became strictly
-        # safer. Found by running the tool on the rewritten rules.
-        #
-        # One run per guard, not per row.
-        for keep_name, _old, _new in muts:
-            variant = original
-            for name, old, new in muts:
-                if name != keep_name:
-                    variant = variant.replace(old, new)
-            REDACT.write_text(variant, encoding="utf-8")
-            try:
-                failing = _evaluate(rows)
-            except Exception:
-                # Tells us nothing about any row. Skipping can only UNDER-count
-                # protection, never invent it -- but say so out loud.
-                print(f"  (all-but-{keep_name} did not compile; skipped)")
-                continue
-            for table, rid, _text in rows:
-                key = (table, rid)
-                if key in all_off_failing and key not in failing:
-                    protected_alone.add(key)
-    except _Abort:
-        # Every early exit lands HERE, then passes through the restore check.
-        # A `return 2` in its place ran the `finally` and left before the check
-        # could report -- so a mutated redact.py was announced as "did not
-        # compile" and nothing else (#161).
-        aborted = True
-    finally:
-        # NOT `return 2` here: a return inside `finally` swallows any exception
-        # still propagating, which would turn "the oracle crashed" into "the
-        # oracle reported 2" and lose the traceback. Record it and act below.
-        REDACT.write_text(original, encoding="utf-8")
-        restore_failed = _original() != original
-
-    if restore_failed:
-        print("*** RESTORE FAILED -- redact.py is NOT as it was found ***")
-        print("Do not trust the working tree. `git checkout -- apps/api/app/ai/redact.py`.")
+    # All guards off at once. Whatever still survives THIS was never in the
+    # risk class, so no guard could have been what saved it.
+    mutated = original
+    for _name, old, new in muts:
+        mutated = mutated.replace(old, new)
+    try:
+        all_off_failing = _evaluate(rows, mutated)
+    except Exception as exc:
+        print(f"  !! all-guards-off variant did not compile: {type(exc).__name__}: {exc}")
         return 2
-    if aborted:
-        return 2  # the cause was printed where it arose; redact.py is restored
+
+    # ALL GUARDS OFF EXCEPT ONE, for each guard in turn. A row that survives
+    # such a variant is protected by that guard ALONE, which separates
+    # "defended in depth by several guards" from "pinning nothing".
+    #
+    # Without this the oracle PUNISHES redundant protection, and it did:
+    # after the B3/B9 fix, `Flat network segmentation is the core finding`
+    # is protected by the no-separator digit requirement AND by the shared
+    # terminal guard, so removing either alone leaves the other -- and the
+    # row was reported as pinning nothing on the round it became strictly
+    # safer. Found by running the tool on the rewritten rules.
+    #
+    # One run per guard, not per row.
+    for keep_name, _old, _new in muts:
+        variant = original
+        for name, old, new in muts:
+            if name != keep_name:
+                variant = variant.replace(old, new)
+        try:
+            failing = _evaluate(rows, variant)
+        except Exception:
+            # Tells us nothing about any row. Skipping can only UNDER-count
+            # protection, never invent it -- but say so out loud.
+            print(f"  (all-but-{keep_name} did not compile; skipped)")
+            continue
+        for table, rid, _text in rows:
+            key = (table, rid)
+            if key in all_off_failing and key not in failing:
+                protected_alone.add(key)
 
     print()
     print(f"  {'ALL GUARDS OFF AT ONCE':48} flips {len(all_off_failing):3}")
