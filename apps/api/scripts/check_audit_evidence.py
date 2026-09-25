@@ -180,8 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     if not problems:
         print(
             f"audit gate: adversarial audit recorded ({len(read)} changed path(s) read, "
-            f"{len(code)} of them code; the body has the `## Adversarial audit` "
-            f"section, a `Findings:` line and a `Disposition:` line)."
+            f"{len(code)} of them code; the body has an `Adversarial audit` heading, "
+            f"a `Findings:` line and a `Disposition:` line)."
         )
         return 0
 

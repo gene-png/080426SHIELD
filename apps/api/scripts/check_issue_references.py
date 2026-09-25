@@ -173,6 +173,18 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to report clean on input it could not read.", file=sys.stderr)
         return 2
 
+    # A PR has at least one commit, so an EMPTY commits file means the collect
+    # step failed, not that there was nothing to scan. Before this it printed
+    # clean over zero lines.
+    if not commits.strip():
+        print(
+            "issue-close guard: the commits file is empty -- a pull request has at "
+            "least one commit, so the collection failed.",
+            file=sys.stderr,
+        )
+        print("Refusing to report clean on input it could not read.", file=sys.stderr)
+        return 2
+
     approved = approved_numbers(body)
     # What a clean line says it read (D-090, #592). The commits file is every
     # commit message concatenated, so it is measured in lines, not commits.

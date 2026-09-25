@@ -218,7 +218,7 @@ def test_main_fails_on_an_undeclared_close(tmp_path) -> None:
     commits = tmp_path / "c"
     title.write_text("feat: a change", encoding="utf-8")
     body.write_text("this repo has closed #12 twice by accident", encoding="utf-8")
-    commits.write_text("", encoding="utf-8")
+    commits.write_text("chore: a commit with no numbers", encoding="utf-8")
     rc = main(["--title", str(title), "--body", str(body), "--commits", str(commits)])
     assert rc == 1
 
@@ -260,7 +260,7 @@ def test_main_passes_a_declared_close(tmp_path) -> None:
     commits = tmp_path / "c"
     title.write_text("fix: closes #12", encoding="utf-8")
     body.write_text("Auto-close-approved: 12", encoding="utf-8")
-    commits.write_text("", encoding="utf-8")
+    commits.write_text("chore: a commit with no numbers", encoding="utf-8")
     assert main(["--title", str(title), "--body", str(body), "--commits", str(commits)]) == 0
 
 
@@ -438,3 +438,12 @@ def test_the_declared_close_line_names_what_it_read(tmp_path, capsys) -> None:
         "run in CI for that; read the title (7 chars), the description (34 chars) and "
         "1 line(s) of commit messages."
     )
+
+
+@pytest.mark.unit
+def test_an_empty_commits_file_is_could_not_look(tmp_path, capsys) -> None:
+    # A pull request has at least one commit, so an empty file is a failed
+    # collection. It printed a clean line over "0 line(s)" before.
+    argv = _inputs(tmp_path, "feat: x", "Tracked in #56.", "  \n")
+    assert main(argv) == 2
+    assert "the commits file is empty" in capsys.readouterr().err

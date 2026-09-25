@@ -84,6 +84,8 @@ And the paths that do not:
   * **the database cannot be reached** — exit 2, same reason. `depends_on`
     waits for `service_healthy`, so this should not happen; if it does, the
     honest report is that the check did not run, not that the pair is fine.
+  * **any command-line argument** — exit 2, naming it (#597). The gate takes
+    none, so `--help` or a typo must not run the check as though absent.
 
 ## Why not just read alembic's own error
 
