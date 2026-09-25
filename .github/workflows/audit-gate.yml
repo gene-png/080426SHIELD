@@ -83,8 +83,9 @@ jobs:
       # Dependabot PR has a body Dependabot wrote, and nobody can edit it into
       # compliance without taking over authorship of the PR -- so the gate is
       # RED BY CONSTRUCTION for that entire class, and the only ways to clear it
-      # are to merge past a red required check or to close the PR and redo the
-      # bump by hand. Both are worse than the exemption: the first teaches that
+      # are to merge past a red required check (since 2026-09-25, with
+      # enforce_admins on, that first means switching the setting off) or to
+      # close the PR and redo the bump by hand. Both are worse than the exemption: the first teaches that
       # a red gate is negotiable, and the second is how security bumps sit
       # unmerged.
       #
@@ -109,6 +110,11 @@ jobs:
       #     gh api repos/{owner}/{repo}/branches/main/protection
       #       required_pull_request_reviews.required_approving_review_count -> 0
       #       enforce_admins                                                -> false
+      #
+      # RE-MEASURED 2026-09-25: the review count is still 0, and
+      # enforce_admins is now TRUE (#595). That changes nothing below: the
+      # skip does not make anything red, it removes a check, so it works the
+      # same whoever merges.
       #
       # Nothing enforces a review. So this step's skip removes the ONLY enforced
       # check on these PRs and leaves a convention in its place. That is
