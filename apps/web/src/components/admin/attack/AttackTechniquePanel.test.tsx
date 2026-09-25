@@ -310,6 +310,12 @@ describe("AttackTechniquePanel — reason code (#554)", () => {
       "reach_limited",
       "missing_control_category",
     ]);
+    // D-076: the label promises no gate. The release gate is not built yet,
+    // and a label claiming it is would license leaving Partials reasonless.
+    const blank = screen
+      .getByRole("combobox", { name: "Reason for T1003" })
+      .querySelector('option[value=""]');
+    expect(blank?.textContent).toBe("No reason given");
   });
 
   it("offers an N/A row only platform_absent -- never a missing control", () => {
@@ -324,7 +330,7 @@ describe("AttackTechniquePanel — reason code (#554)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("saves the chosen code, and shows its definition", () => {
+  it("saves the chosen code", () => {
     const onPatch = reasonPanel(row({ status: "partial" }));
     fireEvent.change(
       screen.getByRole("combobox", { name: "Reason for T1003" }),
@@ -372,5 +378,68 @@ describe("AttackTechniquePanel — reason code (#554)", () => {
     expect(onPatch).toHaveBeenCalledWith({
       narrative: "Agent coverage on servers unknown.",
     });
+  });
+});
+
+describe("AttackTechniquePanel — narrative limits (#603 review)", () => {
+  function box() {
+    return screen.getByRole("textbox", {
+      name: "What could not be established for T1003",
+    });
+  }
+
+  it("caps the narrative at the API's 8000 characters", () => {
+    reasonPanel(row({ status: "gap", narrative: "x" }));
+    expect(box()).toHaveAttribute("maxLength", "8000");
+  });
+
+  it("sends null, never an empty string, when the narrative is cleared", () => {
+    const onPatch = reasonPanel(
+      row({ status: "gap", narrative: "Was unknown." }),
+    );
+    fireEvent.change(box(), { target: { value: "   " } });
+    fireEvent.blur(box());
+    expect(onPatch).toHaveBeenCalledWith({ narrative: null });
+  });
+
+  it("shows the stored narrative again after a refused save rolls back", () => {
+    const { rerender } = render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ id: "c2", status: "gap", narrative: "Stored." })}
+        coverageDefinitions={[]}
+        reasonCodes={REASONS}
+        onPatch={vi.fn()}
+      />,
+    );
+    const textbox = screen.getAllByRole("textbox", {
+      name: "What could not be established for T1003",
+    })[0];
+    fireEvent.change(textbox, { target: { value: "Unsaved edit" } });
+    // The workspace applies the edit optimistically, then rolls back to the
+    // stored row when the API refuses it.
+    rerender(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ id: "c2", status: "gap", narrative: "Unsaved edit" })}
+        coverageDefinitions={[]}
+        reasonCodes={REASONS}
+        onPatch={vi.fn()}
+      />,
+    );
+    rerender(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ id: "c2", status: "gap", narrative: "Stored." })}
+        coverageDefinitions={[]}
+        reasonCodes={REASONS}
+        onPatch={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("textbox", {
+        name: "What could not be established for T1003",
+      }),
+    ).toHaveValue("Stored.");
   });
 });

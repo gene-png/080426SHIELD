@@ -108,7 +108,7 @@ export interface AttackAssessment {
 export interface AttackCoveragePatch {
   status?: CoverageStatus | null;
   reason_code?: string | null;
-  narrative?: string;
+  narrative?: string | null;
   notes?: string;
   evidence_artifact_id?: string | null;
   locked?: boolean;

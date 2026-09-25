@@ -113,8 +113,10 @@ function citationLine(c: UnconfirmedCitation): string {
  * codes, so the pairing the vocabulary forbids -- N/A with
  * `missing_control_category` -- cannot be picked here. The API refuses it
  * anyway (typed 422); this keeps the refusal unreachable from the screen.
- * "No reason given" stays selectable: a missing reason is decided at release,
- * not at the click (#557), and the option says so rather than hiding the state.
+ * "No reason given" stays selectable: requiring a reason is the release gate's
+ * job (#557, "gate the release, not the click"), and that gate is c3 of #554,
+ * NOT YET BUILT. The label promises nothing about it (D-076: name only what
+ * exists).
  */
 function ReasonField({
   techniqueId,
@@ -154,7 +156,7 @@ function ReasonField({
             }
             className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
           >
-            <option value="">No reason given (required before release)</option>
+            <option value="">No reason given</option>
             {offered.map((r) => (
               <option key={r.code} value={r.code}>
                 {r.code.replace(/_/g, " ")}
@@ -177,15 +179,22 @@ function ReasonField({
             What could not be established
           </span>
           <textarea
-            key={`${coverage?.id ?? "none"}-narrative`}
+            // Keyed on the STORED value too, so a refused save's rollback
+            // remounts the box with what was stored instead of leaving the
+            // unsaved text on screen as if it had been kept.
+            key={`${coverage?.id ?? "none"}-narrative-${coverage?.narrative ?? ""}`}
             aria-label={`What could not be established for ${techniqueId}`}
             defaultValue={coverage?.narrative ?? ""}
             disabled={readOnly}
             rows={3}
+            // The API's `narrative` max_length.
+            maxLength={8000}
             onBlur={(e) => {
               const v = e.currentTarget.value.trim();
               if (v === (coverage?.narrative ?? "")) return;
-              void onPatch({ narrative: v });
+              // Cleared means NONE, never "": a blank string would read as a
+              // narrative given to any check that asks whether one exists.
+              void onPatch({ narrative: v === "" ? null : v });
             }}
             className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
           />
