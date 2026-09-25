@@ -271,3 +271,132 @@ def test_a_broken_conftest_is_could_not_look(tmp_path, capsys) -> None:
     root = _project(tmp_path, {M: MARKED, "tests/unit/conftest.py": "raise RuntimeError('x')\n"})
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 2, out
+
+
+# --- #543: a file that removes itself at collection is a finding, not a smaller denominator --
+
+SKIPPED_MODULE = """
+    import pytest
+    pytest.skip("not here", allow_module_level=True)
+    pytestmark = pytest.mark.unit
+    def test_x(): pass
+"""
+S = "tests/unit/test_skipped.py"
+
+
+def test_a_file_that_skips_at_module_level_is_a_finding(tmp_path, capsys) -> None:
+    # It is absent from BOTH collections, so the node-id comparison could never
+    # see it: "CI selects 2 of 2" read clean over a file CI never runs (#543).
+    root = _project(tmp_path, {M: MARKED, S: SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert f"{S}: never collected" in out, out
+
+
+def test_a_file_removed_by_collect_ignore_is_a_finding(tmp_path, capsys) -> None:
+    root = _project(
+        tmp_path,
+        {
+            M: MARKED,
+            "tests/unit/test_ignored.py": MARKED,
+            "tests/unit/conftest.py": 'collect_ignore = ["test_ignored.py"]\n',
+        },
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert "tests/unit/test_ignored.py: never collected" in out, out
+
+
+def test_an_uncollected_file_can_be_baselined_with_a_reason(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED, S: SKIPPED_MODULE})
+    base = _baseline(tmp_path, {S: {"reason": "#999: needs a service", "uncollected_file": True}})
+    code, out = _run(root, base, capsys)
+    assert code == 0, out
+    assert S in out and "#999: needs a service" in out, out
+
+
+def test_a_baselined_uncollected_file_that_now_collects_is_a_finding(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED, S: MARKED})
+    base = _baseline(tmp_path, {S: {"reason": "#999", "uncollected_file": True}})
+    code, out = _run(root, base, capsys)
+    assert code == 1, out
+    assert f"{S}: baselined as never collected, but now collected" in out, out
+
+
+def test_a_baselined_uncollected_file_that_is_gone_is_a_finding(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED})
+    base = _baseline(tmp_path, {S: {"reason": "#999", "uncollected_file": True}})
+    code, out = _run(root, base, capsys)
+    assert code == 1, out
+    assert f"{S}: baselined as never collected, but no longer exists" in out, out
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {S: {"reason": " ", "uncollected_file": True}},
+        {S: {"reason": "r", "uncollected_file": "yes"}},
+        {S: {"reason": "r", "uncollected_file": True, "tests": [f"{S}::test_x"]}},
+    ],
+    ids=["blank-reason", "not-true", "both-shapes"],
+)
+def test_a_malformed_uncollected_entry_is_refused(tmp_path, capsys, entry: dict) -> None:
+    root = _project(tmp_path, {M: MARKED, S: SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, entry), capsys)
+    assert code == 2, out
+
+
+def test_the_clean_line_counts_the_files_it_compared(tmp_path, capsys) -> None:
+    root = _project(tmp_path, {M: MARKED, "tests/unit/sub/test_n.py": MARKED})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out
+    assert "2 of 2 test files on disk collected" in out, out
+
+
+# --- #544: the gate's step must see CI's pytest step's environment -----------------
+
+
+def _ci_steps() -> tuple[str, dict, dict]:
+    """(job name, the pytest -m unit step, the check_ci_selection step)."""
+    ci = yaml.safe_load((_WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    found = []
+    for name, job in ci["jobs"].items():
+        steps = job.get("steps", [])
+        pyt = [
+            s
+            for s in steps
+            if str(s.get("run", "")).strip() == f"pytest {' '.join(gate.CI_SELECTOR)}"
+        ]
+        chk = [s for s in steps if "scripts.check_ci_selection" in str(s.get("run", ""))]
+        if pyt or chk:
+            found.append((name, pyt, chk))
+    assert len(found) == 1, f"the pytest step and the gate step must sit in ONE job: {found}"
+    name, pyt, chk = found[0]
+    assert len(pyt) == 1 and len(chk) == 1, (pyt, chk)
+    return name, pyt[0], chk[0]
+
+
+def test_the_gate_step_runs_with_the_pytest_steps_environment() -> None:
+    # #544: CI_SELECTOR pins the `run:` line only. An `env: PYTEST_ADDOPTS:
+    # --deselect ...` on the pytest step would narrow CI and not the gate, with
+    # every existing pin green. Job- and workflow-level env reach both steps
+    # because they share a job (asserted); step-level env and the working
+    # directory must be identical.
+    if _WORKFLOWS_DIR is None:
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+    _, pyt, chk = _ci_steps()
+    assert pyt.get("env") == chk.get("env"), (pyt.get("env"), chk.get("env"))
+    assert pyt.get("working-directory") == chk.get("working-directory")
+
+
+def test_files_match_when_pytests_rootdir_is_below_the_root(tmp_path, capsys) -> None:
+    # A `tests/pytest.ini` makes node ids read `unit/test_m.py`, not
+    # `tests/unit/test_m.py`. An equality match would call every file
+    # "never collected" in that layout.
+    root = _project(tmp_path, {M: MARKED})
+    (root / "tests" / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    unit: fast\n", encoding="utf-8"
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 0, out
+    assert "1 of 1 test files on disk collected" in out, out

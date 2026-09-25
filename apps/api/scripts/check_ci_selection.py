@@ -19,6 +19,15 @@ an old one with no finding: mark one, add another, the count stays the same
 (review of e8424dd). Each unselected test is named, so one cannot stand in for
 another.
 
+A FILE THAT NEVER COLLECTS IS A FINDING TOO (#543). A module-level
+`pytest.skip(..., allow_module_level=True)`, or a conftest `collect_ignore` /
+`pytest_ignore_collect`, removes a file from BOTH collections, so the node-id
+comparison cannot see it and "CI selects N of N" reads clean with a smaller N.
+So every `test_*.py` on disk under `tests/unit` must contribute at least one
+node id to the unselected collection, unless its baseline entry is
+`{"reason": ..., "uncollected_file": true}`. The file pattern is pytest's
+default `python_files`; neither pyproject.toml overrides it.
+
 THE BASELINE RATCHETS. A baselined node id that is now selected, or no longer
 exists, is a finding too: delete it from the baseline, so the backlog is
 visible and only ever goes down.
@@ -59,9 +68,14 @@ LIMITS. Only `tests/unit`; `tests/live` is opt-in by design. A test that is
 selected but SKIPS at runtime is not seen here (a runtime skip is not a
 selection question). A module-level `pytest.skip(..., allow_module_level=True)`
 removes the file from BOTH collections, so it shrinks the denominator rather
-than producing a finding. A conftest hook that deselects applies to BOTH
-collections, so it is invisible too. `PYTEST_ADDOPTS` or other environment
-set on CI's pytest step but not on this one is not seen.
+than producing a finding -- and that is now caught by the file check above,
+at the granularity of a FILE: a module that removes only some of its tests at
+collection time is not seen. A conftest hook that deselects individual items
+applies to BOTH collections, so it is invisible too. Environment on CI's
+pytest step is pinned equal to this step's by
+`test_the_gate_step_runs_with_the_pytest_steps_environment` (#544), not read
+here; a variable set some other way (a runner image, a composite action) is
+not seen.
 """
 
 from __future__ import annotations
@@ -134,6 +148,17 @@ def _load_baseline(path: Path) -> dict[str, dict]:
     if not isinstance(data, dict):
         raise CouldNotLook(f"baseline {path} must be a JSON object")
     for name, entry in data.items():
+        if isinstance(entry, dict) and "uncollected_file" in entry:
+            if (
+                entry.get("uncollected_file") is not True
+                or "tests" in entry
+                or not str(entry.get("reason", "")).strip()
+            ):
+                raise CouldNotLook(
+                    f"baseline entry {name!r}: an uncollected-file entry is exactly "
+                    '{"reason": <non-empty>, "uncollected_file": true}, with no `tests`'
+                )
+            continue
         tests = entry.get("tests") if isinstance(entry, dict) else None
         if (
             not isinstance(entry, dict)
@@ -149,11 +174,48 @@ def _load_baseline(path: Path) -> dict[str, dict]:
     return data
 
 
+def _collected_files(everything: set[str], on_disk: set[str]) -> set[str]:
+    """The on-disk files (root-relative) that contributed a node id.
+
+    Node ids are relative to pytest's rootdir, which can be BELOW the root
+    (a `tests/pytest.ini` makes ids read `unit/test_m.py`), so a disk path
+    matches a node file that equals it or is a `/`-bounded suffix of it."""
+    node_files = {n.split("::", 1)[0] for n in everything}
+    return {d for d in on_disk if any(d == f or d.endswith("/" + f) for f in node_files)}
+
+
+def uncollected_findings(
+    on_disk: set[str], collected: set[str], baseline: dict[str, dict]
+) -> tuple[list[str], list[str]]:
+    """(findings, allowed) for whole files the collection never reached."""
+    expected = {f: e for f, e in baseline.items() if e.get("uncollected_file") is True}
+    findings = [
+        f"{f}: never collected -- it contributes no test to `pytest tests/unit`, so CI "
+        "never runs it (a module-level skip, or a conftest collect_ignore?). Fix it, or "
+        'baseline it as {"reason": ..., "uncollected_file": true}.'
+        for f in sorted(on_disk - collected - set(expected))
+    ]
+    for f in sorted(expected):
+        if f not in on_disk:
+            findings.append(
+                f"{f}: baselined as never collected, but no longer exists -- delete the entry."
+            )
+        elif f in collected:
+            findings.append(
+                f"{f}: baselined as never collected, but now collected -- delete the entry."
+            )
+    allowed = [
+        f"{f}: never collected, baselined: {e['reason']}" for f, e in sorted(expected.items())
+    ]
+    return findings, allowed
+
+
 def evaluate(
     everything: set[str], selected: set[str], baseline: dict[str, dict]
 ) -> tuple[list[str], list[str]]:
     """(findings, allowed) -- allowed lines are printed on every run."""
     unselected = everything - selected
+    baseline = {f: e for f, e in baseline.items() if "tests" in e}
     baselined = {t: f for f, e in baseline.items() for t in e["tests"]}
     findings: list[str] = []
     new = sorted(unselected - set(baselined))
@@ -203,14 +265,23 @@ def main(argv: list[str]) -> int:
             raise CouldNotLook(
                 "collected ZERO tests with no selector. An empty collection is not a " "clean one."
             )
+        on_disk = {
+            p.relative_to(root).as_posix() for p in (root / "tests" / "unit").rglob("test_*.py")
+        }
     except CouldNotLook as exc:
         print(f"check-ci-selection: could not look -- {exc}")
         return 2
 
     findings, allowed = evaluate(everything, selected, baseline)
-    for line in allowed:
+    collected = _collected_files(everything, on_disk)
+    file_findings, file_allowed = uncollected_findings(on_disk, collected, baseline)
+    findings += file_findings
+    for line in allowed + file_allowed:
         print(f"  baselined: {line}")
-    summary = f"CI selects {len(selected & everything)} of {len(everything)} collected tests"
+    summary = (
+        f"CI selects {len(selected & everything)} of {len(everything)} collected tests; "
+        f"{len(collected)} of {len(on_disk)} test files on disk collected"
+    )
     if findings:
         print(f"check-ci-selection: {len(findings)} finding(s); {summary}:")
         for line in findings:
