@@ -742,3 +742,100 @@ def test_run_ai_does_not_write_a_status_no_surface_reports(app_client, status) -
     assert r.status_code == 200, r.text
     row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
     assert row["status"] is None
+
+
+def _one_row_run_with_reason(c, TestSession, provider, status: str, reason) -> tuple:
+    """As `_one_row_run`, with the model also offering `reason_code`."""
+    import json
+
+    h, svc_id, row_id = _one_row_run(c, TestSession, provider, status)
+    code = next(
+        t["technique_code"]
+        for t in c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()[
+            "coverage"
+        ]
+        if t["id"] == row_id
+    )
+    provider.register_static(
+        "mitre_map",
+        LLMResponse(
+            json.dumps(
+                {
+                    "techniques": [
+                        {
+                            "technique_code": code,
+                            "status": status,
+                            "reason_code": reason,
+                            "detection_tools": [],
+                            "prevention_tools": [],
+                            "response_tools": [],
+                            "rationale": "r",
+                        }
+                    ]
+                }
+            )
+        ),
+    )
+    return h, svc_id, row_id, code
+
+
+def _run_audit(TestSession) -> dict:
+    from sqlalchemy import select
+
+    from app.models.audit_entry import AuditEntry
+
+    with TestSession() as db:
+        return (
+            db.execute(select(AuditEntry.details).where(AuditEntry.action == "attack.run_ai"))
+            .scalars()
+            .one()
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [("partial", "reach_limited"), ("not_applicable", "platform_absent")],
+)
+def test_run_ai_stores_a_reason_the_status_takes(app_client, status, reason) -> None:
+    """#554 slice 2: the model's reason is stored when it belongs to the status."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id, _ = _one_row_run_with_reason(c, TestSession, provider, status, reason)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert (row["status"], row["reason_code"]) == (status, reason)
+    assert _run_audit(TestSession)["reason_codes_rejected"] == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        # The pairing the vocabulary exists to forbid: a missing control is a
+        # GAP, never an N/A reason.
+        ("not_applicable", "missing_control_category"),
+        ("partial", "platform_absent"),
+        ("gap", "reach_limited"),
+        ("partial", "not_a_code"),
+    ],
+)
+def test_run_ai_rejects_and_records_a_reason_the_status_does_not_take(
+    app_client, status, reason
+) -> None:
+    """Never stored, and never dropped silently: the audit row names it."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id, code = _one_row_run_with_reason(c, TestSession, provider, status, reason)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert (row["status"], row["reason_code"]) == (status, None)
+    # The static answer is replayed to EVERY batch, so the pair is recorded once
+    # per batch that saw it; a live run answers a technique in one batch only.
+    # What is pinned is that it IS recorded, and nothing else is.
+    rejected = _run_audit(TestSession)["reason_codes_rejected"]
+    assert rejected, "the rejected reason must be recorded, not silently dropped"
+    assert all(
+        entry == {"technique_code": code, "status": status, "reason_code": reason}
+        for entry in rejected
+    ), rejected

@@ -5828,3 +5828,15 @@ The T1588 finding decided `outside_control_surface`: the parent was N/A while it
 The slice that teaches every surface, and the release gate, to report the new two widens `WRITABLE`, so every intermediate `main` stays honest. The alternative was to widen this slice to cover every surface; it was declined to keep slices reviewable. `risk/link_scope.py` treats any non-NULL status as a consultant's judgement, and `unable_to_determine` is not one. That is unreachable while nothing writes it, and is recorded on #554 for the slice that widens `WRITABLE`.
 
 **What the gate must be (recorded, not built here).** No release gate on `unconfirmed_citations` exists (#557 comment, 2026-09-24), so "the same mechanism" has to be built. It will be one readiness check consulted at approve, finalize and release, returning a typed refusal that names each blocking count, with `unconfirmed_citations` able to become an input. The data-quality exception the owner referred to is defined nowhere in the repo. Its design, where an admin records a reason and acknowledges the unverified count and the deliverable discloses it, is **my call, overturnable**, and ships only together with that disclosure.
+
+## D-093 — The ATT&CK AI draft gives a reason per status, built from the vocabulary, and a wrong pairing is rejected and recorded
+
+**Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (the vocabulary, D-092); this slice wires it into the AI draft
+
+**Decision 1 — the prompt is built from the vocabulary, never restated.** `_MITRE_MAP_PROMPT` lists the seven Partial codes with their definitions from `coverage.REASON_CODES`, and `platform_absent` as the only N/A reason. So the prompt cannot offer a code the parser rejects, or omit one it accepts. It states the owner's test once: if something defends the technique and a named category of control is missing, that is Partial with `missing_control_category`; if nothing does, that is a gap, never N/A. The statuses offered stay the four in `coverage.WRITABLE` (D-092 Decision 5).
+
+**Decision 2 — the model's reason is judged by the PATCH's own rule.** A reason valid for the status is stored. One that is not is REJECTED: never stored, and recorded in the `attack.run_ai` audit row as `reason_codes_rejected`, with its technique, status and code. N/A with `missing_control_category`, the pairing the vocabulary exists to forbid, is the case this exists for. A consultant's reason the new status does not take is still dropped and recorded as `reason_codes_dropped` (D-092).
+
+**Decision 3 — the fixture answers from the prompt.** Fixture-mode Partial rows cycle through three of the seven codes, and N/A rows carry `platform_absent`. A test parses the codes out of the prompt TEXT and asserts every fixture reason is among them, so fixture and parser cannot agree by construction.
+
+**Not here.** Neither audit list reaches a screen yet (#322, #575), and nothing requires a reason; that is the release-readiness slice.

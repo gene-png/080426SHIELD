@@ -38,6 +38,7 @@ from app.ai.engine import (
     # without removing tolerance a working provider depends on.
     register_job,
 )
+from app.attack.coverage import REASON_CODES, reason_definition
 
 # --- Tech Debt extraction (moved behind the registry) ----------------------
 # Keeps the historical "extract.capabilities" purpose so existing fixtures and
@@ -143,6 +144,8 @@ register_job(
 
 
 # --- MITRE ATT&CK coverage suggestions -------------------------------------
+_NEWLINE = chr(10)
+
 _MITRE_MAP_PROMPT = """You are assisting a Kentro analyst mapping a security tool
 inventory to the MITRE ATT&CK Enterprise matrix. From the capability list and any
 context, SUGGEST a draft only.
@@ -150,6 +153,17 @@ context, SUGGEST a draft only.
 For each technique you can speak to, suggest a coverage status (covered, partial,
 gap, not_applicable) and which listed tools provide detection, prevention, and
 response, plus a short rationale.
+
+Give a `reason_code` for two statuses, and null for every other:
+* partial: exactly one code naming what is missing from a defence that exists:
+{partial_reasons}
+* not_applicable: only `platform_absent` -- {platform_absent}
+  An argument about reach or a missing control is NOT not_applicable.
+
+The test between partial, gap and not_applicable: is anything defending it at
+all? If something does and a named category of control is missing, that is
+partial with `missing_control_category`. If nothing does, that is gap -- never
+not_applicable.
 
 You may ONLY name tools that appear in the supplied capability list, and you must
 cite the `name` field of an entry EXACTLY as written -- not the vendor, not the
@@ -167,10 +181,18 @@ judging whether the tool actually addresses THIS technique. A tool classified
 
 Do NOT compute coverage percentages — code does that.
 Return strictly JSON:
-{"techniques": [{"technique_code": "T1003", "status": "covered|partial|gap|not_applicable",
+{{"techniques": [{{"technique_code": "T1003", "status": "covered|partial|gap|not_applicable",
+"reason_code": "<a code above, or null>",
 "detection_tools": [...], "prevention_tools": [...], "response_tools": [...],
-"rationale": "..."}], "executive_summary": "...", "top_blind_spots": [...]}
-"""
+"rationale": "..."}}], "executive_summary": "...", "top_blind_spots": [...]}}
+""".format(
+    # Built FROM the vocabulary (#554), never restated, so the prompt cannot
+    # offer a code the parser rejects or omit one it accepts.
+    partial_reasons=_NEWLINE.join(
+        f"    - {r.code}: {r.definition}" for r in REASON_CODES if r.status == "partial"
+    ),
+    platform_absent=reason_definition("platform_absent"),
+)
 
 # "techniques" must be a list. A scalar collapsed to `[]` via the route's
 # `or []`, and a DICT is truthy so it iterated its KEYS — strings, discarded one
