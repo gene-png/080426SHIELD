@@ -348,6 +348,14 @@ recorded with a real exit code and a real date, and was the minority outcome
 (D-071).
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
+- **`git push` runs the API unit suite** (pre-push hook) in the SHARED api
+  container: ~3 min, 13–16 under load, testing its tree, not the pushed ref
+  (#203). `NOT RUN` exits 2 and names its cause. Git Bash:
+  `SKIP=api-unit-tests git push`; PowerShell:
+  `$env:SKIP="api-unit-tests"; git push; Remove-Item Env:SKIP` (each run
+  2026-09-25 in its shell, a child process standing in for `git push`). **Agents push with SKIP**: CI runs the
+  suite, and the shared stack may be another agent's. Existing clones: re-run
+  `pre-commit install`.
 - Backend unit tests: `docker compose exec -T api pytest -m unit -q`
   (~3 min alone, 13–16 min under load; run detached and poll for the exit code).
 - Web typecheck: `docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"`
