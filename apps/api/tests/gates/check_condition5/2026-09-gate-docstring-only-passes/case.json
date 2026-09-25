@@ -1,0 +1,16 @@
+{
+ "incident": "A gate's module docstring is prose no code reads (the file never uses __doc__), so rewording it changes nothing that runs -- the docstring case the owner named as unable to alter behaviour.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "non-executable change only: apps/api/scripts/check_x.py",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

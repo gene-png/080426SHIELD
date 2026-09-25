@@ -145,20 +145,54 @@ happened.
    landing commit**, with any counts read live rather than carried forward.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
-   proves least.
+   proves least. **A diff changing no executable line in them does not trip it**
+   (#530: a comments-only compose diff came back) — `check_condition5.py`
+   decides, and its exit 2 reads as tripped.
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
 **Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
 
-**Conditions 1 and 4 are mechanical; 5 is mostly a path match, but its
-live-prompt clause needs a diff read. Conditions 2, 3 and 6 are self-attested
+**Conditions 1 and 4 are mechanical; 5 is computed over its listed paths by
+`check_condition5.py`, but a live prompt outside them needs a diff read. Conditions 2, 3 and 6 are self-attested
 by the agent that wants to merge** — three checkable conditions and three
 honest ones, not "a file-path check plus two facts". Condition 6 is a
 judgement call an agent can talk itself out of; when it is arguable, it has
 been tripped.
 
 ### Condition 5: the paths
+
+`check_condition5.py` reads this list; the bullets explain it, and a test pins
+that every entry is also named in them.
+
+    apps/api/app/ai/**
+    apps/api/app/csf/playbook.py
+    apps/api/app/risk/engine.py
+    apps/api/app/zt/scoring.py
+    apps/api/app/attack/coverage.py
+    apps/api/app/csf/scoring.py
+    apps/api/app/zt/maturity.py
+    apps/api/app/tech_debt/security_scope.py
+    apps/api/app/risk/exporters.py
+    apps/api/app/tech_debt/extract.py
+    apps/api/app/config.py
+    apps/api/app/models/**
+    apps/api/alembic/env.py
+    apps/api/tests/**
+    e2e/**
+    apps/web/**/*.test.ts
+    apps/web/**/*.test.tsx
+    apps/web/**/*.spec.ts
+    apps/web/**/*.spec.tsx
+    apps/api/scripts/seed_demo.py
+    scripts/demo-reset.sh
+    docker-compose.yml
+    docker-compose.demo.yml
+    apps/api/scripts/check_*.py
+    apps/api/scripts/leave_row_oracle.py
+    tests/gates/**
+    .github/workflows/**
+    .github/pull_request_template.md
 
 - `apps/api/app/ai/` — the single egress path for all five services.
 - `apps/api/app/csf/playbook.py`, `app/risk/engine.py`, `app/zt/scoring.py` —
@@ -222,10 +256,10 @@ anything adding or changing a test — and this repo does not ship code without
 tests. Condition 5's path list applied to the fifteen most recent PR merges on
 `main`:
 
-| measured | cleared | came back |
-| --- | --- | --- |
-| 2026-08-26 | 4 | 11 |
-| 2026-09-21 | 2 | 13 |
+| measured | cleared | came back | with the executable-line exception |
+| --- | --- | --- | --- |
+| 2026-08-26 | 4 | 11 | 4 / 11 |
+| 2026-09-21 | 2 | 13 | 4 / 11 |
 
 <!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21 -->
 
@@ -1068,14 +1102,9 @@ recorded with a real exit code and a real date, and was the minority outcome
   correctly, on the first run, and was not read. **When a gate reports something
   you did not expect, read it before deciding what it is about.**
 - **Replacing a character class with an enumerated one is a subtraction you must
-  COMPUTE, not guess.** `\s` matches 19 horizontal characters; narrowing it to
-  "space, tab, non-breaking space" to stop a rule crossing newlines dropped
-  SIXTEEN more — and in the redactor that is a LEAK, not a residual, because a
-  street address separated by a narrow no-break space is exactly what PDF and
-  Word extraction emit. The decision was framed as being about NEWLINES, so the
-  replacement was written to solve newlines and nobody re-derived what else was
-  in the class. **Write it as the subtraction and let the language define the
-  set** (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
+  COMPUTE, not guess** — the enumerated version once dropped sixteen characters
+  `\s` matches and leaked addresses (D-058). **Write it as the subtraction and
+  let the language define the set** (`[^\S\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029]`), then pin BOTH halves as
   parametrised sweeps whose parameters come from somewhere other than the thing
   under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
   it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.

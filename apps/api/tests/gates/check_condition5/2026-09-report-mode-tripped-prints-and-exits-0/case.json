@@ -1,0 +1,17 @@
+{
+ "incident": "The CI form (audit-gate.yml). Tripping condition 5 is a routing fact -- the PR comes back to the human -- not a defect in the PR, so a report step that went red on it would turn every test-carrying PR red. --report must still PRINT the tripping file; a report that exits 0 without saying what tripped would be a silent pass.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "executable change in a condition-5 path: docker-compose.yml",
+ "argv": [
+  "--report",
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

@@ -1,0 +1,16 @@
+{
+ "incident": "ADVERSARIAL. A TypeScript test whose only change is a '//' line reads as comment-only, but without a lexer a '//' or '*' line can sit inside a template literal. The gate refuses to guess: exit 2, read as tripped -- the routing a web test change already gets.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "cannot classify",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

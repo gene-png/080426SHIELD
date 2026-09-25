@@ -1,0 +1,16 @@
+{
+ "incident": "ADVERSARIAL. A shell diff whose only changed line starts with '#' looks comment-only, but inside a heredoc that line is DATA written to a file. The gate counts every line of a file that contains a heredoc.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "executable change in a condition-5 path: scripts/demo-reset.sh",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

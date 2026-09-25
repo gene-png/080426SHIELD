@@ -1,0 +1,10 @@
+apps/api/app/ai/**
+docker-compose.yml
+apps/api/scripts/check_*.py
+apps/api/tests/**
+tests/gates/**
+scripts/demo-reset.sh
+apps/web/**/*.test.ts
+apps/api/app/config.py
+apps/api/app/models/**
+.github/workflows/**

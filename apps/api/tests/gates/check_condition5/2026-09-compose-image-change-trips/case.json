@@ -1,0 +1,16 @@
+{
+ "incident": "The negative control for #530's narrowing: the same file, but the change is a value that runs -- an image swap. Condition 5 must still trip.",
+ "expect": 1,
+ "adversarial": false,
+ "stdout_contains": "executable change in a condition-5 path: docker-compose.yml",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

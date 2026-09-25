@@ -1,0 +1,16 @@
+{
+ "incident": "ADVERSARIAL. A comment-only Python diff reads as non-executable, but a changed '# nosec' (or noqa, test-integrity:, type:) changes what bandit, ruff or check_test_integrity does. CLAUDE.md records a red CI caused by exactly one such marker. A tool directive is executable.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "executable change in a condition-5 path: apps/api/app/ai/llm.py",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

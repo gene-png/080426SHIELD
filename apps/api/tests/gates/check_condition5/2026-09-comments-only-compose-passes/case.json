@@ -1,0 +1,16 @@
+{
+ "incident": "#530: the whole docker-compose.yml diff was comments -- nothing that runs changed -- and it still came back to the owner. The owner's rule (2026-09-24): a diff that changes no executable line in a condition-5 path does not trip condition 5.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "non-executable change only: docker-compose.yml",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

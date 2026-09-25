@@ -1,0 +1,16 @@
+{
+ "incident": "ADVERSARIAL. An empty changed-file list means the diff did not resolve. check_audit_evidence.py read that as 'documentation-only, exempt' and exited 0; a condition-5 gate reading it as 'not tripped' would clear an unattended merge on no input at all.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "no changed files",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--paths-file",
+  "{dir}/paths.txt"
+ ]
+}

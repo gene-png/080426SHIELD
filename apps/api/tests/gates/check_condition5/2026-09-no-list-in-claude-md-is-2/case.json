@@ -1,0 +1,16 @@
+{
+ "incident": "The first draft derived the path list from the prose bullets, which name paths they EXCLUDE (apps/web/**, alembic/). The list is now the indented block under the heading; a section with no list is not an empty rule, it is a list that moved.",
+ "expect": 2,
+ "adversarial": false,
+ "stdout_contains": "fewer than",
+ "argv": [
+  "--old-root",
+  "{dir}/old",
+  "--new-root",
+  "{dir}/new",
+  "--changed-files",
+  "{dir}/changed.txt",
+  "--claude-md",
+  "{dir}/CLAUDE.md"
+ ]
+}

@@ -1,0 +1,5 @@
+# the pin is a digest; see #521
+services:
+  api:
+    # why this image
+    image: x
