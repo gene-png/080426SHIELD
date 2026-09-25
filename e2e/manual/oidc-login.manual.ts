@@ -11,7 +11,7 @@ import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../helpers/auth";
  * self-skipped on every CI run while reading as a smoke spec. It is now a
  * `*.manual.ts` file that the default config never collects, run only through
  * `playwright.manual.config.ts`. Run in the wrong state, it FAILS rather than
- * skipping. The seam is dormant on the default stack
+ * skipping: it times out waiting for a button that does not render. The seam is dormant on the default stack
  * (`SHIELD_AUTH_OIDC_ENABLED` defaults false), so with the flag off the
  * "Sign in with Keycloak" button does not render and the "keycloak" provider
  * does not exist.

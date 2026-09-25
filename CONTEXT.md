@@ -1149,7 +1149,8 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
   registration, api at boot readiness) turns it on; a realm-export change since the
   last import also needs a keycloak volume wipe
   (`docker compose stop keycloak && docker volume rm shield-v2_keycloak-data && docker compose up -d keycloak`).
-  The `s26-oidc-login` opt-in spec runs with `E2E_OIDC=1`; always restore the flag
+  The OIDC manual procedure (`e2e/manual/oidc-login.manual.ts`, run through
+  `playwright.manual.config.ts`; #483) runs only with the flag on; always restore the flag
   off and re-prove one credentials sign-in afterward. The realm now pins one
   canonical issuer (`http://localhost:8080/realms/shield`) for browser and
   containers via `KC_HOSTNAME` + backchannel-dynamic; the api fetches JWKS on the
