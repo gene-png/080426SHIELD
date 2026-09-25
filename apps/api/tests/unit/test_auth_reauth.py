@@ -1,7 +1,7 @@
 """Auth compensating-controls tests (Sprint 3 T2).
 
 Covers the honest versions of the controls README/BUILD_REPORT claimed:
-  (a) daily forced re-auth ceiling honored at /auth/refresh (typed 401
+  (a) the forced re-auth ceiling (12 h by default, D-085) honored at /auth/refresh (typed 401
       reason=reauth_required past shield_forced_reauth_seconds);
   (b) refresh-token rotation — a reused (already-rotated) refresh token is
       rejected;
@@ -353,3 +353,50 @@ def test_startup_raises_when_email_delivery_enabled_without_host() -> None:
     settings = Settings(shield_email_delivery_enabled=True, smtp_host="")
     with pytest.raises(RuntimeError, match="SMTP_HOST"):
         settings.assert_safe_for_runtime()
+
+
+@pytest.mark.unit
+def test_the_default_forced_reauth_ceiling_is_twelve_hours(monkeypatch) -> None:
+    """D-085, the owner's decision on #516: the ceiling is a session-AGE bound,
+    lowered from 24 h to 12 h -- a working day with overrun, and half the
+    overnight window. The expected value is the decision, not the constant: an
+    edit to the default has to change this test and the decision record
+    together. It is NOT an idle timeout; see D-085 and #516."""
+    from app.config import Settings
+
+    monkeypatch.delenv("SHIELD_FORCED_REAUTH_SECONDS", raising=False)
+    assert Settings(_env_file=None).shield_forced_reauth_seconds == 12 * 3600
+
+
+@pytest.mark.unit
+def test_the_reauth_refusal_does_not_name_a_period(app_client: TestClient) -> None:
+    """The ceiling is configurable, so the refusal must not say "daily": at the
+    12 h default that was false. It says what happened, not how long it was."""
+    from app.config import get_settings
+    from app.security.jwt import issue_token
+
+    body = _register(app_client)
+    stale_auth_time = datetime.now(UTC) - timedelta(
+        seconds=get_settings().shield_forced_reauth_seconds + 60
+    )
+    import uuid as _uuid
+
+    stale, _ = issue_token(
+        subject=_uuid.UUID(body["user"]["id"]),
+        role="admin",
+        typ="refresh",
+        auth_time=stale_auth_time,
+    )
+    r = app_client.post("/auth/refresh", json={"refresh_token": stale})
+    assert r.status_code == 401, r.text
+    # THIS refusal, not another: a "session superseded" 401 would also pass the
+    # checks below, and would if a refactor ran rotation before the ceiling.
+    assert r.json()["error"]["reason"] == "reauth_required", r.text
+    message = r.json()["error"]["message"]
+    # No period in any spelling: not "daily", and not "12-hour" or "24 h"
+    # either -- the value is configurable, so any figure here goes stale.
+    lowered = message.lower()
+    for word in ("daily", "hour", "day"):
+        assert word not in lowered, (word, message)
+    assert not any(ch.isdigit() for ch in message), message
+    assert "sign in again" in message.lower(), message
