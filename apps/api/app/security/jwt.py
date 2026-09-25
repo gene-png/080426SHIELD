@@ -1,6 +1,9 @@
 """JWT issue + verify.
 
-Master Spec §4.5: short-lived access tokens (15 min) and a refresh token.
+Master Spec §4.5 asks for short-lived access tokens (15 min) and a refresh
+token. What ships is `Settings.jwt_access_ttl_seconds`: 15 minutes only under
+compose (`JWT_ACCESS_TTL_SECONDS=900`), 60 minutes at the config default. See
+`docs/security.md`, and the twin note in `routes/auth.py`.
 Tokens are signed with HS256 from `Settings.jwt_signing_secret`; in
 production the secret comes from a secrets manager rather than an env var.
 

@@ -21,9 +21,12 @@
 > This document previously stated TLS, KMS-encrypted storage, signed CI
 > artifacts, a server-side MIME sniff, an HIBP top-100k password check, a
 > payload hash on the audit row, and a 15-minute access token. None of those
-> existed. A security document that claims controls the code does not have is
-> worse than one that claims nothing: it is the artifact an assessor or a client
-> reads, and every wrong row in it is a finding waiting to be raised against us.
+> existed as stated: the token lifetime is 15 minutes only under compose's
+> override, and 60 by default (see "15-minute access tokens" below); the rest
+> did not exist at all. A security document that claims controls the code does
+> not have is worse than one that claims nothing: it is the artifact an assessor
+> or a client reads, and every wrong row in it is a finding waiting to be raised
+> against us.
 
 ## Threat model (v1)
 
