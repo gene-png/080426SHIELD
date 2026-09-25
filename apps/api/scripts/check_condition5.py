@@ -28,12 +28,13 @@ THE PATHS IT JUDGES. Two sources, and in `--range` mode (the CI form) both:
     needs interpolation is exit 2); and GATE CONFIGURATION by name shape at the
     top of the repo, apps/web and apps/api (package.json, pnpm-workspace.yaml,
     conftest.py, tsconfig*.json, *.config.*, *.setup.*, *.toml/.ini/.cfg,
-    .prettier*, .eslintrc*).
+    .prettier*, .eslintrc*, .babelrc*, .gitignore, .dockerignore, Dockerfile*).
 
 WHAT THIS CANNOT PROTECT, and no in-repo change can: CI runs the merge base's
 copy of this file, but the WORKFLOW that runs it is the PR's own
-(`on: pull_request`), so a PR that edits that step, or this file, can make the
-report say anything. Such a PR trips condition 5 through
+(`on: pull_request`), so a PR that edits THAT STEP can make the report say
+anything (by running its own copy of this file, or no copy). Editing only this
+file cannot: the base's copy judges that edit, and trips it. Such a PR trips condition 5 through
 `.github/workflows/**` and `check_*.py` only if a human reads the diff. Only
 branch protection can close this; it is the owner's (#572).
 
@@ -306,6 +307,11 @@ def _compose_mounts(service: dict) -> list[tuple[str, str]]:
                 continue
             src, dst = ":".join(parts[:k]), parts[k]
             is_path = src.startswith((".", "/", "~", "$"))
+            # `/opt/${NAME}`, or `${N:-/x}` split mid-default: the target is
+            # interpolated even though a part starts with "/".
+            if "$" in ":".join(parts[k:]):
+                out.append((INTERPOLATED_TARGET, UNRESOLVABLE))
+                continue
         elif isinstance(vol, dict) and vol.get("type") == "bind":
             src, dst = str(vol.get("source", "")), str(vol.get("target", ""))
             is_path = True

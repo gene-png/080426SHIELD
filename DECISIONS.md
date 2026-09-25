@@ -5822,7 +5822,9 @@ attesting it. Its exit 2 reads as tripped.
   human reads the diff.
 - **Config by name shape** at the top of the repo, apps/web and apps/api is
   derived, so a first-draft list cannot miss `vitest.setup.ts` or a root
-  `conftest.py`. Compose mounts are merged across files, and a command path
+  `conftest.py`. The shapes: package.json, pnpm-workspace.yaml, conftest.py,
+  tsconfig*.json, _.config._, _.setup._, _.toml/.ini/.cfg, .prettier_,
+  .eslintrc*, .babelrc*, .gitignore, .dockerignore and Dockerfile*. Compose mounts are merged across files, and a command path
   under a mount that needs interpolation is exit 2.
 - **Residual, covered by no other check, and open-ended:** a script reached
   from a sourced file or another script, a path spelled through a `$VAR`,

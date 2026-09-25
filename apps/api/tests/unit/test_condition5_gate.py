@@ -602,6 +602,13 @@ def test_a_compose_mount_with_an_interpolated_target_is_could_not_look() -> None
     )
     with pytest.raises(gate.CouldNotLook, match="container path needs interpolation"):
         gate.scripts_from_compose({"docker-compose.yml": compose}, {"scripts/x.sh"})
+    # A target that STARTS with "/" but is interpolated inside.
+    slash = (
+        "services:\n  web:\n    volumes:\n      - ./scripts:/opt/${NAME}:ro\n"
+        "    command: sh /opt/tools/x.sh\n"
+    )
+    with pytest.raises(gate.CouldNotLook, match="container path needs interpolation"):
+        gate.scripts_from_compose({"docker-compose.yml": slash}, {"scripts/tools/x.sh"})
 
 
 def test_ignore_and_container_build_files_are_gate_config() -> None:
