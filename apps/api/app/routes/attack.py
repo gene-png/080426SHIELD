@@ -49,6 +49,7 @@ from app.attack.citations import (
 )
 from app.attack.coverage import (
     COVERAGE_DEFINITIONS,
+    REASON_CODES,
     WRITABLE,
     CoverageStatus,
     is_valid_reason,
@@ -101,6 +102,7 @@ from app.schemas.attack import (
     AttackServiceCreateRequest,
     AttackServiceResponse,
     CatalogCoverageDefinition,
+    CatalogReasonCode,
     CatalogResponse,
     CatalogTactic,
     CatalogTechnique,
@@ -333,12 +335,17 @@ def get_catalog(
         )
         for d in COVERAGE_DEFINITIONS
     ]
+    reasons = [
+        CatalogReasonCode(code=r.code, status=r.status, definition=r.definition)
+        for r in REASON_CODES
+    ]
     parents = sum(1 for t in TECHNIQUES if not t.is_sub_technique)
     subs = len(TECHNIQUES) - parents
     return CatalogResponse(
         tactics=tactic_rows,
         techniques=technique_rows,
         coverage_definitions=defs,
+        reason_codes=reasons,
         total_techniques=parents,
         total_sub_techniques=subs,
     )

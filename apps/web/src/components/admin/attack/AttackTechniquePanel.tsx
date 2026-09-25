@@ -13,6 +13,7 @@ import type {
   AttackCoverageRow,
   AttackCoveragePatch,
   CatalogCoverageDefinition,
+  CatalogReasonCode,
   CatalogTechnique,
   CoverageStatus,
   UnconfirmedCitation,
@@ -104,10 +105,102 @@ function citationLine(c: UnconfirmedCitation): string {
   return `Cited "${c.cited ?? c.tool}" \u2014 resolved to ${c.tool} (${c.reason.replace(/_/g, " ")}).`;
 }
 
+/**
+ * #554: the reason for the row's status, from the codes that status takes, and
+ * the narrative an unverified row carries.
+ *
+ * Offered only for a status that HAS codes (Partial, N/A), and only those
+ * codes, so the pairing the vocabulary forbids -- N/A with
+ * `missing_control_category` -- cannot be picked here. The API refuses it
+ * anyway (typed 422); this keeps the refusal unreachable from the screen.
+ * "No reason given" stays selectable: a missing reason is decided at release,
+ * not at the click (#557), and the option says so rather than hiding the state.
+ */
+function ReasonField({
+  techniqueId,
+  coverage,
+  reasonCodes,
+  readOnly,
+  onPatch,
+}: {
+  techniqueId: string;
+  coverage: AttackCoverageRow | null;
+  reasonCodes: CatalogReasonCode[];
+  readOnly: boolean;
+  onPatch: (patch: AttackCoveragePatch) => void | Promise<void>;
+}): JSX.Element | null {
+  const status = coverage?.status ?? null;
+  const offered = reasonCodes.filter((r) => r.status === status);
+  const current = coverage?.reason_code ?? null;
+  const chosen = offered.find((r) => r.code === current) ?? null;
+  const showNarrative =
+    (status as string | null) === "unable_to_determine" ||
+    Boolean(coverage?.narrative);
+  if (offered.length === 0 && !showNarrative) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      {offered.length > 0 ? (
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+            Reason
+          </span>
+          <select
+            key={`${coverage?.id ?? "none"}-${status ?? "unscored"}`}
+            aria-label={`Reason for ${techniqueId}`}
+            value={current ?? ""}
+            disabled={readOnly}
+            onChange={(e) =>
+              void onPatch({ reason_code: e.currentTarget.value || null })
+            }
+            className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
+          >
+            <option value="">No reason given (required before release)</option>
+            {offered.map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.code.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+          {chosen ? (
+            <span
+              className="text-xs text-ink-secondary"
+              data-testid="reason-definition"
+            >
+              {chosen.definition}
+            </span>
+          ) : null}
+        </label>
+      ) : null}
+      {showNarrative ? (
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+            What could not be established
+          </span>
+          <textarea
+            key={`${coverage?.id ?? "none"}-narrative`}
+            aria-label={`What could not be established for ${techniqueId}`}
+            defaultValue={coverage?.narrative ?? ""}
+            disabled={readOnly}
+            rows={3}
+            onBlur={(e) => {
+              const v = e.currentTarget.value.trim();
+              if (v === (coverage?.narrative ?? "")) return;
+              void onPatch({ narrative: v });
+            }}
+            className="w-full rounded-md border border-border bg-surface-card p-2 text-sm text-ink-primary focus:outline-2 focus:outline-brand-500"
+          />
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
 export interface AttackTechniquePanelProps {
   technique: CatalogTechnique | null;
   coverage: AttackCoverageRow | null;
   coverageDefinitions: CatalogCoverageDefinition[];
+  /** #554: every reason code and its status, from the catalog. */
+  reasonCodes?: CatalogReasonCode[];
   readOnly?: boolean;
   onPatch: (patch: AttackCoveragePatch) => void | Promise<void>;
   /**
@@ -123,6 +216,7 @@ export function AttackTechniquePanel({
   technique,
   coverage,
   coverageDefinitions,
+  reasonCodes = [],
   readOnly = false,
   onPatch,
   onConfirmCitations,
@@ -207,6 +301,14 @@ export function AttackTechniquePanel({
             );
           })}
         </div>
+
+        <ReasonField
+          techniqueId={technique.id}
+          coverage={coverage}
+          reasonCodes={reasonCodes}
+          readOnly={readOnly}
+          onPatch={onPatch}
+        />
 
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wide text-ink-tertiary">

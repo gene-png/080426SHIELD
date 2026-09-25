@@ -39,10 +39,21 @@ class CatalogCoverageDefinition(BaseModel):
     description: str
 
 
+class CatalogReasonCode(BaseModel):
+    """One reason code, with the ONE status it may accompany (#554, D-092)."""
+
+    code: str
+    status: CoverageStatus
+    definition: str
+
+
 class CatalogResponse(BaseModel):
     tactics: list[CatalogTactic]
     techniques: list[CatalogTechnique]
     coverage_definitions: list[CatalogCoverageDefinition]
+    # #554: served FROM `coverage.REASON_CODES`, so the workspace offers exactly
+    # the codes the PATCH accepts and never keeps a second list to drift.
+    reason_codes: list[CatalogReasonCode]
     total_techniques: int  # parent only
     total_sub_techniques: int
 
