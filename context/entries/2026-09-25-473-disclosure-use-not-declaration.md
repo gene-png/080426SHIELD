@@ -67,12 +67,58 @@ real use.
   One earlier mutation, adding `<` alone, was GREEN. `=>` has no `<`, so it
   never exercised the defect, and it is not counted above.
 
+## Round 1 (review of `9fc8eeb`)
+
+**What the stripper cannot parse is now could-not-look.** An unclosed block
+comment, a template literal open at EOF, a declaration body that never closes,
+or a string in a type body that never closes each used to fall through to a
+verdict, with EOF taken as the end. In the red direction, `type Brace = "{";`
+above a render opened a body that never closed, and the strip ate the render.
+That red could never be cleared, because the exemption check uses the same
+stripper. In the green direction, a regex literal like `/["']/` opened a
+phantom string, and a comment after it cleared the field.
+
+Now:
+- both scanners raise `TsParseError`, and `reader_text` pre-parses every
+  TypeScript reader, so `main` exits 2 naming the file and the cause;
+- strings are skipped inside type bodies;
+- regex literals are recognised by the character before the `/`.
+
+A `'`/`"` string cannot cross a newline in TypeScript, so a quote still open at
+a newline was never a string (JSX text like `Don't`). It resets there instead
+of swallowing the file.
+
+**Arm 2's twin.** `audit_payload_has_a_generic_reader` matched the raw
+`AuditViewer.tsx`, so a commented-out `cell:` satisfied it. It now reads
+`ts_use_text`.
+
+**Keep-tests.** A destructured prop and a `${d.field}` template use must
+survive the strip.
+
+The real tree still reads 31 of 31, with no file exiting 2.
+
+**Red-on-revert, 8 of 8:**
+- an unclosed block comment running to EOF;
+- an unclosed template accepted;
+- a body ending at EOF;
+- a string in a type body ending at EOF;
+- strings not masked in type bodies;
+- regex literals not recognised;
+- the newline reset removed;
+- the audit arm reading the raw file.
+
+The EOF-string mutation was GREEN on the first run. Its only case had a
+newline, so a different check fired first. A case with the quote open at the
+very end of the file was added, and it is red now.
+
 ## Limits
 
+The full list is in `ts_use_text`'s docstring, and the open ones are #632.
 - A green means the field is USED outside a type declaration, in a file that
   names the model. It does not mean RENDERED: a use that feeds nothing visible
   still clears it.
-- A field name inside a string literal counts as a use, so
-  `Pick<Data, "field">` would clear it.
-- An inline object type in a parameter annotation is not stripped.
-- Python exporters are matched as before.
+- These still count as a use: an inline object-type annotation, an
+  indexed-access type or `Pick<Data, "field">`, an `interface` whose generic
+  holds a `{`, a `type` alias whose generic has a default (`<T = Y>`), and a
+  comment after a JSX apostrophe on the same line.
+- Python exporters are matched as before, comments and docstrings included.

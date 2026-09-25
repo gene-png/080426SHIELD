@@ -825,3 +825,102 @@ def test_the_subject_may_live_only_in_the_type_name(tmp_path) -> None:
     web = "interface ThingData { id: string }\nexport const f = (d: any) => d.excluded_inputs;\n"
     seed = _tree(tmp_path, schema=_SCHEMA, web=web)
     assert main(["x", str(seed)]) == 0
+
+
+# --- #631 round 1: what the stripper cannot parse is could-not-look ---------------------
+
+_USE = "const t: Thing = d;\nconst n = t.excluded_inputs.length;\n"
+
+
+@pytest.mark.parametrize(
+    ("web", "cause"),
+    [
+        ("/* a comment that never closes\n" + _USE, "a /* block comment never closes"),
+        ("const s = `a template that never closes\n" + _USE, "a template literal never closes"),
+        (
+            "interface ThingData {\n  excluded_inputs: string[];\n" + _USE,
+            "an interface body never closes",
+        ),
+        (
+            "type ThingData = { excluded_inputs: string[] }\n" + _USE.replace(";", ""),
+            "a type alias body never closes",
+        ),
+        ('type Quote = "unterminated;\n' + _USE, "string inside a type body never closes"),
+        # Open at the very END, no newline after: the EOF branch, not the
+        # newline one (review of the red-on-revert run: this was untested).
+        (_USE + 'type Quote = "unterminated', "string inside a type body never closes"),
+    ],
+    ids=["block-comment", "template", "interface", "type-alias", "string-in-type", "string-at-eof"],
+)
+def test_what_the_stripper_cannot_parse_is_could_not_look(
+    tmp_path, capsys, web: str, cause: str
+) -> None:
+    # Each state used to fall through to a VERDICT: EOF taken as the end, so a
+    # render after it was stripped (a red no exemption could clear) or a
+    # comment stayed in (a green). Now it is exit 2, naming the file and cause.
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 2
+    err = capsys.readouterr().err
+    assert "LatestPanel.tsx: could not parse" in err and cause in err, err
+
+
+def test_a_brace_in_a_string_type_does_not_swallow_the_render(tmp_path) -> None:
+    # `type Brace = "{";` opened a body that never closed, and the strip ate
+    # the render below it. Strings are skipped inside type bodies.
+    seed = _tree(tmp_path, schema=_SCHEMA, web='type Brace = "{";\n' + _USE)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_regex_with_a_quote_does_not_stop_comment_stripping(tmp_path, capsys) -> None:
+    # `/["']/` read as code opened a phantom string, so the comment after it on
+    # the same line survived and cleared the field -- #473's own case, green.
+    web = "const t: Thing = d;\nconst r = /[\"']/; // excluded_inputs is shown elsewhere\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+def test_an_apostrophe_in_jsx_text_does_not_swallow_the_file(tmp_path) -> None:
+    # A `'` string cannot cross a newline, so JSX text like `Don't` resets at
+    # the line end instead of hiding every use after it, or failing to parse.
+    web = "const t: Thing = d;\nconst p = <p>Don't</p>;\nconst n = t.excluded_inputs;\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_comment_after_a_jsx_apostrophe_line_is_still_stripped(tmp_path, capsys) -> None:
+    # The other half of the reset: without it the phantom `'` runs to EOF and
+    # every later comment is kept, so a field named only in one clears.
+    web = "const t: Thing = d;\nconst p = <p>Don't</p>;\n// excluded_inputs is shown elsewhere\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "web",
+    [
+        "export function Panel({ excluded_inputs }: ThingProps) {\n"
+        "  return excluded_inputs.length;\n}\n",
+        "const t: Thing = d;\nconst s = `${t.excluded_inputs.length} dropped`;\n",
+    ],
+    ids=["destructured-prop", "template-use"],
+)
+def test_real_uses_are_KEPT(tmp_path, web: str) -> None:
+    # What must survive the strip, not only what must go: a destructured prop
+    # and a use inside a template literal are uses.
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_a_commented_out_audit_renderer_is_not_a_renderer(tmp_path, capsys) -> None:
+    # Arm 2's twin of #473: the regexes read the RAW file, so a commented-out
+    # cell satisfied them. They now read `ts_use_text`.
+    seed = _tree(tmp_path, schema=_SCHEMA, web=_USE)
+    viewer = tmp_path / "apps" / "web" / "src" / "components" / "admin" / "AuditViewer.tsx"
+    viewer.write_text(
+        "const pairs = Object.entries(details);\n// cell: (e) => renderDetails(e.details),\n",
+        encoding="utf-8",
+    )
+    assert main(["x", str(seed)]) == 1
+    assert "nothing renders the audit `details` payload generically" in capsys.readouterr().out
