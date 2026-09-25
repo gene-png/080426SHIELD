@@ -72,7 +72,7 @@ or listing, a malformed baseline, or a workflow that does not parse exits 2.
 The gate catches one class of defect: a test that exists and CI never runs,
 while a local run passes. That class broke this PR's own CI.
 
-- The three new gates carry the crash handler, so `discover_gates` finds them.
+- The new gates carry the crash handler, so `discover_gates` finds them.
   They had no entry in `test_gate_crash_exit_code.GATES`.
   `test_universe_equals_the_other_gate_enumeration` failed on BOTH heads,
   `d3aeaaf` and `7bbd791`.
@@ -89,7 +89,7 @@ author ran it locally and CI did not". **A local run proves what it selected,
 never what CI selects.** That is the strongest argument for this gate, and it
 is also why the gate asks pytest rather than trusting a person's selection.
 
-Fixed at `d95521d`: both harness files and the three gate test files pass in
+Fixed at `d95521d`: the harness files and the gate test files pass in
 the api image.
 
 ## The backlog, allowed with reasons rather than hidden
