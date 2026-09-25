@@ -127,6 +127,10 @@ class AttackCoverageResponse(BaseModel):
     # the NULL one: `None` means nobody ever resolved this row's citations, and
     # that scores as pending, not as confirmed.
     unconfirmed_citations: list[UnconfirmedCitation] | None = None
+    # #554: why a Partial is partial, why an N/A is N/A, or which surface an
+    # outside-control-surface row is outside of; and what could not be verified.
+    reason_code: str | None = None
+    narrative: str | None = None
 
     # A computed field rather than three hand-built assignments. This response is
     # constructed in three places (`_serialize_coverage`, `patch_coverage`, and
@@ -249,6 +253,10 @@ class AttackCoveragePatch(BaseModel):
     prevention_tools: list[str] | None = None
     response_tools: list[str] | None = None
     rationale: str | None = Field(default=None, max_length=8000)
+    # #554. Validated against the row's resulting status in `patch_coverage`,
+    # typed, rather than as an enum here: a code's validity depends on the status.
+    reason_code: str | None = Field(default=None, max_length=48)
+    narrative: str | None = Field(default=None, max_length=8000)
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +278,9 @@ class TacticHeatmapEntry(BaseModel):
     # actually reads coverage, and a number that is honest only in the total is
     # not honest where it is read.
     pending_review: int = 0
+    # #554: outside the assessed denominator, so stated beside the percentage.
+    outside_control_surface: int = 0
+    unable_to_determine: int = 0
     coverage_pct: float
 
 
@@ -291,6 +302,10 @@ class AttackHeatmap(BaseModel):
     # This count must be rendered beside it. A bare 100% over a withheld row is
     # the false assurance the whole rule exists to prevent.
     pending_review: int = 0
+    # #554: rows outside the assessed denominator; every surface that shows
+    # `coverage_pct` must show these beside it.
+    outside_control_surface: int = 0
+    unable_to_determine: int = 0
     coverage_pct: float
     by_tactic: list[TacticHeatmapEntry]
 

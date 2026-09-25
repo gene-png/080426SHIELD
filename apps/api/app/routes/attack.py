@@ -47,7 +47,12 @@ from app.attack.citations import (
     CitationResolver,
     resolve_citations,
 )
-from app.attack.coverage import COVERAGE_DEFINITIONS, CoverageStatus
+from app.attack.coverage import (
+    COVERAGE_DEFINITIONS,
+    CoverageStatus,
+    is_valid_reason,
+    reason_codes_for,
+)
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import coverage_pct_text
 from app.attack.exporters import render_docx as render_attack_docx
@@ -491,6 +496,28 @@ def patch_coverage(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
+    # #554: a reason code is valid only for the status it belongs to. Judged
+    # against the status the row will HAVE after this patch, and refused typed
+    # rather than stored: a missing reason is a release question, an impossible
+    # pairing (a missing control given as an N/A reason) is refused at the click.
+    resulting_status = data.get("status", row.status)
+    if "reason_code" in data and not is_valid_reason(resulting_status, data["reason_code"]):
+        valid = reason_codes_for(resulting_status)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "invalid_reason_code",
+                "message": (
+                    f"'{data['reason_code']}' is not a reason for status "
+                    f"'{resulting_status or 'unscored'}'. "
+                    + (
+                        f"Valid reasons: {', '.join(valid)}."
+                        if valid
+                        else "That status takes no reason code."
+                    )
+                ),
+            },
+        )
     if "status" in data:
         new_status = data["status"]
         if new_status is None:
@@ -500,6 +527,14 @@ def patch_coverage(
             row.status = (
                 new_status.value if isinstance(new_status, CoverageStatus) else str(new_status)
             )
+        # A reason that no longer fits the new status is dropped, never kept
+        # beside a status it does not describe.
+        if "reason_code" not in data and not is_valid_reason(row.status, row.reason_code):
+            row.reason_code = None
+    if "reason_code" in data:
+        row.reason_code = data["reason_code"]
+    if "narrative" in data:
+        row.narrative = data["narrative"]
     if "notes" in data:
         row.notes = data["notes"]
     if "evidence_artifact_id" in data:
@@ -2111,6 +2146,8 @@ def heatmap(
         gap=rollup.gap,
         not_applicable=rollup.not_applicable,
         pending_review=rollup.pending_review,
+        outside_control_surface=rollup.outside_control_surface,
+        unable_to_determine=rollup.unable_to_determine,
         coverage_pct=rollup.coverage_pct,
         by_tactic=[
             TacticHeatmapEntry(
@@ -2124,6 +2161,8 @@ def heatmap(
                 not_applicable=tc.not_applicable,
                 unscored=tc.unscored,
                 pending_review=tc.pending_review,
+                outside_control_surface=tc.outside_control_surface,
+                unable_to_determine=tc.unable_to_determine,
                 coverage_pct=tc.coverage_pct,
             )
             for tc in rollup.by_tactic

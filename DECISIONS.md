@@ -5731,3 +5731,37 @@ red under five seeds.
 
 - both mutations also turn the invoke-level test red;
 - removing the gate's new signature turns its 4 detection tests red.
+
+## D-092 — The ATT&CK status vocabulary: six statuses, a reason per status, coverage over assessed rows only
+
+**Date:** 2026-09-24 · **Issues:** #554, #557 · **Decided by:** the owner (the vocabulary); this slice implements storage and arithmetic
+
+**The defect.** In a released assessment, 405 of 633 techniques were Partial, with no reason and no action (#554). The same status also carried three unlike claims:
+
+- "partly defended";
+- "we did not verify";
+- "the client cannot reach this".
+
+The missing value always failed in the direction that flatters the client.
+
+**Decision 1 — six statuses.** `covered`, `partial`, `gap` and `not_applicable`, plus:
+
+- **`outside_control_surface`**: the technique applies and the client's control surface does not reach it. It stays in the catalogue total, outside the assessed denominator, with its own line in the deliverable.
+- **`unable_to_determine`**: nobody verified it. It is outside the assessed denominator, never counted as partial or gap, and a release blocker.
+
+The T1588 finding decided `outside_control_surface`: the parent was N/A while its own sub-techniques were Partial on identical reasoning.
+
+**Decision 2 — a reason per status, valid only for that status.**
+
+- **Partial**, seven codes: `missing_control_category`, `reach_limited`, `detection_weak`, `prevention_limited`, `evasive_variant_uncovered`, `recovery_absent`, `periodic_not_continuous`.
+- **N/A**: `platform_absent` only.
+- **`outside_control_surface`**, three sub-cases: `adversary_preparation`, `external_reconnaissance`, `third_party_compromise`. The 10 former-Partial `adversary_side` rows fall into the first two. **My call, overturnable.**
+- **The others**: none. `unable_to_determine` carries a narrative instead.
+
+**The sentence written into the vocabulary** (`app/attack/coverage.py`): missing_control_category is legitimate for Partial (something defends it, a category is missing) and forbidden for N/A (nothing defends it -- that is a gap). The test: is anything defending it at all?
+
+**Decision 3 — coverage over assessed rows only.** `coverage_pct` = (covered + 0.5 × partial) / (covered + partial + gap). `outside_control_surface` and `unable_to_determine` are counted separately and carried on the heatmap, overall and per tactic. They are in `scored_count`, so the catalogue total on screen does not shrink as rows move out of the denominator.
+
+**Decision 4 — at the click, refuse only impossible pairings.** A reason given for a status it does not belong to is a typed 422 `invalid_reason_code`, for example `missing_control_category` given as an N/A reason. A status change drops a reason that no longer fits. A MISSING reason is not refused at the click: "gate the release, not the click" (#557). That release gate is a later slice, because the AI path produces no reason codes until the prompt slice lands, and gating first would block every current flow.
+
+**What the gate must be (recorded, not built here).** No release gate on `unconfirmed_citations` exists (#557 comment, 2026-09-24), so "the same mechanism" has to be built. It will be one readiness check consulted at approve, finalize and release, returning a typed refusal that names each blocking count, with `unconfirmed_citations` able to become an input. The data-quality exception the owner referred to is defined nowhere in the repo. Its design, where an admin records a reason and acknowledges the unverified count and the deliverable discloses it, is **my call, overturnable**, and ships only together with that disclosure.
