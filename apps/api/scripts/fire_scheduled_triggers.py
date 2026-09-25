@@ -53,6 +53,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from datetime import date
 
 LABEL = "scheduled-trigger"
@@ -83,6 +84,13 @@ LIST_LIMIT = 1000
 # A fired trigger untouched this long is reported as ignored (#531).
 STALE_AFTER_DAYS = 14
 FAILURE_TITLE = "Scheduled triggers: the weekly run failed"
+
+
+class CouldNotLook(RuntimeError):
+    """The run could not read or act on what it needed: exit 2, never 1.
+
+    1 is a finding (an unusable or ignored trigger); 2 is "I could not look",
+    the distinction every gate in this repo keeps apart."""
 
 
 def _gh(*args: str) -> str:
@@ -134,7 +142,7 @@ def _gh(*args: str) -> str:
         encoding="utf-8",
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(args)} failed: {proc.stderr.strip()}")
+        raise CouldNotLook(f"gh {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
 
 
@@ -186,7 +194,7 @@ def not_truncated(issues: list[dict], limit: int = LIST_LIMIT) -> list[dict]:
     """The list, or raise if it filled the page: `gh` stops at `--limit` without
     saying so, and an issue past it would never fire (#496)."""
     if len(issues) >= limit:
-        raise RuntimeError(
+        raise CouldNotLook(
             f"`gh issue list` returned {len(issues)} issues, the limit: the list may be "
             "truncated, so some triggers would never be read. Raise LIST_LIMIT."
         )
@@ -303,6 +311,25 @@ def report_failure(log_path: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run, and make every failure's CAUSE reach `TRIGGER_LOG` (#531).
+
+    The failure report quotes that log, and `_log` is the only writer to it. So
+    without this, a truncation refusal or a `gh` failure reached stderr only,
+    and the tracking issue said "the weekly run failed" over a log of success
+    lines, or over none. Could-not-look exits 2; a finding re-raises (exit 1).
+    """
+    try:
+        return _main(argv)
+    except CouldNotLook as exc:
+        _log(f"could not look -- {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        return 2
+    except Exception as exc:
+        _log(f"{type(exc).__name__}: {exc}")
+        raise
+
+
+def _main(argv: list[str] | None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ["--report-failure"] and len(args) == 2:
         return report_failure(args[1])
@@ -377,8 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             "issues labelled `scheduled-trigger` with an unusable or ignored trigger:\n  "
             + "\n  ".join(problems)
         )
-        _log(message)
-        raise ValueError(message)
+        raise ValueError(message)  # `main` logs it, once
     return 0
 
 

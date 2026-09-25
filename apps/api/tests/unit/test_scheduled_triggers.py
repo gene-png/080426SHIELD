@@ -4,20 +4,26 @@ Tested here rather than left to fire blind in CI, because its whole value is tha
 it is reliable: a mechanism nobody trusts gets muted, and a muted mechanism is the
 "tracked but never comes up" state it exists to end.
 
-Only the PURE halves are covered: parsing, the truncation refusal, the
-stale-fired rule and the failure report's content (#531). `main()` shells out
-to `gh`, and a test that mocked `gh` would be asserting my model of the API
-rather than the API -- which is the shape CLAUDE.md records as a test that
-cannot fail. So the gh calls stay thin and the decisions are pure functions.
+The decisions are pure functions and are tested as such. The WIRING is tested
+through `main()` with `_gh` replaced (#531 round 1): a guard that is correct
+as a function and never called from `main` protects nothing, and deleting its
+call must turn a test red. The replacement returns what `gh --json` returns
+and asserts nothing about the API's behaviour; `gh` itself is not modelled.
 """
 
 from __future__ import annotations
 
+import json
+import subprocess
 from datetime import date
+from pathlib import Path
 
 import pytest
+import scripts.fire_scheduled_triggers as triggers
 from scripts.fire_scheduled_triggers import (
+    LIST_LIMIT,
     failure_report,
+    main,
     not_truncated,
     parse_trigger,
     stale_fired,
@@ -143,15 +149,22 @@ def test_a_fired_trigger_left_untouched_is_reported() -> None:
 
 
 @pytest.mark.unit
-def test_a_failed_run_comments_on_the_open_tracking_issue() -> None:
+def test_a_failed_run_comments_on_the_open_tracking_issue(fake_gh) -> None:
+    # The log is one a real run wrote, not a string written to agree with the
+    # report: a malformed trigger, through main(), into TRIGGER_LOG.
+    log_path = fake_gh([_issue(145, body="`Trigger-date` is below\n")])
+    with pytest.raises(ValueError):
+        main([])
+    log = log_path.read_text(encoding="utf-8")
     existing = [
         {"number": 7, "title": "Scheduled triggers: the weekly run failed"},
         {"number": 8, "title": "Something else"},
     ]
-    action, args = failure_report(existing, "ValueError: #145: no reason", "https://run/1")
+    action, args = failure_report(existing, log, "https://run/1")
     assert action == "comment"
     assert args[0] == "7"
-    assert "https://run/1" in args[1] and "ValueError: #145: no reason" in args[1]
+    assert "https://run/1" in args[1]
+    assert "#145: mentions `Trigger-date` but not as a line of its own" in args[1]
 
 
 @pytest.mark.unit
@@ -166,8 +179,93 @@ def test_a_failed_run_opens_the_tracking_issue_when_none_is_open() -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize("argv", [["--nope"], ["--report-failure"], ["--report-failure", "a", "b"]])
 def test_an_unknown_or_incomplete_argument_is_could_not_look(argv: list[str], monkeypatch) -> None:
-    from scripts.fire_scheduled_triggers import main
-
     # REPO set, so the argument check is the only thing that can refuse.
     monkeypatch.setenv("REPO", "owner/repo")
     assert main(argv) == 2
+
+
+# --- main()-level wiring: each goes red when its call in main() is deleted ------------------
+
+
+def _issue(number: int, *, body: str = "", fired: bool = False, updated: str | None = None) -> dict:
+    return {
+        "number": number,
+        "title": f"issue {number}",
+        "body": body,
+        "labels": [{"name": "scheduled-trigger"}] + ([{"name": "trigger-fired"}] if fired else []),
+        "updatedAt": updated or f"{date.today().isoformat()}T07:00:00Z",
+    }
+
+
+@pytest.fixture
+def fake_gh(monkeypatch, tmp_path: Path):
+    """Replace `_gh` with one serving `issue list` from a given list, and point
+    TRIGGER_LOG at a temp file. Returns a setter giving back the log's path;
+    every call made is kept on `fake_gh.calls`."""
+    calls: list[tuple[str, ...]] = []
+    log_path = tmp_path / "triggers.log"
+    monkeypatch.setenv("REPO", "owner/repo")
+    monkeypatch.setenv("TRIGGER_LOG", str(log_path))
+
+    def use(issues: list[dict]) -> Path:
+        def gh(*args: str) -> str:
+            calls.append(args)
+            return json.dumps(issues) if args[:2] == ("issue", "list") else ""
+
+        monkeypatch.setattr(triggers, "_gh", gh)
+        return log_path
+
+    use.calls = calls
+    return use
+
+
+@pytest.mark.unit
+def test_main_refuses_a_full_page_as_could_not_look(fake_gh) -> None:
+    """Wiring for #496: exactly LIST_LIMIT issues, each otherwise clean (fired
+    and recently touched), so the refusal is the only thing that can fail."""
+    log_path = fake_gh([_issue(n, fired=True) for n in range(LIST_LIMIT)])
+    assert main([]) == 2
+    log = log_path.read_text(encoding="utf-8")
+    assert "could not look -- CouldNotLook: `gh issue list` returned 1000 issues" in log
+    assert "Raise LIST_LIMIT" in log
+
+
+@pytest.mark.unit
+def test_main_reads_one_short_of_the_limit_as_complete(fake_gh) -> None:
+    fake_gh([_issue(n, fired=True) for n in range(LIST_LIMIT - 1)])
+    assert main([]) == 0
+
+
+@pytest.mark.unit
+def test_the_limit_asked_of_gh_is_the_limit_refused(fake_gh) -> None:
+    """If `--limit` and the refusal drift apart, a full page is read as complete
+    (limit asked < refused) or a complete one refused (asked > refused)."""
+    fake_gh([])
+    assert main([]) == 0
+    (listing,) = [c for c in fake_gh.calls if c[:2] == ("issue", "list")]
+    assert listing[listing.index("--limit") + 1] == str(LIST_LIMIT)
+
+
+@pytest.mark.unit
+def test_main_fails_on_a_fired_trigger_left_untouched(fake_gh) -> None:
+    log_path = fake_gh([_issue(118, fired=True, updated="2020-01-01T07:00:00Z")])
+    with pytest.raises(ValueError, match="#118: fired and untouched for"):
+        main([])
+    assert "ValueError: issues labelled `scheduled-trigger`" in log_path.read_text("utf-8")
+
+
+@pytest.mark.unit
+def test_a_gh_failure_reaches_the_log_and_exits_2(monkeypatch, tmp_path: Path) -> None:
+    """Through the REAL `_gh`, with only `subprocess.run` replaced: the error
+    `gh` printed must reach TRIGGER_LOG, which is what the tracking issue quotes."""
+    log_path = tmp_path / "triggers.log"
+    monkeypatch.setenv("REPO", "owner/repo")
+    monkeypatch.setenv("TRIGGER_LOG", str(log_path))
+    monkeypatch.setattr(
+        triggers.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "HTTP 502: Bad Gateway"),
+    )
+    assert main([]) == 2
+    assert "gh issue list --repo owner/repo" in log_path.read_text("utf-8")
+    assert "HTTP 502: Bad Gateway" in log_path.read_text("utf-8")

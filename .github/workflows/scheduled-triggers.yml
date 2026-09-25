@@ -24,6 +24,13 @@ on:
     # 07:00 UTC Mondays. After the mutation sweep, and on a day someone reads.
     - cron: "0 7 * * 1"
   workflow_dispatch:
+    inputs:
+      exercise_failure_report:
+        description: >-
+          Also run --report-failure once, live, to prove it can open or comment
+          on the tracking issue. It opens a real issue; close it afterwards.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -51,6 +58,11 @@ jobs:
       # A red scheduled run is on no one's path: this one failed every week for
       # a month and nobody looked (#531). So a failure files, or comments on, an
       # issue carrying the board labels, which IS on someone's path.
+      #
+      # IF THIS STEP ITSELF FAILS, the run is red and reported to nobody -- the
+      # state before #531. Its `gh` calls were first written with no live run
+      # behind them (2026-09-25); dispatch with `exercise_failure_report` to run
+      # it once for real.
       - name: Put a failed run in front of a person
         if: failure()
         env:
@@ -59,3 +71,17 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         working-directory: apps/api
         run: python -m scripts.fire_scheduled_triggers --report-failure "${{ runner.temp }}/triggers.log"
+
+      # Dispatch-only, and only when the run itself succeeded (a failed run
+      # already reports through the step above). The issue still carries the
+      # failure title and opening line; the log it quotes says EXERCISE.
+      - name: Exercise the failure report live (dispatch only)
+        if: success() && inputs.exercise_failure_report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        working-directory: apps/api
+        run: |
+          echo "EXERCISE, not a failure: dispatched with exercise_failure_report to prove --report-failure works live. Close this issue." > "${{ runner.temp }}/exercise.log"
+          python -m scripts.fire_scheduled_triggers --report-failure "${{ runner.temp }}/exercise.log"
