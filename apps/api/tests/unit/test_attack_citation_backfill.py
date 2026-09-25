@@ -56,6 +56,7 @@ def _seed_assessment(engine, *, status: str) -> str:
     code path production uses. If SQLAlchemy's enum storage ever changes, these
     tests move with it instead of pinning a guess.
     """
+    from sqlalchemy import insert
     from sqlalchemy.orm import Session
 
     from app.models.attack_assessment import (
@@ -73,15 +74,23 @@ def _seed_assessment(engine, *, status: str) -> str:
         )
         db.add(a)
         db.flush()
-        row = AttackCoverage(
-            assessment_id=a.id,
-            client_id=a.client_id,
-            technique_code="T1003",
-            status="covered",
+        # Through the model's TABLE, naming only the columns revision 0044 had.
+        # The ORM would also INSERT every column the model has TODAY -- 0053's
+        # `reason_code` and `narrative` among them -- into a database migrated
+        # only to 0044, and fail. A Core insert against the table keeps this
+        # helper's point: stored values still come from the model's own types.
+        coverage_id = uuid.uuid4()
+        db.execute(
+            insert(AttackCoverage.__table__).values(
+                id=coverage_id,
+                assessment_id=a.id,
+                client_id=a.client_id,
+                technique_code="T1003",
+                status="covered",
+            )
         )
-        db.add(row)
         db.commit()
-        return row.id
+        return coverage_id
 
 
 def _citations(conn, coverage_id: uuid.UUID):
