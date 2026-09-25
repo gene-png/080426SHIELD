@@ -1238,7 +1238,8 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
 - Web `tsc --noEmit` clean on Next 15 / React 19 / Tailwind 4 / Auth.js v5. ESLint
   0 errors (1 pre-existing postcss warning). In-container `pnpm -F web build` was
   proven green in T6 (the standalone prod image the demo compose runs).
-- e2e: **41 spec files** (host; `:3000` on Gene's box, `:3001` on Dave's). Phase
+- e2e: the spec count is `cd e2e && npx playwright test --list`, not a number
+  written here (host; `:3000` on Gene's box, `:3001` on Dave's). Phase
   C/D added `s40-admin-deliverables` and `s41-help`, and rewrote `s34`'s
   Run-AI-guard test to seed its own tenant so it can no longer self-skip.
   **Numbering caution:** `s37`/`s38` were briefly duplicated when the Phase D

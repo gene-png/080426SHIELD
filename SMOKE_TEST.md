@@ -402,7 +402,8 @@ as coverage it never provided.
 - [x] Backend exchange contract: a Keycloak-shaped access token is accepted only when its RS256 signature, issuer, audience, and `azp` all check out **and** a matching active local account exists; every other case returns a typed dict-detail failure and **no** account is provisioned (no JIT). (test_oidc_exchange.py)
 - [ ] **Positive path** (manual: `e2e/manual/oidc-login.manual.ts`, last run green in Sprint 9 T7 per CHANGELOG, not in CI, #483) — `admin@kentro.example` (in Keycloak AND in the SHIELD DB) signs in through the real Keycloak form (`#username` / `#password`), lands authenticated, and the admin management list renders, proving the exchanged SHIELD bearer token authenticates a real API call end to end.
 - [ ] **Negative path** (manual, same file and status as above) — `nolocal@atlas.example` (in Keycloak, NOT in the SHIELD DB) authenticates against Keycloak, the exchange refuses it (`oidc_no_local_account`), and `SessionExpiryGuard` signs the session out to `/sign-in?reason=oidc_exchange_failed` with the loud banner.
-- [x] **Flag-off restoration** — after the flag is removed and `api`+`web` are recreated, `keycloak` reports `dormant` on `/ready`, the provider is gone, and the credentials suite signs in green. (s25-admin-health.spec.ts asserts keycloak dormant; s0/s2 credentials sign-in)
+- [x] **Flag-off steady state** — `keycloak` reports `dormant` on `/ready`, and the credentials suite signs in green. (s25-admin-health.spec.ts asserts keycloak dormant; s0/s2 credentials sign-in)
+- [ ] **Flag-off restoration** — after the flag is removed and `api`+`web` are recreated, the Keycloak provider is gone. No committed spec flips the flag or asserts the provider is absent: a manual step, filed as #565.
 
 **Operator note (flip and restore).** The flag must never be committed on.
 

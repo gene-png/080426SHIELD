@@ -91,17 +91,17 @@ cloud/account/region decisions.**
 
 The repo-wide gates enforced this sprint (and encoded in the sprint queue):
 
-| Gate                  | Command                                                                                                                                     | Where                 |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| Backend unit tests    | `docker compose exec -T api pytest -m unit -q`                                                                                              | api container         |
-| Web typecheck         | `docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"`                                                              | web container         |
-| Web unit tests        | `docker compose exec -T web sh -lc "cd /app && pnpm -F web test"` (vitest, Sprint 5 T8; Sprint 6 added HealthMatrix)                        | web container         |
-| Web eslint            | `docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"` (in the queue gate set, Sprint 6)                                         | web container         |
-| Full e2e smoke suite  | `cd e2e && npx playwright test` (27 spec files; Sprint 9 added s26-oidc-login and demo/demo-journey, both self-skipping)                    | host → composed stack |
-| Runtime axe WCAG A/AA | `s16-axe.spec.ts` (part of the suite)                                                                                                       | host → composed stack |
-| Python lint/format    | `docker compose exec -T api sh -lc "ruff check --no-cache . && black --check ."` (root-config parity, Sprint 4 T0)                          | api container         |
-| Repo format           | `v=$(scripts/prettier-hook.sh --print-version); npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"` (Git Bash; D-087) | host                  |
-| Dependency audit      | `pnpm audit` (root) / `npm audit` (`e2e/`)                                                                                                  | host                  |
+| Gate                  | Command                                                                                                                                      | Where                 |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| Backend unit tests    | `docker compose exec -T api pytest -m unit -q`                                                                                               | api container         |
+| Web typecheck         | `docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"`                                                               | web container         |
+| Web unit tests        | `docker compose exec -T web sh -lc "cd /app && pnpm -F web test"` (vitest, Sprint 5 T8; Sprint 6 added HealthMatrix)                         | web container         |
+| Web eslint            | `docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"` (in the queue gate set, Sprint 6)                                          | web container         |
+| Full e2e smoke suite  | `cd e2e && npx playwright test` (at Sprint 9: 27 spec files, Sprint 9 having added s26-oidc-login and demo/demo-journey, both self-skipping) | host → composed stack |
+| Runtime axe WCAG A/AA | `s16-axe.spec.ts` (part of the suite)                                                                                                        | host → composed stack |
+| Python lint/format    | `docker compose exec -T api sh -lc "ruff check --no-cache . && black --check ."` (root-config parity, Sprint 4 T0)                           | api container         |
+| Repo format           | `v=$(scripts/prettier-hook.sh --print-version); npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"` (Git Bash; D-087)  | host                  |
+| Dependency audit      | `pnpm audit` (root) / `npm audit` (`e2e/`)                                                                                                   | host                  |
 
 ### CI jobs (`.github/workflows/ci.yml`)
 
