@@ -287,6 +287,34 @@ jobs:
         run: |
           python scripts/check_merge_rule_conditions.py             --changed-files /tmp/changed.txt --body /tmp/body.md
 
+  merge-rule-text:
+    # INTERIM, until CODEOWNERS covers the governance files (#572). A PR that
+    # changes the text of CLAUDE.md's `## The merge rule` section -- the
+    # conditions, the condition-5 path list, anything in it -- goes RED here,
+    # every time, with no label or escape, so a human reads the change before
+    # anything merges on it. Red means "the rule changed", not "the PR is
+    # wrong". Green means only "the rule's text is unchanged".
+    #
+    # NOT a required check: that is the owner's branch-protection setting. And
+    # a PR editing this step can neuter it, because the workflow runs from the
+    # PR; that stays open until CODEOWNERS covers .github/workflows/ (#572).
+    name: Merge rule text (red means it changed; a human must read it)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The gate reads CLAUDE.md at the merge base, so it needs history and
+          # `origin/<base>`. A shallow clone makes that read fail, which the
+          # gate reports as could-not-look (exit 2) -- red, never green.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Has this PR changed the merge rule's text?
+        run: python apps/api/scripts/check_merge_rule_text.py --range "origin/${{ github.base_ref }}..HEAD" --repo .
+
   # A SEPARATE job, so it reports as its own check rather than folding a
   # different failure into "Adversarial audit recorded". It shares this
   # workflow's `edited` trigger, which this check needs more than the audit gate

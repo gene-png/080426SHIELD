@@ -88,6 +88,8 @@ GATES = [
     ("check_merge_rule_conditions", "sys.argv"),
     # The issue-labels gate (the filing rule). Shipped with the handler.
     ("check_issue_labels", "sys.argv"),
+    # The interim merge-rule-text gate (#572). Added WITH its entry here.
+    ("check_merge_rule_text", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'
