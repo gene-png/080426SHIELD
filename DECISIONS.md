@@ -302,7 +302,7 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
 - **Forced re-auth ceiling (real):** access + refresh tokens now carry an
   `auth_time` claim (original login time) that rides forward unchanged across
   refreshes. `/auth/refresh` rejects a refresh whose session age exceeds
-  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h) with a typed 401
+  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h; **12 h since D-085**) with a typed 401
   `reason=reauth_required` (D-016 envelope).
 - **Refresh-token rotation (real):** each refresh mints a new refresh token and
   stores its jti on the user (`users.active_refresh_jti`, additive/nullable
@@ -313,7 +313,10 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
   concurrent multi-device sessions become a requirement.
 - **Idle timeout (documented, not new machinery):** the 30-minute refresh-token
   TTL already IS the idle timeout — an idle session cannot refresh past it. We
-  document that rather than invent a second timer.
+  document that rather than invent a second timer. **SUPERSEDED by D-085
+  (2026-09-23):** the default refresh TTL has been 24 hours since 2026-08-08,
+  so outside compose there is no idle bound below the forced re-auth ceiling
+  (12 h since D-085).
 - **Dead flags fail loudly:** `assert_safe_for_runtime` now refuses to boot if
   `SHIELD_AUTH_REQUIRE_MFA` or `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` is true,
   because the enrollment/challenge and email-verification flows do not exist.
@@ -5427,6 +5430,58 @@ The residual is general and worse than the miscitation: **every field this gate
 checks is pre-cleared by its own TypeScript type definition**, so a green is not
 evidence that anything renders -- it would have reported #322 clean. Stated in the
 gate's docstring and filed as **#473**.
+
+## D-085 — Two session settings: the dead idle timeout is deleted, and the forced re-auth ceiling drops to 12 hours
+
+**2026-09-23 · admin**, decided by the owner on 2026-09-24
+
+_Numbered D-085, not D-084:_ `context/entries/2026-09-22-dependabot-audit-exemption.md`
+(#469) already points at a D-084 for its lesson, which has not been written yet.
+Taking the number would have sent that pointer to an unrelated decision. · branch `fix/catalog-counts-idle-timeout`
+
+**Supersedes the idle clause of D-020**, which recorded "the 30-minute
+refresh-token TTL already IS the idle timeout ... We document that rather than
+invent a second timer". It also supersedes the idle-timeout entry in the
+compensating-control lists that relied on it.
+
+**What changed underneath D-020.** On 2026-08-08, `jwt_refresh_ttl_seconds`
+was raised from 1800 to 86400, so that a refresh token would not expire before
+the access token it renews. `config.py` records why. From then on, the premise
+held only where compose or `.env.example` sets the TTL back to 1800. The idle
+bound is also counted from the last token ROTATION, not the last activity:
+under compose (access 900, refresh 1800) an idle session gets 15-30 minutes,
+and at the config defaults the forced re-auth ceiling fires before any
+refresh expiry.
+
+**Decision 1: `shield_idle_timeout_seconds` is deleted, not wired.** It was
+defined in config, compose and `.env.example`, and read by nothing. On a
+FedRAMP track that reads to an assessor as an implemented idle-session
+control. Wiring it as a second knob beside the refresh TTL would create two
+values that can disagree about one control.
+
+**Decision 2: `shield_forced_reauth_seconds` drops from 86400 to 43200 (12
+hours)** in config, compose and `.env.example`. The setting was already wired
+(`refresh()` in `routes/auth.py`, with a `ge=300` floor), so this is one value,
+with no new code and no new UX. Twelve hours covers a working day with
+overrun, and halves the overnight window in which a stolen session stays
+usable. The refusal message stops saying "daily". An existing dev `.env` copied
+from the old `.env.example` keeps 86400 until edited, because compose and
+`Settings` both prefer it; CI has no `.env` and gets 43200.
+
+**What that number does NOT do, stated so it implies nothing more.** It
+bounds session AGE, counted from the original sign-in, and no activity
+extends it. It is not an idle control. **A laptop left open for twenty minutes
+is not locked by it**, and outside compose there is still no idle bound below
+the 12-hour ceiling. `docs/security.md` states the idle bound as **Partial**.
+
+**Not built here, and why: the real idle control is #516.** The reason for
+waiting is rework, not priority. The session code (#499, #498) landed
+2026-09-24, and its middleware still documents a live residual around the
+60-second refresh grace window. A second timing rule layered onto code whose
+author is still describing its open edges is how this becomes a rewrite.
+**#516 has a trigger, not a date:** build it before the first client
+engagement that carries an assessment requirement, or once the session code
+has been quiet for a month, whichever comes first.
 
 ## D-086 — `post-mvp` is the filing rule's third legitimate state
 
