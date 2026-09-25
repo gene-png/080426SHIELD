@@ -288,6 +288,56 @@ describe("AttackTechniquePanel — a computed parent (#554, D-094)", () => {
     }
     expect(screen.queryByTestId("computed-parent-status")).toBeNull();
   });
+
+  // The API refuses a computed parent's reason and lock as well as its status
+  // (D-094, #620 round 1). A control that is live but always refused is a
+  // promise the product cannot keep. The computed reason is still SHOWN.
+  it("does not offer a reason or a lock on a parent with sub-techniques", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ status: "partial", reason_code: "reach_limited" })}
+        coverageDefinitions={[]}
+        reasonCodes={[
+          { code: "reach_limited", status: "partial", definition: "d" },
+        ]}
+        subTechniqueCount={2}
+        onPatch={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reason for T1003" }),
+    ).toBeDisabled();
+    expect(screen.getByTestId("reason-definition")).toHaveTextContent("d");
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Lock this technique against AI reruns",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("offers both on a technique with no sub-techniques", () => {
+    render(
+      <AttackTechniquePanel
+        technique={TECHNIQUE}
+        coverage={row({ status: "partial" })}
+        coverageDefinitions={[]}
+        reasonCodes={[
+          { code: "reach_limited", status: "partial", definition: "d" },
+        ]}
+        subTechniqueCount={0}
+        onPatch={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reason for T1003" }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Lock this technique against AI reruns",
+      }),
+    ).not.toBeDisabled();
+  });
 });
 
 // What the catalog serves, abridged: two Partial codes, the N/A code, and one

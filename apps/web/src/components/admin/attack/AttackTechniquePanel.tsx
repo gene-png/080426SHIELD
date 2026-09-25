@@ -300,7 +300,9 @@ export function AttackTechniquePanel({
           techniqueId={technique.id}
           coverage={coverage}
           reasonCodes={reasonCodes}
-          readOnly={readOnly}
+          // A computed parent's reason is computed with its status, and the
+          // API refuses to set it (D-094). Shown, not offered.
+          readOnly={readOnly || subTechniqueCount > 0}
           onPatch={onPatch}
         />
 
@@ -406,7 +408,9 @@ export function AttackTechniquePanel({
           <input
             type="checkbox"
             checked={coverage?.locked ?? false}
-            disabled={readOnly || !coverage}
+            // A locked parent would stop following its children, so the API
+            // refuses the lock on a computed parent (D-094, #620 round 1).
+            disabled={readOnly || !coverage || subTechniqueCount > 0}
             onChange={(e) => void onPatch({ locked: e.currentTarget.checked })}
           />
           <span className="text-ink-secondary">

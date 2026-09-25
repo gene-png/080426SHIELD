@@ -36,6 +36,10 @@ Branch `track2/attack-computed-parents`, from `main` at `2028f38`.
 - **The workspace refetches** the assessment and heatmap after a
   sub-technique's status or reason changes, so the parent on screen is not
   stale.
+- **The panel shows a computed parent's reason and lock, and offers
+  neither.** The API refuses both. #603's reason select arrived with the
+  `main` merge (34f0e33) and was live on a parent, and my round 1 had
+  refused the lock on the API while leaving its checkbox live.
 - **CI was red at 672738e** (13 tests in `test_attack_pending_persistence.py`,
   picking T1001 as `codes[0]`). The earlier sweep missed that spelling. They,
   and one exporter test picking T1003, now use standalone techniques.
