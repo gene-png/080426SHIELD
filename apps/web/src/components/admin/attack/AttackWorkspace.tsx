@@ -286,6 +286,18 @@ export function AttackWorkspace({
           coverage: curr.coverage.map((c) => (c.id === coverageId ? next : c)),
         };
       });
+      // #554 (D-094): a sub-technique's status or reason recomputes its PARENT
+      // on the server, and the PATCH returns only the child. Refetch so the
+      // parent's row agrees with the heatmap refreshed below -- guarded like
+      // every load here, so a newer edit still wins.
+      if (
+        next.technique_code.includes(".") &&
+        ("status" in patch || "reason_code" in patch)
+      ) {
+        const seq = ++assessmentSeq.current;
+        const a = await fetchLatestAssessment(serviceId);
+        if (seq === assessmentSeq.current) setAssessment(a);
+      }
       await refreshHeatmap();
     } catch (err) {
       setLoadError(describeError(err));

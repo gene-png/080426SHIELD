@@ -975,7 +975,7 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
     # recomputed through the SAME function the write paths use; each parent the
     # rule changed gets the seed's tools for its new status, so the unbacked-
     # claim guard below still holds for it.
-    for code in recompute_parents({r.technique_code: r for r in coverage_rows}):
+    for code in recompute_parents({r.technique_code: r for r in coverage_rows}).changed:
         parent = next(r for r in coverage_rows if r.technique_code == code)
         parent.detection_tools, parent.response_tools = _attack_tools_for(parent.status)
     db.flush()

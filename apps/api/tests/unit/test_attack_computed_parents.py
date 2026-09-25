@@ -172,7 +172,9 @@ def _parent_now(c, auth, assessment_id: str, Sess) -> tuple[str | None, str | No
         return row.status, row.reason_code
 
 
-@pytest.mark.parametrize("field", [{"status": "covered"}, {"reason_code": "reach_limited"}])
+@pytest.mark.parametrize(
+    "field", [{"status": "covered"}, {"reason_code": "reach_limited"}, {"locked": True}]
+)
 def test_a_computed_parents_status_and_reason_are_refused_typed(api, field) -> None:
     c, auth, by_code, _, _ = api
     r = _set(c, auth, by_code[PARENT]["id"], field)
@@ -214,3 +216,98 @@ def test_approve_recomputes_a_parent_that_drifted(api) -> None:
     r = c.post(f"/attack/assessments/{assessment_id}/approve", headers=auth)
     assert r.status_code == 200, r.text
     assert _parent_now(c, auth, assessment_id, Sess) == ("gap", None)
+
+
+def _service_id(Sess, assessment_id: str) -> str:
+    from app.models.attack_assessment import AttackAssessment
+
+    with Sess() as s:
+        return str(s.get(AttackAssessment, uuid.UUID(assessment_id)).service_id)
+
+
+def test_a_computed_parent_with_confirmed_children_is_NOT_pending(api) -> None:
+    """#620 review, finding 1. A new assessment's rows are created with NULL
+    citations, and NULL on a covered row reads as pending. The parent's claim
+    rests on its children's evidence, so once the children are confirmed (a
+    hand-set status confirms them), the parent is not pending -- through the
+    heatmap, on a fresh assessment, not the seed (which writes [] everywhere)."""
+    c, auth, by_code, assessment_id, Sess = api
+    for child in CHILDREN:
+        assert _set(c, auth, by_code[child]["id"], {"status": "covered"}).status_code == 200
+    assert _parent_now(c, auth, assessment_id, Sess) == ("covered", None)
+
+    heat = c.get(f"/attack/services/{_service_id(Sess, assessment_id)}/heatmap", headers=auth)
+    assert heat.status_code == 200, heat.text
+    assert heat.json()["pending_review"] == 0
+    assert heat.json()["covered"] == len(CHILDREN) + 1
+
+    rows = c.get(
+        f"/attack/services/{_service_id(Sess, assessment_id)}/assessments/latest", headers=auth
+    ).json()["coverage"]
+    parent_row = next(r for r in rows if r["technique_code"] == PARENT)
+    assert parent_row["pending_review"] is False
+
+
+def test_a_computed_parent_is_pending_when_a_child_is(api) -> None:
+    """The derivation's other half: a parent claiming support on a child whose
+    evidence is unconfirmed is held out with it, and the badge agrees."""
+    from app.models.attack_assessment import AttackCoverage
+
+    c, auth, by_code, assessment_id, Sess = api
+    for child in CHILDREN:
+        assert _set(c, auth, by_code[child]["id"], {"status": "covered"}).status_code == 200
+    with Sess() as s:
+        s.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == uuid.UUID(by_code[CHILDREN[0]]["id"]))
+            .values(
+                unconfirmed_citations=[
+                    {
+                        "tool": "Tool A",
+                        "cited": "Tool",
+                        "reason": "substring",
+                        "field": "detection_tools",
+                        "cleared_at": None,
+                    }
+                ]
+            )
+        )
+        s.commit()
+
+    svc = _service_id(Sess, assessment_id)
+    assert c.get(f"/attack/services/{svc}/heatmap", headers=auth).json()["pending_review"] == 2
+    rows = c.get(f"/attack/services/{svc}/assessments/latest", headers=auth).json()["coverage"]
+    assert next(r for r in rows if r["technique_code"] == PARENT)["pending_review"] is True
+
+
+def test_a_legacy_locked_parent_is_unlocked_and_recomputed_with_a_record(api) -> None:
+    """#620 review, finding 2. A lock that predates D-094 would freeze a number
+    the rule owns, and hide the freeze from run-ai's diff. The recompute unlocks
+    it, and the audit row says so."""
+    from sqlalchemy import select
+
+    from app.models.attack_assessment import AttackCoverage
+    from app.models.audit_entry import AuditEntry
+
+    c, auth, by_code, assessment_id, Sess = api
+    with Sess() as s:
+        s.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == uuid.UUID(by_code[PARENT]["id"]))
+            .values(locked=True, status="covered")
+        )
+        s.commit()
+    for child in CHILDREN:
+        assert _set(c, auth, by_code[child]["id"], {"status": "gap"}).status_code == 200
+
+    assert _parent_now(c, auth, assessment_id, Sess) == ("gap", None)
+    with Sess() as s:
+        parent = s.get(AttackCoverage, uuid.UUID(by_code[PARENT]["id"]))
+        assert parent.locked is False
+        unlocked = [
+            d.get("parents_unlocked")
+            for d in s.execute(
+                select(AuditEntry.details).where(AuditEntry.action == "attack.coverage.updated")
+            ).scalars()
+        ]
+    assert [PARENT] in unlocked

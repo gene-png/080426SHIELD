@@ -22,3 +22,24 @@ Branch `track2/attack-computed-parents`, from `main` at `2028f38`.
 - The release gate reading a computed parent's children (c3).
 - Existing APPROVED or RELEASED assessments are not rewritten; only a new
   approval recomputes.
+
+## Round 1 (review of 672738e)
+
+- **Pending review is derived over the whole assessment.** A computed parent
+  is pending if and only if it claims support and one of its children is
+  pending. Its own citations are never read. The route sets each row's flag
+  from `pending_codes`, so the heatmap, the dashboard and the badge agree.
+- **Locks.** PATCH refuses `locked` on a computed parent. A parent locked
+  before this rule is unlocked when recomputed and audited as
+  `parents_unlocked`. Run AI takes unlocked parents out of its locked set, so
+  its diff shows the recompute.
+- **The workspace refetches** the assessment and heatmap after a
+  sub-technique's status or reason changes, so the parent on screen is not
+  stale.
+- **CI was red at 672738e** (13 tests in `test_attack_pending_persistence.py`,
+  picking T1001 as `codes[0]`). The earlier sweep missed that spelling. They,
+  and one exporter test picking T1003, now use standalone techniques.
+- **Populations** (D-094): DRAFTs correct at their next write or at approve.
+  APPROVED-never-released assessments are never recomputed. The shared dev DB
+  had 0 of them on 2026-09-25. Whether any deployment needs a one-time pass is
+  the owner's call.

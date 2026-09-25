@@ -956,3 +956,50 @@ def test_run_ai_refuses_a_computed_parents_suggestion_and_computes_it(app_client
     # Recorded in the same shape as #590's refusals, code-shaped values only.
     assert {"technique_code": parent, "status": "covered"} in details["parent_suggestions_refused"]
     assert parent in details["parents_recomputed"]
+
+
+@pytest.mark.unit
+def test_run_ai_shows_a_legacy_locked_parents_recompute_in_its_diff(app_client) -> None:
+    """#620 review, finding 2: `diff_keyed_rows` hides locked keys, so a parent
+    locked before D-094 would have been recomputed with the change invisible.
+    The recompute unlocks it, and the run's `changed` shows what moved."""
+    import json
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from app.attack.parents import PARENT_CHILDREN
+    from app.models.attack_assessment import AttackCoverage
+
+    c, TestSession, provider = app_client
+    parent, children = next((p, cs) for p, cs in sorted(PARENT_CHILDREN.items()) if cs)
+    h, svc_id, _ = _one_row_run(c, TestSession, provider, "covered")
+    rows = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()["coverage"]
+    parent_id = next(r["id"] for r in rows if r["technique_code"] == parent)
+    with TestSession() as db:
+        db.execute(
+            update(AttackCoverage)
+            .where(AttackCoverage.id == _uuid.UUID(parent_id))
+            .values(locked=True, status="covered")
+        )
+        db.commit()
+    suggestion = [
+        {
+            "technique_code": child,
+            "status": "gap",
+            "detection_tools": [],
+            "prevention_tools": [],
+            "response_tools": [],
+            "rationale": "r",
+        }
+        for child in children
+    ]
+    provider.register_static("mitre_map", LLMResponse(json.dumps({"techniques": suggestion})))
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["technique_code"] == parent)
+    assert (row["status"], row["locked"]) == ("gap", False)
+    assert {ch["field"] for ch in r.json()["changed"] if ch["technique_code"] == parent} >= {
+        "status"
+    }
+    assert parent in _run_audit(TestSession)["parents_unlocked"]

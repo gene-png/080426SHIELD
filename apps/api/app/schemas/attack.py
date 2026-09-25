@@ -6,10 +6,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.attack.coverage import CoverageStatus
-from app.attack.pending import is_pending_review
 from app.models.attack_assessment import AttackAssessmentStatus
 from app.models.service import ServiceKind, ServiceStatus
 
@@ -137,29 +136,13 @@ class AttackCoverageResponse(BaseModel):
     # `run_ai`), and CLAUDE.md's standing lesson is that a defect found in one
     # copy exists in its twins until checked. Deriving it once means there is no
     # second copy to forget.
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def pending_review(self) -> bool:
-        """True when this row's status makes a claim its evidence does not back.
-
-        #102 / 5.1. Derived, never stored: clearing a flag has to move the
-        technique back into whichever of covered/partial/gap its stored status
-        says, so the status must survive underneath.
-        """
-        citations = (
-            None
-            if self.unconfirmed_citations is None
-            else [c.model_dump() for c in self.unconfirmed_citations]
-        )
-        return is_pending_review(
-            self.status.value if self.status is not None else None,
-            citations,
-            [
-                *(self.detection_tools or []),
-                *(self.prevention_tools or []),
-                *(self.response_tools or []),
-            ],
-        )
+    #: True when this row's status makes a claim its evidence does not back
+    #: (#102 / 5.1). Derived, never stored -- but derived by the ROUTE from
+    #: `pending.pending_codes` over the WHOLE assessment, not from this row alone:
+    #: a computed parent's claim rests on its children's evidence (#554, D-094),
+    #: which one row cannot see. Required, with no default, so a response built
+    #: without deriving it fails loudly instead of guessing.
+    pending_review: bool
 
 
 class AttackAssessmentResponse(BaseModel):

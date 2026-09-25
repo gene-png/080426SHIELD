@@ -149,10 +149,28 @@ def _serialize_coverage(rows: Iterable[AttackCoverage]) -> list[AttackCoverageRe
     the twins problem CLAUDE.md keeps recording; one construction has no twin to
     forget.
     """
+    rows = list(rows)
+    # `pending_review` is derived over the WHOLE assessment, because a computed
+    # parent's claim rests on its children's evidence (#554, D-094). Set on each
+    # row as a plain attribute for `model_validate` to read; the schema field is
+    # required, so a site that skips this fails loudly rather than guessing.
+    pending = attack_pending_codes(rows)
+    for r in rows:
+        r.pending_review = r.technique_code in pending
     return [
         AttackCoverageResponse.model_validate(r, from_attributes=True)
         for r in sorted(rows, key=lambda r: r.technique_code)
     ]
+
+
+def _serialize_one(db: Session, row: AttackCoverage) -> AttackCoverageResponse:
+    """One row, with `pending_review` derived over its whole assessment."""
+    siblings = (
+        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == row.assessment_id))
+        .scalars()
+        .all()
+    )
+    return next(c for c in _serialize_coverage(siblings) if c.id == row.id)
 
 
 def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentResponse:
@@ -511,16 +529,17 @@ def patch_coverage(
         )
     require_current_catalog(db, a)  # #556
     # #554 (D-094): a parent WITH sub-techniques has its status computed from
-    # them, so neither its status nor its reason is anyone's to set. Refused
-    # typed, like every other write the vocabulary forbids.
-    if is_computed_parent(row.technique_code) and ({"status", "reason_code"} & set(data)):
+    # them, so neither its status nor its reason is anyone's to set -- and a
+    # lock, which protects an answer, has no answer of its own to protect.
+    # Refused typed, like every other write the vocabulary forbids.
+    if is_computed_parent(row.technique_code) and ({"status", "reason_code", "locked"} & set(data)):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "reason": "parent_status_computed",
                 "message": (
-                    f"{row.technique_code}'s status is computed from its sub-techniques. "
-                    "Score the sub-techniques instead."
+                    f"{row.technique_code}'s status is computed from its sub-techniques, so "
+                    "it cannot be set or locked. Score or lock the sub-techniques instead."
                 ),
             },
         )
@@ -619,6 +638,7 @@ def patch_coverage(
     # #554 (D-094): a sub-technique's change recomputes its parent in the same
     # transaction, so the parent can never be read out of step with its children.
     recomputed: list[str] = []
+    parents_unlocked: list[str] = []
     technique = technique_by_id(row.technique_code)
     parent_code = technique.parent_id if technique is not None else None
     if parent_code is not None and ({"status", "reason_code"} & set(data)):
@@ -634,7 +654,7 @@ def patch_coverage(
             .scalars()
             .all()
         }
-        recomputed = recompute_parents(family_rows, [parent_code])
+        recomputed, parents_unlocked = recompute_parents(family_rows, [parent_code])
     audit(
         db,
         action="attack.coverage.updated",
@@ -646,6 +666,7 @@ def patch_coverage(
             "fields": sorted(data.keys()),
             # #554 (D-094): the parent this change recomputed, when it changed.
             "parents_recomputed": recomputed,
+            "parents_unlocked": parents_unlocked,
             # Recorded because this is the one path that CLEARS a review queue,
             # and "why does this technique count now" has to be answerable later
             # from the audit trail rather than from the row's current state.
@@ -656,7 +677,7 @@ def patch_coverage(
     db.refresh(row)
     # The second of the two hand-built copies this response used to have. See
     # `_serialize_coverage` for why neither is hand-built any more.
-    return AttackCoverageResponse.model_validate(row, from_attributes=True)
+    return _serialize_one(db, row)
 
 
 def _llm_dep(db: Annotated[Session, Depends(get_db)]) -> LLMClient:
@@ -1680,7 +1701,7 @@ def confirm_coverage_citations(
         technique_code=row.technique_code,
         confirmed=len(outstanding),
     )
-    return AttackCoverageResponse.model_validate(row, from_attributes=True)
+    return _serialize_one(db, row)
 
 
 @router.post(
@@ -2042,8 +2063,11 @@ def run_ai(
         row.answered_at = utcnow()
 
     # #554 (D-094): every parent recomputed from the children this run wrote,
-    # before the snapshot, so the run's own diff shows what the rule changed.
-    parents_recomputed = recompute_parents(rows)
+    # before the snapshot, so the run's own diff shows what the rule changed. A
+    # legacy-locked parent is unlocked by the recompute, so it leaves
+    # `locked_keys` too -- or the diff would hide exactly the change it made.
+    parents_recomputed, parents_unlocked = recompute_parents(rows)
+    locked_keys = locked_keys - frozenset(parents_unlocked)
     db.flush()
     after = _snap()
     diffs = diff_keyed_rows(before, after, _DIFF_FIELDS, locked_keys=locked_keys)
@@ -2117,14 +2141,12 @@ def run_ai(
             "statuses_rejected": statuses_rejected,
             "parent_suggestions_refused": parent_suggestions_refused,
             "parents_recomputed": parents_recomputed,
+            "parents_unlocked": parents_unlocked,
         },
     )
     db.commit()
 
-    coverage = [
-        AttackCoverageResponse.model_validate(r, from_attributes=True)
-        for r in sorted(rows.values(), key=lambda r: r.technique_code)
-    ]
+    coverage = _serialize_coverage(rows.values())
     return AttackRunAiResponse(
         tools_available=len(tools),
         changed=changes,
@@ -2171,7 +2193,7 @@ def approve_assessment(
     # #554 (D-094): approval freezes the numbers, so every parent is recomputed
     # from its children first. A draft scored before parents were computed
     # would otherwise freeze parent statuses nobody's rule produced.
-    parents_recomputed = recompute_parents(
+    parents_recomputed, parents_unlocked = recompute_parents(
         {
             r.technique_code: r
             for r in db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -2188,7 +2210,11 @@ def approve_assessment(
         target_type="attack_assessment",
         target_id=a.id,
         actor_user_id=user.id,
-        details={"version": a.version, "parents_recomputed": parents_recomputed},
+        details={
+            "version": a.version,
+            "parents_recomputed": parents_recomputed,
+            "parents_unlocked": parents_unlocked,
+        },
     )
     db.commit()
     db.refresh(a)

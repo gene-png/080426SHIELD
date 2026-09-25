@@ -30,7 +30,7 @@ REASONS. Computed from the children, never invented:
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from app.attack.catalog import parent_techniques, sub_techniques
 from app.attack.coverage import CoverageStatus
@@ -83,20 +83,37 @@ def computed_parent_status(
     return CoverageStatus.NOT_APPLICABLE.value, "platform_absent"
 
 
+class RecomputeResult(NamedTuple):
+    """What a recompute changed: the parents whose status or reason moved, and
+    the parents whose legacy lock it removed. Both are audited by the caller."""
+
+    changed: list[str]
+    unlocked: list[str]
+
+
 def recompute_parents(
     rows: Mapping[str, AttackCoverage], parent_codes: Iterable[str] | None = None
-) -> list[str]:
+) -> RecomputeResult:
     """Write each computed parent's status and reason from its children's rows.
 
     `rows` is one assessment's coverage rows by technique code. A child with no
-    row counts as unscored -- missing data is never rounded up. Returns the codes
-    of the parents whose stored value changed, so the caller can audit them.
+    row counts as unscored -- missing data is never rounded up.
+
+    A LOCKED parent is unlocked here, not skipped (#620 review, D-094). A lock
+    says "protect this answer from the AI", and a computed parent has no answer
+    of its own to protect: skipping it would freeze a number the rule owns, and
+    `diff_keyed_rows` hides locked rows, so the freeze would be invisible. The
+    PATCH refuses a new lock on a parent; this removes any that predates D-094.
     """
     changed: list[str] = []
+    unlocked: list[str] = []
     for code in PARENT_CHILDREN if parent_codes is None else parent_codes:
         parent = rows.get(code)
         if parent is None or code not in PARENT_CHILDREN:
             continue
+        if parent.locked:
+            parent.locked = False
+            unlocked.append(code)
         children = [
             (rows[c].status, rows[c].reason_code) if c in rows else (None, None)
             for c in PARENT_CHILDREN[code]
@@ -105,4 +122,4 @@ def recompute_parents(
         if (parent.status, parent.reason_code) != (status, reason):
             parent.status, parent.reason_code = status, reason
             changed.append(code)
-    return changed
+    return RecomputeResult(changed, unlocked)

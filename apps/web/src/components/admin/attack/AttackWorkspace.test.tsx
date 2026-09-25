@@ -34,9 +34,28 @@ vi.mock("./AttackDeliverableCard", () => ({
 vi.mock("./AttackHeatmapCard", () => ({ AttackHeatmapCard: () => null }));
 // A marker rather than null, so a test can tell whether step 2 drew it (#556).
 vi.mock("./AttackMatrix", () => ({
-  AttackMatrix: () => <div data-testid="attack-matrix" />,
+  // A button that selects a technique, so a test can drive the panel's onPatch
+  // through the workspace without rendering the real matrix.
+  AttackMatrix: (props: { onSelectTechnique: (code: string) => void }) => (
+    <div data-testid="attack-matrix">
+      <button
+        type="button"
+        onClick={() => props.onSelectTechnique("T1001.001")}
+      >
+        select sub-technique
+      </button>
+    </div>
+  ),
 }));
-vi.mock("./AttackTechniquePanel", () => ({ AttackTechniquePanel: () => null }));
+vi.mock("./AttackTechniquePanel", () => ({
+  AttackTechniquePanel: (props: {
+    onPatch: (patch: { status: string }) => void;
+  }) => (
+    <button type="button" onClick={() => void props.onPatch({ status: "gap" })}>
+      set gap
+    </button>
+  ),
+}));
 vi.mock("@/components/messages/MessageThread", () => ({
   MessageThread: () => null,
 }));
@@ -57,6 +76,7 @@ const fetchCatalog = vi.mocked(attackClient.fetchCatalog);
 const fetchHeatmap = vi.mocked(attackClient.fetchHeatmap);
 const fetchLatestAssessment = vi.mocked(attackClient.fetchLatestAssessment);
 const createAssessment = vi.mocked(attackClient.createAssessment);
+const patchCoverage = vi.mocked(attackClient.patchCoverage);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -299,5 +319,50 @@ describe("AttackWorkspace reqSeq stale-fetch guard", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("boom-catalog");
+  });
+});
+
+describe("AttackWorkspace, a computed parent after a child's edit (#554, D-094)", () => {
+  it("refetches the assessment, so the parent's recomputed status shows", async () => {
+    const child = {
+      id: "c-child",
+      technique_code: "T1001.001",
+      status: "covered",
+      pending_review: false,
+    };
+    const parentOld = {
+      id: "c-parent",
+      technique_code: "T1001",
+      status: "covered",
+      pending_review: false,
+    };
+    const before = { ...draft(), coverage: [parentOld, child] };
+    const after = {
+      ...draft(),
+      coverage: [
+        { ...parentOld, status: "gap" },
+        { ...child, status: "gap" },
+      ],
+    };
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+    fetchLatestAssessment
+      .mockResolvedValueOnce(before as unknown as AttackAssessment)
+      .mockResolvedValueOnce(after as unknown as AttackAssessment);
+    patchCoverage.mockResolvedValue({
+      ...child,
+      status: "gap",
+    } as unknown as Awaited<ReturnType<typeof attackClient.patchCoverage>>);
+
+    render(
+      <AttackWorkspace serviceId="svc-parent" serviceTitle="Atlas ATT&CK" />,
+    );
+    fireEvent.click(await screen.findByText("select sub-technique"));
+    fireEvent.click(await screen.findByText("set gap"));
+
+    // The second load is the refetch; without it the parent keeps "covered".
+    await vi.waitFor(() =>
+      expect(fetchLatestAssessment).toHaveBeenCalledTimes(2),
+    );
   });
 });

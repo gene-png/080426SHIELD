@@ -116,6 +116,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from app.attack.coverage import CoverageStatus
+from app.attack.parents import PARENT_CHILDREN, is_computed_parent
 
 #: Statuses that make a positive claim, and therefore need backing. See the
 #: module docstring for why `gap` is not one of them.
@@ -232,12 +233,34 @@ def row_tools(row: object) -> list[str]:
 
 
 def pending_codes(rows: Iterable[object]) -> frozenset[str]:
-    """The technique codes `analytics.compute` must withhold, from stored rows."""
-    return frozenset(
+    """The technique codes `analytics.compute` must withhold, from stored rows.
+
+    ONE derivation for every surface: the rollups AND each row's `pending_review`
+    flag on the wire (`routes/attack.py` sets it from this), so the badge and the
+    percentage can never disagree about a technique.
+
+    A COMPUTED PARENT (#554, D-094) cites nothing of its own: its status is
+    arithmetic over its sub-techniques, so its claim rests on THEIR evidence. It
+    is pending exactly when it claims support (covered or partial) and any of
+    its children is pending. Its own stored citations are never consulted -- a
+    new parent's are NULL, which on its own would hold it out of coverage
+    forever, with no control to clear it (D-094 refuses the parent PATCH).
+    """
+    rows = list(rows)
+    leaf = {
         row.technique_code
         for row in rows
-        if is_pending_review(row.status, row.unconfirmed_citations, row_tools(row))
-    )
+        if not is_computed_parent(row.technique_code)
+        and is_pending_review(row.status, row.unconfirmed_citations, row_tools(row))
+    }
+    parents = {
+        row.technique_code
+        for row in rows
+        if is_computed_parent(row.technique_code)
+        and row.status in CLAIMS_SUPPORT
+        and any(child in leaf for child in PARENT_CHILDREN[row.technique_code])
+    }
+    return frozenset(leaf | parents)
 
 
 def confirm_all(unconfirmed_citations: list | None, *, at: object) -> list:

@@ -17,6 +17,7 @@ from app.models.attack_assessment import (
     AttackAssessmentStatus,
     AttackCoverage,
 )
+from tests._attack_rows import standalone_rows
 
 # Built with chr() rather than written as an escape. A tab typed as an
 # escape into this file arrived as a REAL control byte and broke the parse --
@@ -427,6 +428,15 @@ def test_the_per_technique_sheet_marks_a_withheld_row() -> None:
 _RECON = "TA0043"
 
 
+#: STANDALONE techniques (#554, D-094). These tests each need a row that
+#: stands on its own evidence; `TECHNIQUES[0]` and `[4]` are computed parents,
+#: whose pending state derives from their children, which `_ctx_from` builds at
+#: `covered` with NULL citations -- so a parent there is always pending.
+_CODES = [
+    r["technique_code"] for r in standalone_rows([{"technique_code": t.id} for t in TECHNIQUES], 8)
+]
+
+
 def _ctx_from(rows: dict[str, dict], *, default_status: str | None = "covered"):
     """Every catalogue technique at `default_status`, with per-code overrides."""
     a, coverage, _ = _build_inputs(default_status=default_status)
@@ -463,7 +473,7 @@ def _xlsx(ctx):
 
 @pytest.mark.unit
 def test_the_coverage_sheet_carries_the_rationale_and_all_three_tool_lists() -> None:
-    code = TECHNIQUES[0].id
+    code = _CODES[0]
     ctx, _ = _ctx_from(
         {
             code: {
@@ -486,7 +496,7 @@ def test_the_coverage_sheet_carries_the_rationale_and_all_three_tool_lists() -> 
 
 @pytest.mark.unit
 def test_the_gaps_sheet_carries_the_rationale_for_each_gap() -> None:
-    code = TECHNIQUES[1].id
+    code = _CODES[1]
     ctx, _ = _ctx_from(
         {code: {"status": CoverageStatus.GAP.value, "rationale": "No tool observes this."}}
     )
@@ -500,7 +510,7 @@ def test_every_unscored_technique_is_listed_by_code_and_agrees_with_the_summary(
     # A null status and an unrecognised one are both unscored to the rollup
     # (`_validated`), so both must be listed -- the sheet may not use a
     # narrower predicate than the number it sits beside.
-    null_code, bogus_code = TECHNIQUES[2].id, TECHNIQUES[3].id
+    null_code, bogus_code = _CODES[2], _CODES[3]
     ctx, rollup = _ctx_from({null_code: {"status": None}, bogus_code: {"status": "bogus"}})
     listed = [r["Technique"] for r in _sheet_rows(_xlsx(ctx)["Unscored"])]
     assert sorted(listed) == sorted([null_code, bogus_code])
@@ -601,7 +611,7 @@ def test_an_inferred_tool_is_marked_unconfirmed_beside_a_confirmed_one() -> None
     """#102. A row with one confirmed tool is NOT pending review, so its
     inferred neighbour used to print exactly like a confirmed citation. The
     mark comes from `pending.uncleared_tools`: inferred and not cleared."""
-    code = TECHNIQUES[4].id
+    code = _CODES[4]
     ctx, _ = _ctx_from(
         {
             code: {
@@ -620,7 +630,7 @@ def test_an_inferred_tool_is_marked_unconfirmed_beside_a_confirmed_one() -> None
 
 @pytest.mark.unit
 def test_a_cleared_citation_is_not_marked() -> None:
-    code = TECHNIQUES[5].id
+    code = _CODES[5]
     ctx, _ = _ctx_from(
         {
             code: {
@@ -639,7 +649,7 @@ def test_a_cleared_citation_is_not_marked() -> None:
 def test_model_text_cannot_become_a_formula_or_break_the_workbook() -> None:
     """Rationale is model output and tool names come from a client upload.
     openpyxl stores a leading "=" as a formula and raises on control bytes."""
-    code, gap_code = TECHNIQUES[6].id, TECHNIQUES[7].id
+    code, gap_code = _CODES[6], _CODES[7]
     formula = '=HYPERLINK("http://example.test","click")'
     ctx, _ = _ctx_from(
         {
