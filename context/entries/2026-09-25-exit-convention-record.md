@@ -46,8 +46,12 @@ fixture incident text and the wording of printed messages.
 - `context/entries/2026-09-24-540-ci-selection-gate.md` cited the convention
   as D-051; it cites D-090.
 - `check_audit_evidence.py`'s docstring said the gate does not block a merge,
-  false since D-054's correction; it now says what the setting does and points
-  at D-054. `DELIVERY_PLAN.md`'s #108 note is date-qualified to match.
+  false since D-054's correction. It now points at D-054 and states the
+  admin setting as measured on 2026-09-25 (`enforce_admins` is `true`: no
+  admin bypass of required checks), with the command. The first fix said
+  `false`, which the owner had changed that week; the other present-tense
+  copies of that claim predate this PR and are filed as #595.
+  `DELIVERY_PLAN.md`'s #108 note is date-qualified to match.
 - The DEFERRED example subject is a placeholder (`D-NNN -- supersedes
   D-MMM`), not a real-looking number.
 

@@ -18,12 +18,14 @@ check is neither: it runs in under a second and has no model in the loop.
 
 **What makes it blocking is a GitHub setting, not this file.** "Adversarial
 audit recorded" was registered as a required status check on `main` on
-2026-08-20 (D-054's correction). A required check binds a non-admin merging
-through a pull request; `enforce_admins` is false, so an admin can merge past a
-red one. An earlier version of this docstring said it did not block at all,
-which stopped being true that day (#108). Verify with
-`gh api repos/{owner}/{repo}/branches/main/protection` rather than trusting
-this paragraph.
+2026-08-20 (D-054's correction). On 2026-09-25,
+`gh api repos/gene-png/080426SHIELD/branches/main/protection --jq
+.enforce_admins.enabled` returned `true`: required checks bind admins too, so
+nobody merges past a red one without first changing the protection setting.
+Earlier it was `false`, and admins could. An earlier version of this docstring
+said the gate did not block at all, which stopped being true on 2026-08-20
+(#108). The setting can change again, so re-run that command rather than
+trusting this paragraph.
 
 ## What it can and cannot prove
 
