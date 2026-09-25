@@ -1598,8 +1598,9 @@ Rules of the road:
   name, in the PR body.** Never an agent, never by inference from silence, never
   the author when the author is an agent. That authorisation is prose and
   nothing checks it: the audit gate reads only that the lines exist. (Admins
-  could merge past a red gate until `enforce_admins` was turned on;
-  `true` on 2026-09-25 by `gh api .../branches/main/protection`, #595.) **The checkable version is a GitHub
+  could merge past a red gate until `enforce_admins` was turned on; `true` on
+  2026-09-25 by `gh api repos/gene-png/080426SHIELD/branches/main/protection
+  --jq .enforce_admins.enabled`, #595.) **The checkable version is a GitHub
   review approval** (`gh pr review --approve`) from the named human. A blocked
   PR waits, and its issue gets a comment saying it is blocked on tooling.
 

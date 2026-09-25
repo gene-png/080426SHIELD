@@ -1717,7 +1717,9 @@ audit caught them contradicting the bullets directly below them:
   request**. This repo had no such person.
 - (Before 2026-09-25) `enforce_admins` was **false**: both developers are
   admins and bypassed every check above.
-- (Before 2026-09-25) **A pull request was not required** to push to `main`, and
+- (Before 2026-09-25) **A pull request did not bind admins**: the review block
+  already existed (0 approvals, measured 2026-09-22), but with `enforce_admins`
+  off an admin could push to `main` directly, and
   `.github/workflows/audit-gate.yml` triggers on `pull_request` only. A commit
   pushed straight to `main` therefore produces no "Adversarial audit recorded"
   check run **at all** — there is nothing to require. This is the largest
@@ -1753,8 +1755,8 @@ with `gh api repos/gene-png/080426SHIELD/branches/main/protection` and
 
 **Caveat on the verification itself.** `gh api .../branches/main/protection`
 reads **classic** branch protection only. It neither shows nor reconciles
-repository **rulesets**, which can add or — via bypass actors — subtract
-enforcement independently. The read-back below is necessary evidence, not
+repository **rulesets**, which can add enforcement independently (each with its
+own bypass list). The read-back below is necessary evidence, not
 sufficient; a full answer needs `gh api repos/.../rulesets` as well.
 
 A GitHub settings change no file in this repo can make or verify, which is why
