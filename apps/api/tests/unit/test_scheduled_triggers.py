@@ -4,9 +4,11 @@ Tested here rather than left to fire blind in CI, because its whole value is tha
 it is reliable: a mechanism nobody trusts gets muted, and a muted mechanism is the
 "tracked but never comes up" state it exists to end.
 
-Only the pure parsing half is covered. `main()` shells out to `gh`, and a test
-that mocked `gh` would be asserting my model of the API rather than the API —
-which is the shape CLAUDE.md records as a test that cannot fail.
+Only the PURE halves are covered: parsing, the truncation refusal, the
+stale-fired rule and the failure report's content (#531). `main()` shells out
+to `gh`, and a test that mocked `gh` would be asserting my model of the API
+rather than the API -- which is the shape CLAUDE.md records as a test that
+cannot fail. So the gh calls stay thin and the decisions are pure functions.
 """
 
 from __future__ import annotations
@@ -14,7 +16,12 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from scripts.fire_scheduled_triggers import parse_trigger
+from scripts.fire_scheduled_triggers import (
+    failure_report,
+    not_truncated,
+    parse_trigger,
+    stale_fired,
+)
 
 
 @pytest.mark.unit
@@ -69,3 +76,98 @@ def test_the_labels_are_case_insensitive_but_the_date_is_not_guessed() -> None:
     """
     due, _ = parse_trigger("trigger-date: 2026-10-01\ntrigger-reason: x\n")
     assert due == date(2026, 10, 1)
+
+
+# --- #531 / #496: the trigger that went nowhere --------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "line",
+    [
+        "`Trigger-date: 2026-09-22`",  # #145's exact shape, which failed four weeks
+        "**Trigger-date:** 2026-09-22",
+        "- Trigger-date: 2026-09-22",
+        "> Trigger-date: 2026-09-22",
+    ],
+)
+def test_a_decorated_trigger_line_parses(line: str) -> None:
+    due, reason = parse_trigger(f"## Trigger\n\n{line}\n- Trigger-reason: because\n")
+    assert due == date(2026, 9, 22)
+    assert reason == "because"
+
+
+@pytest.mark.unit
+def test_a_key_mentioned_but_not_on_its_own_line_names_the_cause() -> None:
+    """The old message said "has no `Trigger-date:` line" while the line was
+    visibly there, which names the check and not the cause (#531)."""
+    body = "The Trigger-date is 2026-09-22, see below.\nTrigger-reason: x\n"
+    with pytest.raises(ValueError, match="mentions `Trigger-date` but not as a line of its own"):
+        parse_trigger(body)
+
+
+@pytest.mark.unit
+def test_an_empty_value_does_not_borrow_the_next_line() -> None:
+    """An empty `Trigger-reason:` is a missing reason. It must not quietly take
+    whatever line follows it as the reason the comment will quote."""
+    body = "Trigger-date: 2026-10-01\nTrigger-reason:\n- a bullet from the next section\n"
+    with pytest.raises(ValueError, match="`Trigger-reason:` has no value on its line"):
+        parse_trigger(body)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("line", ["Trigger-reason: ``", "**Trigger-reason:** **"])
+def test_a_value_of_only_decoration_is_empty(line: str) -> None:
+    with pytest.raises(ValueError, match="`Trigger-reason:` has no value on its line"):
+        parse_trigger(f"Trigger-date: 2026-10-01\n{line}\n")
+
+
+@pytest.mark.unit
+def test_a_full_page_is_refused_as_truncated() -> None:
+    """`gh` stops at `--limit` without saying so, so a full page may hide
+    triggers that would never fire (#496)."""
+    assert not_truncated([{"number": 1}], limit=2) == [{"number": 1}]
+    with pytest.raises(RuntimeError, match="may be truncated"):
+        not_truncated([{"number": 1}, {"number": 2}], limit=2)
+
+
+@pytest.mark.unit
+def test_a_fired_trigger_left_untouched_is_reported() -> None:
+    today = date(2026, 10, 20)
+    issues = [
+        {"number": 1, "labels": [{"name": "trigger-fired"}], "updatedAt": "2026-10-01T07:00:00Z"},
+        {"number": 2, "labels": [{"name": "trigger-fired"}], "updatedAt": "2026-10-15T07:00:00Z"},
+        {"number": 3, "labels": [], "updatedAt": "2026-01-01T07:00:00Z"},
+    ]
+    assert stale_fired(issues, today, days=14) == ["#1: fired and untouched for 19 days"]
+
+
+@pytest.mark.unit
+def test_a_failed_run_comments_on_the_open_tracking_issue() -> None:
+    existing = [
+        {"number": 7, "title": "Scheduled triggers: the weekly run failed"},
+        {"number": 8, "title": "Something else"},
+    ]
+    action, args = failure_report(existing, "ValueError: #145: no reason", "https://run/1")
+    assert action == "comment"
+    assert args[0] == "7"
+    assert "https://run/1" in args[1] and "ValueError: #145: no reason" in args[1]
+
+
+@pytest.mark.unit
+def test_a_failed_run_opens_the_tracking_issue_when_none_is_open() -> None:
+    action, args = failure_report([], None, "https://run/2")
+    assert action == "create"
+    assert args[0] == "Scheduled triggers: the weekly run failed"
+    # A crash before the log was written is said, not papered over.
+    assert "failed before it wrote its log" in args[1] and "https://run/2" in args[1]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("argv", [["--nope"], ["--report-failure"], ["--report-failure", "a", "b"]])
+def test_an_unknown_or_incomplete_argument_is_could_not_look(argv: list[str], monkeypatch) -> None:
+    from scripts.fire_scheduled_triggers import main
+
+    # REPO set, so the argument check is the only thing that can refuse.
+    monkeypatch.setenv("REPO", "owner/repo")
+    assert main(argv) == 2

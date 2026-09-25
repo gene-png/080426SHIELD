@@ -15,8 +15,9 @@ name: Scheduled triggers
 # instead of waiting to be rediscovered.
 #
 # NOT a gate. It cannot block anything and it cannot fail a merge — it only
-# raises its hand. A non-blocking mechanism that runs beats a blocking one that
-# gets turned off (the mutation sweep's own reasoning).
+# raises its hand, and since #531 a failed run raises it on an issue. A
+# non-blocking mechanism that runs beats a blocking one that gets turned off
+# (the mutation sweep's own reasoning).
 
 on:
   schedule:
@@ -43,5 +44,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          TRIGGER_LOG: ${{ runner.temp }}/triggers.log
         working-directory: apps/api
         run: python -m scripts.fire_scheduled_triggers
+
+      # A red scheduled run is on no one's path: this one failed every week for
+      # a month and nobody looked (#531). So a failure files, or comments on, an
+      # issue carrying the board labels, which IS on someone's path.
+      - name: Put a failed run in front of a person
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        working-directory: apps/api
+        run: python -m scripts.fire_scheduled_triggers --report-failure "${{ runner.temp }}/triggers.log"

@@ -34,6 +34,16 @@ known date instead of waiting to be stumbled over.
 FAIL LOUDLY: a malformed `Trigger-date` raises rather than being skipped. A
 silently ignored alarm clock is worse than none, because the label implies one is
 set.
+
+## And the failure has to reach someone (#531)
+
+Failing loudly was not enough: a scheduled workflow's red X is on no one's
+path, and this one was red every week for a month over #145's backticked date.
+So a failed run files (or comments on) an issue titled
+"Scheduled triggers: the weekly run failed", with the board labels
+(`--report-failure`, run by the workflow's `if: failure()` step). And a trigger
+that FIRED and then sat untouched for `STALE_AFTER_DAYS` is a problem too: an
+item that fires and is ignored is back to being untracked.
 """
 
 from __future__ import annotations
@@ -53,8 +63,26 @@ FIRED = "trigger-fired"
 # line at all -- the second reads as "you forgot to set one" when it is
 # sitting right there, and a natural-language date is exactly what someone
 # writes when they mean "later". Found by the test, not by review.
-_DATE = re.compile(r"^\s*Trigger-date:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
-_REASON = re.compile(r"^\s*Trigger-reason:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+#
+# The prefix tolerates markdown decoration before the key -- a bullet, a quote
+# marker, backticks, emphasis -- and after the colon (`**Trigger-date:** x`).
+# #145's backticked date never matched the bare-key pattern (#531).
+# Never \s, on either side of the key: it crosses newlines, so a key would
+# match across lines and an empty value would borrow the next line.
+_DECOR = r"[ \t>*_`\-]*"
+_DATE = re.compile(rf"^{_DECOR}Trigger-date:[*_`]*[ \t]*(.+?)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+_REASON = re.compile(
+    rf"^{_DECOR}Trigger-reason:[*_`]*[ \t]*(.+?)[ \t]*$", re.IGNORECASE | re.MULTILINE
+)
+# Anywhere, to name the cause when the key is present but not as a line.
+_MENTIONS_DATE = re.compile(r"Trigger-date", re.IGNORECASE)
+_MENTIONS_REASON = re.compile(r"Trigger-reason", re.IGNORECASE)
+
+# `gh` stops at `--limit` without saying so (#496). A full page is refused.
+LIST_LIMIT = 1000
+# A fired trigger untouched this long is reported as ignored (#531).
+STALE_AFTER_DAYS = 14
+FAILURE_TITLE = "Scheduled triggers: the weekly run failed"
 
 
 def _gh(*args: str) -> str:
@@ -115,20 +143,172 @@ def parse_trigger(body: str) -> tuple[date, str]:
 
     Both are required. `Trigger-reason` is what makes the comment actionable --
     a bare "this issue is due" is the kind of reminder that gets muted.
+
+    Markdown decoration around the line is tolerated: a list bullet, a quote
+    marker, backticks or emphasis (`` `Trigger-date: 2026-09-22` ``,
+    `**Trigger-date:** 2026-09-22`). #145 wrote its date in backticks, the
+    old pattern anchored on the bare key, and the weekly run failed on it for
+    four weeks with a message that named the check, not the cause (#531).
     """
-    dm = _DATE.search(body or "")
-    if dm is None:
-        raise ValueError(f"labelled `{LABEL}` but has no `Trigger-date:` line")
-    rm = _REASON.search(body or "")
-    if rm is None:
-        raise ValueError(f"labelled `{LABEL}` but has no `Trigger-reason:` line")
+    body = body or ""
+    value = _field(body, "Trigger-date", _DATE, _MENTIONS_DATE, "YYYY-MM-DD")
+    reason = _field(body, "Trigger-reason", _REASON, _MENTIONS_REASON, "<why>")
     try:
-        return date.fromisoformat(dm.group(1)), rm.group(1)
+        return date.fromisoformat(value), reason
     except ValueError as exc:
-        raise ValueError(f"`Trigger-date: {dm.group(1)}` is not an ISO date (YYYY-MM-DD)") from exc
+        raise ValueError(f"`Trigger-date: {value}` is not an ISO date (YYYY-MM-DD)") from exc
 
 
-def main() -> int:
+def _field(body: str, key: str, line: re.Pattern, mention: re.Pattern, shape: str) -> str:
+    """The undecorated value of `key`'s line, or raise naming the CAUSE: no
+    line, a line with nothing on it, or the key mentioned only mid-sentence."""
+    m = line.search(body)
+    if m is not None:
+        value = _undecorate(m.group(1))
+        if value:
+            return value
+        raise ValueError(f"`{key}:` has no value on its line: write `{key}: {shape}`")
+    if _empty_line(key).search(body):
+        raise ValueError(f"`{key}:` has no value on its line: write `{key}: {shape}`")
+    if mention.search(body):
+        raise ValueError(
+            f"mentions `{key}` but not as a line of its own: write "
+            f"`{key}: {shape}` on a line by itself"
+        )
+    raise ValueError(f"labelled `{LABEL}` but has no `{key}:` line")
+
+
+def _empty_line(key: str) -> re.Pattern:
+    return re.compile(rf"^{_DECOR}{key}:[*_`]*[ \t]*$", re.IGNORECASE | re.MULTILINE)
+
+
+def not_truncated(issues: list[dict], limit: int = LIST_LIMIT) -> list[dict]:
+    """The list, or raise if it filled the page: `gh` stops at `--limit` without
+    saying so, and an issue past it would never fire (#496)."""
+    if len(issues) >= limit:
+        raise RuntimeError(
+            f"`gh issue list` returned {len(issues)} issues, the limit: the list may be "
+            "truncated, so some triggers would never be read. Raise LIST_LIMIT."
+        )
+    return issues
+
+
+def _undecorate(value: str) -> str:
+    """The value with markdown decoration stripped from both ends."""
+    return value.strip().strip("`*_").strip()
+
+
+def stale_fired(issues: list[dict], today: date, days: int = STALE_AFTER_DAYS) -> list[str]:
+    """Fired triggers nobody has acted on: still open, `trigger-fired`, and with
+    no activity for `days` days (#531).
+
+    `updatedAt` moves on any comment, label or edit, and firing itself sets it,
+    so an issue last updated `days` ago has seen nothing since it fired. An
+    item that fires and is then ignored is back to being untracked, which is
+    what the trigger existed to end.
+    """
+    out = []
+    for issue in issues:
+        names = {label["name"] for label in issue.get("labels", [])}
+        if FIRED not in names:
+            continue
+        updated = date.fromisoformat(str(issue["updatedAt"])[:10])
+        idle = (today - updated).days
+        if idle >= days:
+            out.append(f"#{issue['number']}: fired and untouched for {idle} days")
+    return out
+
+
+def failure_report(existing: list[dict], log: str | None, run_url: str) -> tuple[str, list[str]]:
+    """What to post when a run fails: ("comment", [number, body]) on the open
+    tracking issue, or ("create", [title, body]) when there is none (#531).
+
+    A scheduled workflow's red X is on no one's path, which is how this one
+    stayed red for four weeks. An issue carrying the board labels is.
+    """
+    tail = (log or "").strip()
+    detail = (
+        f"```\n{tail[-3000:]}\n```"
+        if tail
+        else "The run failed before it wrote its log; the run page has the rest."
+    )
+    body = f"The weekly scheduled-trigger run failed: {run_url}\n\n{detail}"
+    open_ones = [i for i in existing if i.get("title") == FAILURE_TITLE]
+    if open_ones:
+        return "comment", [str(open_ones[0]["number"]), body]
+    return "create", [
+        FAILURE_TITLE,
+        body + "\n\nOpened by `.github/workflows/scheduled-triggers.yml` on a failed run. "
+        "Fix the cause it names, then close this; the next failure opens it again.",
+    ]
+
+
+def _log(line: str) -> None:
+    print(line)
+    path = os.environ.get("TRIGGER_LOG")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+
+def report_failure(log_path: str) -> int:
+    """`--report-failure LOG`: file or update the tracking issue (#531)."""
+    repo = os.environ.get("REPO")
+    run_url = os.environ.get("RUN_URL", "(run URL not set)")
+    if not repo:
+        print("REPO is not set — refusing to guess which repository.", file=sys.stderr)
+        return 2
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            log = f.read()
+    except OSError:
+        log = None  # stated in the body rather than inventing a log
+    existing = json.loads(
+        _gh(
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--search",
+            f'in:title "{FAILURE_TITLE}"',
+            "--json",
+            "number,title",
+        )
+    )
+    action, args = failure_report(existing, log, run_url)
+    if action == "comment":
+        _gh("issue", "comment", args[0], "--repo", repo, "--body", args[1])
+        print(f"commented on #{args[0]}")
+    else:
+        # The board labels at creation: an issue without them is invisible to
+        # the only view used to decide what to work on (CLAUDE.md).
+        _gh(
+            "issue",
+            "create",
+            "--repo",
+            repo,
+            "--title",
+            args[0],
+            "--body",
+            args[1],
+            "--label",
+            "mvp-blocking",
+            "--label",
+            "tier-3",
+        )
+        print("opened the tracking issue")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ["--report-failure"] and len(args) == 2:
+        return report_failure(args[1])
+    if args:
+        print(f"unknown or incomplete arguments: {args!r}", file=sys.stderr)
+        return 2
     repo = os.environ.get("REPO")
     if not repo:
         print("REPO is not set — refusing to guess which repository.", file=sys.stderr)
@@ -144,11 +324,11 @@ def main() -> int:
         "--label",
         LABEL,
         "--limit",
-        "100",
+        str(LIST_LIMIT),
         "--json",
-        "number,title,body,labels",
+        "number,title,body,labels,updatedAt",
     )
-    issues = json.loads(raw)
+    issues = not_truncated(json.loads(raw))
     today = date.today()
     fired, problems = 0, []
 
@@ -187,15 +367,18 @@ def main() -> int:
             ),
         )
         _gh("issue", "edit", str(number), "--repo", repo, "--add-label", FIRED)
-        print(f"fired: #{number} ({issue['title'][:60]})")
+        _log(f"fired: #{number} ({issue['title'][:60]})")
         fired += 1
 
-    print(f"scheduled triggers: {len(issues)} labelled, {fired} fired.")
+    problems += stale_fired(issues, today)
+    _log(f"scheduled triggers: {len(issues)} labelled, {fired} fired.")
     if problems:
-        raise ValueError(
-            "issues labelled `scheduled-trigger` with an unusable trigger:\n  "
+        message = (
+            "issues labelled `scheduled-trigger` with an unusable or ignored trigger:\n  "
             + "\n  ".join(problems)
         )
+        _log(message)
+        raise ValueError(message)
     return 0
 
 
