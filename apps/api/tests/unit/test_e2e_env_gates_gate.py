@@ -134,18 +134,22 @@ def test_an_unknown_argument_is_could_not_look(capsys) -> None:
     assert gate.main(["gate", "--rot", "."]) == 2
 
 
-def test_the_live_repo_matches_483(capsys) -> None:
-    # The real tree, not a fixture: every variable this check reports must be
-    # an EXEMPTED one today. If E2E_PERF or E2E_OIDC is ever set in CI, the
-    # exemption goes stale and this goes red, which is the point. Skipped only
-    # with no `.github/workflows` above this file (the api container).
+def test_the_live_repo_is_clean_with_only_the_configuration_exemption(capsys) -> None:
+    # The real tree, not a fixture. #483's E2E_PERF and E2E_OIDC exemptions are
+    # GONE: #560 renamed both specs to `e2e/manual/*.manual.ts` and removed
+    # their env reads, so no scanned spec reads either, and this PR removed
+    # the exemptions. What remains exempted is E2E_API_URL, configuration with
+    # a default. A new ungated variable, or a stale exemption, turns this red.
+    # Skipped only with no `.github/workflows` above this file (the api
+    # container).
     wf = find_workflows_dir(pathlib.Path(__file__).resolve())
     if wf is None:
         pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
     code = gate.main(["gate", "--root", str(wf.parent.parent)])
     out = capsys.readouterr().out
     assert code == 0, out
-    assert "E2E_PERF" in out and "E2E_OIDC" in out, out
+    assert "exempted: E2E_API_URL" in out, out
+    assert "E2E_PERF" not in out and "E2E_OIDC" not in out, out
 
 
 # --- review of e8424dd: what counts as SET, and what counts as a gate -----------

@@ -96,14 +96,15 @@ the api image.
 
 - **pytest:** 9 tests in 2 files (#500): 8 in `test_admin_removal.py` and 1 in
   `test_self_assessment.py`.
-- **Playwright env gates:** `E2E_PERF` and `E2E_OIDC` (#483). `E2E_API_URL` is
-  exempted as configuration with a default. **These two exemptions END when
-  #560 lands**, because #560 moves both specs to `e2e/manual/`, and the gate
-  then reports the exemptions as stale. Whichever of #545 and #560 lands
-  second removes them. If #560 merges after #545's last CI run, `main` turns
-  red, so land #560 first and re-run #545's CI, or remove the E2E_PERF and E2E_OIDC entries in
-  whichever lands second.
-- **Playwright listing:** all 47 spec files on disk are in CI's run today.
+- **Playwright env gates:** `E2E_API_URL` is exempted as configuration with a
+  default. `E2E_PERF` and `E2E_OIDC` (#483) were exempted until #560 merged
+  (`06fa7ce`). #560 renamed both specs to `e2e/manual/*.manual.ts` and removed
+  their env reads, so no scanned `*.spec.ts` reads either, and the gate
+  reported both exemptions as stale. This PR landed second, so it removed
+  them.
+- **Playwright listing:** every spec file on disk is in CI's run. The count is
+  `cd e2e && npx playwright test --list`, not a number written here. It was 47
+  before #560 moved the OIDC and perf specs out of the suite.
 
 ## Limits
 

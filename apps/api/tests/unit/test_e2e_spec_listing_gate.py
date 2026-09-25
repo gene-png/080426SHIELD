@@ -96,6 +96,9 @@ def test_no_e2e_dir_is_could_not_look(tmp_path, capsys) -> None:
     lst.write_text(_listing("a.spec.ts"), encoding="utf-8")
     code, out = _run(tmp_path, lst, capsys)
     assert code == 2, out
+    # The BRANCH, not only the code: without this guard rglob on a missing
+    # directory falls through to "no *.spec.ts under", also exit 2.
+    assert "does not exist -- wrong root?" in out, out
 
 
 def test_list_file_is_required_and_unknown_flags_refused(capsys) -> None:
