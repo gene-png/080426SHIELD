@@ -89,7 +89,7 @@ So the validation now has both halves, and the second is the one that matters:
     otherwise take the same path as a human author and report clean over a bot
     PR nobody checked.
 
-Exit codes follow D-051: 0 clean, 1 a real violation, 2 could not look.
+Exit codes follow D-090: 0 clean, 1 a real violation, 2 could not look.
 """
 
 from __future__ import annotations
@@ -139,7 +139,10 @@ MANIFEST_GLOBS = (
 #: gate itself, so a PR authored as `dependabot[bot]` could have edited
 #: `audit-gate.yml` -- removing the very step this exemption lives in -- and
 #: passed the manifest-only check. Anyone with write access can push to a
-#: Dependabot branch, `enforce_admins` is false, and zero reviews are required.
+#: Dependabot branch, and zero reviews are required. (`enforce_admins` was
+#: false then and is true since 2026-09-25, #595. That does not close this
+#: hole: the attack goes through GREEN checks, because the skipped audit step
+#: is what would have been red, so there is nothing for an admin to bypass.)
 #:
 #: REMOVING THE GLOB WAS THE WRONG FIX because it re-breaks #465. So `.github/`
 #: is judged by CONTENT: every added or removed line in such a file must be a
@@ -718,5 +721,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-bot-pr-manifest-only: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(EXIT_COULD_NOT_LOOK) from exc

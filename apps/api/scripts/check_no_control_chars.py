@@ -42,7 +42,7 @@ the next person at the same price. Same shape as the prose-total rule refused at
 7.7% signal and the first separator-class draft: the cheap check is the one that
 cries wolf, and a gate that cries wolf gets switched off.
 
-EXIT CODES, per this repo's fail-closed convention (D-051):
+EXIT CODES, per this repo's fail-closed convention (D-090):
   0 - clean
   1 - at least one stray control character found
   2 - could not read the tree (an unreadable input is NOT a pass)
@@ -280,5 +280,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-control-chars: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

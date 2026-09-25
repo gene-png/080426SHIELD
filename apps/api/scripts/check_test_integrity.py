@@ -250,7 +250,7 @@ class CannotScan(Exception):
 
     The shape is `check_audit_evidence`'s recorded defect -- an empty
     changed-file list reading as "documentation-only, exempt" -- in a second
-    gate, and it is why D-051 asks for a checker's silent-success branches to be
+    gate, and it is why D-090 asks for a checker's silent-success branches to be
     enumerated before its first line rather than found in review.
     """
 
@@ -338,7 +338,7 @@ def main(argv: list[str]) -> int:
         findings = scan_tree(root)
     except CannotScan as exc:
         print(f"test-integrity: cannot scan: {exc}", file=sys.stderr)
-        print("Refusing to report clean on input it could not read (D-051).", file=sys.stderr)
+        print("Refusing to report clean on input it could not read (D-090).", file=sys.stderr)
         return 2
     for f in findings:
         print(f"{f.path}:{f.line}: {f.code} {f.message}")
@@ -372,5 +372,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"test-integrity: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

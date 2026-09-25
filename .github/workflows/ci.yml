@@ -205,7 +205,7 @@ jobs:
           # step.
           set -euo pipefail
           CFG=apps/web/next.config.mjs
-          # "I could not look" is exit 2 and never exit 1 (D-051). A missing or
+          # "I could not look" is exit 2 and never exit 1 (D-090). A missing or
           # unevaluable config must not read as "the line was removed".
           if [ ! -r "$CFG" ]; then
             echo "cannot read $CFG -- refusing to guess whether the route is mounted" >&2
@@ -215,7 +215,7 @@ jobs:
           # Without it a missing or broken node aborts at this line and the
           # step exits 1 with no message -- reported as "the line was removed"
           # when the truth is "I could not look", which is the exact inversion
-          # D-051 exists to prevent.
+          # D-090 exists to prevent.
           node_rc=0
           val=$(node --input-type=module -e "
             const m = await import('./apps/web/next.config.mjs');
@@ -359,6 +359,12 @@ jobs:
           # executed it. This is one line and it exercises all three exit
           # codes on a scratch file.
           bash scripts/red-on-revert.sh --self-test
+          # #143: the pre-push hook printed "skipped" over a FAILING suite and
+          # let the push through. This extracts the hook's entry from
+          # `.pre-commit-config.yaml`, runs it against a stub `docker` in six
+          # states, and `--self-test` puts #143's shape back and requires red.
+          bash tests/gates/prepush_hook_status.sh
+          bash tests/gates/prepush_hook_status.sh --self-test
 
       - name: gates can fail
         run: python apps/api/scripts/check_gate_fixtures.py

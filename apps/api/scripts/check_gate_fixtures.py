@@ -23,7 +23,7 @@ in DEFERRED with a reason. A covered gate must have:
   * at least one case the gate PASSES (exit 0);
   * at least one case the gate FAILS with exit 1 -- the NEGATIVE CONTROL, without
     which the suite proves the gate runs and not that it discriminates. A 2 does
-    not satisfy it: 1 and 2 are the codes D-051 exists to keep apart;
+    not satisfy it: 1 and 2 are the codes D-090 exists to keep apart;
   * at least one case expecting exit 2, so the fail-closed half is covered too,
     and it carries `stdout_contains` -- a gate has several "could not look"
     branches and the code alone cannot say which one fired;
@@ -62,7 +62,7 @@ That is the same scoping as the tier-1 claim below: form is mechanisable,
 implication is not. Read "traceable incident" as a convention this file makes
 visible, not a guarantee it enforces -- the enforcement is a reader.
 
-## Fail-closed, per D-051
+## Fail-closed, per D-090
 
 Exit 2 is "I could not look": fixture root missing, no gates discovered, a gate
 directory with no cases, a malformed `case.json`, DEFERRED naming a gate that
@@ -105,6 +105,26 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "prepush_hook_status.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "It EXTRACTS the api-unit-tests hook's `bash -c` body from "
+        "`.pre-commit-config.yaml` (parsed as YAML; exit 2 unless exactly one "
+        "hook with that shape), checks its registration (stages [pre-push], "
+        "always_run true, pass_filenames false), and runs the body against a "
+        "stub `docker` in six states: suite passes 0, suite fails 1, and 2 with "
+        "the cause and both bypasses for the container down, compose failing, "
+        "`docker info` failing (its own stderr quoted), and docker absent. The "
+        "stub answers only the exact argv the hook should send and exits 99 on "
+        "any other. Its `--self-test` applies four mutations -- #143's "
+        "`|| echo skipped`, a NOT RUN branch exiting 0, `--collect-only` on the "
+        "suite, and `docker info`'s redirects flipped -- exits 2 if one does "
+        "not land, and requires exactly its named checks red. A config that "
+        "cannot be read, parsed or split, or has no such hook, is exit 2 before "
+        "any state runs (each shown once by editing the config and restoring). "
+        "LIMITS: the stub stands in for docker, so it proves the hook's shell "
+        "logic, not a real container; the registration check has no mutation in "
+        "the self-test (it was shown red once by deleting `always_run`)."
+    ),
     "verify_in_worktree_status.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Both states are covered internally with REAL RUNS of the script under a "
@@ -261,7 +281,7 @@ DEFERRED: dict[str, str] = {
         "exit-2 message is now pinned to the `git log` branch. The ADVERSARIAL "
         "case is still absent, and the reason is worth more than the gap: "
         "constructing one surfaced a LIVE defect in the gate -- a subject that "
-        "REFERENCES another decision (`D-090 -- supersedes D-072`) is flagged as "
+        "REFERENCES another decision (`D-NNN -- supersedes D-MMM`) is flagged as "
         "naming a decision it does not add, which is an ordinary commit message "
         "here and turns a PR red. Filed as #342, not fixed on this branch. "
         "One more branch was unpinned until this round: `if not added: continue`, "
@@ -270,29 +290,33 @@ DEFERRED: dict[str, str] = {
         "measured, not argued -- and one named test now goes red for it."
     ),
     "check_mount_matches_database.py": (
-        "STRUCTURALLY unfixturable, and the reason recorded here first was the "
-        "weaker of two. 'Needs a live Postgres and an alembic revision to "
-        "compare against' is true and is not the binding fact: `main()` TAKES "
-        "NO ARGUMENTS. It derives the migrations directory from `__file__` and "
-        "the database from `DATABASE_URL`, and reads argv nowhere -- while "
-        "`run_case` covers a gate by substituting `{dir}` into argv. There is "
-        "no invocation that can point this gate at a fixture directory, so "
-        "covering it means changing the SCRIPT rather than adding a case, "
-        "which is exactly the blocker `leave_row_oracle.py` records below. "
+        "STRUCTURALLY unfixturable for its verdicts, and the reason recorded "
+        "here first was the weaker of two. 'Needs a live Postgres and an "
+        "alembic revision to compare against' is true and is not the binding "
+        "fact: `main()` takes NO PATH. It derives the migrations directory from "
+        "`__file__` and the database from `DATABASE_URL` -- while `run_case` "
+        "covers a gate by substituting `{dir}` into argv. No invocation can "
+        "point this gate at a fixture directory, so its 0 and 1 cannot be "
+        "fixtured, and this harness takes a gate's fixtures only with a 0, a 1 "
+        "and a 2 together (`_contract_failures`), and never alongside a DEFERRED "
+        "entry. Since #597 it DOES read argv, to refuse any argument with exit "
+        "2; that one branch is reachable through argv, and is pinned by "
+        "`tests/unit/test_check_mount_matches_database.py`, including a run of "
+        "the real command line with `--nope`. "
         "Someone acting on the Postgres reason would stand up a database and "
-        "find the gate still unreachable. "
+        "find the verdicts still unreachable. "
         "Covered instead by `tests/unit/test_check_mount_matches_database.py`, "
         "which monkeypatches `__file__` and stubs `database_revision`. "
         "WHAT THAT FILE DID NOT COVER, stated because this entry certified it "
         "with no gap while the entry directly below discloses the identical "
         "gap in full -- so a reader comparing the two concludes this gate is "
-        "the stronger, which was backwards. `main` has FOUR could-not-look "
-        "branches and the file exercised three, every one asserting the exit "
-        "CODE and no message. The `DATABASE_URL is unset` branch was reached "
+        "the stronger, which was backwards. `main` had FOUR could-not-look "
+        "branches (five since #597 added the argument refusal) and the file "
+        "exercised three, every one asserting the exit CODE and no message. The `DATABASE_URL is unset` branch was reached "
         "by nothing, because every test there sets the variable in its own "
         "setup: deleting the branch left the file green. Exit 2 is also what "
         "the crash handler returns, so the code alone does not say which "
-        "branch ran, or that any did. All four now pin their own sentence and "
+        "branch ran, or that any did. All five now pin their own sentence and "
         "the unset branch has a test. "
         "STILL NOT COVERED, and it is the same shape the `prettier_hook.sh` "
         "entry carries: this gate has no ADVERSARIAL case, and the "
@@ -772,7 +796,7 @@ def _contract_failures(gate: str, cases: list[dict]) -> list[str]:
             f"{gate}: NO NEGATIVE CONTROL -- no case expects exit 1, so these "
             f"fixtures prove the gate runs, not that it discriminates"
         )
-    # Exit 1 and exit 2 are the two codes D-051 exists to keep apart, so the
+    # Exit 1 and exit 2 are the two codes D-090 exists to keep apart, so the
     # negative control must be a 1 specifically. `!= 0` admitted a 2, which would
     # have let a gate be "covered" by fixtures proving only that it can refuse to
     # look -- the two branches merged, inside the gate whose organising principle

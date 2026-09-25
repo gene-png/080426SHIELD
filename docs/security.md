@@ -208,9 +208,11 @@ Python, Web, E2E, Demo, Secret scan, Adversarial audit recorded, No accidental
 issue closes.
 
 **`mypy` runs in pre-commit only — CI does not run it.** This section previously
-listed it among the CI gates without that distinction. Note also that branch
-protection has `enforce_admins: false`, so both developers can merge past every
-check above; see `DELIVERY_PLAN.md` for the full branch-protection posture.
+listed it among the CI gates without that distinction. Branch protection has
+`enforce_admins` on: `gh api repos/gene-png/080426SHIELD/branches/main/protection --jq .enforce_admins.enabled` returned `true` on 2026-09-25, so the checks above
+bind admins too and nobody merges past a red one without first changing the
+setting. It was `false` before that week, and admins could. See
+`DELIVERY_PLAN.md` for the full branch-protection posture.
 
 ## Incident response
 

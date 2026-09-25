@@ -4815,7 +4815,9 @@ not see the clause that would have caught it". That is D-051's distinction — "
 checked and it passes" versus "I could not look" — **missing from the governance
 layer itself, in the one artifact that defines what checking means.**
 
-`CLAUDE.md` therefore ends with:
+`CLAUDE.md` therefore ended with the following, until #459 (PR #604) moved it
+to the plain-text line `CLAUDE-MD-CANARY: v2`, because context injection drops
+a whole-line HTML comment and so the v1 marker never reached an injected copy:
 
     <!-- CLAUDE-MD-CANARY: v1 -->
 
@@ -4826,7 +4828,8 @@ is the **last non-empty line**, because the marker only answers "did I receive
 the whole file" while nothing follows it. An append below it leaves the canary
 readable and everything after it invisible — **strictly worse than no canary**,
 since the reader now holds a positive signal that its copy is whole. All three
-refusal branches exit 2: an empty file, a missing marker and a mispositioned one
+refusal branches exit 2 (four since #604, which adds a final line carrying a
+wrapped or older marker): an empty file, a missing marker and a mispositioned one
 are could-not-looks, not findings about size.
 
 This converts an invisible variance into a declared one, the same move as making
@@ -5915,3 +5918,79 @@ The client value-summary card reports the ATT&CK kind **unresolved** for a stale
 Three states, handled at every guarded site: current, a different recorded version, unrecorded. Red-on-revert: deleting each guard call, one at a time, turns a named route-level test red. The workspace shows the refusal's own message instead of "reload to try again", keyed on the reason's value (#317). The consultant message names "Discard draft" and "Start assessment" only when discarding would leave no assessment. An approved or released assessment has no control that starts a new version (#558), so its message states that and names no action.
 
 **The migration rule, carried for any future real data.** A consultant scoring T1558 read "Steal or Forge Authentication Certificates" on screen. **They answered the name, not the ID.** An answer moves to wherever the NAME it was given against lives in the new catalog, never by ID. On the chosen path nothing migrates, because everything is rescored. The rule stays written because one real engagement makes it binding.
+
+## D-093 — The ATT&CK AI draft gives a reason per status, built from the vocabulary, and a wrong pairing is rejected and recorded
+
+**Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (the vocabulary, D-092); this slice wires it into the AI draft
+
+**Decision 1 — the prompt is built from the vocabulary, never restated.** `_MITRE_MAP_PROMPT` lists the seven Partial codes with their definitions from `coverage.REASON_CODES`, and the N/A codes from `reason_codes_for(NOT_APPLICABLE)`, which is `platform_absent` alone. So the prompt cannot offer a code the parser rejects, or omit one it accepts. It states the owner's test once: if something defends the technique and a named category of control is missing, that is Partial with `missing_control_category`; if nothing does, that is a gap, never N/A. The statuses offered stay the four in `coverage.WRITABLE` (D-092 Decision 5).
+
+**Decision 2 — a mispaired suggestion is refused WHOLE, as the PATCH refuses the whole request.** A reason valid for the suggested status is stored with it. A suggestion whose reason is not valid for its status is not applied at all: the row keeps its status, reason, tools and rationale. The suggested status and reason are recorded in the `attack.run_ai` audit row as `reason_codes_rejected`, and the reason is stored only when it is code-shaped, a marker otherwise, so model prose never reaches an audit row. N/A with `missing_control_category` is the case this exists for. Applying the N/A while dropping the reason would move the row out of the gap list on the model's word, the direction that flatters the client. That was the first version, and review round 1 refused it; the coordinator's call, overturnable. A consultant's reason that a valid new status does not take is still dropped and recorded as `reason_codes_dropped` (D-092).
+
+**Decision 3 — the fixture answers from the prompt.** Fixture-mode Partial rows cycle through three of the seven codes, and N/A rows carry `platform_absent`. A test parses the codes out of the prompt TEXT and asserts every fixture reason is among them, so fixture and parser cannot agree by construction.
+
+**A status the run may not write refuses the suggestion whole, too.** Since #569, `_VALID_STATUSES` is `coverage.WRITABLE`, so the product's own two new statuses fall outside it. The old path skipped such a status and still wrote the suggestion's tools and rationale, leaving a row that argued for a status it did not have, with no trace. It now refuses the whole suggestion and records it as `statuses_rejected`, code-shaped values only. A suggestion with NO status is refused whole in the same way and recorded as `<none>`: a rationale without a status argues for nothing, and tools cited for no status attach to no claim. That was the coordinator's call in review round 3, overturnable. The narrowing that made this reachable was #569's, so it is fixed here rather than filed.
+
+**Not here.** The audit lists reach the admin audit viewer, which renders `details` generically, but it truncates each value at 200 characters, and no refusal count is shown in the run response or the workspace (#601). What does not exist is a ROW-level disclosure: the technique panel does not say that the AI's suggestion was refused, or that a consultant's reason was dropped. Neither does the deliverable (#575). Nothing requires a reason yet; that is the release-readiness slice.
+
+## D-090 — The gates' exit convention: 0 clean, 1 a violation, 2 could not look
+
+**2026-09-25 · governance/gates** · #553
+
+**Decision (recorded, not new).** The convention every gate is held to:
+
+- **0** when it looked and found nothing to report;
+- **1** when it found a real violation, and names it;
+- **2** when it could not look: missing or unreadable input, a parse failure,
+  an unknown or malformed argument, or a crash.
+
+This states the CONVENTION, not a census of every gate. The parts that are
+mechanically enforced, and the known gaps, are stated below; any other claim
+about a particular gate is checked by reading that gate.
+
+**The crash half is enforced for the gates in
+`test_gate_crash_exit_code.GATES`**: each carries a handler that converts an
+uncaught exception to 2 and prints "A crash is not a clean report and not a
+violation". `check_gate_fixtures.py` is not in that list (it excludes itself)
+and its handler prints a different line.
+
+**Known gap, arguments.** `check_mount_matches_database.py` takes no arguments
+(`main()` never reads `sys.argv`), so an unknown flag is ignored rather than
+refused with 2. Filed as #597.
+
+**A requirement, not yet met everywhere: a clean result says what it read**, so
+a green run shows its scope and "I looked at nothing" cannot pass for "nothing
+was wrong". `check_audit_evidence.py` ("adversarial audit recorded." /
+"documentation-only change, exempt.") and `check_issue_references.py`
+("issue-close guard: clean — no closing references") do not name their inputs
+yet; filed as #592.
+
+The rule: "I could not look" must never share a branch with "nothing to complain
+about" or with "I found a violation". Before a new checker's first line, list
+every `return 0` / `continue` / `pass` it will have and what the input looked
+like there; an answer of "there was nothing there" is the bug (CLAUDE.md's
+silent-success bullet). The HTTP form of the same distinction, a typed
+could-not-look response, is proposed in #550 and not yet built.
+
+**Why a record now.** The convention is written in CLAUDE.md's fail-closed
+bullet, but no D-record decided it, and the gates cited it as D-051. D-051 is
+the #72 two-tier sweep; it does not state the convention. A correct
+constraint cited to a record that lacks it is worse than an unexplained one: a
+reader told to verify opens D-051, does not find the rule, and may discard it.
+
+**The repointing.** Citations that mean the exit convention now cite D-090: gate
+docstrings (`EXIT CODES`, "fail-closed convention"), the crash-handler message
+of every gate in GATES, could-not-look messages, the fixture incidents about
+fail-closed branches, the unit tests about could-not-look, and the ci.yml and
+`web_install_guard.sh` comments. Citations that mean what D-051 decided keep it:
+tests that cannot fail (#72), and "a rule depending on someone remembering needs
+a mechanism". Sentences recording that a gate once cited D-051 keep the history
+and name both. Measured on this branch before commit, 2026-09-25:
+
+    git grep -c "D-051" 2028f38 -- ':!DECISIONS.md'       # 47 files, 79 lines
+    git grep -c "D-051" -- ':!DECISIONS.md'               # 17 files, 25 lines
+
+The 25 remaining (before the first commit; the landing entry pins a reproducible
+re-run: 15 files, 23 lines at `45d414a`, excluding itself) were each read and
+classified as D-051's own subject or as history. Older D-records are
+append-only and are not edited.

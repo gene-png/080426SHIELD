@@ -110,8 +110,10 @@ field that already reaches the reader who matters most. And the audit `details`
 payload -- #322's population, which are dict keys rather than schema fields --
 is checked STRUCTURALLY, by asserting a generic renderer exists, because
 enumerating its keys would report violations over a payload that a generic
-renderer makes fully visible. That arm is exempt until #351 lands, with an
-expiry stated in the code.
+renderer makes fully visible. **Date-qualified 2026-09-25:** this said "That
+arm is exempt until #351 lands, with an expiry stated in the code". #351 has
+MERGED, the generic renderer (`AuditViewer.tsx`) exists, and the gate carries
+no such exemption, so the arm is live rather than exempt.
 
 
 ### `mvp-blocking` issues — the live list is a command, the mapping below is history

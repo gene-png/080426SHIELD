@@ -154,7 +154,7 @@ export function MessageThread({
             onChange={(e) => setDraft(e.target.value)}
             rows={3}
             placeholder="Write a message…"
-            className="w-full rounded-md border border-border-default bg-surface-card px-3 py-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
+            className="w-full rounded-md border border-border bg-surface-card px-3 py-2 text-sm text-ink-primary focus:border-brand-500 focus:outline-hidden"
           />
           <div>
             <button

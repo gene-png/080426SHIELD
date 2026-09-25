@@ -17,6 +17,7 @@ analytics endpoint in place of scoring/gap.
 from __future__ import annotations
 
 import contextvars
+import re
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1339,6 +1340,18 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
     return [c.name for c in _client_capabilities(db, client_id)]
 
 
+_CODE_SHAPE = re.compile(r"^[a-z_]{1,64}$")
+
+
+def _audit_safe_code(value: object) -> str:
+    """A rejected reason as the audit row may hold it: the value only when it is
+    code-shaped, a marker otherwise. Model text stays out of audit rows, as it
+    does in CSF and ZT."""
+    if isinstance(value, str) and _CODE_SHAPE.match(value):
+        return value
+    return "<not a code>"
+
+
 # Pinned to what the prompt offers and every surface renders (#554), not to the
 # whole enum: a status the reports cannot show must not arrive through the AI.
 _VALID_STATUSES = {s.value for s in WRITABLE}
@@ -1825,6 +1838,20 @@ def run_ai(
         return out.tools
 
     reason_codes_dropped: list[dict[str, str]] = []
+    # #554 slice 2: a suggestion whose reason does not belong to its status (N/A
+    # with `missing_control_category`, the pairing the vocabulary exists to
+    # forbid) is REFUSED WHOLE, as the PATCH refuses the whole request with a
+    # typed 422: the row keeps its status, reason, tools and rationale, and the
+    # rejected status and reason are recorded here. Applying the status while
+    # dropping the reason would move the row out of the gap list on the model's
+    # word -- the direction that flatters the client.
+    reason_codes_rejected: list[dict[str, str]] = []
+    # A status the run may not write -- anything outside `_VALID_STATUSES`, which
+    # since #569 includes the product's own two new statuses -- refuses the
+    # suggestion WHOLE too. It used to skip the status and still write the tools
+    # and rationale, so a row could carry a rationale arguing for a status it
+    # does not have, with no trace. Recorded here, code-shaped values only.
+    statuses_rejected: list[dict[str, str]] = []
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
             continue
@@ -1832,16 +1859,41 @@ def run_ai(
         if row is None or row.locked:
             continue
         st = sugg.get("status")
-        if isinstance(st, str) and st in _VALID_STATUSES:
-            row.status = st
-            # #554: the same rule as the PATCH. A reason a consultant gave for the
-            # old status is dropped when the AI moves the row to one it does not
-            # describe -- never left as an N/A carrying `missing_control_category`.
-            if not is_valid_reason(row.status, row.reason_code):
-                reason_codes_dropped.append(
-                    {"technique_code": row.technique_code, "reason_code": row.reason_code}
-                )
-                row.reason_code = None
+        offered = sugg.get("reason_code")
+        if not (isinstance(st, str) and st in _VALID_STATUSES):
+            # No status, or one the run may not write: refused WHOLE. A
+            # rationale without a status argues for nothing, and tools cited
+            # for no status attach to no claim (#590 round 3, the coordinator's
+            # call, overturnable).
+            statuses_rejected.append(
+                {
+                    "technique_code": row.technique_code,
+                    "status": "<none>" if st is None else _audit_safe_code(st),
+                }
+            )
+            continue
+        if offered is not None and not (isinstance(offered, str) and is_valid_reason(st, offered)):
+            reason_codes_rejected.append(
+                {
+                    "technique_code": row.technique_code,
+                    "status": st,
+                    "reason_code": _audit_safe_code(offered),
+                }
+            )
+            continue
+        # Here `st` is a writable status and any offered reason fits it: every
+        # other case was refused whole above.
+        row.status = st
+        if offered is not None:
+            row.reason_code = offered
+        # #554: the same rule as the PATCH. A reason a consultant gave for the
+        # old status is dropped when the AI moves the row to one it does not
+        # describe -- never left as an N/A carrying `missing_control_category`.
+        if not is_valid_reason(row.status, row.reason_code):
+            reason_codes_dropped.append(
+                {"technique_code": row.technique_code, "reason_code": row.reason_code}
+            )
+            row.reason_code = None
         # #101 / #102: record what happened to this row's citations, per FIELD.
         #
         # `row_flags` starts EMPTY, not None. An empty list is a positive claim --
@@ -2014,6 +2066,8 @@ def run_ai(
             "unresolved_fields": unresolved_fields_seen,
             # #554: which consultant reasons the AI's new statuses displaced.
             "reason_codes_dropped": reason_codes_dropped,
+            "reason_codes_rejected": reason_codes_rejected,
+            "statuses_rejected": statuses_rejected,
         },
     )
     db.commit()
