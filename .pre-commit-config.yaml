@@ -1,3 +1,13 @@
+# `pre-commit install` alone installs only the pre-commit stage, so the
+# pre-push hook below (#143) ran for nobody. This makes the documented bare
+# install cover both. EXISTING clones must re-run `pre-commit install`: the
+# setting changes new installs only.
+default_install_hook_types: [pre-commit, pre-push]
+# Installing the pre-push hook type must not also run every commit-time hook
+# (formatters, mypy, gitleaks) over the push range: hooks without their own
+# `stages:` stay commit-time only, as they were.
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -93,7 +103,21 @@ repos:
     hooks:
       - id: api-unit-tests
         name: API unit tests
-        entry: bash -c 'docker compose exec -T api pytest -m unit 2>/dev/null || echo "skipped (api container not running)"'
+        # #143: `pytest ... || echo "skipped"` printed "skipped" over a FAILING
+        # suite and let the push through. The container check is now the `if`,
+        # and pytest runs unguarded in its branch, so a red suite fails the push.
+        #
+        # A SKIP IS NOT A PASS, so it FAILS CLOSED (my call, overturnable):
+        # pre-commit prints only "Passed"/"Failed" on the line people read, and
+        # a skip that exits 0 reads as Passed there. The message names the cause
+        # -- docker absent, the daemon unreachable, or the api container down --
+        # and the per-hook bypass in BOTH shells this repo is developed in. Never
+        # `--no-verify`: that skips every hook.
+        #
+        # It tests the tree the SHARED api container mounts, not the ref being
+        # pushed (#203), and says so.
+        entry: bash -c 'hint="To push without the API unit tests -- Git Bash, SKIP=api-unit-tests git push; PowerShell, \$env:SKIP=\"api-unit-tests\"; git push"; if ! command -v docker >/dev/null; then echo "NOT RUN - docker is not on PATH. $hint"; exit 1; elif ! docker info >/dev/null 2>&1; then echo "NOT RUN - the Docker daemon is not reachable. $hint"; exit 1; elif docker compose ps --status running --services 2>/dev/null | grep -qx api; then echo "API unit tests run against the tree the api container mounts, which may not be the ref being pushed (#203)."; docker compose exec -T api pytest -m unit; else echo "NOT RUN - the api container is not running. $hint"; exit 1; fi'
         language: system
+        verbose: true
         pass_filenames: false
         stages: [pre-push]
