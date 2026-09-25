@@ -43,7 +43,10 @@ def test_the_prompt_offers_exactly_the_decided_partial_reasons() -> None:
 
 def test_the_prompt_allows_only_platform_absent_for_not_applicable() -> None:
     flat = " ".join(_MITRE_MAP_PROMPT.split())
-    assert "not_applicable: only `platform_absent`" in flat
+    (na_line,) = [ln for ln in _MITRE_MAP_PROMPT.splitlines() if "* not_applicable:" in ln]
+    # Every code the N/A line offers, parsed from the TEXT: exactly the one the
+    # owner decided.
+    assert set(re.findall(r"`([a-z_]+)`", na_line)) == {"platform_absent"}
     # The prohibition the vocabulary exists for, in the prompt's own words.
     assert "If nothing does, that is gap -- never not_applicable." in flat
 

@@ -38,7 +38,12 @@ from app.ai.engine import (
     # without removing tolerance a working provider depends on.
     register_job,
 )
-from app.attack.coverage import REASON_CODES, reason_definition
+from app.attack.coverage import (
+    REASON_CODES,
+    CoverageStatus,
+    reason_codes_for,
+    reason_definition,
+)
 
 # --- Tech Debt extraction (moved behind the registry) ----------------------
 # Keeps the historical "extract.capabilities" purpose so existing fixtures and
@@ -157,7 +162,7 @@ response, plus a short rationale.
 Give a `reason_code` for two statuses, and null for every other:
 * partial: exactly one code naming what is missing from a defence that exists:
 {partial_reasons}
-* not_applicable: only `platform_absent` -- {platform_absent}
+* not_applicable: only {na_reasons}
   An argument about reach or a missing control is NOT not_applicable.
 
 The test between partial, gap and not_applicable: is anything defending it at
@@ -186,12 +191,16 @@ Return strictly JSON:
 "detection_tools": [...], "prevention_tools": [...], "response_tools": [...],
 "rationale": "..."}}], "executive_summary": "...", "top_blind_spots": [...]}}
 """.format(
-    # Built FROM the vocabulary (#554), never restated, so the prompt cannot
-    # offer a code the parser rejects or omit one it accepts.
+    # Built FROM the vocabulary (#554), never restated -- both lists, Partial's
+    # and N/A's -- so the prompt cannot offer a code the parser rejects or omit
+    # one it accepts.
     partial_reasons=_NEWLINE.join(
         f"    - {r.code}: {r.definition}" for r in REASON_CODES if r.status == "partial"
     ),
-    platform_absent=reason_definition("platform_absent"),
+    na_reasons="; ".join(
+        f"`{code}` -- {reason_definition(code)}"
+        for code in reason_codes_for(CoverageStatus.NOT_APPLICABLE)
+    ),
 )
 
 # "techniques" must be a list. A scalar collapsed to `[]` via the route's

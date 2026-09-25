@@ -810,32 +810,44 @@ def test_run_ai_stores_a_reason_the_status_takes(app_client, status, reason) -> 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("status", "reason"),
+    ("status", "reason", "recorded"),
     [
         # The pairing the vocabulary exists to forbid: a missing control is a
-        # GAP, never an N/A reason.
-        ("not_applicable", "missing_control_category"),
-        ("partial", "platform_absent"),
-        ("gap", "reach_limited"),
-        ("partial", "not_a_code"),
+        # GAP, never an N/A reason. Applying the N/A would move the row out of
+        # the gap list on the model's word.
+        ("not_applicable", "missing_control_category", "missing_control_category"),
+        ("partial", "platform_absent", "platform_absent"),
+        ("gap", "reach_limited", "reach_limited"),
+        ("partial", "not_a_code", "not_a_code"),
+        # Model PROSE never reaches an audit row: a marker stands in for it.
+        ("partial", "Nothing defends this. See notes!", "<not a code>"),
     ],
 )
-def test_run_ai_rejects_and_records_a_reason_the_status_does_not_take(
-    app_client, status, reason
+def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
+    app_client, status, reason, recorded
 ) -> None:
-    """Never stored, and never dropped silently: the audit row names it."""
+    """As the PATCH refuses the whole request (typed 422), the write-back refuses
+    the whole suggestion: the row keeps the consultant's status AND reason, and
+    the audit row names what was refused."""
     c, TestSession, provider = app_client
     h, svc_id, row_id, code = _one_row_run_with_reason(c, TestSession, provider, status, reason)
+    before = c.patch(
+        f"/attack/coverage/{row_id}",
+        headers=h,
+        json={"status": "partial", "reason_code": "detection_weak"},
+    )
+    assert before.status_code == 200, before.text
+
     r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
     assert r.status_code == 200, r.text
     row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
-    assert (row["status"], row["reason_code"]) == (status, None)
-    # The static answer is replayed to EVERY batch, so the pair is recorded once
-    # per batch that saw it; a live run answers a technique in one batch only.
-    # What is pinned is that it IS recorded, and nothing else is.
+    assert (row["status"], row["reason_code"]) == ("partial", "detection_weak")
+    # The static answer is replayed to EVERY batch, so the refusal is recorded
+    # once per batch that saw it. What is pinned is that it IS recorded, whole,
+    # and nothing else is.
     rejected = _run_audit(TestSession)["reason_codes_rejected"]
-    assert rejected, "the rejected reason must be recorded, not silently dropped"
+    assert rejected, "a refused suggestion must be recorded, not silently dropped"
     assert all(
-        entry == {"technique_code": code, "status": status, "reason_code": reason}
+        entry == {"technique_code": code, "status": status, "reason_code": recorded}
         for entry in rejected
     ), rejected
