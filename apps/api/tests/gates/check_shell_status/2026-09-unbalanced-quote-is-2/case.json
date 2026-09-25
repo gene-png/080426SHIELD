@@ -1,0 +1,10 @@
+{
+ "incident": "A script the parser cannot read is not a script with no findings. Reporting clean over it would be the could-not-look branch sharing a verdict with the clean one.",
+ "expect": 2,
+ "adversarial": false,
+ "stdout_contains": "unbalanced quotes",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

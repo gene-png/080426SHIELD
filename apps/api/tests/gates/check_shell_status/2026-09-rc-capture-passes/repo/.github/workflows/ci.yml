@@ -1,0 +1,10 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          rc=0
+          python scripts/check_x.py > out.txt || rc=$?
+          cat out.txt
+          exit "$rc"

@@ -1,0 +1,10 @@
+{
+ "incident": "ADVERSARIAL. Piping a gate into `tee` to keep a log looks harmless, but a `run:` step without `shell: bash` is `bash -e` with no pipefail, so the step reports tee's status. CLAUDE.md's opening table records the same shape with `| head -1`.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "R1 pipe",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

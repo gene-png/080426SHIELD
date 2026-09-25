@@ -93,7 +93,11 @@ repos:
     hooks:
       - id: api-unit-tests
         name: API unit tests
-        entry: bash -c 'docker compose exec -T api pytest -m unit 2>/dev/null || echo "skipped (api container not running)"'
+        # #143: `pytest ... || echo "skipped"` printed "skipped" over a FAILING
+        # suite and let the push through. The container check is now the `if`,
+        # and pytest runs unguarded in the branch, so a red suite fails the push
+        # while a stopped container still skips. check_shell_status.py gates it.
+        entry: bash -c 'if docker compose ps --status running --services 2>/dev/null | grep -qx api; then docker compose exec -T api pytest -m unit; else echo "skipped (api container not running)"; fi'
         language: system
         pass_filenames: false
         stages: [pre-push]

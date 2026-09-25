@@ -88,6 +88,10 @@ GATES = [
     ("check_merge_rule_conditions", "sys.argv"),
     # The issue-labels gate (the filing rule). Shipped with the handler.
     ("check_issue_labels", "sys.argv"),
+    # #213's shell-status gate. Added WITH its entry, because the two
+    # enumerations diverging is what `test_universe_equals_the_other_gate_
+    # enumeration` catches -- and it did, on #545.
+    ("check_shell_status", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

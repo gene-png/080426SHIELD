@@ -127,6 +127,13 @@ jobs:
       - name: control-character sweep
         run: python apps/api/scripts/check_no_control_chars.py .
 
+      # A gate's exit status must reach the result (#213): no gate piped without
+      # pipefail, swallowed by `|| echo`, or followed mid-script by `&& ...`.
+      # Reads every workflow `run:`, the pre-commit hooks, and CLAUDE.md's code
+      # blocks. #143's pre-push hook was the live instance when this landed.
+      - name: gate statuses reach the result
+        run: python apps/api/scripts/check_shell_status.py --root .
+
       # DELIVERY_PLAN's stated total vs the sum of its own rows. Two instances,
       # both written by someone who had just written the rule against them --
       # the second inside a section headed "and the parts sum to it". Same

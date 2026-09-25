@@ -1,0 +1,10 @@
+{
+ "incident": "Pointed at a tree with no workflows, a clean report would certify scripts it never read. An empty scan is not a clean one.",
+ "expect": 2,
+ "adversarial": false,
+ "stdout_contains": "no workflows",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}
