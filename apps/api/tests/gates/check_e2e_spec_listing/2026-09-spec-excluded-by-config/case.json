@@ -1,0 +1,12 @@
+{
+ "incident": "#540, the owner's Playwright design: a spec on disk that CI's `npx playwright test` excludes (testIgnore, testMatch, grep, project) never runs, and nothing fails. It must be a finding naming the spec.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--root",
+  "{dir}",
+  "--list-file",
+  "{dir}/list.txt"
+ ],
+ "stdout_contains": "e2e/smoke/a.spec.ts: not in"
+}
