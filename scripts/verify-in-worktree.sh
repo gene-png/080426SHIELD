@@ -381,7 +381,14 @@ tsc() {
     fi
     return 2
   fi
-  return "$status"
+  # A REAL VERDICT IS 1, NEVER tsc's OWN 2. tsc exits 2 for ordinary type
+  # errors (diagnostics present, outputs skipped), and in this script 2 means
+  # could-not-look -- which `--all` ranks above 1. Passing it through made a
+  # branch with a genuine type error read as "could not look". By here
+  # require_ran has seen an `error TS` line for any non-zero status, and
+  # errors outside apps/web have already returned 2 above.
+  if [ "$status" -ne 0 ]; then return 1; fi
+  return 0
 }
 
 vitest() {

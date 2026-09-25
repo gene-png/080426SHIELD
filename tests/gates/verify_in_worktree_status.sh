@@ -89,6 +89,24 @@ case "$STUB_MODE" in
   vitest-mismatch) echo "verify-in-worktree: apps/web package.json scripts.$last = tool"; echo " Test Files  5 passed (5)"; exit 0 ;;
   # #566: eslint exit 0 with no file count, and with a count of zero.
   lint-nocount) echo "verify-in-worktree: apps/web package.json scripts.$last = tool"; exit 0 ;;
+  # For --all's ranking: real verdicts from tsc and vitest, then an eslint
+  # that cannot look (no count line).
+  mixed-lint-blind)
+    echo "verify-in-worktree: apps/web package.json scripts.$last = tool"
+    case "$last" in
+      typecheck) echo "src/lib/a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'."; exit 2 ;;
+      test) echo " FAIL  src/a.test.ts > does a thing"; echo " Test Files  1 failed | 1 passed (2)"; exit 1 ;;
+      lint) exit 0 ;;
+    esac ;;
+  # The reverse order: vitest cannot look (no summary), then eslint gives a
+  # real finding. A last-status-wins --all would report eslint's 1.
+  mixed-vitest-blind)
+    echo "verify-in-worktree: apps/web package.json scripts.$last = tool"
+    case "$last" in
+      typecheck) exit 0 ;;
+      test) exit 0 ;;
+      lint) echo "2026-09-25T18:47:02.872Z eslint:eslint 2 file(s) found in 10 ms" >&2; echo "  1:5  error  Parsing error: Expression expected"; echo "✖ 1 problem (1 error, 0 warnings)"; exit 1 ;;
+    esac ;;
   lint-zero) echo "verify-in-worktree: apps/web package.json scripts.$last = tool"; echo "2026-09-25T18:47:02.872Z eslint:eslint 0 file(s) found in 3 ms" >&2; exit 0 ;;
   ran-crash)
     # The scripts line printed, then the tool CRASHED: exit 1, no verdict output.
@@ -148,7 +166,10 @@ case "$out" in *"eslint -- linted 2 file(s)"*"exit 0"*) : ;; *) echo "FAIL: a cl
 #     verdict code from an arm's list left this gate green while real type
 #     errors printed COULD NOT LOOK.
 run ran-verdict tsc
-if [ "$rc" -ne 2 ]; then echo "FAIL: tsc with a real type error exited $rc, expected its own 2." >&2; fail=1; fi
+# 1, not tsc's own 2: in this script 2 means could-not-look, and `--all` ranks
+# it above 1, so passing tsc's 2 through read a real type error as "could not
+# look" (#618 review).
+if [ "$rc" -ne 1 ]; then echo "FAIL: tsc with a real type error exited $rc, expected 1 (a verdict; tsc's own 2 is not passed through)." >&2; fail=1; fi
 case "$out" in *"tsc -- 1 error(s)"*) : ;; *) echo "FAIL: tsc with a real type error printed no bound." >&2; echo "$out" | sed 's/^/      | /' >&2; fail=1 ;; esac
 run ran-verdict vitest
 if [ "$rc" -ne 1 ]; then echo "FAIL: vitest with a failing test exited $rc, expected its own 1." >&2; fail=1; fi
@@ -179,14 +200,22 @@ expect_refusal lint-zero eslint "eslint -- linted" "found 0 files"
 case "$out" in *"eslint:eslint"*) echo "FAIL: eslint's debug lines were printed, not consumed." >&2; fail=1 ;; esac
 
 # 3f. #566 -- `--all` runs every arm even after a red, says what each gave,
-#     and exits with the worst status. Under ran-verdict tsc gives 2, and the
-#     old --all stopped there without saying eslint never ran.
+#     and exits with the worst status. The old --all stopped at tsc's red
+#     without saying the later arms never ran. Three real verdicts are 1s.
 run ran-verdict --all
-if [ "$rc" -ne 2 ]; then echo "FAIL: --all over tsc 2 / vitest 1 / eslint 1 exited $rc, expected the worst, 2." >&2; fail=1; fi
+if [ "$rc" -ne 1 ]; then echo "FAIL: --all over three real verdicts exited $rc, expected 1." >&2; fail=1; fi
 case "$out" in
-  *"== eslint =="*"--all -- tsc 2, vitest 1, eslint 1 (all three ran"*) : ;;
+  *"== eslint =="*"--all -- tsc 1, vitest 1, eslint 1 (all three ran"*) : ;;
   *) echo "FAIL: --all did not run every arm and summarise them." >&2; echo "$out" | sed 's/^/      | /' >&2; fail=1 ;;
 esac
+# 2 OUTRANKS 1 even when the 1s come first: tsc and vitest give real verdicts,
+# eslint cannot look. A last-status-wins or first-status-wins --all fails here.
+run mixed-lint-blind --all
+if [ "$rc" -ne 2 ]; then echo "FAIL: --all over tsc 1 / vitest 1 / eslint could-not-look exited $rc, expected 2." >&2; fail=1; fi
+case "$out" in *"--all -- tsc 1, vitest 1, eslint 2 (all three ran"*) : ;; *) echo "FAIL: --all did not rank eslint's 2 over the earlier 1s." >&2; echo "$out" | sed 's/^/      | /' >&2; fail=1 ;; esac
+run mixed-vitest-blind --all
+if [ "$rc" -ne 2 ]; then echo "FAIL: --all over tsc 0 / vitest could-not-look / eslint 1 exited $rc, expected 2 -- a later 1 must not replace an earlier 2." >&2; fail=1; fi
+case "$out" in *"--all -- tsc 0, vitest 2, eslint 1 (all three ran"*) : ;; *) echo "FAIL: --all did not keep vitest's 2 over eslint's later 1." >&2; echo "$out" | sed 's/^/      | /' >&2; fail=1 ;; esac
 run ran-clean --all
 if [ "$rc" -ne 0 ]; then echo "FAIL: --all over three clean arms exited $rc, expected 0." >&2; fail=1; fi
 case "$out" in *"--all -- tsc 0, vitest 0, eslint 0"*) : ;; *) echo "FAIL: a clean --all printed no summary." >&2; fail=1 ;; esac
