@@ -237,12 +237,10 @@ On 2026-09-21 one of the thirteen came back ONLY through the new
 `tests/gates/**` glob, tripping nothing else, so that glob is load-bearing on
 real traffic rather than theoretically.
 
-Dropping the rule was weighed against the same evidence and loses: the four that
-clear are the PRs that recur every round. **D-059** carries the cleared SHAs and
-the two PRs on which a denylist and an allowlist construction disagree; **D-079**
-carries how the first attempt at the September re-derivation selected the wrong
-population and produced a clean-looking "fifteen cleared, zero came back" about
-commits nobody had asked about.
+Dropping the rule was weighed against the same evidence and loses: the PRs that
+clear are the ones that recur every round (D-059). A re-derivation selects PR
+merges with the selector above, never commits: counting commits once reported
+"fifteen cleared, zero came back".
 
 ### Worked examples
 
@@ -2318,8 +2316,8 @@ it, so moving it loses no rule:
    address-corpus stories already moved, to D-087, on 2026-09-24.)
 2. **The worked examples under `Rules of the road`** — the sweep shape
    statement and the subagent-citation arithmetic. **Confirm the cited record
-   holds the text before cutting:** on 2026-09-24 five pointers into D-079 and
-   D-058 named text neither record held, and were removed.
+   holds the text before cutting:** the pointers found on 2026-09-24 naming text
+   their record did not hold were removed, and more are open on #571.
 3. **The per-instance lists** inside the numbers-in-prose, correction-paragraph
    and twin-sweep rules. Each is a list that grows, which is the defect those
    rules describe; they belong in a D-record, where a tally is expected to

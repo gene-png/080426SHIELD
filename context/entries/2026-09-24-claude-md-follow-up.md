@@ -53,5 +53,9 @@ The file's own trim list now says to confirm the cited record before cutting.
 untrimmed. Five named text their record did not hold: those two, plus three
 more into D-079 (the correction-paragraph list, the numbers-in-prose instances,
 and the verification-sentence rule). Leaving them while the trim list called
-them false was a self-contradiction. D-079's other pointers were checked and
-hold. The pointer beside the merge-rule measurement table is #559's to fix.
+them false was a self-contradiction. **"D-079's other pointers were checked and
+hold" was false**, and the re-review disproved it with a sixth: "fifteen
+cleared, zero came back" is in no record. It now reads as #559 rewrote it, in
+identical text so the two merge. Three more suspected pointers, and a
+percentage with no source left, are filed as #571. That is an audit, not a
+completed sweep.
