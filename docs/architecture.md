@@ -234,11 +234,15 @@ route → engine.run_job(purpose, payload, client_id)
   The credentials-provider seam stays a dormant hook for a later OIDC / Keycloak
   cutover. Behaviour is identical to v4; the bump cleared the `uuid@8.3.2`
   moderate advisory.
-- SHIELD-issued HS256 JWTs: 15-minute access tokens, 30-minute refresh tokens
-  (the refresh TTL **is** the idle timeout).
+- SHIELD-issued HS256 JWTs: 15-minute access tokens and 30-minute refresh
+  tokens under compose (the config defaults are 60 minutes and 24 hours). The
+  refresh TTL is the only idle bound, counted from the last rotation; see
+  `docs/security.md`.
 - Refresh rotation: single active refresh jti per user; a replayed token is
-  rejected (`reason=refresh_reused`). Forced re-auth ceiling: `auth_time`
-  claim, 24h default (`reason=reauth_required`). See D-020.
+  rejected (`reason=refresh_reused`). The one exception: the IMMEDIATELY
+  previous token is still honoured for `jwt_refresh_grace_seconds` (60 s by
+  default) after a rotation, so concurrent requests converge. Forced re-auth ceiling: `auth_time`
+  claim, 12 h default since D-085 (`reason=reauth_required`). See D-020.
 - Account lockout (10 failures / 15 min) and per-IP + per-account rate limits
   on login/register, checked before Argon2 work (T3). Second-factor failures
   (MFA verify / verify-login) feed the SAME lockout counter as password

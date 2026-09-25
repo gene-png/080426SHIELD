@@ -107,7 +107,7 @@ function reasonOf(payload: unknown): string | undefined {
  * replay. The backend now honours the immediately-previous token for a short
  * grace window and serves the current identity, so the racers converge instead. On failure we stamp the token with an error so
  * `session()` stops exposing the access token and the UI falls back to
- * sign-in. A backend `reauth_required` / `refresh_reused` reason (daily
+ * sign-in. A backend `reauth_required` / `refresh_reused` reason (the
  * forced-reauth ceiling, or a rotated-out token) is surfaced as the distinct
  * REAUTH_REQUIRED_ERROR so the UI can show friendly "please sign in again"
  * copy rather than a generic error.
