@@ -37,6 +37,8 @@ const DATA: AttackDashboardData = {
     partial: 1,
     gap: 1,
     not_applicable: 0,
+    outside_control_surface: 0,
+    unable_to_determine: 0,
     coverage_pct: 62.5,
     by_tactic: [
       {
@@ -47,6 +49,8 @@ const DATA: AttackDashboardData = {
         gap: 1,
         not_applicable: 0,
         unscored: 3,
+        outside_control_surface: 0,
+        unable_to_determine: 0,
         coverage_pct: 50,
       },
       {
@@ -57,6 +61,8 @@ const DATA: AttackDashboardData = {
         gap: 0,
         not_applicable: 0,
         unscored: 5,
+        outside_control_surface: 0,
+        unable_to_determine: 0,
         coverage_pct: 100,
       },
       {
@@ -67,6 +73,8 @@ const DATA: AttackDashboardData = {
         gap: 0,
         not_applicable: 0,
         unscored: 9,
+        outside_control_surface: 0,
+        unable_to_determine: 0,
         coverage_pct: 0,
       },
     ],

@@ -29,10 +29,14 @@ three copies is how three services come to disagree about one client. That is
 the argument `routes/risk.py` already makes at its `resolve_target_tier` import
 site, applied to the same file's other shared quantity.
 
-**`status` is scored when it is not NULL, INCLUDING `not_applicable`.** That is
-a judgement a consultant entered, not an absence, so a technique ruled
-inapplicable stays citable. The distinction matters because it is the one place
-the predicate is not simply "is there a number here".
+**`status` is scored when it is a JUDGEMENT: not NULL, INCLUDING
+`not_applicable` and `outside_control_surface`,** each a ruling a consultant
+entered, so a technique ruled inapplicable or out of reach stays citable. **Not
+`unable_to_determine`** (#554): that status records that nobody verified the
+technique -- the absence of a judgement written down -- so it is unscored here,
+and a risk entry cannot cite it as evidence (`_UNJUDGED`). The distinction
+matters because it is the one place the predicate is not simply "is there a
+value here".
 
 ## Both halves are returned, and that is the disclosure
 
@@ -107,6 +111,14 @@ class LinkScope:
         return self.total - len(self.codes)
 
 
+#: Stored values that are NOT a judgement, per model, beyond NULL. Named rather
+#: than inferred from the vocabulary: "is this a judgement" is this module's
+#: question, and a status added later is scored until someone decides here.
+_UNJUDGED: dict[type, frozenset[str]] = {
+    AttackCoverage: frozenset({"unable_to_determine"}),
+}
+
+
 def scope_for(model: type, rows: Sequence[object] | Iterable[object]) -> LinkScope:
     """The `LinkScope` for one assessment's rows.
 
@@ -124,11 +136,13 @@ def scope_for(model: type, rows: Sequence[object] | Iterable[object]) -> LinkSco
             "SCORE_COLUMNS; add one rather than defaulting, or the allow-list "
             "silently widens back to every code that exists (#403)."
         ) from None
+    unjudged = _UNJUDGED.get(model, frozenset())
     codes: set[str] = set()
     total = 0
     for row in rows:
         total += 1
-        if getattr(row, score_attr) is not None:
+        value = getattr(row, score_attr)
+        if value is not None and value not in unjudged:
             codes.add(getattr(row, code_attr))
     return LinkScope(codes=frozenset(codes), total=total)
 

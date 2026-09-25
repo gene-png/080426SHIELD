@@ -10,6 +10,10 @@ const TONE: Record<CoverageStatus, string> = {
     "bg-status-warning-bg text-status-warning-fg border-status-warning-fg",
   gap: "bg-status-danger-bg text-status-danger-fg border-status-danger-fg",
   not_applicable: "bg-surface-sunken text-ink-tertiary border-border",
+  outside_control_surface: "bg-surface-sunken text-ink-secondary border-border",
+  // Its own state: not gap red, not N/A grey. Unverified is neither.
+  unable_to_determine:
+    "bg-status-info-bg text-status-info-fg border-status-info-fg",
 };
 
 const LABEL: Record<CoverageStatus, string> = {
@@ -17,6 +21,8 @@ const LABEL: Record<CoverageStatus, string> = {
   partial: "Partial",
   gap: "Gap",
   not_applicable: "N/A",
+  outside_control_surface: "Outside control surface",
+  unable_to_determine: "Not verified",
 };
 
 export interface StatusBadgeProps {

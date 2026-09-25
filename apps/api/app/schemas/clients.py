@@ -80,6 +80,11 @@ class AttackTacticCoverage(BaseModel):
     # unconfirmed is withheld from `coverage_pct` -- which narrows its
     # denominator, so this count has to be rendered beside it and never dropped.
     pending_review: int = 0
+    # #554: outside the assessed denominator, and REQUIRED -- no default, so a
+    # response built without them fails loudly instead of reading "0 not
+    # verified". Every surface that shows `coverage_pct` shows these beside it.
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float
 
 
@@ -117,6 +122,11 @@ class AttackDashboardRollup(BaseModel):
     # exactly when the released PDF does, so a rollup computed without
     # withholding hands the same client two numbers for one assessment.
     pending_review: int = 0
+    # #554: outside the assessed denominator, and REQUIRED -- no default, so a
+    # response built without them fails loudly instead of reading "0 not
+    # verified". Every surface that shows `coverage_pct` shows these beside it.
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float
     by_tactic: list[AttackTacticCoverage]
 

@@ -7,7 +7,15 @@
  * are unit-testable in isolation.
  */
 
-export type CoverageStatus = "covered" | "partial" | "gap" | "not_applicable";
+/** Every status the API can store (#554). The two new ones are not WRITABLE
+ *  yet, but every surface must be able to render them first. */
+export type CoverageStatus =
+  | "covered"
+  | "partial"
+  | "gap"
+  | "not_applicable"
+  | "outside_control_surface"
+  | "unable_to_determine";
 
 export interface DashTactic {
   tactic_id: string;
@@ -19,6 +27,9 @@ export interface DashTactic {
   unscored: number;
   /** #102: status assigned, supporting citation unconfirmed, withheld from the %. */
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage. */
+  outside_control_surface: number;
+  unable_to_determine: number;
   coverage_pct: number;
 }
 
@@ -51,6 +62,9 @@ export interface DashRollup {
    * beside it — the same rule the released PDF follows.
    */
   pending_review?: number;
+  /** #554: outside the assessed denominator; always beside the percentage. */
+  outside_control_surface: number;
+  unable_to_determine: number;
   coverage_pct: number;
   by_tactic: DashTactic[];
 }

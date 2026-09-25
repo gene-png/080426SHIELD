@@ -17,6 +17,8 @@ function heatmap(over: Partial<AttackHeatmap> = {}): AttackHeatmap {
     partial: 2,
     gap: 4,
     not_applicable: 0,
+    outside_control_surface: 0,
+    unable_to_determine: 0,
     coverage_pct: 50,
     by_tactic: [],
     ...over,
@@ -57,5 +59,25 @@ describe("AttackHeatmapCard", () => {
     render(<AttackHeatmapCard heatmap={heatmap()} />);
     expect(screen.queryByTestId("attack-heatmap-pending")).toBeNull();
     expect(screen.getByText(/Coverage 50%/)).toBeInTheDocument();
+  });
+
+  it("states the not-verified count beside the percentage, even at zero (#554)", () => {
+    const { unmount } = render(
+      <AttackHeatmapCard
+        heatmap={heatmap({
+          unable_to_determine: 7,
+          outside_control_surface: 3,
+        })}
+      />,
+    );
+    expect(
+      screen.getByTestId("attack-heatmap-outside-assessed"),
+    ).toHaveTextContent("Not verified 7, Outside control surface 3.");
+    unmount();
+    // Unlike pending review, never hidden at zero.
+    render(<AttackHeatmapCard heatmap={heatmap()} />);
+    expect(
+      screen.getByTestId("attack-heatmap-outside-assessed"),
+    ).toHaveTextContent("Not verified 0, Outside control surface 0.");
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import { outsideAssessedText } from "@/lib/attack/outsideAssessed";
 import dynamic from "next/dynamic";
 import * as React from "react";
 
@@ -155,6 +156,25 @@ const STATUS_CHIP: Record<string, { bg: string; fg: string; label: string }> = {
   partial: { bg: "rgba(245,158,11,.18)", fg: "#fde68a", label: "Partial" },
   gap: { bg: "rgba(239,68,68,.18)", fg: "#fecaca", label: "Uncovered" },
   not_applicable: { bg: "rgba(152,162,196,.18)", fg: "#cbd5e1", label: "N/A" },
+  // #554. Each its own state. An unverified technique shown as N/A would tell
+  // the client "this does not apply to you" about something nobody checked.
+  outside_control_surface: {
+    bg: "rgba(148,163,184,.14)",
+    fg: "#e2e8f0",
+    label: "Outside control surface",
+  },
+  unable_to_determine: {
+    bg: "rgba(168,85,247,.18)",
+    fg: "#e9d5ff",
+    label: "Not verified",
+  },
+  // A status this page does not know. Never borrowed from another state: a
+  // fallback to N/A is how an unknown value would have read "not applicable".
+  unknown: {
+    bg: "rgba(152,162,196,.18)",
+    fg: "#cbd5e1",
+    label: "Unknown status",
+  },
   // #102. Its OWN state, and deliberately NOT the red of `gap`: a reader takes
   // the colour before the word, so reusing red would collapse "nothing was
   // found" into "something was found and is not confirmed" exactly where the
@@ -174,7 +194,7 @@ function Chip({
   status: string;
   pendingReview?: boolean;
 }): JSX.Element {
-  const base = STATUS_CHIP[status] ?? STATUS_CHIP.not_applicable;
+  const base = STATUS_CHIP[status] ?? STATUS_CHIP.unknown;
   const s = pendingReview
     ? {
         ...STATUS_CHIP.pending_review,
@@ -323,12 +343,14 @@ export function AttackDashboard({
         <Section
           title="Overall coverage mix"
           desc={
-            (data.rollup.pending_review ?? 0) > 0
+            ((data.rollup.pending_review ?? 0) > 0
               ? `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. ` +
                 `${data.rollup.pending_review} technique${data.rollup.pending_review === 1 ? " is" : "s are"} ` +
                 `held out of this figure pending evidence review, so it is a percentage of what can be ` +
-                `claimed today — not of the whole catalogue.`
-              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%.`
+                `claimed today — not of the whole catalogue. `
+              : `Weighted coverage across evaluated techniques: ${data.rollup.coverage_pct}%. `) +
+            // #554: beside the percentage on every surface, even at zero.
+            outsideAssessedText(data.rollup)
           }
         >
           <div style={{ position: "relative", height: 340 }}>
@@ -499,6 +521,10 @@ export function AttackDashboard({
             <option value="partial">Partial</option>
             <option value="gap">Uncovered</option>
             <option value="not_applicable">N/A</option>
+            <option value="outside_control_surface">
+              Outside control surface
+            </option>
+            <option value="unable_to_determine">Not verified</option>
           </select>
         </div>
         <div

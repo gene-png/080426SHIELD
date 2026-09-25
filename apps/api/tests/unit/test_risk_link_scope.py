@@ -833,3 +833,27 @@ def test_a_register_that_PREDATES_the_recording_is_silent_not_an_error(capsys) -
 
     assert out["excluded_unscored_links_recorded"] is False
     assert "risk_register_link_scope_unreadable" not in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_only_a_JUDGEMENT_is_citable_so_an_unverified_technique_is_not() -> None:
+    """#554: `unable_to_determine` records that nobody verified the technique --
+    no judgement was made -- so a risk entry must not cite it as evidence. N/A
+    and `outside_control_surface` ARE judgements a consultant entered, and stay
+    citable. Rows are built as literals: the rule is about stored values, not
+    about the vocabulary module that defines them."""
+    from types import SimpleNamespace
+
+    from app.models.attack_assessment import AttackCoverage
+    from app.risk.link_scope import scope_for
+
+    rows = [
+        SimpleNamespace(technique_code="T1", status="covered"),
+        SimpleNamespace(technique_code="T2", status="not_applicable"),
+        SimpleNamespace(technique_code="T3", status="outside_control_surface"),
+        SimpleNamespace(technique_code="T4", status="unable_to_determine"),
+        SimpleNamespace(technique_code="T5", status=None),
+    ]
+    scope = scope_for(AttackCoverage, rows)
+    assert scope.codes == frozenset({"T1", "T2", "T3"})
+    assert scope.total == 5

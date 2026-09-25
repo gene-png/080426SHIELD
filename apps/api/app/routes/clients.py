@@ -1266,6 +1266,8 @@ def attack_dashboard(
             gap=rollup.gap,
             not_applicable=rollup.not_applicable,
             pending_review=rollup.pending_review,
+            outside_control_surface=rollup.outside_control_surface,
+            unable_to_determine=rollup.unable_to_determine,
             coverage_pct=rollup.coverage_pct,
             by_tactic=[
                 AttackTacticCoverage(
@@ -1277,6 +1279,8 @@ def attack_dashboard(
                     not_applicable=tc.not_applicable,
                     unscored=tc.unscored,
                     pending_review=tc.pending_review,
+                    outside_control_surface=tc.outside_control_surface,
+                    unable_to_determine=tc.unable_to_determine,
                     coverage_pct=tc.coverage_pct,
                 )
                 for tc in rollup.by_tactic

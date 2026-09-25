@@ -9,6 +9,15 @@ describe("StatusBadge", () => {
     expect(screen.getByText("Covered")).toBeInTheDocument();
   });
 
+  it("names the two statuses #554 added, each as itself", () => {
+    // Not borrowed from N/A: an unverified technique is not "not applicable".
+    const { unmount } = render(<StatusBadge status="unable_to_determine" />);
+    expect(screen.getByText("Not verified")).toBeInTheDocument();
+    unmount();
+    render(<StatusBadge status="outside_control_surface" />);
+    expect(screen.getByText("Outside control surface")).toBeInTheDocument();
+  });
+
   it("says pending review, and does NOT say Covered on its own", () => {
     // 5.1: a technique whose support is unconfirmed gets its OWN visible state.
     // The matrix badge is where a consultant reads a single technique, and a
