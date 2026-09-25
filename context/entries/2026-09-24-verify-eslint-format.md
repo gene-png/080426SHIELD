@@ -7,12 +7,35 @@ repo pins 9.39.5) removed that formatter from core, so every run exited 2 with
 "The unix formatter is no longer part of core ESLint". It then printed that it
 had run "the same invocation `pnpm -F web lint` uses", so the web-lint half of
 worktree verification checked nothing on every branch since the flag arrived
-(`0519df7`, 2026-09-10).
+(`0519df7`, 2026-09-10). Tracked in #450, and in #383, its duplicate.
 
-The fix drops the flag. The printed line is now built from the command that
-ran, so the message and the invocation cannot disagree.
+## The fix is a derivation, not a corrected copy
 
-| run | before | after |
-| --- | --- | --- |
-| clean tree | exit 2 | exit 0 (3 warnings, as the script's own comment records for `eslint .`) |
-| planted parse error | exit 2 | **exit 1** (`Parsing error: Expression expected`) |
+The first version of this fix dropped the flag and kept a hand-written
+`eslint .` beside a sentence claiming parity with the gate. That is the same
+synchronization that broke, the adversarial review said so, and it was right.
+Now all three arms (`typecheck`, `test`, `lint`) run the script of that name
+from `apps/web/package.json`, read inside the container: the thing
+`pnpm -F web <name>` runs in CI. A missing script or an unreadable
+package.json exits 2. ESLint's own exit 2 prints as could-not-look.
+
+## And the self-test can now fail on it
+
+`--self-test` used to probe only tsc, so nothing ever exercised the lint arm,
+and that is how a lint arm that could not run survived two weeks. It now plants
+a parse error and requires exit **1 exactly**. "Non-zero" would have passed on
+the broken arm's exit 2.
+
+| run | result |
+| --- | --- |
+| `--self-test`, this tree | exit 0: tsc 0 then 1, lint 0 then 1 |
+| `--self-test`, `--format unix` put back on the lint script only | **exit 2**, lint baseline 2 |
+| `eslint`, package.json's lint given `--max-warnings 0` | **exit 1** on the 3 warnings: the change reached the harness |
+
+The first red-on-revert attempt put the flag on every script, so tsc failed
+first and the lint arm was never reached. It was re-run scoped to `lint`, and
+that re-run is the one recorded above.
+
+Two present-tense "is broken" statements are date-qualified: one paragraph of
+`context/gene.md` (with the coordinator's explicit leave for that paragraph
+only) and the 2026-09-22 #209 entry.

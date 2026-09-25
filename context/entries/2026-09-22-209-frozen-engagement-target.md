@@ -126,7 +126,8 @@ fully green. `git merge` exits 1 on `apps/api/tests/unit/test_gate_crash_exit_co
 — both append their new gate to the same registry list. `audit-gate.yml` itself
 merges cleanly. Resolution is "keep both tuples"; they must be sequenced.
 
-**`scripts/verify-in-worktree.sh eslint` cannot pass on any tree.** `HARNESS_EXIT=2`
+**On 2026-09-22, `scripts/verify-in-worktree.sh eslint` could not pass on any
+tree** (fixed by #564). `HARNESS_EXIT=2`
 with `The unix formatter is no longer part of core ESLint`, under a printed
 sentence claiming it ran the CI command. Already filed twice, as #450 and #383,
 which are duplicates of each other; today's measurement is commented on #450.

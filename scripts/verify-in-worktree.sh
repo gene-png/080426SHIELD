@@ -184,7 +184,11 @@ export MSYS_NO_PATHCONV=1
 
 win() { printf '%s' "$1" | sed -e 's#^/\([a-z]\)/#\U\1:/#'; }
 
+# Positional arguments after the script reach it as $1, $2... inside the
+# container, so a value is handed over without being spliced into shell source.
 run_in_container() {
+  local script="$1"
+  shift
   docker run --rm \
     -v "$(win "$WORKTREE")/apps/web:/app/apps/web" \
     -v "$(win "$WORKTREE")/packages:/app/packages" \
@@ -194,7 +198,31 @@ run_in_container() {
     -v shield-v2_node-modules-root:/app/node_modules \
     -v shield-v2_node-modules-web:/app/apps/web/node_modules \
     -w /app "$IMAGE" \
-    sh -lc "$1"
+    sh -lc "$script" verify-in-worktree "$@"
+}
+
+# THE COMMAND IS DERIVED, NOT RESTATED. Each mode runs the script of the same
+# name in `apps/web/package.json` -- the one `pnpm -F web <name>` runs in CI --
+# rather than a hand-copied invocation beside a sentence claiming they match.
+# Hand-copying is how `--format unix` sat here claiming parity with a gate that
+# never passed it (#450): the claim was a synchronization, and nothing kept it.
+# A `lint` script that gains `--max-warnings 0` now reaches this harness in the
+# same commit that adds it.
+#
+# Reading the script is the FIRST step, and a missing script or an unreadable
+# package.json exits 2 -- could not look -- never a verdict.
+WEB_SCRIPT='cd apps/web || exit 2
+cmd="$(node -p "(require(\"./package.json\").scripts || {})[process.argv[1]] || \"\"" "$1")" || exit 2
+if [ -z "$cmd" ]; then
+  echo "verify-in-worktree: apps/web/package.json defines no \"$1\" script" >&2
+  exit 2
+fi
+echo "verify-in-worktree: apps/web package.json scripts.$1 = $cmd"
+PATH="$PWD/node_modules/.bin:$PATH"
+exec sh -c "$cmd"'
+
+run_web_script() {
+  run_in_container "$WEB_SCRIPT" "$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -240,7 +268,7 @@ count_uncollected() {
 
 tsc() {
   local out status
-  out="$(run_in_container "cd apps/web && ./node_modules/.bin/tsc --noEmit" 2>&1)" && status=0 || status=$?
+  out="$(run_web_script typecheck 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
   local total outside
@@ -280,7 +308,7 @@ tsc() {
 
 vitest() {
   local out status
-  out="$(run_in_container "cd apps/web && ./node_modules/.bin/vitest run" 2>&1)" && status=0 || status=$?
+  out="$(run_web_script test 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
 
@@ -338,28 +366,38 @@ vitest() {
   fi
   return "$status"
 }
-# EXACTLY what the repo gate runs, not stricter. `apps/web/package.json`
-# defines `"lint": "eslint ."` and `ci.yml` runs `pnpm -F web lint`. A first
-# draft of this file passed `--max-warnings=0` over `src`, and independent
-# verification measured the difference: `eslint .` exits 0 with 3 warnings,
-# `eslint src --max-warnings=0` exits 1 with 2. A harness stricter than the
-# gate produces a red no CI run can reproduce, and the natural repair is to
-# "fix" untouched files -- here two `window.location.assign` call sites CI
-# accepts. That is a harness steering an author into changes nobody asked for.
+# EXACTLY what the repo gate runs, not stricter -- by derivation now (see
+# WEB_SCRIPT). A first draft of this file passed `--max-warnings=0` over `src`,
+# and independent verification measured the difference: `eslint .` exits 0
+# with 3 warnings, `eslint src --max-warnings=0` exits 1 with 2. A harness
+# stricter than the gate produces a red no CI run can reproduce, and the
+# natural repair is to "fix" untouched files -- here two
+# `window.location.assign` call sites CI accepts.
 #
-# `--format unix` used to follow `eslint .` here. ESLint 9 removed that
-# formatter from core, so every run exited 2 ("The unix formatter is no longer
-# part of core ESLint") and then printed the line below claiming the same
-# invocation as the gate. The web-lint half of worktree verification checked
-# nothing. The message is now built from the command that ran, so the two
-# cannot disagree again.
+# Until 2026-09-24 this arm passed `--format unix`, which ESLint 9 removed from
+# core, so every run exited 2 and then printed a sentence claiming the gate's
+# invocation: worktree lint checked nothing from 2026-09-10 (#450).
+# `--self-test` now requires this arm to exit EXACTLY 1 on a planted parse
+# error, which the broken arm could not do.
+#
+# ESLint's own exit 2 is a configuration or crash error, not a finding, and it
+# is reported as could-not-look.
 eslint() {
-  local out status cmd="./node_modules/.bin/eslint ."
-  out="$(run_in_container "cd apps/web && $cmd" 2>&1)" && status=0 || status=$?
-  printf '%s
-' "$out"
-  echo "verify-in-worktree: eslint -- ran \`$cmd\` from apps/web (\`pnpm -F web lint\` runs \`eslint .\`), exit $status"
+  local out status
+  out="$(run_web_script lint 2>&1)" && status=0 || status=$?
+  printf '%s\n' "$out"
+  echo "verify-in-worktree: eslint -- ran apps/web's \`lint\` script (what \`pnpm -F web lint\` runs), exit $status"
+  if [ "$status" -eq 2 ]; then
+    echo "verify-in-worktree: COULD NOT LOOK -- exit 2 is ESLint failing to run (config, crash, or no lint script), not lint findings." >&2
+  fi
   return "$status"
+}
+
+# The lint arm's exit status alone, for `--self-test`.
+eslint_status() {
+  local s
+  run_web_script lint >/dev/null 2>&1 && s=0 || s=$?
+  echo "$s"
 }
 
 # apps/web errors ONLY, as a number.
@@ -370,7 +408,7 @@ eslint() {
 # the bound above would have left the harness unable to self-test at all, which
 # is a worse defect than the one being fixed.
 tsc_appsweb_error_count() {
-  run_in_container "cd apps/web && ./node_modules/.bin/tsc --noEmit" 2>&1     | grep 'error TS' | grep -vc '\.\./\.\./packages/' || true
+  run_web_script typecheck 2>&1    | grep 'error TS' | grep -vc '\.\./\.\./packages/' || true
 }
 
 self_test() {
@@ -398,7 +436,30 @@ self_test() {
     echo "           green from it; it is describing some other tree." >&2
     return 1
   fi
-  echo "self-test: PASS -- apps/web errors: baseline 0, mutated $mutated, probe removed"
+  echo "self-test: tsc PASS -- apps/web errors: baseline 0, mutated $mutated, probe removed"
+
+  # THE LINT ARM, and the expected status is 1 EXACTLY. "Non-zero" would have
+  # passed on the broken arm, which exited 2 on every tree (#450) -- the shape
+  # this self-test exists to catch. 1 means ESLint ran and found something; 2
+  # means it never ran; 0 means it did not see the probe.
+  local lint_probe="apps/web/src/lib/__verify_lint_probe.ts" lint_base lint_mut
+  lint_base="$(eslint_status)"
+  echo "self-test: baseline lint exit: ${lint_base}"
+  if [ "$lint_base" -ne 0 ]; then
+    echo "self-test: LINT BASELINE NOT 0 (got ${lint_base}) -- run \`$0 eslint\` and read it." >&2
+    return 2
+  fi
+  printf 'export const lintProbe = ;\n' > "$WORKTREE/$lint_probe"
+  grep -q 'lintProbe = ;' "$WORKTREE/$lint_probe" || { echo "self-test: lint probe never written" >&2; return 2; }
+  lint_mut="$(eslint_status)"
+  rm -f "$WORKTREE/$lint_probe"
+  if [ "$lint_mut" -ne 1 ]; then
+    echo "self-test: FAILED -- a planted parse error gave lint exit ${lint_mut}, not 1." >&2
+    echo "           2 means ESLint never ran; 0 means it is not reading $WORKTREE." >&2
+    return 1
+  fi
+  echo "self-test: lint PASS -- exit: baseline 0, planted parse error 1, probe removed"
+  echo "self-test: PASS"
 }
 
 self_test_bound() {
