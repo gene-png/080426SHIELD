@@ -45,10 +45,19 @@ import { describe, expect, it } from "vitest";
  * **What this does NOT prove:** that a real 204 reaches a browser as a 204.
  * That needs a running upstream, and none of the SIX PROXIED routers (attack,
  * csf, zt, risk, tech_debt, ai) emits one today -- the measurement is in the
- * proxies' own comments. Other routers do: `routes/admin.py` and
- * `routes/auth.py` return `HTTP_204_NO_CONTENT`, behind other proxies. (This
- * sentence said "no route emits one", which was false; #318.) This pins the
- * SOURCE, which is where the regression would be written.
+ * proxies' own comments. Other routers do: `routes/admin.py` returns
+ * `HTTP_204_NO_CONTENT` behind the admin proxies, and `routes/auth.py`'s only
+ * one is `/auth/logout`, which no proxy fronts. (This sentence said "no route
+ * emits one", which was false; #318.) This pins the SOURCE, which is where the
+ * regression would be written.
+ *
+ * ## A floor, not a census
+ *
+ * The coalesce patterns below catch `?? {}` / `|| []` (with an optional
+ * parenthesis), `() => ({})`, `() => { return {} }`, `?? null` in a helper,
+ * and `?? null` inside a `NextResponse.json(...)` anywhere. NOT modelled:
+ * `Promise.resolve({})`, a spread `{ ...result }`, `Object.assign({}, x)`, an
+ * `async` arrow returning `{}`, or an empty value built in a variable first.
  *
  * ## Matched against CODE, not text
  *
@@ -117,14 +126,29 @@ describe("proxies never synthesise an empty result", () => {
     "%s does not coalesce a missing body into a JSON response",
     (name, path) => {
       const src = code(readFileSync(path, "utf8"));
+      // An over-eager comment strip would leave nothing to match and pass in
+      // silence: every route and helper file exports its handlers, so the
+      // stripped code must still say so.
+      expect(
+        /\bexport\b/.test(src),
+        `${name}: nothing left after stripping comments`,
+      ).toBe(true);
       // The SHAPE, not the literal that was there, and ANYWHERE in the code,
       // not only inside `NextResponse.json(...)`: `const body = result ?? {}`
-      // two lines above the response, or `.catch(() => ({}))`, reintroduce the
-      // defect and passed the narrower pattern (#318).
-      const coalesced =
-        /(\?\?|\|\|)\s*(\{\s*\}|\[\s*\])|=>\s*\(\s*(\{\s*\}|\[\s*\])\s*\)/.exec(
-          src,
-        );
+      // two lines above the response, `.catch(() => ({}))`, and
+      // `.catch(() => { return {}; })` reintroduce the defect and passed the
+      // narrower pattern (#318). `?? null` is the same defect answering `null`
+      // at 200; it is forbidden in the response itself here, and anywhere in a
+      // helper below, because `accessToken ?? null` is a legitimate use in
+      // route files.
+      const coalesced = new RegExp(
+        [
+          String.raw`(\?\?|\|\|)\s*\(?\s*(\{\s*\}|\[\s*\])`,
+          String.raw`=>\s*\(\s*(\{\s*\}|\[\s*\]|null)\s*\)`,
+          String.raw`=>\s*\{\s*return\s+(\{\s*\}|\[\s*\]|null)\s*;?\s*\}`,
+          String.raw`NextResponse\.json\([^;]*(\?\?|\|\|)\s*\(?\s*null\b`,
+        ].join("|"),
+      ).exec(src);
       expect(
         coalesced?.[0] ?? null,
         `${name} answers 200 with a synthesised empty body. The client then
@@ -148,14 +172,31 @@ a successful response containing nothing — "the upstream returned nothing" and
       // `result === undefined` and to nothing else. A 204 returned for a
       // genuine empty object (`{}` becoming "no content") is the reverse of
       // #173 and passed the old check (#318).
+      expect(
+        /\bNextResponse\b/.test(src),
+        `${name}: no NextResponse left after stripping comments`,
+      ).toBe(true);
       const branch =
         /if\s*\(\s*result\s*===\s*undefined\s*\)\s*\{\s*return\s+new\s+NextResponse\(\s*null\s*,\s*\{\s*status:\s*204\s*\}\s*\)\s*;?\s*\}/;
       expect(
-        branch.test(src) && (src.match(/status:\s*204/g) ?? []).length === 1,
-        `${name} has no branch for an empty upstream body. The coalesce this
-test forbids was also the only thing handling 204, so removing it without
+        branch.test(src),
+        `${name} has no \`result === undefined\` branch answering 204. The coalesce
+this test forbids was also the only thing handling 204, so removing it without
 replacing it is not a fix.`,
       ).toBe(true);
+      const answers204 = (src.match(/status:\s*204/g) ?? []).length;
+      expect(
+        answers204,
+        `${name}: expected exactly one 204 response, found ${answers204}. A second one
+answers "no content" for something other than an empty upstream body -- the
+reverse of #173.`,
+      ).toBe(1);
+      // In a helper, `?? null` anywhere is the #173 defect answering `null`.
+      const nulled = /(\?\?|\|\|)\s*\(?\s*null\b/.exec(src);
+      expect(
+        nulled?.[0] ?? null,
+        `${name} coalesces the upstream result to null`,
+      ).toBeNull();
     },
   );
 });

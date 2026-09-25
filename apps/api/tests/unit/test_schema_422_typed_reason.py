@@ -102,7 +102,9 @@ def _error(resp) -> dict:
 def test_a_forbidden_extra_field_names_its_cause(client) -> None:
     """The refusal #195 added, read the way an integrator reads it.
 
-    `schema_extra_forbidden` is a code a client maps to copy. "Extra inputs are
+    `schema_unapplied_fields` is a code a client maps to copy (the
+    `mode="before"` validator runs ahead of `extra="forbid"`, so it is not
+    `schema_extra_forbidden`). "Extra inputs are
     not permitted" is a sentence a client matches on, and matching on a sentence
     is what breaks the day the sentence is reworded -- a defect this repo has
     already shipped once, in a spec that could never match again.
@@ -215,9 +217,9 @@ def test_every_detail_entry_gets_a_code(client) -> None:
     assert len(error["reasons"]) == len(set(error["reasons"])), "distinct, in first-seen order"
     # The first reason is the first error Pydantic reported, read off the
     # details rather than off the function under test. This payload's two types
-    # happen to be in alphabetical order already, so this line alone cannot
-    # tell first-seen from sorted; the ORDER is pinned by
-    # test_schema_reasons_keeps_first_seen_order_and_drops_repeats (#318).
+    # are already in alphabetical order, so this line alone cannot tell
+    # first-seen from sorted; the route-level ORDER is pinned by
+    # test_reasons_keep_first_seen_order_through_the_route (#318).
     assert error["reasons"][0] == "schema_" + error["details"][0]["type"], error
 
     # The no-type case, which a live route may never produce and which the
@@ -442,28 +444,30 @@ def test_schema_reasons_keeps_first_seen_order_and_drops_repeats() -> None:
     ]
 
 
-def test_several_errors_of_one_type_are_that_type_not_mixed() -> None:
-    """The same-type branch of the `reason` choice (#318's advisory): two errors
-    of ONE type are that type's code, not `schema_multiple`. Through the
-    handler, because the choice is made there and not in `schema_reasons`; no
-    route here can produce two errors of one type in one request."""
-    import asyncio
-    import json
+def test_reasons_keep_first_seen_order_through_the_route(client) -> None:
+    """The ORDER at the surface a client reads (#318, round 1 of PR 610).
 
-    from fastapi.exceptions import RequestValidationError
-
-    from app.exceptions import _handle_validation_error
-
-    exc = RequestValidationError(
-        [
-            {"type": "missing", "loc": ("body", "a"), "msg": "Field required", "input": {}},
-            {"type": "missing", "loc": ("body", "b"), "msg": "Field required", "input": {}},
-        ]
+    A bool for `maturity_stage` fails a VALUE check and an int for `notes` a
+    TYPE check: first-seen is value_error then string_type, which `sorted()`
+    reverses. The expectation is written out, not derived.
+    """
+    headers = _headers(client)
+    resp = client.patch(
+        f"/zt/self-assessment/answers/{_uuid.uuid4()}",
+        json={"maturity_stage": True, "notes": 5},
+        headers=headers,
     )
-    from types import SimpleNamespace
+    error = _error(resp)
+    assert error["reasons"] == ["schema_value_error", "schema_string_type"], error
+    assert error["reason"] == "schema_multiple", error
 
-    request = SimpleNamespace(state=SimpleNamespace(correlation_id="t"))
-    resp = asyncio.run(_handle_validation_error(request, exc))
-    error = json.loads(resp.body)["error"]
+
+def test_several_errors_of_one_type_are_that_type_not_mixed(client) -> None:
+    """The same-type branch of the `reason` choice (#318's advisory): several
+    errors of ONE type are that type's code, not `schema_multiple`. Through a
+    real route: an empty registration body is three `missing` errors."""
+    resp = client.post("/auth/register", json={})
+    error = _error(resp)
+    assert len(error["details"]) >= 2, error
     assert error["reason"] == "schema_missing", error
     assert error["reasons"] == ["schema_missing"], error
