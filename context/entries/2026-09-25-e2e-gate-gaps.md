@@ -1,4 +1,4 @@
-# 2026-09-25: the Playwright gates see every file, and two refusals are pinned (#579, #580)
+# 2026-09-25: the Playwright gates see every script-suffixed file, and two refusals are pinned (#579, #580)
 
 Branch `track1/e2e-gate-gaps`, branch-start base `2028f38`.
 
@@ -20,7 +20,8 @@ testMatch (`*.spec|test.[cm][jt]s[x]`) instead of `*.spec.ts`, and refuses
 with exit 2 if `playwright.config.ts` sets its own `testMatch`.
 
 **Measured on the real tree**, 2026-09-25: `npx playwright test --list` in
-this worktree (93 tests in 45 files) against the new gate gives clean, with
+this worktree, on the `e2e/` tree at `2028f38` (this branch changes no file
+under `e2e/`): 93 tests in 45 files. The new gate gives clean, with
 57 script files: 45 in the run and 12 declared non-suite, across 6
 declarations.
 
@@ -73,3 +74,19 @@ the old output, so it was updated.
   directory-key case.
 - Red on revert: eleven mutations, the earlier nine plus the suffix chain and
   the `testMatch` pattern, each red on its named test.
+
+## After the second review (`18d24d5`)
+
+- **The floor, stated, by the coordinator's call:** the listing gate sees a
+  renamed spec only while some suffix in its name is still a script
+  extension. A rename that drops every script suffix (`a.spec.ts~`,
+  `a.spec.ts_disabled`, `a.spec.ts-old`, `a.spec.txt`, `a.spec`) is seen by
+  neither gate. Stated in both gates' LIMITS, here, the #540 entry and the PR
+  body, and filed as #605 (linked from #579). This entry's title said "every
+  file"; it now says what is true.
+- **The env gate found no config and read that as "no `testMatch`".** It now
+  requires exactly one `e2e/playwright.config.{ts,js,mts,mjs,cts,cjs}` and
+  exits 2 on none or several; tests for none, two, and a `.mts` config that
+  sets `testMatch`. The fixtures and the test helper carry a config.
+- The listing measurement names its tree (`2028f38`).
+

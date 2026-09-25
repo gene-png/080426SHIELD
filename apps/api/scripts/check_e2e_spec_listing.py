@@ -15,9 +15,9 @@ EVERY script file under `e2e/` (any suffix in the name's chain being `.ts`,
 `node_modules`). Each must be either in the run or
 DECLARED a non-suite file, with a reason, in `.github/e2e-non-suite-files.json`
 (helpers, the global setup, the configs, `manual/`). So a spec disabled by a
-rename that takes it out of the suite's pattern -- `a.specs.ts`,
+rename that keeps SOME script suffix in its name -- `a.specs.ts`,
 `a.spec.ts.disabled`, `a.spec.TS` -- is reported rather than silently dropped
-(#579). A declaration that matches no file, or names a file the run lists, is
+(#579). A rename that drops every script suffix is not; see LIMITS. A declaration that matches no file, or names a file the run lists, is
 a finding too. `--list` applies the config's selection exactly as a run would,
 without starting a browser or the stack. Standard library only, because the
 E2E job installs no Python packages.
@@ -35,7 +35,11 @@ so reported as declared-but-listed, but an out-of-pattern name there
 (`helpers/s9.specs.ts`) is not reported, and nor would a spec-named one be if
 `testIgnore` came to exclude that directory. That declaration's reason is the
 only guard there.
-Files that are not scripts (`.json`, `.md`) are not compared.
+Files with no script suffix anywhere in the name are not compared at all, so
+a rename that drops the script suffix entirely -- `a.spec.ts~`,
+`a.spec.ts_disabled`, `a.spec.ts-old`, `a.spec.txt`, `a.spec` -- takes a spec
+out of CI with this gate and the env gate both green (#605). That is the
+floor this gate stops at, by decision, rather than listing every file.
 
 EXIT CODES (D-051): 0 every script file on disk is listed or declared; 1 at
 least one is neither, or a declaration is stale or names a listed file; 2

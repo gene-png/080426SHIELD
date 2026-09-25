@@ -36,6 +36,11 @@ def _repo(tmp_path: Path, specs: dict[str, str], workflow: str, exemptions: dict
     (tmp_path / ".github" / "e2e-env-gate-exemptions.json").write_text(
         json.dumps(exemptions), encoding="utf-8"
     )
+    # The gate requires exactly one Playwright config (review of 18d24d5).
+    (tmp_path / "e2e").mkdir(exist_ok=True)
+    (tmp_path / "e2e" / "playwright.config.ts").write_text(
+        "export default { testDir: '.' };" + chr(10), encoding="utf-8"
+    )
     return tmp_path
 
 
@@ -322,3 +327,35 @@ def test_a_config_that_sets_test_match_is_could_not_look(tmp_path, capsys, confi
     code, out = _run(root, capsys)
     assert code == 2, out
     assert "sets `testMatch`" in out, out
+
+
+# --- review of 18d24d5: the config must be found before "no testMatch" --------------------
+
+
+def test_no_playwright_config_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.ts").unlink()
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "expected exactly one Playwright config" in out and "found 0" in out, out
+
+
+def test_two_playwright_configs_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.js").write_text(
+        "module.exports = {};" + chr(10), encoding="utf-8"
+    )
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "found 2" in out, out
+
+
+def test_an_mts_config_that_sets_test_match_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, SET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.ts").unlink()
+    (root / "e2e" / "playwright.config.mts").write_text(
+        "export default { testMatch: '**/*.e2e.ts' };" + chr(10), encoding="utf-8"
+    )
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "playwright.config.mts sets `testMatch`" in out, out

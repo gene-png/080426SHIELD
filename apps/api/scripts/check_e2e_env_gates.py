@@ -46,13 +46,16 @@ LIMITS, stated so a clean run is not read as more than it is:
     (E2E_API_URL), is reported unless exempted, because this cannot tell a
     gate from a setting. Exempt it for the specs that use it that way.
   * It scans the files Playwright's DEFAULT testMatch collects
-    (`*.spec|test.[cm][jt]s[x]`), and refuses (exit 2) if the config sets its
-    own `testMatch`. A spec renamed out of that pattern is not scanned here;
-    `check_e2e_spec_listing.py` reports it as a file neither in the run nor
-    declared (#579).
+    (`*.spec|test.[cm][jt]s[x]`), and refuses (exit 2) unless it finds exactly
+    one `e2e/playwright.config.*` and that config never mentions `testMatch`.
+    A spec renamed out of that pattern is not scanned here;
+    `check_e2e_spec_listing.py` reports it while some suffix in its name is
+    still a script extension. A rename that drops every script suffix
+    (`a.spec.ts~`, `a.spec.txt`, `a.spec`) is seen by neither gate (#605).
 
 EXIT CODES (D-051): 0 every gate variable is set or exempted; 1 a finding; 2
-could not look -- no `e2e/` or no spec files under it, no workflows, a
+could not look -- no `e2e/` or no spec files under it, no Playwright config
+or more than one, a config that mentions `testMatch`, no workflows, a
 workflow that does not parse, an unreadable or malformed exemptions file, or
 an unknown argument.
 """
@@ -77,7 +80,11 @@ EXEMPTIONS = Path(".github/e2e-env-gate-exemptions.json")
 #: config sets none; if it ever does, this is no longer the suite, so that is a
 #: could-not-look rather than a guess (#579).
 _SUITE_FILE = re.compile(r"\.(?:spec|test)\.[cm]?[jt]sx?$")
-_CONFIG = Path("e2e") / "playwright.config.ts"
+#: The names Playwright resolves a default config from, in `e2e/` where the CI
+#: run is started. `playwright.manual.config.ts` is not one of them.
+_CONFIG_NAMES = tuple(
+    f"playwright.config.{ext}" for ext in ("ts", "js", "mts", "mjs", "cts", "cjs")
+)
 # Any mention, not only `testMatch:`: shorthand (`{ testMatch, ... }`) and a
 # quoted key both set it. A comment mentioning it trips this too, which fails
 # closed (review of 81871d4).
@@ -103,8 +110,17 @@ def gate_variables(root: Path) -> dict[str, list[str]]:
     e2e = root / "e2e"
     if not e2e.is_dir():
         raise CouldNotLook(f"{e2e} does not exist -- wrong directory?")
-    config = root / _CONFIG
-    if config.is_file() and _TEST_MATCH.search(config.read_text(encoding="utf-8")):
+    # The config must be FOUND, exactly one, before "it sets no testMatch" can
+    # be said: an absent config shared a branch with a config that sets none
+    # (review of 18d24d5).
+    configs = [e2e / n for n in _CONFIG_NAMES if (e2e / n).is_file()]
+    if len(configs) != 1:
+        raise CouldNotLook(
+            f"expected exactly one Playwright config ({', '.join(_CONFIG_NAMES)}) in {e2e}, "
+            f"found {len(configs)}; without it this gate cannot say which files are the suite"
+        )
+    config = configs[0]
+    if _TEST_MATCH.search(config.read_text(encoding="utf-8")):
         raise CouldNotLook(
             f"{config} sets `testMatch`; this gate scans Playwright's DEFAULT pattern "
             "and cannot say which files are the suite"
