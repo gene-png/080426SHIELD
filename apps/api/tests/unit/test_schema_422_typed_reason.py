@@ -213,6 +213,12 @@ def test_every_detail_entry_gets_a_code(client) -> None:
 
     assert set(error["reasons"]) == set(schema_reasons(error["details"]))
     assert len(error["reasons"]) == len(set(error["reasons"])), "distinct, in first-seen order"
+    # The first reason is the first error Pydantic reported, read off the
+    # details rather than off the function under test. This payload's two types
+    # happen to be in alphabetical order already, so this line alone cannot
+    # tell first-seen from sorted; the ORDER is pinned by
+    # test_schema_reasons_keeps_first_seen_order_and_drops_repeats (#318).
+    assert error["reasons"][0] == "schema_" + error["details"][0]["type"], error
 
     # The no-type case, which a live route may never produce and which the
     # helper must still handle rather than drop.
@@ -416,3 +422,48 @@ def test_the_schema_namespace_is_the_literal_the_web_layer_spells_out() -> None:
     # the mixed code must live INSIDE the namespace, or a multi-field failure
     # would be treated as friendly copy.
     assert exceptions.SCHEMA_REASON_MIXED.startswith("schema_")
+
+
+def test_schema_reasons_keeps_first_seen_order_and_drops_repeats() -> None:
+    """The documented contract, against literal input: order preserved, repeats
+    dropped, a missing type named rather than skipped (#318)."""
+    from app.exceptions import schema_reasons
+
+    details = [
+        {"type": "string_type"},
+        {"type": "less_than_equal"},
+        {"type": "string_type"},
+        {},
+    ]
+    assert schema_reasons(details) == [
+        "schema_string_type",
+        "schema_less_than_equal",
+        "schema_unknown",
+    ]
+
+
+def test_several_errors_of_one_type_are_that_type_not_mixed() -> None:
+    """The same-type branch of the `reason` choice (#318's advisory): two errors
+    of ONE type are that type's code, not `schema_multiple`. Through the
+    handler, because the choice is made there and not in `schema_reasons`; no
+    route here can produce two errors of one type in one request."""
+    import asyncio
+    import json
+
+    from fastapi.exceptions import RequestValidationError
+
+    from app.exceptions import _handle_validation_error
+
+    exc = RequestValidationError(
+        [
+            {"type": "missing", "loc": ("body", "a"), "msg": "Field required", "input": {}},
+            {"type": "missing", "loc": ("body", "b"), "msg": "Field required", "input": {}},
+        ]
+    )
+    from types import SimpleNamespace
+
+    request = SimpleNamespace(state=SimpleNamespace(correlation_id="t"))
+    resp = asyncio.run(_handle_validation_error(request, exc))
+    error = json.loads(resp.body)["error"]
+    assert error["reason"] == "schema_missing", error
+    assert error["reasons"] == ["schema_missing"], error

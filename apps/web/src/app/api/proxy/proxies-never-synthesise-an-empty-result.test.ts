@@ -43,10 +43,48 @@ import { describe, expect, it } from "vitest";
  * Enumerating the two the issue named would have pinned a third of the set.
  *
  * **What this does NOT prove:** that a real 204 reaches a browser as a 204.
- * That needs a running upstream, and no route emits one today (the measurement
- * is in the proxies' own comments). This pins the SOURCE, which is where the
- * regression would be written.
+ * That needs a running upstream, and none of the SIX PROXIED routers (attack,
+ * csf, zt, risk, tech_debt, ai) emits one today -- the measurement is in the
+ * proxies' own comments. Other routers do: `routes/admin.py` and
+ * `routes/auth.py` return `HTTP_204_NO_CONTENT`, behind other proxies. (This
+ * sentence said "no route emits one", which was false; #318.) This pins the
+ * SOURCE, which is where the regression would be written.
+ *
+ * ## Matched against CODE, not text
+ *
+ * Every pattern below runs on the source with comments removed. The proxies'
+ * own comments quote the forbidden shape (`result ?? {}`) and the required one
+ * (`status: 204`), so a text match was satisfied, or tripped, by prose: one
+ * reworded comment could make the 204 assertion permanently true (#318).
  */
+
+/**
+ * The source with `//` and block comments removed, string and template
+ * literals kept (a `//` inside `"http://..."` is not a comment).
+ */
+function code(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+    } else if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i += 1;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end === -1 ? src.length : end + 2;
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
 
 const PROXY_ROOT = join(process.cwd(), "src/app/api/proxy");
 
@@ -78,13 +116,13 @@ describe("proxies never synthesise an empty result", () => {
   it.each(FILES.map((p) => [label(p), p] as const))(
     "%s does not coalesce a missing body into a JSON response",
     (name, path) => {
-      const src = readFileSync(path, "utf8");
-      // The SHAPE, not the literal that was there: `result ?? {}` is one
-      // spelling, `data || {}` and `body ?? []` are the same defect written
-      // differently, and a sweep over the original literal would miss the
-      // rewrite that reintroduces it.
+      const src = code(readFileSync(path, "utf8"));
+      // The SHAPE, not the literal that was there, and ANYWHERE in the code,
+      // not only inside `NextResponse.json(...)`: `const body = result ?? {}`
+      // two lines above the response, or `.catch(() => ({}))`, reintroduce the
+      // defect and passed the narrower pattern (#318).
       const coalesced =
-        /NextResponse\.json\(\s*[A-Za-z_$][\w$]*\s*(\?\?|\|\|)\s*(\{\s*\}|\[\s*\])/.exec(
+        /(\?\?|\|\|)\s*(\{\s*\}|\[\s*\])|=>\s*\(\s*(\{\s*\}|\[\s*\])\s*\)/.exec(
           src,
         );
       expect(
@@ -100,13 +138,20 @@ a successful response containing nothing — "the upstream returned nothing" and
   it.each(HELPERS.map((p) => [label(p), p] as const))(
     "%s handles an empty upstream body explicitly",
     (name, path) => {
-      const src = readFileSync(path, "utf8");
+      const src = code(readFileSync(path, "utf8"));
       // The other half, and asserting only the first would let a "fix" that
       // deleted the coalesce and nothing else pass — which trades a swallow for
       // a path that answers `null` at 200, or throws. `CLAUDE.md`: before
       // fixing an over-match, check what it was accidentally catching.
+      //
+      // The BRANCH, not two words anywhere: the 204 must be the answer to
+      // `result === undefined` and to nothing else. A 204 returned for a
+      // genuine empty object (`{}` becoming "no content") is the reverse of
+      // #173 and passed the old check (#318).
+      const branch =
+        /if\s*\(\s*result\s*===\s*undefined\s*\)\s*\{\s*return\s+new\s+NextResponse\(\s*null\s*,\s*\{\s*status:\s*204\s*\}\s*\)\s*;?\s*\}/;
       expect(
-        /result === undefined/.test(src) && /status: 204/.test(src),
+        branch.test(src) && (src.match(/status:\s*204/g) ?? []).length === 1,
         `${name} has no branch for an empty upstream body. The coalesce this
 test forbids was also the only thing handling 204, so removing it without
 replacing it is not a fix.`,
