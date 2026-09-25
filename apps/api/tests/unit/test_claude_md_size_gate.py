@@ -294,3 +294,19 @@ def test_the_canary_is_not_an_html_comment() -> None:
     """The reason for v2, pinned: a comment-wrapped constant would reintroduce #459."""
     mod = _load()
     assert "<!--" not in mod.CANARY and "-->" not in mod.CANARY
+
+
+@pytest.mark.unit
+def test_a_deleted_final_marker_is_no_marker_even_when_the_notice_names_it(tmp_path: Path) -> None:
+    """CLAUDE.md names the marker in its top-of-file notice. With the final
+    marker deleted, that mention must not make the file read as "wrapped"."""
+    mod = _load()
+    f = tmp_path / "CLAUDE.md"
+    notice = "**This file must end with the line `" + mod.CANARY + "`.**"
+    f.write_text(
+        "# x" + chr(10) + chr(10) + notice + chr(10) + chr(10) + "the rules" + chr(10),
+        encoding="utf-8",
+    )
+    done = _run("--require-canary", str(f))
+    assert done.returncode == 2
+    assert "has NO canary marker" in done.stdout, done.stdout

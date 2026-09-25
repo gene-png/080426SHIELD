@@ -146,9 +146,10 @@ the reader now has a POSITIVE signal that its copy is whole.
 
 It is a FLAG rather than always-on because this gate is reusable for any
 governance file, and the fixture files are themselves named `CLAUDE.md` without
-carrying canaries. `ci.yml` passes it for the real file. All THREE refusal
-branches exit 2 -- an empty file, a missing marker and a mispositioned one are
-could-not-looks, not findings about size. (An earlier version of this sentence
+carrying canaries. `ci.yml` passes it for the real file. All FOUR refusal
+branches exit 2 -- an empty file, a final line carrying a wrapped or older
+marker (#459), a missing marker and a mispositioned one are could-not-looks,
+not findings about size. (An earlier version of this sentence
 said "both" and named two, omitting the empty case, which was the one no
 sentence mentioned.)
 
@@ -354,7 +355,10 @@ def main(argv: list[str]) -> int:
                 print(f"check-claude-md-size: {target} is empty, so it carries no canary.")
                 return 2
             stripped = [ln.strip() for ln in tail]
-            if CANARY not in stripped and any("CLAUDE-MD-CANARY" in ln for ln in stripped):
+            # Decided from the LAST line only: CLAUDE.md names the marker in its
+            # own top-of-file notice, so "any line mentions it" would read a
+            # deleted final marker as a wrapped one (review of cba5455).
+            if stripped[-1] != CANARY and "CLAUDE-MD-CANARY" in stripped[-1]:
                 print(f"check-claude-md-size: {target}'s canary is not the bare marker line.")
                 print(f"  expected the last non-empty line to be exactly: {CANARY}")
                 print("  A marker wrapped in an HTML comment, or an older version, is dropped")

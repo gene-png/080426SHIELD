@@ -37,11 +37,15 @@ Measured on this session's own injected `CLAUDE.md` (main at `2028f38`,
   above the old canary is the injected copy's last line.
 - Indented comments survive, for example `  <!-- counted: historical -->`.
 
-So the drop keys on a column-0 whole-line comment, not on position, and a
-plain line in the same position survives. What this cannot show is the new
-final line itself being injected: that needs a session that reads `CLAUDE.md`
-from `main` after this merges. Check it then, and reopen #459 if
-`CLAUDE-MD-CANARY: v2` is missing.
+That v2 survives rests on the comment-stripping HYPOTHESIS, not on a
+measurement of the new line: what the evidence shows is that whole-line
+column-0 HTML comments vanish WHEREVER they sit, not only at the end. Besides
+the canary, line 230 on `main` vanished from this session's injected copy,
+and a reviewer's injected copy of the primary tree lost its line 2287, also a
+column-0 comment mid-file. Plain lines beside each survived. The new final
+line itself can only be seen by a session that reads `CLAUDE.md` from `main`
+after this merges. That check is recorded in the PR body and as a comment on
+#459, and this PR does NOT close #459, so the check has a live home.
 
 ## Limit
 
@@ -49,3 +53,18 @@ Other whole-line HTML comments in `CLAUDE.md` (for example column-0
 `<!-- counted: ... -->` provenance markers) are dropped from injected copies
 in the same way. That hides provenance from agents, not a rule, and is left
 to #459's comments rather than changed here.
+
+## After the first review (`cba5455`)
+
+- The "wrapped or older" refusal is decided from the LAST non-empty line
+  only. It tested every line, and `CLAUDE.md` names the marker in its own
+  top-of-file notice, so a deleted final marker read as "wrapped" and the
+  no-marker branch was unreachable on the real file. A test with the notice
+  and no final marker pins "has NO canary marker".
+- The survival claim is reworded as resting on the comment-stripping
+  hypothesis, with its evidence; the post-merge check is on #459, which this
+  PR leaves open.
+- D-079's canary paragraph is date-qualified in place (a present tense gone
+  stale, not a changed decision), and "three refusal branches" is now four
+  there and in the gate's docstring.
+
