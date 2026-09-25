@@ -17,7 +17,8 @@ governance files, the change is made VISIBLE instead.
   path list) at the PR's merge base and at its head. Exit 0: byte-identical. 1:
   changed, with the changed lines named. 2: could not look (the section
   missing at either end, including a renamed heading; git cannot read a ref;
-  CLAUDE.md missing; a bad argument). No label, no escape.
+  CLAUDE.md missing; a bad argument). No label and no opt-out marker;
+  editing this workflow step is a stated limit (#572, #585).
 - **Its own job in `audit-gate.yml`**, "Merge rule text", with
   `fetch-depth: 0`. NOT a required check: that is the owner's setting.
 - Fixtures for 0, 1 and 2 (a whitespace-only edit is the adversarial 1),

@@ -7,8 +7,8 @@ reads, clear itself: nothing in condition 5 lists CLAUDE.md, and the rule's own
 conditions are not a listed path (#572). Until CODEOWNERS covers the
 governance files (the owner's decision, after the bot account exists), this
 makes every change to the rule's text VISIBLE as a red check, so a human reads
-it before anything merges on it. There is no label and no escape of any kind:
-a change to the section's bytes is always red.
+it before anything merges on it. There is no label and no opt-out marker;
+editing this workflow step is a stated limit (#572, #585).
 
 WHAT IT COMPARES. The BYTES of CLAUDE.md's `## The merge rule` section -- from
 that heading to the `## Real commands` heading, which includes `### Condition
@@ -43,7 +43,7 @@ LIMITS, stated so a green is not read as more than it is:
     not silent.
   * It does not catch a SEMANTIC change outside the section: a D-record the
     rule cites, an agent definition in `.claude/agents/`, or the code of a gate
-    the rule relies on (the condition-5 path matcher, `compose_unchanged.py`).
+    the rule relies on (the condition-5 path matcher, #581's compose check).
   * A PR that edits THIS GATE'S OWN WORKFLOW STEP can neuter it: the workflow
     runs from the PR (`on: pull_request`). That stays open until CODEOWNERS
     covers `.github/workflows/` and the bot account exists (#572).

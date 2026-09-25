@@ -232,9 +232,10 @@ jobs:
     # INTERIM, until CODEOWNERS covers the governance files (#572). A PR that
     # changes the BYTES of CLAUDE.md's `## The merge rule` section -- the
     # conditions, the condition-5 path list, anything in it -- goes RED here,
-    # every time those bytes change, with no label or escape, so a human reads
-    # the change before anything merges on it. Red means "the rule changed",
-    # not "the PR is wrong". Green means only "the section's bytes are
+    # every time those bytes change, so a human reads the change before
+    # anything merges on it. There is no label and no opt-out marker;
+    # editing this workflow step is a stated limit (#572, #585). Red means
+    # "the rule changed", not "the PR is wrong". Green means only "the section's bytes are
     # unchanged". It sees bytes, not meaning: a change that leaves the bytes
     # identical while altering how the section is read (an HTML-comment wrap,
     # a second rule under a variant heading, an edit to this step) is out of
