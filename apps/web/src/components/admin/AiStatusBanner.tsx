@@ -8,7 +8,8 @@ import type { JSX } from "react";
 
 /**
  * Issue 2: warn an admin — on every admin page, including right after sign-in —
- * that AI will produce offline (fixture) output, and point at the fix.
+ * that AI is not live: a Run-AI will produce offline (fixture) output, or, since
+ * #472, fail outright. `status.detail` says which, and what fixes it.
  *
  * Previously this rendered on exactly one of the five workspaces and offered no
  * way to resolve the problem, so an admin could work for a whole session
@@ -30,7 +31,8 @@ export function AiStatusBanner(): JSX.Element | null {
       <span>
         <span className="font-semibold">AI is not live.</span> {status.detail}
       </span>
-      {status.can_configure ? (
+      {/* Only where a key can be loaded AND would help (#472). */}
+      {status.can_configure && status.serves === "offline" ? (
         <Link
           href="/admin/management#ai-provider-key"
           className="rounded-md border border-status-warning-border bg-surface-card px-3 py-1 text-xs font-semibold text-ink-primary hover:bg-surface-sunken"

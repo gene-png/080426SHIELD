@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { extractAfterUpload, watchUpload } from "../helpers/ai";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -62,6 +62,7 @@ test("the workspace discloses what the extraction dropped, and the row can be re
       r.request().method() === "POST",
     { timeout: 120000 },
   );
+  const uploadWatch = watchUpload(page);
   await page
     .locator('input[type="file"]')
     .first()
@@ -70,14 +71,11 @@ test("the workspace discloses what the extraction dropped, and the row can be re
       mimeType: "text/csv",
       buffer: Buffer.from(INVENTORY_CSV),
     });
-  const extractBtn = page
-    .getByRole("button", { name: "Extract from this" })
-    .first();
-  if (await extractBtn.isVisible().catch(() => false)) {
-    await extractBtn.click();
-    await acknowledgeOfflineAi(page);
-  }
-  const extractResponse = await extractDone;
+  const extractResponse = await extractAfterUpload(
+    page,
+    extractDone,
+    uploadWatch,
+  );
   const list = (await extractResponse.json()) as {
     id: string;
     source_rows_total: number;

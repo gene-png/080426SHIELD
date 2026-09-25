@@ -534,6 +534,22 @@ class VertexProvider:
         return _parse_generate_content(resp.json())
 
 
+#: The providers `_build_provider` has a LIVE adapter for. A summary of the
+#: if-chain below, so it can drift from it -- `test_llm_adapters.py` builds
+#: every member of `LLMProvider` in live mode and pins this against the result.
+_LIVE_ADAPTERS = frozenset({"anthropic", "openai", "gemini", "vertex"})
+
+
+def has_live_adapter(provider: str) -> bool:
+    """Whether live mode can call ``provider`` at all (#472).
+
+    Readiness asks this before prescribing ``SHIELD_LLM_MODE=live``: for a
+    provider with no adapter that advice stops the api booting
+    (``live_llm_readiness`` refuses it).
+    """
+    return provider in _LIVE_ADAPTERS
+
+
 def _build_provider(settings: Settings, runtime_key: str | None = None) -> LLMProvider:
     """Pick the provider adapter for this call.
 

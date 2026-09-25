@@ -10,8 +10,10 @@ resolved. Three rules hold everywhere in this module:
    decrypt at call time. Nothing surfaces it to an endpoint, a log line, or an
    audit ``details`` blob.
 3. **Database beats environment.** A key pasted through the UI overrides
-   ``ANTHROPIC_API_KEY`` and friends, so removing it through the UI is a real
-   removal rather than a silent fallback to whatever the container booted with.
+   ``ANTHROPIC_API_KEY`` and friends while it is stored. Removing it falls BACK
+   to the environment key when there is one -- ``llm._build_provider``'s live
+   branch reads it -- so in live mode Run-AI keeps calling the provider;
+   ``GET /admin/ai-status`` says which (#472).
 """
 
 from __future__ import annotations
@@ -38,6 +40,30 @@ _ENV_KEY_ATTR = {
     "openai": "openai_api_key",
     "gemini": "gemini_api_key",
 }
+
+
+def env_key_var(provider: str) -> str | None:
+    """The environment variable that carries ``provider``'s key, or None for a
+    provider that takes no key (vertex uses ADC).
+
+    NOT whether a key can be LOADED here: that is ``accepts_runtime_key``, and
+    confusing the two told openai and gemini admins to paste a key the
+    validator then refused (#472).
+    """
+    attr = _ENV_KEY_ATTR.get(provider)
+    return attr.upper() if attr else None
+
+
+def accepts_runtime_key(provider: str) -> bool:
+    """Whether a key for ``provider`` can be LOADED here, through
+    ``POST /admin/llm-key``.
+
+    That route stores only what ``live_validate_key`` validates, and this is
+    the predicate ``live_validate_key`` itself branches on -- one answer for
+    both, so "Load a key" cannot be offered for a provider the validator
+    refuses (#472). Anthropic alone today.
+    """
+    return provider == "anthropic"
 
 
 def _fernet(settings: Settings) -> Fernet:
@@ -152,7 +178,7 @@ def live_validate_key(provider: str, model: str, api_key: str) -> tuple[bool, st
     surface as a readable refusal in the admin UI, not a 500. Deliberately
     tiny: one token of output is enough to prove the credential is accepted.
     """
-    if provider == "anthropic":
+    if accepts_runtime_key(provider):
         try:
             import anthropic
         except ImportError:

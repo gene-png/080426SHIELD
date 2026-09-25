@@ -5548,3 +5548,147 @@ else, and that issue carried no labels, so it appeared in no query. #184 and
 #286 are the same defect, and the older, better-written one was the invisible
 one. Search-before-filing is real, and not sufficient on its own: it can only
 find what previous filers labelled.
+
+## D-088 — The separator gate protects separators the code RECEIVES, not only the ones it writes
+
+**D-087 is not skipped by this entry.** It belongs to PR #539 and D-085 to PR #517, both open when this was written. The gap is recoverable by reading this sentence.
+
+### What broke, measured live (#535, #536, both tier-1)
+
+The client's legal name reached the LLM provider verbatim, and `llm_calls.redacted_counts` recorded `{}`. So the egress record said nothing was removed. Measured on `main` at `5783fae` through `redact_payload`, the function `LLMClient.invoke` calls. The leak is client-to-provider, not cross-tenant (the owner's classification is recorded on both issues), and it is live: a runtime-loaded key makes egress real in the default configuration (D-037), `legal_name` accepts any string, and no AI route requires the preview.
+
+- **#535:** `re.escape(org_name)` turns the stored name's space into a literal U+0020. A no-break space, a narrow no-break space or two spaces between the words never matched. The same held for every name hint.
+- **#536:** the pattern was anchored `\b...\b`. A `\b` after a final `.` needs a word character next, so "Acme Holdings, Inc." (most incorporated names) could never be redacted anywhere.
+
+### Decision 1: data becomes a pattern in exactly one place
+
+`redact.py::_literal_pattern(needle)` is the only function that turns data into regex source. It:
+
+- splits the needle on whitespace and rejoins the `re.escape`d tokens with `\s+` (first `_HSPACE+`; Decision 3 below records why literal names cross line breaks while the shape rules `_PHONE_SEP`, `_CAGE_SEP` and `_STREET_SEP` do not);
+- anchors conditionally: `(?<!\w)` only when the needle starts with a word character, `(?!\w)` only when it ends with one. A word-edged name still cannot match inside a longer word.
+
+`redact_org_name` and `_redact_names` both use it. `\b(?:a|b)\b` had #536's defect for every hint; how `_redact_names` now combines hints is below, under the review rounds.
+
+### Decision 2: the gate's premise is widened, and this is the part worth keeping
+
+`check_separator_classes.py` existed to stop exactly this shape, and its docstring records two prior leaks: D-058's `[ \t\xa0]` and item 10's `_PHONE_SEP`. #535 is the third instance, and the gate was structurally blind to it. Its signature looks for a character class in SOURCE. Here the whitespace arrived from the DATABASE, so no class ever appeared.
+
+**A source-scanning gate cannot see a separator that lives in data. It CAN see the point where data becomes a pattern, because that point is source, and it is precise: `re.escape`.** So the gate gains a second signature, resolved by the AST rather than by text: any REFERENCE to `re.escape` (a call, or passing it as a value, as in `map(re.escape, ...)`; also `escape` imported from `re`, or `re` under an alias) outside the one module-level `_literal_pattern` is a finding. A docstring or comment that merely mentions it is not. Each signature prints its own cause: "a separator the code WRITES" versus "a separator the code RECEIVES".
+
+Applied to `main`'s `redact.py`, it fires on both real sites, `redact_org_name` and `_redact_names`, and on nothing else. Fixture cases in `tests/gates/check_separator_classes/` pin both directions.
+
+**What it still cannot see:** data interpolated into a pattern WITHOUT `re.escape` (an f-string of a raw variable). That would be a regex injection, a different and worse defect, which `redact.py` does not do today. A grep of every `re.compile` in the file found exactly two runtime-built patterns, both via `re.escape`. It also cannot see `getattr(re, "escape")` or a bare `escape` reached through `from re import *`.
+
+### Decision 3, the owner's: literal names use `\s+`, not `_HSPACE+`
+
+The first version joined name tokens with `_HSPACE+`, so a legal name WRAPPED
+across a line ("Atlas\nDefense") still egressed. It was pinned by a test marked
+`xfail(strict=True)` pending this decision. The owner decided `\s+` for both
+literal name rules, and the reason is RULE CLASS, written into
+`_literal_pattern` so nobody reverts it as an inconsistency:
+
+- `_HSPACE` exists for SHAPE rules. An address or contact pattern that crossed a
+  line could join tokens that were never one thing (#135: the contact hint must
+  not reach across prose for its evidence).
+- These two rules match a KNOWN LITERAL from the tenant's own rows. "Acme
+  Holdings" across a line break is almost always "Acme Holdings". The false
+  positive is rare here and costs only context: a heading ending "Atlas" above a
+  line opening "Defense in depth" becomes "[CLIENT] in depth" (review of
+  `a409aea`).
+- The asymmetry decides it anyway. A miss is the client's name reaching a third
+  party. An over-match is the model seeing [CLIENT] instead of context, on a
+  pipeline where it only suggests.
+- PDF and Word extraction feed the Tech Debt payload, so wrapped names are real.
+
+**Measured before landing, because this is the shape of the 49x regression:**
+
+- single-spaced text: at or below `main` at every size;
+- 500 hints over 262 KB: 474 ms against 668 ms;
+- line-break-heavy text, 500 hints over 336 KB: 777 ms against 968 ms. It
+  redacted 18,496 names where `main` redacted 3,674, the other ~80% being names
+  split across lines that `main` let through.
+
+No bound on line-break runs was added, because the measurement did not ask for
+one. The xfail became a sweep over the 10 characters `str.splitlines()` breaks
+on, for org names, plus a hint case; reverting to `_HSPACE+` turns all 11 red.
+
+### Review found two regressions the first version of this fix introduced
+
+Both published a SURNAME under an output that reads as a completed redaction,
+which is worse than no match:
+
+- **Sorting on stored length.** `_redact_names` sorted hints by their stored
+  length, but `_literal_pattern` drops whitespace. "Dana" + 12 spaces outranked
+  "Dana Whitfield" and matched "Dana" alone.
+- **Leftmost match.** A punctuation-led hint has no leading anchor, so "(Dana"
+  matched at position 0 of "(Dana Whitfield)", left of where the full name can
+  start. Python's alternation takes the leftmost match before the longest, so no
+  ordering prevents it.
+
+`main` redacted both correctly. **So `_redact_names` no longer relies on
+alternation order.** It normalises hints, finds every hint's matches on the
+ORIGINAL text, keeps the longest non-overlapping spans, and only then replaces
+(the state at `4f042f3`; the second review round below replaced "longest" with
+the union).
+Placeholders are never rescanned.
+
+The same review closed three holes in the gate's new signature:
+
+- `re.escape` passed as a value (`map(re.escape, hints)`) was invisible, so the
+  gate now flags references, not only calls;
+- a file that tokenizes but does not parse came back as a finding with exit 1,
+  and is now exit 2;
+- a nested or duplicate `_literal_pattern` was exempt, and only one module-level
+  constructor is now.
+
+Each was proven red-on-revert with a named test. The first padded-hint test used
+10 spaces, which TIES "Dana Whitfield" at 14 characters, so `set()` order (which
+varies by hash seed) decided whether it failed. It was made deterministic and run
+red under five seeds.
+
+### A second review round: CI never ran the new tests, and a winner-take-all rule still leaked
+
+- **The new test file carried no `unit` mark, and CI runs `pytest -m unit`.**
+  On the reviewed head, CI selected 0 of that file's 61 tests. Every leak test
+  was skipped there, while local runs that named the file directly passed.
+  It is now `pytestmark = pytest.mark.unit`, and CI selects all of its tests.
+  This is CLAUDE.md's "a selector that selects nothing passes". The collect
+  count used to prove the fix was itself broken on the first try: this pytest
+  prints `file: N` in quiet mode, so a grep for `::` counted zero both before
+  and after. Read the raw output before trusting a filtered count.
+- **Choosing the longest span still published part of a chained name.**
+  Hints "Dana Whitfield" and "Whitfield Jones" over "Dana Whitfield Jones"
+  gave "Dana [NAME]". Overlapping spans are now MERGED (the union). That
+  redacts strictly more, and a merged run is one removal.
+- **The span search was slow.** Measured with 500 hints over 262 KB:
+  - one pattern per hint: 49x slower than `main`;
+  - anchors inside every alternative: still about 6x slower than `main`
+    END TO END. The scan ALONE with anchors inside every alternative was 27x
+    slower than with them hoisted (0.27 s against 0.01 s), which is the figure
+    `_hint_patterns` cites. They measure different things.
+    Hints are now grouped by anchor shape, so the anchors can be hoisted out of
+    the alternation. Each group is one cached pattern, and a hint can start only
+    inside a region its group's leftmost scan matched, so only those positions
+    are re-examined. Grouping must not let an earlier group win at a position:
+    "(Acme." against "(Acme. Labs" pins that. Measured afterwards, the new code
+    is at or below `main` at every size tried: 4, 17, 47 and 405 ms against 4,
+    19, 81 and 680 ms.
+
+### Relation to #158
+
+#158's bare `\s` in `_RE_CONTACT_HINT` is the BENIGN instance of the same family. It is harmless only because its input is a stripped single line from `str.splitlines()`. #535 is the live instance: the same kind of mismatch, on free text. **Whether a separator mismatch is safe is a property of the input, not of the pattern.**
+
+### Proof
+
+- New tests, written first and red on `main`: 38 separator rows, 7 edge rows and a partial-miss row, with separators computed from the language (`\s` minus what `str.splitlines()` breaks on), never imported from `redact.py`.
+- An `LLMClient.invoke` test asserts both what the provider received and the ledger's `redacted_counts`.
+- Red-on-revert with `scripts/red-on-revert.sh --expect`, one fix at a time:
+  - reverting the anchors turns exactly the 7 #536 rows red;
+  - reverting the separator join turns the separator rows red, plus the partial-miss row and the one edge row that combines both defects;
+  - after Decision 3, reverting `\s+` to `_HSPACE+` turns the 10 line-break rows and the CRLF hint row red;
+  - deleting the hint path's hoisted anchors in `_hint_patterns` turns `test_a_word_edged_hint_still_needs_a_word_boundary`'s 3 rows red.
+
+**Whitespace runs, measured because review suspected superlinear cost (`a409aea`).** At a fixed ~190 KB, growing the whitespace run between a name's words from 500 to 50,000 characters made the branch FASTER (752, 614, 492 ms). So cost is linear in text size, not in run length. On that pathological input it is about 2x `main`, and `main` redacted none of the names.
+
+- both mutations also turn the invoke-level test red;
+- removing the gate's new signature turns its 4 detection tests red.

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { acknowledgeOfflineAi } from "../helpers/ai";
+import { extractAfterUpload, watchUpload } from "../helpers/ai";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -72,6 +72,7 @@ test("an unconfirmed 'not security' call is provisional; sign-off is what remove
       r.request().method() === "POST",
     { timeout: 120000 },
   );
+  const uploadWatch = watchUpload(page);
   await page
     .locator('input[type="file"]')
     .first()
@@ -80,14 +81,7 @@ test("an unconfirmed 'not security' call is provisional; sign-off is what remove
       mimeType: "text/csv",
       buffer: Buffer.from(INVENTORY_CSV),
     });
-  const extractBtn = page
-    .getByRole("button", { name: "Extract from this" })
-    .first();
-  if (await extractBtn.isVisible().catch(() => false)) {
-    await extractBtn.click();
-    await acknowledgeOfflineAi(page);
-  }
-  await extractDone;
+  await extractAfterUpload(page, extractDone, uploadWatch);
 
   // 1. The queue surfaces the negative call, and says how many are outstanding.
   await expect(
@@ -186,6 +180,7 @@ test("a wrongly-classified security tool can be overturned back into scope", asy
       r.request().method() === "POST",
     { timeout: 120000 },
   );
+  const uploadWatch = watchUpload(page);
   await page
     .locator('input[type="file"]')
     .first()
@@ -194,14 +189,7 @@ test("a wrongly-classified security tool can be overturned back into scope", asy
       mimeType: "text/csv",
       buffer: Buffer.from(INVENTORY_CSV),
     });
-  const extractBtn = page
-    .getByRole("button", { name: "Extract from this" })
-    .first();
-  if (await extractBtn.isVisible().catch(() => false)) {
-    await extractBtn.click();
-    await acknowledgeOfflineAi(page);
-  }
-  await extractDone;
+  await extractAfterUpload(page, extractDone, uploadWatch);
 
   const queueCard = page
     .locator("li", { has: page.getByText(NON_SECURITY_ROW, { exact: true }) })

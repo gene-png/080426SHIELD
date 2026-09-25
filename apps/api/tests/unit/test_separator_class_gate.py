@@ -215,3 +215,133 @@ def test_a_LEADING_unknown_flag_cannot_look(capsys) -> None:
 
     assert gate_main(["x", "--bogus"]) == 2
     assert "is a flag, and this script implements none" in capsys.readouterr().err
+
+
+# --- the second signature: a separator the code RECEIVES (#535) --------------
+#
+# The class-literal signature above protects separators the code WRITES. #535's
+# space arrived from the DATABASE (a stored legal name) and became a pattern
+# through `re.escape`, so no class ever appeared in source. The point where
+# data becomes a pattern IS in source, though, and it is precise: any
+# `re.escape` outside the one constructor, `_literal_pattern`, is a finding.
+
+_PRE_FIX_ORG_RULE = (
+    "import re\n"
+    "def redact_org_name(text, org_name):\n"
+    "    pat = re.compile(rf'" + B + "b{re.escape(org_name)}" + B + "b', re.IGNORECASE)\n"
+    "    return pat.sub('[CLIENT]', text)\n"
+)
+
+
+@pytest.mark.unit
+def test_the_535_instance_a_data_escape_outside_the_constructor_is_caught() -> None:
+    code, findings = check(_PRE_FIX_ORG_RULE)
+    assert code == 1
+    assert any("re.escape" in f and "_literal_pattern" in f for f in findings), findings
+
+
+@pytest.mark.unit
+def test_the_pre_fix_name_hint_join_is_caught() -> None:
+    src = (
+        "import re\n"
+        "def _redact_names(text, hints):\n"
+        "    return re.compile(r'"
+        + B
+        + "b(?:' + '|'.join(re.escape(h) for h in hints) + r')"
+        + B
+        + "b')\n"
+    )
+    code, findings = check(src)
+    assert code == 1
+    assert any("_redact_names" in f for f in findings), findings
+
+
+@pytest.mark.unit
+def test_escape_inside_the_constructor_passes() -> None:
+    src = (
+        "import re\n"
+        "_HSPACE = r'[^" + B + "S" + B + "n]'\n"
+        "def _literal_pattern(needle):\n"
+        "    return (_HSPACE + '+').join(re.escape(t) for t in needle.split())\n"
+        "def redact_org_name(text, org):\n"
+        "    return re.compile(_literal_pattern(org)).sub('[CLIENT]', text)\n"
+    )
+    assert check(src) == (0, [])
+
+
+@pytest.mark.unit
+def test_an_escape_mentioned_in_a_docstring_or_comment_is_not_a_call() -> None:
+    src = (
+        "def f():\n"
+        '    """Used to be rf"' + B + "b{re.escape(x)}" + B + 'b"."""\n'
+        "    # re.escape(x) was the defect\n"
+        "    return 1\n"
+    )
+    assert check(src) == (0, [])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "src",
+    [
+        "from re import escape\ndef f(x):\n    return escape(x)\n",
+        "import re as r\ndef f(x):\n    return r.escape(x)\n",
+    ],
+    ids=["from-import", "module-alias"],
+)
+def test_an_aliased_escape_is_still_caught(src: str) -> None:
+    code, findings = check(src)
+    assert code == 1, findings
+
+
+# --- review of ab80a13: the second signature's own holes ----------------------
+
+
+@pytest.mark.unit
+def test_a_file_that_tokenizes_but_does_not_parse_is_could_not_look_not_a_violation() -> None:
+    # "x = = 1" tokenizes cleanly and fails ast.parse. It used to come back as
+    # a `re.escape` finding with exit 1 -- the wrong cause AND the wrong code.
+    code, findings = check("x = = 1\n")
+    assert code == 2, findings
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "src",
+    [
+        "import re\ndef f(h):\n    return '|'.join(map(re.escape, h))\n",
+        "import re\ndef f(x):\n    esc = re.escape\n    return esc(x)\n",
+        "from re import escape\ndef f(h):\n    return list(map(escape, h))\n",
+    ],
+    ids=["map-reference", "alias-assignment", "from-import-reference"],
+)
+def test_escape_passed_as_a_value_is_caught_not_only_when_called(src: str) -> None:
+    code, findings = check(src)
+    assert code == 1, findings
+
+
+@pytest.mark.unit
+def test_a_nested_function_named_like_the_constructor_is_not_exempt() -> None:
+    src = (
+        "import re\n"
+        "def g(x):\n"
+        "    def _literal_pattern(y):\n"
+        "        return re.escape(y)\n"
+        "    return _literal_pattern(x)\n"
+    )
+    code, findings = check(src)
+    assert code == 1, findings
+
+
+@pytest.mark.unit
+def test_a_second_module_level_constructor_is_a_finding() -> None:
+    src = (
+        "import re\n"
+        "def _literal_pattern(y):\n"
+        "    return re.escape(y)\n"
+        "def _literal_pattern(y):\n"
+        "    return re.escape(y)\n"
+    )
+    code, findings = check(src)
+    assert code == 1, findings
+    assert any("more than one" in f for f in findings), findings

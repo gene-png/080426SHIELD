@@ -250,3 +250,43 @@ def test_the_row_records_the_mode_the_call_actually_ran_under(
             # row says why. Without the second half these bytes are identical
             # to a clean strict run.
             assert persisted.redacted_counts is None
+
+
+@pytest.mark.unit
+def test_invoke_redacts_a_punctuated_legal_name_and_a_no_break_space_hint(db_factory) -> None:
+    """#535 and #536 through the EGRESS SURFACE, not the redactor alone.
+
+    Measured live on `main` at `5783fae`: this exact payload reached the
+    provider verbatim, and `llm_calls.redacted_counts` recorded `{}`, so the
+    egress record said nothing had been removed. Asserts both what the provider
+    RECEIVED and what the LEDGER says, because the defect was that the two
+    disagreed with the truth together.
+    """
+    provider = FixtureProvider()
+    captured: dict = {}
+
+    def fake(payload: dict) -> LLMResponse:
+        captured.update(payload)
+        return LLMResponse("ok", input_tokens=1, output_tokens=1)
+
+    provider.register("extract.capabilities", fake)
+    client = LLMClient(provider, settings=get_settings())
+
+    with db_factory() as db:
+        admin = _new_admin(db)
+        _response, row = client.invoke(
+            db,
+            purpose="extract.capabilities",
+            prompt="Extract the capability list.",
+            payload={"narrative": "Acme Holdings, Inc. runs Splunk. Contact Dana\u00a0Whitfield."},
+            requested_by=admin.id,
+            client_org_name="Acme Holdings, Inc.",
+            name_hints=("Dana Whitfield",),
+        )
+        db.commit()
+        assert row.redacted_counts is not None, "the ledger recorded no redaction at all"
+        assert row.redacted_counts.get("client_org") == 1, row.redacted_counts
+        assert row.redacted_counts.get("name") == 1, row.redacted_counts
+
+    assert "Acme" not in captured["narrative"], captured
+    assert "Whitfield" not in captured["narrative"], captured

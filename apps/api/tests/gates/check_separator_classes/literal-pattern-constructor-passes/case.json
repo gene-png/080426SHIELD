@@ -1,0 +1,8 @@
+{
+ "incident": "Control for #535's signature, and the shape it prescribes as the fix: re.escape called ONLY inside _literal_pattern, which joins tokens with _HSPACE+. The gate must accept its own remedy, and a docstring that merely mentions re.escape( is not a call.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "{dir}/redact.py"
+ ]
+}
