@@ -75,7 +75,7 @@ def test_r2_or_echo_swallows() -> None:
     assert _rules('pytest -m unit || echo "skipped"') == ["R2 swallow"]
 
 
-@pytest.mark.parametrize("rescue", ["exit 1", "rc=$?", "return 2", "false"])
+@pytest.mark.parametrize("rescue", ["exit 1", "return 2", "false"])
 def test_r2_is_not_a_capture(rescue: str) -> None:
     assert _rules(f"pytest -m unit || {rescue}\necho done") == []
 
@@ -246,7 +246,7 @@ def test_exit_zero_after_or_is_143_in_another_spelling(script: str) -> None:
     assert _rules(script + "\necho after") == ["R2 swallow"]
 
 
-@pytest.mark.parametrize("rescue", ["exit", "exit $?", 'exit "$rc"', "{ echo x; exit 3; }"])
+@pytest.mark.parametrize("rescue", ["exit", "exit $?", "{ echo x; exit 3; }", "{ exit $?; }"])
 def test_status_preserving_exits_are_rescues(rescue: str) -> None:
     assert _rules(f"pytest || {rescue}\necho after") == []
 
@@ -290,3 +290,34 @@ def test_the_could_not_look_word_list_is_the_gate_set() -> None:
     # `tests/gates/*.sh` was a gate to is_gate and prose to the old word list.
     with pytest.raises(gate.CouldNotLook):
         gate._block_has_gate('bash tests/gates/x.sh "unterminated')
+
+
+# --- round 3: the conservative rescue model --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "pytest || { echo skipped; exit; }",  # bare exit = echo's status, 0
+        "pytest || { echo x; exit $?; }",  # $? is echo's
+        "pytest || { rc=$?; echo failed; exit 0; }",  # captured, never decided on
+        "pytest || rc=$?\necho done",  # captured, never read
+        'pytest || exit "$code"',  # nothing shows $code holds the gate's status
+    ],
+)
+def test_a_rescue_that_does_not_visibly_keep_the_failure_is_a_finding(script: str) -> None:
+    assert _rules(script + "\necho after") == ["R2 swallow"]
+
+
+def test_a_capture_counts_only_when_something_decides_on_it() -> None:
+    assert _rules('pytest || rc=$?\necho after\nexit "$rc"') == []
+    assert _rules('pytest || rc=$?\nif [ "$rc" -ne 0 ]; then exit "$rc"; fi') == []
+
+
+def test_printing_the_status_is_not_keeping_it() -> None:
+    # CLAUDE.md's opening-table row: the step then exits 0 over a red gate.
+    wf = gate._shell_flags(None)
+    found = gate.analyse('set +e\npython scripts/check_x.py\necho "gate exit $?"', "t", **wf)
+    assert [f.split(": ", 1)[1].split(" --")[0] for f in found] == ["R4 no errexit"]
+    kept = gate.analyse("set +e\npython scripts/check_x.py\nrc=$?\nexit $rc", "t", **wf)
+    assert kept == []

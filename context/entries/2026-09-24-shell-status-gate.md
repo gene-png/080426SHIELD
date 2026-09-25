@@ -133,3 +133,26 @@ command variables; loops; code after an if/case compound; a gate inside
 
 Red-on-revert: eight new mutations, each red on its named test. The self-scan
 stays clean, with R4 now reading every workflow step.
+
+## After round 3 of the review (`2eb2ac4`)
+
+- **The hook moved out.** Fail-closed, `default_install_hook_types`,
+  `default_stages`, the two-shell bypass and the tested-tree notice change
+  every developer's push, so they are #576, for the owner to decide on its own.
+  This PR keeps only the minimal #143 repair (the `if` form), because its own
+  gate scans the hook and would be red on main's `|| echo skipped`. Both edit
+  the same `entry:` line; whichever lands second takes #576's.
+- **The rescue model is conservative**, because it grew a new hole in each
+  round: `|| exit 0` in round 1, then `|| { echo skipped; exit; }` and
+  `|| { rc=$?; echo failed; exit 0; }` in round 2. A rescue now counts only if
+  the FIRST thing after the failure visibly keeps it: `false`; `exit`/`return`
+  bare, with `$?`, or with a non-zero literal; or `var=$?` that a later
+  exit/return/[/test/if decides on. In a `{ }` group, the first exit it reaches
+  being a non-zero literal also counts, which keeps the fail-loud
+  `|| { echo msg; exit 1; }` (my refinement, overturnable). A printed `$?` is
+  not kept. The trade is stated in the docstring: a false positive costs a
+  rewrite, a false negative costs the next #143.
+- Two old tests encoded the lenient rule (`|| rc=$?` never read, and
+  `exit "$rc"` with no visible capture). They were said to be wrong before
+  being changed, and now pin the opposite.
+- Red on revert: five mutations, each red. The self-scan stays clean.

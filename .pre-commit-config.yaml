@@ -1,8 +1,3 @@
-# `pre-commit install` alone installs only the pre-commit stage, so the
-# pre-push hook below (#143) ran for nobody. This makes the documented bare
-# install cover both.
-default_install_hook_types: [pre-commit, pre-push]
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -102,16 +97,9 @@ repos:
         # suite and let the push through. The container check is now the `if`,
         # and pytest runs unguarded in the branch, so a red suite fails the push
         # while a stopped container still skips. check_shell_status.py gates it.
-        #
-        # A SKIP IS NOT A PASS, so it FAILS CLOSED (my call, overturnable, #563):
-        # pre-commit prints only "Passed"/"Failed" on the line people read, and
-        # a skip that exits 0 reads as Passed there. The message names the cause
-        # -- docker absent, the daemon unreachable, or the api container down --
-        # and the per-hook bypass, `SKIP=api-unit-tests git push`, which pre-
-        # commit then reports as "Skipped". Never `--no-verify`: that skips
-        # every hook.
-        entry: bash -c 'hint="To push without the API unit tests, run SKIP=api-unit-tests git push"; if ! command -v docker >/dev/null; then echo "NOT RUN - docker is not on PATH. $hint"; exit 1; elif ! docker info >/dev/null 2>&1; then echo "NOT RUN - the Docker daemon is not reachable. $hint"; exit 1; elif docker compose ps --status running --services 2>/dev/null | grep -qx api; then docker compose exec -T api pytest -m unit; else echo "NOT RUN - the api container is not running. $hint"; exit 1; fi'
+        # Installing this hook at all, failing closed on a skip, and naming the
+        # bypass are the separate developer-flow change in #576.
+        entry: bash -c 'if docker compose ps --status running --services 2>/dev/null | grep -qx api; then docker compose exec -T api pytest -m unit; else echo "skipped (api container not running)"; fi'
         language: system
-        verbose: true
         pass_filenames: false
         stages: [pre-push]
