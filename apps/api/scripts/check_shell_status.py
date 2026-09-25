@@ -32,19 +32,28 @@ and `docker compose exec|run [opts] SERVICE` are looked through.
   R1 pipe       the gate is not the LAST command of a pipeline, and pipefail is
                 not on (`set -o pipefail`, `set -euo pipefail`, or a workflow
                 step whose `shell:` is `bash`). `set +o pipefail` turns it off.
-  R2 swallow    the gate is followed by `||`, and the next element is not an
-                exit, return, false, a `$?` capture, or a group containing an
-                exit or return (`|| { echo msg; exit 1; }` is the fail-loud
-                idiom, not a swallow). A statement `! gate` is R2 as well: `!`
-                inverts the status and `set -e` ignores it.
+  R2 swallow    the gate is followed by `||`, and what follows does not keep
+                the failure: `false`, a `$?` capture, `exit` / `return` with no
+                argument, `$?`, a variable or a NON-ZERO literal -- alone or in
+                a `{ ...; }` group (`|| { echo msg; exit 1; }` is the fail-loud
+                idiom). `|| exit 0` and `|| { echo skipped; exit 0; }` ARE
+                swallows: #143 in another spelling. A statement `! gate` is R2
+                as well: `!` inverts the status and `set -e` ignores it.
   R3 mid-list   the gate is followed by `&&` in a statement that is not the
                 script's last, with no later rescue. Under `set -e` its failure
                 does not stop the lines after it.
   R4 no errexit the script is not under `set -e` and a gate is not its last
-                statement. Its status is overwritten by whatever runs next.
-                Applied to scripts that run unattended: `sh -c` / `bash -c`
-                bodies, pre-commit entries and `.sh` files. NOT to CLAUDE.md's
-                blocks, which a person runs line by line and reads.
+                statement, and the next statement does not read `$?`. Its
+                status is overwritten by whatever runs next. Applied to scripts
+                that run unattended: workflow steps (after a `set +e`, or under
+                a custom `shell:` without -e), `sh -c` / `bash -c` bodies,
+                pre-commit entries and `.sh` files (a shebang's `-e` counts).
+                NOT to CLAUDE.md's blocks, which a person runs line by line.
+
+A `{ ...; }` group's last statement is NOT terminal unless the group is: bash
+does not exit when a brace group fails because of a command that failed while
+`-e` was ignored, so `{ pytest && echo ok; }` then `git push` pushes. A
+`( ... )` subshell's failure does exit, so its body's end is terminal.
 
 `if` / `elif` / `while` / `until` conditions are exempt: they consume the
 status on purpose.
@@ -86,14 +95,13 @@ _GATE = re.compile(
     r"|(^|/)(pytest|ruff|black|tsc|eslint|vitest|bandit|pip-audit|gitleaks)$"
 )
 _PYTHON = re.compile(r"(^|/)python(\d+(\.\d+)?)?$")
-_CAPTURE = re.compile(r"^(exit|return|false)$|^[A-Za-z_][A-Za-z0-9_]*=\$\?$")
 _CONDITIONAL = {"if", "elif", "while", "until"}
 _SEPARATORS = {";", "&", ";;", "then", "do", "else", "fi", "done"}
 _FENCE = re.compile(r"^```(bash|sh|shell)\s*$")
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _GROUP = "__GROUP__:"
 _OPEN = {"(": ")", "{": "}"}
-_GATE_WORD = re.compile(r"\b(check_[a-z0-9_]+|pytest|ruff|black|tsc|eslint|vitest|prettier)\b")
+_BRACE = "__BRACE__:"
 
 
 class CouldNotLook(Exception):
@@ -140,7 +148,10 @@ def _strip_wrappers(w: list[str]) -> list[str]:
 
 
 def _group_body(tok: str) -> str | None:
-    return tok[len(_GROUP) :] if tok.startswith(_GROUP) else None
+    for prefix in (_GROUP, _BRACE):
+        if tok.startswith(prefix):
+            return tok[len(prefix) :]
+    return None
 
 
 def is_gate(words: list[str]) -> bool:
@@ -275,7 +286,9 @@ def _flatten(script: str) -> str:
                 i += 2
                 continue
             if c == "\n":
-                out.append(" ; ")
+                # `pytest ||` then `exit 1` on the next line is ONE list.
+                tail = "".join(out[-4:]).rstrip()
+                out.append(" " if tail.endswith(("&&", "||", "|")) else " ; ")
                 i += 1
                 for delim, strip in pending:
                     while True:
@@ -328,7 +341,8 @@ def statements_with_ends(script: str) -> list[tuple[list[str], str | None]]:
             opener, body = stack[-1]
             if tok == _OPEN[opener]:
                 stack.pop()
-                token = _GROUP + " ".join(shlex.quote(t) if t not in _PUNCT else t for t in body)
+                prefix = _BRACE if opener == "{" else _GROUP
+                token = prefix + " ".join(shlex.quote(t) if t not in _PUNCT else t for t in body)
                 (stack[-1][1] if stack else cur).append(token)
             else:
                 body.append(tok)
@@ -411,15 +425,29 @@ def _set_flags(stmt: list[str]) -> dict[str, bool]:
     return out
 
 
+def _keeps_failure(words: list[str]) -> bool:
+    """Does this command keep a failure a failure? `exit 0` does not."""
+    if not words:
+        return False
+    head = words[0]
+    if head == "false" or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=\$\?", head):
+        return True
+    if head in ("exit", "return"):
+        if len(words) == 1 or words[1] == "$?":
+            return True  # status-preserving
+        if re.fullmatch(r"\d+", words[1]):
+            return int(words[1]) != 0
+        return True  # a variable: in this repo, the captured status
+    return False
+
+
 def _rescue(cmd: list[str]) -> bool:
     if not cmd:
         return False
-    if _CAPTURE.match(cmd[0]):
-        return True
     body = _group_body(cmd[0])
     if body is not None:
-        return any(s and _CAPTURE.match(s[0]) for s in statements(body))
-    return False
+        return any(_keeps_failure(s) for s in statements(body))
+    return _keeps_failure(cmd)
 
 
 def analyse(
@@ -429,6 +457,7 @@ def analyse(
     pipefail: bool = False,
     errexit: bool = True,
     unattended: bool = False,
+    tail_terminal: bool = True,
 ) -> list[str]:
     findings: list[str] = []
     pairs = statements_with_ends(script)
@@ -439,7 +468,7 @@ def analyse(
         # compound is not modelled, which is a stated limit.
         nxt = stmts[idx + 1][0] if idx + 1 < len(stmts) else None
         terminal = (
-            idx == len(stmts) - 1
+            (idx == len(stmts) - 1 and tail_terminal)
             or pairs[idx][1] in ("else", "fi", ";;", "done")
             or nxt in ("elif", "esac")
         )
@@ -451,6 +480,9 @@ def analyse(
         elems = _elements(body_stmt)
         conditional = stmt[0] in _CONDITIONAL
         last_stmt = terminal
+        # The next statement reads the status: `pytest` then `rc=$?`.
+        nxt_stmt = stmts[idx + 1] if idx + 1 < len(stmts) else []
+        captured = any("$?" in tok for tok in nxt_stmt[:4])
         ops = [op for _, op in elems]
         for e_i, (pipe, op) in enumerate(elems):
             for cmd in pipe:
@@ -462,12 +494,18 @@ def analyse(
                     body = _group_body(tok)
                     if body is not None:
                         findings += analyse(
-                            body, where, pipefail=pipefail, errexit=errexit, unattended=unattended
+                            body,
+                            where,
+                            pipefail=pipefail,
+                            errexit=errexit,
+                            unattended=unattended,
+                            # A brace group's end is terminal only if the group is.
+                            tail_terminal=terminal if tok.startswith(_BRACE) else True,
                         )
             gate_at = [k for k, cmd in enumerate(pipe) if is_gate(cmd)]
             if not gate_at:
                 continue
-            gate_txt = " ".join(pipe[gate_at[0]]).replace(_GROUP, "(")[:70]
+            gate_txt = " ".join(pipe[gate_at[0]]).replace(_GROUP, "(").replace(_BRACE, "{")[:70]
             if any(k < len(pipe) - 1 for k in gate_at) and not pipefail:
                 findings.append(
                     f"{where}: R1 pipe -- `{gate_txt}` is piped without pipefail, so its status is lost"
@@ -486,12 +524,12 @@ def analyse(
                 findings.append(
                     f"{where}: R2 swallow -- `{gate_txt} || ...` turns the gate's failure into success"
                 )
-            elif op == "&&" and not last_stmt and not rescued:
+            elif op == "&&" and not last_stmt and not rescued and not captured:
                 findings.append(
                     f"{where}: R3 mid-list -- `{gate_txt} && ...` is followed by more statements; "
                     "under set -e its failure does not stop them"
                 )
-            elif op is None and unattended and not errexit and not last_stmt:
+            elif op is None and unattended and not errexit and not last_stmt and not captured:
                 findings.append(
                     f"{where}: R4 no errexit -- `{gate_txt}` is not the last statement and set -e "
                     "is off, so what runs next overwrites its status"
@@ -518,6 +556,23 @@ def _step_shell(job: dict, step: dict, doc: dict) -> str | None:
 Source = tuple[str, str, dict]
 
 
+def _shell_flags(shell: str | None) -> dict:
+    """What GitHub runs a step under. Default: `bash -e {0}`; `bash`: `bash -eo pipefail`.
+
+    A custom string (`bash -euo pipefail {0}`, `bash {0}`) is read for its own
+    flags: the first version compared it to "bash" and read every custom shell
+    as no-pipefail, and `bash {0}` -- no -e at all -- as errexit.
+    """
+    base = {"unattended": True}
+    if shell is None or shell.strip() == "sh":
+        return {**base, "errexit": True, "pipefail": False}
+    s = shell.strip()
+    if s == "bash":
+        return {**base, "errexit": True, "pipefail": True}
+    flags = [w for w in s.split() if w.startswith("-") and not w.startswith("--")]
+    return {**base, "errexit": any("e" in w[1:] for w in flags), "pipefail": "pipefail" in s}
+
+
 def workflow_scripts(root: Path) -> list[Source]:
     import yaml
 
@@ -536,13 +591,7 @@ def workflow_scripts(root: Path) -> list[Source]:
                 if run:
                     name = step.get("name") or f"step {s_i + 1}"
                     shell = _step_shell(job, step, doc)
-                    out.append(
-                        (
-                            str(run),
-                            f"{wf.name} / {jname} / {name}",
-                            {"pipefail": shell == "bash", "errexit": True},
-                        )
-                    )
+                    out.append((str(run), f"{wf.name} / {jname} / {name}", _shell_flags(shell)))
     return out
 
 
@@ -581,8 +630,27 @@ def shell_file_scripts(root: Path) -> list[Source]:
             text = p.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             raise CouldNotLook(f"cannot read {rel}: {exc}") from exc
-        out.append((text, rel, {"errexit": False, "unattended": True}))
+        first = text.splitlines()[0] if text else ""
+        errexit = first.startswith("#!") and any(
+            w.startswith("-") and not w.startswith("--") and "e" in w[1:] for w in first.split()[1:]
+        )
+        opts = {"errexit": errexit, "unattended": True, "pipefail": "pipefail" in first}
+        out.append((text, rel, opts))
     return out
+
+
+def _names_a_gate(block: str) -> bool:
+    """Could this unparseable text name a gate? Derived from `is_gate`, one definition.
+
+    The first version used its own word list, narrower than `is_gate`: a block
+    running `bash tests/gates/x.sh` read as prose, so could-not-look became clean.
+    """
+    try:
+        if any(is_gate(line.split()) for line in block.splitlines() if line.strip()):
+            return True
+        return any(is_gate([w]) for w in re.findall(r"[A-Za-z0-9_./:@-]+", block))
+    except CouldNotLook:
+        return True  # it could not even be read as candidate commands
 
 
 def _block_has_gate(block: str) -> bool:
@@ -592,7 +660,7 @@ def _block_has_gate(block: str) -> bool:
         # Most such blocks are prose or transcripts. One that names a gate is
         # not known to be prose, and reading it as "no gate" was could-not-look
         # sharing a branch with clean.
-        if _GATE_WORD.search(block):
+        if _names_a_gate(block):
             raise CouldNotLook(f"an indented block names a gate but does not parse: {exc}") from exc
         return False
 

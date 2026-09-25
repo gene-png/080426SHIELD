@@ -233,3 +233,60 @@ def test_an_indented_block_naming_a_gate_that_does_not_parse_is_could_not_look()
     with pytest.raises(gate.CouldNotLook):
         gate._block_has_gate('pytest "unterminated')
     assert gate._block_has_gate('prose "unterminated') is False
+
+
+# --- round 2 of the review ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "script",
+    ["pytest -m unit || exit 0", "pytest || { echo skipped; exit 0; }", "pytest || return 0"],
+)
+def test_exit_zero_after_or_is_143_in_another_spelling(script: str) -> None:
+    assert _rules(script + "\necho after") == ["R2 swallow"]
+
+
+@pytest.mark.parametrize("rescue", ["exit", "exit $?", 'exit "$rc"', "{ echo x; exit 3; }"])
+def test_status_preserving_exits_are_rescues(rescue: str) -> None:
+    assert _rules(f"pytest || {rescue}\necho after") == []
+
+
+def test_r4_applies_to_workflows_after_set_plus_e_unless_the_status_is_read() -> None:
+    wf = gate._shell_flags(None)
+    lost = gate.analyse("set +e\npython scripts/check_x.py\necho done", "t", **wf)
+    assert [f.split(": ", 1)[1].split(" --")[0] for f in lost] == ["R4 no errexit"]
+    kept = "set +e\npython scripts/check_x.py > o.txt\ncode=$?\nset -e\nexit $code"
+    assert gate.analyse(kept, "t", **wf) == []
+
+
+def test_a_brace_group_end_is_not_terminal_but_a_subshell_end_is() -> None:
+    assert _rules("{ pytest && echo ok; }\ngit push") == ["R3 mid-list"]
+    assert _rules("( pytest && echo ok )\ngit push") == []
+
+
+def test_a_trailing_operator_continues_onto_the_next_line() -> None:
+    assert _rules("pytest ||\n  exit 1\necho after") == []
+    assert _rules("pytest &&\n  echo ok") == []
+
+
+def test_custom_workflow_shells_are_read_for_their_own_flags() -> None:
+    assert gate._shell_flags("bash -euo pipefail {0}")["pipefail"] is True
+    assert gate._shell_flags("bash {0}")["errexit"] is False
+    assert gate._shell_flags("bash") == {"unattended": True, "errexit": True, "pipefail": True}
+
+
+def test_a_shebang_e_flag_is_errexit(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "a.sh").write_text("#!/bin/bash -e\npytest\necho done\n", encoding="utf-8")
+    (tmp_path / "b.sh").write_text("#!/bin/bash\npytest\necho done\n", encoding="utf-8")
+    found = {
+        rel: gate.analyse(text, rel, **opts)
+        for text, rel, opts in gate.shell_file_scripts(tmp_path)
+    }
+    assert found["a.sh"] == []
+    assert len(found["b.sh"]) == 1 and "R4" in found["b.sh"][0]
+
+
+def test_the_could_not_look_word_list_is_the_gate_set() -> None:
+    # `tests/gates/*.sh` was a gate to is_gate and prose to the old word list.
+    with pytest.raises(gate.CouldNotLook):
+        gate._block_has_gate('bash tests/gates/x.sh "unterminated')

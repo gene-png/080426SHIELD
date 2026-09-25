@@ -14,7 +14,7 @@ Branch `track1/shell-status-gate`, base `20f747f`.
 
 The owner asked for this to be gated, not written up again.
 
-## What changed
+## What changed (as of `a62f41e`; the review sections below supersede it)
 
 - **`check_shell_status.py`** flags three shapes wherever a gate command runs:
   - **R1:** the gate is piped without pipefail;
@@ -106,3 +106,30 @@ Listed in the gate's docstring and filed as #568: functions, sourced files and
 command variables; loops; code after an if/case compound; a gate inside
 `"$( )"`; keywords used as words; `docker run`; unlisted wrappers; scoped
 `set -e`; and no committed test of the hook itself.
+
+## After round 2 of the review (`57b0499`)
+
+- **The round-1 rescue reopened #143.** Any `exit` counted, so `|| exit 0` and
+  `|| { echo skipped; exit 0; }` passed clean. A rescue now has to keep the
+  failure: `false`, a `$?` capture, `exit`/`return` with no argument, with
+  `$?`, with a variable, or with a non-zero literal. `exit 0` is a fixture.
+- **R4 applies to workflows**, using each step's real shell flags. A custom
+  `shell: bash -euo pipefail {0}` is read for its own flags, and so is
+  `bash {0}` (no -e). A next statement that reads `$?` is a rescue, which is
+  the repo's own set +e / capture idiom.
+- **A brace group's end is not terminal unless the group is.** bash does not
+  exit on a failed `{ pytest && echo ok; }`; a failed `( ... )` does exit.
+- **The could-not-look word list is `is_gate` itself.** The old list missed
+  `tests/gates/*.sh`, bandit and the rest.
+- **The hook fails closed**, my call, overturnable: exit 1 with its cause
+  named (docker absent, daemon unreachable, container down) and the per-hook
+  bypass `SKIP=api-unit-tests git push`. **`default_install_hook_types:
+  [pre-commit, pre-push]`**: until now the bare `pre-commit install` everyone
+  documents never installed this hook, so "#143 repaired" was true of the
+  file and false of pushes.
+- **False positives removed:** a trailing `||` continues onto the next line,
+  `pytest` then `rc=$?` is kept, and a `#!/bin/bash -e` shebang counts as
+  errexit.
+
+Red-on-revert: eight new mutations, each red on its named test. The self-scan
+stays clean, with R4 now reading every workflow step.
