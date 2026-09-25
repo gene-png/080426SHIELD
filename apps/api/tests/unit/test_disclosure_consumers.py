@@ -762,3 +762,66 @@ def test_arm_2_needs_the_renderer_to_be_WIRED_not_merely_present(tmp_path, capsy
 
     assert main(["x", str(seed)]) == 1
     assert "nothing renders the audit `details` payload generically" in capsys.readouterr().out
+
+
+# --- #473: a type declaration is not a use ----------------------------------------------
+
+_INTERFACE_ONLY = """
+export interface ThingData {
+  onPick: (id: string) => void;
+  nested: { depth: number };
+  excluded_inputs: string[];
+}
+export function panel(data: ThingData): string {
+  return "nothing about the field";
+}
+"""
+
+
+def test_a_field_only_DECLARED_in_an_interface_is_a_violation(tmp_path, capsys) -> None:
+    """#473's shape. The interface names the subject and the field, and nothing
+    renders the field. The old predicate cleared it. The field comes AFTER an
+    arrow type and a nested object on purpose: a strip that counted the `>` of
+    `=>`, or stopped at the nested `}`, would end early and leave it visible."""
+    seed = _tree(tmp_path, schema=_SCHEMA, web=_INTERFACE_ONLY)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+def test_a_field_declared_AND_used_in_the_same_file_passes(tmp_path) -> None:
+    web = _INTERFACE_ONLY + "export const n = (d: ThingData) => d.excluded_inputs.length;\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+@pytest.mark.parametrize(
+    "web",
+    [
+        "type ThingData = {\n  excluded_inputs: string[];\n};\nexport const x = 1;\n",
+        "type ThingData =\n  { excluded_inputs: string[] } | null;\nexport const x = 1;\n",
+        "const t: Thing = d; // excluded_inputs is shown elsewhere\n",
+        "const t: Thing = d;\n/* excluded_inputs,\n   still not rendered */\n",
+    ],
+    ids=["type-alias", "type-alias-next-line", "line-comment", "block-comment"],
+)
+def test_a_type_alias_or_a_comment_is_not_a_use(tmp_path, capsys, web: str) -> None:
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 1
+    assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
+
+
+def test_a_double_slash_inside_a_string_does_not_hide_the_use(tmp_path) -> None:
+    # The comment stripper is string-aware: `//` in a URL is not a comment, so
+    # the use after it on the same line still counts.
+    web = 'const t: Thing = d; const u = "https://x/y"; const n = t.excluded_inputs;\n'
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0
+
+
+def test_the_subject_may_live_only_in_the_type_name(tmp_path) -> None:
+    # The subject is matched against the WHOLE file: a reader that names its
+    # model only in the interface it declares still attributes, as long as the
+    # field is USED outside the declaration.
+    web = "interface ThingData { id: string }\nexport const f = (d: any) => d.excluded_inputs;\n"
+    seed = _tree(tmp_path, schema=_SCHEMA, web=web)
+    assert main(["x", str(seed)]) == 0

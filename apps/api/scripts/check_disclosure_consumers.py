@@ -82,6 +82,7 @@ branch.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 import sys
 from pathlib import Path
@@ -117,22 +118,20 @@ DISCLOSURE_PREFIXES = (
 #: is removed from `lib/dashboards/zt.ts` -- so the count is evidence rather
 #: than a number that went up.
 #:
-#: **NOT red when the RENDER is deleted, and an earlier version of this note
-#: claimed it was.** Measured 2026-09-23: replacing
-#: `renderedAgainstNote(data.target_frozen_at)` with `""` in `zt.ts` AND
-#: deleting the `.concat(...)` in `CsfDashboard.tsx` leaves the gate at
-#: **29 of 29, exit 0**. The red came from removing the field NAME, which is a
-#: different mutation.
+#: **Red when the RENDER is deleted -- since #473, and not before.** Measured
+#: 2026-09-23, before #473: replacing `renderedAgainstNote(data.target_frozen_at)`
+#: in `zt.ts` AND deleting the `.concat(...)` in `CsfDashboard.tsx` left the
+#: gate at 29 of 29, exit 0, because a TypeScript interface mirroring the API
+#: response satisfied "field name and subject in one file" with nothing
+#: rendering. `readers_for` now matches a TypeScript reader's FIELD against
+#: `ts_use_text` -- comments and `interface`/`type` bodies removed -- so the
+#: same deletion is red, naming both fields (measured 2026-09-25 on the real
+#: tree; `main`'s gate stayed green over the same deletion).
 #:
-#: THE RESIDUAL THAT EXPOSES, and it is PRE-EXISTING and applies to every field
-#: this gate checks: `readers_for` asks only whether the field name and the
-#: model's subject both appear in a file's text. **A TypeScript interface
-#: mirroring the API response satisfies that with nothing rendering.** So a
-#: green here means "the name reaches a file that also mentions this
-#: dashboard", NOT "a person can see it". Every `lib/dashboards/*.ts` declares
-#: its response shape, so every field is pre-cleared by its own type
-#: definition. The gate is a floor against a field nobody typed at all; the
-#: render still has to be read by a human. Filed.
+#: What a green means now: the field is USED -- read in code outside a type
+#: declaration -- in a file naming the model. Not that it is RENDERED: a use
+#: that feeds nothing visible still clears it. The render is still for a human
+#: to read.
 DISCLOSURE_SUBSTRINGS = ("withheld", "provenance", "frozen", "computed_live")
 
 #: Fields this gate does not currently require a reader for, each with its
@@ -360,6 +359,102 @@ def reader_text(repo: Path) -> tuple[list[tuple[str, str]], list[str]]:
     return readers, problems
 
 
+#: The start of a TypeScript type declaration whose BODY is a type, not a use:
+#: `interface X {`, `interface X<T> extends Y {`, or `type X = ...`. Only the
+#: head is matched here; the body is found by bracket balancing below.
+_TS_INTERFACE_HEAD = re.compile(r"\binterface\s+\w+[^{;]*\{")
+_TS_TYPE_HEAD = re.compile(r"\btype\s+\w+\s*(?:<[^=;]*>)?\s*=")
+
+
+def _strip_ts_comments(text: str) -> str:
+    """`text` with `//` and `/* */` comments blanked, string-aware.
+
+    A comment naming a field is not a render, and #473's first option was
+    "defeated by a field mentioned in a comment". Quotes and template literals
+    are tracked so a `//` inside a URL string is not taken for a comment;
+    newlines are kept so nothing else shifts."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote = ""
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+            i += 1
+            continue
+        if c in "'\"`":
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            end = n if j == -1 else j + 2
+            out.append("".join("\n" if ch == "\n" else " " for ch in text[i:end]))
+            i = end
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _balanced_end(text: str, start: int, *, stop_at_semicolon: bool) -> int:
+    """Index just past a declaration body starting at `start`.
+
+    Counts `{}`, `()` and `[]` only -- NOT `<>`, because the `>` of an arrow
+    type (`() => void`) would unbalance it. An `interface` body ends at the
+    brace closing its first `{`. A `type` alias ends at its first `;` at depth
+    0 (prettier writes one after every alias), so a body that starts on the
+    next line is still inside it."""
+    depth = 0
+    i = start
+    while i < len(text):
+        c = text[i]
+        if c in "{([":
+            depth += 1
+        elif c in "})]":
+            depth -= 1
+            if depth == 0 and c == "}" and not stop_at_semicolon:
+                return i + 1
+        elif c == ";" and depth == 0 and stop_at_semicolon:
+            return i + 1
+        i += 1
+    return len(text)
+
+
+@functools.lru_cache(maxsize=4096)
+def ts_use_text(text: str) -> str:
+    """The parts of a TypeScript file that can USE a field (#473).
+
+    Comments and the bodies of `interface` and `type` declarations are
+    removed. Every `lib/dashboards/*.ts` declares its response shape, so with
+    the declaration counted, every field was pre-cleared by its own type and
+    deleting the RENDER left the gate green (measured on #209's branch:
+    29 of 29, exit 0, with both renders of `target_frozen_at` removed)."""
+    text = _strip_ts_comments(text)
+    for head in (_TS_INTERFACE_HEAD, _TS_TYPE_HEAD):
+        while True:
+            m = head.search(text)
+            if not m:
+                break
+            if head is _TS_INTERFACE_HEAD:
+                end = _balanced_end(text, m.end() - 1, stop_at_semicolon=False)
+            else:
+                end = _balanced_end(text, m.end(), stop_at_semicolon=True)
+            text = text[: m.start()] + " " + text[end:]
+    return text
+
+
 def model_subject(model: str) -> str:
     """The model name with its `Response` suffix removed.
 
@@ -371,14 +466,24 @@ def model_subject(model: str) -> str:
 
 
 def readers_for(field: str, subject: str, readers: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Readers that mention the field AND name the model's subject, same file.
+    """Readers that USE the field AND name the model's subject, same file.
 
     Both conditions in ONE file is the whole of the attribution. A file that
     names the subject is handling that model; a field name inside it is that
     model's field.
+
+    In a TypeScript reader the FIELD must appear outside comments and outside
+    `interface`/`type` bodies (`ts_use_text`, #473): a declaration mirrors the
+    response and renders nothing. The SUBJECT is still looked for in the whole
+    file, because the type name is usually where a file names its model.
     """
     pattern = re.compile(rf"(?<!\w){re.escape(field)}(?!\w)")
-    return [(p, b) for p, b in readers if pattern.search(b) and subject in b]
+    out = []
+    for p, b in readers:
+        use = ts_use_text(b) if p.endswith((".ts", ".tsx")) else b
+        if pattern.search(use) and subject in b:
+            out.append((p, b))
+    return out
 
 
 def unconsumed(
