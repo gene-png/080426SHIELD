@@ -103,7 +103,11 @@ function serviceLabel(kind: string, fallback: string): string {
 function phaseFor(
   e: AssessmentResponse,
   hasReleasedDeliverable: boolean,
+  withheld: boolean,
 ): { label: string; tone: StatusTone } {
+  // #556: checked FIRST. A withheld report was released, so every "released"
+  // signal below would otherwise call it ready.
+  if (withheld) return { label: "Report withheld", tone: "warning" };
   if (hasReleasedDeliverable) return { label: "Report ready", tone: "success" };
   switch (e.assessment_status) {
     // Reachable since W4 (D-046): release flips the parent assessment to
@@ -184,7 +188,11 @@ const BUCKETS: ReadonlyArray<{
 function bucketFor(
   e: AssessmentResponse,
   hasReleasedDeliverable: boolean,
+  withheld: boolean,
 ): BucketKey {
+  // #556: a withheld report is not "Released and ready to read". The next move
+  // is the analyst's.
+  if (withheld) return "progress";
   if (hasReleasedDeliverable || e.status === "released") return "results";
   if (needsClient(e)) return "action";
   return "progress";
@@ -242,8 +250,17 @@ export function HomeDashboard({
   unavailable,
 }: HomeDashboardProps): JSX.Element {
   const down = new Set<HomePanel>(unavailable);
+  // #556: a WITHHELD report is released and not readable, so it counts as
+  // neither. `readable` drives the grid and the hero; a service whose only
+  // release is withheld is told so rather than called ready.
+  const readable = deliverables.filter((d) => !d.withheld);
   // Which services already have a released report (drives the grid + hero).
-  const releasedServiceIds = new Set(deliverables.map((d) => d.service_id));
+  const releasedServiceIds = new Set(readable.map((d) => d.service_id));
+  const withheldServiceIds = new Set(
+    deliverables
+      .filter((d) => d.withheld && !releasedServiceIds.has(d.service_id))
+      .map((d) => d.service_id),
+  );
 
   // WHEN THE DELIVERABLES PANEL FAILED, `releasedServiceIds` IS EMPTY -- and
   // three separate readers silently treated that as "nothing is released".
@@ -261,7 +278,7 @@ export function HomeDashboard({
     (unavailable.includes("deliverables") &&
       e.assessment_status === "released");
   // Ordered released_at desc upstream, so [0] is the freshest report.
-  const latest = deliverables[0] ?? null;
+  const latest = readable[0] ?? null;
   const openSelfAssessments = engagements.filter(needsClient);
   // Every engagement filed under exactly one bucket, in arrival order within it.
   const grouped: Record<BucketKey, AssessmentResponse[]> = {
@@ -270,7 +287,9 @@ export function HomeDashboard({
     results: [],
   };
   for (const e of engagements) {
-    grouped[bucketFor(e, isReleased(e))].push(e);
+    grouped[
+      bucketFor(e, isReleased(e), withheldServiceIds.has(e.service_id))
+    ].push(e);
   }
 
   return (
@@ -482,11 +501,19 @@ export function HomeDashboard({
                 <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {items.map((e) => {
                     const released = isReleased(e);
-                    const phase = phaseFor(e, released);
+                    const phase = phaseFor(
+                      e,
+                      released,
+                      withheldServiceIds.has(e.service_id),
+                    );
                     return (
                       <li key={e.service_id}>
                         <Link
-                          href={serviceHref(e, released)}
+                          href={serviceHref(
+                            e,
+                            // #556: a withheld report's dashboard says why.
+                            released || withheldServiceIds.has(e.service_id),
+                          )}
                           className="block h-full rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
                         >
                           <Card className="h-full transition-colors hover:border-brand-500">

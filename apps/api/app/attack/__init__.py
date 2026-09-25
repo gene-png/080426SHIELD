@@ -1,10 +1,9 @@
 """MITRE ATT&CK Enterprise coverage module (Phase 5 stage 5).
 
-The full ATT&CK Enterprise matrix lives in `app.attack.catalog` as
-immutable code data (its docstring says how to count it; the counts once
-written here were wrong).
-Per D-007 (Decisions log) we encode the complete matrix rather than a
-curated subset.
+The full ATT&CK Enterprise matrix lives in `app.attack.catalog`, generated
+from MITRE's published STIX (#556); `catalog.SOURCE_VERSION` names the release
+and the counts are whatever that release contains. Per D-007 (Decisions log)
+we encode the complete matrix rather than a curated subset.
 
 The coverage model uses a different shape from the maturity-tier
 services (Tech Debt / CSF / Zero Trust): each technique gets a single

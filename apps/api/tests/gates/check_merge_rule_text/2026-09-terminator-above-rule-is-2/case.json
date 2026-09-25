@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. Review of b80cefe: with `## Real commands` moved ABOVE the merge rule, the message blamed an interposed heading or the end of the file. The terminator preceding the rule is named as the cause.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "comes BEFORE `## The merge rule`",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}

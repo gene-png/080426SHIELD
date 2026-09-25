@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. Review of 6fcc02f: a `## ` heading inserted above the path list ends the section early. It goes red once, and after that every path-list edit compared green, because the list was outside the compared text. The subsection must lie inside the section at both ends. Since 2ae1650's review the terminator is pinned, and that is the check that fires.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "interrupted by `## An inserted heading`",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}

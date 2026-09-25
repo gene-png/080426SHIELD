@@ -1,0 +1,12 @@
+{
+ "incident": "A PR that changes CLAUDE.md OUTSIDE the merge rule's section leaves the rule's text unchanged, and the check is green. Green means only that.",
+ "expect": 0,
+ "adversarial": false,
+ "stdout_contains": "the merge rule section's bytes are unchanged",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}
