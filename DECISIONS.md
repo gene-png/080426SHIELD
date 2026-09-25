@@ -5884,10 +5884,11 @@ This states the CONVENTION, not a census of every gate. The parts that are
 mechanically enforced, and the known gaps, are stated below; any other claim
 about a particular gate is checked by reading that gate.
 
-**The crash half is enforced for the gates in `test_gate_crash_exit_code.GATES`**:
-each carries a handler that converts an uncaught exception to 2 and prints "A
-crash is not a clean report and not a violation". `check_gate_fixtures.py` is
-not in that list (it excludes itself) and its handler prints a different line.
+**The crash half is enforced for the gates in
+`test_gate_crash_exit_code.GATES`**: each carries a handler that converts an
+uncaught exception to 2 and prints "A crash is not a clean report and not a
+violation". `check_gate_fixtures.py` is not in that list (it excludes itself)
+and its handler prints a different line.
 
 **Known gap, arguments.** `check_mount_matches_database.py` takes no arguments
 (`main()` never reads `sys.argv`), so an unknown flag is ignored rather than
@@ -5896,32 +5897,33 @@ refused with 2. Filed as #597.
 **A requirement, not yet met everywhere: a clean result says what it read**, so
 a green run shows its scope and "I looked at nothing" cannot pass for "nothing
 was wrong". `check_audit_evidence.py` ("adversarial audit recorded." /
-"documentation-only change, exempt.") and `check_issue_references.py` ("clean
--- no closing references") do not name their inputs yet; filed as #592.
+"documentation-only change, exempt.") and `check_issue_references.py`
+("issue-close guard: clean — no closing references") do not name their inputs
+yet; filed as #592.
 
-"I could not look" never shares a branch with "nothing to complain about" or
-with "I found a violation". Before a new checker's first line, list every
-`return 0` / `continue` / `pass` it will have and what the input looked like
-there; an answer of "there was nothing there" is the bug (CLAUDE.md's
-silent-success bullet). The HTTP form of the same distinction is a typed
-could-not-look response (#550).
+The rule: "I could not look" must never share a branch with "nothing to complain
+about" or with "I found a violation". Before a new checker's first line, list
+every `return 0` / `continue` / `pass` it will have and what the input looked
+like there; an answer of "there was nothing there" is the bug (CLAUDE.md's
+silent-success bullet). The HTTP form of the same distinction, a typed
+could-not-look response, is proposed in #550 and not yet built.
 
 **Why a record now.** The convention is written in CLAUDE.md's fail-closed
 bullet, but no D-record decided it, and the gates cited it as D-051. D-051 is
 the #72 two-tier sweep; it does not state the convention. A correct
-constraint cited to a record that lacks it is worse than an unexplained one: a reader told to verify opens D-051, does not find the
-rule, and may discard it.
+constraint cited to a record that lacks it is worse than an unexplained one: a
+reader told to verify opens D-051, does not find the rule, and may discard it.
 
-**The repointing.** Citations that mean the exit convention now cite D-090:
-gate docstrings (`EXIT CODES`, "fail-closed convention"), every crash
-handler's message, could-not-look messages, the fixture incidents about
+**The repointing.** Citations that mean the exit convention now cite D-090: gate
+docstrings (`EXIT CODES`, "fail-closed convention"), the crash-handler message
+of every gate in GATES, could-not-look messages, the fixture incidents about
 fail-closed branches, the unit tests about could-not-look, and the ci.yml and
-`web_install_guard.sh` comments. Citations that mean what D-051 decided keep
-it: tests that cannot fail (#72), and "a rule depending on someone remembering
-needs a mechanism". Sentences recording that a gate once cited D-051 keep the
-history and name both. Measured on this branch before commit, 2026-09-25:
+`web_install_guard.sh` comments. Citations that mean what D-051 decided keep it:
+tests that cannot fail (#72), and "a rule depending on someone remembering needs
+a mechanism". Sentences recording that a gate once cited D-051 keep the history
+and name both. Measured on this branch before commit, 2026-09-25:
 
-    git grep -c "D-051" origin/main -- ':!DECISIONS.md'   # 47 files, 79 lines
+    git grep -c "D-051" 2028f38 -- ':!DECISIONS.md'       # 47 files, 79 lines
     git grep -c "D-051" -- ':!DECISIONS.md'               # 17 files, 25 lines
 
 The 25 remaining were each read and classified as D-051's own subject or as

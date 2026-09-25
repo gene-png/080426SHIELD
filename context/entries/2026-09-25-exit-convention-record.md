@@ -13,8 +13,8 @@ would open D-051, not find the rule, and could discard a rule that is right.
 
 - **D-090** records the convention, the silent-success step that goes with it,
   and why the record exists.
-- **Citations meaning the convention now cite D-090**: gate docstrings, every
-  crash handler's message, could-not-look messages, fail-closed fixture
+- **Citations meaning the convention now cite D-090**: gate docstrings, the
+  crash-handler message of every gate in GATES, could-not-look messages, fail-closed fixture
   incidents, could-not-look unit tests, and two workflow and shell comments.
   CLAUDE.md's fail-closed bullet cites it.
 - **Citations meaning what D-051 decided keep it** (tests that cannot fail,
@@ -55,9 +55,10 @@ fixture incident text and the wording of printed messages.
 - The DEFERRED example subject is a placeholder (`D-NNN -- supersedes
   D-MMM`), not a real-looking number.
 
-**The sweep, re-run at `4c8e4d3`**, 2026-09-25:
-`git grep -c "D-051" -- ':!DECISIONS.md'` gave 16 files and 28 lines, not
-counting this paragraph's own hits. Every hit was read and classified:
+**The sweep, re-run at `45d414a`**, 2026-09-25:
+`git grep -c "D-051" -- ':!DECISIONS.md' ':!context/entries/2026-09-25-exit-convention-record.md'`
+(excluding this entry, so the count does not move as the entry is edited)
+gives 15 files and 23 lines at `45d414a`. Every hit was read and classified:
 
 - **D-051's own subject** (tests that cannot fail, #72; a rule that depends on
   remembering needs a mechanism; D-051's in-entry correction style):
@@ -68,6 +69,5 @@ counting this paragraph's own hits. Every hit was read and classified:
 - **History**, a sentence recording what was once cited: `audit-gate.yml`'s
   correction note, `DELIVERY_PLAN.md`'s #108 note, and the separator gate's
   comment, test docstring and fixture, each naming both records.
-- **This change's own record**: this entry.
 
 None cites D-051 for the exit convention.

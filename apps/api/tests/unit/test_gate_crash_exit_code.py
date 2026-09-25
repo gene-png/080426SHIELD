@@ -1,7 +1,7 @@
 """A gate that crashes must not report a verdict it never reached.
 
-Every gate in this repo returns 1 for "violations found" and 2 for "I could not
-look" (D-090). Python exits 1 on an unhandled exception, so an uncaught error
+The convention every gate is held to is 1 for "violations found" and 2 for "I
+could not look" (D-090). Python exits 1 on an unhandled exception, so an uncaught error
 inside `main` was indistinguishable from a finding: the same exit code, the same
 red X, and a log that reads like a verdict. Gene confirmed the shape by running
 a patched copy of `check_plan_totals.py` -- exit 1, traceback on stderr.
