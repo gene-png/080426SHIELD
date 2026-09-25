@@ -67,6 +67,31 @@ or listing, a malformed baseline, or a workflow that does not parse exits 2.
   pytest prepends it before the ini is read and `-o addopts=` does not clear
   it. The unselected collection now runs without it.
 
+## This PR was red when it opened, for the reason the gate exists
+
+The gate catches one class of defect: a test that exists and CI never runs,
+while a local run passes. That class broke this PR's own CI.
+
+- The three new gates carry the crash handler, so `discover_gates` finds them.
+  They had no entry in `test_gate_crash_exit_code.GATES`.
+  `test_universe_equals_the_other_gate_enumeration` failed on BOTH heads,
+  `d3aeaaf` and `7bbd791`.
+- The author's local runs named `test_gate_crash_exit_code.py`, where the list
+  lives, and never `test_gate_fixtures_harness.py`, where the equality check
+  lives. So everything the author ran was green.
+- The author then reported the PR as waiting only on merge order, without
+  re-reading its checks.
+
+It was the second time on 2026-09-24 that a local run and CI disagreed. The
+first was the #535/#536 tests shipping unmarked, which is why this gate
+exists. The check that catches "CI never runs this" was itself broken by "the
+author ran it locally and CI did not". **A local run proves what it selected,
+never what CI selects.** That is the strongest argument for this gate, and it
+is also why the gate asks pytest rather than trusting a person's selection.
+
+Fixed at `d95521d`: both harness files and the three gate test files pass in
+the api image.
+
 ## The backlog, allowed with reasons rather than hidden
 
 - **pytest:** 9 tests in 2 files (#500): 8 in `test_admin_removal.py` and 1 in
