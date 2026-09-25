@@ -30,7 +30,7 @@ A change is red on purpose, and rare: of the last 80 first-parent commits on
 `main` at ef94f4f (71 of them PR merges; measured 2026-09-25, D-095), two
 changed compose content. Red
 means a human reads the compose diff, the same design as
-`check_merge_rule_text.py`. The job is not a required check.
+#582's merge-rule text gate. The job is not a required check.
 
 USAGE: python compose_unchanged.py [--repo DIR] BASE..HEAD
 """
