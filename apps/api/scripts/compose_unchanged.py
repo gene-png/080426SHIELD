@@ -23,7 +23,8 @@ to the same node tree, or none changed; 1 at least one changed in content, so
 condition 5 trips (an added or deleted compose file counts as changed); 2
 could not look -- git failed, a file does not parse, or a bad argument.
 
-`--report` is the CI form (audit-gate.yml's "Compose exception report" job):
+`--report` is the CI form (audit-gate.yml's "condition-5 compose gate read its
+inputs" job):
 it prints the verdict on every PR and exits 0 whether or not a compose file
 changed, because a compose content change is a ROUTING fact (condition 5 comes
 back to the human), not a defect. It still exits 2 when it could not look, so

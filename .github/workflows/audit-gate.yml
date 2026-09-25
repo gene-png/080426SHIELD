@@ -292,9 +292,10 @@ jobs:
     # merge-rule condition 5. This job's PROPOSITION is "the compose check could
     # read its inputs", and that is what green means. The verdict (did a compose
     # file change in content?) is in the step summary, not the colour: `--report`
-    # exits 0 for either verdict and 2 only when it could not look. Nothing named
-    # for condition 5 may show green, because that reads as "condition 5 is
-    # clear". It judges compose files ONLY. NOT a required check.
+    # exits 0 for either verdict and 2 only when it could not look. Nothing whose
+    # COLOUR could be read as a condition-5 verdict may show green, which is why
+    # the name states the job's proposition. It judges compose files ONLY. NOT a
+    # required check.
     name: condition-5 compose gate read its inputs
     runs-on: ubuntu-latest
     steps:

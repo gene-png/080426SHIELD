@@ -5834,9 +5834,10 @@ The slice that teaches every surface, and the release gate, to report the new tw
 **2026-09-25 · governance/merge rule** · #530
 
 **Decision (the owner's).** Condition 5 has ONE exception: a
-`docker-compose*.yml` diff whose parsed YAML node tree is unchanged
-(comments, blank lines, layout, quoting that keeps a value's type) does not
-trip it. #530 is the instance: its whole compose diff was comments, and it
+`docker-compose*.yml` diff whose parsed YAML node tree is unchanged does not
+trip it. Form: comments, blank lines, indentation, single versus double
+quoting, and block-style changes that keep the value. Content: any plain to
+quoted flip, and any change of value or tag. #530 is the instance: its whole compose diff was comments, and it
 still came back to the owner. Every other condition-5 path trips exactly as
 before. `apps/api/scripts/compose_unchanged.py BASE..HEAD` decides: 0 no
 compose file changed in content, 1 at least one did (an added or deleted file

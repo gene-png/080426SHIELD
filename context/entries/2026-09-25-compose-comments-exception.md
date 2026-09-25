@@ -32,14 +32,24 @@ file is not a listed path, so the figure is 3/12 against the old 2/13.
 
 ## Proof
 
-- `test_compose_unchanged.py`: a comments-only diff, content changes that
-  Python equality would hide (`on` to `yes`, `1` to `1.0`, `1` to `"1"`, `on`
-  to `"on"`), a `!reset` tag, an added file, a range with no compose change,
-  an unparseable file, and bad arguments.
-- Red on revert: loaded-object equality, not counting an added file, ignoring
-  scalar tags, and accepting a three-dot range each turn a named test red. Two
-  mutations first stayed green; the tests were strengthened (a scalar tag
-  change, and asserting the three-dot refusal by its message).
+- `test_compose_unchanged.py`:
+  - a comments-only diff;
+  - content changes Python equality would hide: `on` to `yes`, `1` to `1.0`,
+    `1` to `"1"`, `on` to `"on"`, and an explicit `!!str` tag;
+  - quote flips where the YAML 1.1 tag agrees: `"0o17"` to `0o17`, and
+    `"1e3"` to `1e3`;
+  - a `!reset` tag, an added file, a deleted file, and a range with no
+    compose change;
+  - an unparseable file, bad arguments, a three-dot range, and `--report`
+    both ways.
+- Red on revert, five mutations, each red on its named test (round 2):
+  loaded-object equality (`test_a_content_change_trips`), a deleted file not
+  counted (`test_a_deleted_compose_file_trips`), scalar tags ignored
+  (`test_a_content_change_trips`, via the explicit-tag row), scalar style
+  ignored (`test_a_quote_flip_is_content_even_where_the_1_1_tag_agrees`), and
+  a three-dot range accepted (`test_a_three_dot_range_is_refused_by_name`).
+  In round 1, two mutations first stayed green, and the tests were
+  strengthened.
 
 ## Limits
 
