@@ -1,0 +1,12 @@
+{
+ "incident": "A PR that renames the section's heading would, if missing meant 'nothing to compare', turn the check green while rewriting the rule. A missing section is could-not-look, which is red too.",
+ "expect": 2,
+ "adversarial": false,
+ "stdout_contains": "no `## The merge rule` section",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}
