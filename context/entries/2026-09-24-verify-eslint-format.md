@@ -39,3 +39,20 @@ that re-run is the one recorded above.
 Two present-tense "is broken" statements are date-qualified: one paragraph of
 `context/gene.md` (with the coordinator's explicit leave for that paragraph
 only) and the 2026-09-22 #209 entry.
+
+## Re-review of `7ed5f7f`
+
+- **Could-not-look reached the bound line.** A missing script exited 2, and
+  `tsc` then printed "0 error(s)" over it; tsc's own exit 2 means real errors,
+  so the two collided. WEB_SCRIPT now prints a `NO-WEB-SCRIPT` marker, and each
+  arm refuses on it before printing any bound. Measured with the `lint` and
+  `typecheck` scripts deleted: each arm exits 2 with COULD NOT LOOK and no
+  bound. With the refusal reverted, the defect is back.
+- **The probes are cleaned up on any exit.** My first trap put `rm` on
+  INT/TERM, and that SWALLOWS the signal: a TERM mid-probe ran the cleanup and
+  then the self-test carried on to PASS, exit 0 (measured). Now EXIT cleans up
+  and the signals exit. A TERM mid-probe gives exit 143 with no probe left.
+- The tsc comment's "CI runs `pnpm -F web exec tsc`" is corrected to what
+  ci.yml runs, `pnpm -F web typecheck`.
+- The derivation copies the scripts' TEXT, not pnpm's executor. The comment
+  says so, and the divergence is filed as #570.

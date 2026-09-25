@@ -201,20 +201,28 @@ run_in_container() {
     sh -lc "$script" verify-in-worktree "$@"
 }
 
-# THE COMMAND IS DERIVED, NOT RESTATED. Each mode runs the script of the same
-# name in `apps/web/package.json` -- the one `pnpm -F web <name>` runs in CI --
-# rather than a hand-copied invocation beside a sentence claiming they match.
+# THE COMMAND TEXT IS DERIVED, NOT RESTATED. Each mode runs the TEXT of the
+# script of the same name in `apps/web/package.json` -- the one
+# `pnpm -F web <name>` runs in CI -- rather than a hand-copied invocation beside
+# a sentence claiming they match. It copies the text, NOT pnpm's executor: only
+# apps/web's node_modules/.bin is on PATH, there is no root .bin and no npm_*
+# environment, and this image has no pnpm. A script that later calls
+# `pnpm run x` or a root-only binary would diverge (#570).
 # Hand-copying is how `--format unix` sat here claiming parity with a gate that
 # never passed it (#450): the claim was a synchronization, and nothing kept it.
 # A `lint` script that gains `--max-warnings 0` now reaches this harness in the
 # same commit that adds it.
 #
-# Reading the script is the FIRST step, and a missing script or an unreadable
-# package.json exits 2 -- could not look -- never a verdict.
-WEB_SCRIPT='cd apps/web || exit 2
-cmd="$(node -p "(require(\"./package.json\").scripts || {})[process.argv[1]] || \"\"" "$1")" || exit 2
+# Reading the script is the FIRST step. A missing script or an unreadable
+# package.json prints NO_SCRIPT_MARKER and exits 2, and every arm checks for
+# the marker BEFORE printing a bound: exit 2 alone collides with tsc's own
+# exit 2 for real errors, and "0 error(s)" over a script that never ran is a
+# verdict about nothing.
+NO_SCRIPT_MARKER="verify-in-worktree: NO-WEB-SCRIPT"
+WEB_SCRIPT='cd apps/web || { echo "verify-in-worktree: NO-WEB-SCRIPT (no apps/web)"; exit 2; }
+cmd="$(node -p "(require(\"./package.json\").scripts || {})[process.argv[1]] || \"\"" "$1")" || { echo "verify-in-worktree: NO-WEB-SCRIPT (package.json unreadable)"; exit 2; }
 if [ -z "$cmd" ]; then
-  echo "verify-in-worktree: apps/web/package.json defines no \"$1\" script" >&2
+  echo "verify-in-worktree: NO-WEB-SCRIPT (apps/web/package.json defines no \"$1\" script)"
   exit 2
 fi
 echo "verify-in-worktree: apps/web package.json scripts.$1 = $cmd"
@@ -223,6 +231,16 @@ exec sh -c "$cmd"'
 
 run_web_script() {
   run_in_container "$WEB_SCRIPT" "$1"
+}
+
+# Exit 2 with COULD NOT LOOK, before any bound, when the script was never read.
+# $1 = arm name, $2 = its captured output.
+refuse_if_unread() {
+  if printf '%s\n' "$2" | grep -qF "$NO_SCRIPT_MARKER"; then
+    echo "verify-in-worktree: $1 -- COULD NOT LOOK: its apps/web script could not be read, so nothing ran." >&2
+    return 0
+  fi
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -271,11 +289,12 @@ tsc() {
   out="$(run_web_script typecheck 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
+  if refuse_if_unread tsc "$out"; then return 2; fi
   local total outside
   total="$(printf '%s
 ' "$out" | grep -c 'error TS' || true)"
   # Errors from OUTSIDE apps/web are not this worktree's code. CI runs
-  # `pnpm -F web exec tsc` and is green on main, so when these appear they are
+  # `pnpm -F web typecheck` and is green on main, so when these appear they are
   # the mount, not the branch -- and reporting them without saying so sends an
   # author to debug someone else's package.
   outside="$(printf '%s
@@ -311,6 +330,7 @@ vitest() {
   out="$(run_web_script test 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
+  if refuse_if_unread vitest "$out"; then return 2; fi
 
   local found ran uncollected
   found="$(count_test_files)"
@@ -386,6 +406,7 @@ eslint() {
   local out status
   out="$(run_web_script lint 2>&1)" && status=0 || status=$?
   printf '%s\n' "$out"
+  if refuse_if_unread eslint "$out"; then return 2; fi
   echo "verify-in-worktree: eslint -- ran apps/web's \`lint\` script (what \`pnpm -F web lint\` runs), exit $status"
   if [ "$status" -eq 2 ]; then
     echo "verify-in-worktree: COULD NOT LOOK -- exit 2 is ESLint failing to run (config, crash, or no lint script), not lint findings." >&2
@@ -413,6 +434,14 @@ tsc_appsweb_error_count() {
 
 self_test() {
   local probe="apps/web/src/lib/__verify_probe.ts"
+  # Both probes are removed on ANY exit, Ctrl-C included. A probe left behind
+  # makes the next self-test refuse with a false baseline, and `git add -A`
+  # would commit it.
+  trap 'rm -f "$WORKTREE/apps/web/src/lib/__verify_probe.ts" "$WORKTREE/apps/web/src/lib/__verify_lint_probe.ts"' EXIT
+  # A trap on INT/TERM that only cleaned up would SWALLOW the signal: bash runs
+  # it and carries on to PASS (measured). The signals exit, and EXIT cleans up.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   echo "self-test: the mount must SEE this worktree, so make it fail on purpose"
   local baseline
   baseline="$(tsc_appsweb_error_count)"
