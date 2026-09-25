@@ -146,7 +146,9 @@ happened.
    landing commit**, with any counts read live rather than carried forward.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
-   proves least.
+   proves least. One exception: a `docker-compose*.yml` diff whose parsed YAML is
+   unchanged (comments, layout) does not trip it. `compose_unchanged.py` decides
+   (#530, D-095).
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
@@ -223,12 +225,12 @@ anything adding or changing a test — and this repo does not ship code without
 tests. Condition 5's path list applied to the fifteen most recent PR merges on
 `main`:
 
-| measured | cleared | came back |
-| --- | --- | --- |
-| 2026-08-26 | 4 | 11 |
-| 2026-09-21 | 2 | 13 |
+| measured | cleared | came back | with the compose exception |
+| --- | --- | --- | --- |
+| 2026-08-26 | 4 | 11 | 4 / 11 |
+| 2026-09-21 | 2 | 13 | 3 / 12 |
 
-<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21 -->
+<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21; last column: `compose_unchanged.py --repo . <sha>^1..<sha>` per PR, 2026-09-25 (D-095) -->
 
 Each is a claim about a fixed window, so it does not rot the way a live count
 does — and each is true only of condition 5 as it stood that day. **Re-derive
@@ -346,6 +348,14 @@ recorded with a real exit code and a real date, and was the minority outcome
 (D-071).
 - Docker CLI is NOT on Git Bash PATH:
   `export PATH="$PATH:/c/Program Files/Docker/Docker/resources/bin"` first, every shell.
+- **`git push` runs the API unit suite** (pre-push hook) in the SHARED api
+  container: ~3 min, 13–16 under load, testing its tree, not the pushed ref
+  (#203). `NOT RUN` exits 2 and names its cause. Git Bash:
+  `SKIP=api-unit-tests git push`; PowerShell:
+  `$env:SKIP="api-unit-tests"; git push; Remove-Item Env:SKIP` (each run
+  2026-09-25 in its shell, a child process standing in for `git push`). **Agents push with SKIP**: CI runs the
+  suite, and the shared stack may be another agent's. Existing clones: re-run
+  `pre-commit install`.
 - Backend unit tests: `docker compose exec -T api pytest -m unit -q`
   (~3 min alone, 13–16 min under load; run detached and poll for the exit code).
 - Web typecheck: `docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"`
@@ -1289,11 +1299,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   - `_redacted_form`'s docstring claiming it used "the SAME redactor the egress
     path uses" while calling one rule out of ten. The docstring even argued
     correctly that a second copy would drift, directly above the second copy.
-  - `redact.py` — "Every separator in the module is now built from [`_HSPACE`]",
-    itself written as a correction to an earlier note that HAD gone stale.
-    `_RE_CONTACT_HINT` uses bare `\s` twice, and `check_separator_classes.py`
-    cannot see it: that gate flags hand-ENUMERATED classes, not `\s`. Wrong on
-    arrival rather than stale. Tracked as **#158**.
+  - `redact.py`'s separator note, wrong on arrival rather than stale (#158).
 
   Every one was found by reading the CODE and comparing, never by reading the
   prose — which is the only method that works, because the prose is accurate.
