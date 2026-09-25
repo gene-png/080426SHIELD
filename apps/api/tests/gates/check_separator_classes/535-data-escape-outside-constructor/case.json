@@ -1,0 +1,9 @@
+{
+ "incident": "#535, measured live on main at 5783fae: redact_org_name built its pattern with re.escape, which turns the stored legal name's space into a literal U+0020, so 'Atlas' + no-break space + 'Defense' never matched and the client's name reached the LLM provider with counts == {}. The separator came from the DATABASE, not from source, so the class-literal signature could not see it: the third instance of the shape this gate exists for. The gate must fire on data becoming a pattern outside _literal_pattern, and name that cause rather than the enumerated-class one.",
+ "expect": 1,
+ "adversarial": false,
+ "stdout_contains": "A SEPARATOR THE CODE RECEIVES",
+ "argv": [
+  "{dir}/redact.py"
+ ]
+}

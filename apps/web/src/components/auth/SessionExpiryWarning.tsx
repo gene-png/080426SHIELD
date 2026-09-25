@@ -9,7 +9,7 @@ import * as React from "react";
  * Sessions used to end without warning: the access token expired, a rotation
  * race turned that into a hard sign-out, and whatever was on screen was gone.
  * The race is fixed, but a session still has a real ceiling
- * (`jwt_refresh_ttl_seconds` / the daily forced-reauth limit), and walking into
+ * (`jwt_refresh_ttl_seconds` / the forced re-auth ceiling, 12 h by default), and walking into
  * it mid-assessment with no notice is its own defect — the client-facing
  * self-assessment is 37 questions long.
  *

@@ -302,7 +302,7 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
 - **Forced re-auth ceiling (real):** access + refresh tokens now carry an
   `auth_time` claim (original login time) that rides forward unchanged across
   refreshes. `/auth/refresh` rejects a refresh whose session age exceeds
-  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h) with a typed 401
+  `SHIELD_FORCED_REAUTH_SECONDS` (default 24h; **12 h since D-085**) with a typed 401
   `reason=reauth_required` (D-016 envelope).
 - **Refresh-token rotation (real):** each refresh mints a new refresh token and
   stores its jti on the user (`users.active_refresh_jti`, additive/nullable
@@ -313,7 +313,10 @@ indefinitely with no rotation or ceiling. Sprint 3 T2 makes the claims honest:
   concurrent multi-device sessions become a requirement.
 - **Idle timeout (documented, not new machinery):** the 30-minute refresh-token
   TTL already IS the idle timeout — an idle session cannot refresh past it. We
-  document that rather than invent a second timer.
+  document that rather than invent a second timer. **SUPERSEDED by D-085
+  (2026-09-23):** the default refresh TTL has been 24 hours since 2026-08-08,
+  so outside compose there is no idle bound below the forced re-auth ceiling
+  (12 h since D-085).
 - **Dead flags fail loudly:** `assert_safe_for_runtime` now refuses to boot if
   `SHIELD_AUTH_REQUIRE_MFA` or `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` is true,
   because the enrollment/challenge and email-verification flows do not exist.
@@ -5428,6 +5431,58 @@ checks is pre-cleared by its own TypeScript type definition**, so a green is not
 evidence that anything renders -- it would have reported #322 clean. Stated in the
 gate's docstring and filed as **#473**.
 
+## D-085 — Two session settings: the dead idle timeout is deleted, and the forced re-auth ceiling drops to 12 hours
+
+**2026-09-23 · admin**, decided by the owner on 2026-09-24
+
+_Numbered D-085, not D-084:_ `context/entries/2026-09-22-dependabot-audit-exemption.md`
+(#469) already points at a D-084 for its lesson, which has not been written yet.
+Taking the number would have sent that pointer to an unrelated decision. · branch `fix/catalog-counts-idle-timeout`
+
+**Supersedes the idle clause of D-020**, which recorded "the 30-minute
+refresh-token TTL already IS the idle timeout ... We document that rather than
+invent a second timer". It also supersedes the idle-timeout entry in the
+compensating-control lists that relied on it.
+
+**What changed underneath D-020.** On 2026-08-08, `jwt_refresh_ttl_seconds`
+was raised from 1800 to 86400, so that a refresh token would not expire before
+the access token it renews. `config.py` records why. From then on, the premise
+held only where compose or `.env.example` sets the TTL back to 1800. The idle
+bound is also counted from the last token ROTATION, not the last activity:
+under compose (access 900, refresh 1800) an idle session gets 15-30 minutes,
+and at the config defaults the forced re-auth ceiling fires before any
+refresh expiry.
+
+**Decision 1: `shield_idle_timeout_seconds` is deleted, not wired.** It was
+defined in config, compose and `.env.example`, and read by nothing. On a
+FedRAMP track that reads to an assessor as an implemented idle-session
+control. Wiring it as a second knob beside the refresh TTL would create two
+values that can disagree about one control.
+
+**Decision 2: `shield_forced_reauth_seconds` drops from 86400 to 43200 (12
+hours)** in config, compose and `.env.example`. The setting was already wired
+(`refresh()` in `routes/auth.py`, with a `ge=300` floor), so this is one value,
+with no new code and no new UX. Twelve hours covers a working day with
+overrun, and halves the overnight window in which a stolen session stays
+usable. The refusal message stops saying "daily". An existing dev `.env` copied
+from the old `.env.example` keeps 86400 until edited, because compose and
+`Settings` both prefer it; CI has no `.env` and gets 43200.
+
+**What that number does NOT do, stated so it implies nothing more.** It
+bounds session AGE, counted from the original sign-in, and no activity
+extends it. It is not an idle control. **A laptop left open for twenty minutes
+is not locked by it**, and outside compose there is still no idle bound below
+the 12-hour ceiling. `docs/security.md` states the idle bound as **Partial**.
+
+**Not built here, and why: the real idle control is #516.** The reason for
+waiting is rework, not priority. The session code (#499, #498) landed
+2026-09-24, and its middleware still documents a live residual around the
+60-second refresh grace window. A second timing rule layered onto code whose
+author is still describing its open edges is how this becomes a rewrite.
+**#516 has a trigger, not a date:** build it before the first client
+engagement that carries an assessment requirement, or once the session code
+has been quiet for a month, whichever comes first.
+
 ## D-086 — `post-mvp` is the filing rule's third legitimate state
 
 **D-084 and D-085 are not skipped by this entry.** D-084 is referenced by #469's
@@ -5493,3 +5548,241 @@ else, and that issue carried no labels, so it appeared in no query. #184 and
 #286 are the same defect, and the older, better-written one was the invisible
 one. Search-before-filing is real, and not sufficient on its own: it can only
 find what previous filers labelled.
+
+## D-087 — Tiers measure consequence along the delivery path; `mvp-blocking` means board membership
+
+The repo owner's rulings during triage, 2026-09-24. CLAUDE.md's tier paragraph
+carries the rule in brief; this entry carries the reasoning and the evidence.
+
+### 1. Consequence, not audience
+
+tier-3 means the falsehood changes nothing about what the client ends up with.
+It does not mean the screen is internal.
+
+**The measurement that argues the other way is real, and it is not enough.**
+The CSF exporter states `answered_subcategories/total_subcategories` and
+`coverage_pct` in the XLSX, and in the Maturity summary of the DOCX and PDF
+(`csf/exporters.py`). ATT&CK's `coverage_pct_text` is the percentage "as every
+surface of the deliverable states it" (`attack/exporters.py`). So a deliverable
+built after a false "done" is visibly thin, not falsely full. The drafting pass
+proposed tier-3 for #70 and #74 on exactly that basis.
+
+**The owner overruled it.** A falsehood that deceives the consultant into
+releasing work they would not have released has a client-facing consequence.
+The consultant is a path, not an exemption. Anyone who re-runs the exporter
+measurement will re-derive tier-3, and CLAUDE.md's line exists to stop that.
+
+### 2. The path is the DELIVERY path, not any human
+
+A consultant is the last step before the client. A reviewer or developer is not
+on the delivery path. A false gate that misleads them is tiered by what the gate
+does, and a defect the gate lets through is tiered on its own merits when it is
+found. Without this bound the rule swallows the backlog and the scale stops
+discriminating. #106, #107, #143, #161 and #170 stay tier-3 on this basis.
+
+### 3. The scale has no term for compliance consequence (#528)
+
+#53 (the `llm_calls` egress record is lost on rollback) is tier-2 by the
+owner's call. No client reads that record, but an assessor does, on a FedRAMP
+Moderate/High track. The scale's audience-shaped tier-3 would put every such
+defect at the bottom of the board's ordering. (tier-3 issues are still on the
+board, because the board is `label:mvp-blocking`.) The fix to the scale is #528,
+and it is not decided here.
+
+### 4. Correction to D-086: `mvp-blocking` is board membership
+
+D-086 justified the `deferred_on_board` fault by reading `mvp-blocking` as its
+name, "blocks the MVP". Its definition is board membership: the board is
+`is:issue is:open label:mvp-blocking`. The fault stands, on the right ground:
+"on the board" contradicts "deferred off it". That is the second label in two
+days whose name implies a different test than its definition. The first was
+`tier-3` read as "internal screen". CLAUDE.md's tier paragraph now names the
+class: a label's name is not its test. D-086 is left as written, and this entry
+corrects it. The gate's docstring and the test comment are corrected in place.
+
+### 5. The format step reads prettier's version from the lockfile, through the hook's reader
+
+CLAUDE.md's MANDATORY format step said `3.9.6` while `pnpm-lock.yaml` resolved
+`3.9.8`. Every author following it formatted with a different tool from CI's.
+The step now calls `scripts/prettier-hook.sh --print-version`. That reader takes
+the root importer's entry, refuses when it cannot read, and is pinned by
+`tests/gates/prettier_hook.sh`.
+
+**The first draft of this change got the parse wrong.** It used a node regex
+over the `packages:` list, whose entries are alphabetical, so the first match is
+the LOWEST prettier in the file. That is #311's silent downgrade, reintroduced
+one file away from the reader that already fixed it. Review caught it, and the
+same review found both dev agents' Step 0 guard keyed on the literal
+`prettier@3.9.6`. That guard would have halted every dispatch with a false
+diagnosis, and it is re-keyed in the same change.
+
+An in-container `pnpm format:check` was tried first and rejected. It flagged 177
+files on a tree CI passes. The reason is NOT that the working tree holds build
+output CI lacks. `.prettierignore` already excludes `.next/` and
+`pnpm-lock.yaml`, but the web container never mounts `.prettierignore`: compose
+mounts `apps/web`, `packages`, `package.json`, `pnpm-workspace.yaml`, the
+lockfile and `web-install-if-stale.sh`, and never `.prettierignore`. So the container ignores nothing and cannot see `apps/api`, `e2e/`,
+`docs/` or `.github/`. It is not CI parity, however clean the tree.
+
+### Record moved here from CLAUDE.md, to pay for the tier clause
+
+The over-match rule's instance, per the size ratchet's prepared cut list (item
+1). `suite_pat`'s `\bFl` ate the `oor` in "Floor", and that bug was the sole
+reason `2nd Floor` got any redaction at all. The pattern has no branch for a
+value PRECEDING its keyword, so tightening `Fl` silently removed coverage
+nobody knew existed. Nothing fails when this happens: no test knew the coverage
+was there, because it was never intended. On #130 the honest framing was "adds
+coverage that never existed and closes a live leak", not "preserves coverage
+through a fix".
+
+The corpus rule's instances, moved for the same reason. #130 lived for months
+under a green suite, because every name-shaped string in `seed_demo.py` and
+`fixtures.py` passes the address rule clean, so an address assertion built on
+seed data passes forever. Then, while fixing it, a hand-written corpus of "real
+product names" certified a pattern carrying six leak regressions. The author
+writes addresses correctly spaced, and the failing class was malformed input
+(`PO Box99`, `Suite400`) arriving from OCR and exported spreadsheets.
+
+## D-088 — The separator gate protects separators the code RECEIVES, not only the ones it writes
+
+**D-087 is not skipped by this entry.** It belongs to PR #539 and D-085 to PR #517, both open when this was written. The gap is recoverable by reading this sentence.
+
+### What broke, measured live (#535, #536, both tier-1)
+
+The client's legal name reached the LLM provider verbatim, and `llm_calls.redacted_counts` recorded `{}`. So the egress record said nothing was removed. Measured on `main` at `5783fae` through `redact_payload`, the function `LLMClient.invoke` calls. The leak is client-to-provider, not cross-tenant (the owner's classification is recorded on both issues), and it is live: a runtime-loaded key makes egress real in the default configuration (D-037), `legal_name` accepts any string, and no AI route requires the preview.
+
+- **#535:** `re.escape(org_name)` turns the stored name's space into a literal U+0020. A no-break space, a narrow no-break space or two spaces between the words never matched. The same held for every name hint.
+- **#536:** the pattern was anchored `\b...\b`. A `\b` after a final `.` needs a word character next, so "Acme Holdings, Inc." (most incorporated names) could never be redacted anywhere.
+
+### Decision 1: data becomes a pattern in exactly one place
+
+`redact.py::_literal_pattern(needle)` is the only function that turns data into regex source. It:
+
+- splits the needle on whitespace and rejoins the `re.escape`d tokens with `\s+` (first `_HSPACE+`; Decision 3 below records why literal names cross line breaks while the shape rules `_PHONE_SEP`, `_CAGE_SEP` and `_STREET_SEP` do not);
+- anchors conditionally: `(?<!\w)` only when the needle starts with a word character, `(?!\w)` only when it ends with one. A word-edged name still cannot match inside a longer word.
+
+`redact_org_name` and `_redact_names` both use it. `\b(?:a|b)\b` had #536's defect for every hint; how `_redact_names` now combines hints is below, under the review rounds.
+
+### Decision 2: the gate's premise is widened, and this is the part worth keeping
+
+`check_separator_classes.py` existed to stop exactly this shape, and its docstring records two prior leaks: D-058's `[ \t\xa0]` and item 10's `_PHONE_SEP`. #535 is the third instance, and the gate was structurally blind to it. Its signature looks for a character class in SOURCE. Here the whitespace arrived from the DATABASE, so no class ever appeared.
+
+**A source-scanning gate cannot see a separator that lives in data. It CAN see the point where data becomes a pattern, because that point is source, and it is precise: `re.escape`.** So the gate gains a second signature, resolved by the AST rather than by text: any REFERENCE to `re.escape` (a call, or passing it as a value, as in `map(re.escape, ...)`; also `escape` imported from `re`, or `re` under an alias) outside the one module-level `_literal_pattern` is a finding. A docstring or comment that merely mentions it is not. Each signature prints its own cause: "a separator the code WRITES" versus "a separator the code RECEIVES".
+
+Applied to `main`'s `redact.py`, it fires on both real sites, `redact_org_name` and `_redact_names`, and on nothing else. Fixture cases in `tests/gates/check_separator_classes/` pin both directions.
+
+**What it still cannot see:** data interpolated into a pattern WITHOUT `re.escape` (an f-string of a raw variable). That would be a regex injection, a different and worse defect, which `redact.py` does not do today. A grep of every `re.compile` in the file found exactly two runtime-built patterns, both via `re.escape`. It also cannot see `getattr(re, "escape")` or a bare `escape` reached through `from re import *`.
+
+### Decision 3, the owner's: literal names use `\s+`, not `_HSPACE+`
+
+The first version joined name tokens with `_HSPACE+`, so a legal name WRAPPED
+across a line ("Atlas\nDefense") still egressed. It was pinned by a test marked
+`xfail(strict=True)` pending this decision. The owner decided `\s+` for both
+literal name rules, and the reason is RULE CLASS, written into
+`_literal_pattern` so nobody reverts it as an inconsistency:
+
+- `_HSPACE` exists for SHAPE rules. An address or contact pattern that crossed a
+  line could join tokens that were never one thing (#135: the contact hint must
+  not reach across prose for its evidence).
+- These two rules match a KNOWN LITERAL from the tenant's own rows. "Acme
+  Holdings" across a line break is almost always "Acme Holdings". The false
+  positive is rare here and costs only context: a heading ending "Atlas" above a
+  line opening "Defense in depth" becomes "[CLIENT] in depth" (review of
+  `a409aea`).
+- The asymmetry decides it anyway. A miss is the client's name reaching a third
+  party. An over-match is the model seeing [CLIENT] instead of context, on a
+  pipeline where it only suggests.
+- PDF and Word extraction feed the Tech Debt payload, so wrapped names are real.
+
+**Measured before landing, because this is the shape of the 49x regression:**
+
+- single-spaced text: at or below `main` at every size;
+- 500 hints over 262 KB: 474 ms against 668 ms;
+- line-break-heavy text, 500 hints over 336 KB: 777 ms against 968 ms. It
+  redacted 18,496 names where `main` redacted 3,674, the other ~80% being names
+  split across lines that `main` let through.
+
+No bound on line-break runs was added, because the measurement did not ask for
+one. The xfail became a sweep over the 10 characters `str.splitlines()` breaks
+on, for org names, plus a hint case; reverting to `_HSPACE+` turns all 11 red.
+
+### Review found two regressions the first version of this fix introduced
+
+Both published a SURNAME under an output that reads as a completed redaction,
+which is worse than no match:
+
+- **Sorting on stored length.** `_redact_names` sorted hints by their stored
+  length, but `_literal_pattern` drops whitespace. "Dana" + 12 spaces outranked
+  "Dana Whitfield" and matched "Dana" alone.
+- **Leftmost match.** A punctuation-led hint has no leading anchor, so "(Dana"
+  matched at position 0 of "(Dana Whitfield)", left of where the full name can
+  start. Python's alternation takes the leftmost match before the longest, so no
+  ordering prevents it.
+
+`main` redacted both correctly. **So `_redact_names` no longer relies on
+alternation order.** It normalises hints, finds every hint's matches on the
+ORIGINAL text, keeps the longest non-overlapping spans, and only then replaces
+(the state at `4f042f3`; the second review round below replaced "longest" with
+the union).
+Placeholders are never rescanned.
+
+The same review closed three holes in the gate's new signature:
+
+- `re.escape` passed as a value (`map(re.escape, hints)`) was invisible, so the
+  gate now flags references, not only calls;
+- a file that tokenizes but does not parse came back as a finding with exit 1,
+  and is now exit 2;
+- a nested or duplicate `_literal_pattern` was exempt, and only one module-level
+  constructor is now.
+
+Each was proven red-on-revert with a named test. The first padded-hint test used
+10 spaces, which TIES "Dana Whitfield" at 14 characters, so `set()` order (which
+varies by hash seed) decided whether it failed. It was made deterministic and run
+red under five seeds.
+
+### A second review round: CI never ran the new tests, and a winner-take-all rule still leaked
+
+- **The new test file carried no `unit` mark, and CI runs `pytest -m unit`.**
+  On the reviewed head, CI selected 0 of that file's 61 tests. Every leak test
+  was skipped there, while local runs that named the file directly passed.
+  It is now `pytestmark = pytest.mark.unit`, and CI selects all of its tests.
+  This is CLAUDE.md's "a selector that selects nothing passes". The collect
+  count used to prove the fix was itself broken on the first try: this pytest
+  prints `file: N` in quiet mode, so a grep for `::` counted zero both before
+  and after. Read the raw output before trusting a filtered count.
+- **Choosing the longest span still published part of a chained name.**
+  Hints "Dana Whitfield" and "Whitfield Jones" over "Dana Whitfield Jones"
+  gave "Dana [NAME]". Overlapping spans are now MERGED (the union). That
+  redacts strictly more, and a merged run is one removal.
+- **The span search was slow.** Measured with 500 hints over 262 KB:
+  - one pattern per hint: 49x slower than `main`;
+  - anchors inside every alternative: still about 6x slower than `main`
+    END TO END. The scan ALONE with anchors inside every alternative was 27x
+    slower than with them hoisted (0.27 s against 0.01 s), which is the figure
+    `_hint_patterns` cites. They measure different things.
+    Hints are now grouped by anchor shape, so the anchors can be hoisted out of
+    the alternation. Each group is one cached pattern, and a hint can start only
+    inside a region its group's leftmost scan matched, so only those positions
+    are re-examined. Grouping must not let an earlier group win at a position:
+    "(Acme." against "(Acme. Labs" pins that. Measured afterwards, the new code
+    is at or below `main` at every size tried: 4, 17, 47 and 405 ms against 4,
+    19, 81 and 680 ms.
+
+### Relation to #158
+
+#158's bare `\s` in `_RE_CONTACT_HINT` is the BENIGN instance of the same family. It is harmless only because its input is a stripped single line from `str.splitlines()`. #535 is the live instance: the same kind of mismatch, on free text. **Whether a separator mismatch is safe is a property of the input, not of the pattern.**
+
+### Proof
+
+- New tests, written first and red on `main`: 38 separator rows, 7 edge rows and a partial-miss row, with separators computed from the language (`\s` minus what `str.splitlines()` breaks on), never imported from `redact.py`.
+- An `LLMClient.invoke` test asserts both what the provider received and the ledger's `redacted_counts`.
+- Red-on-revert with `scripts/red-on-revert.sh --expect`, one fix at a time:
+  - reverting the anchors turns exactly the 7 #536 rows red;
+  - reverting the separator join turns the separator rows red, plus the partial-miss row and the one edge row that combines both defects;
+  - after Decision 3, reverting `\s+` to `_HSPACE+` turns the 10 line-break rows and the CRLF hint row red;
+  - deleting the hint path's hoisted anchors in `_hint_patterns` turns `test_a_word_edged_hint_still_needs_a_word_boundary`'s 3 rows red.
+
+**Whitespace runs, measured because review suspected superlinear cost (`a409aea`).** At a fixed ~190 KB, growing the whitespace run between a name's words from 500 to 50,000 characters made the branch FASTER (752, 614, 492 ms). So cost is linear in text size, not in run length. On that pathological input it is about 2x `main`, and `main` redacted none of the names.
+
+- both mutations also turn the invoke-level test red;
+- removing the gate's new signature turns its 4 detection tests red.

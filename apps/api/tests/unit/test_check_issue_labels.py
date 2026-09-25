@@ -54,7 +54,7 @@ _TABLE = [
     # allowed and not required -- the deferral is the decision.
     ({"post-mvp"}, None),
     ({"tier-3", "post-mvp"}, None),
-    # ...and NOT together with `mvp-blocking`: "blocks the MVP" and "deferred
+    # ...and NOT together with `mvp-blocking`: "on the board" and "deferred
     # past it" contradict each other, whatever the tiers. Unlike
     # `unowned-with-reason` + `mvp-blocking` above, which is a coherent state
     # (a blocker nobody owns). The live instance this guards against is a

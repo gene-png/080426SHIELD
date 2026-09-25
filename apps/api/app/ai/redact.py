@@ -45,9 +45,12 @@ Modes:
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
+
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 RedactionMode = Literal["strict", "standard", "off"]
 
@@ -79,13 +82,33 @@ _RE_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 # is built from it, so "the rule does not cross a line" is one definition in one
 # place rather than a property each pattern re-asserts.
 #
-# Every separator in the module is now built from it -- the address rules, the
-# phone rule, and (as a superset) the CAGE class. An earlier version of this note
-# said `_RE_PHONE` and `_RE_CAGE` "still contain `\s` and still cross line
-# breaks", which was true when written and false as of the item 10 rewrites, and
-# it told the reader to grep `\s` to find them. A note that sends someone
-# hunting a defect that is gone is the same shape as one that reassures about a
-# defect that is not.
+# The address rules, the phone rule and (as a superset) the CAGE class are
+# built from it. TWO EXCEPTIONS, both deliberate:
+#
+# 1. `_RE_CONTACT_HINT` keeps three bare `\s` (the `--` delimiter and the
+#    state-ZIP hint). Provably equivalent to `_HSPACE` where it is used
+#    (#158): its one call site searches `nxt.strip()`, where every `nxt` is a
+#    line from `text.splitlines(keepends=True)`. `splitlines()` breaks on
+#    exactly the ten characters `_HSPACE` excludes, so none can be inside a
+#    line, and `strip()` removes the break `keepends` leaves at the end (two
+#    characters for `\r\n`). The proof holds ONLY for a `str.splitlines()`
+#    line with `strip()` applied, at that one call site. A split on "\n"
+#    alone, or any second caller, breaks it: convert the three to `_HSPACE`
+#    first.
+# 2. The two LITERAL-NAME rules (`redact_org_name`, `_redact_names`) join a
+#    stored name's words with `\s+`, NOT `_HSPACE+`, ON PURPOSE -- do not
+#    "fix" this as an inconsistency (owner decision, D-088; the reason is in
+#    `_literal_pattern`). `_HSPACE` guards SHAPE rules, which could join
+#    tokens across a line that were never one thing; these match a known
+#    literal from the tenant's own rows, and a miss sends the client's name to
+#    a third party. They once matched a literal U+0020 only, so a no-break
+#    space, a line wrap or two spaces leaked the name with a zero count (#535).
+#
+# An earlier version of this note said `_RE_PHONE` and `_RE_CAGE` "still
+# contain `\s` and still cross line breaks", which was true when written and
+# false as of the item 10 rewrites, and it told the reader to grep `\s` to
+# find them. A note that sends someone hunting a defect that is gone is the
+# same shape as one that reassures about a defect that is not.
 #
 # WHY A SUBTRACTION AND NOT A LIST. The first version of this fix enumerated
 # `[ \t\xa0]`, which reads as "space, tab, non-breaking space -- surely
@@ -1125,6 +1148,94 @@ def _redact_addresses(text: str) -> tuple[str, int]:
     return _RE_ADDRESS.sub(PLACEHOLDER_ADDRESS, text), count
 
 
+class BlankRedactionLiteralError(StarletteHTTPException):
+    """A literal-name rule was handed a needle with nothing to match.
+
+    Unreachable through today's callers -- `redact_org_name` returns early on a
+    blank name and `_redact_names` drops hints shorter than two characters after
+    normalising -- and that is exactly why it is a raise rather than a sentence:
+    the only protection was caller discipline written in a docstring, and a
+    blank needle then died as a bare IndexError at `tokens[0]`, which is not a
+    typed error under D-016 (owner review of #542).
+
+    RAISED, never skipped: this sits on the egress path, so stopping is the
+    fail-closed answer. Skipping the needle would redact less and say nothing.
+    Mapped by the global HTTPException handler to the typed envelope, as
+    `MissingFixtureError` is.
+    """
+
+    def __init__(self, needle: str) -> None:
+        super().__init__(
+            status_code=500,
+            detail={
+                "reason": "redaction_blank_literal",
+                "message": (
+                    "The redactor was given a blank name to remove "
+                    f"({needle!r}), so redaction stopped and nothing was sent."
+                ),
+            },
+        )
+
+
+def _needle_tokens(needle: str) -> list[str]:
+    """The needle's whitespace-separated tokens; a blank needle raises, typed."""
+    tokens = needle.split()
+    if not tokens:
+        raise BlankRedactionLiteralError(needle)
+    return tokens
+
+
+def _literal_edges(needle: str) -> tuple[bool, bool]:
+    """Does the needle start / end with a word character? Decides its anchors."""
+    tokens = _needle_tokens(needle)
+    return bool(re.match(r"\w", tokens[0])), bool(re.match(r"\w", tokens[-1][-1]))
+
+
+def _literal_pattern(needle: str, *, anchored: bool = True) -> str:
+    r"""Regex source for a DATA-SUPPLIED literal: a stored legal name or a name hint.
+
+    The only place in this module where data becomes a pattern, so the only
+    place `re.escape` may appear (`check_separator_classes.py` enforces that).
+    Two things `rf"\b{re.escape(needle)}\b"` got wrong, both measured live:
+
+    * #535 -- `re.escape` turns the stored name's space into a literal U+0020,
+      so a no-break space, a narrow no-break space, two spaces or a line wrap
+      between the words never matched. The needle is split on whitespace and
+      its tokens rejoined with `\s+`. `str.split()` also splits a no-break
+      space stored IN the name.
+
+      `\s+`, NOT `_HSPACE+`, ON PURPOSE -- this is a rule-class difference, not
+      an inconsistency to "fix" (owner decision, D-088). `_HSPACE` exists for
+      SHAPE rules: an address or contact pattern that crossed a line could join
+      tokens that were never one thing (#135 -- the contact hint must not reach
+      across prose for its evidence). These two rules match a KNOWN LITERAL
+      from the tenant's own rows: "Acme Holdings" across a line break is
+      almost always "Acme Holdings". The false positive `_HSPACE` guards
+      against is rare here and costs only context -- a heading ending "Atlas"
+      above a line opening "Defense in depth" becomes "[CLIENT] in depth" --
+      and the asymmetry decides it anyway: a miss is the
+      client's name reaching a third party; an over-match is the model seeing
+      [CLIENT] instead of context, on a pipeline where it only suggests. PDF and
+      Word extraction feed the Tech Debt payload, so wrapped names are real.
+    * #536 -- `\b` needs a word character on one side, so after a final "."
+      it fails before a space, a comma or the end of the text: "Acme Holdings,
+      Inc." could never be redacted anywhere. The anchors are now CONDITIONAL:
+      `(?<!\w)` only when the needle starts with a word character, `(?!\w)`
+      only when it ends with one. A word-edged name still cannot match inside
+      a longer word; a punctuation-edged one needs no anchor on that side.
+
+    A needle with no non-space character raises `BlankRedactionLiteralError`.
+    """
+    tokens = _needle_tokens(needle)
+    body = r"\s+".join(re.escape(t) for t in tokens)
+    if not anchored:
+        return body
+    starts_word, ends_word = _literal_edges(needle)
+    head = r"(?<!\w)" if starts_word else ""
+    tail = r"(?!\w)" if ends_word else ""
+    return head + body + tail
+
+
 def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
     """Replace the client's legal name (case-insensitive, whole-token).
 
@@ -1140,7 +1251,7 @@ def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
     """
     if not org_name.strip():
         return text, 0
-    pat = re.compile(rf"\b{re.escape(org_name)}\b", re.IGNORECASE)
+    pat = re.compile(_literal_pattern(org_name), re.IGNORECASE)
     count = _count_replacements(pat, text)
     if count == 0:
         return text, 0
@@ -1148,29 +1259,132 @@ def redact_org_name(text: str, org_name: str) -> tuple[str, int]:
 
 
 def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
-    """Replace exact-match names from `name_hints` (case-insensitive)."""
-    hints = [h for h in name_hints if h and len(h) >= 2]
+    """Replace exact-match names from `name_hints` (case-insensitive).
+
+    NORMALISED FIRST. `_literal_pattern` ignores a hint's leading, trailing and
+    repeated whitespace, so the filter, the dedupe and the length comparison
+    must see the same normalised string. Sorting the STORED hints let
+    "Dana" + padding outrank "Dana Whitfield" (review of ab80a13).
+
+    EVERY MATCH COUNTS, DECIDED ON THE TEXT, not by alternation order.
+    Python's alternation is leftmost-first, then first-listed: a partial hint
+    that matches further LEFT wins however the list is sorted. "(Dana" matched
+    at position 0 of "(Dana Whitfield)", one character before "Dana Whitfield"
+    could start, and published "[NAME] Whitfield" under an output that reads as
+    a completed redaction. That is worse than no match, because no match is
+    visibly a leak and a partial one looks finished -- the same failure as the
+    suite rule's `Suite B 201` -> `[ADDRESS] 201`. So every hint's matches are
+    found on the ORIGINAL text, overlapping spans are MERGED (the union), and
+    only then is anything replaced. Placeholders are never rescanned, so a hint
+    like "name" cannot match inside "[NAME]".
+    """
+    hints = tuple(sorted({" ".join(h.split()) for h in name_hints if h}))
+    hints = tuple(h for h in hints if len(h) >= 2)
     if not hints:
         return text, 0
-    # LONGEST FIRST. Python's alternation is first-match-wins, not
-    # longest-match-wins, so a dictionary containing both `Dana` and
-    # `Dana Whitfield` in that order rewrote "Dana Whitfield" to
-    # "[NAME] Whitfield" -- publishing the surname under an output that reads
-    # as a completed redaction. Which order the hints arrived in depended on
-    # database row order, and a security boundary must not depend on that.
+    # CANDIDATES COME ONLY FROM WHERE A PLAIN SCAN MATCHED. For each pattern, a
+    # hint can only START inside a region that pattern's leftmost scan
+    # matched: had it started anywhere else, the scan (which resumes where each
+    # match ends) would have found it there. So `match` is asked only at
+    # positions INSIDE matched regions, and returns the longest hint starting
+    # there. `pos` does not slice, so `(?<!\w)` still sees the previous
+    # character.
     #
-    # Same failure shape as the suite rule's `Suite B 201` -> `[ADDRESS] 201`:
-    # a partial match is worse than no match, because no match is visibly a
-    # leak and a partial one looks finished.
-    hints = sorted(set(hints), key=len, reverse=True)
-    pat = re.compile(
-        r"\b(?:" + "|".join(re.escape(h) for h in hints) + r")\b",
-        re.IGNORECASE,
-    )
-    count = _count_replacements(pat, text)
-    if count == 0:
+    # THE BOUND IS O(H * L * T): T the text length, L the longest hint in
+    # characters, H the hints in one anchor group (`_hint_patterns` compiles
+    # each group as ONE alternation). H and T were measured; the L factor is
+    # argued from the code, not measured -- every series used L of about 250.
+    #
+    # Why each factor. Inside a region, every position a hint could begin at
+    # gets a `match` comparing up to L characters -- plus any whitespace run
+    # a `\s+` join consumes, which only the token just before the run
+    # starts, so it adds O(H * T) once amortised. At each position, every
+    # alternative that fails pays for the prefix it matched first. CPython's
+    # parser hoists a prefix shared by ALL alternatives, but only up to the
+    # first `\s+` (a repeat does not compare equal; parsed and seen in the api
+    # image's Python 3.12.13), so it helps only when the
+    # hints share part of their FIRST word, and a hint that breaks the shared
+    # prefix costs only from the point where it breaks. A word-end `(?!\w)`
+    # failing after the longest match backtracks into the rest.
+    #
+    # Measured worst case, 2026-09-24, api image (Python 3.12.13): N hints
+    # of about 250 characters sharing a prefix, plus one more that breaks it
+    # at the first character, N = 1 to 1024 -- 427-556 ns per sharing hint
+    # per character. At N = 64 that is 31-33 us per character over 200 KB,
+    # about 32 s per MB by extrapolation. Every run is on #546.
+    #
+    # L IS BOUNDED BY THE SCHEMA, NOT HERE. Hints come from
+    # `name_hints_for_tenant` only: `User.display_name` (255 characters) and
+    # email local parts, which `EmailStr` keeps under 254 by refusing any
+    # address over 254 (email-validator 2.3.0, measured). `Client.legal_name`
+    # goes to `redact_org_name` -- no per-position loop, but its scan has the
+    # same L term, also bounded at 255. A hint source without a CHARACTER cap
+    # lifts the bound, and must be capped or come with a cap here.
+    #
+    # H IS BOUNDED BY NOTHING: up to two hints per tenant user, and users set
+    # their own display names. Filed as #546, not capped: a cap on hints is a
+    # cap on what gets redacted. A stall does NOT stop egress -- the request
+    # runs on after the caller gives up (measured, #546).
+    spans: list[tuple[int, int]] = []
+    for pat in _hint_patterns(hints):
+        for region in pat.finditer(text):
+            for position in range(region.start(), region.end()):
+                m = pat.match(text, position)
+                if m and m.end() > position:
+                    spans.append((position, m.end()))
+    if not spans:
         return text, 0
-    return pat.sub(PLACEHOLDER_NAME, text), count
+    # THE UNION of overlapping spans, not the longest one. Choosing a winner
+    # still published part of a chained name: hints "Dana Whitfield" and
+    # "Whitfield Jones" over "Dana Whitfield Jones" kept one span and left
+    # "Dana [NAME]" (review of 4f042f3). A merged run redacts strictly more and
+    # is ONE removal, so the count keeps its unit (one removal is one).
+    spans.sort()
+    merged: list[list[int]] = []
+    for start, end in spans:
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    parts: list[str] = []
+    pos = 0
+    for start, end in merged:
+        parts.append(text[pos:start])
+        parts.append(PLACEHOLDER_NAME)
+        pos = end
+    parts.append(text[pos:])
+    return "".join(parts), len(merged)
+
+
+@functools.lru_cache(maxsize=256)
+def _hint_patterns(hints: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    """One compiled pattern per anchor shape, cached on the normalised hints.
+
+    WHY GROUPED, and why not one alternation. The anchors are conditional, so
+    they can only be hoisted OUT of the alternation -- which is what lets the
+    engine use its literal-prefix fast path -- for hints that share them.
+    The SCAN ALONE with anchors inside every alternative was measured 27x
+    slower than with them hoisted (0.27 s against 0.01 s, 500 hints over
+    262 KB); end to end that was about 6x slower than `main` (D-088). A
+    single alternation across shapes would let the first shape to match at a
+    position win rather than the longest, so "Acme" could beat "Acme Corp."
+    and publish "Corp.". Each group is
+    scanned separately and `_redact_names` takes the union.
+
+    CACHED because `redact_payload` calls `redact_for_ai` for every string in
+    a payload with the same hints. Compiling per string cost a compile per
+    hint per string (review of 4f042f3).
+    """
+    groups: dict[tuple[bool, bool], list[str]] = {}
+    for hint in sorted(hints, key=len, reverse=True):
+        groups.setdefault(_literal_edges(hint), []).append(hint)
+    patterns = []
+    for (starts_word, ends_word), members in sorted(groups.items()):
+        head = r"(?<!\w)" if starts_word else ""
+        tail = r"(?!\w)" if ends_word else ""
+        body = "|".join(_literal_pattern(h, anchored=False) for h in members)
+        patterns.append(re.compile(head + "(?:" + body + ")" + tail, re.IGNORECASE))
+    return tuple(patterns)
 
 
 def redact_for_ai(

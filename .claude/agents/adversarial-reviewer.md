@@ -202,8 +202,9 @@ never the problem. Treating everything you found as blocking was.
    is a finding about the run and belongs in your report.
 
    **"RE-READ `CLAUDE.md`" CANNOT BE DONE BY READING IT, AND PRETENDING
-   OTHERWISE IS THE WORST OF THE THREE OPTIONS.** It is ~2900 lines against a
-   read cap near 930. A reviewer who opens it gets the first third and then
+   OTHERWISE IS THE WORST OF THE THREE OPTIONS.** It was ~2900 lines when this
+   was written and 2340 on 2026-09-24 -- either way far past a read cap near
+   930. A reviewer who opens it gets the first third and then
    relies on injected context for the rest — which is the stale copy this step
    exists to distrust, now trusted for two thirds of the file and believed to
    have been checked.
@@ -221,7 +222,10 @@ never the problem. Treating everything you found as blocking was.
    nothing -- the measured non-delivery failure #384 exists to end, caused by
    the step meant to catch stale context.
 
-   Read your own frontmatter for the list. Concretely, the search is
+   Read your own frontmatter for the list -- and know it is a FLOOR, not the
+   whole set: a harness can add a hand-back tool the `tools:` line never names
+   (measured 2026-09-24, see "Deliver the report" below). Concretely, the
+   search is
 
        pattern:  ^(#{2,3} |[0-9]+\. \*\*|- \*\*|\*\*)
        path:     <the ABSOLUTE worktree path you were handed>/CLAUDE.md
@@ -323,15 +327,39 @@ never the problem. Treating everything you found as blocking was.
 
 ## Reporting
 
-### Deliver the report with `SendMessage`. Your plain text reaches nobody.
+### Deliver the report through a delivery TOOL. Your plain text reaches nobody.
 
 **This is first because a report that is not delivered is worse than no report:
 the dispatcher sees you go idle, and idle reads as done.**
 
 Your plain-text output is NOT transmitted to the agent that dispatched you.
-Finish by calling `SendMessage` with the report as the `message`, addressed to
-whoever dispatched you — `main` when you were spawned from a main conversation,
-otherwise the team-lead name your prompt gives you.
+Finish by calling a tool that carries the report, and pick it in this order:
+
+1. **The hand-back tool your dispatch or system instructions name**, if they
+   name one (a `SubagentHandback`-style call). The harness that spawned you
+   knows its own return path; this file does not.
+2. **Otherwise `SendMessage`**, with the report as the `message`, addressed to
+   whoever dispatched you — `main` when you were spawned from a main
+   conversation, otherwise the team-lead name your prompt gives you.
+
+**Name the channel you used in the report's opening line**, beside the two
+step-0 files that line already names (see "Open the report" below). **Any
+disagreement about the channel is a RUN-FINDING** -- report it, never resolve it
+quietly. That means between any two of: this file, your injected copy of it, the
+dispatcher's prose, and the tool the system instructions name. A tool whose
+name has CHANGED is one too: rule 1 above will quietly follow it, which is right
+for delivery and is exactly the drift nobody else can see.
+
+**Why the order, measured 2026-09-24:** this section used to name `SendMessage`
+alone. Four reviewers dispatched through the Agent tool were each told by the
+harness that only its hand-back call reaches the caller -- the four #545
+rounds recorded in that PR's `## Adversarial audit` section (324dc15,
+adaf082, 701f032, d3aeaaf). Every review dispatched since, through 2026-09-24, reported the same.
+Each used the hand-back, each report arrived, and each flagged the
+contradiction with this file. The rule that survives is the one this section
+was always about -- a TOOL call, never plain text. The tool's NAME is a
+property of the harness, which is why it comes from the dispatch first (#215
+records definitions going stale against the world; this is an instance).
 
 **End every report with a terminator on its own final line:**
 
@@ -375,8 +403,8 @@ signals. The reports were recovered only because the dispatcher asked each
 agent directly instead of reading idle as delivery.
 
 **A compact contract and a terminator both help and neither is the fix.** They
-bound the size and they make a cut visible. Only calling `SendMessage` makes
-the report exist for the reader.
+bound the size and they make a cut visible. Only a delivery-tool call makes the
+report exist for the reader.
 
 Rank by severity — could this reach a client, corrupt data, or cost money.
 
@@ -408,7 +436,8 @@ State clearly what you examined and what you could not reach — an unchecked ar
 is a finding of its own, not silence.
 
 Open the report by naming the two files from step 0 with their **absolute
-paths** and whether each was read, stale or absent. One line. It is what lets a
+paths** and whether each was read, stale or absent, and the delivery channel
+you are using. One line. It is what lets a
 reader tell a real audit from a generic one months later, when the only surviving
 evidence is your report.
 
