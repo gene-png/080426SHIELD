@@ -16,8 +16,9 @@ second half.
 also present: the board query returns the issue either way, so it needs a place
 in the ordering either way. An unowned blocker is a coherent state.
 
-`mvp-blocking` together with `post-mvp` is NOT: "blocks the MVP" and "deferred
-past it" contradict each other, whatever the tiers, so the pair is its own
+`mvp-blocking` together with `post-mvp` is NOT: `mvp-blocking` means ON THE
+BOARD (D-087 corrects D-086, which read it by its name), and "on the board"
+contradicts "deferred off it", whatever the tiers, so the pair is its own
 fault and is reported before any tier check. The case it catches is a half-done
 move to `post-mvp` that forgot to remove `mvp-blocking`. Off the board,
 `post-mvp` allows a tier and does not require one.

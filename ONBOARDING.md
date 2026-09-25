@@ -86,7 +86,9 @@ docker compose exec -T api pytest -m unit -q
 # 2. web typecheck (in-container):
 docker compose exec -T web sh -lc "cd /app && pnpm -F web exec tsc --noEmit"
 # 3. formatting (host; use the version pnpm-lock.yaml resolves):
-npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+# Git Bash only (see CLAUDE.md's format step)
+v=$(scripts/prettier-hook.sh --print-version)
+npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 # 4. python lint/format (in-container, CI-parity — pins ruff==0.15.20 black==26.5.1):
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 # 5. web unit tests (vitest, in-container):
@@ -130,8 +132,10 @@ walking the checklist below.
 3. **Edit your runtime copy**: set `working_dir` to your absolute repo path
    and `expected_gh_user` to your GitHub login. The loop halts on either
    being wrong. Confirm the `gates` array's command strings match YOUR
-   OS/Docker/Node layout — the six gates themselves are the invariant. Known
-   trap: gate 3 (prettier) discovers Node via the **winget** package path
+   OS/Docker/Node layout — the six gates themselves are the invariant.
+   **Replace gate 3's hardcoded `prettier@3.9.6`** with CLAUDE.md's
+   lockfile-read format command (D-087); every staged queue pins a version
+   the lockfile has since passed. Known trap: gate 3 (prettier) discovers Node via the **winget** package path
    (`$LOCALAPPDATA/Microsoft/WinGet/Packages/OpenJS.NodeJS.LTS…`); if you
    installed Node any other way (.msi, nvm), replace the `NODE_DIR` discovery
    with your node dir — or drop it if `npx` is already on the gate shell's

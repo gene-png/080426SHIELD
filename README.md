@@ -188,7 +188,7 @@ Every variable in [`.env.example`](.env.example) is required. Summary:
 | LLM            | `SHIELD_LLM_PROVIDER`, `SHIELD_LLM_MODEL`, `SHIELD_LLM_MODE`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GCP_PROJECT_ID` + `GCP_REGION` (`vertex`/ADC) | `MODE=fixture` for offline tests                                 |
 | Feature flags  | `SHIELD_AUTH_REQUIRE_MFA`, `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY`, `SHIELD_EMAIL_DELIVERY_ENABLED`                                                                        | All `false` for v1                                               |
 | Redaction      | `SHIELD_REDACTION_MODE`                                                                                                                                               | `strict` in prod; `off` forbidden outside dev                    |
-| Sessions       | `JWT_ACCESS_TTL_SECONDS`, `JWT_REFRESH_TTL_SECONDS`, `SHIELD_ACCOUNT_LOCKOUT_*`, `SHIELD_IDLE_TIMEOUT_SECONDS`, `SHIELD_FORCED_REAUTH_SECONDS`                        | Compensating controls (MFA enforcement is optional, default off) |
+| Sessions       | `JWT_ACCESS_TTL_SECONDS`, `JWT_REFRESH_TTL_SECONDS`, `SHIELD_ACCOUNT_LOCKOUT_*`, `SHIELD_FORCED_REAUTH_SECONDS`                                                       | Compensating controls (MFA enforcement is optional, default off) |
 | Mail           | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                                                                                                                                 | MailHog locally                                                  |
 
 ### LLM providers
@@ -236,7 +236,9 @@ docker compose exec -T web sh -lc "cd /app && pnpm -F web lint"
 docker compose exec -T api sh -lc "cd /app && ruff check --no-cache . && black --check ."
 
 # Formatting (the version pnpm-lock.yaml resolves; CI enforces it)
-npx -y prettier@3.9.6 --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+# Git Bash only (see CLAUDE.md's format step)
+v=$(scripts/prettier-hook.sh --print-version)
+npx -y "prettier@${v:?}" --check "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 
 # End-to-end (Playwright) - host-run against the running stack on :3000.
 # 21 spec files under e2e/smoke/ (s0-s21). Chromium only, serialized;
@@ -267,7 +269,7 @@ are pending.
 Per Master Spec §2, two risks are explicitly accepted for v1:
 
 1. **Commercial LLM provider may not be FedRAMP-authorized.** Egress may leave the FedRAMP boundary. Mandatory PII redaction (`apps/api/app/ai/redact.py`) is the primary control. See [`docs/security.md`](docs/security.md).
-2. **MFA and email-verification enforcement is optional (default off) for v1.** The flows themselves are real since Sprint 6: TOTP MFA with recovery codes (D-027) and email verification / password reset (D-028). Enforcement is flag-gated — `SHIELD_AUTH_REQUIRE_MFA` / `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` default `false`; flipping them on is a deploy-time choice with no code changes. Compensating controls that are always enforced: 15-minute access-token lifetime; a 30-minute refresh-token TTL that functions as the idle timeout (an idle session cannot refresh past it); a daily (24h) forced re-auth ceiling enforced at `/auth/refresh` via an `auth_time` claim (typed 401 `reason=reauth_required`, tunable with `SHIELD_FORCED_REAUTH_SECONDS`); single-use refresh-token rotation (a replayed/rotated-out refresh token is rejected, `reason=refresh_reused`); and account lockout after 10 failed attempts in 15 minutes.
+2. **MFA and email-verification enforcement is optional (default off) for v1.** The flows themselves are real since Sprint 6: TOTP MFA with recovery codes (D-027) and email verification / password reset (D-028). Enforcement is flag-gated — `SHIELD_AUTH_REQUIRE_MFA` / `SHIELD_AUTH_REQUIRE_EMAIL_VERIFY` default `false`; flipping them on is a deploy-time choice with no code changes. Compensating controls, with what each depends on: a short access-token lifetime (15 minutes under compose; the config default is 60); an idle bound from the refresh-token TTL (15-30 minutes under compose, counted from the last rotation; at the config defaults it is no tighter than the ceiling, see `docs/security.md`); a 12-hour forced re-auth ceiling on session age, not idle time, enforced at `/auth/refresh` via an `auth_time` claim (typed 401 `reason=reauth_required`, tunable with `SHIELD_FORCED_REAUTH_SECONDS`); refresh-token rotation (a rotated-out refresh token is rejected, `reason=refresh_reused`; only the immediately previous token is honoured, for 60 seconds, so concurrent requests converge); and account lockout after 10 failed attempts in 15 minutes.
 
 ## License
 
