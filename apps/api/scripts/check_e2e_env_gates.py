@@ -45,8 +45,11 @@ LIMITS, stated so a clean run is not read as more than it is:
   * A variable that is CONFIGURATION with a default, not a gate
     (E2E_API_URL), is reported unless exempted, because this cannot tell a
     gate from a setting. Exempt it for the specs that use it that way.
-  * Only `*.spec.ts` is scanned. A spec renamed out of that pattern -- #560's
-    own mechanism -- leaves CI with every gate green (#579).
+  * It scans the files Playwright's DEFAULT testMatch collects
+    (`*.spec|test.[cm][jt]s[x]`), and refuses (exit 2) if the config sets its
+    own `testMatch`. A spec renamed out of that pattern is not scanned here;
+    `check_e2e_spec_listing.py` reports it as a file neither in the run nor
+    declared (#579).
 
 EXIT CODES (D-051): 0 every gate variable is set or exempted; 1 a finding; 2
 could not look -- no `e2e/` or no spec files under it, no workflows, a
@@ -70,6 +73,12 @@ _SKIP = re.compile(r"\b(?:test(?:\s*\.\s*describe)?|testInfo)\s*\.\s*(?:skip|fix
 _ASSIGN = re.compile(r"^(?:export\s+)?([A-Z0-9_]+)=(\S*)")
 _DISABLING = {"", "0", "false"}
 EXEMPTIONS = Path(".github/e2e-env-gate-exemptions.json")
+#: Playwright's DEFAULT testMatch, `**/*.@(spec|test).?(c|m)[jt]s?(x)`. The
+#: config sets none; if it ever does, this is no longer the suite, so that is a
+#: could-not-look rather than a guess (#579).
+_SUITE_FILE = re.compile(r"\.(?:spec|test)\.[cm]?[jt]sx?$")
+_CONFIG = Path("e2e") / "playwright.config.ts"
+_TEST_MATCH = re.compile(r"\btestMatch\s*:")
 
 
 class CouldNotLook(Exception):
@@ -91,9 +100,19 @@ def gate_variables(root: Path) -> dict[str, list[str]]:
     e2e = root / "e2e"
     if not e2e.is_dir():
         raise CouldNotLook(f"{e2e} does not exist -- wrong directory?")
-    specs = [p for p in e2e.rglob("*.spec.ts") if "node_modules" not in p.parts]
+    config = root / _CONFIG
+    if config.is_file() and _TEST_MATCH.search(config.read_text(encoding="utf-8")):
+        raise CouldNotLook(
+            f"{config} sets `testMatch`; this gate scans Playwright's DEFAULT pattern "
+            "and cannot say which files are the suite"
+        )
+    specs = [
+        p
+        for p in e2e.rglob("*")
+        if p.is_file() and _SUITE_FILE.search(p.name) and "node_modules" not in p.parts
+    ]
     if not specs:
-        raise CouldNotLook(f"no *.spec.ts under {e2e}; an empty scan is not a clean one")
+        raise CouldNotLook(f"no spec files under {e2e}; an empty scan is not a clean one")
     found: dict[str, list[str]] = {}
     for spec in sorted(specs):
         text = spec.read_text(encoding="utf-8")

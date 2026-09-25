@@ -273,11 +273,43 @@ def test_a_listed_spec_that_no_longer_reads_the_variable_is_stale(tmp_path, caps
     assert "exemption is STALE for e2e/old.spec.ts" in out, out
 
 
-def test_an_exemption_with_no_specs_is_could_not_look(tmp_path, capsys) -> None:
-    root = _repo(
-        tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {"E2E_PERF": {"reason": "#483"}}
-    )
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"reason": "#483"},
+        # #580: a STRING is not a list of specs -- iterated, it would be one
+        # spec per character -- and an EMPTY list scopes the exemption to
+        # nothing. Each must be could-not-look, not a finding or a pass.
+        {"reason": "#483", "specs": "e2e/perf.spec.ts"},
+        {"reason": "#483", "specs": []},
+        {"reason": "#483", "specs": [7]},
+    ],
+    ids=["missing", "a-string", "empty-list", "not-strings"],
+)
+def test_an_exemption_with_no_specs_list_is_could_not_look(tmp_path, capsys, entry) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {"E2E_PERF": entry})
     code = gate.main(["gate", "--root", str(root)])
     out = capsys.readouterr().out
     assert code == 2, out
-    assert "needs a non-empty `specs` list" in out, out
+    assert "E2E_PERF needs a non-empty `specs` list" in out, out
+
+
+# --- #579: the suite is Playwright's default testMatch, not only `*.spec.ts` -------------
+
+
+@pytest.mark.parametrize("name", ["perf.spec.tsx", "perf.test.ts", "perf.spec.mjs"])
+def test_a_gate_in_any_default_pattern_spec_is_seen(tmp_path, capsys, name: str) -> None:
+    root = _repo(tmp_path, {name: GATED}, UNSET_WORKFLOW, {})
+    code, out = _run(root, capsys)
+    assert code == 1, out
+    assert "E2E_PERF" in out and name in out, out
+
+
+def test_a_config_that_sets_test_match_is_could_not_look(tmp_path, capsys) -> None:
+    root = _repo(tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {})
+    (root / "e2e" / "playwright.config.ts").write_text(
+        "export default { testMatch: '**/*.e2e.ts' };\n", encoding="utf-8"
+    )
+    code, out = _run(root, capsys)
+    assert code == 2, out
+    assert "sets `testMatch`" in out, out
