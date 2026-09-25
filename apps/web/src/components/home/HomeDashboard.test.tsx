@@ -49,6 +49,7 @@ function deliverable(over: Partial<ClientDeliverable>): ClientDeliverable {
     version: 1,
     released_at: "2026-02-02T00:00:00Z",
     superseded: false,
+    withheld: false,
     pdf_artifact_id: null,
     xlsx_artifact_id: null,
     docx_artifact_id: null,
@@ -490,6 +491,7 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
           zt_targets_computed_live: null,
           attack_uncovered_count: null,
           attack_uncovered_unresolved: false,
+          attack_uncovered_withheld: false,
           csf_gap_count: null,
           csf_gap_unresolved: false,
           csf_services: 0,
@@ -532,5 +534,54 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
     );
 
     expect(screen.queryByText(/could not be loaded/i)).toBeNull();
+  });
+});
+
+describe("HomeDashboard — a WITHHELD report is not ready (#556, review round 3 A)", () => {
+  const SVC_ATTACK = "44444444-4444-4444-8444-444444444444";
+  const attack = engagement({
+    service_id: SVC_ATTACK,
+    service_type: "attack_coverage",
+    title: "ATT&CK Coverage",
+    status: "released",
+    assessment_status: "released",
+  });
+  const withheldReport = deliverable({
+    id: "d-withheld",
+    service_id: SVC_ATTACK,
+    service_kind: "attack_coverage",
+    service_title: "ATT&CK Coverage",
+    withheld: true,
+  });
+
+  function renderWith(deliverables: ClientDeliverable[]) {
+    render(
+      <HomeDashboard
+        greetingName="Ada"
+        deliverables={deliverables}
+        engagements={[attack]}
+        unreadMessages={0}
+        valueSummary={null}
+        unavailable={[]}
+      />,
+    );
+  }
+
+  it("does not headline a withheld report as ready", () => {
+    renderWith([withheldReport]);
+    expect(screen.queryByText(/report is ready/)).not.toBeInTheDocument();
+    expect(screen.getByText("Report withheld")).toBeInTheDocument();
+    expect(screen.queryByText("Report ready")).not.toBeInTheDocument();
+    // Not "Released and ready to read": the next move is the analyst's.
+    expect(titlesIn("In progress")).toEqual(["ATT&CK Coverage"]);
+  });
+
+  it("still headlines a readable report beside a withheld one", () => {
+    renderWith([withheldReport, deliverable({})]);
+    expect(
+      screen.getByRole("heading", {
+        name: /Technical Debt Review report is ready/,
+      }),
+    ).toBeInTheDocument();
   });
 });

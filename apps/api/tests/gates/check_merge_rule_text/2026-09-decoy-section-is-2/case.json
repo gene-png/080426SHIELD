@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. Review of 6fcc02f: a byte-identical decoy of the section inserted above the real one would be read instead of it, so the real one could be edited green. Exactly one `## The merge rule` heading is required.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "`## The merge rule` headings",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}

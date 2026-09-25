@@ -39,6 +39,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.attack.analytics import compute as compute_attack  # noqa: E402
+from app.attack.catalog import SOURCE_VERSION as ATTACK_SOURCE_VERSION  # noqa: E402
 from app.attack.catalog import TECHNIQUES, parent_techniques  # noqa: E402
 from app.attack.coverage import CoverageStatus  # noqa: E402
 from app.attack.exporters import (  # noqa: E402
@@ -100,6 +101,7 @@ from app.risk.engine import (  # noqa: E402
     RiskAxis,
     tier_for,
 )
+from app.routes.risk import _provenance_snapshot  # noqa: E402
 from app.security.email_domains import domain_of  # noqa: E402
 from app.security.password import hash_password  # noqa: E402
 from app.storage import StorageBackend, get_storage  # noqa: E402
@@ -927,6 +929,8 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         status=AttackAssessmentStatus.RELEASED,
         approved_at=utcnow(),
         approved_by=admin.id,
+        # #556: rows below are seeded from this catalog, so record which one.
+        catalog_version=ATTACK_SOURCE_VERSION,
     )
     db.add(assessment)
     db.flush()
@@ -1210,11 +1214,13 @@ def _seed_risk_register(
         # of green, and this is the same shape with the polarity reversed.
         #
         # An EMPTY `excluded` is a positive claim: the demo register is built
-        # from finalized inputs and nothing was withheld. `inputs` is left out
-        # rather than invented, because the seed does not go through
-        # `_provenance_snapshot` and a hand-written input list would be a
-        # second, drifting answer to a question that resolver owns.
-        provenance={"excluded": []},
+        # from finalized inputs and nothing was withheld. `inputs` comes from
+        # `_provenance_snapshot` ITSELF -- the resolver that owns the question
+        # -- over the assessments seeded above, never from a hand-written list.
+        # It used to be left out, and since #556 that is not neutral: a register
+        # naming no ATT&CK input is withheld from the client
+        # (`is_stale_risk_register`), which would have withheld the demo's own.
+        provenance=_provenance_snapshot(db, org.id, []),
     )
     db.add(register)
     db.flush()

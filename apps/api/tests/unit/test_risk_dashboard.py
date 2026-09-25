@@ -365,3 +365,102 @@ def test_the_client_dashboard_discloses_entries_missing_from_every_breakdown(
         f"with {b['entries_without_tier']} disclosed -- these must reconcile, "
         "or the disclosure is a number that explains nothing"
     )
+
+
+def _attack_input(prov: dict) -> dict:
+    (entry,) = [e for e in prov["inputs"] if e["kind"] == "attack"]
+    return entry
+
+
+def _only(kinds_other_than_attack: dict) -> dict:
+    return {
+        "inputs": [e for e in kinds_other_than_attack["inputs"] if e["kind"] != "attack"],
+        "excluded": [],
+    }
+
+
+def _with_attack_id(prov: dict, assessment_id: str) -> dict:
+    return {
+        "inputs": [
+            {**e, "assessment_id": assessment_id} if e["kind"] == "attack" else e
+            for e in prov["inputs"]
+        ],
+        "excluded": [],
+    }
+
+
+def _two_attack(prov: dict, second_id: str) -> dict:
+    return {"inputs": [*prov["inputs"], {**_attack_input(prov), "assessment_id": second_id}]}
+
+
+_MISSING = "00000000-0000-4000-8000-000000000000"
+
+#: The truth table, written before `is_stale_risk_register`'s rewrite. Each row is
+#: a shape a real writer produces (the generate path's `_provenance_snapshot`,
+#: `seed_demo.py`'s `{"excluded": []}` before #556, a pre-0047 NULL) or a
+#: corruption of one. Only a register PROVABLY built from current-catalog
+#: ATT&CK input reaches the client.
+_REGISTER_CASES = [
+    # (id, provenance from the generated one, stamp the ATT&CK assessment stale?, status)
+    ("pre_0047_null", lambda p: None, False, 409),
+    ("seed_shape_no_inputs_key", lambda p: {"excluded": []}, False, 409),
+    ("inputs_not_a_list", lambda p: {"inputs": "attack", "excluded": []}, False, 409),
+    ("inputs_empty", lambda p: {"inputs": [], "excluded": []}, False, 409),
+    ("no_attack_input", _only, False, 409),
+    ("attack_current", lambda p: p, False, 200),
+    ("attack_stale", lambda p: p, True, 409),
+    ("attack_missing", lambda p: _with_attack_id(p, _MISSING), False, 409),
+    ("attack_bad_id", lambda p: _with_attack_id(p, "not-a-uuid"), False, 409),
+    ("two_attack_one_missing", lambda p: _two_attack(p, _MISSING), False, 409),
+    (
+        "two_attack_both_current",
+        lambda p: _two_attack(p, _attack_input(p)["assessment_id"]),
+        False,
+        200,
+    ),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("shape", "stale_attack", "expected"),
+    [(build, stale, code) for _, build, stale, code in _REGISTER_CASES],
+    ids=[case[0] for case in _REGISTER_CASES],
+)
+def test_the_client_risk_dashboard_shows_only_a_provably_current_register(
+    app_client, shape, stale_attack, expected
+) -> None:
+    """#556, the owner's decision: a finalized register whose findings may have
+    been emitted by technique ID against the old catalog's names is withheld
+    from the client, typed. Round 4 found the seeded shape fell open."""
+    from sqlalchemy import select, update
+
+    from app.models.attack_assessment import AttackAssessment
+    from app.models.risk_register import RiskRegister
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    c.headers["X-Client-Id"] = client_id
+    _generate_and_finalize(c, admin["tokens"]["access_token"], client_id)
+
+    with c.test_session() as db:  # type: ignore[attr-defined]
+        reg = db.execute(select(RiskRegister)).scalars().one()
+        generated = reg.provenance
+        # The writer's real shape, or this table is about a different system.
+        assert {e["kind"] for e in generated["inputs"]} >= {"attack"}
+        db.execute(update(RiskRegister).values(provenance=shape(generated)))
+        if stale_attack:
+            db.execute(update(AttackAssessment).values(catalog_version=None))
+        db.commit()
+
+    r = c.get(
+        f"/clients/{client_id}/risk/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    )
+    assert r.status_code == expected, r.text
+    if expected == 409:
+        body = r.json()["error"]
+        assert body["reason"] == "attack_catalog_mismatch"
+        assert body["message"].startswith("This Risk Register was built from an ATT&CK")

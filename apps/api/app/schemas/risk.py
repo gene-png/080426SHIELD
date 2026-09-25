@@ -48,6 +48,12 @@ class RiskGateStatus(BaseModel):
     # "what is unapproved" and "what stops you". Merging them is what produced
     # the defect.
     synthesizable_missing: list[str] = []
+    # #556: the consultant sentence when the finalized ATT&CK input was scored
+    # against a catalog other than the current one; None when it is current or
+    # absent. BLOCKS generation, with its own remedy -- it is already approved,
+    # so it is not an entry in `synthesizable_missing`. Required, no default:
+    # the gate is built live, and a default would hide missing wiring.
+    attack_catalog_mismatch: str | None
 
 
 class RiskEntryResponse(BaseModel):

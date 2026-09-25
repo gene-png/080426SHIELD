@@ -666,6 +666,7 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
     admin_id = _uuid.UUID(reg["user"]["id"])
     client_id = _uuid.UUID(c.headers["X-Client-Id"])
 
+    from app.attack.catalog import SOURCE_VERSION
     from app.models.attack_assessment import (
         AttackAssessment,
         AttackAssessmentStatus,
@@ -685,12 +686,18 @@ def test_risk_gate_and_findings_skip_discarded(app_client) -> None:
             client_id=client_id,
             version=1,
             status=AttackAssessmentStatus.APPROVED,
+            # As `create_assessment` stamps it (#556); a NULL here is the
+            # stale state, which synthesis now refuses.
+            catalog_version=SOURCE_VERSION,
         )
         a2 = AttackAssessment(
             service_id=attack_svc.id,
             client_id=client_id,
             version=2,
             status=AttackAssessmentStatus.DISCARDED,
+            # As `create_assessment` stamps it (#556); a NULL here is the
+            # stale state, which synthesis now refuses.
+            catalog_version=SOURCE_VERSION,
         )
         db.add_all([a1, a2])
         db.flush()

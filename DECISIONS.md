@@ -5869,6 +5869,53 @@ risk-acceptance vocabulary (artifact names, control references) against the
 FedRAMP and NIST sources, not against this record. "Moderate" is #557's
 wording; the platform targets Moderate and High, so check the High baseline too.
 
+## D-091 — The ATT&CK catalog is generated from MITRE's STIX, and it is v19.2
+
+**Date:** 2026-09-24 · **Issues:** #556 (tier-1), #554 · **Decided by:** the owner (version and path); the method is this PR's
+
+**What was wrong.** `app/attack/catalog.py` was hand-encoded and labelled "ATT&CK Enterprise v15 baseline: 607 total". It held 633 entries and matched no released version. Diffed against MITRE's STIX for v15.1, v16.1, v17.1 and v18.1:
+
+- 17 real techniques were missing in every version, including T1553 and all six of its sub-techniques;
+- T1558 and T1649 carried each other's names;
+- the four Kerberos sub-techniques were filed as T1649.001–.004, IDs that do not exist;
+- 13 v16 additions sat on a v15 base;
+- `_dedupe_and_merge` deliberately kept the longer of two names, so "(also DE)"-style editorial suffixes reached client deliverables.
+
+The only catalog test asserted `len(TECHNIQUES) >= 600`. **Every ATT&CK coverage number produced so far was computed over a denominator that was not ATT&CK.**
+
+**Decision 1 — generate, never hand-encode.** `scripts/generate_attack_catalog.py` reads one `enterprise-attack-<version>.json` from mitre-attack/attack-stix-data and refuses unless its collection object names the requested version. It writes `app/attack/_catalog_data.py` and a type-selected subset of MITRE's objects under `app/attack/stix/` (value-equal to MITRE's, re-serialized with sorted keys, so not byte-equal). `catalog.SOURCE` records the version, the URL and the full file's sha256, so the version claim is true by construction. This follows the repo's rule to prefer a derivation over a synchronization: a hand list kept in sync with published data had drifted in five ways.
+
+**Decision 2 — v19.2, by the owner's rule.** The rule: all test data → generate v19.2, discard and rescore, and land it in one move; real assessments exist → v15.1 first. Measured on 2026-09-24:
+
+- 0 real client ATT&CK assessments in any environment this repo defines;
+- the dev database holds 4, all test: the seeded demo, an e2e-minted client, and the synthetic client of #555;
+- migration 0045's "14 assessments" was also dev data;
+- `docs/operations.md` states that no production deployment exists.
+
+**The path rests on one condition nobody here can check:** that no real engagement ran on a stack this session could not reach.
+
+v19.2 itself: collection "Enterprise ATT&CK" 19.2, source sha256 `dc1639caa5501d720e280cf1cbd8fbe009884a0c9b3e6e9ed9d0c25166c3d8f4`, 15 tactics, 222 techniques, 475 sub-techniques. TA0005 keeps its ID and becomes **Stealth**; **Defense Impairment** is the new TA0112. 19 IDs from the old file are inactive in v19.2: all of T1562, T1070.001/.002 and T1574.002 are revoked or deprecated, and the other four are the non-existent T1649.00x.
+
+**Decision 3 — the test never agrees with the catalog by construction.** `test_attack_catalog_matches_stix.py` parses the committed subset with its own code and compares IDs, names, tactics, matrix order and the sub-technique flag. One test does run the generator, and says so: it proves the data module was not hand-edited, and nothing about MITRE. Red-on-revert: reintroducing the T1558/T1649 swap turns 3 named tests red; dropping T1553 and its subs turns 3 red.
+
+**Decision 4 — every assessment records its catalog version, and every reader that computes, changes or publishes coverage refuses a stale one.** Rows are keyed by technique code and pre-seeded from the catalog of the day. The readers kept only rows whose code was in the current catalog (`if r.technique_code in valid`), so after a catalog change an old assessment would silently lose 19 statuses and lack rows for every new technique while still reporting numbers. Migration 0052 adds `attack_assessments.catalog_version`: stamped at creation, **NULL for every existing row**, because those were scored against a label that was false.
+
+`app/attack/catalog_version.py` refuses with a typed 409 `attack_catalog_mismatch`:
+
+- in `routes/attack.py`: coverage PATCH, confirm-citations, the AI request builder, the heatmap, approve, finalize and a first release;
+- in `routes/clients.py`: the client dashboard, in client wording, which the dashboard page renders under "Dashboard withheld" instead of an unhandled error;
+- in `routes/risk.py`: risk synthesis, which emits findings by technique ID and would otherwise relabel answers by ID. The Risk Register gate carries the refusal's own sentence in a field of its own, `attack_catalog_mismatch`, which the Risk Register page renders as its own banner. It is not an entry in `synthesizable_missing`: that banner reads "until these are approved", and this input already is.
+
+The client value-summary card reports the ATT&CK kind **unresolved** for a stale assessment, the answer it already gives for an unresolvable service.
+
+**A document already released over a stale assessment is withheld, not exempt.** The owner's decision, 2026-09-25, recorded on #556. It was first my call. It was then briefly replaced by a refusing migration, which the owner withdrew: with no rescore control after approval (#558), a refusing migration is a dead end. `is_stale_attack_deliverable` is one predicate for both client paths to it. The client deliverable list keeps the row, because the home page asserts that list's membership. The row's `summary`, which carried the finalize-time "Coverage: X%" over a denominator that is not ATT&CK, is replaced by the dashboard's own withholding sentence, and its file IDs are withheld. The file download refuses the same files with the same typed sentence, so a remembered link does not serve them either. The admin deliverables page counts such a row as "Withheld from client", not visible, through the same predicate, and the client home page and value card say withheld rather than ready. A finalized Risk Register built from a stale ATT&CK assessment is withheld from the client dashboard in the same way, decided from the register's own provenance. A register with no provenance predates 0047, and so was built from an unrecorded catalog: it is withheld too. Stakes, measured 2026-09-24: 0 real client ATT&CK assessments, so no client loses a document it holds today. The client sentence promises no rescore, because nothing rescores an approved assessment yet (#558, D-076).
+
+**Deliberately unguarded:** the assessment GET, which reports `catalog_current` so the workspace can say why numbers are refused, and the discard summary's row count, which is true for any catalog. The workspace does not draw a stale assessment's rows into the current matrix; step 2 says why instead, because an ID can name a different technique in the current catalog.
+
+Three states, handled at every guarded site: current, a different recorded version, unrecorded. Red-on-revert: deleting each guard call, one at a time, turns a named route-level test red. The workspace shows the refusal's own message instead of "reload to try again", keyed on the reason's value (#317). The consultant message names "Discard draft" and "Start assessment" only when discarding would leave no assessment. An approved or released assessment has no control that starts a new version (#558), so its message states that and names no action.
+
+**The migration rule, carried for any future real data.** A consultant scoring T1558 read "Steal or Forge Authentication Certificates" on screen. **They answered the name, not the ID.** An answer moves to wherever the NAME it was given against lives in the new catalog, never by ID. On the chosen path nothing migrates, because everything is rescored. The rule stays written because one real engagement makes it binding.
+
 ## D-094 — An ATT&CK parent with sub-techniques has its status computed from them
 
 **Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (that parents are computed); the rule itself is **my call, overturnable**

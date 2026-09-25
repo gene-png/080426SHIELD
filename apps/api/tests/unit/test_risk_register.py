@@ -1750,11 +1750,13 @@ def test_export_allows_the_seeded_shape_a_finalized_register_with_no_inputs_key(
 ) -> None:
     """THE SEEDED REGISTER'S OWN SHAPE, and the one no other test generates.
 
-    `seed_demo.py` writes `provenance={"excluded": []}` -- a dict, with no
-    `inputs` key, deliberately, because it does not go through
-    `_provenance_snapshot`. Every OTHER register in the system is either NULL
-    (pre-0047) or carries a full snapshot, so this third shape exists exactly
-    once and only on the demo path.
+    `seed_demo.py` wrote `provenance={"excluded": []}` -- a dict, with no
+    `inputs` key -- until #556 (2026-09-25) made it go through
+    `_provenance_snapshot`. Every register seeded before that still carries it,
+    so the shape outlives the writer: every OTHER register is either NULL
+    (pre-0047) or carries a full snapshot. Since #556 the CLIENT dashboard
+    withholds this shape (it names no ATT&CK input); this test is about the
+    ADMIN re-export path, which is a different question.
 
     That is why it needs its own test rather than being caught in passing: an
     input that exists in exactly one place, written by a script no spec drives,
@@ -2539,3 +2541,64 @@ def test_every_batched_risk_synthesize_call_carries_the_requests_correlation_id(
     engine.dispose()
     assert len(ids) > 1, ids  # more than one batch, or the workers are untested
     assert set(ids) == {"corr-risk-batches"}, ids
+
+
+@pytest.mark.unit
+def test_synthesis_refuses_an_attack_assessment_scored_against_another_catalog(app_client) -> None:
+    """#556: synthesis emits `ATT&CK <code>: <status>` per gap/partial row, BY ID.
+    A stale assessment holds codes the catalog no longer has (T1649.001 is not a
+    technique) and a T1558 row answered against the swapped name, so reading it
+    would relabel answers by ID. It is refused through the endpoint, typed."""
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    technique, _ = _seed_attack_and_zt(c, bearer, cid)
+    provider.register_static("risk_synthesize", LLMResponse(_one_entry(technique)))
+    db = _session()
+    db.execute(update(AttackAssessment).values(catalog_version=None))
+    db.commit()
+    db.close()
+
+    r = c.post(
+        f"/risk/clients/{cid}/register/generate", headers={"Authorization": f"Bearer {bearer}"}
+    )
+    assert r.status_code == 409, r.text
+    body = r.json().get("error", r.json())
+    assert body.get("reason") == "attack_catalog_mismatch", r.json()
+
+
+@pytest.mark.unit
+def test_the_gate_reports_a_stale_attack_input_with_the_refusals_sentence(app_client) -> None:
+    """#556, the twin of the synthesis refusal: the gate asks the same predicate
+    and carries the refusal's own sentence. This asserts the FIELD only. That
+    Generate is then not offered is the page's job, asserted in
+    `RiskRegisterDashboard.test.tsx` (review round 3: this test's old name
+    claimed the button, which nothing here can see)."""
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c, _ = app_client
+    bearer, cid = _admin(c)
+    _seed_attack_and_zt(c, bearer, cid)
+    bh = {"Authorization": f"Bearer {bearer}"}
+    before = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    assert (before["synthesizable_missing"], before["attack_catalog_mismatch"]) == ([], None)
+    db = _session()
+    db.execute(update(AttackAssessment).values(catalog_version=None))
+    db.commit()
+    db.close()
+
+    g = c.get(f"/risk/clients/{cid}/gate", headers=bh).json()
+    # Its own field: it is already approved, so "approve these" is the wrong list.
+    assert g["synthesizable_missing"] == []
+    assert "scored against an ATT&CK catalog that was never recorded" in (
+        g["attack_catalog_mismatch"]
+    )
+    # The same sentence the synthesis refusal gives, so the two cannot drift.
+    r = c.post(f"/risk/clients/{cid}/register/generate", headers=bh)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["message"] == g["attack_catalog_mismatch"]

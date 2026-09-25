@@ -12,6 +12,7 @@ import { PublicHeader } from "@/components/site/PublicHeader";
 import { SkipToContent } from "@/components/site/SkipToContent";
 import { ACTIVE_CLIENT_COOKIE, ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { isCatalogWithheld } from "@/lib/describe-save-error";
 import Link from "next/link";
 
 import type { JSX } from "react";
@@ -62,7 +63,14 @@ export default async function ResultsPage(): Promise<JSX.Element> {
       await apiFetch(`/clients/${clientId}/risk/dashboard`, { bearer: token });
       hasRiskDashboard = true;
     } catch (err) {
-      if (!(err instanceof ApiError && err.status === 404)) throw err;
+      // #556: a withheld register still gets its link. The dashboard page is
+      // where the client reads why it is withheld; hiding the link would make
+      // a delivered register silently vanish from Results.
+      if (isCatalogWithheld(err)) {
+        hasRiskDashboard = true;
+      } else if (!(err instanceof ApiError && err.status === 404)) {
+        throw err;
+      }
     }
   }
 

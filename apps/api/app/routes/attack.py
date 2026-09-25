@@ -34,6 +34,7 @@ from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
+    SOURCE_VERSION,
     TACTICS,
     TECHNIQUES,
     technique_by_id,
@@ -41,6 +42,8 @@ from app.attack.catalog import (
 from app.attack.catalog import (
     all_codes as attack_all_codes,
 )
+from app.attack.catalog_version import attack_parent, require_current_catalog
+from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.citations import (
     _MAX_REJECTED_EXAMPLES,
     Candidate,
@@ -165,6 +168,10 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         approved_at=a.approved_at,
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
+        catalog_version=a.catalog_version,
+        # The ONE definition of current (`catalog_version.is_current`), never a
+        # second inline comparison that could disagree with the guards.
+        catalog_current=attack_catalog_is_current(a),
         coverage=_serialize_coverage(rows),
     )
 
@@ -387,6 +394,8 @@ def create_assessment(
         client_id=client.id,
         version=version,
         status=AttackAssessmentStatus.DRAFT,
+        # #556: the catalog the pre-seeded rows below come from.
+        catalog_version=SOURCE_VERSION,
     )
     db.add(assessment)
     db.flush()
@@ -499,10 +508,7 @@ def patch_coverage(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
-    # #554: a reason code is valid only for the status it belongs to. Judged
-    # against the status the row will HAVE after this patch, and refused typed
-    # rather than stored: a missing reason is a release question, an impossible
-    # pairing (a missing control given as an N/A reason) is refused at the click.
+    require_current_catalog(db, a)  # #556
     # #554 (D-094): a parent WITH sub-techniques has its status computed from
     # them, so neither its status nor its reason is anyone's to set. Refused
     # typed, like every other write the vocabulary forbids.
@@ -531,6 +537,10 @@ def patch_coverage(
                 ),
             },
         )
+    # #554: a reason code is valid only for the status it belongs to. Judged
+    # against the status the row will HAVE after this patch, and refused typed
+    # rather than stored: a missing reason is a release question, an impossible
+    # pairing (a missing control given as an N/A reason) is refused at the click.
     resulting_status = data.get("status", row.status)
     if "reason_code" in data and not is_valid_reason(resulting_status, data["reason_code"]):
         valid = reason_codes_for(resulting_status)
@@ -1406,6 +1416,7 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
+    require_current_catalog(db, a)  # #556: never draft over rows keyed to another catalog
 
     # ONE query, projected two ways, so the hard allow-list and the egress
     # payload cannot disagree about what the client owns.
@@ -1613,6 +1624,7 @@ def confirm_coverage_citations(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
+    require_current_catalog(db, a)  # #556
     outstanding = [e for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is None]
     if not outstanding:
         # Refused rather than returned as a cheerful no-op. A 200 here would write
@@ -2088,6 +2100,9 @@ def approve_assessment(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment already released.",
         )
+    # #556: approving a stale draft would remove the discard remedy and make it
+    # the finalize/synthesis input.
+    require_current_catalog(db, a)
     # #554 (D-094): approval freezes the numbers, so every parent is recomputed
     # from its children first. A draft scored before parents were computed
     # would otherwise freeze parent statuses nobody's rule produced.
@@ -2216,6 +2231,9 @@ def heatmap(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No assessment yet.",
         )
+    # #556: `valid` below used to be the whole defence, and it DROPS unknown codes
+    # silently. A stale assessment is refused before any number is computed.
+    require_current_catalog(db, a)
     valid = attack_all_codes()
     rows = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -2711,6 +2729,7 @@ def finalize_attack_deliverable(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment must be approved before finalizing the deliverable.",
         )
+    require_current_catalog(db, assessment)  # #556: never render a stale denominator
     valid = attack_all_codes()
     coverage = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
@@ -2875,6 +2894,48 @@ def latest_attack_deliverable(
     return _serialize_deliverable(db, deliv)
 
 
+def _refuse_release_of_a_stale_deliverable(
+    db: Session, deliverable_id: uuid.UUID, client_id: uuid.UUID
+) -> None:
+    """#556: a document finalized over a non-current catalog is not released.
+
+    Only a FIRST release is guarded. Re-releasing an already-released deliverable
+    is `release_deliverable`'s idempotent repair path and publishes nothing new.
+    A deliverable this tenant does not own, or of another service kind, falls
+    through to `release_deliverable`, which 404s it -- so this never reveals
+    another tenant's deliverable or answers for another kind's. A NULL
+    `parent_version` (finalized before 0041) cannot be traced to the assessment it
+    was built from, so it is refused as unknown rather than guessed, the rule
+    `_release_parent` already applies.
+    """
+    deliv = db.get(Deliverable, deliverable_id)
+    if deliv is None or deliv.released_at is not None:
+        return
+    # Deliverables carry no client_id; tenancy is through the service, exactly as
+    # `require_deliverable_in_tenant` checks it.
+    svc = db.get(Service, deliv.service_id)
+    if svc is None or svc.client_id != client_id:
+        return
+    # Another kind's deliverable is `release_deliverable`'s 404 (`kinds`), never
+    # this guard's 409: it has no ATT&CK assessment to trace.
+    if svc.kind != ServiceKind.ATTACK_COVERAGE:
+        return
+    parent = attack_parent(db, deliv)
+    if parent is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_catalog_mismatch",
+                "message": (
+                    "This deliverable cannot be traced to the assessment it was built "
+                    "from, so the ATT&CK catalog it was scored against is unknown and it "
+                    "is not released."
+                ),
+            },
+        )
+    require_current_catalog(db, parent)
+
+
 @router.post(
     "/deliverables/{deliverable_id}/release",
     response_model=DeliverableResponse,
@@ -2886,6 +2947,7 @@ def release_attack_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    _refuse_release_of_a_stale_deliverable(db, deliverable_id, client.id)
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
