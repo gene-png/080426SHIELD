@@ -50,6 +50,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 RedactionMode = Literal["strict", "standard", "off"]
 
 # ---------------------------------------------------------------------------
@@ -1146,9 +1148,46 @@ def _redact_addresses(text: str) -> tuple[str, int]:
     return _RE_ADDRESS.sub(PLACEHOLDER_ADDRESS, text), count
 
 
+class BlankRedactionLiteralError(StarletteHTTPException):
+    """A literal-name rule was handed a needle with nothing to match.
+
+    Unreachable through today's callers -- `redact_org_name` returns early on a
+    blank name and `_redact_names` drops hints shorter than two characters after
+    normalising -- and that is exactly why it is a raise rather than a sentence:
+    the only protection was caller discipline written in a docstring, and a
+    blank needle then died as a bare IndexError at `tokens[0]`, which is not a
+    typed error under D-016 (owner review of #542).
+
+    RAISED, never skipped: this sits on the egress path, so stopping is the
+    fail-closed answer. Skipping the needle would redact less and say nothing.
+    Mapped by the global HTTPException handler to the typed envelope, as
+    `MissingFixtureError` is.
+    """
+
+    def __init__(self, needle: str) -> None:
+        super().__init__(
+            status_code=500,
+            detail={
+                "reason": "redaction_blank_literal",
+                "message": (
+                    "The redactor was given a blank name to remove "
+                    f"({needle!r}), so redaction stopped and nothing was sent."
+                ),
+            },
+        )
+
+
+def _needle_tokens(needle: str) -> list[str]:
+    """The needle's whitespace-separated tokens; a blank needle raises, typed."""
+    tokens = needle.split()
+    if not tokens:
+        raise BlankRedactionLiteralError(needle)
+    return tokens
+
+
 def _literal_edges(needle: str) -> tuple[bool, bool]:
     """Does the needle start / end with a word character? Decides its anchors."""
-    tokens = needle.split()
+    tokens = _needle_tokens(needle)
     return bool(re.match(r"\w", tokens[0])), bool(re.match(r"\w", tokens[-1][-1]))
 
 
@@ -1185,9 +1224,9 @@ def _literal_pattern(needle: str, *, anchored: bool = True) -> str:
       only when it ends with one. A word-edged name still cannot match inside
       a longer word; a punctuation-edged one needs no anchor on that side.
 
-    Callers must pass a needle with at least one non-space character.
+    A needle with no non-space character raises `BlankRedactionLiteralError`.
     """
-    tokens = needle.split()
+    tokens = _needle_tokens(needle)
     body = r"\s+".join(re.escape(t) for t in tokens)
     if not anchored:
         return body
@@ -1250,6 +1289,42 @@ def _redact_names(text: str, name_hints: Iterable[str]) -> tuple[str, int]:
     # positions INSIDE matched regions, and returns the longest hint starting
     # there. `pos` does not slice, so `(?<!\w)` still sees the previous
     # character.
+    #
+    # THE BOUND IS O(H * L * T): T the text length, L the longest hint in
+    # characters, H the hints in one anchor group (`_hint_patterns` compiles
+    # each group as ONE alternation). H and T were measured; the L factor is
+    # argued from the code, not measured -- every series used L of about 250.
+    #
+    # Why each factor. Inside a region, every position a hint could begin at
+    # gets a `match` comparing up to L characters -- plus any whitespace run
+    # a `\s+` join consumes, which only the token just before the run
+    # starts, so it adds O(H * T) once amortised. At each position, every
+    # alternative that fails pays for the prefix it matched first. CPython's
+    # parser hoists a prefix shared by ALL alternatives, but only up to the
+    # first `\s+` (a repeat does not compare equal; parsed and seen in the api
+    # image's Python 3.12.13), so it helps only when the
+    # hints share part of their FIRST word, and a hint that breaks the shared
+    # prefix costs only from the point where it breaks. A word-end `(?!\w)`
+    # failing after the longest match backtracks into the rest.
+    #
+    # Measured worst case, 2026-09-24, api image (Python 3.12.13): N hints
+    # of about 250 characters sharing a prefix, plus one more that breaks it
+    # at the first character, N = 1 to 1024 -- 427-556 ns per sharing hint
+    # per character. At N = 64 that is 31-33 us per character over 200 KB,
+    # about 32 s per MB by extrapolation. Every run is on #546.
+    #
+    # L IS BOUNDED BY THE SCHEMA, NOT HERE. Hints come from
+    # `name_hints_for_tenant` only: `User.display_name` (255 characters) and
+    # email local parts, which `EmailStr` keeps under 254 by refusing any
+    # address over 254 (email-validator 2.3.0, measured). `Client.legal_name`
+    # goes to `redact_org_name` -- no per-position loop, but its scan has the
+    # same L term, also bounded at 255. A hint source without a CHARACTER cap
+    # lifts the bound, and must be capped or come with a cap here.
+    #
+    # H IS BOUNDED BY NOTHING: up to two hints per tenant user, and users set
+    # their own display names. Filed as #546, not capped: a cap on hints is a
+    # cap on what gets redacted. A stall does NOT stop egress -- the request
+    # runs on after the caller gives up (measured, #546).
     spans: list[tuple[int, int]] = []
     for pat in _hint_patterns(hints):
         for region in pat.finditer(text):

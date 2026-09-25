@@ -151,7 +151,7 @@ write_lock 3.9.6 'prettier@3.9.6:'
 expect_ok "3.9.6" "reads the resolved version"
 
 # --- A VERSION THAT IS NOT THE REPO'S OWN. ----------------------------------
-# Every success case used to expect 3.9.6, which is also this repo's real pin --
+# Every success case used to expect 3.9.6, which was also this repo's real pin when written (2026-08-30) --
 # so `VERSION=3.9.6` hardcoded, or a `${VERSION:-3.9.6}` fallback, passed them.
 # A fixture pinning something else is what makes the read load-bearing (#318).
 write_lock 3.1.0 'prettier@3.1.0:'
