@@ -4,7 +4,7 @@ Branch `track1/e2e-manual-procedures`, base `20f747f`.
 
 ## Why
 
-Two specs were gated on variables no workflow sets, so they self-skipped on
+These specs were gated on variables no workflow sets, so they self-skipped on
 every CI run while reading as part of the suite:
 
 - `e2e/smoke/s26-oidc-login.spec.ts`, a SMOKE spec, behind `E2E_OIDC=1`;
