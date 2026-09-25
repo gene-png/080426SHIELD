@@ -32,7 +32,10 @@ vi.mock("./AttackDeliverableCard", () => ({
   AttackDeliverableCard: () => null,
 }));
 vi.mock("./AttackHeatmapCard", () => ({ AttackHeatmapCard: () => null }));
-vi.mock("./AttackMatrix", () => ({ AttackMatrix: () => null }));
+// A marker rather than null, so a test can tell whether step 2 drew it (#556).
+vi.mock("./AttackMatrix", () => ({
+  AttackMatrix: () => <div data-testid="attack-matrix" />,
+}));
 vi.mock("./AttackTechniquePanel", () => ({ AttackTechniquePanel: () => null }));
 vi.mock("@/components/messages/MessageThread", () => ({
   MessageThread: () => null,
@@ -81,6 +84,8 @@ function draft(): AttackAssessment {
     version: 1,
     coverage: [],
     documents_stale: false,
+    catalog_version: "19.2",
+    catalog_current: true,
   } as unknown as AttackAssessment;
 }
 
@@ -117,6 +122,173 @@ describe("AttackWorkspace reqSeq stale-fetch guard", () => {
     expect(
       screen.queryByText("No coverage assessment yet"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the API's own refusal when the assessment is on another ATT&CK catalog (#556)", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    const payload = {
+      error: {
+        reason: "attack_catalog_mismatch",
+        message:
+          "This assessment was scored against an ATT&CK catalog that was never recorded.",
+      },
+    };
+    // The mocked class stores nothing, so status and payload are set explicitly.
+    const refusal = Object.assign(
+      new attackClient.AttackProxyError(409, payload),
+      {
+        status: 409,
+        payload,
+      },
+    );
+    fetchHeatmap.mockRejectedValue(refusal);
+
+    render(
+      <AttackWorkspace serviceId="svc-stale" serviceTitle="Atlas ATT&CK" />,
+    );
+
+    expect(
+      await screen.findByText(
+        /scored against an ATT&CK catalog that was never recorded/,
+      ),
+    ).toBeInTheDocument();
+    // "reload to try again" is false advice for a stale assessment.
+    expect(screen.queryByText(/reload to try again/)).not.toBeInTheDocument();
+  });
+
+  it("does not offer Approve on an assessment scored against another catalog (#556)", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: null,
+      catalog_current: false,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-stale-approve"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    // Steps 1, 3 and 4 each say why they are blocked.
+    expect(
+      await screen.findAllByText(
+        /scored against a different ATT&CK catalog than the current one/,
+      ),
+    ).toHaveLength(3);
+    expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
+    // Run AI's only outcome would be the API's 409, so it is not offered.
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+  });
+
+  it("reads an ABSENT catalog_current as not current (#556, fail closed)", async () => {
+    // Missing data defaults to unconfirmed: a response without the field must
+    // not be offered Run AI, whose only outcome for a stale assessment is 409.
+    const { catalog_current: _omit, ...withoutField } = draft();
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(
+      withoutField as unknown as AttackAssessment,
+    );
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace serviceId="svc-absent" serviceTitle="Atlas ATT&CK" />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Run AI" }),
+    ).toBeDisabled();
+  });
+
+  it("offers Run AI on a current draft", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: "19.2",
+      catalog_current: true,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-current-run"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Run AI" }),
+    ).not.toBeDisabled();
+  });
+
+  it("does not draw a stale assessment's rows into the current matrix (#556)", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: "15.1",
+      catalog_current: false,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-stale-matrix"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    expect(await screen.findByTestId("attack-stale-catalog")).toHaveTextContent(
+      "This assessment was scored against ATT&CK v15.1, not the current one.",
+    );
+    expect(screen.queryByTestId("attack-matrix")).not.toBeInTheDocument();
+  });
+
+  it("draws the matrix for a current assessment", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: "19.2",
+      catalog_current: true,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-current-matrix"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    expect(await screen.findByTestId("attack-matrix")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("attack-stale-catalog"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the generic sentence for any OTHER heatmap failure", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchHeatmap.mockRejectedValue(
+      Object.assign(
+        new attackClient.AttackProxyError(500, {
+          error: { reason: "something_else", message: "not shown" },
+        }),
+        {
+          status: 500,
+          payload: {
+            error: { reason: "something_else", message: "not shown" },
+          },
+        },
+      ),
+    );
+
+    render(<AttackWorkspace serviceId="svc-500" serviceTitle="Atlas ATT&CK" />);
+
+    expect(await screen.findByText(/reload to try again/)).toBeInTheDocument();
+    expect(screen.queryByText("not shown")).not.toBeInTheDocument();
   });
 
   it("surfaces a failed catalog load to the error state (fail loudly)", async () => {

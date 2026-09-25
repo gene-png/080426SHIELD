@@ -23,6 +23,14 @@ from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
+from app.attack.catalog_version import (
+    CLIENT_WITHHELD_MESSAGE,
+    RISK_REGISTER_WITHHELD_MESSAGE,
+    is_stale_attack_deliverable,
+    is_stale_risk_register,
+    require_current_catalog_for_client,
+)
+from app.attack.catalog_version import is_current as attack_catalog_is_current
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
@@ -157,27 +165,52 @@ def list_client_deliverables(
         count=len(rows),
     )
 
-    items = [
-        ClientDeliverableResponse(
+    # #556 (D-091): an ATT&CK report released over a non-current catalog stays
+    # LISTED -- the home page asserts this list's membership, see above -- with
+    # its figures and files withheld and the reason in the summary it already
+    # renders, the same refusal its dashboard gives.
+    items = [_client_deliverable(db, deliv, svc) for deliv, svc in rows]
+    return ClientDeliverableListResponse(items=items)
+
+
+def _client_deliverable(db: Session, deliv: Deliverable, svc: Service) -> ClientDeliverableResponse:
+    if is_stale_attack_deliverable(db, deliv):
+        return ClientDeliverableResponse(
             id=deliv.id,
             service_id=deliv.service_id,
             service_kind=svc.kind,
             service_title=svc.title,
             title=deliv.title,
-            summary=deliv.summary,
+            summary=CLIENT_WITHHELD_MESSAGE,
             version=deliv.version,
             released_at=deliv.released_at,
             superseded=deliv.superseded_by is not None,
-            pdf_artifact_id=deliv.pdf_artifact_id,
-            xlsx_artifact_id=deliv.xlsx_artifact_id,
-            docx_artifact_id=deliv.docx_artifact_id,
-            pdf_filename=_artifact_title(db, deliv.pdf_artifact_id),
-            xlsx_filename=_artifact_title(db, deliv.xlsx_artifact_id),
-            docx_filename=_artifact_title(db, deliv.docx_artifact_id),
+            withheld=True,
+            pdf_artifact_id=None,
+            xlsx_artifact_id=None,
+            docx_artifact_id=None,
+            pdf_filename=None,
+            xlsx_filename=None,
+            docx_filename=None,
         )
-        for deliv, svc in rows
-    ]
-    return ClientDeliverableListResponse(items=items)
+    return ClientDeliverableResponse(
+        id=deliv.id,
+        service_id=deliv.service_id,
+        service_kind=svc.kind,
+        service_title=svc.title,
+        title=deliv.title,
+        summary=deliv.summary,
+        version=deliv.version,
+        released_at=deliv.released_at,
+        superseded=deliv.superseded_by is not None,
+        withheld=False,
+        pdf_artifact_id=deliv.pdf_artifact_id,
+        xlsx_artifact_id=deliv.xlsx_artifact_id,
+        docx_artifact_id=deliv.docx_artifact_id,
+        pdf_filename=_artifact_title(db, deliv.pdf_artifact_id),
+        xlsx_filename=_artifact_title(db, deliv.xlsx_artifact_id),
+        docx_filename=_artifact_title(db, deliv.docx_artifact_id),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -837,9 +870,11 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
     return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable, live)
 
 
-def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindTotal:
+def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[_KindTotal, bool]:
+    """The ATT&CK total, and whether it is unresolved because the report is
+    WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences."""
     if not service_ids:
-        return _KindTotal(None, False)
+        return _KindTotal(None, False), False
     total = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
@@ -854,12 +889,18 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindT
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True)
+            return _KindTotal(None, True), False
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
         # would otherwise read this as the site that was missed.
         a = res.row
+        if not attack_catalog_is_current(a):
+            # #556: an assessment scored against another catalog would have its
+            # unknown codes silently dropped by `attack_compute` below. Same
+            # answer as an unresolvable service: the whole kind is unresolved,
+            # and the card is told the cause.
+            return _KindTotal(None, True), True
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
@@ -880,7 +921,7 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> _KindT
         # of what you just changed finds every copy that went through it and
         # misses every other caller sitting beside it.
         total += attack_compute(coverage_map).gap
-    return _KindTotal(total, False)
+    return _KindTotal(total, False), False
 
 
 def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
@@ -945,7 +986,9 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack = _attack_uncovered_total(db, by_kind.get(ServiceKind.ATTACK_COVERAGE, []))
+    attack, attack_withheld = _attack_uncovered_total(
+        db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
+    )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
 
     has_any = any(v is not None for v in (td.value, zt.value, attack.value, csf.value))
@@ -985,6 +1028,7 @@ def value_summary(
         zt_targets_computed_live=zt.targets_computed_live,
         attack_uncovered_count=attack.value,
         attack_uncovered_unresolved=attack.unresolved,
+        attack_uncovered_withheld=attack_withheld,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,
@@ -1159,6 +1203,8 @@ def attack_dashboard(
     )
     if assessment is None:
         raise _unresolved_parent(deliv, surface="attack_dashboard")
+    # #556: refuse, in client words, rather than drop unknown codes below.
+    require_current_catalog_for_client(assessment)
 
     valid = attack_all_codes()
     rows = (
@@ -1708,6 +1754,18 @@ def risk_dashboard(
             detail={
                 "reason": "dashboard_not_released",
                 "message": "No finalized Risk Register for your organization yet.",
+            },
+        )
+    # #556 (the owner's decision): a register built from an ATT&CK assessment on
+    # another catalog carries findings emitted by technique ID against the old
+    # names. Withheld like the ATT&CK report itself, typed, before any number
+    # is read.
+    if is_stale_risk_register(db, reg.provenance):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "attack_catalog_mismatch",
+                "message": RISK_REGISTER_WITHHELD_MESSAGE,
             },
         )
 

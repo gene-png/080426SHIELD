@@ -25,7 +25,8 @@ WHAT IT HAS ALREADY CAUGHT. Two defects, both branch-introduced, both
 client-reaching, and neither visible to any truth-table cell:
 
   B10  `T1003.001` -> `T[PHONE]`, `{'phone': 1}`
-       440 of the 633 ATT&CK ids are sub-techniques. `1003.001` is seven digits
+       440 of the 633 ATT&CK ids were sub-techniques in the hand-encoded catalog of
+       2026-09 (v19.2, generated since #556, has 475 of 697). `1003.001` is seven digits
        in two groups with one of exactly three, satisfying both phone
        validators. The parent `T1003` survives, which is precisely why every
        existing row passed.
