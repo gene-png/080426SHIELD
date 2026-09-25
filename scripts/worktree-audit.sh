@@ -239,35 +239,54 @@ check() {
 }
 
 self_test() {
-  local tmp r rc fail=0 out tree
+  local tmp r rc fail=0 out tree v observed
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
+  # Isolate git CONFIG, not only git's repository overrides (cleared at the top
+  # of the file). A global core.hooksPath or init.templateDir hook would run on
+  # every commit, clone and checkout below and could write outside $tmp; a
+  # global commit.gpgsign would make them prompt or fail. HOME=$tmp drops the
+  # global config portably (GIT_CONFIG_GLOBAL=/dev/null is rewritten by MSYS
+  # under Git Bash); GIT_CONFIG_NOSYSTEM drops the system one; the
+  # GIT_CONFIG_* variables carry `-c` settings from a parent git. Self-test
+  # only: report and --check read other people's trees under their config.
+  export HOME="$tmp/home"
+  mkdir "$HOME"
+  export GIT_CONFIG_NOSYSTEM=1
+  unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM XDG_CONFIG_HOME
+  for v in $(compgen -e); do
+    case "$v" in GIT_CONFIG_KEY_* | GIT_CONFIG_VALUE_*) unset "$v" ;; esac
+  done
+  # And per command, belt and braces: an empty hooks dir, no signing, and
+  # `init --template=` so no template hook is copied in.
+  mkdir "$tmp/no-hooks"
+  tg() { git -c core.hooksPath="$tmp/no-hooks" -c commit.gpgsign=false "$@"; }
   r="$tmp/repo"
   mkdir "$r"
-  git -C "$r" init -q -b main
-  git -C "$r" config user.email t@example.invalid
-  git -C "$r" config user.name t
-  git -C "$r" config core.autocrlf false
+  tg -C "$r" init -q --template= -b main
+  tg -C "$r" config user.email t@example.invalid
+  tg -C "$r" config user.name t
+  tg -C "$r" config core.autocrlf false
   printf 'rules v1\n\nCANARY\n' > "$r/CLAUDE.md"
-  git -C "$r" add -A && git -C "$r" commit -q -m v1
-  git clone -q "$r" "$tmp/old-clone"
-  git -C "$r" worktree add -q "$tmp/stale" -b stale
-  git -C "$r" worktree add -q "$tmp/edited-behind" -b edited-behind
+  tg -C "$r" add -A && tg -C "$r" commit -q -m v1
+  tg clone -q --template= "$r" "$tmp/old-clone"
+  tg -C "$r" worktree add -q "$tmp/stale" -b stale
+  tg -C "$r" worktree add -q "$tmp/edited-behind" -b edited-behind
   printf 'rules v1, edited on a branch\n\nCANARY\n' > "$tmp/edited-behind/CLAUDE.md"
-  git -C "$tmp/edited-behind" commit -q -am edit
+  tg -C "$tmp/edited-behind" commit -q -am edit
   printf 'rules v2\n\nCANARY\n' > "$r/CLAUDE.md"
-  git -C "$r" commit -q -am v2
-  git -C "$r" worktree add -q "$tmp/same" -b same
-  git -C "$r" worktree add -q "$tmp/edited" -b edited
+  tg -C "$r" commit -q -am v2
+  tg -C "$r" worktree add -q "$tmp/same" -b same
+  tg -C "$r" worktree add -q "$tmp/edited" -b edited
   printf 'rules v2, edited on a branch\n\nCANARY\n' > "$tmp/edited/CLAUDE.md"
-  git -C "$tmp/edited" commit -q -am edit
+  tg -C "$tmp/edited" commit -q -am edit
   # A tree whose HEAD commit's tree object is gone: readable ref, unreadable tree.
-  git -C "$r" worktree add -q "$tmp/unreadable" -b unreadable
+  tg -C "$r" worktree add -q "$tmp/unreadable" -b unreadable
   printf 'rules v2, a commit whose tree is then deleted\n\nCANARY\n' > "$tmp/unreadable/CLAUDE.md"
-  git -C "$tmp/unreadable" commit -q -am unreadable
-  tree="$(git -C "$tmp/unreadable" rev-parse "HEAD^{tree}")"
+  tg -C "$tmp/unreadable" commit -q -am unreadable
+  tree="$(tg -C "$tmp/unreadable" rev-parse "HEAD^{tree}")"
   rm -f "$r/.git/objects/${tree:0:2}/${tree:2}"
-  if git -C "$r" cat-file -e "$tree" 2>/dev/null; then
+  if tg -C "$r" cat-file -e "$tree" 2>/dev/null; then
     echo "FAIL [setup]: the tree object $tree is still readable after deleting it"
     return 1
   fi
@@ -291,18 +310,18 @@ self_test() {
   # `status`, and would pass with blob() folding errors away.
   local r2="$tmp/repo2" b2 got2=0 out2
   mkdir "$r2"
-  git -C "$r2" init -q -b main
-  git -C "$r2" config user.email t@example.invalid
-  git -C "$r2" config user.name t
-  git -C "$r2" config core.autocrlf false
+  tg -C "$r2" init -q --template= -b main
+  tg -C "$r2" config user.email t@example.invalid
+  tg -C "$r2" config user.name t
+  tg -C "$r2" config core.autocrlf false
   printf 'base rules\n' > "$r2/CLAUDE.md"
-  git -C "$r2" add -A && git -C "$r2" commit -q -m base
-  git -C "$r2" worktree add -q "$tmp/base-unreadable" -b base-unreadable
+  tg -C "$r2" add -A && tg -C "$r2" commit -q -m base
+  tg -C "$r2" worktree add -q "$tmp/base-unreadable" -b base-unreadable
   printf 'base rules, edited on a branch\n' > "$tmp/base-unreadable/CLAUDE.md"
-  git -C "$tmp/base-unreadable" commit -q -am edit
+  tg -C "$tmp/base-unreadable" commit -q -am edit
   printf 'newer rules\n' > "$r2/CLAUDE.md"
-  git -C "$r2" commit -q -am newer
-  b2="$(git -C "$r2" rev-parse "main~1^{tree}")"
+  tg -C "$r2" commit -q -am newer
+  b2="$(tg -C "$r2" rev-parse "main~1^{tree}")"
   rm -f "$r2/.git/objects/${b2:0:2}/${b2:2}"
   out2="$(cd "$r2" && SHIELD_MAIN_REF=main "$SELF" --check "$tmp/base-unreadable" 2>&1)" || got2=$?
   case "$got2:$out2" in
@@ -316,24 +335,33 @@ self_test() {
       echo "ok   [report] counts read, gone and unreadable trees apart, and exits 2 over the unreadable one" ;;
     *) echo "FAIL [report]: exit $rc; output: $out"; fail=1 ;;
   esac
-  # A hook context exports GIT_DIR (and GIT_INDEX_FILE, before a commit), not
-  # GIT_WORK_TREE -- so with `-C` the work tree is the scratch dir and its files
-  # would be committed INTO the repo GIT_DIR names. Point both at a SENTINEL repo
-  # under $tmp, run a nested self-test, and require the sentinel untouched: its
-  # HEAD, its commit count, its index bytes and its status. The nested run skips
-  # this case (no recursion). Never pointed at a real repository.
-  if [ -z "${WORKTREE_AUDIT_NESTED:-}" ]; then
+  observed="SAME, STALE, EDITED, EDITED+STALE, an unreadable tree, a non-git path and a clone with another main"
+  # The two cases below each run a NESTED self-test, which skips them (no
+  # recursion) and says so. A caller exporting WORKTREE_AUDIT_NESTED gets the
+  # same skips, printed, and they are left out of the closing claim.
+  if [ -n "${WORKTREE_AUDIT_NESTED:-}" ]; then
+    echo "skip [inherited GIT_DIR and GIT_INDEX_FILE] WORKTREE_AUDIT_NESTED is set"
+    echo "skip [hostile global git config] WORKTREE_AUDIT_NESTED is set"
+  else
+    # A hook context exports GIT_DIR (and GIT_INDEX_FILE, before a commit), not
+    # GIT_WORK_TREE -- so with `-C` the work tree is the scratch dir and its
+    # files would be committed INTO the repo GIT_DIR names. Point both at a
+    # SENTINEL repo under $tmp, run a nested self-test, and require the sentinel
+    # untouched: its HEAD, commit count, index bytes and status. Never pointed
+    # at a real repository.
     local s="$tmp/sentinel" before after nested=0
     mkdir "$s"
-    git -C "$s" init -q -b main
-    git -C "$s" config user.email t@example.invalid
-    git -C "$s" config user.name t
+    tg -C "$s" init -q --template= -b main
+    tg -C "$s" config user.email t@example.invalid
+    tg -C "$s" config user.name t
     printf 'sentinel\n' > "$s/file"
-    git -C "$s" add -A && git -C "$s" commit -q -m sentinel
-    before="$(git -C "$s" rev-parse HEAD) $(git -C "$s" rev-list --count HEAD) $(cksum < "$s/.git/index") [$(git -C "$s" status --porcelain)]"
+    tg -C "$s" add -A && tg -C "$s" commit -q -m sentinel
+    # --no-optional-locks: a plain `status` may refresh the index, which would
+    # change its bytes and read as the pollution this case exists to catch.
+    before="$(tg -C "$s" rev-parse HEAD) $(tg -C "$s" rev-list --count HEAD) $(cksum < "$s/.git/index") [$(tg --no-optional-locks -C "$s" status --porcelain)]"
     WORKTREE_AUDIT_NESTED=1 GIT_DIR="$s/.git" GIT_INDEX_FILE="$s/.git/index" \
       "$SELF" --self-test > "$tmp/nested.out" 2>&1 || nested=$?
-    after="$(git -C "$s" rev-parse HEAD) $(git -C "$s" rev-list --count HEAD) $(cksum < "$s/.git/index") [$(git -C "$s" status --porcelain)]"
+    after="$(tg -C "$s" rev-parse HEAD) $(tg -C "$s" rev-list --count HEAD) $(cksum < "$s/.git/index") [$(tg --no-optional-locks -C "$s" status --porcelain)]"
     if [ "$nested" -eq 0 ] && [ "$before" = "$after" ]; then
       echo "ok   [inherited GIT_DIR and GIT_INDEX_FILE] the nested self-test passed and the sentinel repo is untouched"
     else
@@ -341,9 +369,46 @@ self_test() {
       tail -5 "$tmp/nested.out"
       fail=1
     fi
+    # A HOSTILE global config: core.hooksPath and init.templateDir both hold
+    # hooks that create $ran, outside every scratch repo, and commit.gpgsign
+    # is on. A nested self-test under that HOME must pass and never create it.
+    local h="$tmp/hostile-home" hooks="$tmp/hostile-hooks" tmpl="$tmp/hostile-template" ran="$tmp/HOOK_RAN" hook probe="$tmp/probe" nested2=0
+    mkdir -p "$h" "$hooks" "$tmpl/hooks" "$probe"
+    for hook in pre-commit post-commit post-checkout; do
+      printf '#!/bin/sh\ntouch "%s"\n' "$ran" > "$hooks/$hook"
+      cp "$hooks/$hook" "$tmpl/hooks/$hook"
+      chmod +x "$hooks/$hook" "$tmpl/hooks/$hook"
+    done
+    printf '[core]\n\thooksPath = %s\n[init]\n\ttemplateDir = %s\n[commit]\n\tgpgsign = true\n' \
+      "$(winpath "$hooks")" "$(winpath "$tmpl")" > "$h/.gitconfig"
+    # Prove the fixture is LIVE before trusting a clean result: under this
+    # HOME, a plain init-and-commit (signing off, so the hook is what is
+    # tested) must fire a hook.
+    HOME="$h" git -C "$probe" init -q -b main
+    HOME="$h" git -C "$probe" -c commit.gpgsign=false -c user.email=t@example.invalid -c user.name=t \
+      commit -q --allow-empty -m probe
+    if [ ! -e "$ran" ]; then
+      echo "FAIL [hostile global git config]: setup -- the hostile hook did not fire on a plain commit, so this case would prove nothing"
+      fail=1
+    else
+      rm -f "$ran"
+      HOME="$h" WORKTREE_AUDIT_NESTED=1 "$SELF" --self-test > "$tmp/nested2.out" 2>&1 || nested2=$?
+      if [ "$nested2" -eq 0 ] && [ ! -e "$ran" ]; then
+        echo "ok   [hostile global git config] the nested self-test passed and no hook ran"
+      else
+        echo "FAIL [hostile global git config]: nested exit $nested2; hook ran: $([ -e "$ran" ] && echo yes || echo no)"
+        tail -5 "$tmp/nested2.out"
+        fail=1
+      fi
+    fi
+    observed="$observed, an inherited GIT_DIR and GIT_INDEX_FILE, and a hostile global git config"
   fi
   [ "$fail" -eq 0 ] || return 1
-  echo "worktree-audit: self-test ok -- SAME, STALE, EDITED, EDITED+STALE, an unreadable tree, a non-git path, a clone with another main and inherited git overrides each observed."
+  echo "worktree-audit: self-test ok -- $observed each observed."
+}
+
+winpath() { # a path git.exe can read on Windows; unchanged elsewhere
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 
 case "$MODE" in

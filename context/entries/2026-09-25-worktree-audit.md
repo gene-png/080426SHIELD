@@ -48,12 +48,29 @@ runs with `--no-optional-locks`, so it cannot write another session's index.
 - **Main is resolved once.** Report and `--check` resolve the main ref to a
   commit once, and every tree is classified against that SHA. A fetch landing
   mid-run cannot move main between two trees.
-- **Inherited git overrides are cleared.** The script unsets `GIT_DIR`,
-  `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the object-directory
-  overrides. git gives them precedence over `-C`, and a hook exports
-  `GIT_DIR`. From a hook, the self-test would otherwise have committed its
-  scratch files into the repository `GIT_DIR` names, and every `-C <tree>`
-  would have read that one repository.
+- **Inherited repository overrides are cleared, for every mode.** At the top
+  of the script, beside `set -euo pipefail`, it unsets six variables:
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+  `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES`. git gives
+  them precedence over `-C`, and a hook exports `GIT_DIR`. From a hook, the
+  self-test would otherwise have committed its scratch files into the
+  repository `GIT_DIR` names, and every `-C <tree>` would have read that one
+  repository.
+- **Git config is isolated, in `--self-test` only.** Report and `--check` read
+  other people's trees under their own config.
+
+  Inside `self_test`, the script:
+  - sets `HOME` to a directory under the scratch dir, which drops the global
+    config (`GIT_CONFIG_GLOBAL=/dev/null` is rewritten by MSYS under Git
+    Bash);
+  - exports `GIT_CONFIG_NOSYSTEM=1`;
+  - unsets `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_GLOBAL`,
+    `GIT_CONFIG_SYSTEM`, `XDG_CONFIG_HOME` and every
+    `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`.
+
+  Every git command in the self-test also runs with
+  `-c core.hooksPath=<an empty dir>` and `-c commit.gpgsign=false`. Every
+  `init` and `clone` passes `--template=`.
 - **`--self-test`** builds throwaway repositories and requires each exit code
   and output for these cases:
   - each state;
@@ -61,7 +78,9 @@ runs with `--no-optional-locks`, so it cannot write another session's index.
   - an unreadable merge-base tree;
   - a non-git path;
   - a clone with another main;
-  - the report's counts.
+  - the report's counts;
+  - an inherited `GIT_DIR` and `GIT_INDEX_FILE`;
+  - a hostile global git config.
 
   The merge-base case is the one that pins `blob()`. With HEAD's tree gone,
   `git status` fails first, so the HEAD case passes even with `blob()` folding
@@ -69,12 +88,34 @@ runs with `--no-optional-locks`, so it cannot write another session's index.
   as a confident `EDITED+STALE`, exit 1. Removing the main-ref comparison turns
   the clone case red as `SAME`.
 
-  A last case runs a nested self-test with `GIT_DIR` and `GIT_INDEX_FILE`
-  pointed at a sentinel scratch repository, then requires the sentinel's HEAD,
-  commit count, index bytes and status to be unchanged. Reverting the `unset`
-  in a scratch copy turned it red: the sentinel gained a commit. Never pointed
-  at a real repository. Classifying against the resolved SHA is not pinned by
-  a test, because the race needs a fetch to land mid-run.
+  The inherited-override case runs a nested self-test with `GIT_DIR` and
+  `GIT_INDEX_FILE` pointed at a sentinel scratch repository. It then requires
+  the sentinel's HEAD, commit count, index bytes and status (read with
+  `--no-optional-locks`) to be unchanged. Reverting the `unset` in a scratch
+  copy turned it red: the sentinel gained a commit.
+
+  The hostile-config case runs a nested self-test under a `HOME` whose
+  `.gitconfig` sets three things:
+  - `core.hooksPath` to hooks that create a file outside every scratch repo;
+  - `init.templateDir` to the same hooks;
+  - `commit.gpgsign` to true.
+
+  It requires the nested run to pass and the file never to appear. It first
+  proves the fixture is live: a plain commit under that `HOME` must fire the
+  hook.
+
+  The isolation has two layers, `HOME`/`GIT_CONFIG_NOSYSTEM` and the
+  per-command `-c` and `--template=`, and each suffices on its own. Reverting
+  either alone left the case green. Reverting both turned it red: the hook ran,
+  and signing was attempted and failed.
+
+  Both nested cases skip themselves inside a nested run, to avoid recursion.
+  A caller exporting `WORKTREE_AUDIT_NESTED` gets the same skips, printed as
+  `skip`, and they are left out of the closing `self-test ok` line. Neither
+  case is ever pointed at a real repository.
+
+  Classifying against the resolved SHA is not pinned by a test, because the
+  race needs a fetch to land mid-run.
 
 ## Measured
 
