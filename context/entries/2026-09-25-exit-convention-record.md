@@ -62,7 +62,7 @@ gives 15 files and 23 lines at `45d414a`. Every hit was read and classified:
 
 - **D-051's own subject** (tests that cannot fail, #72; a rule that depends on
   remembering needs a mechanism; D-051's in-entry correction style):
-  `CLAUDE.md`, `CONTEXT.md`, `DELIVERY_PLAN.md` (the W8a row, the W8b notes),
+  `CLAUDE.md`, `CONTEXT.md`, `DELIVERY_PLAN.md` (the W8a row, the W8b notes, the §14 audit-gate bullet),
   `check_plan_totals.py`, `check_recalled_counts.py`,
   `scheduled-triggers.yml`, `fire_scheduled_triggers.py`, the
   `check_test_integrity` fixture, two test files, and `context/gene.md`.

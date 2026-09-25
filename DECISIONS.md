@@ -5926,5 +5926,7 @@ and name both. Measured on this branch before commit, 2026-09-25:
     git grep -c "D-051" 2028f38 -- ':!DECISIONS.md'       # 47 files, 79 lines
     git grep -c "D-051" -- ':!DECISIONS.md'               # 17 files, 25 lines
 
-The 25 remaining were each read and classified as D-051's own subject or as
-history. Older D-records are append-only and are not edited.
+The 25 remaining (before the first commit; the landing entry pins a reproducible
+re-run: 15 files, 23 lines at `45d414a`, excluding itself) were each read and
+classified as D-051's own subject or as history. Older D-records are
+append-only and are not edited.
