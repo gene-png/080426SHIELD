@@ -31,6 +31,10 @@ class TacticCoverage:
     # was assigned). Excluded from `addressable`, so it withholds a claim rather
     # than scoring a zero.
     pending_review: int
+    # #554: rows the assessed denominator excludes, counted so they can be
+    # stated beside the percentage rather than silently shrinking it.
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float  # (covered + 0.5*partial) / addressable * 100
 
 
@@ -45,16 +49,15 @@ class CoverageRollup:
     gap: int
     not_applicable: int
     pending_review: int
+    outside_control_surface: int
+    unable_to_determine: int
     coverage_pct: float
     by_tactic: tuple[TacticCoverage, ...]
 
 
-_STATUS_BUCKETS = (
-    CoverageStatus.COVERED,
-    CoverageStatus.PARTIAL,
-    CoverageStatus.GAP,
-    CoverageStatus.NOT_APPLICABLE,
-)
+# Every status. `_validated` maps anything NOT in the enum to unscored, so a
+# status missing here would vanish from every count while still stored (#554).
+_STATUS_BUCKETS = tuple(CoverageStatus)
 
 
 def _validated(value: str | None) -> CoverageStatus | None:
@@ -150,6 +153,8 @@ def compute(
                 not_applicable=counts[CoverageStatus.NOT_APPLICABLE.value],
                 unscored=counts["unscored"],
                 pending_review=counts["pending_review"],
+                outside_control_surface=counts[CoverageStatus.OUTSIDE_CONTROL_SURFACE.value],
+                unable_to_determine=counts[CoverageStatus.UNABLE_TO_DETERMINE.value],
                 coverage_pct=_pct(weighted, addressable),
             )
         )
@@ -185,6 +190,8 @@ def compute(
         gap=overall_counts[CoverageStatus.GAP.value],
         not_applicable=overall_counts[CoverageStatus.NOT_APPLICABLE.value],
         pending_review=overall_counts["pending_review"],
+        outside_control_surface=overall_counts[CoverageStatus.OUTSIDE_CONTROL_SURFACE.value],
+        unable_to_determine=overall_counts[CoverageStatus.UNABLE_TO_DETERMINE.value],
         coverage_pct=_pct(weighted_total, addressable_total),
         by_tactic=tuple(by_tactic),
     )
