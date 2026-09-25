@@ -155,11 +155,13 @@ enumerate gates, and the ZT exporter and dashboard paths this branch touches.
     prettier@3.9.6 --check <repo glob>          -> exit 0
     ruff check --no-cache . && black --check .  -> exit 0, 355 files unchanged
 
-**`scripts/verify-in-worktree.sh eslint` is BROKEN and exits 2**, on this branch
-and on `main` — it passes `--format unix`, which ESLint 9 core no longer ships
-("The unix formatter is no longer part of core ESLint"). It fails loudly, which
-is the right shape, but the eslint arm of the harness verifies nothing today.
-Tracked in #450.
+**As of 2026-09-22, `scripts/verify-in-worktree.sh eslint` was BROKEN and
+exited 2**, on this branch and on `main` — it passed `--format unix`, which
+ESLint 9 core no longer ships ("The unix formatter is no longer part of core
+ESLint"). It failed loudly, which is the right shape, but the eslint arm
+verified nothing. Tracked in #450; fixed by #564, where the arm runs
+`apps/web/package.json`'s own `lint` script and `--self-test` requires exit 1
+on a planted parse error.
 
 **And the MSYS rewrite reaches `docker run -v`'s DESTINATION, not just `-w`.**
 A `-v "$(pwd)/apps/api:/app"` without `MSYS_NO_PATHCONV=1` mounted nothing at
