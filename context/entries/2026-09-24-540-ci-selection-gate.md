@@ -37,7 +37,7 @@ every other gate.
 and so is an exemption for a variable now set or no longer read. So the
 backlog only goes down, and every run prints what it allows.
 
-**Fail closed (D-051).** A wrong directory, an empty or unparseable collection
+**Fail closed (D-090).** A wrong directory, an empty or unparseable collection
 or listing, a malformed baseline, or a workflow that does not parse exits 2.
 
 ## Review found, and this round fixed

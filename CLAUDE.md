@@ -2,9 +2,10 @@
 
 ## Before anything else: is your copy of this file COMPLETE?
 
-**This file must end with the line `<!-- CLAUDE-MD-CANARY: v1 -->`. If you
-cannot see that marker at the end of what you received, YOUR COPY IS
-TRUNCATED. Stop.** Say so, name the last heading you did receive, and do not
+**This file must end with the line `CLAUDE-MD-CANARY: v2`. If you cannot see
+that marker at the end of what you received, YOUR COPY IS TRUNCATED. Stop.**
+(Plain text on purpose: context injection drops a whole-line HTML comment, so
+the v1 marker, `<!-- ... -->`, was missing from every injected copy, #459.) Say so, name the last heading you did receive, and do not
 apply the merge rule or any condition test until someone confirms which clauses
 you are missing. A truncated governance file is a control that does not exist.
 
@@ -741,7 +742,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   **A checker's "nothing to complain about" branch and its "I could not look"
   branch must not be the same branch.** Every gate in this repo returns a
   distinct non-zero (2) for unreadable input, separate from the 1 it returns for
-  a real violation.
+  a real violation (D-090).
 
   **Recorded because this is the one case where writing it down demonstrably
   worked.** `check_issue_references.py` was written months later by someone who
@@ -2334,4 +2335,4 @@ Stop.** Say so, name the last heading you did receive, and do not apply the
 merge rule or any condition test until someone confirms which clauses you are
 missing. A truncated governance file is a control that does not exist.
 
-<!-- CLAUDE-MD-CANARY: v1 -->
+CLAUDE-MD-CANARY: v2

@@ -370,8 +370,47 @@ def test_an_unreachable_database_cannot_look(monkeypatch, tmp_path, capsys) -> N
     )
     monkeypatch.setattr(mod, "__file__", str(tmp_path / "scripts" / "x.py"))
     assert mod.main() == EXIT_COULD_NOT_LOOK
-    # The message AND the cause it reports. A bare `"could not look"` is in all
-    # four branches, so it would not distinguish this one from the three above.
+    # The message AND the cause it reports. A bare `"could not look"` is in every
+    # could-not-look branch, so it would not distinguish this one from the others.
     err = capsys.readouterr().err
     assert "the database was unreachable" in err
     assert "OSError: connection refused" in err
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("args", [["--help"], ["--db", "x"], ["extra"], [""]])
+def test_any_argument_is_could_not_look_and_is_named(monkeypatch, capsys, args) -> None:
+    """#597: the gate takes no arguments, so ANY argument is exit 2, named.
+
+    Refused before anything is read: the database stub raises a BaseException,
+    which escapes `main`'s `except Exception` and fails this test if reached.
+    """
+    import check_mount_matches_database as mod
+
+    class _Reached(BaseException):  # not Exception, so `main` cannot swallow it
+        pass
+
+    def _reached(*_a, **_k):
+        # Not KeyboardInterrupt: pytest reads that as the run being interrupted
+        # (exit 2), not as this test failing.
+        raise _Reached("the database was consulted")
+
+    monkeypatch.setattr(mod, "database_revision", _reached)
+    rc = mod.main(["check_mount_matches_database.py", *args])
+    err = capsys.readouterr().err
+    assert rc == 2, err
+    assert "this gate takes no arguments, and was given " + repr(args) in err, err
+
+
+@pytest.mark.unit
+def test_the_command_line_passes_its_arguments_to_main() -> None:
+    """The WIRING: `__main__` must hand `sys.argv` to `main`, or the guard above
+    never sees a real command line."""
+    import subprocess
+
+    script = _SCRIPTS / "check_mount_matches_database.py"
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, str(script), "--nope"], capture_output=True, text=True
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "this gate takes no arguments, and was given ['--nope']" in proc.stderr, proc.stderr

@@ -81,9 +81,12 @@ And the paths that do not:
   * **the versions directory is missing or empty** — exit 2. This is "I could
     not look": with no revisions to compare against, every database would look
     wrong. It must not share an exit with either answer.
+  * **`DATABASE_URL` is unset** — exit 2: there is no database to read.
   * **the database cannot be reached** — exit 2, same reason. `depends_on`
     waits for `service_healthy`, so this should not happen; if it does, the
     honest report is that the check did not run, not that the pair is fine.
+  * **any command-line argument** — exit 2, naming it (#597). The gate takes
+    none, so `--help` or a typo must not run the check as though absent.
 
 ## Why not just read alembic's own error
 
@@ -157,7 +160,20 @@ def database_revision(url: str) -> str | None:
         return row[0] if row else None
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    # It takes NO arguments, and any it is given is a could-not-look (#597). A
+    # flag this gate does not implement must not run the check as though it
+    # were absent: `--help` or a typo'd `--db` would otherwise print a verdict
+    # the caller did not ask for. `None` (a direct call, as the tests make) is
+    # no arguments; the command line passes `sys.argv`, program name first.
+    args = [] if argv is None else list(argv[1:])
+    if args:
+        print(
+            f"check-mount: could not look -- this gate takes no arguments, and was "
+            f"given {args!r}. Run it bare: `python scripts/check_mount_matches_database.py`.",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_LOOK
     here = pathlib.Path(__file__).resolve().parents[1]
     versions = here / "alembic" / "versions"
 
@@ -286,11 +302,11 @@ if __name__ == "__main__":
     # that prove a gate can fail were blind to it (#318), and the "gates can
     # fail" step was green BECAUSE of the omission.
     try:
-        raise SystemExit(main())
+        raise SystemExit(main(sys.argv))
     except (SystemExit, KeyboardInterrupt):
         raise
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-mount-matches-database: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc
