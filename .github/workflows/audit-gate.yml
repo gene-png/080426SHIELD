@@ -334,7 +334,7 @@ jobs:
           elif ! git cat-file -e "$base:$gate" 2> /dev/null; then
             echo "check-condition5: the base has no $gate, so this PR introduces the gate. Condition 5 TRIPPED: it comes back to the human." > /tmp/condition5.txt
           elif git show "$base:$gate" > /tmp/check_condition5_base.py; then
-            python /tmp/check_condition5_base.py --report --repo .. --range "$base..HEAD" > /tmp/condition5.txt || rc=$?
+            python /tmp/check_condition5_base.py --report --repo ../.. --range "$base..HEAD" > /tmp/condition5.txt || rc=$?
           else
             echo "check-condition5: could not look -- git show $base:$gate failed." > /tmp/condition5.txt
             rc=2

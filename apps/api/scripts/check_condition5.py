@@ -41,7 +41,9 @@ RESIDUAL, stated because the verdict is only as wide as its sources and NO
 other check covers it -- CLAUDE.md's derive-the-set grep reads workflows
 only, which this already derives: a script reached from a sourced file or
 another script; a path spelled through a `$VAR`; config deeper than the three
-top levels; and dependency changes (lockfiles) that change a tool's version. In `--old-root` mode nothing is
+top levels, or referenced from a config file (eslint.config.js loads a local
+rule); dependency changes (lockfiles) that change a tool's version; and any
+gate input not matching these shapes. The list is open-ended on purpose. In `--old-root` mode nothing is
 derived, and the output says so.
 
 WHAT COUNTS AS AN EXECUTABLE CHANGE, per file type. Every rule leans toward
@@ -209,7 +211,7 @@ _CONFIG_DIRS = ("", "apps/web", "apps/api")
 _CONFIG_NAME = re.compile(
     r"^(package\.json|pnpm-workspace\.yaml|conftest\.py|tsconfig[^/]*\.json"
     r"|[^/]*\.config\.[^/]+|[^/]*\.setup\.[^/]+|[^/]*\.(toml|ini|cfg)"
-    r"|\.prettier[^/]*|\.eslintrc[^/]*)$"
+    r"|\.prettier[^/]*|\.eslintrc[^/]*|\.babelrc[^/]*|\.gitignore|\.dockerignore|Dockerfile[^/]*)$"
 )
 
 
@@ -277,6 +279,7 @@ def scripts_from_workflows(workflows: dict[str, str], tracked: set[str]) -> set[
 
 
 UNRESOLVABLE = "?"
+INTERPOLATED_TARGET = "$"  # a mount whose CONTAINER path compose must interpolate
 
 
 def _compose_mounts(service: dict) -> list[tuple[str, str]]:
@@ -298,12 +301,17 @@ def _compose_mounts(service: dict) -> list[tuple[str, str]]:
             # is the first part that starts with "/" after the source.
             k = next((i for i in range(1, len(parts)) if parts[i].startswith("/")), None)
             if k is None:
+                if "$" in ":".join(parts[1:]):
+                    out.append((INTERPOLATED_TARGET, UNRESOLVABLE))
                 continue
             src, dst = ":".join(parts[:k]), parts[k]
             is_path = src.startswith((".", "/", "~", "$"))
         elif isinstance(vol, dict) and vol.get("type") == "bind":
             src, dst = str(vol.get("source", "")), str(vol.get("target", ""))
             is_path = True
+            if "$" in dst:
+                out.append((INTERPOLATED_TARGET, UNRESOLVABLE))
+                continue
         else:
             continue
         if not is_path or not dst.startswith("/"):
@@ -373,6 +381,11 @@ def scripts_from_compose(composes: dict[str, str], tracked: set[str]) -> set[str
                         found.add(cand)
                     break
             else:
+                if token.startswith("/") and (INTERPOLATED_TARGET, UNRESOLVABLE) in mounts:
+                    raise CouldNotLook(
+                        f"compose service {sname!r} runs {token!r}, and has a mount whose "
+                        "container path needs interpolation, so where that mount lands is unknown"
+                    )
                 for cand in _script_candidates(token, ""):
                     if cand in tracked:
                         found.add(cand)
@@ -555,7 +568,10 @@ class Range:
         if ".." not in rng:
             raise CouldNotLook(f"--range must be BASE..HEAD, got {rng!r}")
         base, self.head = rng.split("..", 1)
-        self.repo = repo
+        # The TOP LEVEL, whatever --repo names. CI runs from apps/api, and a
+        # --repo pointing into the tree made `ls-tree` list cwd-relative paths:
+        # no workflows, an empty derived set, exit 2 on every PR (measured).
+        self.repo = Path(_git(repo, "rev-parse", "--show-toplevel").strip())
         self.merge_base = _git(repo, "merge-base", base, self.head).strip()
         # --no-renames: a rename would otherwise show only its NEW, possibly
         # unlisted, name and hide the listed path it moved away from.
@@ -581,7 +597,9 @@ class Range:
     def workflow_scripts(self) -> set[str]:
         found: set[str] = set()
         for ref in (self.merge_base, self.head):
-            tracked = set(_git(self.repo, "ls-tree", "-r", "--name-only", ref).splitlines())
+            tracked = set(
+                _git(self.repo, "ls-tree", "-r", "--full-tree", "--name-only", ref).splitlines()
+            )
             wfs = {
                 p: self.show(ref, p)
                 for p in tracked
@@ -746,7 +764,8 @@ def main(argv: list[str]) -> int:
     print(
         "  Not derived, and covered by NO other check: scripts reached from sourced files "
         "or other scripts, paths spelled through a $VAR, config below the repo root, "
-        "apps/web and apps/api, and lockfile changes. And a PR editing this gate or "
+        "apps/web and apps/api or loaded by other config, lockfile changes, and any gate "
+        "input not matching these shapes. And a PR editing this gate or "
         "the workflow step that runs it is NOT protected by this report (#572)."
     )
     return 0

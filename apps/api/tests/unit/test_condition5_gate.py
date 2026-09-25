@@ -536,3 +536,103 @@ def test_compose_mounts_merge_across_files_and_refuse_what_they_cannot_resolve()
     uses_cfg = "services:\n  web:\n    command: sh /cfg/z.sh\n"
     with pytest.raises(gate.CouldNotLook, match="interpolation"):
         gate.scripts_from_compose({"docker-compose.yml": base, "o.yml": uses_cfg}, tracked)
+
+
+# --- round 4 of the review ----------------------------------------------------------------
+
+
+def test_range_with_repo_pointing_into_the_tree_still_reads_the_workflows(tmp_path, capsys) -> None:
+    # CI runs from apps/api. `ls-tree` without --full-tree listed cwd-relative
+    # paths, so --repo .. found no workflows and exited 2 on EVERY PR.
+    r = _repo(tmp_path, _base())
+    _commit(r, {"scripts/run-me.sh": "#!/bin/sh\necho b\n"})
+    rc = gate.main(["x", "--range", "main..pr", "--repo", str(r / "apps" / "api")])
+    out = capsys.readouterr().out
+    assert rc == 1 and "scripts/run-me.sh" in out, out
+
+
+def _ci_step_script(tmp: pathlib.Path) -> str:
+    import yaml
+
+    if _WORKFLOWS is None:
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+    doc = yaml.safe_load((_WORKFLOWS / "audit-gate.yml").read_text(encoding="utf-8"))
+    steps = doc["jobs"]["condition-5-report"]["steps"]
+    step = next(s for s in steps if "check_condition5" in s.get("run", ""))
+    assert step.get("working-directory") == "apps/api", step
+    text = step["run"].replace("${{ github.base_ref }}", "main")
+    text = "\n".join(ln for ln in text.splitlines() if "pip install" not in ln)
+    # The step's own scratch paths, redirected into the test's tmp dir.
+    return text.replace("/tmp/", tmp.as_posix() + "/")  # noqa: S108
+
+
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        ({"README.md": "s\n"}, "not tripped"),
+        ({"scripts/run-me.sh": "#!/bin/sh\necho b\n"}, "TRIPPED"),
+    ],
+)
+def test_the_ci_step_itself_runs_the_base_gate_to_a_verdict(tmp_path, change, verdict) -> None:
+    # EXECUTES the workflow step's own script, as CI would after this gate
+    # lands: the base HAS the gate, and the step runs from apps/api.
+    bash = shutil.which("bash")  # by PATH: a bare "bash" can resolve to WSL's on Windows
+    if bash is None:
+        pytest.skip("no bash here; CI's python job runs on a runner that has it")
+    real = pathlib.Path(gate.__file__).read_text(encoding="utf-8")
+    r = _repo(tmp_path, _base({"apps/api/scripts/check_condition5.py": real}))
+    ref = ["git", "-C", str(r), "update-ref", "refs/remotes/origin/main", "main"]
+    subprocess.run(ref, check=True)  # noqa: S603,S607
+    _commit(r, change)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    script = _ci_step_script(out_dir)
+    env = {**__import__("os").environ, "GITHUB_STEP_SUMMARY": str(out_dir / "summary.md")}
+    proc = subprocess.run(  # noqa: S603
+        [bash, "-e", "-c", script], cwd=r / "apps" / "api", env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert verdict in proc.stdout, proc.stdout
+
+
+def test_a_compose_mount_with_an_interpolated_target_is_could_not_look() -> None:
+    compose = (
+        "services:\n  web:\n    volumes:\n      - ./scripts:${SCRIPTS_DIR:-/scripts}\n"
+        "    command: sh /scripts/x.sh\n"
+    )
+    with pytest.raises(gate.CouldNotLook, match="container path needs interpolation"):
+        gate.scripts_from_compose({"docker-compose.yml": compose}, {"scripts/x.sh"})
+
+
+def test_ignore_and_container_build_files_are_gate_config() -> None:
+    tracked = {
+        ".gitignore",
+        "apps/api/Dockerfile",
+        "apps/web/.dockerignore",
+        ".babelrc",
+        "docs/x.md",
+    }
+    wf = "jobs:\n  j:\n    steps:\n      - run: echo hi\n"
+    assert gate.scripts_from_workflows({"ci.yml": wf}, tracked) == tracked - {"docs/x.md"}
+
+
+def test_the_base_copy_trips_the_rigged_pr_under_report_too(tmp_path) -> None:
+    # CI passes --report, where both copies exit 0 and only the TEXT differs.
+    import sys
+
+    real = pathlib.Path(gate.__file__).read_text(encoding="utf-8")
+    anchor = "def main(argv: list[str]) -> int:\n"
+    rigged = real.replace(anchor, anchor + "    return 0  # rigged: always 'not tripped'\n")
+    listed = _LIST.replace("p11/**", "apps/api/scripts/check_*.py")
+    r = _repo(
+        tmp_path, _base({"CLAUDE.md": _md(listed), "apps/api/scripts/check_condition5.py": real})
+    )
+    _commit(r, {"apps/api/scripts/check_condition5.py": rigged})
+    f = tmp_path / "base_copy.py"
+    f.write_text(real, encoding="utf-8")
+    cmd = [sys.executable, str(f), "--report", "--range", "main..pr", "--repo", str(r)]
+    proc = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
+    assert proc.returncode == 0, proc.stdout
+    assert (
+        "condition 5 TRIPPED" in proc.stdout and "check_condition5.py" in proc.stdout
+    ), proc.stdout

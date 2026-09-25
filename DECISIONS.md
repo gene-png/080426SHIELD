@@ -5810,7 +5810,7 @@ attesting it. Its exit 2 reads as tripped.
   command, entrypoint or healthcheck names (compose paths are mapped through
   the bind mounts), plus the gate configuration those tools read
   (`package.json` files, the prettier, eslint, vitest and tsconfig files,
-  `pyproject.toml`). On 2026-09-24 it added twelve files the list does not
+  `pyproject.toml`). At `8cb5248` it added twelve files the list does not
   name, `scripts/red-on-revert.sh` and `scripts/web-install-if-stale.sh`
   among them.
 - **The base's copy judges**, so a PR cannot certify itself by editing
@@ -5824,9 +5824,11 @@ attesting it. Its exit 2 reads as tripped.
   derived, so a first-draft list cannot miss `vitest.setup.ts` or a root
   `conftest.py`. Compose mounts are merged across files, and a command path
   under a mount that needs interpolation is exit 2.
-- **Residual, covered by no other check:** a script reached from a sourced
-  file or another script, a path spelled through a `$VAR`, and lockfile
-  changes. CLAUDE.md's derive-the-set grep reads workflows only, which this
+- **Residual, covered by no other check, and open-ended:** a script reached
+  from a sourced file or another script, a path spelled through a `$VAR`,
+  config deeper than the three top levels or loaded by other config (the
+  eslint config loads a local rule), lockfile changes, and any gate input
+  not matching the derived shapes. CLAUDE.md's derive-the-set grep reads workflows only, which this
   already derives, so it is no fallback for these. Filed as #572, with the
   merge-rule conditions themselves, which the list does not protect.
 

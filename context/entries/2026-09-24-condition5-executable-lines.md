@@ -1,6 +1,6 @@
 # 2026-09-24: condition 5 ignores a diff that changes nothing that runs
 
-Branch `track1/cond5-executable-lines`, merge base `20f747f`.
+Branch `track1/cond5-executable-lines`, branch-start base `20f747f`.
 
 ## Why
 
@@ -154,3 +154,25 @@ pytest config does not print. Every run exited 1 and named its test FAILED.
   with no gate trips, and any other `git show` failure is exit 2.
 - The CLAUDE.md marker says the last column was read from the diffs.
 - Red on revert: six mutations, each red on its named test.
+
+## After the re-review of `6f9a673` (round 4)
+
+- **The CI step would have exited 2 on EVERY PR after merge.** It ran from
+  `apps/api` with `--repo ..`, which names `apps/`, and `git ls-tree` without
+  `--full-tree` lists cwd-relative paths, so it found zero workflows.
+  Measured: 0 from `apps/`, 5 with `--full-tree`. #559's own CI could not show
+  it, because its base has no gate, so that branch trips before python runs.
+  Fixed at three layers: the gate resolves `--repo` to the top level, ls-tree
+  uses `--full-tree`, and the step passes `--repo ../..`.
+- **A test now EXECUTES the step's own script** against a repo whose base has
+  the gate, run from `apps/api` as CI does. It gets a verdict both ways (not
+  tripped, TRIPPED). Red on revert.
+- CLAUDE.md, at condition 5: a PR changing a workflow or the gate is tripped
+  whatever its report says (#572). The needs-a-human sentence now says "any
+  gate input it does not derive".
+- `.gitignore`, `Dockerfile*`, `.dockerignore` and `.babelrc*` are shapes. The
+  printed residual is open-ended.
+- A compose mount whose TARGET needs interpolation is could-not-look for any
+  absolute path in that service.
+- The base-copy test has a `--report` variant, asserting the TRIPPED text.
+- Red on revert: five mutations, each red.

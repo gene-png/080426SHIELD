@@ -146,15 +146,16 @@ happened.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
    proves least. **A diff changing no executable line in them does not trip it**
-   (#530); `check_condition5.py` decides, and its exit 2 reads as tripped.
+   (#530); `check_condition5.py` decides, and its exit 2 reads as tripped. A PR
+   changing a workflow or that gate is tripped whatever its report says (#572).
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
 **Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
 
 **Conditions 1 and 4 are mechanical; 5 is computed by `check_condition5.py`
-over the list and every script a workflow runs, but a live prompt outside them,
-or a script reached from another script or a `$VAR`, needs a human read. Conditions 2, 3 and 6 are self-attested
+over the list and what it derives, but a live prompt outside them, or any gate
+input it does not derive (#572), needs a human read. Conditions 2, 3 and 6 are self-attested
 by the agent that wants to merge** — three checkable conditions and three
 honest ones, not "a file-path check plus two facts". Condition 6 is a
 judgement call an agent can talk itself out of; when it is arguable, it has
