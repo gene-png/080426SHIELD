@@ -196,6 +196,10 @@ def test_the_client_dashboard_refuses_a_stale_release_in_client_words(env) -> No
     before = c.get(listing, headers=_auth(client_bearer)).json()["items"]
     pdf = before[0]["pdf_artifact_id"]
     assert pdf is not None
+    assert before[0]["withheld"] is False
+    admin_listing = "/admin/deliverables"
+    (admin_row,) = c.get(admin_listing, headers=_auth(bearer)).json()["items"]
+    assert (admin_row["status"], admin_row["client_visible"]) == ("released", True)
     download = f"/artifacts/{pdf}/download"
     assert c.get(download, headers=_auth(client_bearer)).status_code == 200
 
@@ -210,12 +214,21 @@ def test_the_client_dashboard_refuses_a_stale_release_in_client_words(env) -> No
     # figures the dashboard refuses: still LISTED, with the reason as its summary.
     (row,) = c.get(listing, headers=_auth(client_bearer)).json()["items"]
     assert row["summary"] == msg
+    # A FIELD every "ready"/"visible" screen can read, not an inference from
+    # null files (review round 3, A).
+    assert row["withheld"] is True
+    # The admin page agrees with what the client is shown (review round 3, C):
+    # released, and NOT visible to the client.
+    (admin_row,) = c.get(admin_listing, headers=_auth(bearer)).json()["items"]
+    assert (admin_row["status"], admin_row["client_visible"]) == ("withheld", False)
     assert (row["pdf_artifact_id"], row["xlsx_artifact_id"], row["docx_artifact_id"]) == (
         None,
         None,
         None,
     )
-    assert c.get(download, headers=_auth(client_bearer)).status_code == 404
+    # Refused, and SAYS why: a bare 404 "Artifact not found." read as a broken
+    # link for a file the client can see listed (review round 3, F).
+    assert _refused(c.get(download, headers=_auth(client_bearer))) == msg
 
 
 def test_approve_refuses_a_stale_draft(env) -> None:

@@ -525,6 +525,11 @@ export function AttackWorkspace({
             title="Draft the mapping with AI"
             description="Claude suggests a coverage status and the detection / prevention / response tooling for each technique, using only this client's approved Tech Debt capability list. It drafts; you decide. Locked rows are never touched."
             done={runResult !== null || scoredCount > 0}
+            blockedReason={
+              assessment.catalog_current === false
+                ? "This assessment was scored against a different ATT&CK catalog than the current one, so the AI cannot draft over it."
+                : null
+            }
           >
             <div className="flex flex-col gap-3">
               {/* Issue 2: warn before producing canned output when no key is
@@ -535,7 +540,12 @@ export function AttackWorkspace({
                     <button
                       type="button"
                       onClick={onClick}
-                      disabled={busy !== null || readOnly}
+                      disabled={
+                        busy !== null ||
+                        readOnly ||
+                        // #556: the API refuses it; the step says why.
+                        assessment.catalog_current === false
+                      }
                       className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {busy === "run" ? "Running…" : "Run AI"}
@@ -679,9 +689,11 @@ export function AttackWorkspace({
             title="Generate and release the deliverable"
             description="Renders the PDF and XLSX from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
             blockedReason={
-              assessment.status === "draft"
-                ? "Approve the assessment in step 3 before generating a deliverable from it."
-                : null
+              assessment.catalog_current === false
+                ? "This assessment was scored against a different ATT&CK catalog than the current one, so no deliverable can be generated or released from it."
+                : assessment.status === "draft"
+                  ? "Approve the assessment in step 3 before generating a deliverable from it."
+                  : null
             }
           >
             <div className="flex flex-col gap-3">
@@ -691,6 +703,7 @@ export function AttackWorkspace({
                 assessmentStatus={assessment.status}
                 deliverable={deliverable}
                 onChange={setDeliverable}
+                catalogStale={assessment.catalog_current === false}
               />
             </div>
           </WorkflowStep>

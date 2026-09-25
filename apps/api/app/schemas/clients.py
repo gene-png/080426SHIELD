@@ -48,6 +48,12 @@ class ClientDeliverableResponse(BaseModel):
     version: int
     released_at: datetime | None
     superseded: bool
+    # #556 (D-091, the owner's decision): an ATT&CK report released over an
+    # assessment scored against another catalog. Still listed, with `summary`
+    # carrying why and every file ID null. A FIELD, not an inference from null
+    # files: every screen that says "ready" or "visible" must be able to tell.
+    # Required, so a response built without deciding it fails loudly.
+    withheld: bool
     pdf_artifact_id: uuid.UUID | None
     xlsx_artifact_id: uuid.UUID | None
     docx_artifact_id: uuid.UUID | None
@@ -579,6 +585,11 @@ class ValueSummaryResponse(BaseModel):
     zt_targets_computed_live: int | None
     attack_uncovered_count: int | None
     attack_uncovered_unresolved: bool
+    #: #556: the ATT&CK kind is unresolved BECAUSE its released report is
+    #: withheld (scored against another catalog), not because the figure cannot
+    #: be matched to its release (#114). A different cause, so a different
+    #: sentence on the card. Only ever True alongside `attack_uncovered_unresolved`.
+    attack_uncovered_withheld: bool
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int

@@ -42,6 +42,7 @@ function summary(over: Partial<ValueSummary> = {}): ValueSummary {
     zt_targets_computed_live: null,
     attack_uncovered_count: null,
     attack_uncovered_unresolved: false,
+    attack_uncovered_withheld: false,
     csf_gap_count: null,
     csf_gap_unresolved: false,
     csf_services: 0,
@@ -150,6 +151,25 @@ describe("ValueLoopCard", () => {
     expect(
       screen.getByText(/analyst will need to look into it/),
     ).toBeInTheDocument();
+  });
+
+  it("says WITHHELD, not 'still available', when the ATT&CK report is withheld (#556)", () => {
+    // Review round 3, A: the #114 sentence tells the client the report is
+    // "still available under Results", and a withheld report's figures and
+    // files are not. A different cause, so a different sentence.
+    render(
+      <ValueLoopCard
+        summary={summary({
+          attack_uncovered_unresolved: true,
+          attack_uncovered_withheld: true,
+          has_unresolved: true,
+        })}
+      />,
+    );
+    expect(screen.getByText(/so its figures are withheld/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/still available under Results/),
+    ).not.toBeInTheDocument();
   });
 
   it("lets the FLAG win over a value, so a number never sits under 'not showing a number'", () => {

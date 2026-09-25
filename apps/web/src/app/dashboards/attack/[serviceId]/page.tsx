@@ -6,7 +6,7 @@ import { AttackDashboard } from "@/components/dashboards/attack/AttackDashboard"
 import { ApiError, apiFetch } from "@/lib/api";
 import {
   dashboardLoadReason,
-  serverReasonCode,
+  isCatalogWithheld,
 } from "@/lib/describe-save-error";
 import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
@@ -70,11 +70,7 @@ export default async function AttackDashboardPage({
         // exceptional one. The decision lives in one place so the five
         // dashboards cannot drift.
         reason = dashboardLoadReason(err);
-      } else if (
-        err instanceof ApiError &&
-        err.status === 409 &&
-        serverReasonCode(err) === "attack_catalog_mismatch"
-      ) {
+      } else if (isCatalogWithheld(err)) {
         withheld = true;
         reason = dashboardLoadReason(err);
       } else {

@@ -387,6 +387,7 @@ def test_value_summary_full_data(app_client) -> None:
     assert body["csf_gap_count"] == 5
     assert body["zt_gap_count"] == 4
     assert body["attack_uncovered_count"] == 3
+    assert body["attack_uncovered_withheld"] is False  # #556: a current assessment
     assert body["tech_debt_savings_usd"] == 3000.0
     assert body["tech_debt_savings_cost_known"] is True
     assert body["has_any_data"] is True
@@ -1126,3 +1127,7 @@ def test_value_summary_withholds_attack_scored_against_another_catalog(app_clien
     body = r.json()
     assert body["attack_uncovered_count"] is None
     assert body["attack_uncovered_unresolved"] is True
+    # And the card is told the CAUSE, so it says "withheld" instead of the #114
+    # sentence claiming the report is "still available under Results"
+    # (review round 3, A).
+    assert body["attack_uncovered_withheld"] is True

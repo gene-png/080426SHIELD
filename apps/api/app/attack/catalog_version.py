@@ -17,14 +17,20 @@ THREE STATES, for every site that calls this:
 WHERE IT IS CALLED, and so what "refused" covers. Not every reader: every
 reader that COMPUTES a number from coverage rows, CHANGES them, or PUBLISHES
 them. In routes/attack.py: coverage PATCH, confirm-citations, the AI request
-builder, the heatmap, approve, finalize and release. In routes/clients.py: the
-client dashboard (`require_current_catalog_for_client`) and the value-summary
-card (which reports the kind unresolved via `is_current`). In routes/risk.py:
+builder, the heatmap, approve, finalize, and a FIRST release. Re-releasing an
+already-released deliverable is not guarded: it is `release_deliverable`'s
+idempotent repair path and publishes nothing new; a stale one is instead
+withheld from the client, below. In routes/clients.py: the client dashboard
+(`require_current_catalog_for_client`) and the value-summary card (which
+reports the kind unresolved, and withheld, via `is_current`). In routes/risk.py:
 risk synthesis, and the gate that offers it, through the same sentence
 (`catalog_mismatch_message`).
 A document already RELEASED over a stale assessment is withheld from the client
-by `is_stale_attack_deliverable`, in the deliverable list (routes/clients.py)
-and the file download (routes/artifacts.py). Readers that neither compute nor
+by `is_stale_attack_deliverable`: in the deliverable list (routes/clients.py),
+the file download (routes/artifacts.py, typed), and the admin deliverables page,
+which counts it as not visible to the client (routes/admin.py). A Risk Register
+built from one is withheld from the client dashboard by `is_stale_risk_register`.
+Readers that neither compute nor
 publish -- the assessment GET, which reports `catalog_current`, and the discard
 summary's row count -- are deliberately unguarded.
 
@@ -36,6 +42,8 @@ message states the fact and names no action.
 """
 
 from __future__ import annotations
+
+import uuid
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -141,6 +149,31 @@ def is_stale_attack_deliverable(db: Session, deliv: Deliverable) -> bool:
     return parent is None or not is_current(parent)
 
 
+def is_stale_risk_register(db: Session, provenance: dict | None) -> bool:
+    """A Risk Register built from an ATT&CK assessment that is not current.
+
+    Decided from the register's own `provenance` (#240), which records the
+    assessment each input WAS at generate. A register with no provenance
+    (pre-0047) names no input, and every register generated before 0052 was
+    built from an unrecorded catalog anyway, so missing data defaults to stale.
+    An ATT&CK input whose assessment no longer exists is stale for the same
+    reason. A register generated since cannot be stale: synthesis refuses a
+    stale ATT&CK input (`routes/risk.py`).
+    """
+    if provenance is None:
+        return True
+    for entry in provenance.get("inputs") or []:
+        if entry.get("kind") != "attack":
+            continue
+        try:
+            assessment_id = uuid.UUID(str(entry.get("assessment_id")))
+        except ValueError:
+            return True
+        a = db.get(AttackAssessment, assessment_id)
+        return a is None or not is_current(a)
+    return False
+
+
 #: What the client reads wherever a stale ATT&CK report is withheld. It states
 #: the fact and names no action: nothing rescores an approved assessment yet
 #: (#558), so a promise of one would name a control that does not exist (D-076).
@@ -148,6 +181,13 @@ CLIENT_WITHHELD_MESSAGE = (
     "This ATT&CK coverage report was produced against an earlier version of the "
     f"ATT&CK framework than the current one (v{SOURCE_VERSION}), so its figures "
     "are withheld."
+)
+
+#: The same, for a Risk Register built from one. States the fact, names no action.
+RISK_REGISTER_WITHHELD_MESSAGE = (
+    "This Risk Register was built from an ATT&CK coverage report produced against an "
+    "earlier version of the ATT&CK framework than the current one "
+    f"(v{SOURCE_VERSION}), so it is withheld."
 )
 
 

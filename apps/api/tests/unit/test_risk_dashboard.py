@@ -363,3 +363,66 @@ def test_the_client_dashboard_discloses_entries_missing_from_every_breakdown(
         f"with {b['entries_without_tier']} disclosed -- these must reconcile, "
         "or the disclosure is a number that explains nothing"
     )
+
+
+@pytest.mark.unit
+def test_a_register_built_from_a_stale_attack_assessment_is_withheld_from_the_client(
+    app_client,
+) -> None:
+    """#556, the owner's decision: a finalized register whose ATT&CK input was
+    scored against another catalog carries findings emitted BY ID against the
+    old names. It is withheld from the client like the ATT&CK report itself --
+    typed, with the client sentence -- rather than left visible (review round 3,
+    D). Decided from the register's own provenance, not today's latest row."""
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    c.headers["X-Client-Id"] = client_id
+    _generate_and_finalize(c, admin["tokens"]["access_token"], client_id)
+    url = f"/clients/{client_id}/risk/dashboard"
+    ch = {"Authorization": f"Bearer {client['tokens']['access_token']}"}
+    assert c.get(url, headers=ch).status_code == 200
+
+    with c.test_session() as db:  # type: ignore[attr-defined]
+        db.execute(update(AttackAssessment).values(catalog_version=None))
+        db.commit()
+
+    r = c.get(url, headers=ch)
+    assert r.status_code == 409, r.text
+    body = r.json()["error"]
+    assert body["reason"] == "attack_catalog_mismatch"
+    assert body["message"].startswith(
+        "This Risk Register was built from an ATT&CK coverage report produced against"
+    )
+    assert body["message"].endswith("so it is withheld.")
+
+
+@pytest.mark.unit
+def test_a_register_with_no_provenance_is_withheld(app_client) -> None:
+    """Missing data defaults to unconfirmed: a pre-0047 register names no input,
+    and every register generated before 0052 was built from an unrecorded
+    catalog."""
+    from sqlalchemy import update
+
+    from app.models.risk_register import RiskRegister
+
+    c = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    client_id = client["user"]["client_id"]
+    c.headers["X-Client-Id"] = client_id
+    _generate_and_finalize(c, admin["tokens"]["access_token"], client_id)
+    with c.test_session() as db:  # type: ignore[attr-defined]
+        db.execute(update(RiskRegister).values(provenance=None))
+        db.commit()
+    r = c.get(
+        f"/clients/{client_id}/risk/dashboard",
+        headers={"Authorization": f"Bearer {client['tokens']['access_token']}"},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "attack_catalog_mismatch"

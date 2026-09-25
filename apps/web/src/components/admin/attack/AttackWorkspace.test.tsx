@@ -171,12 +171,36 @@ describe("AttackWorkspace reqSeq stale-fetch guard", () => {
       />,
     );
 
+    // Steps 1, 3 and 4 each say why they are blocked.
     expect(
-      await screen.findByText(
+      await screen.findAllByText(
         /scored against a different ATT&CK catalog than the current one/,
       ),
-    ).toBeInTheDocument();
+    ).toHaveLength(3);
     expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
+    // Run AI's only outcome would be the API's 409, so it is not offered.
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
+  });
+
+  it("offers Run AI on a current draft", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue({
+      ...draft(),
+      catalog_version: "19.2",
+      catalog_current: true,
+    });
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace
+        serviceId="svc-current-run"
+        serviceTitle="Atlas ATT&CK"
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Run AI" }),
+    ).not.toBeDisabled();
   });
 
   it("does not draw a stale assessment's rows into the current matrix (#556)", async () => {

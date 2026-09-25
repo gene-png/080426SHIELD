@@ -76,3 +76,33 @@ migration plan is on #556, with the name-not-ID rule.
   untraceable-parent branch has its own test.
 - `test_discard_draft.py` hand-built an assessment with no `catalog_version`,
   a state `create_assessment` cannot produce. It now carries the stamp.
+
+## The owner's decision, and review round 3 (2026-09-25)
+
+The owner briefly replaced this design with a migration that refuses while any
+old assessment exists (option 3), then withdrew it. With no rescore control
+after approval (#558), a refusing migration is a dead end for a stack holding
+real assessments. Quarantine and withhold is the decision, recorded on #556
+and #562. The option-3 rework was never pushed.
+
+Round 3's findings, fixed:
+
+- **A.** The client home page no longer calls a withheld report ready: the
+  hero skips it, the service's phase reads "Report withheld" and it files under
+  In progress. The value card says the figures are withheld, not "still
+  available under Results". The Results pill reads Withheld. Client
+  deliverables carry a `withheld` field for this.
+- **B.** Generate, Run AI, Finalize and Release are no longer offered for a
+  stale input, whose only outcome is the 409. The Risk gate test is renamed to
+  what it asserts.
+- **C.** The admin deliverables page counts a withheld row as "Withheld from
+  client", not visible, through the same predicate as the client list.
+- **D.** A finalized Risk Register built from a stale ATT&CK assessment is
+  withheld from the client dashboard, decided from its own provenance. The
+  Results page keeps its link instead of crashing on the 409.
+- **E.** The docstring says a FIRST release is guarded.
+- **F.** A withheld file download is a typed 409 with the client sentence,
+  not a bare 404.
+- The test-output file `apps/api/.r2_run.txt`, committed by mistake at
+  4970f4c, is removed.
+

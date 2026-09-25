@@ -2566,10 +2566,12 @@ def test_synthesis_refuses_an_attack_assessment_scored_against_another_catalog(a
 
 
 @pytest.mark.unit
-def test_the_gate_does_not_offer_generate_over_a_stale_attack_input(app_client) -> None:
-    """#556, the twin of the synthesis refusal: the gate asks the same predicate,
-    so it reports the stale ATT&CK input as blocking, with the refusal's own
-    sentence, instead of offering a Generate whose only outcome is a 409."""
+def test_the_gate_reports_a_stale_attack_input_with_the_refusals_sentence(app_client) -> None:
+    """#556, the twin of the synthesis refusal: the gate asks the same predicate
+    and carries the refusal's own sentence. This asserts the FIELD only. That
+    Generate is then not offered is the page's job, asserted in
+    `RiskRegisterDashboard.test.tsx` (review round 3: this test's old name
+    claimed the button, which nothing here can see)."""
     from sqlalchemy import update
 
     from app.models.attack_assessment import AttackAssessment

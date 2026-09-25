@@ -460,7 +460,9 @@ export function RiskRegisterDashboard(): JSX.Element {
               <button
                 type="button"
                 onClick={onClick}
-                disabled={busy !== null}
+                // #556: a stale ATT&CK input's only outcome is the 409 the
+                // banner above already explains, so the button is not offered.
+                disabled={busy !== null || catalogMismatch !== null}
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:opacity-50"
               >
                 {busy === "generate"

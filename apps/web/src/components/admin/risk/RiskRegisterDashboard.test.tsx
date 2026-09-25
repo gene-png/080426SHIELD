@@ -173,6 +173,21 @@ describe("RiskRegisterDashboard tier-less entries disclosure", () => {
     expect(banner.textContent).toContain(sentence);
     // It is already approved: the approve-these banner must not claim it.
     expect(screen.queryByTestId("risk-register-unapproved-sources")).toBeNull();
+    // And Generate, whose only outcome would be the 409, is not offered.
+    expect(
+      screen.getByRole("button", { name: /^(Generate|Regenerate)$/ }),
+    ).toBeDisabled();
+  });
+
+  it("offers Generate when the ATT&CK input is current", async () => {
+    fetchRiskGate.mockResolvedValue(gate({ attack_catalog_mismatch: null }));
+    await loaded();
+    expect(
+      screen.queryByTestId("risk-register-attack-catalog-mismatch"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^(Generate|Regenerate)$/ }),
+    ).not.toBeDisabled();
   });
 
   it("says so when entries reached the register with no tier", async () => {
