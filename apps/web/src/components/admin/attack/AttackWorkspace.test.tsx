@@ -119,6 +119,62 @@ describe("AttackWorkspace reqSeq stale-fetch guard", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the API's own refusal when the assessment is on another ATT&CK catalog (#556)", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    const payload = {
+      error: {
+        reason: "attack_catalog_mismatch",
+        message:
+          "This assessment was scored against an ATT&CK catalog that was never recorded.",
+      },
+    };
+    // The mocked class stores nothing, so status and payload are set explicitly.
+    const refusal = Object.assign(
+      new attackClient.AttackProxyError(409, payload),
+      {
+        status: 409,
+        payload,
+      },
+    );
+    fetchHeatmap.mockRejectedValue(refusal);
+
+    render(
+      <AttackWorkspace serviceId="svc-stale" serviceTitle="Atlas ATT&CK" />,
+    );
+
+    expect(
+      await screen.findByText(
+        /scored against an ATT&CK catalog that was never recorded/,
+      ),
+    ).toBeInTheDocument();
+    // "reload to try again" is false advice for a stale assessment.
+    expect(screen.queryByText(/reload to try again/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the generic sentence for any OTHER heatmap failure", async () => {
+    fetchCatalog.mockResolvedValue(CATALOG);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchHeatmap.mockRejectedValue(
+      Object.assign(
+        new attackClient.AttackProxyError(500, {
+          error: { reason: "something_else", message: "not shown" },
+        }),
+        {
+          status: 500,
+          payload: {
+            error: { reason: "something_else", message: "not shown" },
+          },
+        },
+      ),
+    );
+
+    render(<AttackWorkspace serviceId="svc-500" serviceTitle="Atlas ATT&CK" />);
+
+    expect(await screen.findByText(/reload to try again/)).toBeInTheDocument();
+    expect(screen.queryByText("not shown")).not.toBeInTheDocument();
+  });
+
   it("surfaces a failed catalog load to the error state (fail loudly)", async () => {
     fetchCatalog.mockRejectedValue(new Error("boom-catalog"));
     fetchLatestAssessment.mockResolvedValue(null);

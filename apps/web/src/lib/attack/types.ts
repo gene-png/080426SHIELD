@@ -86,6 +86,10 @@ export interface AttackAssessment {
   approved_at: string | null;
   approved_by: string | null;
   documents_stale?: boolean;
+  /** #556: the ATT&CK catalog version this assessment was scored against (null = unrecorded). */
+  catalog_version?: string | null;
+  /** #556: false = every coverage computation for it is refused (`attack_catalog_mismatch`). */
+  catalog_current?: boolean;
   coverage: AttackCoverageRow[];
 }
 

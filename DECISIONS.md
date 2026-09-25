@@ -5637,3 +5637,36 @@ red under five seeds.
 
 - both mutations also turn the invoke-level test red;
 - removing the gate's new signature turns its 4 detection tests red.
+
+## D-091 — The ATT&CK catalog is generated from MITRE's STIX, and it is v19.2
+
+**Date:** 2026-09-24 · **Issues:** #556 (tier-1), #554 · **Decided by:** the owner (version and path); the method is this PR's
+
+**What was wrong.** `app/attack/catalog.py` was hand-encoded and labelled "ATT&CK Enterprise v15 baseline: 607 total". It held 633 entries and matched no released version. Diffed against MITRE's STIX for v15.1, v16.1, v17.1 and v18.1:
+
+- 17 real techniques were missing in every version, including T1553 and all six of its sub-techniques;
+- T1558 and T1649 carried each other's names;
+- the four Kerberos sub-techniques were filed as T1649.001–.004, IDs that do not exist;
+- 13 v16 additions sat on a v15 base;
+- `_dedupe_and_merge` deliberately kept the longer of two names, so "(also DE)"-style editorial suffixes reached client deliverables.
+
+The only catalog test asserted `len(TECHNIQUES) >= 600`. **Every ATT&CK coverage number produced so far was computed over a denominator that was not ATT&CK.**
+
+**Decision 1 — generate, never hand-encode.** `scripts/generate_attack_catalog.py` reads one `enterprise-attack-<version>.json` from mitre-attack/attack-stix-data and refuses unless its collection object names the requested version. It writes `app/attack/_catalog_data.py` and a verbatim subset of MITRE's objects under `app/attack/stix/`. `catalog.SOURCE` records the version, the URL and the full file's sha256, so the version claim is true by construction. This follows the repo's rule to prefer a derivation over a synchronization: a hand list kept in sync with published data had drifted in five ways.
+
+**Decision 2 — v19.2, by the owner's rule.** The rule: all test data → generate v19.2, discard and rescore, and land it in one move; real assessments exist → v15.1 first. Measured on 2026-09-24:
+
+- 0 real client ATT&CK assessments in any environment this repo defines;
+- the dev database holds 4, all test: the seeded demo, an e2e-minted client, and the synthetic client of #555;
+- migration 0045's "14 assessments" was also dev data;
+- `docs/operations.md` states that no production deployment exists.
+
+**The path rests on one condition nobody here can check:** that no real engagement ran on a stack this session could not reach.
+
+v19.2 itself: collection "Enterprise ATT&CK" 19.2, source sha256 `dc1639caa5501d720e280cf1cbd8fbe009884a0c9b3e6e9ed9d0c25166c3d8f4`, 15 tactics, 222 techniques, 475 sub-techniques. TA0005 keeps its ID and becomes **Stealth**; **Defense Impairment** is the new TA0112. 19 IDs from the old file are inactive in v19.2: all of T1562, T1070.001/.002 and T1574.002 are revoked or deprecated, and the other four are the non-existent T1649.00x.
+
+**Decision 3 — the test never agrees with the catalog by construction.** `test_attack_catalog_matches_stix.py` parses the committed subset with its own code and compares IDs, names, tactics, matrix order and the sub-technique flag. One test does run the generator, and says so: it proves the data module was not hand-edited, and nothing about MITRE. Red-on-revert: reintroducing the T1558/T1649 swap turns 3 named tests red; dropping T1553 and its subs turns 3 red.
+
+**Decision 4 — every assessment records its catalog version, and a stale one is refused, never silently computed.** Rows are keyed by technique code and pre-seeded from the catalog of the day. The heatmap, finalize and the client dashboard kept only rows whose code was in the current catalog (`if r.technique_code in valid`), so after a catalog change an old assessment would silently lose 19 statuses and lack rows for every new technique while still reporting a percentage. Migration 0052 adds `attack_assessments.catalog_version`: stamped at creation, **NULL for every existing row**, because those were scored against a label that was false. `app/attack/catalog_version.py` refuses with a typed 409 `attack_catalog_mismatch` at six sites: coverage PATCH, citation confirm, the AI request builder, the heatmap, finalize, and the client dashboard (in client wording). Three states, all handled: current, a different recorded version, unrecorded. Red-on-revert: deleting each of the six calls, one at a time, turns a named route-level test red. The workspace shows the API's own message for this refusal instead of "reload to try again", keyed on the reason's value (#317). **Gap filed, not fixed:** an approved or released assessment has no control that starts a new version (#558), so its message names none.
+
+**The migration rule, carried for any future real data.** A consultant scoring T1558 read "Steal or Forge Authentication Certificates" on screen. **They answered the name, not the ID.** An answer moves to wherever the NAME it was given against lives in the new catalog, never by ID. On the chosen path nothing migrates, because everything is rescored. The rule stays written because one real engagement makes it binding.

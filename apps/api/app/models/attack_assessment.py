@@ -75,6 +75,11 @@ class AttackAssessment(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
 
+    # The ATT&CK catalog version this assessment was scored against (#556,
+    # migration 0052). NULL = created before it was recorded, which is treated
+    # as NOT current: see app/attack/catalog_version.py.
+    catalog_version: Mapped[str | None] = mapped_column(String(16))
+
 
 class AttackCoverage(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "attack_coverage"

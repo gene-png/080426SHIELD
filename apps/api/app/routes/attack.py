@@ -34,12 +34,14 @@ from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
 from app.attack.analytics import compute as compute_heatmap
 from app.attack.catalog import (
+    SOURCE_VERSION,
     TACTICS,
     TECHNIQUES,
 )
 from app.attack.catalog import (
     all_codes as attack_all_codes,
 )
+from app.attack.catalog_version import require_current_catalog
 from app.attack.citations import (
     _MAX_REJECTED_EXAMPLES,
     Candidate,
@@ -157,6 +159,8 @@ def _serialize_assessment(db: Session, a: AttackAssessment) -> AttackAssessmentR
         approved_at=a.approved_at,
         approved_by=a.approved_by,
         documents_stale=a.documents_stale,
+        catalog_version=a.catalog_version,
+        catalog_current=a.catalog_version == SOURCE_VERSION,
         coverage=_serialize_coverage(rows),
     )
 
@@ -379,6 +383,8 @@ def create_assessment(
         client_id=client.id,
         version=version,
         status=AttackAssessmentStatus.DRAFT,
+        # #556: the catalog the pre-seeded rows below come from.
+        catalog_version=SOURCE_VERSION,
     )
     db.add(assessment)
     db.flush()
@@ -491,6 +497,7 @@ def patch_coverage(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
+    require_current_catalog(a)  # #556
     if "status" in data:
         new_status = data["status"]
         if new_status is None:
@@ -1314,6 +1321,7 @@ def build_attack_ai_request(db: Session, svc: Service, client: Client) -> Attack
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This assessment is locked."
         )
+    require_current_catalog(a)  # #556: never draft over rows keyed to another catalog
 
     # ONE query, projected two ways, so the hard allow-list and the egress
     # payload cannot disagree about what the client owns.
@@ -1521,6 +1529,7 @@ def confirm_coverage_citations(
             status_code=status.HTTP_409_CONFLICT,
             detail="This assessment is locked.",
         )
+    require_current_catalog(a)  # #556
     outstanding = [e for e in (row.unconfirmed_citations or []) if e.get("cleared_at") is None]
     if not outstanding:
         # Refused rather than returned as a cheerful no-op. A 200 here would write
@@ -2089,6 +2098,9 @@ def heatmap(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No assessment yet.",
         )
+    # #556: `valid` below used to be the whole defence, and it DROPS unknown codes
+    # silently. A stale assessment is refused before any number is computed.
+    require_current_catalog(a)
     valid = attack_all_codes()
     rows = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
@@ -2580,6 +2592,7 @@ def finalize_attack_deliverable(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment must be approved before finalizing the deliverable.",
         )
+    require_current_catalog(assessment)  # #556: never render a stale denominator
     valid = attack_all_codes()
     coverage = (
         db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))

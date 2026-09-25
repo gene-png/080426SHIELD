@@ -33,8 +33,10 @@ TECHNIQUE_ID_PATTERN = re.compile(r"^T\d{4}(\.\d{3})?$")
 
 
 @pytest.mark.unit
-def test_fourteen_tactics() -> None:
-    assert len(TACTICS) == 14
+def test_tactic_ids_well_formed() -> None:
+    # The COUNT is whatever MITRE's release has (15 in v19.2); it is pinned
+    # against the STIX in test_attack_catalog_matches_stix.py, not here (#556).
+    assert TACTICS
     for t in TACTICS:
         assert TACTIC_ID_PATTERN.fullmatch(t.id), t.id
 
@@ -49,7 +51,9 @@ def test_tactics_unique() -> None:
 
 @pytest.mark.unit
 def test_at_least_600_total_entries() -> None:
-    # D-007: full Enterprise matrix (target floor 600).
+    # D-007: full Enterprise matrix. A floor only; the exact set is checked
+    # against MITRE's STIX in test_attack_catalog_matches_stix.py (#556). This
+    # floor alone passed a catalog missing 17 real techniques.
     assert len(TECHNIQUES) >= 600
 
 

@@ -171,12 +171,20 @@ export function AttackWorkspace({
       const next = await fetchHeatmap(serviceId);
       setHeatmap(next);
       heatmapAttempt.clear();
-    } catch {
+    } catch (err) {
       // NON-BLOCKING IS NOT SILENT. The old comment was true and is
       // why this survived: a panel's own loading state cannot be told
       // apart from a slow network.
+      //
+      // #556: an assessment scored against another ATT&CK catalog is REFUSED
+      // (409 `attack_catalog_mismatch`), and "reload to try again" would be
+      // false advice for it -- no reload fixes a stale assessment. Keyed on the
+      // reason's VALUE, never its presence (CLAUDE.md, #317), so every other
+      // failure keeps the sentence below.
       heatmapAttempt.note(
-        "Couldn't refresh the coverage heatmap. What is shown may be out of date; reload to try again.",
+        errorReason(err) === "attack_catalog_mismatch"
+          ? describeError(err)
+          : "Couldn't refresh the coverage heatmap. What is shown may be out of date; reload to try again.",
       );
     }
   }, [serviceId, beginRefresh]);

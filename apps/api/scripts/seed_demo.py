@@ -39,6 +39,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.attack.analytics import compute as compute_attack  # noqa: E402
+from app.attack.catalog import SOURCE_VERSION as ATTACK_SOURCE_VERSION  # noqa: E402
 from app.attack.catalog import TECHNIQUES, parent_techniques  # noqa: E402
 from app.attack.coverage import CoverageStatus  # noqa: E402
 from app.attack.exporters import (  # noqa: E402
@@ -926,6 +927,8 @@ def _seed_attack(db: Session, storage: StorageBackend, admin: User, org: Client)
         status=AttackAssessmentStatus.RELEASED,
         approved_at=utcnow(),
         approved_by=admin.id,
+        # #556: rows below are seeded from this catalog, so record which one.
+        catalog_version=ATTACK_SOURCE_VERSION,
     )
     db.add(assessment)
     db.flush()

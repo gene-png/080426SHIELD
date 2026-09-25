@@ -23,6 +23,7 @@ from app.attack.analytics import compute as attack_compute
 from app.attack.catalog import all_codes as attack_all_codes
 from app.attack.catalog import tactic_by_id as attack_tactic_by_id
 from app.attack.catalog import technique_by_id as attack_technique_by_id
+from app.attack.catalog_version import require_current_catalog_for_client
 from app.attack.pending import pending_codes as attack_pending_codes
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as csf_analyze_gaps
@@ -1159,6 +1160,8 @@ def attack_dashboard(
     )
     if assessment is None:
         raise _unresolved_parent(deliv, surface="attack_dashboard")
+    # #556: refuse, in client words, rather than drop unknown codes below.
+    require_current_catalog_for_client(assessment)
 
     valid = attack_all_codes()
     rows = (
