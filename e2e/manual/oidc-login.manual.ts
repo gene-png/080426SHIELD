@@ -6,11 +6,15 @@ import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../helpers/auth";
  * SMOKE_TEST OIDC section (Sprint 9 T7, D-032): the hybrid Keycloak SSO seam,
  * end to end through a real browser.
  *
- * OPT-IN, and doubly gated. The seam is dormant on the default stack
+ * A MANUAL PROCEDURE, NOT PART OF THE SUITE (#483). It used to live in
+ * `smoke/` behind `test.skip(E2E_OIDC !== "1")`, which no workflow sets, so it
+ * self-skipped on every CI run while reading as a smoke spec. It is now a
+ * `*.manual.ts` file that the default config never collects, run only through
+ * `playwright.manual.config.ts`. Run in the wrong state, it FAILS rather than
+ * skipping: it times out waiting for a button that does not render. The seam is dormant on the default stack
  * (`SHIELD_AUTH_OIDC_ENABLED` defaults false), so with the flag off the
  * "Sign in with Keycloak" button does not render and the "keycloak" provider
- * does not exist. This spec self-skips unless `E2E_OIDC=1`, so the default
- * suite runs ZERO tests from this file and its pass/fail count is unchanged.
+ * does not exist.
  *
  * To run it you must FIRST flip the seam on and rebuild the stack:
  *
@@ -22,7 +26,7 @@ import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../helpers/auth";
  *      `docker compose stop keycloak`
  *      `docker volume rm shield-v2_keycloak-data`
  *      `docker compose up -d keycloak`
- *   4. `E2E_OIDC=1 npx playwright test smoke/s26-oidc-login.spec.ts`
+ *   4. `cd e2e`, then `npx playwright test -c playwright.manual.config.ts oidc-login`
  *
  * ALWAYS restore afterward — remove the flag line and
  * `docker compose up -d --force-recreate api web`, then re-run the default
@@ -42,11 +46,6 @@ import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../helpers/auth";
  * Keycloak's login page is NOT our UI, so it is driven by Keycloak's stable ids
  * (`#username` / `#password` / `#kc-login`), never by our design-system copy.
  */
-
-test.skip(
-  process.env.E2E_OIDC !== "1",
-  "OIDC hybrid SSO e2e — opt-in; set E2E_OIDC=1 after flipping SHIELD_AUTH_OIDC_ENABLED=true and recreating api+web (see the file header).",
-);
 
 const NOLOCAL_EMAIL = "nolocal@atlas.example";
 // Both the seeded Keycloak users share the demo password (infra/keycloak realm
@@ -85,7 +84,7 @@ async function submitKeycloakForm(
   await page.click("#kc-login");
 }
 
-test.describe("s26 hybrid Keycloak OIDC sign-in (opt-in, E2E_OIDC=1)", () => {
+test.describe("hybrid Keycloak OIDC sign-in (manual procedure, #483)", () => {
   test("positive: admin round-trips through Keycloak and an API-backed page renders", async ({
     page,
   }) => {

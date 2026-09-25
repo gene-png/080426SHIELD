@@ -29,6 +29,13 @@ rescored by resetting it: the workspace has no control that starts a new version
 after approval (#558). That rests on one condition nobody here can check: no
 real engagement ran on a stack this session could not see.
 
+## Chain order: 0051 -> 0053 -> 0052
+
+Written as the next revision after 0051, while #569's 0053 was also open and also
+chained from 0051. #569 merged first, so this revision now follows 0053 to keep
+a single head. The id stays `0052`: alembic orders by the chain, not by the
+number, and renaming would change every reference to it for no behaviour.
+
 SQLite-safe via `batch_alter_table` (core principle 6); additive and nullable,
 so older code reading a newer database is unaffected.
 """
@@ -41,7 +48,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0052"
-down_revision: str | Sequence[str] | None = "0051"
+down_revision: str | Sequence[str] | None = "0053"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

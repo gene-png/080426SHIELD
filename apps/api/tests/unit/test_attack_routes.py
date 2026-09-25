@@ -117,7 +117,8 @@ def test_catalog_returns_full_matrix(app_client) -> None:
     assert len(body["techniques"]) >= 600
     assert body["total_techniques"] >= 150
     assert body["total_sub_techniques"] >= 350
-    assert len(body["coverage_definitions"]) == 4
+    # Six since the #554 vocabulary (2026-09-24): the spec changed, not the rigour.
+    assert len(body["coverage_definitions"]) == 6
 
 
 # ---------------------------------------------------------------------------

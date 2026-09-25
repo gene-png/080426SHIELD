@@ -49,7 +49,13 @@ from app.attack.citations import (
     CitationResolver,
     resolve_citations,
 )
-from app.attack.coverage import COVERAGE_DEFINITIONS, CoverageStatus
+from app.attack.coverage import (
+    COVERAGE_DEFINITIONS,
+    WRITABLE,
+    CoverageStatus,
+    is_valid_reason,
+    reason_codes_for,
+)
 from app.attack.exporters import build_context as build_attack_context
 from app.attack.exporters import coverage_pct_text
 from app.attack.exporters import render_docx as render_attack_docx
@@ -498,6 +504,42 @@ def patch_coverage(
             detail="This assessment is locked.",
         )
     require_current_catalog(db, a)  # #556
+    # #554: a reason code is valid only for the status it belongs to. Judged
+    # against the status the row will HAVE after this patch, and refused typed
+    # rather than stored: a missing reason is a release question, an impossible
+    # pairing (a missing control given as an N/A reason) is refused at the click.
+    # #554: the two new statuses are not writable until every reporting surface
+    # renders them (`coverage.WRITABLE`); refused typed, never stored.
+    if data.get("status") is not None and CoverageStatus(data["status"]) not in WRITABLE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "status_not_yet_reportable",
+                "message": (
+                    f"'{CoverageStatus(data['status']).value}' cannot be recorded yet: the "
+                    "dashboards and reports do not show it. Use covered, partial, gap "
+                    "or N/A."
+                ),
+            },
+        )
+    resulting_status = data.get("status", row.status)
+    if "reason_code" in data and not is_valid_reason(resulting_status, data["reason_code"]):
+        valid = reason_codes_for(resulting_status)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "invalid_reason_code",
+                "message": (
+                    f"'{data['reason_code']}' is not a reason for status "
+                    f"'{resulting_status or 'unscored'}'. "
+                    + (
+                        f"Valid reasons: {', '.join(valid)}."
+                        if valid
+                        else "That status takes no reason code."
+                    )
+                ),
+            },
+        )
     if "status" in data:
         new_status = data["status"]
         if new_status is None:
@@ -507,6 +549,14 @@ def patch_coverage(
             row.status = (
                 new_status.value if isinstance(new_status, CoverageStatus) else str(new_status)
             )
+        # A reason that no longer fits the new status is dropped, never kept
+        # beside a status it does not describe.
+        if "reason_code" not in data and not is_valid_reason(row.status, row.reason_code):
+            row.reason_code = None
+    if "reason_code" in data:
+        row.reason_code = data["reason_code"]
+    if "narrative" in data:
+        row.narrative = data["narrative"]
     if "notes" in data:
         row.notes = data["notes"]
     if "evidence_artifact_id" in data:
@@ -1275,9 +1325,14 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
     return [c.name for c in _client_capabilities(db, client_id)]
 
 
-_VALID_STATUSES = {s.value for s in CoverageStatus}
+# Pinned to what the prompt offers and every surface renders (#554), not to the
+# whole enum: a status the reports cannot show must not arrive through the AI.
+_VALID_STATUSES = {s.value for s in WRITABLE}
 _DIFF_FIELDS = (
     "status",
+    # #554: a consultant's reason the AI's new status does not take is dropped
+    # (below), and a drop nobody is told about is the silent-failure shape.
+    "reason_code",
     "detection_tools",
     "prevention_tools",
     "response_tools",
@@ -1669,6 +1724,7 @@ def run_ai(
         return {
             code: {
                 "status": r.status,
+                "reason_code": r.reason_code,
                 "detection_tools": list(r.detection_tools or []),
                 "prevention_tools": list(r.prevention_tools or []),
                 "response_tools": list(r.response_tools or []),
@@ -1754,6 +1810,7 @@ def run_ai(
         # the displacement in `test_attack_run_ai.py`.
         return out.tools
 
+    reason_codes_dropped: list[dict[str, str]] = []
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
             continue
@@ -1763,6 +1820,14 @@ def run_ai(
         st = sugg.get("status")
         if isinstance(st, str) and st in _VALID_STATUSES:
             row.status = st
+            # #554: the same rule as the PATCH. A reason a consultant gave for the
+            # old status is dropped when the AI moves the row to one it does not
+            # describe -- never left as an N/A carrying `missing_control_category`.
+            if not is_valid_reason(row.status, row.reason_code):
+                reason_codes_dropped.append(
+                    {"technique_code": row.technique_code, "reason_code": row.reason_code}
+                )
+                row.reason_code = None
         # #101 / #102: record what happened to this row's citations, per FIELD.
         #
         # `row_flags` starts EMPTY, not None. An empty list is a positive claim --
@@ -1933,6 +1998,8 @@ def run_ai(
             # so the next run can.
             "rows_left_unresolved": rows_left_unresolved,
             "unresolved_fields": unresolved_fields_seen,
+            # #554: which consultant reasons the AI's new statuses displaced.
+            "reason_codes_dropped": reason_codes_dropped,
         },
     )
     db.commit()
@@ -2126,6 +2193,8 @@ def heatmap(
         gap=rollup.gap,
         not_applicable=rollup.not_applicable,
         pending_review=rollup.pending_review,
+        outside_control_surface=rollup.outside_control_surface,
+        unable_to_determine=rollup.unable_to_determine,
         coverage_pct=rollup.coverage_pct,
         by_tactic=[
             TacticHeatmapEntry(
@@ -2139,6 +2208,8 @@ def heatmap(
                 not_applicable=tc.not_applicable,
                 unscored=tc.unscored,
                 pending_review=tc.pending_review,
+                outside_control_surface=tc.outside_control_surface,
+                unable_to_determine=tc.unable_to_determine,
                 coverage_pct=tc.coverage_pct,
             )
             for tc in rollup.by_tactic

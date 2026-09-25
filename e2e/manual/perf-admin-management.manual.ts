@@ -14,18 +14,17 @@
  * digits. This spec exists to turn "probably drift" into a number, and to be
  * re-run against a freshly seeded database for the comparison.
  *
- * OPT-IN. `playwright.config.ts` sets `testDir: "."`, so this file IS collected
- * by a bare `npx playwright test` -- including CI's. It is gated behind
- * `E2E_PERF=1`, the same pattern `s26-oidc-login` uses for `E2E_OIDC`, so the
- * smoke suite is unchanged and CI does not spend two minutes measuring a number
- * its own empty-volume runners can never reproduce.
+ * A MANUAL MEASUREMENT, NOT PART OF THE SUITE (#483). It used to be a
+ * `*.spec.ts` collected by CI and skipped behind `E2E_PERF=1`, which no workflow
+ * sets, so it read as part of the suite and never ran. CI's empty-volume runners
+ * could never reproduce the number anyway. It is now a `*.manual.ts` file that
+ * the default config never collects.
  *
- * Run explicitly:
- *   E2E_PERF=1 npx playwright test perf-admin-management.spec.ts
+ * Run explicitly, against a database with realistic client counts:
+ *   cd e2e
+ *   npx playwright test -c playwright.manual.config.ts perf-admin-management
  */
 import { expect, test } from "@playwright/test";
-
-const PERF = process.env.E2E_PERF === "1";
 
 const ADMIN_EMAIL = "admin@kentro.example";
 const ADMIN_PASSWORD = "DemoPass!2026";
@@ -33,7 +32,6 @@ const ADMIN_PASSWORD = "DemoPass!2026";
 test("measure: /admin/management request fan-out and time to networkidle", async ({
   page,
 }) => {
-  test.skip(!PERF, "measurement only — set E2E_PERF=1 to run");
   test.setTimeout(600_000);
 
   await page.goto("/sign-in");

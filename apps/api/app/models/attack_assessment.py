@@ -103,6 +103,12 @@ class AttackCoverage(UUIDPKMixin, TimestampMixin, Base):
 
     # Free-form short enum value (CoverageStatus). NULL = unscored.
     status: Mapped[str | None] = mapped_column(String(32))
+    # #554 (migration 0053): the reason code valid for `status` (see
+    # app/attack/coverage.py), and, for `unable_to_determine`, what could not be
+    # verified. NULL reason = none given; whether that may ship is a release
+    # question, not a storage one.
+    reason_code: Mapped[str | None] = mapped_column(String(48))
+    narrative: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     evidence_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artifacts.id", ondelete="SET NULL")
