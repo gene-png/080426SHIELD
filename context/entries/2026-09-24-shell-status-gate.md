@@ -159,7 +159,7 @@ stays clean, with R4 now reading every workflow step.
   being changed, and now pin the opposite.
 - Red on revert: five mutations, each red. The self-scan stays clean.
 
-## After round 4 of the review (`9701c47`): a whitelist
+## After round 4 of the review (`9701c47`): a whitelist (`return` dropped in round 7)
 
 Round 4 found #143 reopened a fourth time, through my own refinement: the
 "first exit it reaches" rule read the first exit in TEXT order, not the one
@@ -267,8 +267,9 @@ accepted it was a hole, PRE-EXISTING since round 2.
 
 - **`return` is dropped from every accepted form**: the `||` rescue, the
   `{ ...; }` group, the `if` failure branch, `exit $?`, and the capture's next
-  statement. Functions are already an unmodelled limit, so no in-scope shape
-  needed it.
+  statement. Function BODIES are still scanned, so `gate || return N` inside a
+  function is now a finding by design (a conservative false positive, stated in
+  LIMITS); no such site exists in the repo today.
 - **Three pinned expectations were WRONG, not strict**, and were said to be
   before they changed: `return 2` in `test_r2_is_not_a_capture`, `return 1` in
   `test_whitelisted_rescues`, and `return $rc` in the capture test. They move

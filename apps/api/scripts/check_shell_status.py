@@ -91,8 +91,10 @@ tracked-looking `*.sh` file outside `node_modules`; and every fenced
 ```bash / ```sh / ```shell block in CLAUDE.md, plus every indented block there
 that invokes a gate.
 
-LIMITS, and each is a way a clean run can be wrong: functions, sourced files
-and variables holding commands are not followed; a loop's earlier iterations
+LIMITS, and each is a way a clean run can be wrong: function CALLS, sourced
+files and variables holding commands are not followed (function BODIES are
+scanned as brace groups, so `gate || return N` inside one is a finding even
+though `return` exits a function; a false positive by design); a loop's earlier iterations
 are not modelled (only the body's own statements); a gate ending an if/case
 branch is taken to reach the compound's status, so code after the compound is
 not checked; `"$( ... )"` inside double quotes is read as one word, so a gate
@@ -481,8 +483,10 @@ _GROUP_FORBIDDEN = {"if", "then", "||", "&&", "{", "(", "exit", "return"}
 
 # `return` is NOT accepted anywhere. Outside a function, bash prints "can only
 # `return' from a function" and CONTINUES with status 1 (rc 2 under -e only), so
-# `gate || return 1; git push` pushes. Functions are an unmodelled limit, so
-# nothing in scope needs it (round 7, measured with bash -c).
+# `gate || return 1; git push` pushes (round 7, measured with bash -c). Function
+# BODIES are still scanned (as brace groups), so `gate || return 1` inside a
+# function is a finding BY DESIGN, though there it is a real exit: a stated
+# limit, conservative. Function CALLS are what is not followed.
 def _literal_failure(words: list[str]) -> bool:
     """`exit N`: exactly two words, N a literal the SHELL sees as non-zero."""
     return (
@@ -942,7 +946,7 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"check-shell-status: none of R1-R4 found in {scope}. A line-level heuristic, "
-        "not a shell parser, so a floor, not a census. NOT modelled: functions, sourced "
+        "not a shell parser, so a floor, not a census. NOT modelled: function calls (bodies are scanned, and a `return` there is a finding), sourced "
         "files, command variables, loop bodies and while/until conditions, unlisted "
         "wrappers, unquoted $(gate) in echo/export/local, backgrounded gates, heredoc "
         "bodies, trap EXIT (#586); package.json scripts are not scanned, and pwsh/python "
