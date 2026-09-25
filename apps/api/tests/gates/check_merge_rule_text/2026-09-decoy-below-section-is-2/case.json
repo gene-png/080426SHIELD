@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. Review of 2ae1650: a decoy copy of the heading BELOW the real section. The count of start headings catches it; this pins that it does.",
+ "expect": 2,
+ "adversarial": true,
+ "stdout_contains": "2 `## The merge rule` headings",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}

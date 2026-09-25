@@ -1598,8 +1598,10 @@ Rules of the road:
   **Who may decide a PR ships without it: the human dev at the keyboard, by
   name, in the PR body.** Never an agent, never by inference from silence, never
   the author when the author is an agent. That authorisation is prose and
-  nothing checks it — `enforce_admins` is false and both devs are admins, so
-  either can already merge past a red gate. **The checkable version is a GitHub
+  nothing checks it: the audit gate reads only that the lines exist. (Admins
+  could merge past a red gate until `enforce_admins` was turned on; `true` on
+  2026-09-25 by `gh api repos/gene-png/080426SHIELD/branches/main/protection
+  --jq .enforce_admins.enabled`, #595.) **The checkable version is a GitHub
   review approval** (`gh pr review --approve`) from the named human. A blocked
   PR waits, and its issue gets a comment saying it is blocked on tooling.
 
@@ -2194,7 +2196,8 @@ Rules of the road:
   Do none of this **while an agent holds the shared tree**.
 - **Branch + PR for anything that changes behaviour or states a rule. Two
   exceptions go direct to `main`, and they are exceptions because practice
-  already worked this way.**
+  already worked this way.** (A direct push may now be refused since
+  `enforce_admins` went on: #596, derived from the API, untested.)
 
   1. **`context/*.md`** — the personal status files. Owner-write-only by
      convention, read by the other dev for awareness, stale within hours.

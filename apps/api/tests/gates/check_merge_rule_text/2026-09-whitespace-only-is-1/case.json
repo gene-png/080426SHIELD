@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL. A change that looks like nothing -- one extra space -- is still a change to the rule's text. This gate enforces visibility of ANY edit, not a judgement about which edits matter; that judgement is the human's.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "CHANGES the merge rule",
+ "argv": [
+  "--old",
+  "{dir}/old/CLAUDE.md",
+  "--new",
+  "{dir}/new/CLAUDE.md"
+ ]
+}
