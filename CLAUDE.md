@@ -146,8 +146,7 @@ happened.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
    proves least. **A diff changing no executable line in them does not trip it**
-   (#530: a comments-only compose diff came back) — `check_condition5.py`
-   decides, and its exit 2 reads as tripped.
+   (#530); `check_condition5.py` decides, and its exit 2 reads as tripped.
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
@@ -162,8 +161,7 @@ been tripped.
 
 ### Condition 5: the paths
 
-`check_condition5.py` reads this list; the bullets explain it, and a test pins
-that every entry is also named in them.
+The gate reads this list; the bullets explain it, and a test pins the two agree.
 
     apps/api/app/ai/**
     apps/api/app/csf/playbook.py
@@ -256,7 +254,7 @@ anything adding or changing a test — and this repo does not ship code without
 tests. Condition 5's path list applied to the fifteen most recent PR merges on
 `main`:
 
-| measured | cleared | came back | with the executable-line exception |
+| measured | cleared | came back | with the exception |
 | --- | --- | --- | --- |
 | 2026-08-26 | 4 | 11 | 4 / 11 |
 | 2026-09-21 | 2 | 13 | 4 / 11 |
@@ -271,12 +269,10 @@ On 2026-09-21 one of the thirteen came back ONLY through the new
 `tests/gates/**` glob, tripping nothing else, so that glob is load-bearing on
 real traffic rather than theoretically.
 
-Dropping the rule was weighed against the same evidence and loses: the four that
-clear are the PRs that recur every round. **D-059** carries the cleared SHAs and
-the two PRs on which a denylist and an allowlist construction disagree; **D-079**
-carries how the first attempt at the September re-derivation selected the wrong
-population and produced a clean-looking "fifteen cleared, zero came back" about
-commits nobody had asked about.
+Dropping the rule was weighed against the same evidence and loses: the PRs that
+clear are the ones that recur every round (D-059). A re-derivation selects PR
+merges with the selector above, never commits: counting commits once reported
+"fifteen cleared, zero came back".
 
 ### Worked examples
 
