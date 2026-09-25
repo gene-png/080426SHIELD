@@ -166,6 +166,27 @@ describe("attack dashboard transforms", () => {
     expect(dpr.detect.pct).toBe(0);
   });
 
+  it("dprCoverage: the two #554 statuses leave both sides of the fraction", () => {
+    // #621 review, finding 2. Fifty verified covered rows beside fifty rows
+    // nobody verified must read "Detect 100%" with the fifty counted beside
+    // it, not "Detect 50%" over a population the owner excluded.
+    const assessed = tech({ code: "T1", detection_tools: ["Tool A"] });
+    const unverified = tech({ code: "T2", status: "unable_to_determine" });
+    const outside = tech({ code: "T3", status: "outside_control_surface" });
+    const dpr = dprCoverage([assessed, unverified, outside]);
+    expect(dpr.total).toBe(1);
+    expect(dpr.detect.pct).toBe(100);
+  });
+
+  it("dprCoverage: N/A stays in the denominator, as it was before #554", () => {
+    // Deliberately unchanged: moving it would shift a number on already
+    // released dashboards, which is the owner's call. Pinned so that a change
+    // to it is a decision rather than a side effect.
+    const assessed = tech({ code: "T1", detection_tools: ["Tool A"] });
+    const na = tech({ code: "T2", status: "not_applicable" });
+    expect(dprCoverage([assessed, na]).total).toBe(2);
+  });
+
   it("blindSpots: only gap techniques", () => {
     const b = blindSpots(DATA.techniques);
     expect(b.map((t) => t.code)).toEqual(["T1610"]);

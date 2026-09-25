@@ -34,5 +34,26 @@ surface could yet show them. This slice teaches the surfaces first.
 
 ## Not in this slice
 
-- Widening `coverage.WRITABLE`, the release-readiness gate (c3b, blocked on
-  #603 and #620), and the narrative editor (#615).
+- Widening `coverage.WRITABLE`, the release-readiness gate (c3b, #622,
+  blocked on #603 and #620), and the narrative editor (#615).
+
+## Round 1 (review of 43edf12)
+
+- **Three surfaces the first list missed now carry the counts:** the client
+  dashboard's KPI row and Detect / Prevent / Respond triad, the home value
+  card ("N techniques uncovered, M not verified", from a new API field
+  `attack_not_verified_count`), and the admin matrix's per-tactic header.
+- **The triad's denominator** leaves out the two new statuses. N/A stays in it,
+  as before #554, because moving it would change a number on released
+  dashboards. That is for the owner.
+- **The web list is derived** (`attack-percentages-state-the-outside-counts.test.ts`):
+  any component reading ATT&CK data that renders a coverage figure must state
+  the counts. The API renderers stay a named registry.
+- **Smaller fixes:** the heatmap card's formula matches the exports; the PDF
+  calls the shared sentence; the admin badge renders an unknown status instead
+  of throwing; `coverage.py` lists what remains before `WRITABLE` widens;
+  D-092 is date-qualified.
+- **Risk export wording** (the owner's recommendation, 2026-09-25; the final
+  call is pending): the disclosure names "techniques marked Not verified"
+  beside unscored rows, as the ATT&CK deliverable does. Citability is
+  unchanged.

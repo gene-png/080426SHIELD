@@ -5801,8 +5801,8 @@ The missing value always failed in the direction that flatters the client.
 
 **Decision 1 — six statuses.** `covered`, `partial`, `gap` and `not_applicable`, plus:
 
-- **`outside_control_surface`**: the technique applies and the client's control surface does not reach it. It stays in the catalogue total, outside the assessed denominator. The owner's decision gives it its own line in the deliverable; **not yet built**.
-- **`unable_to_determine`**: nobody verified it. It is outside the assessed denominator and never counted as partial or gap. The owner's decision makes it a release blocker; **not yet built**.
+- **`outside_control_surface`**: the technique applies and the client's control surface does not reach it. It stays in the catalogue total, outside the assessed denominator. The owner's decision gives it its own line in the deliverable; **not yet built** (true when written; as of 2026-09-25 #621 builds the line).
+- **`unable_to_determine`**: nobody verified it. It is outside the assessed denominator and never counted as partial or gap. The owner's decision makes it a release blocker; **not yet built** (still true as of 2026-09-25; tracked in #622).
 
 The T1588 finding decided `outside_control_surface`: the parent was N/A while its own sub-techniques were Partial on identical reasoning.
 
@@ -5815,7 +5815,7 @@ The T1588 finding decided `outside_control_surface`: the parent was N/A while it
 
 **The sentence written into the vocabulary** (`app/attack/coverage.py`): missing_control_category is legitimate for Partial (something defends it, a category is missing) and forbidden for N/A (nothing defends it -- that is a gap). The test: is anything defending it at all?
 
-**Decision 3 — coverage over assessed rows only.** `coverage_pct` = (covered + 0.5 × partial) / (covered + partial + gap). `outside_control_surface` and `unable_to_determine` are counted separately in the heatmap API response, overall and per tactic. No screen, export or deliverable renders them yet. They are in `scored_count`, so the catalogue total on screen does not shrink as rows move out of the denominator.
+**Decision 3 — coverage over assessed rows only.** `coverage_pct` = (covered + 0.5 × partial) / (covered + partial + gap). `outside_control_surface` and `unable_to_determine` are counted separately in the heatmap API response, overall and per tactic. No screen, export or deliverable renders them yet (true when written; as of 2026-09-25 #621 renders both counts on every coverage surface). They are in `scored_count`, so the catalogue total on screen does not shrink as rows move out of the denominator.
 
 **Decision 4 — at the click, refuse only impossible pairings.** A reason given for a status it does not belong to is a typed 422 `invalid_reason_code`, for example `missing_control_category` given as an N/A reason. A status change drops a reason that no longer fits. A MISSING reason is not refused at the click: "gate the release, not the click" (#557). That release gate is a later slice, because the AI path produces no reason codes until the prompt slice lands, and gating first would block every current flow.
 

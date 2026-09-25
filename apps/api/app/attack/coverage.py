@@ -15,20 +15,16 @@ do not:
     it a release blocker; that gate is a later slice.
 
 NOT YET WRITABLE. The two new statuses are defined, stored and counted, and
-nothing may WRITE them yet: `WRITABLE` below is the four statuses every
-reporting surface already renders. What does not yet know the new two, and so
-what the widening slice must change first:
-  * the client dashboard, which shows an unknown status as N/A;
-  * the three exporters and the finalize summary, which drop both counts while
-    `scored` includes them (a 100% PDF over unverified rows);
-  * the admin status badges and heatmap card;
-  * the release gate, which does not exist yet;
-  * `risk/link_scope.py`, which treats any non-NULL status as a consultant's
-    judgement ("scored when it is not NULL"), so `unable_to_determine` would
-    become a citable risk link.
+nothing may WRITE them yet: `WRITABLE` below is still the original four. Every
+reporting surface renders them as of #621 (the client and admin dashboards, the
+exporters and finalize summary, the home value card, the risk link scope). What
+remains before the widening slice may add them to `WRITABLE`:
+  * the release-readiness gate (#622), which does not exist yet;
+  * the owner's call on how the Risk Register treats an unverified technique
+    (#621 keeps it uncitable and names it "Not verified"; not yet confirmed).
 The PATCH refuses them typed, and the AI write-back refuses a suggestion carrying
-one WHOLE and records it (`statuses_rejected`), until the slice that teaches
-every surface to report them widens `WRITABLE`. My call, overturnable, recorded on #554.
+one WHOLE and records it (`statuses_rejected`), until that slice widens
+`WRITABLE`. My call, overturnable, recorded on #554.
 
 REASON CODES. A reason means something only for the status it belongs to:
   * Partial: seven codes, below.

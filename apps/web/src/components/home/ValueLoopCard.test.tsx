@@ -43,6 +43,8 @@ function summary(over: Partial<ValueSummary> = {}): ValueSummary {
     attack_uncovered_count: null,
     attack_uncovered_unresolved: false,
     attack_uncovered_withheld: false,
+    // Null exactly when the uncovered count is (#554).
+    attack_not_verified_count: null,
     csf_gap_count: null,
     csf_gap_unresolved: false,
     csf_services: 0,
@@ -70,6 +72,36 @@ function ztChosen(count: number): Partial<ValueSummary> {
 }
 
 describe("ValueLoopCard", () => {
+  it("states the not-verified count beside the uncovered count, even at zero (#554)", () => {
+    // #621 review finding 3: an assessment nobody verified has no gap rows, so
+    // the uncovered count alone read "0 techniques uncovered".
+    const { unmount } = render(
+      <ValueLoopCard
+        summary={summary({
+          attack_uncovered_count: 0,
+          attack_not_verified_count: 12,
+          has_any_data: true,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("0 techniques uncovered, 12 not verified"),
+    ).toBeInTheDocument();
+    unmount();
+    render(
+      <ValueLoopCard
+        summary={summary({
+          attack_uncovered_count: 1,
+          attack_not_verified_count: 0,
+          has_any_data: true,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("1 technique uncovered, 0 not verified"),
+    ).toBeInTheDocument();
+  });
+
   it("renders nothing for a brand-new client with no data and nothing unresolved", () => {
     const { container } = render(<ValueLoopCard summary={summary()} />);
     expect(container).toBeEmptyDOMElement();

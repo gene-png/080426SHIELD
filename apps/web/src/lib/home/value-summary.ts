@@ -47,6 +47,10 @@ export interface ValueSummary {
   /** #556: unresolved BECAUSE the released ATT&CK report is withheld (another
    *  catalog), not because the figure cannot be matched (#114). */
   attack_uncovered_withheld: boolean;
+  /** #554: techniques nobody verified, stated beside the uncovered count so
+   *  "0 uncovered" cannot read as "nothing missing". Null exactly when
+   *  `attack_uncovered_count` is. */
+  attack_not_verified_count: number | null;
   csf_gap_count: number | null;
   csf_gap_unresolved: boolean;
   csf_services: number;

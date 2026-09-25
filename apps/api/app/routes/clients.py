@@ -870,12 +870,20 @@ def _zt_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTot
     return _TargetedKindTotal(total, False, len(service_ids), defaulted, unusable, live)
 
 
-def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[_KindTotal, bool]:
-    """The ATT&CK total, and whether it is unresolved because the report is
-    WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences."""
+def _attack_uncovered_total(
+    db: Session, service_ids: list[uuid.UUID]
+) -> tuple[_KindTotal, bool, int | None]:
+    """The ATT&CK total, whether it is unresolved because the report is
+    WITHHELD (#556) rather than unmatched (#114) -- two causes, two sentences --
+    and the NOT-VERIFIED count beside it (#554, #621 review).
+
+    The third value exists because "0 techniques uncovered" over an assessment
+    whose rows nobody verified is a false assurance: `gap` counts only what was
+    judged and found missing. It is None exactly when the total is."""
     if not service_ids:
-        return _KindTotal(None, False), False
+        return _KindTotal(None, False), False, None
     total = 0
+    not_verified = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED row.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -889,7 +897,7 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[
             # One unresolvable service makes the whole KIND unresolved. Summing
             # the rest would publish a floor as a figure — option 1 in
             # `_released_parent`, rejected there for this reason.
-            return _KindTotal(None, True), False
+            return _KindTotal(None, True), False, None
         # No `deliverable` here: an ATT&CK service has no engagement target of
         # #209's shape, so there is nothing to freeze. Stated because the two
         # helpers above this one DO freeze, and a reader sweeping for the twin
@@ -900,7 +908,7 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[
             # unknown codes silently dropped by `attack_compute` below. Same
             # answer as an unresolvable service: the whole kind is unresolved,
             # and the card is told the cause.
-            return _KindTotal(None, True), True
+            return _KindTotal(None, True), True, None
         rows = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
@@ -920,8 +928,10 @@ def _attack_uncovered_total(db: Session, service_ids: list[uuid.UUID]) -> tuple[
         # function and read as though it covered the file. Checking the callers
         # of what you just changed finds every copy that went through it and
         # misses every other caller sitting beside it.
-        total += attack_compute(coverage_map).gap
-    return _KindTotal(total, False), False
+        rollup = attack_compute(coverage_map)
+        total += rollup.gap
+        not_verified += rollup.unable_to_determine
+    return _KindTotal(total, False), False, not_verified
 
 
 def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTotal:
@@ -986,7 +996,7 @@ def value_summary(
         ServiceKind.ZERO_TRUST_DOD, []
     )
     zt = _zt_gap_total(db, zt_ids)
-    attack, attack_withheld = _attack_uncovered_total(
+    attack, attack_withheld, attack_not_verified = _attack_uncovered_total(
         db, by_kind.get(ServiceKind.ATTACK_COVERAGE, [])
     )
     csf = _csf_gap_total(db, by_kind.get(ServiceKind.NIST_CSF, []))
@@ -1029,6 +1039,7 @@ def value_summary(
         attack_uncovered_count=attack.value,
         attack_uncovered_unresolved=attack.unresolved,
         attack_uncovered_withheld=attack_withheld,
+        attack_not_verified_count=attack_not_verified,
         csf_gap_count=csf.value,
         csf_gap_unresolved=csf.unresolved,
         csf_services=csf.services,

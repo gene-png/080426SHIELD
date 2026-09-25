@@ -137,9 +137,23 @@ export interface DprCoverage {
  * Out of BOTH sides, like `unscored` and for the same reason: it is a claim not
  * being made, not a claim of absence. Scoring it as a zero would understate the
  * posture rather than decline to state it.
+ *
+ * The two #554 statuses are out of BOTH sides for the same reason: nobody
+ * verified the technique, or the client's controls do not reach it, so it is
+ * not in the assessed population the owner's decision computes coverage over.
+ * Their counts are rendered beside the triad instead. N/A is left where it was
+ * (in the denominator) deliberately: moving it would change a number already
+ * shown on released dashboards, which is the owner's call, not this slice's.
  */
+const OUTSIDE_ASSESSED: ReadonlySet<CoverageStatus> = new Set([
+  "outside_control_surface",
+  "unable_to_determine",
+]);
+
 export function dprCoverage(techniques: DashTechnique[]): DprCoverage {
-  const claimable = techniques.filter((t) => !t.pending_review);
+  const claimable = techniques.filter(
+    (t) => !t.pending_review && !OUTSIDE_ASSESSED.has(t.status),
+  );
   const total = claimable.length;
   const detect = claimable.filter((t) => t.detection_tools.length > 0).length;
   const prevent = claimable.filter((t) => t.prevention_tools.length > 0).length;

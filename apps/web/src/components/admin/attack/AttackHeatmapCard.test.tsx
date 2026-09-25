@@ -80,4 +80,18 @@ describe("AttackHeatmapCard", () => {
       screen.getByTestId("attack-heatmap-outside-assessed"),
     ).toHaveTextContent("Not verified 0, Outside control surface 0.");
   });
+
+  it("defines the percentage with the same denominator the exports state (#621)", () => {
+    // The exporters' COVERAGE_PCT_DEFINITION: (Covered + 0.5 x Partial) /
+    // (Covered + Partial + Gap), with Not verified and Outside control surface
+    // outside it. The card said "addressable excludes N/A and pending", which
+    // left the two new statuses in -- a consultant reading it would state the
+    // formula wrong to a client.
+    const { container } = render(<AttackHeatmapCard heatmap={heatmap()} />);
+    const text = container.textContent ?? "";
+    expect(text).toMatch(/\(covered \+ partial \+ gap\)/);
+    expect(text).toMatch(
+      /N\/A, Outside control surface, Not verified, unscored and pending\s+review techniques are outside it/,
+    );
+  });
 });

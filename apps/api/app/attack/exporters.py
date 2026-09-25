@@ -570,8 +570,9 @@ def render_pdf(ctx: AttackDeliverableContext) -> bytes:
             f"Gap <b>{ctx.rollup.gap}</b>, "
             f"N/A <b>{ctx.rollup.not_applicable}</b>, "
             f"Pending review <b>{ctx.rollup.pending_review}</b>, "
-            f"Not verified <b>{ctx.rollup.unable_to_determine}</b>, "
-            f"Outside control surface <b>{ctx.rollup.outside_control_surface}</b>",
+            # #554: the shared sentence, not a copy of it, so the PDF cannot
+            # drift from the DOCX, XLSX and stored summary. It carries no bold.
+            f"{outside_assessed_text(ctx.rollup)}",
             body,
         )
     )

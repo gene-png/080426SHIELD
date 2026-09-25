@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import type { CoverageStatus } from "@/lib/attack/types";
+
 import { StatusBadge } from "./StatusBadge";
 
 describe("StatusBadge", () => {
@@ -16,6 +18,19 @@ describe("StatusBadge", () => {
     unmount();
     render(<StatusBadge status="outside_control_surface" />);
     expect(screen.getByText("Outside control surface")).toBeInTheDocument();
+  });
+
+  it("renders a status it does not know as unknown, and does not throw", () => {
+    // #621 review: the pending branch called `.toLowerCase()` on the label
+    // lookup, so an unknown status threw and took the matrix down with it.
+    const bogus = "bogus" as unknown as CoverageStatus;
+    const { unmount } = render(<StatusBadge status={bogus} />);
+    expect(screen.getByText("Unknown status")).toBeInTheDocument();
+    unmount();
+    render(<StatusBadge status={bogus} pendingReview />);
+    expect(screen.getByText(/Pending review/)).toHaveTextContent(
+      "Pending review (unknown status)",
+    );
   });
 
   it("says pending review, and does NOT say Covered on its own", () => {

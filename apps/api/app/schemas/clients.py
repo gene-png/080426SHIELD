@@ -95,7 +95,9 @@ class AttackDashboardTechnique(BaseModel):
     code: str
     name: str
     tactic_name: str
-    status: str  # CoverageStatus value: covered | partial | gap | not_applicable
+    status: str  # a CoverageStatus value: covered | partial | gap | not_applicable
+    # | outside_control_surface | unable_to_determine (#554). Typed `str`, so the
+    # web chip's "Unknown status" fallback is reachable only through bad data.
     # #102. The rollup beside this array withholds unbacked claims; without this
     # flag the matrix listed those same techniques as `covered`, naming the
     # unconfirmed tool under Detection. One page, two answers.
@@ -600,6 +602,10 @@ class ValueSummaryResponse(BaseModel):
     #: be matched to its release (#114). A different cause, so a different
     #: sentence on the card. Only ever True alongside `attack_uncovered_unresolved`.
     attack_uncovered_withheld: bool
+    #: #554 / #621 review: techniques nobody verified, rendered beside the
+    #: uncovered count so "0 uncovered" cannot read as "nothing is missing" over
+    #: an unverified assessment. None exactly when `attack_uncovered_count` is.
+    attack_not_verified_count: int | None
     csf_gap_count: int | None
     csf_gap_unresolved: bool
     csf_services: int

@@ -25,6 +25,13 @@ const LABEL: Record<CoverageStatus, string> = {
   unable_to_determine: "Not verified",
 };
 
+// A status this build does not know. The API enum-types the admin payload, so
+// this is reachable only if the API gains a status before the web does -- and
+// then it must render as unknown, never throw and never borrow another label.
+// The client chip's twin (`AttackDashboard.tsx`) does the same.
+const UNKNOWN_LABEL = "Unknown status";
+const UNKNOWN_TONE = "bg-surface-sunken text-ink-tertiary border-border";
+
 export interface StatusBadgeProps {
   status: CoverageStatus | null;
   /**
@@ -45,6 +52,8 @@ export function StatusBadge({
       </span>
     );
   }
+  const label: string = LABEL[status] ?? UNKNOWN_LABEL;
+  const tone: string = TONE[status] ?? UNKNOWN_TONE;
   if (pendingReview) {
     // Its OWN state, which is 5.1's requirement and not a styling preference: a
     // green "Covered" cell over a technique the rollup card is withholding is
@@ -61,17 +70,17 @@ export function StatusBadge({
     return (
       <span
         className="inline-flex items-center rounded-md border border-dashed border-status-info-fg bg-status-info-bg px-1.5 py-0.5 text-[10px] font-semibold text-status-info-fg"
-        title={`Assigned ${LABEL[status].toLowerCase()}, held out of the coverage score until its supporting citation is confirmed.`}
+        title={`Assigned ${label.toLowerCase()}, held out of the coverage score until its supporting citation is confirmed.`}
       >
-        Pending review ({LABEL[status].toLowerCase()})
+        Pending review ({label.toLowerCase()})
       </span>
     );
   }
   return (
     <span
-      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${TONE[status]}`}
+      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${tone}`}
     >
-      {LABEL[status]}
+      {label}
     </span>
   );
 }

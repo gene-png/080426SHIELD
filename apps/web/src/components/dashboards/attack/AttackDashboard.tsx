@@ -300,7 +300,9 @@ export function AttackDashboard({
         <KpiCard
           label="Techniques evaluated"
           value={String(k.evaluated)}
-          sub="Coverage assessed this engagement"
+          // #554: the KPI percentages divide by covered + partial + gap, so
+          // the two counts outside that denominator sit beside them.
+          sub={`Coverage assessed this engagement. ${outsideAssessedText(data.rollup)}`}
         />
         <KpiCard
           label="Fully covered"
@@ -362,7 +364,11 @@ export function AttackDashboard({
       {/* DPR triad */}
       <Section
         title="Detect · Prevent · Respond posture"
-        desc="A technique is fully covered only when all three legs are present."
+        desc={
+          "A technique is fully covered only when all three legs are present. " +
+          // #554: beside the three percentages, which exclude both.
+          outsideAssessedText(data.rollup)
+        }
       >
         <div
           style={{

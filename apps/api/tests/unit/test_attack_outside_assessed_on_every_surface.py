@@ -7,7 +7,14 @@ outside-the-control-surface count travels with it.
 
 EVERY SURFACE, ONE TEST EACH, from the same world: the three renderers (XLSX,
 DOCX, PDF), the stored deliverable summary, the admin heatmap and the client
-dashboard. A surface added later that shows the percentage belongs here.
+dashboard (the home value card's count is in `test_value_summary.py`). This is a
+NAMED REGISTRY of the API surfaces. Its first version missed three surfaces, each
+rendered on the web.
+The web side is DERIVED instead
+(`attack-percentages-state-the-outside-counts.test.ts`): any component reading
+ATT&CK data that renders a coverage figure must state the counts. The API
+renderers stay a list because they are few and live in two modules; a new one
+belongs here.
 
 The rows are written straight to the database, because no writer may produce
 these statuses yet (`coverage.WRITABLE`, D-092 Decision 5): the surfaces must be

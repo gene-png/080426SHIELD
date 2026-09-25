@@ -857,3 +857,41 @@ def test_only_a_JUDGEMENT_is_citable_so_an_unverified_technique_is_not() -> None
     scope = scope_for(AttackCoverage, rows)
     assert scope.codes == frozenset({"T1", "T2", "T3"})
     assert scope.total == 5
+
+
+@pytest.mark.unit
+def test_the_disclosure_names_not_verified_rows_as_the_attack_deliverable_does() -> None:
+    """#554, #621 review finding 11 (the owner's recommendation, 2026-09-25).
+
+    An unverified ATT&CK technique is not citable (`_UNJUDGED`), so it is among
+    the rows this disclosure says cannot appear. The ATT&CK deliverable calls
+    those rows "Not verified"; this disclosure called them "unscored" -- two
+    client documents naming the same rows two ways. Asserted on all three
+    rendered documents, whitespace-normalised because a PDF wraps lines.
+    """
+    import io
+
+    from docx import Document
+    from openpyxl import load_workbook
+
+    from app.risk.exporters import build_context, render_docx, render_pdf, render_xlsx
+
+    from .test_risk_register import _pdf_text
+
+    ctx = build_context(
+        client_legal_name="Atlas",
+        version=1,
+        entries=[],
+        link_scope=[("attack", 12, 700)],
+    )
+    phrase = "techniques marked Not verified cannot appear"
+
+    def flat(text: str) -> str:
+        return " ".join(text.split())
+
+    assert phrase in flat(_pdf_text(render_pdf(ctx)))
+    docx = Document(io.BytesIO(render_docx(ctx)))
+    assert phrase in flat(" ".join(p.text for p in docx.paragraphs))
+    sheet = load_workbook(io.BytesIO(render_xlsx(ctx)))["Scored coverage"]
+    cells = " ".join(str(c.value) for row in sheet.iter_rows() for c in row if c.value)
+    assert phrase in flat(cells)

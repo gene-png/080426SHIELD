@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -29,6 +29,15 @@ function technique(code: string, status: string): DashTechnique {
     response_tools: [],
     rationale: null,
   };
+}
+
+/** The technique's own table row. The status filter always renders every
+ *  status as an <option>, so a page-wide `getAllByText` passes whatever the
+ *  chip says (#621 review, finding 1). */
+function row(code: string): HTMLElement {
+  const tr = screen.getByText(code).closest("tr");
+  if (!tr) throw new Error(`no table row for ${code}`);
+  return tr;
 }
 
 function data(
@@ -62,7 +71,9 @@ describe("AttackDashboard, the two new statuses (#554)", () => {
         data={data([technique("T1190", "unable_to_determine")])}
       />,
     );
-    expect(screen.getAllByText("Not verified").length).toBeGreaterThan(0);
+    const r = within(row("T1190"));
+    expect(r.getByText("Not verified")).toBeInTheDocument();
+    expect(r.queryByText("N/A")).toBeNull();
   });
 
   it("names a technique outside the control surface as such", () => {
@@ -72,28 +83,34 @@ describe("AttackDashboard, the two new statuses (#554)", () => {
       />,
     );
     expect(
-      screen.getAllByText("Outside control surface").length,
-    ).toBeGreaterThan(0);
+      within(row("T1190")).getByText("Outside control surface"),
+    ).toBeInTheDocument();
   });
 
   it("shows a status it does not know as unknown, never borrowing N/A", () => {
     render(<AttackDashboard data={data([technique("T1190", "bogus")])} />);
-    expect(screen.getByText("Unknown status")).toBeInTheDocument();
+    expect(
+      within(row("T1190")).getByText("Unknown status"),
+    ).toBeInTheDocument();
   });
 
-  it("states the not-verified count beside the percentage, even at zero", () => {
+  it("states the not-verified count beside every percentage, even at zero", () => {
+    // Three places show a percentage: the coverage mix, the KPI row, and the
+    // Detect / Prevent / Respond triad (#621 review, finding 2). Each carries
+    // the sentence, so the count is exactly three -- dropping any one surface
+    // turns this red.
     const { unmount } = render(
       <AttackDashboard
         data={data([technique("T1", "covered")], { nv: 7, out: 3 })}
       />,
     );
     expect(
-      screen.getByText(/Not verified 7, Outside control surface 3\./),
-    ).toBeInTheDocument();
+      screen.getAllByText(/Not verified 7, Outside control surface 3\./),
+    ).toHaveLength(3);
     unmount();
     render(<AttackDashboard data={data([technique("T1", "covered")])} />);
     expect(
-      screen.getByText(/Not verified 0, Outside control surface 0\./),
-    ).toBeInTheDocument();
+      screen.getAllByText(/Not verified 0, Outside control surface 0\./),
+    ).toHaveLength(3);
   });
 });

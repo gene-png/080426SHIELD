@@ -35,11 +35,12 @@ export function AttackHeatmapCard({
       <CardHeader>
         <CardTitle>Coverage rollup</CardTitle>
         <CardDescription>
-          Coverage % = (covered + 0.5 × partial) / addressable × 100, where
-          addressable excludes N/A rows and rows pending review — a technique
-          whose supporting citation is unconfirmed withholds its claim rather
-          than scoring as covered or as a gap. Per-tactic counts feed the matrix
-          below.
+          Coverage % = (covered + 0.5 × partial) / (covered + partial + gap) ×
+          100. N/A, Outside control surface, Not verified, unscored and pending
+          review techniques are outside it — a technique whose supporting
+          citation is unconfirmed withholds its claim rather than scoring as
+          covered or as a gap. Not verified and Outside control surface are
+          counted beside it. Per-tactic counts feed the matrix below.
         </CardDescription>
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
