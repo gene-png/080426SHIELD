@@ -130,4 +130,5 @@ the api image.
   out of that pattern left CI with both green. Now the listing gate requires
   every script file to be listed or declared, and the env-gate scan uses
   Playwright's default testMatch (refusing a config that sets its own). A
-  declared DIRECTORY (`helpers/`) still covers any file added under it.
+  declared DIRECTORY (`helpers/`) still hides an out-of-pattern name under it
+  (`helpers/s9.specs.ts`); a spec-named file there is listed and reported.

@@ -10,12 +10,13 @@ this covers exclusion.
 HOW. The E2E job runs `npx playwright test --list` with the SAME cwd and
 arguments as its real `npx playwright test` step (pinned by a test that parses
 ci.yml), writes it to a file, and this compares the files named there with
-EVERY script file under `e2e/` (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`,
-`.mts`, `.cts`, outside `node_modules`). Each must be either in the run or
+EVERY script file under `e2e/` (any suffix in the name's chain being `.ts`,
+`.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts` or `.cts`, in any case, outside
+`node_modules`). Each must be either in the run or
 DECLARED a non-suite file, with a reason, in `.github/e2e-non-suite-files.json`
-(helpers, the global setup, the configs, `manual/`). So a spec renamed out of
-the suite's pattern -- `a.specs.ts`, or a move to `manual/` with no
-declaration, #560's own mechanism -- is reported rather than silently dropped
+(helpers, the global setup, the configs, `manual/`). So a spec disabled by a
+rename that takes it out of the suite's pattern -- `a.specs.ts`,
+`a.spec.ts.disabled`, `a.spec.TS` -- is reported rather than silently dropped
 (#579). A declaration that matches no file, or names a file the run lists, is
 a finding too. `--list` applies the config's selection exactly as a run would,
 without starting a browser or the stack. Standard library only, because the
@@ -28,8 +29,12 @@ the skips keyed on an environment variable, so an unconditional `test.skip()`
 or `test.describe.skip` is listed, never runs, and neither gate reports it.
 It describes the E2E job's main run, not the Demo job's
 `npx playwright test demo/`, which is a subset. A declared DIRECTORY
-(`helpers/`) covers any file added under it, so a spec written into a declared
-directory is not reported; that declaration's reason is the only guard there.
+(`helpers/`) covers files added under it that the run does not list: with
+`testDir: "."` and no `testIgnore`, a SPEC-NAMED file there is still listed and
+so reported as declared-but-listed, but an out-of-pattern name there
+(`helpers/s9.specs.ts`) is not reported, and nor would a spec-named one be if
+`testIgnore` came to exclude that directory. That declaration's reason is the
+only guard there.
 Files that are not scripts (`.json`, `.md`) are not compared.
 
 EXIT CODES (D-051): 0 every script file on disk is listed or declared; 1 at
@@ -68,14 +73,22 @@ def listed_specs(listing: str) -> set[str]:
 
 
 def disk_scripts(root: Path) -> set[str]:
-    """Every script file under e2e/, relative to it, outside node_modules."""
+    """Every script file under e2e/, relative to it, outside node_modules.
+
+    A file is a script if ANY suffix in its chain is one, case-insensitively:
+    a spec disabled by renaming its final suffix (`a.spec.ts.disabled`,
+    `.bak`) or its case (`a.spec.TS`) is still a script that is not in the run,
+    so it is reported, not skipped as "not a script" (review of 81871d4).
+    """
     e2e = root / "e2e"
     if not e2e.is_dir():
         raise CouldNotLook(f"{e2e} does not exist -- wrong root?")
     files = {
         p.relative_to(e2e).as_posix()
         for p in e2e.rglob("*")
-        if p.is_file() and p.suffix in _SUFFIXES and "node_modules" not in p.parts
+        if p.is_file()
+        and any(s.lower() in _SUFFIXES for s in p.suffixes)
+        and "node_modules" not in p.parts
     }
     if not files:
         raise CouldNotLook(f"no script files under {e2e}")

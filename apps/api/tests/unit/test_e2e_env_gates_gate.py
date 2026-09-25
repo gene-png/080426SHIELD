@@ -305,11 +305,20 @@ def test_a_gate_in_any_default_pattern_spec_is_seen(tmp_path, capsys, name: str)
     assert "E2E_PERF" in out and name in out, out
 
 
-def test_a_config_that_sets_test_match_is_could_not_look(tmp_path, capsys) -> None:
+@pytest.mark.parametrize(
+    "config",
+    [
+        "export default { testMatch: '**/*.e2e.ts' };",
+        "const testMatch = '**/*.e2e.ts';"
+        + chr(10)
+        + "export default defineConfig({ testMatch });",
+        'export default { "testMatch": "**/*.e2e.ts" };',
+    ],
+    ids=["key", "shorthand", "quoted-key"],
+)
+def test_a_config_that_sets_test_match_is_could_not_look(tmp_path, capsys, config: str) -> None:
     root = _repo(tmp_path, {"perf.spec.ts": GATED}, UNSET_WORKFLOW, {})
-    (root / "e2e" / "playwright.config.ts").write_text(
-        "export default { testMatch: '**/*.e2e.ts' };\n", encoding="utf-8"
-    )
+    (root / "e2e" / "playwright.config.ts").write_text(config + chr(10), encoding="utf-8")
     code, out = _run(root, capsys)
     assert code == 2, out
     assert "sets `testMatch`" in out, out

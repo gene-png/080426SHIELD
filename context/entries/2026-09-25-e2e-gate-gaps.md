@@ -24,9 +24,13 @@ this worktree (93 tests in 45 files) against the new gate gives clean, with
 57 script files: 45 in the run and 12 declared non-suite, across 6
 declarations.
 
-**Limit:** a declared directory covers any file added under it, so a spec
-written into `helpers/` is not reported. The declaration's reason is the only
-guard there.
+**Limit:** a declared directory covers files under it that the run does not
+list. With `testDir: "."` and no `testIgnore`, a spec-NAMED file under
+`helpers/` is still listed, so it is reported as declared-but-listed. The hole
+is an out-of-pattern name there (`helpers/s9.specs.ts`), and spec-named files
+there if a `testIgnore` ever excludes the directory. The declaration's reason
+is the only guard for those. (Round 1 stated this limit as "any file", which
+was wrong.)
 
 ## #580: two exemption refusals had no test
 
@@ -47,3 +51,25 @@ The existing listing tests and fixtures gained an empty declarations file,
 because the file is now a required input. One test's expected clean line
 encoded the old message ("all 2 spec file(s)"); that expectation was about
 the old output, so it was updated.
+
+## After the first review (`81871d4`)
+
+- **A spec disabled by its final suffix or its case** (`a.spec.ts.disabled`,
+  `.bak`, `a.spec.TS`) passed, because only the final suffix was read. A file
+  is now a script if ANY suffix in its chain is one, case-insensitively, so
+  these are reported. My call, overturnable: this over the alternative of
+  comparing every file against a non-script allow-list, because it keeps
+  `.json` and `.md` out without a second list to maintain.
+- **The env gate's suite pattern stays anchored and case-sensitive**, also my
+  call: it models what Playwright COLLECTS, and a disabled file is not
+  collected, so scanning it would report its variables as unset gates for a
+  spec that cannot run. The listing gate is what reports the disabled file.
+- **`testMatch` in shorthand or as a quoted key** was missed by `testMatch:`;
+  any mention now refuses (a comment mentioning it fails closed).
+- **The limit was misstated** as "any file" under a declared directory. A
+  spec-named file there is listed and reported; the hole is an out-of-pattern
+  name there, or spec-named files if a `testIgnore` excludes the directory.
+  Corrected here, in the gate and in the #540 entry, with a test for the
+  directory-key case.
+- Red on revert: eleven mutations, the earlier nine plus the suffix chain and
+  the `testMatch` pattern, each red on its named test.

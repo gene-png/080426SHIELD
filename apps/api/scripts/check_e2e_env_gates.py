@@ -78,7 +78,10 @@ EXEMPTIONS = Path(".github/e2e-env-gate-exemptions.json")
 #: could-not-look rather than a guess (#579).
 _SUITE_FILE = re.compile(r"\.(?:spec|test)\.[cm]?[jt]sx?$")
 _CONFIG = Path("e2e") / "playwright.config.ts"
-_TEST_MATCH = re.compile(r"\btestMatch\s*:")
+# Any mention, not only `testMatch:`: shorthand (`{ testMatch, ... }`) and a
+# quoted key both set it. A comment mentioning it trips this too, which fails
+# closed (review of 81871d4).
+_TEST_MATCH = re.compile(r"\btestMatch\b")
 
 
 class CouldNotLook(Exception):

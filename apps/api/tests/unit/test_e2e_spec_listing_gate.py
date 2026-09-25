@@ -215,3 +215,31 @@ def test_non_script_files_are_not_compared(tmp_path, capsys) -> None:
     )
     code, out = _run(root, lst, capsys)
     assert code == 0, out
+
+
+# --- review of 81871d4 ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["a.spec.ts.disabled", "a.spec.ts.bak", "a.spec.TS"])
+def test_a_spec_disabled_by_its_final_suffix_or_case_is_a_finding(tmp_path, capsys, name) -> None:
+    # Only the final suffix was read, so these read as "not a script" and passed.
+    root, lst = _repo(tmp_path, ["b.spec.ts", name], _listing("b.spec.ts"), {})
+    code, out = _run(root, lst, capsys)
+    assert code == 1, out
+    assert f"e2e/{name}: not in `npx playwright test --list` and not declared" in out, out
+
+
+def test_a_spec_named_file_under_a_declared_directory_the_run_lists_is_a_finding(
+    tmp_path, capsys
+) -> None:
+    # testDir "." with no testIgnore lists it, so the DIRECTORY declaration and
+    # the run disagree about it.
+    root, lst = _repo(
+        tmp_path,
+        ["a.spec.ts", "helpers/auth.ts", "helpers/s9.spec.ts"],
+        _listing("a.spec.ts", "helpers/s9.spec.ts"),
+        {"helpers/": "imported by specs"},
+    )
+    code, out = _run(root, lst, capsys)
+    assert code == 1, out
+    assert "e2e/helpers/s9.spec.ts: declared a non-suite file ('helpers/')" in out, out
