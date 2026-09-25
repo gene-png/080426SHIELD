@@ -184,7 +184,11 @@ export MSYS_NO_PATHCONV=1
 
 win() { printf '%s' "$1" | sed -e 's#^/\([a-z]\)/#\U\1:/#'; }
 
+# Positional arguments after the script reach it as $1, $2... inside the
+# container, so a value is handed over without being spliced into shell source.
 run_in_container() {
+  local script="$1"
+  shift
   docker run --rm \
     -v "$(win "$WORKTREE")/apps/web:/app/apps/web" \
     -v "$(win "$WORKTREE")/packages:/app/packages" \
@@ -194,7 +198,90 @@ run_in_container() {
     -v shield-v2_node-modules-root:/app/node_modules \
     -v shield-v2_node-modules-web:/app/apps/web/node_modules \
     -w /app "$IMAGE" \
-    sh -lc "$1"
+    sh -lc "$script" verify-in-worktree "$@"
+}
+
+# THE COMMAND TEXT IS DERIVED, NOT RESTATED. Each mode runs the TEXT of the
+# script of the same name in `apps/web/package.json` -- the one
+# `pnpm -F web <name>` runs in CI -- rather than a hand-copied invocation beside
+# a sentence claiming they match. It copies the text, NOT pnpm's executor: only
+# apps/web's node_modules/.bin is on PATH, there is no root .bin and no npm_*
+# environment, and this image has no pnpm. A script that later calls
+# `pnpm run x` or a root-only binary would diverge (#570).
+# Hand-copying is how `--format unix` sat here claiming parity with a gate that
+# never passed it (#450): the claim was a synchronization, and nothing kept it.
+# A `lint` script that gains `--max-warnings 0` now reaches this harness in the
+# same commit that adds it.
+#
+# Reading the script is the FIRST step. A missing script or an unreadable
+# package.json prints NO_SCRIPT_MARKER and exits 2, and every arm checks for
+# the marker BEFORE printing a bound: exit 2 alone collides with tsc's own
+# exit 2 for real errors, and "0 error(s)" over a script that never ran is a
+# verdict about nothing.
+NO_SCRIPT_MARKER="verify-in-worktree: NO-WEB-SCRIPT"
+WEB_SCRIPT='cd apps/web || { echo "verify-in-worktree: NO-WEB-SCRIPT (no apps/web)"; exit 2; }
+cmd="$(node -p "(require(\"./package.json\").scripts || {})[process.argv[1]] || \"\"" "$1")" || { echo "verify-in-worktree: NO-WEB-SCRIPT (package.json unreadable)"; exit 2; }
+if [ -z "$cmd" ]; then
+  echo "verify-in-worktree: NO-WEB-SCRIPT (apps/web/package.json defines no \"$1\" script)"
+  exit 2
+fi
+echo "verify-in-worktree: apps/web package.json scripts.$1 = $cmd"
+PATH="$PWD/node_modules/.bin:$PATH"
+exec sh -c "$cmd"'
+
+run_web_script() {
+  run_in_container "$WEB_SCRIPT" "$1"
+}
+
+# A BOUND IS PRINTED ONLY ON POSITIVE EVIDENCE THAT THE TOOL RAN AND GAVE A
+# VERDICT. The first version refused on ONE cause -- the NO-WEB-SCRIPT marker --
+# and every other could-not-look walked past it: docker not on PATH (127), the
+# daemon down (125), a tool missing from an empty node_modules volume (127). tsc
+# then printed "0 error(s)" and vitest "53/53 test files ran", both over 127.
+# So the test is the property, not a list of causes: the "scripts.<name> ="
+# line WEB_SCRIPT prints before exec'ing the tool must be present, AND the
+# status must be one the tool gives as a verdict. Anything else is
+# could-not-look, with the likeliest cause named.
+#
+# AND A NON-ZERO VERDICT STATUS NEEDS VERDICT-SHAPED OUTPUT. The scripts line
+# prints BEFORE the tool starts, and exit 1 is also Node's code for an uncaught
+# exception: a typescript lib that fails to load, or a vitest config that
+# throws, exits 1 having judged nothing. So exit 1/2 counts only beside a line
+# the tool prints when it has judged something (`error TS`, a `Test Files`
+# summary, an eslint problem line). Exit 0 needs no such line.
+#
+# $1 = label, $2 = script name, $3 = captured output, $4 = status,
+# $5 = an ERE a non-zero verdict must match in the output,
+# $6... = the statuses this tool uses for a verdict. Returns 0 if it ran.
+require_ran() {
+  local label="$1" name="$2" out="$3" status="$4" verdict="$5" s cause
+  shift 5
+  if printf '%s\n' "$out" | grep -qF "$NO_SCRIPT_MARKER"; then
+    cause="its apps/web script could not be read"
+  elif ! printf '%s\n' "$out" | grep -qF "verify-in-worktree: apps/web package.json scripts.$name = "; then
+    case "$status" in
+      125) cause="docker could not start the container (exit 125: daemon down, or a bad run option)" ;;
+      126 | 127) cause="a command was not found or not executable (exit $status) before the script started: is docker on PATH?" ;;
+      *) cause="the script never started (exit $status, and no 'scripts.$name =' line)" ;;
+    esac
+  else
+    for s in "$@"; do
+      if [ "$status" -eq "$s" ]; then
+        [ "$status" -eq 0 ] && return 0
+        printf '%s\n' "$out" | grep -qE "$verdict" && return 0
+        cause="the tool exited $status without producing a verdict (no line matching '$verdict'): a crash, not findings"
+        break
+      fi
+    done
+    if [ -z "${cause:-}" ]; then
+      case "$status" in
+        126 | 127) cause="the tool was not found or not executable (exit $status): is the node_modules volume empty?" ;;
+        *) if [ "$status" -gt 128 ]; then cause="killed by signal $((status - 128))"; else cause="exit $status is not a verdict this tool gives"; fi ;;
+      esac
+    fi
+  fi
+  echo "verify-in-worktree: $label -- COULD NOT LOOK: $cause. No bound is printed, because nothing is known to have run." >&2
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -240,14 +327,15 @@ count_uncollected() {
 
 tsc() {
   local out status
-  out="$(run_in_container "cd apps/web && ./node_modules/.bin/tsc --noEmit" 2>&1)" && status=0 || status=$?
+  out="$(run_web_script typecheck 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
+  if ! require_ran tsc typecheck "$out" "$status" 'error TS[0-9]+' 0 1 2; then return 2; fi
   local total outside
   total="$(printf '%s
 ' "$out" | grep -c 'error TS' || true)"
   # Errors from OUTSIDE apps/web are not this worktree's code. CI runs
-  # `pnpm -F web exec tsc` and is green on main, so when these appear they are
+  # `pnpm -F web typecheck` and is green on main, so when these appear they are
   # the mount, not the branch -- and reporting them without saying so sends an
   # author to debug someone else's package.
   outside="$(printf '%s
@@ -280,9 +368,10 @@ tsc() {
 
 vitest() {
   local out status
-  out="$(run_in_container "cd apps/web && ./node_modules/.bin/vitest run" 2>&1)" && status=0 || status=$?
+  out="$(run_web_script test 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
+  if ! require_ran vitest test "$out" "$status" 'Test Files' 0 1; then return 2; fi
 
   local found ran uncollected
   found="$(count_test_files)"
@@ -338,21 +427,41 @@ vitest() {
   fi
   return "$status"
 }
-# EXACTLY what the repo gate runs, not stricter. `apps/web/package.json`
-# defines `"lint": "eslint ."` and `ci.yml` runs `pnpm -F web lint`. A first
-# draft of this file passed `--max-warnings=0` over `src`, and independent
-# verification measured the difference: `eslint .` exits 0 with 3 warnings,
-# `eslint src --max-warnings=0` exits 1 with 2. A harness stricter than the
-# gate produces a red no CI run can reproduce, and the natural repair is to
-# "fix" untouched files -- here two `window.location.assign` call sites CI
-# accepts. That is a harness steering an author into changes nobody asked for.
+# EXACTLY what the repo gate runs, not stricter -- by derivation now (see
+# WEB_SCRIPT). A first draft of this file passed `--max-warnings=0` over `src`,
+# and independent verification measured the difference: `eslint .` exits 0
+# with 3 warnings, `eslint src --max-warnings=0` exits 1 with 2. A harness
+# stricter than the gate produces a red no CI run can reproduce, and the
+# natural repair is to "fix" untouched files -- here two
+# `window.location.assign` call sites CI accepts.
+#
+# Until 2026-09-24 this arm passed `--format unix`, which ESLint 9 removed from
+# core, so every run exited 2 and then printed a sentence claiming the gate's
+# invocation: worktree lint checked nothing from 2026-09-10 (#450).
+# `--self-test` now requires this arm to exit EXACTLY 1 on a planted parse
+# error, which the broken arm could not do.
+#
+# ESLint's own exit 2 is a configuration or crash error, not a finding, and it
+# is reported as could-not-look.
 eslint() {
   local out status
-  out="$(run_in_container "cd apps/web && ./node_modules/.bin/eslint . --format unix" 2>&1)" && status=0 || status=$?
-  printf '%s
-' "$out"
-  echo "verify-in-worktree: eslint -- ran \`eslint .\` from apps/web, the same invocation \`pnpm -F web lint\` uses"
+  out="$(run_web_script lint 2>&1)" && status=0 || status=$?
+  printf '%s\n' "$out"
+  # ESLint's exit 2 is a configuration or crash error, not a verdict, so only
+  # 0 and 1 count as having looked.
+  if ! require_ran eslint lint "$out" "$status" '[0-9]+:[0-9]+[[:space:]]+(error|warning)|[0-9]+ problems?' 0 1; then return 2; fi
+  echo "verify-in-worktree: eslint -- ran apps/web's \`lint\` script (what \`pnpm -F web lint\` runs), exit $status"
   return "$status"
+}
+
+# The lint arm's exit status alone, for `--self-test`. Returns 2, having named
+# the cause, when the arm could not look -- so the self-test never reports a
+# missing tool as a mount fault.
+lint_status() {
+  local out s
+  out="$(run_web_script lint 2>&1)" && s=0 || s=$?
+  require_ran "self-test lint" lint "$out" "$s" '[0-9]+:[0-9]+[[:space:]]+(error|warning)|[0-9]+ problems?' 0 1 || return 2
+  echo "$s"
 }
 
 # apps/web errors ONLY, as a number.
@@ -362,15 +471,29 @@ eslint() {
 # here keeps the mount check usable while #175 is open. Without this, adding
 # the bound above would have left the harness unable to self-test at all, which
 # is a worse defect than the one being fixed.
-tsc_appsweb_error_count() {
-  run_in_container "cd apps/web && ./node_modules/.bin/tsc --noEmit" 2>&1     | grep 'error TS' | grep -vc '\.\./\.\./packages/' || true
+appsweb_errors() {
+  printf '%s
+' "$1" | grep 'error TS' | grep -vc '\.\./\.\./packages/' || true
 }
 
 self_test() {
   local probe="apps/web/src/lib/__verify_probe.ts"
+  # A probe left behind makes the next self-test refuse with a false baseline,
+  # and `git add -A` would commit it. So both are removed at ENTRY -- which
+  # covers the exits no trap can: KILL is untrappable, and bash defers TERM
+  # until the running container command returns -- and again on every exit
+  # bash can trap.
+  rm -f "$WORKTREE/apps/web/src/lib/__verify_probe.ts" "$WORKTREE/apps/web/src/lib/__verify_lint_probe.ts"
+  trap 'rm -f "$WORKTREE/apps/web/src/lib/__verify_probe.ts" "$WORKTREE/apps/web/src/lib/__verify_lint_probe.ts"' EXIT
+  # A trap on INT/TERM that only cleaned up would SWALLOW the signal: bash runs
+  # it and carries on to PASS (measured). The signals exit, and EXIT cleans up.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   echo "self-test: the mount must SEE this worktree, so make it fail on purpose"
-  local baseline
-  baseline="$(tsc_appsweb_error_count)"
+  local baseline out st
+  out="$(run_web_script typecheck 2>&1)" && st=0 || st=$?
+  require_ran "self-test tsc baseline" typecheck "$out" "$st" 'error TS[0-9]+' 0 1 2 || return 2
+  baseline="$(appsweb_errors "$out")"
   echo "self-test: baseline apps/web errors: ${baseline} (packages/* excluded -- see #175)"
   if [ "$baseline" -ne 0 ]; then
     echo "self-test: BASELINE NOT GREEN -- ${baseline} apps/web error(s). Fix the" >&2
@@ -383,15 +506,41 @@ self_test() {
   # cannot fail, and it is the answer you are hoping for.
   grep -q 'not a number' "$WORKTREE/$probe" || { echo "self-test: probe never written" >&2; return 2; }
   local mutated
-  mutated="$(tsc_appsweb_error_count)"
+  out="$(run_web_script typecheck 2>&1)" && st=0 || st=$?
   rm -f "$WORKTREE/$probe"
+  require_ran "self-test tsc mutated" typecheck "$out" "$st" 'error TS[0-9]+' 0 1 2 || return 2
+  mutated="$(appsweb_errors "$out")"
   if [ "$mutated" -eq 0 ]; then
     echo "self-test: FAILED -- a deliberate type error did not turn this red." >&2
     echo "           The container is not reading $WORKTREE. Do not trust any" >&2
     echo "           green from it; it is describing some other tree." >&2
     return 1
   fi
-  echo "self-test: PASS -- apps/web errors: baseline 0, mutated $mutated, probe removed"
+  echo "self-test: tsc PASS -- apps/web errors: baseline 0, mutated $mutated, probe removed"
+
+  # THE LINT ARM, and the expected status is 1 EXACTLY. "Non-zero" would have
+  # passed on the broken arm, which exited 2 on every tree (#450) -- the shape
+  # this self-test exists to catch. 1 means ESLint ran and found something; 2
+  # means it never ran; 0 means it did not see the probe.
+  local lint_probe="apps/web/src/lib/__verify_lint_probe.ts" lint_base lint_mut
+  lint_base="$(lint_status)" || return 2
+  echo "self-test: baseline lint exit: ${lint_base}"
+  if [ "$lint_base" -ne 0 ]; then
+    echo "self-test: LINT BASELINE NOT 0 (got ${lint_base}) -- run \`$0 eslint\` and read it." >&2
+    return 2
+  fi
+  printf 'export const lintProbe = ;\n' > "$WORKTREE/$lint_probe"
+  grep -q 'lintProbe = ;' "$WORKTREE/$lint_probe" || { echo "self-test: lint probe never written" >&2; return 2; }
+  lint_mut="$(lint_status)" && st=0 || st=$?
+  rm -f "$WORKTREE/$lint_probe"
+  [ "$st" -eq 0 ] || return 2
+  if [ "$lint_mut" -ne 1 ]; then
+    echo "self-test: FAILED -- a planted parse error gave lint exit ${lint_mut}, not 1." >&2
+    echo "           2 means ESLint never ran; 0 means it is not reading $WORKTREE." >&2
+    return 1
+  fi
+  echo "self-test: lint PASS -- exit: baseline 0, planted parse error 1, probe removed"
+  echo "self-test: PASS"
 }
 
 self_test_bound() {
