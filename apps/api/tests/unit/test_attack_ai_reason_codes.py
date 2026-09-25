@@ -13,6 +13,7 @@ import re
 import pytest
 
 from app.ai.fixtures import _fixture_mitre_map
+
 # test-integrity: the prompt TEXT is the thing under test, not a source of
 # expected values -- every expectation below is a literal from the owner's
 # decision on #554, and the fixture is checked against what this text says.
