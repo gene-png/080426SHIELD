@@ -321,6 +321,12 @@ class CannotMeasure(Exception):
     """
 
 
+class _Abort(Exception):
+    """An early exit from the mutation loop. Raised INSTEAD of `return 2`
+    inside the `try`, so control reaches the restore check below the `finally`
+    rather than leaving with the verdict computed and unread (#161)."""
+
+
 def _original() -> str:
     return REDACT.read_text(encoding="utf-8")
 
@@ -1075,12 +1081,13 @@ def main(argv: list[str]) -> int:
 
     killed_by: dict = {}
     protected_alone: set = set()
+    aborted = False
     try:
         for name, old, new in muts:
             n = original.count(old)
             if n != 1:
                 print(f"  !! {name}: anchor appears {n} times, not 1 -- cannot measure")
-                return 2
+                raise _Abort
             REDACT.write_text(original.replace(old, new), encoding="utf-8")
             try:
                 failing = _evaluate(rows)
@@ -1088,7 +1095,7 @@ def main(argv: list[str]) -> int:
                 # NOT a skip. A mutation that will not compile silently removes
                 # a guard from the measurement and inflates `unrelated`.
                 print(f"  !! {name} did not compile: {type(exc).__name__}: {str(exc)[:70]}")
-                return 2
+                raise _Abort from exc
             print(f"  {name:48} flips {len(failing):3}{'   <- unexercised' if not failing else ''}")
             for key in failing:
                 killed_by.setdefault(key, []).append(name)
@@ -1103,7 +1110,7 @@ def main(argv: list[str]) -> int:
             all_off_failing = _evaluate(rows)
         except Exception as exc:
             print(f"  !! all-guards-off variant did not compile: {type(exc).__name__}: {exc}")
-            return 2
+            raise _Abort from exc
 
         # ALL GUARDS OFF EXCEPT ONE, for each guard in turn. A row that survives
         # such a variant is protected by that guard ALONE, which separates
@@ -1134,6 +1141,12 @@ def main(argv: list[str]) -> int:
                 key = (table, rid)
                 if key in all_off_failing and key not in failing:
                     protected_alone.add(key)
+    except _Abort:
+        # Every early exit lands HERE, then passes through the restore check.
+        # A `return 2` in its place ran the `finally` and left before the check
+        # could report -- so a mutated redact.py was announced as "did not
+        # compile" and nothing else (#161).
+        aborted = True
     finally:
         # NOT `return 2` here: a return inside `finally` swallows any exception
         # still propagating, which would turn "the oracle crashed" into "the
@@ -1145,6 +1158,8 @@ def main(argv: list[str]) -> int:
         print("*** RESTORE FAILED -- redact.py is NOT as it was found ***")
         print("Do not trust the working tree. `git checkout -- apps/api/app/ai/redact.py`.")
         return 2
+    if aborted:
+        return 2  # the cause was printed where it arose; redact.py is restored
 
     print()
     print(f"  {'ALL GUARDS OFF AT ONCE':48} flips {len(all_off_failing):3}")
