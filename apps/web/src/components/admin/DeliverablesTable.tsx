@@ -37,12 +37,15 @@ import type { JSX } from "react";
 const STATUS_TONE: Record<DeliverableStatus, StatusTone> = {
   released: "success",
   generated: "info",
+  withheld: "warning",
   superseded: "neutral",
 };
 
 const STATUS_LABEL: Record<DeliverableStatus, string> = {
   released: "Released",
   generated: "Generated",
+  // #556: released, and withheld from the client (another ATT&CK catalog).
+  withheld: "Withheld from client",
   superseded: "Superseded",
 };
 

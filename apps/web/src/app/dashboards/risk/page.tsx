@@ -5,7 +5,10 @@ import { redirect } from "next/navigation";
 
 import { RiskDashboard } from "@/components/dashboards/risk/RiskDashboard";
 import { ACTIVE_CLIENT_COOKIE, ApiError, apiFetch } from "@/lib/api";
-import { dashboardLoadReason } from "@/lib/describe-save-error";
+import {
+  dashboardLoadReason,
+  isCatalogWithheld,
+} from "@/lib/describe-save-error";
 import { auth } from "@/lib/auth/options";
 import { SkipToContent } from "@/components/site/SkipToContent";
 import type { RiskDashboardData } from "@/lib/dashboards/risk";
@@ -37,6 +40,10 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
 
   let data: RiskDashboardData | null = null;
   let notReleased = false;
+  // #556: finalized, but built from an ATT&CK report on another catalog, so the
+  // API withholds it (typed 409). Rendered with the server's sentence rather
+  // than rethrown into Next's error page.
+  let withheld = false;
   // The server's typed explanation, where it sent one (#244).
   let reason: string | null = null;
   if (clientId) {
@@ -65,6 +72,9 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
         // exceptional one. The decision lives in one place so the five
         // dashboards cannot drift.
         reason = dashboardLoadReason(err);
+      } else if (isCatalogWithheld(err)) {
+        withheld = true;
+        reason = dashboardLoadReason(err);
       } else {
         throw err;
       }
@@ -81,13 +91,17 @@ export default async function RiskDashboardPage(): Promise<JSX.Element> {
         className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-16 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
       >
         <h1 className="text-2xl font-semibold text-ink-primary">
-          Risk Register not available yet
+          {withheld
+            ? "Risk Register withheld"
+            : "Risk Register not available yet"}
         </h1>
         <p className="text-sm text-ink-secondary">
           {reason ??
-            (notReleased
-              ? "Your Risk Register hasn't been finalized yet. It will appear here once your SHIELD analyst generates and finalizes it."
-              : "We couldn't load your Risk Register.")}
+            (withheld
+              ? "Your Risk Register is withheld."
+              : notReleased
+                ? "Your Risk Register hasn't been finalized yet. It will appear here once your SHIELD analyst generates and finalizes it."
+                : "We couldn't load your Risk Register.")}
         </p>
         <Link
           href="/results"

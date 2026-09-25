@@ -24,6 +24,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.ai import keystore
+from app.attack.catalog_version import is_stale_attack_deliverable
 from app.audit import audit
 from app.client_naming import org_display_name
 from app.config import get_settings
@@ -189,7 +190,7 @@ def intake_queue(
     )
 
 
-def _deliverable_status(deliv: Deliverable) -> tuple[str, bool]:
+def _deliverable_status(db: Session, deliv: Deliverable) -> tuple[str, bool]:
     """Derive (status, client_visible) from columns that already exist.
 
     Superseded wins over released: a superseded row is history whatever it once
@@ -197,12 +198,18 @@ def _deliverable_status(deliv: Deliverable) -> tuple[str, bool]:
     is looking at a version that has since been replaced.
 
     No new column, no migration, and no second lifecycle to drift from the §12
-    release rule — `released_at` remains the single source of truth for "the
-    client can see this".
+    release rule. `released_at` decides "released", and ONE further predicate
+    decides whether a released row reaches the client: an ATT&CK report released
+    over an assessment scored against another catalog is WITHHELD (#556, the
+    owner's decision). `is_stale_attack_deliverable` is the same function the
+    client list and the file download call, so this page cannot count a row as
+    visible that the client is not shown.
     """
     if deliv.superseded_by is not None:
         return "superseded", False
     if deliv.released_at is not None:
+        if is_stale_attack_deliverable(db, deliv):
+            return "withheld", False
         return "released", True
     return "generated", False
 
@@ -242,7 +249,7 @@ def list_admin_deliverables(
 
     items = []
     for deliv, svc in rows:
-        status_label, visible = _deliverable_status(deliv)
+        status_label, visible = _deliverable_status(db, deliv)
         items.append(
             AdminDeliverableRow(
                 id=deliv.id,
@@ -262,7 +269,7 @@ def list_admin_deliverables(
         )
 
     logger.info(
-        "admin.deliverables.listed client_id=%s actor=%s count=%d released=%d",
+        "admin.deliverables.listed client_id=%s actor=%s count=%d client_visible=%d",
         client.id,
         user.id,
         len(items),
