@@ -5994,3 +5994,77 @@ The 25 remaining (before the first commit; the landing entry pins a reproducible
 re-run: 15 files, 23 lines at `45d414a`, excluding itself) were each read and
 classified as D-051's own subject or as history. Older D-records are
 append-only and are not edited.
+
+## D-095 — A docker-compose diff whose parsed YAML is unchanged does not trip condition 5
+
+**2026-09-25 · governance/merge rule** · #530
+
+**Decision (the owner's).** Condition 5 has ONE exception: a
+`docker-compose*.yml` diff whose parsed YAML node tree is unchanged does not
+trip it. Form: comments, blank lines, indentation, single versus double
+quoting, and block-style changes that keep the value. Content: any plain to
+quoted flip, and any change of value or tag. #530 is the instance: its whole compose diff was comments, and it
+still came back to the owner. Every other condition-5 path trips exactly as
+before. `apps/api/scripts/compose_unchanged.py BASE..HEAD` decides: 0 no
+compose file changed in content, 1 at least one did (an added or deleted file
+counts), 2 could not look, which reads as tripped. It also runs on every PR as
+the job "compose content changed", which is not required and reports its
+verdict: green is unchanged, red is changed (1) or could not read (2), and the
+job summary names which of the three it was. Could-not-read never shows green.
+
+**Why red on a change (the owner's decision (b), 2026-09-25).** A change is
+rare. Of the last 80 first-parent commits on `main` at `ef94f4f` (71 of them PR
+merges), three touched a compose file: two changed its content (`59484a9`,
+`f36d7a5`) and one was comments only (`adc2217`). So red-when-changed fires
+about twice in eighty, the same
+rare-and-red design as the merge-rule text gate (#582). The owner's own figure
+was four touching, two comments-only; the re-derivation below found three and
+one, and this record uses the re-derived figure:
+
+    # Git Bash, from the repo root, as a script (`bash file.sh`): it fails
+    # loudly on an empty or failed `git log` and says how many it iterated.
+    set -euo pipefail
+    commits=$(git log --first-parent --format=%h -80 ef94f4f)
+    n=0
+    for c in $commits; do
+      n=$((n + 1))
+      files=$(git diff --name-only "$c^" "$c")
+      if grep -E '^docker-compose[^/]*\.ya?ml$' <<<"$files" >/dev/null; then
+        rc=0
+        python apps/api/scripts/compose_unchanged.py --repo . "$c^..$c" >/dev/null || rc=$?
+        echo "$c $rc"
+      fi
+    done
+    echo "iterated $n commits"
+    prs=$(git log --first-parent --format=%s -80 ef94f4f | grep -cE '\(#[0-9]+\)$')
+    echo "$prs of them are PR merges"
+    # Run 2026-09-25, exit 0:
+    #   59484a9 1
+    #   adc2217 0
+    #   f36d7a5 1
+    #   iterated 80 commits
+    #   71 of them are PR merges
+
+**Why the node tree, not the loaded object.** PyYAML reads YAML 1.1, and
+Python's `==` is loose, so `on` to `yes` (both True) and `1` to `1.0` compare
+equal while compose, a YAML 1.2 reader, sees a different value. Comparing the
+composed nodes (the YAML 1.1 tag, scalar text, and whether a scalar is plain
+or quoted) keeps those as changes, and keeps a compose `!reset` tag as content.
+Any quote flip counts: PyYAML gives `"0o17"` and `0o17` the same 1.1 tag and
+value, while compose reads the plain form as a number.
+
+**Why this and not the general rule.** A general executable-line exception
+(#559) was built, reviewed for five rounds with a blocking finding in each,
+and closed unmerged by the owner. Measured on the same windows, it gained one
+PR in thirty over the old rule, and so does this.
+
+**Measured**, on the 15 most recent PR merges at each recorded window's ref,
+with `python apps/api/scripts/compose_unchanged.py --repo . <sha>^1..<sha>`
+run on every PR in the window that touches a compose file:
+
+- **2026-08-26** (`fdfde7d^1`): no PR touches a compose file, so the rule
+  changes nothing. **4/11**, the old rule's figure.
+- **2026-09-21** (`897eeae`): only `b516891` touches one. Its compose diff is
+  form only (exit 0), and its other file, CLAUDE.md, is not a listed path, so
+  it clears. **3/12**, against the old rule's 2/13. `7c2802c` (an
+  `ai/engine.py` docstring) still comes back: the exception is compose only.

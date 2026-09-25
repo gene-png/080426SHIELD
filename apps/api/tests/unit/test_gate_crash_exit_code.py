@@ -98,6 +98,9 @@ GATES = [
     ("check_ci_selection", "sys.argv"),
     ("check_e2e_env_gates", "sys.argv"),
     ("check_e2e_spec_listing", "sys.argv"),
+    # D-095's compose exception. Added WITH its entry here. `sys.argv` because
+    # `main(argv)` takes the argument list.
+    ("compose_unchanged", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'
