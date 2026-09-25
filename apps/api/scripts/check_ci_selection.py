@@ -23,10 +23,12 @@ A FILE THAT NEVER COLLECTS IS A FINDING TOO (#543). A module-level
 `pytest.skip(..., allow_module_level=True)`, or a conftest `collect_ignore` /
 `pytest_ignore_collect`, removes a file from BOTH collections, so the node-id
 comparison cannot see it and "CI selects N of N" reads clean with a smaller N.
-So every `test_*.py` on disk under `tests/unit` must contribute at least one
-node id to the unselected collection, unless its baseline entry is
-`{"reason": ..., "uncollected_file": true}`. The file pattern is pytest's
-default `python_files`; neither pyproject.toml overrides it.
+So every file on disk under `tests/unit` that pytest's `python_files`
+names must contribute at least one node id to the unselected collection,
+unless its baseline entry is `{"reason": ..., "uncollected_file": true}`. The
+patterns are PYTEST'S OWN ANSWER -- the probe plugin writes
+`config.getini("python_files")` -- not a copy: a hard-coded `test_*.py` missed
+the default's second half, `*_test.py`.
 
 THE BASELINE RATCHETS. A baselined node id that is now selected, or no longer
 exists, is a finding too: delete it from the baseline, so the backlog is
@@ -72,10 +74,12 @@ than producing a finding -- and that is now caught by the file check above,
 at the granularity of a FILE: a module that removes only some of its tests at
 collection time is not seen. A conftest hook that deselects individual items
 applies to BOTH collections, so it is invisible too. Environment on CI's
-pytest step is pinned equal to this step's by
-`test_the_gate_step_runs_with_the_pytest_steps_environment` (#544), not read
-here; a variable set some other way (a runner image, a composite action) is
-not seen.
+pytest step is pinned equal to this step's by `pin_violations` in
+`test_ci_selection_gate.py` (#544), not read here: one job, identical step
+`env` and `working-directory`, and no step between the two writing
+`$GITHUB_ENV` or `$GITHUB_PATH`. A variable set some other way (a runner
+image, a composite action, or a step between them that changes the
+environment by a route other than those two files) is not seen.
 """
 
 from __future__ import annotations
@@ -85,6 +89,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from fnmatch import fnmatch
 from pathlib import Path
 
 CI_SELECTOR = ("-m", "unit", "tests/unit")
@@ -99,6 +104,8 @@ import os
 def pytest_collection_finish(session):
     with open(os.environ["{_PROBE_OUT}"], "w", encoding="utf-8") as fh:
         fh.write("\\n".join(item.nodeid for item in session.items))
+    with open(os.environ["{_PROBE_OUT}"] + ".python_files", "w", encoding="utf-8") as fh:
+        fh.write("\\n".join(session.config.getini("python_files")))
 """
 
 
@@ -106,8 +113,11 @@ class CouldNotLook(Exception):
     """The gate could not establish the answer. Maps to exit 2, never 0 or 1."""
 
 
-def _collect(root: Path, args: tuple[str, ...], *, clear_addopts: bool) -> set[str]:
-    """Node ids pytest collects for `args`, as reported by the probe plugin."""
+def _collect(
+    root: Path, args: tuple[str, ...], *, clear_addopts: bool
+) -> tuple[set[str], list[str]]:
+    """(node ids, python_files) for `args`, both as the probe plugin reports
+    them: pytest's own answer, not a reading of its config files."""
     with tempfile.TemporaryDirectory() as tmp:
         probe_dir = Path(tmp)
         (probe_dir / f"{_PROBE_NAME}.py").write_text(_PROBE_SOURCE, encoding="utf-8")
@@ -137,7 +147,14 @@ def _collect(root: Path, args: tuple[str, ...], *, clear_addopts: bool) -> set[s
                 f"the probe plugin wrote nothing for `{' '.join(args)}` -- it did not load, "
                 "so there is no answer to read"
             )
-        return {line for line in out.read_text(encoding="utf-8").splitlines() if line}
+        ids = {line for line in out.read_text(encoding="utf-8").splitlines() if line}
+        patterns_file = Path(str(out) + ".python_files")
+        if not patterns_file.is_file():
+            raise CouldNotLook("the probe plugin wrote no `python_files` -- it did not finish")
+        patterns = [p for p in patterns_file.read_text(encoding="utf-8").splitlines() if p]
+        if not patterns:
+            raise CouldNotLook("pytest reported an EMPTY `python_files`, so no file is a test file")
+        return ids, patterns
 
 
 def _load_baseline(path: Path) -> dict[str, dict]:
@@ -172,6 +189,23 @@ def _load_baseline(path: Path) -> dict[str, dict]:
                 f"`tests` list of node ids under {name}::"
             )
     return data
+
+
+def files_named_by_python_files(root: Path, python_files: list[str]) -> set[str]:
+    """Root-relative `.py` files under `tests/unit` that `python_files` names.
+
+    pytest matches a pattern against the file's BASENAME unless the pattern
+    holds a path separator, and then against the path; this does the same.
+    The default is `test_*.py *_test.py`, and a scan of only the first half
+    left a self-removing `*_test.py` invisible (review of 52b80c9)."""
+    found = set()
+    for path in (root / "tests" / "unit").rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        for pat in python_files:
+            if ("/" in pat and fnmatch(rel, "*/" + pat.lstrip("/"))) or fnmatch(path.name, pat):
+                found.add(rel)
+                break
+    return found
 
 
 def _collected_files(everything: set[str], on_disk: set[str]) -> set[str]:
@@ -259,15 +293,13 @@ def main(argv: list[str]) -> int:
         if not (root / "tests" / "unit").is_dir():
             raise CouldNotLook(f"{root / 'tests' / 'unit'} does not exist -- wrong directory?")
         baseline = _load_baseline(baseline_path)
-        everything = _collect(root, _ALL, clear_addopts=True)
-        selected = _collect(root, CI_SELECTOR, clear_addopts=False)
+        everything, python_files = _collect(root, _ALL, clear_addopts=True)
+        selected, _ = _collect(root, CI_SELECTOR, clear_addopts=False)
         if not everything:
             raise CouldNotLook(
                 "collected ZERO tests with no selector. An empty collection is not a " "clean one."
             )
-        on_disk = {
-            p.relative_to(root).as_posix() for p in (root / "tests" / "unit").rglob("test_*.py")
-        }
+        on_disk = files_named_by_python_files(root, python_files)
     except CouldNotLook as exc:
         print(f"check-ci-selection: could not look -- {exc}")
         return 2

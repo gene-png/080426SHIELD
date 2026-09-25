@@ -356,37 +356,101 @@ def test_the_clean_line_counts_the_files_it_compared(tmp_path, capsys) -> None:
 # --- #544: the gate's step must see CI's pytest step's environment -----------------
 
 
-def _ci_steps() -> tuple[str, dict, dict]:
-    """(job name, the pytest -m unit step, the check_ci_selection step)."""
-    ci = yaml.safe_load((_WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+def pin_violations(ci: dict) -> list[str]:
+    """Why CI's `pytest -m unit` step could see an environment the gate step
+    does not (#544). Empty means the two are pinned together.
+
+    - They must sit in ONE job, so job and workflow `env` reach both.
+    - Their step `env` and `working-directory` must be identical.
+    - No step BETWEEN them may write `$GITHUB_ENV` or `$GITHUB_PATH`: either
+      changes the environment of every LATER step in the job, so a write
+      after the gate and before pytest narrows CI alone (review of 52b80c9).
+    """
+    pytest_run = f"pytest {' '.join(gate.CI_SELECTOR)}"
     found = []
     for name, job in ci["jobs"].items():
         steps = job.get("steps", [])
-        pyt = [
-            s
-            for s in steps
-            if str(s.get("run", "")).strip() == f"pytest {' '.join(gate.CI_SELECTOR)}"
+        pyt = [i for i, st in enumerate(steps) if str(st.get("run", "")).strip() == pytest_run]
+        chk = [
+            i
+            for i, st in enumerate(steps)
+            if "scripts.check_ci_selection" in str(st.get("run", ""))
         ]
-        chk = [s for s in steps if "scripts.check_ci_selection" in str(s.get("run", ""))]
         if pyt or chk:
-            found.append((name, pyt, chk))
-    assert len(found) == 1, f"the pytest step and the gate step must sit in ONE job: {found}"
-    name, pyt, chk = found[0]
-    assert len(pyt) == 1 and len(chk) == 1, (pyt, chk)
-    return name, pyt[0], chk[0]
+            found.append((name, steps, pyt, chk))
+    if len(found) != 1:
+        return [f"the pytest step and the gate step must sit in ONE job: {[f[0] for f in found]}"]
+    name, steps, pyt, chk = found[0]
+    if len(pyt) != 1 or len(chk) != 1:
+        return [
+            f"job {name}: expected one pytest step and one gate step, got {len(pyt)} and {len(chk)}"
+        ]
+    i, j = sorted((pyt[0], chk[0]))
+    out = []
+    if steps[pyt[0]].get("env") != steps[chk[0]].get("env"):
+        out.append("step env differs between the pytest step and the gate step")
+    if steps[pyt[0]].get("working-directory") != steps[chk[0]].get("working-directory"):
+        out.append("working-directory differs between the pytest step and the gate step")
+    for k in range(i + 1, j):
+        text = str(steps[k].get("run", ""))
+        if "GITHUB_ENV" in text or "GITHUB_PATH" in text:
+            out.append(
+                f"step {k} ({steps[k].get('name', '?')}) between them writes GITHUB_ENV/GITHUB_PATH"
+            )
+    return out
 
 
 def test_the_gate_step_runs_with_the_pytest_steps_environment() -> None:
     # #544: CI_SELECTOR pins the `run:` line only. An `env: PYTEST_ADDOPTS:
-    # --deselect ...` on the pytest step would narrow CI and not the gate, with
-    # every existing pin green. Job- and workflow-level env reach both steps
-    # because they share a job (asserted); step-level env and the working
-    # directory must be identical.
+    # --deselect ...` on the pytest step, or a `$GITHUB_ENV` write between the
+    # two, would narrow CI and not the gate with every other pin green.
     if _WORKFLOWS_DIR is None:
         pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
-    _, pyt, chk = _ci_steps()
-    assert pyt.get("env") == chk.get("env"), (pyt.get("env"), chk.get("env"))
-    assert pyt.get("working-directory") == chk.get("working-directory")
+    ci = yaml.safe_load((_WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    assert pin_violations(ci) == []
+
+
+def _workflow(*steps: dict) -> dict:
+    return {"jobs": {"python": {"steps": list(steps)}}}
+
+
+GATE_STEP = {
+    "name": "gate",
+    "working-directory": "apps/api",
+    "run": "python -m scripts.check_ci_selection",
+}
+PYTEST_STEP = {
+    "name": "pytest",
+    "working-directory": "apps/api",
+    "run": "pytest -m unit tests/unit",
+}
+
+
+def test_the_pin_passes_two_matching_steps() -> None:
+    # The passing half, so the refusals below are not one broken path.
+    assert pin_violations(_workflow(GATE_STEP, PYTEST_STEP)) == []
+
+
+@pytest.mark.parametrize("var", ["GITHUB_ENV", "GITHUB_PATH"])
+def test_a_github_env_write_between_the_steps_is_refused(var: str) -> None:
+    writer = {"name": "narrow", "run": f'echo "PYTEST_ADDOPTS=--deselect x" >> "${var}"'}
+    assert pin_violations(_workflow(GATE_STEP, writer, PYTEST_STEP)), var
+
+
+def test_a_github_env_write_before_both_steps_is_allowed() -> None:
+    # Before the gate it reaches BOTH steps, which is what the pin requires.
+    writer = {"name": "setup", "run": 'echo "X=1" >> "$GITHUB_ENV"'}
+    assert pin_violations(_workflow(writer, GATE_STEP, PYTEST_STEP)) == []
+
+
+def test_an_env_on_the_pytest_step_alone_is_refused() -> None:
+    narrowed = {**PYTEST_STEP, "env": {"PYTEST_ADDOPTS": "--deselect x"}}
+    assert pin_violations(_workflow(GATE_STEP, narrowed))
+
+
+def test_the_two_steps_in_different_jobs_are_refused() -> None:
+    ci = {"jobs": {"a": {"steps": [GATE_STEP]}, "b": {"steps": [PYTEST_STEP]}}}
+    assert pin_violations(ci)
 
 
 def test_files_match_when_pytests_rootdir_is_below_the_root(tmp_path, capsys) -> None:
@@ -400,3 +464,32 @@ def test_files_match_when_pytests_rootdir_is_below_the_root(tmp_path, capsys) ->
     code, out = _run(root, _baseline(tmp_path, {}), capsys)
     assert code == 0, out
     assert "1 of 1 test files on disk collected" in out, out
+
+
+SKIPPED_SUFFIX = "tests/unit/skipped_test.py"
+
+
+def test_a_self_removing_underscore_test_file_is_a_finding(tmp_path, capsys) -> None:
+    # pytest's default python_files is `test_*.py *_test.py`. A scan of only
+    # `test_*.py` left this file invisible and "N of N collected" true of a
+    # smaller N (review of 52b80c9).
+    root = _project(tmp_path, {M: MARKED, SKIPPED_SUFFIX: SKIPPED_MODULE})
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert f"{SKIPPED_SUFFIX}: never collected" in out, out
+
+
+def test_the_file_patterns_are_pytests_own(tmp_path, capsys) -> None:
+    # A configured python_files is honoured: `check_*.py` becomes a test file,
+    # so a self-removing one is a finding, and `test_*.py` no longer is one.
+    root = _project(
+        tmp_path, {"tests/unit/check_m.py": MARKED, "tests/unit/check_s.py": SKIPPED_MODULE}
+    )
+    ini = root / "pytest.ini"
+    ini.write_text(
+        ini.read_text(encoding="utf-8") + "python_files = check_*.py\n", encoding="utf-8"
+    )
+    code, out = _run(root, _baseline(tmp_path, {}), capsys)
+    assert code == 1, out
+    assert "tests/unit/check_s.py: never collected" in out, out
+    assert "1 of 2 test files on disk collected" in out, out

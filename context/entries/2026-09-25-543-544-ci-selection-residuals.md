@@ -19,8 +19,11 @@ limits.
 
 ## What changed
 
-- **Every `test_*.py` on disk under `tests/unit` must contribute a node id to
-  the unselected collection.** A file that contributes none is a finding. It
+- **Every file on disk under `tests/unit` that pytest's `python_files` names
+  must contribute a node id to the unselected collection.** The patterns are
+  pytest's own answer: the probe plugin writes `config.getini("python_files")`.
+  The first version hard-coded `test_*.py` and missed the default's second
+  half, `*_test.py` (review of `52b80c9`). A file that contributes none is a finding. It
   can instead carry a baseline entry `{"reason": ..., "uncollected_file":
   true}`. That entry ratchets like the node-id entries: it is a finding once
   the file collects again, or is deleted.
@@ -30,7 +33,11 @@ limits.
 - **The clean line** now also says `N of N test files on disk collected`.
 - **#544 is a pin, not a read.** A new test requires CI's `pytest -m unit`
   step and the gate's step to sit in ONE job, so job and workflow env reach
-  both. It also requires identical step-level `env` and `working-directory`.
+  both. It also requires identical step-level `env` and `working-directory`,
+  and no step BETWEEN the two writing `$GITHUB_ENV` or `$GITHUB_PATH`, which
+  would change the environment of the later step only (review of `52b80c9`).
+  The pin is a pure function over a parsed workflow, so synthetic workflows
+  test it.
 
 ## Measured, before writing the check
 
@@ -38,7 +45,7 @@ On a full checkout at `ebdd23d`, all 162 `test_*.py` files under
 `tests/unit` contributed a node id. So the new check starts clean, and the
 baseline gains no entries.
 
-The gate now reads: `CI selects 8587 of 8596 collected tests; 162 of 162
+At the first head, `52b80c9`, the gate read: `CI selects 8587 of 8596 collected tests; 162 of 162
 test files on disk collected`.
 
 ## Verified
@@ -53,6 +60,13 @@ test files on disk collected`.
   - a `PYTEST_ADDOPTS` env added to CI's pytest step only, written into
     `ci.yml` and restored.
 
+  After review, 3 of 3 more went red:
+  - the hard-coded `test_*.py`, caught by a self-removing `*_test.py` and a
+    configured `python_files`;
+  - the `GITHUB_ENV` check dropped;
+  - a `GITHUB_ENV` writer inserted into the real `ci.yml` between the two
+    steps, then restored.
+
 ## Limits
 
 - The check is per FILE. A module that removes only some of its tests at
@@ -60,4 +74,5 @@ test files on disk collected`.
 - A conftest hook deselecting individual items applies to both collections,
   and is still invisible.
 - Environment set outside the step, such as a runner image or a composite
-  action, is not seen.
+  action, is not seen. Nor is a step between the two that changes the
+  environment by any route other than `$GITHUB_ENV` or `$GITHUB_PATH`.
