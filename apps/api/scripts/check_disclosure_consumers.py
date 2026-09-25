@@ -74,6 +74,11 @@ Every one is exit 2, never 0:
     with, where a path that does not exist prints "clean" and exits 0.
   * ZERO disclosure fields discovered, which means the predicate broke rather
     than that the tree is clean.
+  * a web reader the TypeScript stripper cannot parse -- a block comment,
+    template literal or declaration body that never closes, or a string in a
+    type body that never closes (`TsParseError`, reported by `reader_text`
+    naming the file). Guessing an end would decide a verdict from text the
+    gate did not understand.
 
 Exit 1 is a real violation. Exit 2 is "I could not look". They never share a
 branch.
@@ -379,8 +384,13 @@ class TsParseError(ValueError):
     """The TypeScript stripper could not find where something ENDS -- a block
     comment, a template literal or a declaration body never closes. That is
     "I could not look" (exit 2, D-090): guessing an end would silently strip
-    real uses (a red nobody can clear, since the exemption check uses the same
-    stripper) or leave comments in (a green over #473's own case)."""
+    real uses or leave comments in (a green over #473's own case).
+
+    The red direction is worse than it looks, because it CAN be cleared -- the
+    wrong way. The gate's own remedy for a red is an `EXEMPT_FIELDS` entry, and
+    `expired_field_exemptions` reads the file through this same stripper. So an
+    exemption written for a field that is really rendered would never be seen
+    to expire, and would stand as a false "deliberately no consumer" record."""
 
 
 #: A `/` after one of these (or at the start) begins a REGEX literal, not a
@@ -533,8 +543,20 @@ def ts_use_text(text: str) -> str:
         generic's `{`, so the interface body is not the one stripped;
       * `type X<T = Y> =` -- the head's `<[^=;]*>` cannot contain `=`, so the
         alias is not recognised at all;
-      * a `//` comment after an apostrophe in JSX text on the same line (the
-        phantom quote resets at the newline, not before the comment);
+      * THE LEXER-STATE CLASS: whenever the lexer believes it is inside a
+        string or a regex that it is not really in, it misses a comment
+        opener for the rest of that line -- and for a block comment, every
+        LATER line of the comment is then lexed as code. Known forms:
+          - JSX text with an apostrophe, `Don't {/* see` on one line and the
+            field on the next: the phantom `'` eats the `/*`. Backticks in the
+            comment's prose can then flip template parity, or cause exit 2;
+          - `}` is a regex preceder, so in `<X a={b} /> {/* field */}` the
+            `/> {/` is read as a regex and the comment survives;
+          - a keyword before a regex (`return /'/`, `typeof /x'/`): a keyword
+            is not a preceder, so the literal reads as division and its quote
+            opens a phantom string -- or a multi-line template, if it holds a
+            backtick.
+        All three err GREEN (a comment's field counted as a use);
       * Python exporters are matched as before, comments and docstrings
         included.
     And a green means USED, not RENDERED: a use feeding nothing visible still

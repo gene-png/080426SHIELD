@@ -880,9 +880,13 @@ def test_a_regex_with_a_quote_does_not_stop_comment_stripping(tmp_path, capsys) 
     assert "thing.py::ThingResponse.excluded_inputs" in capsys.readouterr().out
 
 
-def test_an_apostrophe_in_jsx_text_does_not_swallow_the_file(tmp_path) -> None:
-    # A `'` string cannot cross a newline, so JSX text like `Don't` resets at
-    # the line end instead of hiding every use after it, or failing to parse.
+def test_an_apostrophe_in_jsx_text_is_not_a_parse_failure(tmp_path) -> None:
+    # A KEEP-test, and what it pins is narrow: a `'` in JSX text is NOT an
+    # unterminated string, so the gate neither exits 2 nor drops the use on
+    # the next line. It goes red if a quote open at a newline were made a
+    # TsParseError (the obvious stricter design). It does NOT pin the newline
+    # reset itself -- an open quote still copies its content, so this passes
+    # without the reset; the reset is pinned by the comment test below.
     web = "const t: Thing = d;\nconst p = <p>Don't</p>;\nconst n = t.excluded_inputs;\n"
     seed = _tree(tmp_path, schema=_SCHEMA, web=web)
     assert main(["x", str(seed)]) == 0

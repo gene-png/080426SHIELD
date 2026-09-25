@@ -74,9 +74,14 @@ comment, a template literal open at EOF, a declaration body that never closes,
 or a string in a type body that never closes each used to fall through to a
 verdict, with EOF taken as the end. In the red direction, `type Brace = "{";`
 above a render opened a body that never closed, and the strip ate the render.
-That red could never be cleared, because the exemption check uses the same
-stripper. In the green direction, a regex literal like `/["']/` opened a
-phantom string, and a comment after it cleared the field.
+That red is worse than it looks, because it CAN be cleared, the wrong way. The
+gate's remedy for a red is an `EXEMPT_FIELDS` entry, and
+`expired_field_exemptions` reads the file through the same stripper. So an
+exemption written for a field that is really rendered would never be seen to
+expire. (An earlier version of this entry said the red "could never be
+cleared", which was backwards; corrected on review of `63430ff`.) In the green
+direction, a regex literal like `/["']/` opened a phantom string, and a
+comment after it cleared the field.
 
 Now:
 - both scanners raise `TsParseError`, and `reader_text` pre-parses every
@@ -119,6 +124,33 @@ The full list is in `ts_use_text`'s docstring, and the open ones are #632.
   still clears it.
 - These still count as a use: an inline object-type annotation, an
   indexed-access type or `Pick<Data, "field">`, an `interface` whose generic
-  holds a `{`, a `type` alias whose generic has a default (`<T = Y>`), and a
-  comment after a JSX apostrophe on the same line.
+  holds a `{`, and a `type` alias whose generic has a default (`<T = Y>`).
+- **The lexer-state class.** Whenever the lexer believes it is inside a string
+  or a regex that it is not really in, it misses a comment opener for the rest
+  of that line. For a block comment, every LATER line of the comment is then
+  lexed as code. Three known forms, all erring green, none live:
+  - JSX text with an apostrophe, `Don't {/* see` with the field on the next
+    line. Backticks in that comment's prose can also flip template parity, or
+    cause exit 2.
+  - `}` as a regex preceder, as in `<X a={b} /> {/* field */}`.
+  - A keyword before a regex (`return /'/`, `typeof /x'/`), read as division.
+
+  An earlier version listed only "a `//` comment after a JSX apostrophe on the
+  same line", which is one form of the class, not the class (review of
+  `63430ff`).
 - Python exporters are matched as before, comments and docstrings included.
+
+## Round 2 (review of `63430ff`)
+
+These changes are prose, plus one relabelled test:
+- the lexer-state class is stated in the docstring and here, and #632's body
+  is widened to it;
+- the `TsParseError` docstring states the real hazard of the red direction;
+- the module docstring's list of exit-2 branches gains the could-not-parse
+  branch.
+
+The apostrophe test is relabelled as a keep-test, and its comment now says
+what it pins. It goes red if a quote open at a newline were made a
+`TsParseError`; that was checked by mutation, and it was red. It does not pin
+the newline reset: with the reset removed it stays green, as the review found.
+The reset is pinned by the comment test beside it.
