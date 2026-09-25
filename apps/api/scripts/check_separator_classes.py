@@ -45,7 +45,7 @@ WHAT IT CANNOT CATCH, stated so a clean run is not read as more than it is:
   * Whether the redactor HONOURS the mode it was handed -- that is behaviour, and
     no static gate sees it.
 
-EXIT CODES, per this repo's fail-closed convention (D-051):
+EXIT CODES, per this repo's fail-closed convention (D-090):
   0 - no enumerated whitespace class, and no `re.escape` outside the one
       module-level `_literal_pattern` (the second signature, #535)
   1 - at least one of either found
@@ -295,12 +295,13 @@ def main(argv: list[str]) -> int:
     if code == 2:
         # "I could not look" must not share a branch with "I found a violation",
         # and it must not share one with "nothing to complain about" either.
-        # This gate cited D-051 while collapsing its own 2 into a 1 -- the exit
-        # code the docstring promises was unreachable through main().
+        # This gate cited the exit convention (then as D-051; D-090 records
+        # it) while collapsing its own 2 into a 1 -- the exit code the
+        # docstring promises was unreachable through main().
         print(f"check-separator-classes: cannot parse {target}")
         for finding in findings:
             print(f"  {finding}")
-        print("An unreadable input is NOT a pass and NOT a violation (D-051).")
+        print("An unreadable input is NOT a pass and NOT a violation (D-090).")
         return 2
     if code == 0:
         print(f"check-separator-classes: clean ({target})")
@@ -354,5 +355,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-separator-classes: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

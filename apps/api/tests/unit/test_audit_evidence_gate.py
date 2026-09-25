@@ -240,3 +240,45 @@ def test_the_pr_template_is_treated_as_code() -> None:
     the copy and not the file.
     """
     assert is_code_change([".github/pull_request_template.md"]) is True
+
+
+# --- #592: a clean line says what it read (D-090) ---------------------------------------
+# The expected text is written out as a literal, from the requirement, not
+# built from the gate's own format string.
+
+
+@pytest.mark.unit
+def test_the_recorded_line_names_what_it_read(tmp_path, capsys) -> None:
+    from scripts.check_audit_evidence import main
+
+    body = "## Adversarial audit\nFindings: none\nDisposition: nothing to act on\n"
+    paths = "apps/api/app/x.py\nCONTEXT.md\napps/web/y.ts\n"
+    assert main(_files(tmp_path, paths, body)) == 0
+    assert capsys.readouterr().out.strip() == (
+        "audit gate: adversarial audit recorded (3 changed path(s) read, 2 of them code; "
+        "the body has an `Adversarial audit` heading, a `Findings:` line and a "
+        "`Disposition:` line)."
+    )
+
+
+@pytest.mark.unit
+def test_the_exempt_line_names_what_it_read(tmp_path, capsys) -> None:
+    from scripts.check_audit_evidence import main
+
+    assert main(_files(tmp_path, "CONTEXT.md\ncontext/gene.md\n", "no audit here\n")) == 0
+    assert capsys.readouterr().out.strip() == (
+        "audit gate: documentation-only change, exempt (2 changed path(s) read, none of them code)."
+    )
+
+
+@pytest.mark.unit
+def test_any_level_or_case_of_the_heading_is_the_same_heading(tmp_path, capsys) -> None:
+    # HEADING matches `#{1,6}`, case-insensitively, so the clean line names a
+    # heading, not a `##` section.
+    from scripts.check_audit_evidence import main
+
+    body = (
+        "### adversarial AUDIT" + chr(10) + "Findings: none" + chr(10) + "Disposition: x" + chr(10)
+    )
+    assert main(_files(tmp_path, "apps/api/app/x.py" + chr(10), body)) == 0
+    assert "the body has an `Adversarial audit` heading" in capsys.readouterr().out

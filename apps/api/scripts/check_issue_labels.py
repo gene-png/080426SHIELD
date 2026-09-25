@@ -34,7 +34,7 @@ Input: `gh api` against `$REPO`, or `--issues-file PATH` holding the same JSON
 (a list of pages, as `gh api --paginate --slurp` prints, or a flat list). The
 file form exists so the fixture harness can run real cases without a network.
 
-Exit codes, per this repo's gate convention (D-051):
+Exit codes, per this repo's gate convention (D-090):
   0  the rule holds (for every open issue, or for issue N)
   1  it does not (each fault listed)
   2  could not look: no REPO and no file, `gh` or the file unreadable, zero
@@ -211,5 +211,5 @@ if __name__ == "__main__":
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
         nl = chr(10)
         sys.stderr.write(f"check-issue-labels: CRASHED: {type(exc).__name__}: {exc}{nl}")
-        sys.stderr.write(f"A crash is not a clean report and not a violation (D-051).{nl}")
+        sys.stderr.write(f"A crash is not a clean report and not a violation (D-090).{nl}")
         raise SystemExit(2) from exc

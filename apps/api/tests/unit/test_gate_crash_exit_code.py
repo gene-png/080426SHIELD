@@ -1,13 +1,13 @@
 """A gate that crashes must not report a verdict it never reached.
 
-Every gate in this repo returns 1 for "violations found" and 2 for "I could not
-look" (D-051). Python exits 1 on an unhandled exception, so an uncaught error
+The convention every gate is held to is 1 for "violations found" and 2 for "I
+could not look" (D-090). Python exits 1 on an unhandled exception, so an uncaught error
 inside `main` was indistinguishable from a finding: the same exit code, the same
 red X, and a log that reads like a verdict. Gene confirmed the shape by running
 a patched copy of `check_plan_totals.py` -- exit 1, traceback on stderr.
 
 The expected value comes from the CONVENTION rather than from the scripts: 2 is
-what all eight already return for an anticipated failure to read their input.
+what every gate in GATES returns for an anticipated failure to read its input.
 Nothing here reads a constant out of the module under test.
 
 Each gate is exercised twice. Once with its real `__main__` block, asserting 2;
@@ -60,7 +60,7 @@ GATES = [
     # over, which is why `discover_gates` derives from the file and this list
     # exists to catch what that derivation cannot see.
     ("check_decision_numbers", ""),
-    ("check_mount_matches_database", ""),
+    ("check_mount_matches_database", "sys.argv"),
     # The #336 consumer gate. It shipped with the handler (so `discover_gates`
     # sees it) and WITHOUT an entry here, so the two enumerations diverged and
     # `test_universe_equals_the_other_gate_enumeration` went red -- which is
@@ -86,6 +86,9 @@ GATES = [
     # lists diverging and there is no reason to make it work for its living
     # twice. `sys.argv` because `main(argv)` takes the argument list.
     ("check_merge_rule_conditions", "sys.argv"),
+    # The interim merge-rule-text gate (#572). Added WITH its entry here, next to
+    # its condition-4 sibling rather than at the end, where #581's entry lands.
+    ("check_merge_rule_text", "sys.argv"),
     # The issue-labels gate (the filing rule). Shipped with the handler.
     ("check_issue_labels", "sys.argv"),
     # #540's three non-execution gates. Shipped with the handler and WITHOUT

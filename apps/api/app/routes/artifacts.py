@@ -21,6 +21,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.attack.catalog_version import CLIENT_WITHHELD_MESSAGE, is_stale_attack_deliverable
 from app.audit import audit
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
@@ -63,24 +64,37 @@ def _storage_dep() -> StorageBackend:
     return get_storage()
 
 
-def _in_released_deliverable(db: Session, artifact_id: uuid.UUID) -> bool:
-    """True if the artifact is a format (PDF/XLSX/DOCX) of a RELEASED deliverable.
+def _released_deliverable_access(db: Session, artifact_id: uuid.UUID) -> str:
+    """Whether the artifact is a format (PDF/XLSX/DOCX) of a RELEASED deliverable,
+    and whether that release reaches the client: "readable", "withheld" or "none".
 
     The artifact's tenant is already verified by the caller (row.client_id ==
-    client.id), so a match here means "this is a released deliverable file of
-    the caller's own tenant" — the only deliverable artifact a client may read.
+    client.id), so "readable" means "this is a released deliverable file of the
+    caller's own tenant" — the only deliverable artifact a client may read.
+
+    "withheld" (#556, the owner's decision): every released deliverable carrying
+    it is an ATT&CK report over an assessment scored against another catalog.
+    The client list withholds its files through the same predicate
+    (`is_stale_attack_deliverable`), so a remembered link does not serve them,
+    and the caller says why rather than answering a bare 404.
     """
-    match = db.execute(
-        select(Deliverable.id)
-        .where(
-            Deliverable.released_at.is_not(None),
-            (Deliverable.pdf_artifact_id == artifact_id)
-            | (Deliverable.xlsx_artifact_id == artifact_id)
-            | (Deliverable.docx_artifact_id == artifact_id),
+    matches = (
+        db.execute(
+            select(Deliverable).where(
+                Deliverable.released_at.is_not(None),
+                (Deliverable.pdf_artifact_id == artifact_id)
+                | (Deliverable.xlsx_artifact_id == artifact_id)
+                | (Deliverable.docx_artifact_id == artifact_id),
+            )
         )
-        .limit(1)
-    ).first()
-    return match is not None
+        .scalars()
+        .all()
+    )
+    if not matches:
+        return "none"
+    if any(not is_stale_attack_deliverable(db, d) for d in matches):
+        return "readable"
+    return "withheld"
 
 
 @router.post(
@@ -226,9 +240,15 @@ def download_artifact(
     #      invisible to the client exactly like every other draft.
     is_uploader = row.uploaded_by == user.id
     is_staff = user.role == UserRole.ADMIN
-    is_released_deliverable = user.role == UserRole.CLIENT and _in_released_deliverable(
-        db, artifact_id
+    access = (
+        _released_deliverable_access(db, artifact_id) if user.role == UserRole.CLIENT else "none"
     )
+    if access == "withheld" and not is_uploader:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason": "attack_catalog_mismatch", "message": CLIENT_WITHHELD_MESSAGE},
+        )
+    is_released_deliverable = access == "readable"
     if not (is_uploader or is_staff or is_released_deliverable):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
