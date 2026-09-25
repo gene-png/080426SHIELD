@@ -66,8 +66,14 @@ test files on disk collected`.
 
 ## Verified
 
-- 43 tests pass in the gate's file plus the crash-exit test, in
-  `docker run --rm` of `shield-v2-api:latest` with the full worktree mounted.
+- `pytest -p no:cacheprovider -o addopts= tests/unit/test_ci_selection_gate.py tests/unit/test_gate_crash_exit_code.py`:
+  **133 passed**. Run at the round-4 fix head, in `docker run --rm` of
+  `shield-v2-api:latest` with the full worktree mounted.
+
+  An earlier version of this line said "43 tests pass". That was not a
+  count. It was the number of progress dots on pytest's LAST `-q` output line,
+  read through `tail -1`, and `-q` wraps its dots across lines. Corrected on
+  review of `42c11a2`.
 - Red-on-revert, 5 of 5, with each anchor counted:
   - the file findings dropped;
   - equality-only file matching;
@@ -98,6 +104,15 @@ test files on disk collected`.
   - `followlinks=False`, caught by a symlinked test directory, both in its
     passing state and with a self-removing file in it.
 
+  After the fourth review, 1 of 1 more went red: the new refusal of any
+  `${{ }}` expression in either step's `env`, `working-directory` or `shell`,
+  dropped. Equal TEXT is not equal VALUES once an expression is involved,
+  because GitHub evaluates `${{ }}` once per step, so
+  `${{ steps.gate.outcome == 'success' && '--deselect ...' || '' }}` gives ''
+  while the gate runs and a deselect afterwards. Both tests use identical text
+  on the two steps. The real `ci.yml` python job has no expressions in those
+  fields and stays clean.
+
 ## Limits
 
 - The check is per FILE. A module that removes only some of its tests at
@@ -111,4 +126,13 @@ test files on disk collected`.
   `norecursedirs`. Both behaviours were read from pytest 9.1.1, and
   `pyproject.toml` allows `pytest>=8.3`. A pytest release that changes either
   would make the scan drift with nothing to say so. A missing `fnmatch_ex` is
-  exit 2.
+  exit 2. The walk behaviour was read from pytest's collection path,
+  `Dir.collect` (main.py) and `Package.collect` (python.py), each `scandir()`
+  then `direntry.is_dir()`. It was NOT read from `_pytest.pathlib.visit`, which
+  is not on that path; an earlier version cited it.
+- Filed from round 4, not fixed here:
+  - #627: the pin ignores `continue-on-error:` and `if:`;
+  - #628: the scan swallows a scandir error, and counts a broken `test_*.py`
+    symlink;
+  - #629: "CI's exact argv" is `python -m pytest`, which adds the cwd to
+    `sys.path`, where CI runs bare `pytest`.

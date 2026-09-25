@@ -362,6 +362,7 @@ NOT_ADJACENT = "the gate step must come IMMEDIATELY before the pytest step"
 ENV_DIFFERS = "step env differs between the gate step and the pytest step"
 WD_DIFFERS = "working-directory differs between the gate step and the pytest step"
 SHELL_DIFFERS = "shell differs between the gate step and the pytest step"
+EXPRESSION = "an expression (`${{ }}`) in a step's env, working-directory or shell"
 
 
 def pin_violations(ci: dict) -> list[str]:
@@ -405,6 +406,15 @@ def pin_violations(ci: dict) -> list[str]:
         out.append(WD_DIFFERS)
     if steps[i].get("shell") != steps[j].get("shell"):
         out.append(SHELL_DIFFERS)
+    # EQUAL TEXT IS NOT EQUAL VALUES once an expression is involved: GitHub
+    # evaluates `${{ }}` once per STEP, so the same text can yield '' while the
+    # gate runs and a `--deselect` afterwards (`steps.gate.outcome`, or
+    # `github.action`, which differs per step). The comparisons above are of
+    # text, so any expression in these fields is refused (review of 42c11a2).
+    for k, role in ((j, "gate"), (i, "pytest")):
+        for key in ("env", "working-directory", "shell"):
+            if "${{" in yaml.safe_dump(steps[k].get(key)):
+                out.append(f"{EXPRESSION}: {role} step, {key}")
     return out
 
 
@@ -488,6 +498,29 @@ def test_a_different_shell_is_refused() -> None:
     # A login shell can source a profile that sets PYTEST_ADDOPTS.
     login = {**PYTEST_STEP, "shell": "bash -l {0}"}
     assert pin_violations(_workflow(GATE_STEP, login)) == [SHELL_DIFFERS]
+
+
+def test_the_same_expression_on_both_steps_is_refused() -> None:
+    # Identical TEXT, so every equality check passes -- but GitHub evaluates it
+    # per step: '' while the gate runs, a --deselect once it has succeeded.
+    expr = "${{ steps.gate.outcome == 'success' && '--deselect tests/unit/x.py' || '' }}"
+    gate_step = {**GATE_STEP, "id": "gate", "env": {"PYTEST_ADDOPTS": expr}}
+    pytest_step = {**PYTEST_STEP, "env": {"PYTEST_ADDOPTS": expr}}
+    assert pin_violations(_workflow(gate_step, pytest_step)) == [
+        f"{EXPRESSION}: gate step, env",
+        f"{EXPRESSION}: pytest step, env",
+    ]
+
+
+def test_an_expression_in_the_working_directory_is_refused() -> None:
+    wd = "apps/${{ github.action }}"
+    out = pin_violations(
+        _workflow({**GATE_STEP, "working-directory": wd}, {**PYTEST_STEP, "working-directory": wd})
+    )
+    assert out == [
+        f"{EXPRESSION}: gate step, working-directory",
+        f"{EXPRESSION}: pytest step, working-directory",
+    ]
 
 
 def test_the_two_steps_in_different_jobs_are_refused() -> None:

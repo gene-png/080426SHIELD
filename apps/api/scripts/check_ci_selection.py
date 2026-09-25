@@ -223,8 +223,11 @@ def files_named_by_python_files(root: Path, config: dict[str, list[str]]) -> set
     except ImportError as exc:  # pragma: no cover - pytest is what this gate runs
         raise CouldNotLook(f"cannot import pytest's own matcher: {exc}") from exc
     found = set()
-    # followlinks: pytest descends a symlinked directory (`visit` recurses on
-    # `DirEntry.is_dir()`, which follows links; read in pytest 9.1.1).
+    # followlinks: pytest descends a symlinked directory. Its collection walks
+    # in `Dir.collect` (_pytest/main.py) and `Package.collect`
+    # (_pytest/python.py), each `scandir()` then `direntry.is_dir()`, which
+    # follows links -- read in pytest 9.1.1. (`_pytest.pathlib.visit` is not
+    # on that path; an earlier version of this comment cited it.)
     for dirpath, dirnames, filenames in os.walk(
         root.resolve() / "tests" / "unit", followlinks=True
     ):
