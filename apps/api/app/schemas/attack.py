@@ -39,10 +39,21 @@ class CatalogCoverageDefinition(BaseModel):
     description: str
 
 
+class CatalogReasonCode(BaseModel):
+    """One reason code, with the ONE status it may accompany (#554, D-092)."""
+
+    code: str
+    status: CoverageStatus
+    definition: str
+
+
 class CatalogResponse(BaseModel):
     tactics: list[CatalogTactic]
     techniques: list[CatalogTechnique]
     coverage_definitions: list[CatalogCoverageDefinition]
+    # #554: served FROM `coverage.REASON_CODES`, so the workspace offers exactly
+    # the codes the PATCH accepts and never keeps a second list to drift.
+    reason_codes: list[CatalogReasonCode]
     total_techniques: int  # parent only
     total_sub_techniques: int
 
@@ -264,6 +275,11 @@ class AttackCoveragePatch(BaseModel):
     # #554. Validated against the row's resulting status in `patch_coverage`,
     # typed, rather than as an enum here: a code's validity depends on the status.
     reason_code: str | None = Field(default=None, max_length=48)
+    # No web editor exists yet. The narrative editor (#615) must mirror this
+    # limit by counting the code points of the value it SENDS: pydantic's
+    # max_length measures the raw string, untrimmed, and the route stores it
+    # as sent (only a blank one becomes NULL). Whoever changes it here must
+    # change it there.
     narrative: str | None = Field(default=None, max_length=8000)
 
 
