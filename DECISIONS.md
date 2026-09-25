@@ -5916,6 +5916,20 @@ Three states, handled at every guarded site: current, a different recorded versi
 
 **The migration rule, carried for any future real data.** A consultant scoring T1558 read "Steal or Forge Authentication Certificates" on screen. **They answered the name, not the ID.** An answer moves to wherever the NAME it was given against lives in the new catalog, never by ID. On the chosen path nothing migrates, because everything is rescored. The rule stays written because one real engagement makes it binding.
 
+## D-093 — The ATT&CK AI draft gives a reason per status, built from the vocabulary, and a wrong pairing is rejected and recorded
+
+**Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (the vocabulary, D-092); this slice wires it into the AI draft
+
+**Decision 1 — the prompt is built from the vocabulary, never restated.** `_MITRE_MAP_PROMPT` lists the seven Partial codes with their definitions from `coverage.REASON_CODES`, and the N/A codes from `reason_codes_for(NOT_APPLICABLE)`, which is `platform_absent` alone. So the prompt cannot offer a code the parser rejects, or omit one it accepts. It states the owner's test once: if something defends the technique and a named category of control is missing, that is Partial with `missing_control_category`; if nothing does, that is a gap, never N/A. The statuses offered stay the four in `coverage.WRITABLE` (D-092 Decision 5).
+
+**Decision 2 — a mispaired suggestion is refused WHOLE, as the PATCH refuses the whole request.** A reason valid for the suggested status is stored with it. A suggestion whose reason is not valid for its status is not applied at all: the row keeps its status, reason, tools and rationale. The suggested status and reason are recorded in the `attack.run_ai` audit row as `reason_codes_rejected`, and the reason is stored only when it is code-shaped, a marker otherwise, so model prose never reaches an audit row. N/A with `missing_control_category` is the case this exists for. Applying the N/A while dropping the reason would move the row out of the gap list on the model's word, the direction that flatters the client. That was the first version, and review round 1 refused it; the coordinator's call, overturnable. A consultant's reason that a valid new status does not take is still dropped and recorded as `reason_codes_dropped` (D-092).
+
+**Decision 3 — the fixture answers from the prompt.** Fixture-mode Partial rows cycle through three of the seven codes, and N/A rows carry `platform_absent`. A test parses the codes out of the prompt TEXT and asserts every fixture reason is among them, so fixture and parser cannot agree by construction.
+
+**A status the run may not write refuses the suggestion whole, too.** Since #569, `_VALID_STATUSES` is `coverage.WRITABLE`, so the product's own two new statuses fall outside it. The old path skipped such a status and still wrote the suggestion's tools and rationale, leaving a row that argued for a status it did not have, with no trace. It now refuses the whole suggestion and records it as `statuses_rejected`, code-shaped values only. A suggestion with NO status is refused whole in the same way and recorded as `<none>`: a rationale without a status argues for nothing, and tools cited for no status attach to no claim. That was the coordinator's call in review round 3, overturnable. The narrowing that made this reachable was #569's, so it is fixed here rather than filed.
+
+**Not here.** The audit lists reach the admin audit viewer, which renders `details` generically, but it truncates each value at 200 characters, and no refusal count is shown in the run response or the workspace (#601). What does not exist is a ROW-level disclosure: the technique panel does not say that the AI's suggestion was refused, or that a consultant's reason was dropped. Neither does the deliverable (#575). Nothing requires a reason yet; that is the release-readiness slice.
+
 ## D-094 — An ATT&CK parent with sub-techniques has its status computed from them
 
 **Date:** 2026-09-25 · **Issues:** #554 · **Decided by:** the owner (that parents are computed); the rule itself is **my call, overturnable**
@@ -5945,7 +5959,7 @@ The truth table was written BEFORE the function, and one row was corrected after
 
 - PATCH refuses a parent's status or reason with a typed 422, `parent_status_computed`. Notes stay editable.
 - A child's PATCH recomputes its parent in the same transaction.
-- The AI write-back refuses a parent's suggestion whole (`parent_suggestions_refused`), and recomputes every parent before the run's diff is taken.
+- The AI write-back refuses a parent's suggestion whole and recomputes every parent before the run's diff is taken. The refusal is recorded as `parent_suggestions_refused`, in D-093's shape (`{technique_code, status}`, code-shaped values only). The ORDER per suggestion is: a locked row is skipped; then a computed parent is refused, whatever it suggested; then a missing or disallowed status (D-093); then a mispaired reason (D-093); only then is anything applied. Each refusal lands in exactly one list.
 - Approve recomputes every parent before freezing the numbers, so a draft scored before this rule existed is corrected at the point it matters. Each is audited (`parents_recomputed`).
 - The demo seed recomputes through the same function.
 

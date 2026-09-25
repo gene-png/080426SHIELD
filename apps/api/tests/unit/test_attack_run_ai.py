@@ -740,11 +740,178 @@ def test_run_ai_does_not_write_a_status_no_surface_reports(app_client, status) -
     """#554: the AI's allowed set is the four the prompt offers, not the whole
     enum, so a model answer outside it leaves the row as it was."""
     c, TestSession, provider = app_client
-    h, svc_id, row_id = _one_row_run(c, TestSession, provider, status)
+    h, svc_id, row_id, code = _one_row_run_with_reason(c, TestSession, provider, status, None)
     r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
     assert r.status_code == 200, r.text
     row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    # Refused WHOLE (#590 round 2): no status, and none of the suggestion's
+    # tools or rationale -- a rationale arguing for a status the row does not
+    # have is what the old skip left behind.
     assert row["status"] is None
+    assert not row["detection_tools"]
+    assert row["rationale"] != _SUGGESTED_RATIONALE
+    rejected = _run_audit(TestSession)["statuses_rejected"]
+    assert rejected and all(e == {"technique_code": code, "status": status} for e in rejected)
+
+
+_SUGGESTED_RATIONALE = "SUGGESTED-RATIONALE-that-must-not-land-on-a-refused-row"
+
+
+def _one_row_run_with_reason(c, TestSession, provider, status: str, reason) -> tuple:
+    """As `_one_row_run`, with the model also offering `reason_code`."""
+    import json
+
+    # The first registration is replaced below; "covered" only builds the world.
+    h, svc_id, row_id = _one_row_run(c, TestSession, provider, "covered")
+    code = next(
+        t["technique_code"]
+        for t in c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()[
+            "coverage"
+        ]
+        if t["id"] == row_id
+    )
+    provider.register_static(
+        "mitre_map",
+        LLMResponse(
+            json.dumps(
+                {
+                    "techniques": [
+                        {
+                            "technique_code": code,
+                            "status": status,
+                            "reason_code": reason,
+                            # Cited and argued, so a refusal that let the tools
+                            # or the rationale through is visible on the row.
+                            "detection_tools": ["Tool A"],
+                            "prevention_tools": [],
+                            "response_tools": [],
+                            "rationale": _SUGGESTED_RATIONALE,
+                        }
+                    ]
+                }
+            )
+        ),
+    )
+    return h, svc_id, row_id, code
+
+
+def _run_audit(TestSession) -> dict:
+    from sqlalchemy import select
+
+    from app.models.audit_entry import AuditEntry
+
+    with TestSession() as db:
+        return (
+            db.execute(select(AuditEntry.details).where(AuditEntry.action == "attack.run_ai"))
+            .scalars()
+            .one()
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [("partial", "reach_limited"), ("not_applicable", "platform_absent")],
+)
+def test_run_ai_stores_a_reason_the_status_takes(app_client, status, reason) -> None:
+    """#554 slice 2: the model's reason is stored when it belongs to the status."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id, _ = _one_row_run_with_reason(c, TestSession, provider, status, reason)
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert (row["status"], row["reason_code"]) == (status, reason)
+    assert _run_audit(TestSession)["reason_codes_rejected"] == []
+
+
+_PRIOR_PARTIAL = {"status": "partial", "reason_code": "detection_weak"}
+_PRIOR_GAP = {"status": "gap", "reason_code": None}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "reason", "recorded", "prior"),
+    [
+        # The pairing the vocabulary exists to forbid: a missing control is a
+        # GAP, never an N/A reason. Applying the N/A would move the row out of
+        # the gap list on the model's word.
+        ("not_applicable", "missing_control_category", "missing_control_category", _PRIOR_PARTIAL),
+        ("partial", "platform_absent", "platform_absent", _PRIOR_GAP),
+        ("gap", "reach_limited", "reach_limited", _PRIOR_PARTIAL),
+        ("partial", "not_a_code", "not_a_code", _PRIOR_GAP),
+        # Model PROSE never reaches an audit row: a marker stands in for it.
+        ("partial", "Nothing defends this. See notes!", "<not a code>", _PRIOR_GAP),
+    ],
+)
+def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
+    app_client, status, reason, recorded, prior
+) -> None:
+    """As the PATCH refuses the whole request (typed 422), the write-back refuses
+    the whole suggestion: the row keeps the consultant's status AND reason, and
+    the audit row names what was refused. Every case starts from a prior status
+    DIFFERENT from the suggestion, or applying the status would change nothing
+    and the case could not fail (review round 2)."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id, code = _one_row_run_with_reason(c, TestSession, provider, status, reason)
+    assert prior["status"] != status
+    before = c.patch(f"/attack/coverage/{row_id}", headers=h, json=prior)
+    assert before.status_code == 200, before.text
+    kept = {k: before.json()[k] for k in ("detection_tools", "rationale")}
+
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert (row["status"], row["reason_code"]) == (prior["status"], prior["reason_code"])
+    # WHOLE: the suggestion's tools and rationale did not land either.
+    assert {k: row[k] for k in kept} == kept
+    assert row["rationale"] != _SUGGESTED_RATIONALE
+    # The static answer is replayed to EVERY batch, so the refusal is recorded
+    # once per batch that saw it. What is pinned is that it IS recorded, whole,
+    # and nothing else is.
+    rejected = _run_audit(TestSession)["reason_codes_rejected"]
+    assert rejected, "a refused suggestion must be recorded, not silently dropped"
+    assert all(
+        entry == {"technique_code": code, "status": status, "reason_code": recorded}
+        for entry in rejected
+    ), rejected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "recorded"),
+    [
+        # Model PROSE never reaches an audit row.
+        ("Nothing defends this. See notes!", "<not a code>"),
+        # Code-shaped but not a status: recorded as itself.
+        ("maybe", "maybe"),
+        # Not strings at all.
+        (["covered"], "<not a code>"),
+        (5, "<not a code>"),
+        # No status: refused whole too, since a rationale without a status
+        # argues for nothing (#590 round 3, the coordinator's call).
+        (None, "<none>"),
+    ],
+)
+def test_run_ai_refuses_a_suggestion_without_a_writable_status_whole(
+    app_client, status, recorded
+) -> None:
+    """The row keeps its status, tools and rationale, and the audit records the
+    refused status in code-shaped form only."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id, code = _one_row_run_with_reason(
+        c, TestSession, provider, status, "reach_limited"
+    )
+    before = c.patch(f"/attack/coverage/{row_id}", headers=h, json={"status": "gap"})
+    assert before.status_code == 200, before.text
+    kept = {k: before.json()[k] for k in ("detection_tools", "rationale", "reason_code")}
+
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert row["status"] == "gap"
+    assert {k: row[k] for k in kept} == kept
+    rejected = _run_audit(TestSession)["statuses_rejected"]
+    assert rejected and all(e == {"technique_code": code, "status": recorded} for e in rejected)
 
 
 @pytest.mark.unit
@@ -785,15 +952,7 @@ def test_run_ai_refuses_a_computed_parents_suggestion_and_computes_it(app_client
     # Computed from its children -- all gap -- not the model's "covered".
     assert row["status"] == "gap"
     assert row["rationale"] != "PARENT-RATIONALE-that-must-not-land"
-    from sqlalchemy import select
-
-    from app.models.audit_entry import AuditEntry
-
-    with TestSession() as db:
-        details = (
-            db.execute(select(AuditEntry.details).where(AuditEntry.action == "attack.run_ai"))
-            .scalars()
-            .one()
-        )
-    assert parent in details["parent_suggestions_refused"]
+    details = _run_audit(TestSession)
+    # Recorded in the same shape as #590's refusals, code-shaped values only.
+    assert {"technique_code": parent, "status": "covered"} in details["parent_suggestions_refused"]
     assert parent in details["parents_recomputed"]
