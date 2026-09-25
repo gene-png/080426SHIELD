@@ -12,13 +12,15 @@ Branch `track2/attack-ai-reason-codes`, from `main` at `ef94f4f`.
   reason is not valid for its status is refused WHOLE, as the PATCH refuses a
   whole request: the row keeps everything it had. The refusal is recorded in
   the `attack.run_ai` audit row as `reason_codes_rejected`, with code-shaped
-  values only.
+  values only. A status outside the writable four (including the product's own
+  two new ones) is refused whole in the same way, as `statuses_rejected`.
 - **The fixture** answers from the prompt: Partial rows carry three of its
   seven codes, and N/A rows carry `platform_absent`.
 
 ## Not in this slice
 
 - A row-level or deliverable disclosure of a refused suggestion or a dropped
-  reason (#575). The admin audit viewer already shows both lists.
+  reason (#575). The admin audit viewer shows the lists, truncated at 200
+  characters, and no refusal count is shown anywhere (#601).
 - Requiring a reason, and blocking release on `unable_to_determine`: the
   release-readiness slice (c3).

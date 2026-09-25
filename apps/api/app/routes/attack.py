@@ -1823,6 +1823,12 @@ def run_ai(
     # dropping the reason would move the row out of the gap list on the model's
     # word -- the direction that flatters the client.
     reason_codes_rejected: list[dict[str, str]] = []
+    # A status the run may not write -- anything outside `_VALID_STATUSES`, which
+    # since #569 includes the product's own two new statuses -- refuses the
+    # suggestion WHOLE too. It used to skip the status and still write the tools
+    # and rationale, so a row could carry a rationale arguing for a status it
+    # does not have, with no trace. Recorded here, code-shaped values only.
+    statuses_rejected: list[dict[str, str]] = []
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
             continue
@@ -1831,6 +1837,11 @@ def run_ai(
             continue
         st = sugg.get("status")
         offered = sugg.get("reason_code")
+        if st is not None and not (isinstance(st, str) and st in _VALID_STATUSES):
+            statuses_rejected.append(
+                {"technique_code": row.technique_code, "status": _audit_safe_code(st)}
+            )
+            continue
         if (
             isinstance(st, str)
             and st in _VALID_STATUSES
@@ -2030,6 +2041,7 @@ def run_ai(
             # #554: which consultant reasons the AI's new statuses displaced.
             "reason_codes_dropped": reason_codes_dropped,
             "reason_codes_rejected": reason_codes_rejected,
+            "statuses_rejected": statuses_rejected,
         },
     )
     db.commit()
