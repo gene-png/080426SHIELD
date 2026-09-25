@@ -6,6 +6,7 @@ the merge rule relies on are the ones exercised.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 import subprocess
@@ -148,23 +149,91 @@ def test_could_not_read_is_2_and_says_so_first(tmp_path, capsys) -> None:
     assert out.startswith("compose content: COULD NOT READ"), out
 
 
-def _compose_job() -> str:
+_STUB_PYTHON = """#!/bin/sh
+# Stands in for `python` in the job's run block: `-m pip` succeeds, and the
+# compose tool reports the state named by STUB_RC, the way the real one does.
+if [ "$1" = "-m" ]; then exit 0; fi
+case "$STUB_RC" in
+  0) echo "compose content: UNCHANGED (stub)" ;;
+  1) echo "compose content: CHANGED in 1 file(s) (stub)" ;;
+  *) echo "compose-unchanged: CRASHED: stub" >&2 ;;
+esac
+exit "$STUB_RC"
+"""
+
+
+def _compose_step() -> tuple[dict, dict]:
+    """The compose job and its tool step, PARSED from audit-gate.yml (not restated)."""
+    import yaml
+
     wf = pathlib.Path(__file__).resolve().parents[4] / ".github" / "workflows" / "audit-gate.yml"
     if not wf.is_file():
         pytest.skip(f"no workflow at {wf} (the api image mounts apps/api only)")
-    text = wf.read_text(encoding="utf-8")
-    start = text.index("  compose-content-changed:\n")
-    end = text.index("\n  # ", start)  # the next job's leading comment
-    return text[start:end]
+    job = yaml.safe_load(wf.read_text(encoding="utf-8"))["jobs"]["compose-content-changed"]
+    steps = [s for s in job["steps"] if "compose_unchanged.py" in str(s.get("run", ""))]
+    assert len(steps) == 1, steps
+    return job, steps[0]
 
 
-def test_the_ci_job_is_red_on_a_change_and_on_could_not_read() -> None:
-    # The job's colour is the verdict: the tool's own 1 and 2 must reach the
-    # job, so no flag may turn a change into a 0, and the status is passed on.
-    job = _compose_job()
-    assert "name: compose content changed\n" in job, job
-    assert "compose_unchanged.py --repo ." in job and "--report" not in job, job
-    assert 'exit "$rc"' in job, job
+def test_the_ci_job_cannot_be_made_green_by_configuration() -> None:
+    job, step = _compose_step()
+    assert job["name"] == "compose content changed", job["name"]
+    for where, node in (("job", job), ("step", step)):
+        assert "continue-on-error" not in node, f"{where} carries continue-on-error"
+        assert "if" not in node, f"{where} carries an if:"
+    assert "shell" not in step, "the test runs the block under GitHub's default bash -e"
+
+
+def _run_block(tmp_path: pathlib.Path, stub_rc: int) -> tuple[int, str]:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash here")
+    _, step = _compose_step()
+    run = step["run"]
+    marker = "${{ github.base_ref }}"
+    assert run.count(marker) == 1, run
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir(exist_ok=True)
+    (stub_dir / "python").write_text(_STUB_PYTHON, encoding="utf-8", newline="\n")
+    (stub_dir / "python").chmod(0o755)
+    summary = tmp_path / f"summary-{stub_rc}.md"
+    summary.write_text("", encoding="utf-8")
+    script = tmp_path / f"block-{stub_rc}.sh"
+    script.write_text(
+        'PATH="$(cd "$STUB_DIR" && pwd):$PATH"\n' + run.replace(marker, "main"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    env = {
+        **os.environ,
+        "STUB_DIR": str(stub_dir),
+        "STUB_RC": str(stub_rc),
+        "GITHUB_STEP_SUMMARY": str(summary),
+    }
+    # GitHub runs a `run:` block with no `shell:` as `bash -e {0}`.
+    proc = subprocess.run(  # noqa: S603
+        [bash, "--noprofile", "--norc", "-e", str(script)], env=env, capture_output=True
+    )
+    return proc.returncode, summary.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("stub_rc", "red", "named"),
+    [
+        (0, False, "compose content: UNCHANGED (stub)"),
+        (1, True, "compose content: CHANGED in 1 file(s) (stub)"),
+        (2, True, "CRASHED: stub"),
+    ],
+)
+def test_the_ci_job_is_red_on_a_change_and_on_could_not_read(
+    tmp_path, stub_rc: int, red: bool, named: str
+) -> None:
+    # EXECUTES the job's own run block against a stub tool: its exit status is
+    # the job's colour, and its summary must name the state, including a crash
+    # whose only output is on stderr.
+    rc, summary = _run_block(tmp_path, stub_rc)
+    assert (rc != 0) is red, (stub_rc, rc, summary)
+    assert named in summary, (stub_rc, summary)
 
 
 @pytest.mark.parametrize(

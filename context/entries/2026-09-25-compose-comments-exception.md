@@ -42,7 +42,11 @@ file is not a listed path, so the figure is 3/12 against the old 2/13.
     compose change;
   - an unparseable file, bad arguments and a three-dot range, each naming
     its state on the first line;
-  - the CI job passing 1 and 2 through as red.
+  - the CI job EXECUTED: its run block, parsed from `audit-gate.yml`, runs
+    under `bash -e` against a stub tool exiting 0, 1 and 2, and must exit
+    0, non-zero, non-zero, with each state named in the summary (a crash
+    included, via `2>&1`); the parsed job and step carry no
+    `continue-on-error` and no `if:`.
 - Red on revert, five mutations, each red on its named test (round 2):
   loaded-object equality (`test_a_content_change_trips`), a deleted file not
   counted (`test_a_deleted_compose_file_trips`), scalar tags ignored
@@ -50,10 +54,15 @@ file is not a listed path, so the figure is 3/12 against the old 2/13.
   ignored (`test_a_quote_flip_is_content_even_where_the_1_1_tag_agrees`), and
   a three-dot range accepted (`test_a_three_dot_range_is_refused_by_name`).
   In round 1, two mutations first stayed green, and the tests were
-  strengthened. After decision (b), three more, each red on its named test: a
-  change exiting 0 (`test_a_content_change_trips`), the job given a
-  `--report` flag, and the job ending `exit 0`
-  (`test_the_ci_job_is_red_on_a_change_and_on_could_not_read`, both).
+  strengthened. After decision (b) and round 3, nine more, each red on its
+  named test: a change exiting 0 (`test_a_content_change_trips`); in the run
+  block, `|| rc=$?` as `|| true`, `exit "$rc"` as `exit 0`, `exit "$rc"`
+  commented out, and `2>&1` dropped
+  (`test_the_ci_job_is_red_on_a_change_and_on_could_not_read`); and
+  `continue-on-error: true` or `if: false` on the job or on the step
+  (`test_the_ci_job_cannot_be_made_green_by_configuration`). Round 3 found
+  that the first version of the job test only checked strings were present,
+  so `|| true` and the rest survived it; the test now runs the block.
 
 ## Limits
 
@@ -67,8 +76,8 @@ file is not a listed path, so the figure is 3/12 against the old 2/13.
   DEFERRED with a reason naming each mutation's test, and it is in
   `test_gate_crash_exit_code.GATES`.
 - **Why red on a change** (the owner's decision (b)). A compose content change
-  is rare: of the last 80 merges on `main` (at `ef94f4f`), three touched a
-  compose file, two changed its content and one was comments only. That is
+  is rare: of the last 80 first-parent commits on `main` at `ef94f4f` (71 of
+  them PR merges), three touched a compose file, two changed its content and one was comments only. That is
   about two reds in eighty, the same rare-and-red design as #582. The owner's
   figure was four touching, two comments-only; the re-derivation (the command
   is in D-095) found three and one, and this entry uses it. An earlier draft

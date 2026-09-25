@@ -5847,16 +5847,20 @@ verdict: green is unchanged, red is changed (1) or could not read (2), and the
 job summary names which of the three it was. Could-not-read never shows green.
 
 **Why red on a change (the owner's decision (b), 2026-09-25).** A change is
-rare. Of the last 80 merges on `main` (at `ef94f4f`), three touched a compose
-file: two changed its content (`59484a9`, `f36d7a5`) and one was comments only
-(`adc2217`). So red-when-changed fires about twice in eighty, the same
+rare. Of the last 80 first-parent commits on `main` at `ef94f4f` (71 of them PR
+merges), three touched a compose file: two changed its content (`59484a9`,
+`f36d7a5`) and one was comments only (`adc2217`). So red-when-changed fires
+about twice in eighty, the same
 rare-and-red design as the merge-rule text gate (#582). The owner's own figure
 was four touching, two comments-only; the re-derivation below found three and
 one, and this record uses the re-derived figure:
 
-    git log --first-parent --format=%h -80 origin/main
-    # for each: git diff --name-only <c>^ <c> | grep -E '^docker-compose[^/]*\.ya?ml$'
-    #           python apps/api/scripts/compose_unchanged.py --repo . <c>^..<c>
+    # Git Bash, from the repo root; prints each compose-touching commit and the
+    # tool's exit (the loop's own status is its last grep's, so ignore it).
+    for c in $(git log --first-parent --format=%h -80 ef94f4f); do git diff --name-only "$c^" "$c" | grep -qE '^docker-compose[^/]*\.ya?ml$' && echo "$c $(python apps/api/scripts/compose_unchanged.py --repo . "$c^..$c" >/dev/null; echo $?)"; done
+    # -> 59484a9 1 / adc2217 0 / f36d7a5 1   (run 2026-09-25)
+    git log --first-parent --format=%s -80 ef94f4f | grep -cE '\(#[0-9]+\)$'
+    # -> 71 of the 80 are PR merges
 
 **Why the node tree, not the loaded object.** PyYAML reads YAML 1.1, and
 Python's `==` is loose, so `on` to `yes` (both True) and `1` to `1.0` compare
