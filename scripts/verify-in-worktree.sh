@@ -233,13 +233,39 @@ run_web_script() {
   run_in_container "$WEB_SCRIPT" "$1"
 }
 
-# Exit 2 with COULD NOT LOOK, before any bound, when the script was never read.
-# $1 = arm name, $2 = its captured output.
-refuse_if_unread() {
-  if printf '%s\n' "$2" | grep -qF "$NO_SCRIPT_MARKER"; then
-    echo "verify-in-worktree: $1 -- COULD NOT LOOK: its apps/web script could not be read, so nothing ran." >&2
-    return 0
+# A BOUND IS PRINTED ONLY ON POSITIVE EVIDENCE THAT THE TOOL RAN AND GAVE A
+# VERDICT. The first version refused on ONE cause -- the NO-WEB-SCRIPT marker --
+# and every other could-not-look walked past it: docker not on PATH (127), the
+# daemon down (125), a tool missing from an empty node_modules volume (127). tsc
+# then printed "0 error(s)" and vitest "53/53 test files ran", both over 127.
+# So the test is the property, not a list of causes: the "scripts.<name> ="
+# line WEB_SCRIPT prints before exec'ing the tool must be present, AND the
+# status must be one the tool gives as a verdict. Anything else is
+# could-not-look, with the likeliest cause named.
+#
+# $1 = label, $2 = script name, $3 = captured output, $4 = status,
+# $5... = the statuses this tool uses for a verdict. Returns 0 if it ran.
+require_ran() {
+  local label="$1" name="$2" out="$3" status="$4" s cause
+  shift 4
+  if printf '%s\n' "$out" | grep -qF "$NO_SCRIPT_MARKER"; then
+    cause="its apps/web script could not be read"
+  elif ! printf '%s\n' "$out" | grep -qF "verify-in-worktree: apps/web package.json scripts.$name = "; then
+    case "$status" in
+      125) cause="docker could not start the container (exit 125: daemon down, or a bad run option)" ;;
+      126 | 127) cause="a command was not found or not executable (exit $status) before the script started: is docker on PATH?" ;;
+      *) cause="the script never started (exit $status, and no 'scripts.$name =' line)" ;;
+    esac
+  else
+    for s in "$@"; do
+      [ "$status" -eq "$s" ] && return 0
+    done
+    case "$status" in
+      126 | 127) cause="the tool was not found or not executable (exit $status): is the node_modules volume empty?" ;;
+      *) if [ "$status" -gt 128 ]; then cause="killed by signal $((status - 128))"; else cause="exit $status is not a verdict this tool gives"; fi ;;
+    esac
   fi
+  echo "verify-in-worktree: $label -- COULD NOT LOOK: $cause. No bound is printed, because nothing is known to have run." >&2
   return 1
 }
 
@@ -289,7 +315,7 @@ tsc() {
   out="$(run_web_script typecheck 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
-  if refuse_if_unread tsc "$out"; then return 2; fi
+  if ! require_ran tsc typecheck "$out" "$status" 0 1 2; then return 2; fi
   local total outside
   total="$(printf '%s
 ' "$out" | grep -c 'error TS' || true)"
@@ -330,7 +356,7 @@ vitest() {
   out="$(run_web_script test 2>&1)" && status=0 || status=$?
   printf '%s
 ' "$out"
-  if refuse_if_unread vitest "$out"; then return 2; fi
+  if ! require_ran vitest test "$out" "$status" 0 1; then return 2; fi
 
   local found ran uncollected
   found="$(count_test_files)"
@@ -406,18 +432,20 @@ eslint() {
   local out status
   out="$(run_web_script lint 2>&1)" && status=0 || status=$?
   printf '%s\n' "$out"
-  if refuse_if_unread eslint "$out"; then return 2; fi
+  # ESLint's exit 2 is a configuration or crash error, not a verdict, so only
+  # 0 and 1 count as having looked.
+  if ! require_ran eslint lint "$out" "$status" 0 1; then return 2; fi
   echo "verify-in-worktree: eslint -- ran apps/web's \`lint\` script (what \`pnpm -F web lint\` runs), exit $status"
-  if [ "$status" -eq 2 ]; then
-    echo "verify-in-worktree: COULD NOT LOOK -- exit 2 is ESLint failing to run (config, crash, or no lint script), not lint findings." >&2
-  fi
   return "$status"
 }
 
-# The lint arm's exit status alone, for `--self-test`.
-eslint_status() {
-  local s
-  run_web_script lint >/dev/null 2>&1 && s=0 || s=$?
+# The lint arm's exit status alone, for `--self-test`. Returns 2, having named
+# the cause, when the arm could not look -- so the self-test never reports a
+# missing tool as a mount fault.
+lint_status() {
+  local out s
+  out="$(run_web_script lint 2>&1)" && s=0 || s=$?
+  require_ran "self-test lint" lint "$out" "$s" 0 1 || return 2
   echo "$s"
 }
 
@@ -428,23 +456,29 @@ eslint_status() {
 # here keeps the mount check usable while #175 is open. Without this, adding
 # the bound above would have left the harness unable to self-test at all, which
 # is a worse defect than the one being fixed.
-tsc_appsweb_error_count() {
-  run_web_script typecheck 2>&1    | grep 'error TS' | grep -vc '\.\./\.\./packages/' || true
+appsweb_errors() {
+  printf '%s
+' "$1" | grep 'error TS' | grep -vc '\.\./\.\./packages/' || true
 }
 
 self_test() {
   local probe="apps/web/src/lib/__verify_probe.ts"
-  # Both probes are removed on ANY exit, Ctrl-C included. A probe left behind
-  # makes the next self-test refuse with a false baseline, and `git add -A`
-  # would commit it.
+  # A probe left behind makes the next self-test refuse with a false baseline,
+  # and `git add -A` would commit it. So both are removed at ENTRY -- which
+  # covers the exits no trap can: KILL is untrappable, and bash defers TERM
+  # until the running container command returns -- and again on every exit
+  # bash can trap.
+  rm -f "$WORKTREE/apps/web/src/lib/__verify_probe.ts" "$WORKTREE/apps/web/src/lib/__verify_lint_probe.ts"
   trap 'rm -f "$WORKTREE/apps/web/src/lib/__verify_probe.ts" "$WORKTREE/apps/web/src/lib/__verify_lint_probe.ts"' EXIT
   # A trap on INT/TERM that only cleaned up would SWALLOW the signal: bash runs
   # it and carries on to PASS (measured). The signals exit, and EXIT cleans up.
   trap 'exit 130' INT
   trap 'exit 143' TERM
   echo "self-test: the mount must SEE this worktree, so make it fail on purpose"
-  local baseline
-  baseline="$(tsc_appsweb_error_count)"
+  local baseline out st
+  out="$(run_web_script typecheck 2>&1)" && st=0 || st=$?
+  require_ran "self-test tsc baseline" typecheck "$out" "$st" 0 1 2 || return 2
+  baseline="$(appsweb_errors "$out")"
   echo "self-test: baseline apps/web errors: ${baseline} (packages/* excluded -- see #175)"
   if [ "$baseline" -ne 0 ]; then
     echo "self-test: BASELINE NOT GREEN -- ${baseline} apps/web error(s). Fix the" >&2
@@ -457,8 +491,10 @@ self_test() {
   # cannot fail, and it is the answer you are hoping for.
   grep -q 'not a number' "$WORKTREE/$probe" || { echo "self-test: probe never written" >&2; return 2; }
   local mutated
-  mutated="$(tsc_appsweb_error_count)"
+  out="$(run_web_script typecheck 2>&1)" && st=0 || st=$?
   rm -f "$WORKTREE/$probe"
+  require_ran "self-test tsc mutated" typecheck "$out" "$st" 0 1 2 || return 2
+  mutated="$(appsweb_errors "$out")"
   if [ "$mutated" -eq 0 ]; then
     echo "self-test: FAILED -- a deliberate type error did not turn this red." >&2
     echo "           The container is not reading $WORKTREE. Do not trust any" >&2
@@ -472,7 +508,7 @@ self_test() {
   # this self-test exists to catch. 1 means ESLint ran and found something; 2
   # means it never ran; 0 means it did not see the probe.
   local lint_probe="apps/web/src/lib/__verify_lint_probe.ts" lint_base lint_mut
-  lint_base="$(eslint_status)"
+  lint_base="$(lint_status)" || return 2
   echo "self-test: baseline lint exit: ${lint_base}"
   if [ "$lint_base" -ne 0 ]; then
     echo "self-test: LINT BASELINE NOT 0 (got ${lint_base}) -- run \`$0 eslint\` and read it." >&2
@@ -480,8 +516,9 @@ self_test() {
   fi
   printf 'export const lintProbe = ;\n' > "$WORKTREE/$lint_probe"
   grep -q 'lintProbe = ;' "$WORKTREE/$lint_probe" || { echo "self-test: lint probe never written" >&2; return 2; }
-  lint_mut="$(eslint_status)"
+  lint_mut="$(lint_status)" && st=0 || st=$?
   rm -f "$WORKTREE/$lint_probe"
+  [ "$st" -eq 0 ] || return 2
   if [ "$lint_mut" -ne 1 ]; then
     echo "self-test: FAILED -- a planted parse error gave lint exit ${lint_mut}, not 1." >&2
     echo "           2 means ESLint never ran; 0 means it is not reading $WORKTREE." >&2

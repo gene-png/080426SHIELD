@@ -56,3 +56,28 @@ only) and the 2026-09-22 #209 entry.
   ci.yml runs, `pnpm -F web typecheck`.
 - The derivation copies the scripts' TEXT, not pnpm's executor. The comment
   says so, and the divergence is filed as #570.
+
+## Re-review of `1b671c3`: key on the property, not the cause
+
+Round 2's refusal keyed on ONE cause, the NO-WEB-SCRIPT marker. Every other
+could-not-look walked past it: docker off PATH (127), the daemon down (125), a
+tool missing from an empty volume (127). tsc printed "0 error(s)" and vitest
+"53/53 test files ran" over 127.
+
+- **A bound is printed only on POSITIVE evidence**: the `scripts.<name> =` line
+  is present, AND the status is one the tool gives as a verdict (tsc 0/1/2,
+  vitest 0/1, eslint 0/1). Anything else is could-not-look, with the likeliest
+  cause named.
+- **The self-test uses the same check**, so a missing tool is no longer
+  reported as "the container is not reading" the tree.
+- **The probes are removed at self-test entry too**, which covers what no trap
+  can: KILL, and a TERM deferred until the container command returns.
+- **`tests/gates/verify_in_worktree_status.sh`**, wired into CI's shell gates,
+  runs the REAL script under a stub `docker`: four refusals, a verdict-shaped
+  exit 1 with no evidence of a run, a positive control, the self-test's cause,
+  and TERM mid-probe giving 143 with no probe left.
+- Red-on-revert: four mutations, each red on its named failure. Two first
+  stayed green and showed gaps in the GATE: the verdict check masked the
+  line check (so the exit-1 case was added), and the self-test's baseline and mutated checks
+  each covered the other (so the mutation removes both).
+- `--all` stopping at the first red arm is #566.

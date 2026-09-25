@@ -346,6 +346,11 @@ jobs:
           # a real throwaway worktree, because a test of the refusal alone stays
           # green with the derivation reverted.
           bash tests/gates/verify_in_worktree_mounts.sh
+          # The web arms print a bound ONLY on positive evidence a tool ran:
+          # a stub `docker` drives 125/127/no-marker/verdict-shaped failures, a
+          # positive control, and a TERM mid-self-test (143, no probe left).
+          # The first fix keyed on one cause and let "0 error(s)" print over 127.
+          bash tests/gates/verify_in_worktree_status.sh
           # A self-test nobody runs is furniture. `red-on-revert.sh` is the
           # harness that keeps `git checkout --` out of the restore path, and
           # it shipped with a restore check that compared a file to itself --
