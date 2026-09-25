@@ -405,3 +405,36 @@ def test_the_linked_file_is_parsed_permissively(tmp_path) -> None:
     assert linked_numbers("12\n34\n") == {12, 34}
     assert linked_numbers('[{"number": 12}, {"number": 34}]') == {12, 34}
     assert linked_numbers("no numbers here") == set()
+
+
+# --- #592: a clean line says what it read (D-090) ---------------------------------------
+
+
+def _inputs(tmp_path, title: str, body: str, commits: str) -> list[str]:
+    paths = []
+    for name, text in (("t", title), ("b", body), ("c", commits)):
+        p = tmp_path / name
+        p.write_text(text, encoding="utf-8")
+        paths.append(str(p))
+    return ["--title", paths[0], "--body", paths[1], "--commits", paths[2]]
+
+
+@pytest.mark.unit
+def test_the_clean_line_names_what_it_read(tmp_path, capsys) -> None:
+    argv = _inputs(tmp_path, "feat: x", "Tracked in #56.", "see #12\n\nfiled as #34\n")
+    assert main(argv) == 0
+    assert capsys.readouterr().out.strip() == (
+        "issue-close guard: clean — no closing references; read the title (7 chars), "
+        "the description (15 chars) and 3 line(s) of commit messages."
+    )
+
+
+@pytest.mark.unit
+def test_the_declared_close_line_names_what_it_read(tmp_path, capsys) -> None:
+    argv = _inputs(tmp_path, "feat: x", "Fixes #12\n\nAuto-close-approved: 12", "feat: x\n")
+    assert main(argv) == 0
+    assert capsys.readouterr().out.strip() == (
+        "issue-close guard: clean (1 declared close: 12) -- NOT verified against GitHub; "
+        "run in CI for that; read the title (7 chars), the description (34 chars) and "
+        "1 line(s) of commit messages."
+    )

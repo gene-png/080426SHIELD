@@ -157,7 +157,20 @@ def database_revision(url: str) -> str | None:
         return row[0] if row else None
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    # It takes NO arguments, and any it is given is a could-not-look (#597). A
+    # flag this gate does not implement must not run the check as though it
+    # were absent: `--help` or a typo'd `--db` would otherwise print a verdict
+    # the caller did not ask for. `None` (a direct call, as the tests make) is
+    # no arguments; the command line passes `sys.argv`, program name first.
+    args = [] if argv is None else list(argv[1:])
+    if args:
+        print(
+            f"check-mount: could not look -- this gate takes no arguments, and was "
+            f"given {args!r}. Run it bare: `python scripts/check_mount_matches_database.py`.",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_LOOK
     here = pathlib.Path(__file__).resolve().parents[1]
     versions = here / "alembic" / "versions"
 
@@ -286,7 +299,7 @@ if __name__ == "__main__":
     # that prove a gate can fail were blind to it (#318), and the "gates can
     # fail" step was green BECAUSE of the omission.
     try:
-        raise SystemExit(main())
+        raise SystemExit(main(sys.argv))
     except (SystemExit, KeyboardInterrupt):
         raise
     except BaseException as exc:  # noqa: BLE001 - deliberate: crash != verdict
