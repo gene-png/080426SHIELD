@@ -4815,7 +4815,9 @@ not see the clause that would have caught it". That is D-051's distinction — "
 checked and it passes" versus "I could not look" — **missing from the governance
 layer itself, in the one artifact that defines what checking means.**
 
-`CLAUDE.md` therefore ends with:
+`CLAUDE.md` therefore ended with the following, until #459 (PR #604) moved it
+to the plain-text line `CLAUDE-MD-CANARY: v2`, because context injection drops
+a whole-line HTML comment and so the v1 marker never reached an injected copy:
 
     <!-- CLAUDE-MD-CANARY: v1 -->
 
@@ -4826,7 +4828,8 @@ is the **last non-empty line**, because the marker only answers "did I receive
 the whole file" while nothing follows it. An append below it leaves the canary
 readable and everything after it invisible — **strictly worse than no canary**,
 since the reader now holds a positive signal that its copy is whole. All three
-refusal branches exit 2: an empty file, a missing marker and a mispositioned one
+refusal branches exit 2 (four since #604, which adds a final line carrying a
+wrapped or older marker): an empty file, a missing marker and a mispositioned one
 are could-not-looks, not findings about size.
 
 This converts an invisible variance into a declared one, the same move as making
