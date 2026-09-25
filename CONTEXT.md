@@ -1247,7 +1247,8 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
   same pass. `s12` carries a genuine pre-existing duplicate
   (`s12-a11y-nav`, `s12-notfound`). Check `ls e2e/smoke` before claiming a number.
   Earlier: 27 spec files. Sprint 9 added `s26-oidc-login`
-  (opt-in, self-skips unless `E2E_OIDC=1`) and `demo/demo-journey` (opt-in,
+  (opt-in, self-skipping unless `E2E_OIDC=1`, until #483 moved it to
+  `e2e/manual/`) and `demo/demo-journey` (opt-in,
   self-skips unless `SHIELD_DEMO_SMOKE=1`), so the default suite count is unchanged.
   The T10 exit run was green on the flag-off dev stack: 51 passed / 6 skipped (2
   s26 + 4 demo-journey), zero failures/flakes, across six foreground sub-9-min

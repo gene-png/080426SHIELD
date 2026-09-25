@@ -21,7 +21,7 @@ every CI run while reading as part of the suite:
   spec. So two steps would do it, and condition 1's count is unchanged. What is
   unproven is whether a host browser on the runner completes the Keycloak round
   trip. That proof belongs in its own change, filed as #565, together with the
-  flag-off restoration box below. (An earlier draft of this entry said a CI job
+  restoration half of the flag-off box, which is unticked below. (An earlier draft of this entry said a CI job
   would change condition 1's count. That was false, and the adversarial review
   of this PR caught it.)
 
@@ -42,9 +42,11 @@ in CI.
   green in Sprint 9 T7.
 - The dormancy box keeps only what a CI spec proves (`s25` asserts `keycloak`
   dormant on `/ready`). "s26 reports two skipped tests" proved only the skip.
-- The ticked **Flag-off restoration** box is left as it was, and it is not
-  honest either. Its specs prove the flag-off steady state, not the transition
-  back to it. That is pre-existing, and it is filed under #565.
+- The ticked **Flag-off restoration** box is SPLIT. Its specs proved the
+  flag-off steady state, not the transition back to it, so the tick was not
+  honest (pre-existing, caught by review). **Flag-off steady state** stays
+  ticked (s25, s0/s2). **Flag-off restoration**, the transition with the
+  provider gone, is unticked as a manual step under #565.
 
 ## Interaction with #545
 
