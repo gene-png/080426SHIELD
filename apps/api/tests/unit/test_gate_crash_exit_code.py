@@ -88,6 +88,9 @@ GATES = [
     ("check_merge_rule_conditions", "sys.argv"),
     # The issue-labels gate (the filing rule). Shipped with the handler.
     ("check_issue_labels", "sys.argv"),
+    # D-095's compose exception. Added WITH its entry here. `sys.argv` because
+    # `main(argv)` takes the argument list.
+    ("compose_unchanged", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'

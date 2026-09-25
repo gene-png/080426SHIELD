@@ -145,7 +145,9 @@ happened.
    landing commit**, with any counts read live rather than carried forward.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
-   proves least.
+   proves least. One exception: a `docker-compose*.yml` diff whose parsed YAML is
+   unchanged (comments, layout) does not trip it. `compose_unchanged.py` decides
+   (#530, D-095).
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
@@ -222,12 +224,12 @@ anything adding or changing a test — and this repo does not ship code without
 tests. Condition 5's path list applied to the fifteen most recent PR merges on
 `main`:
 
-| measured | cleared | came back |
-| --- | --- | --- |
-| 2026-08-26 | 4 | 11 |
-| 2026-09-21 | 2 | 13 |
+| measured | cleared | came back | with the compose exception |
+| --- | --- | --- | --- |
+| 2026-08-26 | 4 | 11 | 4 / 11 |
+| 2026-09-21 | 2 | 13 | 3 / 12 |
 
-<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21 -->
+<!-- counted: condition 5's path list applied to `git log --first-parent -40 --format='%H|%s' origin/main | grep -E '\(#[0-9]+\)$' | head -15`, at 897eeae, 2026-09-21; last column: compose_unchanged.py per PR, 2026-09-25 (D-095) -->
 
 Each is a claim about a fixed window, so it does not rot the way a live count
 does — and each is true only of condition 5 as it stood that day. **Re-derive

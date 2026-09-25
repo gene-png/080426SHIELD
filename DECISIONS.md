@@ -5786,3 +5786,40 @@ red under five seeds.
 
 - both mutations also turn the invoke-level test red;
 - removing the gate's new signature turns its 4 detection tests red.
+
+## D-095 — A docker-compose diff whose parsed YAML is unchanged does not trip condition 5
+
+**2026-09-25 · governance/merge rule** · #530
+
+**Decision (the owner's).** Condition 5 has ONE exception: a
+`docker-compose*.yml` diff whose parsed YAML node tree is unchanged
+(comments, blank lines, layout, quoting that keeps a value's type) does not
+trip it. #530 is the instance: its whole compose diff was comments, and it
+still came back to the owner. Every other condition-5 path trips exactly as
+before. `apps/api/scripts/compose_unchanged.py BASE..HEAD` decides: 0 no
+compose file changed in content, 1 at least one did (an added or deleted file
+counts), 2 could not look, which reads as tripped. It also runs on every PR as
+the "Compose exception report" job, which is not required and is green whenever
+it could look.
+
+**Why the node tree, not the loaded object.** PyYAML reads YAML 1.1, and
+Python's `==` is loose, so `on` to `yes` (both True) and `1` to `1.0` compare
+equal while compose, a YAML 1.2 reader, sees a different value. Comparing the
+composed nodes (tag and scalar text) keeps those as changes, and keeps a
+compose `!reset` tag as content.
+
+**Why this and not the general rule.** A general executable-line exception
+(#559) was built, reviewed for five rounds with a blocking finding in each,
+and closed unmerged by the owner. Measured on the same windows, it gained one
+PR in thirty over the old rule, and so does this.
+
+**Measured**, on the 15 most recent PR merges at each recorded window's ref,
+with `compose_unchanged.py` run on every PR in the window that touches a
+compose file:
+
+- **2026-08-26** (`fdfde7d^1`): no PR touches a compose file, so the rule
+  changes nothing. **4/11**, the old rule's figure.
+- **2026-09-21** (`897eeae`): only `b516891` touches one. Its compose diff is
+  form only (exit 0), and its other file, CLAUDE.md, is not a listed path, so
+  it clears. **3/12**, against the old rule's 2/13. `7c2802c` (an
+  `ai/engine.py` docstring) still comes back: the exception is compose only.

@@ -98,6 +98,15 @@ from pathlib import Path
 # mapping nor the fixture tree FAILS the run: silence must not be how coverage
 # quietly shrinks.
 DEFERRED: dict[str, str] = {
+    "compose_unchanged.py": (
+        "Reads a git RANGE -- the merge base and the head -- and a fixture here is "
+        "a static directory, not a repository, so no case can give it a range. "
+        "Both states are covered by `tests/unit/test_compose_unchanged.py`, which "
+        "builds a real throwaway repository per case: 0 for a comments-only compose "
+        "diff, 1 for content changes Python equality would hide, 2 for an "
+        "unparseable file and for bad arguments, and the --report form. "
+        "Red-on-revert, 2026-09-25: four mutations, each red on a named test."
+    ),
     # -- SHELL GATES (#318) -------------------------------------------------
     # They cannot be fixtured by this harness: `run_case` invokes
     # `[sys.executable] + argv`, and these are bash. Their both-states evidence

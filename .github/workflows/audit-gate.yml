@@ -287,6 +287,36 @@ jobs:
         run: |
           python scripts/check_merge_rule_conditions.py             --changed-files /tmp/changed.txt --body /tmp/body.md
 
+  compose-exception-report:
+    # D-095: a docker-compose diff whose parsed YAML is unchanged does not trip
+    # merge-rule condition 5. This prints that verdict on every PR. GREEN DOES
+    # NOT MEAN CLEAR: `--report` exits 0 whether or not a compose file changed
+    # in content, because that is a routing fact, not a defect; it goes red only
+    # when it could not look (exit 2). It judges compose files ONLY -- every
+    # other condition-5 path is read as before. NOT a required check.
+    name: Compose exception report (green is not clear; read the summary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tool reads the merge base and the head, so it needs history.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compose exception, computed
+        # No pipe into `tee`: a `run:` step here is `bash -e` without pipefail,
+        # so a pipe would report tee's status and lose the 2 (#213).
+        run: |
+          python -m pip install --quiet "pyyaml>=6.0"
+          rc=0
+          python apps/api/scripts/compose_unchanged.py --report --repo . "origin/${{ github.base_ref }}..HEAD" > /tmp/compose.txt || rc=$?
+          cat /tmp/compose.txt
+          cat /tmp/compose.txt >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
   # A SEPARATE job, so it reports as its own check rather than folding a
   # different failure into "Adversarial audit recorded". It shares this
   # workflow's `edited` trigger, which this check needs more than the audit gate
