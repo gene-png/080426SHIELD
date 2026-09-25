@@ -1837,17 +1837,19 @@ def run_ai(
             continue
         st = sugg.get("status")
         offered = sugg.get("reason_code")
-        if st is not None and not (isinstance(st, str) and st in _VALID_STATUSES):
+        if not (isinstance(st, str) and st in _VALID_STATUSES):
+            # No status, or one the run may not write: refused WHOLE. A
+            # rationale without a status argues for nothing, and tools cited
+            # for no status attach to no claim (#590 round 3, the coordinator's
+            # call, overturnable).
             statuses_rejected.append(
-                {"technique_code": row.technique_code, "status": _audit_safe_code(st)}
+                {
+                    "technique_code": row.technique_code,
+                    "status": "<none>" if st is None else _audit_safe_code(st),
+                }
             )
             continue
-        if (
-            isinstance(st, str)
-            and st in _VALID_STATUSES
-            and offered is not None
-            and not (isinstance(offered, str) and is_valid_reason(st, offered))
-        ):
+        if offered is not None and not (isinstance(offered, str) and is_valid_reason(st, offered)):
             reason_codes_rejected.append(
                 {
                     "technique_code": row.technique_code,
@@ -1856,18 +1858,19 @@ def run_ai(
                 }
             )
             continue
-        if isinstance(st, str) and st in _VALID_STATUSES:
-            row.status = st
-            if offered is not None:
-                row.reason_code = offered
-            # #554: the same rule as the PATCH. A reason a consultant gave for the
-            # old status is dropped when the AI moves the row to one it does not
-            # describe -- never left as an N/A carrying `missing_control_category`.
-            if not is_valid_reason(row.status, row.reason_code):
-                reason_codes_dropped.append(
-                    {"technique_code": row.technique_code, "reason_code": row.reason_code}
-                )
-                row.reason_code = None
+        # Here `st` is a writable status and any offered reason fits it: every
+        # other case was refused whole above.
+        row.status = st
+        if offered is not None:
+            row.reason_code = offered
+        # #554: the same rule as the PATCH. A reason a consultant gave for the
+        # old status is dropped when the AI moves the row to one it does not
+        # describe -- never left as an N/A carrying `missing_control_category`.
+        if not is_valid_reason(row.status, row.reason_code):
+            reason_codes_dropped.append(
+                {"technique_code": row.technique_code, "reason_code": row.reason_code}
+            )
+            row.reason_code = None
         # #101 / #102: record what happened to this row's citations, per FIELD.
         #
         # `row_flags` starts EMPTY, not None. An empty list is a positive claim --

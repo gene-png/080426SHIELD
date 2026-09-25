@@ -758,7 +758,8 @@ def _one_row_run_with_reason(c, TestSession, provider, status: str, reason) -> t
     """As `_one_row_run`, with the model also offering `reason_code`."""
     import json
 
-    h, svc_id, row_id = _one_row_run(c, TestSession, provider, status)
+    # The first registration is replaced below; "covered" only builds the world.
+    h, svc_id, row_id = _one_row_run(c, TestSession, provider, "covered")
     code = next(
         t["technique_code"]
         for t in c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()[
@@ -870,3 +871,41 @@ def test_run_ai_refuses_a_mispaired_suggestion_whole_and_records_it(
         entry == {"technique_code": code, "status": status, "reason_code": recorded}
         for entry in rejected
     ), rejected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "recorded"),
+    [
+        # Model PROSE never reaches an audit row.
+        ("Nothing defends this. See notes!", "<not a code>"),
+        # Code-shaped but not a status: recorded as itself.
+        ("maybe", "maybe"),
+        # Not strings at all.
+        (["covered"], "<not a code>"),
+        (5, "<not a code>"),
+        # No status: refused whole too, since a rationale without a status
+        # argues for nothing (#590 round 3, the coordinator's call).
+        (None, "<none>"),
+    ],
+)
+def test_run_ai_refuses_a_suggestion_without_a_writable_status_whole(
+    app_client, status, recorded
+) -> None:
+    """The row keeps its status, tools and rationale, and the audit records the
+    refused status in code-shaped form only."""
+    c, TestSession, provider = app_client
+    h, svc_id, row_id, code = _one_row_run_with_reason(
+        c, TestSession, provider, status, "reach_limited"
+    )
+    before = c.patch(f"/attack/coverage/{row_id}", headers=h, json={"status": "gap"})
+    assert before.status_code == 200, before.text
+    kept = {k: before.json()[k] for k in ("detection_tools", "rationale", "reason_code")}
+
+    r = c.post(f"/attack/services/{svc_id}/run-ai", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
+    assert row["status"] == "gap"
+    assert {k: row[k] for k in kept} == kept
+    rejected = _run_audit(TestSession)["statuses_rejected"]
+    assert rejected and all(e == {"technique_code": code, "status": recorded} for e in rejected)
