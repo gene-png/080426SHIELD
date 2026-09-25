@@ -145,15 +145,13 @@ def test_sub_techniques_helper() -> None:
 
 
 @pytest.mark.unit
-def test_four_coverage_definitions() -> None:
-    assert len(COVERAGE_DEFINITIONS) == 4
-    statuses = {d.status for d in COVERAGE_DEFINITIONS}
-    assert statuses == {
-        CoverageStatus.COVERED,
-        CoverageStatus.PARTIAL,
-        CoverageStatus.GAP,
-        CoverageStatus.NOT_APPLICABLE,
-    }
+def test_every_status_has_one_definition() -> None:
+    # CHANGED BECAUSE THE SPECIFICATION CHANGED, not to get green: the owner
+    # decided a six-status vocabulary on #554 (2026-09-24), adding
+    # `outside_control_surface` and `unable_to_determine`. The exact set is
+    # pinned against the decision's literals in test_attack_status_vocabulary.py.
+    assert len(COVERAGE_DEFINITIONS) == 6
+    assert {d.status for d in COVERAGE_DEFINITIONS} == set(CoverageStatus)
 
 
 @pytest.mark.unit
@@ -164,6 +162,8 @@ def test_four_coverage_definitions() -> None:
         (CoverageStatus.PARTIAL, "Partial"),
         (CoverageStatus.GAP, "Gap"),
         (CoverageStatus.NOT_APPLICABLE, "N/A"),
+        (CoverageStatus.OUTSIDE_CONTROL_SURFACE, "Outside control surface"),
+        (CoverageStatus.UNABLE_TO_DETERMINE, "Not verified"),
         ("covered", "Covered"),
         (None, "Unscored"),
     ],

@@ -1149,7 +1149,8 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
   registration, api at boot readiness) turns it on; a realm-export change since the
   last import also needs a keycloak volume wipe
   (`docker compose stop keycloak && docker volume rm shield-v2_keycloak-data && docker compose up -d keycloak`).
-  The `s26-oidc-login` opt-in spec runs with `E2E_OIDC=1`; always restore the flag
+  The OIDC manual procedure (`e2e/manual/oidc-login.manual.ts`, run through
+  `playwright.manual.config.ts`; #483) runs only with the flag on; always restore the flag
   off and re-prove one credentials sign-in afterward. The realm now pins one
   canonical issuer (`http://localhost:8080/realms/shield`) for browser and
   containers via `KC_HOSTNAME` + backchannel-dynamic; the api fetches JWKS on the
@@ -1237,7 +1238,8 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
 - Web `tsc --noEmit` clean on Next 15 / React 19 / Tailwind 4 / Auth.js v5. ESLint
   0 errors (1 pre-existing postcss warning). In-container `pnpm -F web build` was
   proven green in T6 (the standalone prod image the demo compose runs).
-- e2e: **41 spec files** (host; `:3000` on Gene's box, `:3001` on Dave's). Phase
+- e2e: the spec count is `cd e2e && npx playwright test --list`, not a number
+  written here (host; `:3000` on Gene's box, `:3001` on Dave's). Phase
   C/D added `s40-admin-deliverables` and `s41-help`, and rewrote `s34`'s
   Run-AI-guard test to seed its own tenant so it can no longer self-skip.
   **Numbering caution:** `s37`/`s38` were briefly duplicated when the Phase D
@@ -1245,7 +1247,8 @@ streaming change. Treat "live Anthropic works" as unproven until a run says so.
   same pass. `s12` carries a genuine pre-existing duplicate
   (`s12-a11y-nav`, `s12-notfound`). Check `ls e2e/smoke` before claiming a number.
   Earlier: 27 spec files. Sprint 9 added `s26-oidc-login`
-  (opt-in, self-skips unless `E2E_OIDC=1`) and `demo/demo-journey` (opt-in,
+  (opt-in, self-skipping unless `E2E_OIDC=1`, until #483 moved it to
+  `e2e/manual/`) and `demo/demo-journey` (opt-in,
   self-skips unless `SHIELD_DEMO_SMOKE=1`), so the default suite count is unchanged.
   The T10 exit run was green on the flag-off dev stack: 51 passed / 6 skipped (2
   s26 + 4 demo-journey), zero failures/flakes, across six foreground sub-9-min
