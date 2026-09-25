@@ -22,8 +22,13 @@
 #   tests/gates/prepush_hook_status.sh --self-test  # prove it can fail
 #
 # `--self-test` applies each mutation to the extracted body -- #143's
-# `|| echo skipped` shape, and a NOT RUN branch exiting 0 -- proves the
-# mutation LANDED, and requires the named check to go RED.
+# `|| echo skipped`, a NOT RUN branch exiting 0, `--collect-only` on the suite,
+# and `docker info`'s redirects flipped -- proves each LANDED (exit 2 if not),
+# and requires exactly its named checks to go RED.
+#
+# Exit codes: 0 clean; 1 a check failed; 2 could not look (the config is
+# missing, unreadable, unparseable or has no such hook, or a mutation did not
+# land). The states never run against a body that was not extracted.
 
 set -euo pipefail
 
@@ -75,18 +80,48 @@ trap 'rm -rf "$WORK"' EXIT
 # exit 1 is a registration violation. Neither is read as a pass.
 rc=0
 "$PYTHON" - "$CONFIG" "$WORK/body.sh" <<'EXTRACT' || rc=$?
-import shlex, sys, yaml
+import os, shlex, sys, yaml
 src, dest = sys.argv[1], sys.argv[2]
-doc = yaml.safe_load(open(src, encoding="utf-8"))
-hooks = [h for r in doc.get("repos", []) for h in r.get("hooks", []) if h.get("id") == "api-unit-tests"]
+
+
+def _crash(kind, value, tb):
+    # An UNEXPECTED exception would otherwise exit 1, which the caller reads as
+    # a registration violation and then runs the states. A crash is a 2.
+    sys.stderr.write("EXTRACT FAILED: crashed: %s: %s\n" % (kind.__name__, value))
+    sys.stderr.flush()
+    os._exit(2)
+
+
+sys.excepthook = _crash
+
+
+def could_not_look(cause):
+    # 2, never 1: an unreadable config is not a registration violation, and
+    # nothing below may run against a body that was never extracted.
+    sys.stderr.write("EXTRACT FAILED: %s\n" % cause)
+    sys.exit(2)
+
+
+try:
+    doc = yaml.safe_load(open(src, encoding="utf-8"))
+except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+    could_not_look("cannot read or parse %s: %s" % (src, exc))
+if not isinstance(doc, dict) or not isinstance(doc.get("repos"), list):
+    could_not_look("%s has no `repos:` list (empty or not a pre-commit config)" % src)
+hooks = [
+    h
+    for r in doc["repos"] if isinstance(r, dict)
+    for h in (r.get("hooks") or []) if isinstance(h, dict) and h.get("id") == "api-unit-tests"
+]
 if len(hooks) != 1:
-    sys.stderr.write("EXTRACT FAILED: expected 1 api-unit-tests hook, found %d\n" % len(hooks))
-    sys.exit(2)
+    could_not_look("expected 1 api-unit-tests hook, found %d" % len(hooks))
 hook = hooks[0]
-words = shlex.split(hook.get("entry", ""))
-if len(words) != 3 or words[:2] != ["bash", "-c"]:
-    sys.stderr.write("EXTRACT FAILED: entry is not `bash -c '<body>'`: %r\n" % words[:2])
-    sys.exit(2)
+try:
+    words = shlex.split(str(hook.get("entry", "")))
+except ValueError as exc:
+    could_not_look("the entry does not split as shell words: %s" % exc)
+if len(words) != 3 or words[:2] != ["bash", "-c"] or not words[2].strip():
+    could_not_look("entry is not `bash -c '<non-empty body>'`: %r" % words[:2])
 bad = []
 if hook.get("stages") != ["pre-push"]:
     bad.append("stages is %r, not ['pre-push']" % hook.get("stages"))
@@ -99,7 +134,14 @@ if bad:
     sys.stderr.write("REGISTRATION: " + "; ".join(bad) + "\n")
     sys.exit(1)
 EXTRACT
-if [ "$rc" -eq 2 ]; then exit 2; fi
+# Only 0 (registered correctly) and 1 (a registration violation, reached only
+# after the body was written) mean a body was extracted. Every read or parse
+# failure, and any crash, is 2 above, and stops here before the states run.
+case "$rc" in
+  0|1) ;;
+  *) echo "could not look: the extractor exited $rc" >&2; exit 2 ;;
+esac
+[ -s "$WORK/body.sh" ] || { echo "could not look: the extracted body is empty" >&2; exit 2; }
 FAILURES=0
 if [ "$rc" -ne 0 ]; then
   echo "FAIL [registration]: see above"
@@ -108,19 +150,21 @@ fi
 
 # --- the stub docker ------------------------------------------------------------
 mkdir -p "$WORK/bin" "$WORK/empty"
+# The stub answers ONLY the exact argv the hook is meant to send, and exits 99
+# on anything else. An edit to `pytest -m unit --collect-only`, `-T web` or
+# `-m integration` is a different call, so it cannot pass as the suite.
 cat > "$WORK/bin/docker" <<'STUB'
 #!/usr/bin/env bash
-case "$1" in
-  info)
+case "$*" in
+  "info")
     [ "${STUB_INFO:-0}" = "0" ] || { echo "permission denied while trying to connect" >&2; exit 1; }
     exit 0 ;;
-  compose)
-    if [ "$2" = "ps" ]; then
-      [ "${STUB_COMPOSE:-0}" = "0" ] || { echo "unknown flag: --status" >&2; exit 1; }
-      printf '%s\n' ${STUB_SERVICES:-api web}
-      exit 0
-    fi
-    if [ "$2" = "exec" ]; then exit "${STUB_PYTEST:-0}"; fi ;;
+  "compose ps --status running --services")
+    [ "${STUB_COMPOSE:-0}" = "0" ] || { echo "unknown flag: --status" >&2; exit 1; }
+    printf '%s\n' ${STUB_SERVICES:-api web}
+    exit 0 ;;
+  "compose exec -T api pytest -m unit")
+    exit "${STUB_PYTEST:-0}" ;;
 esac
 echo "stub docker: unexpected call: $*" >&2
 exit 99
@@ -159,7 +203,7 @@ check_body() {  # $1 = body file; sets LABELS to the failed checks
   run_case "$B" "suite fails" 1 "$tree" STUB_PYTEST=1
   run_case "$B" "container down" 2 "NOT RUN - the api container is not running" STUB_SERVICES=web
   run_case "$B" "compose fails" 2 "NOT RUN - docker compose failed - unknown flag: --status" STUB_COMPOSE=1
-  run_case "$B" "docker info fails" 2 "NOT RUN - docker info failed" STUB_INFO=1
+  run_case "$B" "docker info fails" 2 "NOT RUN - docker info failed, so the daemon is unreachable or permission was denied - permission denied while trying to connect" STUB_INFO=1
   run_case "$B" "docker not on PATH" 2 "NOT RUN - docker is not on PATH"
 }
 
@@ -179,13 +223,19 @@ old, new = {
     # A NOT RUN branch that exits 0 reads as Passed on pre-commit's line.
     "down_exits_0": ('the api container is not running. $hint"; exit 2',
                      'the api container is not running. $hint"; exit 0'),
+    # Collects and runs nothing, then exits 0: every push passes.
+    "collect_only": ("exec docker compose exec -T api pytest -m unit",
+                     "exec docker compose exec -T api pytest -m unit --collect-only"),
+    # Flipped redirects: stderr goes to /dev/null, so the cause is lost.
+    "info_redirects": ("docker info 2>&1 >/dev/null", "docker info >/dev/null 2>&1"),
 }[which]
 if body.count(old) != 1:
     sys.stderr.write("MUTATION DID NOT LAND [%s]: anchor found %d times\n" % (which, body.count(old)))
     sys.exit(2)
 open(dest, "w", encoding="utf-8", newline="\n").write(body.replace(old, new))
 MUTATE
-    if [ "$rc" -ne 0 ]; then self_fail=1; continue; fi
+    # A mutation that did not land proves nothing about the gate: could not look.
+    if [ "$rc" -ne 0 ]; then echo "self-test could not look: [$mutation] did not land" >&2; exit 2; fi
     check_body "$WORK/mutant.sh" >/dev/null
     if [ "$LABELS" = "$expected" ]; then
       echo "self-test ok [$mutation] -> fails exactly [${expected#|}]"
@@ -196,6 +246,8 @@ MUTATE
   done <<'EXPECTATIONS'
 echo_rescue=|suite fails
 down_exits_0=|container down
+collect_only=|suite passes|suite fails
+info_redirects=|docker info fails
 EXPECTATIONS
   [ "$self_fail" -eq 0 ] || exit 1
   echo "self-test ok: each mutation turned exactly its named check red."

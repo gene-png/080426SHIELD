@@ -120,3 +120,21 @@ Stub-measured, running the hook's own entry:
 - Advisories (a compose WARN standing in for the cause; CLAUDE.md not saying
   NOT RUN blocks the push, nor that Git Bash refuses every push by default)
   are filed as #589.
+
+## After the third review (`6158252`)
+
+- **The stub answers only the exact argv** the hook should send
+  (`info`, `compose ps --status running --services`,
+  `compose exec -T api pytest -m unit`) and exits 99 on any other, so an edit
+  to `--collect-only`, `-T web` or `-m integration` cannot pass as the suite.
+  A `--collect-only` self-test mutation turns both suite checks red.
+- **The `docker info` state requires the tool's own stderr** in the message,
+  and a self-test mutation flipping the redirects turns it red.
+- **Could-not-look is 2.** A config that cannot be read or parsed, is empty,
+  whose entry does not split as shell words, or has no such hook, exits 2
+  before any state runs; so does an unexpected crash of the extractor, and a
+  self-test mutation that does not land. Each input was run once by editing
+  the config and restoring it.
+- #563's gate over this tree finds nothing in the new script; its two
+  findings are in `main`'s workflow steps that #563 itself rewrites.
+
