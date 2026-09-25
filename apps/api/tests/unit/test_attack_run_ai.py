@@ -707,6 +707,29 @@ def test_run_ai_drops_a_reason_the_new_status_does_not_take(app_client) -> None:
     row = next(t for t in r.json()["coverage"] if t["id"] == row_id)
     assert (row["status"], row["reason_code"]) == ("not_applicable", None)
 
+    # DISCLOSED, not only dropped: in the run's own diff and in the audit row.
+    code = row["technique_code"]
+    changed = {
+        ch["field"]: (ch["old"], ch["new"])
+        for ch in r.json()["changed"]
+        if ch["technique_code"] == code
+    }
+    assert changed["reason_code"] == ("missing_control_category", None), changed
+
+    from sqlalchemy import select
+
+    from app.models.audit_entry import AuditEntry
+
+    with TestSession() as db:
+        details = (
+            db.execute(select(AuditEntry.details).where(AuditEntry.action == "attack.run_ai"))
+            .scalars()
+            .one()
+        )
+    assert details["reason_codes_dropped"] == [
+        {"technique_code": code, "reason_code": "missing_control_category"}
+    ]
+
 
 @pytest.mark.unit
 @pytest.mark.parametrize("status", ["unable_to_determine", "outside_control_surface"])

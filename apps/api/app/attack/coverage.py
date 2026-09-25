@@ -16,10 +16,16 @@ do not:
 
 NOT YET WRITABLE. The two new statuses are defined, stored and counted, and
 nothing may WRITE them yet: `WRITABLE` below is the four statuses every
-reporting surface already renders. The client dashboard, the exporters, the
-admin badges and the release gate do not yet know the new two, so a row stored
-with one would be mis-reported (an unverified row shown as N/A, a 100% PDF over
-unverified rows). The PATCH refuses them typed and the AI write-back ignores
+reporting surface already renders. What does not yet know the new two, and so
+what the widening slice must change first:
+  * the client dashboard, which shows an unknown status as N/A;
+  * the three exporters and the finalize summary, which drop both counts while
+    `scored` includes them (a 100% PDF over unverified rows);
+  * the admin status badges and heatmap card;
+  * the release gate, which does not exist yet;
+  * `risk/link_scope.py`, which treats any non-NULL status as a consultant's
+    judgement ("scored when it is not NULL"), so `unable_to_determine` would
+    become a citable risk link. The PATCH refuses them typed and the AI write-back ignores
 them, until the slice that teaches every surface to report them widens
 `WRITABLE`. My call, overturnable, recorded on #554.
 
@@ -86,7 +92,7 @@ COVERAGE_DEFINITIONS: tuple[CoverageDefinition, ...] = (
         short_label="Partial",
         description=(
             "Something defends against this technique, and a named part of that "
-            "defence is missing. Name which with one of the seven Partial reason codes."
+            "defence is missing."
         ),
     ),
     CoverageDefinition(

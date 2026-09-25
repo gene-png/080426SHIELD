@@ -1323,6 +1323,9 @@ def _client_tool_names(db: Session, client_id: uuid.UUID) -> list[str]:
 _VALID_STATUSES = {s.value for s in WRITABLE}
 _DIFF_FIELDS = (
     "status",
+    # #554: a consultant's reason the AI's new status does not take is dropped
+    # (below), and a drop nobody is told about is the silent-failure shape.
+    "reason_code",
     "detection_tools",
     "prevention_tools",
     "response_tools",
@@ -1712,6 +1715,7 @@ def run_ai(
         return {
             code: {
                 "status": r.status,
+                "reason_code": r.reason_code,
                 "detection_tools": list(r.detection_tools or []),
                 "prevention_tools": list(r.prevention_tools or []),
                 "response_tools": list(r.response_tools or []),
@@ -1797,6 +1801,7 @@ def run_ai(
         # the displacement in `test_attack_run_ai.py`.
         return out.tools
 
+    reason_codes_dropped: list[dict[str, str]] = []
     for sugg in (result.data or {}).get("techniques", []):
         if not isinstance(sugg, dict):
             continue
@@ -1810,6 +1815,9 @@ def run_ai(
             # old status is dropped when the AI moves the row to one it does not
             # describe -- never left as an N/A carrying `missing_control_category`.
             if not is_valid_reason(row.status, row.reason_code):
+                reason_codes_dropped.append(
+                    {"technique_code": row.technique_code, "reason_code": row.reason_code}
+                )
                 row.reason_code = None
         # #101 / #102: record what happened to this row's citations, per FIELD.
         #
@@ -1981,6 +1989,8 @@ def run_ai(
             # so the next run can.
             "rows_left_unresolved": rows_left_unresolved,
             "unresolved_fields": unresolved_fields_seen,
+            # #554: which consultant reasons the AI's new statuses displaced.
+            "reason_codes_dropped": reason_codes_dropped,
         },
     )
     db.commit()

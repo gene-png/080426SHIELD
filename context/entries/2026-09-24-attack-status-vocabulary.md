@@ -27,8 +27,11 @@ verified, and out of the client's reach.
 - **Neither new status is writable yet (D-092 Decision 5, my call).** PATCH
   refuses them with a typed 422 `status_not_yet_reportable`, and the AI accepts
   only the four statuses every surface renders. The slice that teaches the
-  dashboards, exporters, badges and release gate to report them widens
+  dashboards, exporters, badges and release gate to report them, and decides
+  `risk/link_scope.py`'s "scored when it is not NULL", widens
   `coverage.WRITABLE`.
+- **The AI's reason drop is disclosed:** it appears in the run's `changed`
+  diff and in the `attack.run_ai` audit row as `reason_codes_dropped`.
 
 ## Not in this slice
 
