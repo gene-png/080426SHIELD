@@ -156,3 +156,33 @@ stays clean, with R4 now reading every workflow step.
   `exit "$rc"` with no visible capture). They were said to be wrong before
   being changed, and now pin the opposite.
 - Red on revert: five mutations, each red. The self-scan stays clean.
+
+## After round 4 of the review (`9701c47`): a whitelist
+
+Round 4 found #143 reopened a fourth time, through my own refinement: the
+"first exit it reaches" rule read the first exit in TEXT order, not the one
+executed (`docker ps || exit 0` or an `if` inside the group). A capture
+"decided on" anywhere later counted, including a warn-only `if`. `exit 256`
+counted as non-zero, and `|| false` counted with errexit off. The
+coordinator's direction: stop refining and use an explicit whitelist.
+
+- **The right side of `||` must be EXACTLY one of:** `exit N` / `return N`
+  with N % 256 != 0; `exit $?` / `return $?`; `false` while errexit is on;
+  `{ echo/printf...; exit N; }` with one exit, last, at top level, and no
+  if/then/&&/||/nested group/$( inside; or `var=$?` whose NEXT statement is
+  exactly `exit $var`, `return $var`, `[ "$var" -ne 0 ] && exit "$var"` or
+  `[ "$var" -eq 0 ] || exit "$var"`. Everything else is a finding. The
+  "reaches" and "decides" machinery is deleted.
+- **Two real repo scripts failed it, and the SCRIPTS were rewritten**, not the
+  rule. audit-gate's D-NUMBERS step now runs the gate as its only command,
+  with a separate `if: failure()` step printing the banner (naming both exit
+  codes' meanings). ci.yml's advisory recalled-counts step uses the
+  whitelisted `|| { echo...; exit 2; }`. `close_guard_linked_file.sh`, which
+  reads audit-gate.yml, still passes.
+- Four tests and one fixture encoded the wider model (bare `exit`,
+  `{ exit $?; }`, a `set -e` or `cat` between capture and exit). That was said
+  before they were changed. Each reviewer case, plus three boundary cases, is a
+  finding test.
+- Red on revert: seven mutations, one per whitelist rule, each red. Two rules
+  (echo-only, forbidden tokens) overlapped on the reviewer's cases, so each got
+  a case only it catches.

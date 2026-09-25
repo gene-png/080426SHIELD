@@ -1,5 +1,5 @@
 {
- "incident": "The deliberate form: `|| rc=$?` captures the status and the step exits with it. `||` alone must not be flagged; only an `||` that discards the status.",
+ "incident": "The deliberate form, in the one capture shape the whitelist accepts: `|| rc=$?` and, as the NEXT statement, `[ \"$rc\" -eq 0 ] || exit \"$rc\"`. The earlier fixture ran `cat` between the capture and the exit; that is correct shell but outside the deliberately narrow whitelist (#563 round 4).",
  "expect": 0,
  "adversarial": false,
  "stdout_contains": "none of R1-R4 found",

@@ -246,8 +246,11 @@ def test_exit_zero_after_or_is_143_in_another_spelling(script: str) -> None:
     assert _rules(script + "\necho after") == ["R2 swallow"]
 
 
-@pytest.mark.parametrize("rescue", ["exit", "exit $?", "{ echo x; exit 3; }", "{ exit $?; }"])
-def test_status_preserving_exits_are_rescues(rescue: str) -> None:
+@pytest.mark.parametrize(
+    "rescue",
+    ["exit $?", "exit 3", "return 1", "{ echo x; exit 3; }", "{ printf 'x'; echo y; exit 1; }"],
+)
+def test_whitelisted_rescues(rescue: str) -> None:
     assert _rules(f"pytest || {rescue}\necho after") == []
 
 
@@ -255,7 +258,7 @@ def test_r4_applies_to_workflows_after_set_plus_e_unless_the_status_is_read() ->
     wf = gate._shell_flags(None)
     lost = gate.analyse("set +e\npython scripts/check_x.py\necho done", "t", **wf)
     assert [f.split(": ", 1)[1].split(" --")[0] for f in lost] == ["R4 no errexit"]
-    kept = "set +e\npython scripts/check_x.py > o.txt\ncode=$?\nset -e\nexit $code"
+    kept = "set +e\npython scripts/check_x.py > o.txt\ncode=$?\nexit $code"
     assert gate.analyse(kept, "t", **wf) == []
 
 
@@ -309,9 +312,53 @@ def test_a_rescue_that_does_not_visibly_keep_the_failure_is_a_finding(script: st
     assert _rules(script + "\necho after") == ["R2 swallow"]
 
 
-def test_a_capture_counts_only_when_something_decides_on_it() -> None:
-    assert _rules('pytest || rc=$?\necho after\nexit "$rc"') == []
-    assert _rules('pytest || rc=$?\nif [ "$rc" -ne 0 ]; then exit "$rc"; fi') == []
+@pytest.mark.parametrize(
+    "propagate",
+    ['exit "$rc"', "return $rc", '[ "$rc" -ne 0 ] && exit "$rc"', '[ "$rc" -eq 0 ] || exit "$rc"'],
+)
+def test_a_capture_counts_only_when_the_next_statement_propagates_it(propagate: str) -> None:
+    assert _rules(f"pytest || rc=$?\n{propagate}\necho after") == []
+
+
+# --- round 4: the whitelist. Each case below was a rescue under an earlier model. ---
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        # (a) an exit 0 behind another command inside the group
+        "pytest || { echo skipped; docker ps >/dev/null || exit 0; exit 1; }",
+        # (b) an if inside the group
+        'pytest || { echo x; if [ -z "$STRICT" ]; then exit 1; fi; exit 0; }',
+        # (c) a nested group
+        "pytest || { echo x; { exit 0; }; exit 1; }",
+        # a warn-only capture: decided on, never propagated
+        'pytest || rc=$?\nif [ "$rc" -ne 0 ]; then echo "::warning::red"; fi',
+        # a capture overwritten before it is used
+        "pytest || rc=$?\nrc=0\nexit $rc",
+        # the shell exits 0 for exit 256
+        "pytest || exit 256",
+        # a bare exit: the status of whatever ran last, not provably the gate's
+        "pytest || exit",
+        # a capture propagated only after something else runs
+        'pytest || rc=$?\necho after\nexit "$rc"',
+        # a group statement that is not echo/printf (the echo-only rule alone)
+        "pytest || { cleanup; exit 1; }",
+        # an operator inside an echo statement (the forbidden-token rule alone)
+        "pytest || { echo x || exit 0; exit 1; }",
+        # more than one statement on the right of the rescuing ||
+        "pytest || exit 1 || true",
+    ],
+)
+def test_shapes_outside_the_whitelist_are_findings(script: str) -> None:
+    assert _rules(script + "\necho end") == ["R2 swallow"]
+
+
+def test_or_false_rescues_only_under_errexit() -> None:
+    on = gate.analyse("pytest || false\necho done", "t", errexit=True, unattended=True)
+    assert on == []
+    off = gate.analyse("set +e\npytest || false\necho done", "t", errexit=True, unattended=True)
+    assert [f.split(": ", 1)[1].split(" --")[0] for f in off] == ["R2 swallow"]
 
 
 def test_printing_the_status_is_not_keeping_it() -> None:

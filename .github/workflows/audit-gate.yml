@@ -491,49 +491,38 @@ jobs:
         # that names none. Requiring completeness would have failed the whole
         # history to catch one defect -- measured against the real commits
         # before the boundary was chosen.
+        #
+        # THE GATE IS THE STEP'S ONLY COMMAND, and the banner is a SEPARATE step
+        # below that runs only when this one failed. The previous shape --
+        # `set +e`, the gate, `status=$?`, a banner, `exit $status` -- was
+        # correct, but it is not on check_shell_status.py's deliberately narrow
+        # whitelist (#563), and the rule there is to rewrite the script rather
+        # than widen the whitelist. Here the status needs no capture at all.
+        id: dnumbers
+        run: python apps/api/scripts/check_decision_numbers.py --base "origin/${{ github.base_ref }}" --head HEAD
+
+      - name: "D-NUMBERS failed: what the red check above actually means"
+        if: failure() && steps.dnumbers.outcome == 'failure'
+        # The banner, for a reader who arrives from a red check named "No
+        # accidental issue closes". It cannot see the exit code, so it names
+        # BOTH causes and points at the output that decides between them:
+        # check_decision_numbers.py returns 1 for a real mismatch and 2 for
+        # "could not look", and a banner naming only the first would hand a
+        # reader a false cause. This step's own status is that of its last
+        # echo, and the job is already red from the step above.
         run: |
-          # The banner is the point. A reader arrives here from a red check
-          # named "No accidental issue closes" and needs to be told, before
-          # anything else, that the closing keywords are not what failed.
-          # `set +e` / capture / `set -e`, NOT `if ! cmd; then status=$?`.
-          # Inside the then-branch of a negated test, `$?` is the status of the
-          # NEGATION -- 0 when the command failed. MEASURED:
-          #
-          #     bash -c 'if ! false; then echo $?; fi'   ->   0
-          #
-          # So that idiom would have printed the banner and exited 0: a step
-          # that announces a failure and reports success. The exact shape
-          # CLAUDE.md opens with, one layer down, inside the fix for a
-          # different reporting defect.
-          set +e
-          python apps/api/scripts/check_decision_numbers.py             --base "origin/${{ github.base_ref }}" --head HEAD
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
-            echo ""
-            echo "=============================================================="
-            echo "THIS STEP DOES NOT CHECK CLOSING KEYWORDS."
-            echo ""
-            echo "The red check is named 'No accidental issue closes' because"
-            echo "this D-NUMBER step shares that job. What failed is above."
-            echo ""
-            # TWO EXIT CODES, TWO CAUSES. check_decision_numbers.py returns 1
-            # for a real mismatch and 2 for 'I could not look' -- its own
-            # __main__ says "a crash must not share an exit code with 'found
-            # something'". A banner naming the exit-1 cause unconditionally
-            # would hand a reader a false cause AND an imperative naming work
-            # that cannot help.
-            if [ "$status" -eq 1 ]; then
-              echo "A commit SUBJECT names a D-number the commit does not add."
-              echo "Fix the commit subject, not the PR body."
-            else
-              echo "The check could not run (exit $status) -- it reached no"
-              echo "verdict about your commits. Read its output above: this is"
-              echo "a git or environment failure, not something to fix in a"
-              echo "commit message."
-            fi
-            echo ""
-            echo "Tracked in #318."
-            echo "=============================================================="
-            exit $status
-          fi
+          echo "=============================================================="
+          echo "THIS STEP DOES NOT CHECK CLOSING KEYWORDS."
+          echo ""
+          echo "The red check is named 'No accidental issue closes' because"
+          echo "the D-NUMBER step shares that job. What failed is the step"
+          echo "above; its exit code, in its output, says which cause:"
+          echo ""
+          echo "  exit 1 -- a commit SUBJECT names a D-number the commit does"
+          echo "            not add. Fix the commit subject, not the PR body."
+          echo "  exit 2 -- the check could not run and reached no verdict"
+          echo "            about your commits: a git or environment failure,"
+          echo "            not something to fix in a commit message."
+          echo ""
+          echo "Tracked in #318."
+          echo "=============================================================="

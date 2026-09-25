@@ -32,21 +32,28 @@ and `docker compose exec|run [opts] SERVICE` are looked through.
   R1 pipe       the gate is not the LAST command of a pipeline, and pipefail is
                 not on (`set -o pipefail`, `set -euo pipefail`, or a workflow
                 step whose `shell:` is `bash`). `set +o pipefail` turns it off.
-  R2 swallow    the gate is followed by `||`, and the FIRST thing that runs
-                does not visibly keep the failure. CONSERVATIVE: only `false`,
-                `exit`/`return` bare or with `$?` or a non-zero literal, or
-                `var=$?` that a later exit/return/[/test/if decides on, count.
-                In a `{ }` group, the FIRST exit it reaches being a non-zero
-                literal also counts (`|| { echo msg; exit 1; }`). Everything
-                else is a finding: `|| exit 0`, `|| { echo x; exit; }` (bare
-                exit = echo's status), `|| exit "$var"` with no visible capture.
-                A false positive costs a rewrite; a false negative, #143. A statement `! gate` is R2
-                as well: `!` inverts the status and `set -e` ignores it.
+  R2 swallow    the gate is followed by `||`, and the right side is not on a
+                deliberately NARROW whitelist (four review rounds each found a
+                hole in a more permissive model):
+                  - exactly `exit N` / `return N`, N a literal, N % 256 != 0;
+                  - exactly `exit $?` / `return $?`;
+                  - `false`, only while errexit is on;
+                  - exactly `{ echo/printf ...; exit N; }`: echo or printf
+                    statements, then one exit, last, at top level, with no
+                    if/then/&&/||/nested group/$( inside;
+                  - `var=$?` whose NEXT statement is exactly `exit $var`,
+                    `return $var`, `[ "$var" -ne 0 ] && exit "$var"` or
+                    `[ "$var" -eq 0 ] || exit "$var"`.
+                Everything else is a finding. A false positive costs rewriting
+                a script into one of these shapes; a false negative costs the
+                next #143. A statement `! gate` is R2 as well: `!` inverts the
+                status and `set -e` ignores it.
   R3 mid-list   the gate is followed by `&&` in a statement that is not the
                 script's last, with no later rescue. Under `set -e` its failure
                 does not stop the lines after it.
   R4 no errexit the script is not under `set -e` and a gate is not its last
-                statement, and the next statement does not read `$?`. Its
+                statement, and the next statement does not propagate its status
+                in a whitelisted shape (`exit $?`, or a whitelisted capture). Its
                 status is overwritten by whatever runs next. Applied to scripts
                 that run unattended: workflow steps (after a `set +e`, or under
                 a custom `shell:` without -e), `sh -c` / `bash -c` bodies,
@@ -428,66 +435,82 @@ def _set_flags(stmt: list[str]) -> dict[str, bool]:
     return out
 
 
-# CONSERVATIVE BY DESIGN. The rescue model grew a new hole in each review round
-# (#143 reopened by `|| exit 0`, then by `|| { echo skipped; exit; }`), so it
-# now counts a rescue only when it can SEE the failure kept, and flags
-# everything else. A false positive costs a script rewrite; a false negative
-# costs the next #143.
+# A WHITELIST, DELIBERATELY NARROW. Four review rounds each found a new way a
+# "rescue" model let a red gate through: `|| exit 0`; `|| { echo x; exit; }`;
+# a capture nobody read; an `exit 0` hidden behind `docker ps ||` or an `if`
+# inside a group; `exit 256`. Each fix modelled a little more of the shell and
+# opened the next hole. So nothing is modelled any more: a rescue is one of the
+# exact shapes below, and anything else is a finding. A false positive costs
+# rewriting a script into one of these shapes; a false negative costs the next
+# #143. If a real script fails this, rewrite the script -- do not widen this.
 _ASSIGN_STATUS = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=\$\?$")
-_DECIDERS = {"exit", "return", "[", "[[", "test", "if", "elif"}
+_ECHOES = {"echo", "printf"}
+_GROUP_FORBIDDEN = {"if", "then", "||", "&&", "{", "(", "exit", "return"}
 
 
-def _reads_var(stmts: list[list[str]], var: str) -> bool:
-    """Does a later statement DECIDE on $var -- in an exit, return, [, test or if?"""
-    pat = re.compile(r"\$\{?" + re.escape(var) + r"(\b|\})")
-    return any(s and s[0] in _DECIDERS and any(pat.search(tok) for tok in s[1:]) for s in stmts)
+def _literal_failure(words: list[str]) -> bool:
+    """`exit N` / `return N`: exactly two words, N a literal the SHELL sees as non-zero."""
+    return (
+        len(words) == 2
+        and words[0] in ("exit", "return")
+        and bool(re.fullmatch(r"[0-9]+", words[1]))
+        and int(words[1]) % 256 != 0
+    )
 
 
-def _nonzero_literal(words: list[str]) -> bool:
-    return len(words) > 1 and bool(re.fullmatch(r"[0-9]+", words[1])) and int(words[1]) != 0
+def _is_status_exit(words: list[str]) -> bool:
+    """`exit $?` / `return $?`: exactly those two words."""
+    return len(words) == 2 and words[0] in ("exit", "return") and words[1] == "$?"
 
 
-def _keeps_failure(words: list[str], later: list[list[str]]) -> bool:
-    """Is this -- the FIRST command after the gate fails -- one that keeps the failure?
+def _group_is_whitelisted(body: str) -> bool:
+    """Exactly `{ <echo/printf statements>; exit N; }`: one exit, at top level, last."""
+    stmts = statements(body)
+    if not stmts or not _literal_failure(stmts[-1]):
+        return False
+    for s in stmts[:-1]:
+        if not s or s[0] not in _ECHOES:
+            return False
+        for tok in s:
+            if tok in _GROUP_FORBIDDEN or "$(" in tok or _group_body(tok) is not None:
+                return False
+    return True
 
-    `false`; `exit` / `return` bare or with `$?` (the gate's status, since
-    nothing ran between); a non-zero literal; or `var=$?` whose variable a
-    later statement decides on. `exit $var` is NOT enough on its own: nothing
-    shows the variable holds the gate's status.
-    """
+
+def _capture_is_whitelisted(var: str, nxt: list[str]) -> bool:
+    """The NEXT statement propagates the captured status, in exactly one of these shapes."""
+    ref = ("$" + var, "${" + var + "}")
+    if len(nxt) == 2 and nxt[0] in ("exit", "return") and nxt[1] in ref:
+        return True
+    # `[ "$var" -ne 0 ] && exit "$var"` or `[ "$var" -eq 0 ] || exit "$var"`
+    return (
+        len(nxt) == 8
+        and nxt[0] == "["
+        and nxt[1] in ref
+        and (nxt[2], nxt[5]) in (("-ne", "&&"), ("-eq", "||"))
+        and nxt[3] == "0"
+        and nxt[4] == "]"
+        and nxt[6] == "exit"
+        and nxt[7] in ref
+    )
+
+
+def _rescue(element: list[list[str]], nxt: list[str], errexit: bool) -> bool:
+    """Is the right side of `||` -- EXACTLY one command -- a whitelisted rescue?"""
+    if len(element) != 1:
+        return False  # a pipeline on the right of `||` is not a whitelisted shape
+    words = element[0]
     if not words:
         return False
-    head = words[0]
-    if head == "false":
+    body = _group_body(words[0])
+    if body is not None:
+        return len(words) == 1 and words[0].startswith(_BRACE) and _group_is_whitelisted(body)
+    if _literal_failure(words) or _is_status_exit(words):
         return True
-    m = _ASSIGN_STATUS.match(head)
-    if m and len(words) == 1:
-        return _reads_var(later, m.group(1))
-    if head in ("exit", "return"):
-        return len(words) == 1 or words[1] == "$?" or _nonzero_literal(words)
-    return False
-
-
-def _rescue(cmd: list[str], later: list[list[str]]) -> bool:
-    if not cmd:
-        return False
-    body = _group_body(cmd[0])
-    if body is None:
-        return _keeps_failure(cmd, later)
-    stmts = statements(body)
-    if not stmts:
-        return False
-    if _keeps_failure(stmts[0], stmts[1:] + later):
-        return True
-    # A group whose first statement is something else (`{ echo msg; exit 1; }`,
-    # the fail-loud idiom) still keeps the failure if the FIRST exit or return
-    # it reaches is a non-zero literal: it can end no other way. A bare `exit`
-    # or `exit $?` there carries the status of whatever ran before it -- the
-    # `echo` -- so it does not count.
-    for s in stmts[1:]:
-        if s and s[0] in ("exit", "return"):
-            return _nonzero_literal(s)
-    return False
+    if words == ["false"]:
+        return errexit  # `|| false` keeps the failure only if something exits on it
+    m = _ASSIGN_STATUS.match(words[0])
+    return bool(m) and len(words) == 1 and _capture_is_whitelisted(m.group(1), nxt)
 
 
 def analyse(
@@ -520,21 +543,17 @@ def analyse(
         elems = _elements(body_stmt)
         conditional = stmt[0] in _CONDITIONAL
         last_stmt = terminal
-        # The next statement reads the status: `pytest` then `rc=$?`.
         nxt_stmt = stmts[idx + 1] if idx + 1 < len(stmts) else []
-        # A next statement that KEEPS the status: `exit $?`, a `[`/`test`/`if` on
-        # `$?`, or `var=$?` that a later statement decides on. `echo "... $?"`
-        # only prints it, and the script then exits 0: not a rescue.
+        # The next statement propagates the status, in a WHITELISTED shape only:
+        # `exit $?` / `return $?`, or `var=$?` followed by a whitelisted
+        # propagation of `$var`. A printed or merely tested `$?` is not kept.
+        after = stmts[idx + 2] if idx + 2 < len(stmts) else []
         captured = bool(nxt_stmt) and (
-            (nxt_stmt[0] in ("exit", "return") and nxt_stmt[1:2] == ["$?"])
-            or (
-                nxt_stmt[0] in _DECIDERS - {"exit", "return"}
-                and any("$?" in tok for tok in nxt_stmt[1:])
-            )
+            _is_status_exit(nxt_stmt)
             or (
                 len(nxt_stmt) == 1
                 and bool(_ASSIGN_STATUS.match(nxt_stmt[0]))
-                and _reads_var(stmts[idx + 2 :], _ASSIGN_STATUS.match(nxt_stmt[0]).group(1))
+                and _capture_is_whitelisted(_ASSIGN_STATUS.match(nxt_stmt[0]).group(1), after)
             )
         )
         ops = [op for _, op in elems]
@@ -572,7 +591,9 @@ def analyse(
                 )
                 continue
             rescued = any(
-                ops[k] == "||" and _rescue(elems[k + 1][0][0], stmts[idx + 1 :])
+                ops[k] == "||"
+                and k + 1 == len(elems) - 1  # EXACTLY one statement on the right
+                and _rescue(elems[k + 1][0], nxt_stmt, errexit)
                 for k in range(e_i, len(elems) - 1)
             )
             if op == "||" and not rescued:
