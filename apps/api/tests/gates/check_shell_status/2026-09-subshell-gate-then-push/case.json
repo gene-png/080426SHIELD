@@ -1,0 +1,10 @@
+{
+ "incident": "ADVERSARIAL. #213 instance 1's exact shape, with the gate inside a subshell. The first version split on the parens, so the gate ended a statement of its own and R3 never fired.",
+ "expect": 1,
+ "adversarial": true,
+ "stdout_contains": "R3 mid-list",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

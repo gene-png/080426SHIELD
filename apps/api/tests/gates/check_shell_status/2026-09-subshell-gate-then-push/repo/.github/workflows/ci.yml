@@ -1,0 +1,8 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          (cd apps/api && python -m scripts.check_x) && git commit -m x
+          git push

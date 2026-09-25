@@ -97,7 +97,14 @@ repos:
         # suite and let the push through. The container check is now the `if`,
         # and pytest runs unguarded in the branch, so a red suite fails the push
         # while a stopped container still skips. check_shell_status.py gates it.
-        entry: bash -c 'if docker compose ps --status running --services 2>/dev/null | grep -qx api; then docker compose exec -T api pytest -m unit; else echo "skipped (api container not running)"; fi'
+        #
+        # A SKIP IS NOT A PASS, so it is made visible: `verbose: true` prints the
+        # hook's output even when it exits 0, which pre-commit otherwise hides
+        # behind "Passed". And a missing `docker` (the Git Bash default, per
+        # CLAUDE.md) is named, rather than hidden by `2>/dev/null` and read as
+        # "container not running".
+        entry: bash -c 'if ! command -v docker >/dev/null; then echo "SKIPPED, NOT PASSED - docker is not on PATH"; elif docker compose ps --status running --services 2>/dev/null | grep -qx api; then docker compose exec -T api pytest -m unit; else echo "SKIPPED, NOT PASSED - the api container is not running"; fi'
         language: system
+        verbose: true
         pass_filenames: false
         stages: [pre-push]

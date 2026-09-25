@@ -1,0 +1,10 @@
+{
+ "incident": "With no CLAUDE.md the first version read zero blocks and reported clean. A source it could not read is could-not-look.",
+ "expect": 2,
+ "adversarial": false,
+ "stdout_contains": "no CLAUDE.md",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}

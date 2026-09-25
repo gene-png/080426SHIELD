@@ -135,6 +135,101 @@ def test_the_live_repo_is_clean() -> None:
     if wf is None:
         pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
     root = wf.parent.parent
-    scripts = gate.workflow_scripts(root) + gate.hook_scripts(root) + gate.claude_md_scripts(root)
-    findings = [f for s, w, p in scripts for f in gate.analyse(s, w, pipefail=p)]
+    scripts = (
+        gate.workflow_scripts(root)
+        + gate.hook_scripts(root)
+        + gate.shell_file_scripts(root)
+        + gate.claude_md_scripts(root)
+    )
+    findings = [f for s, w, opts in scripts for f in gate.analyse(s, w, **opts)]
     assert findings == [], findings
+
+
+# --- review of a62f41e ------------------------------------------------------------------
+
+
+def _unattended(script: str) -> list[str]:
+    return [
+        f.split(": ", 1)[1].split(" --")[0]
+        for f in gate.analyse(script, "t", errexit=False, unattended=True)
+    ]
+
+
+def test_a_gate_in_a_subshell_or_brace_group_is_still_judged_from_outside() -> None:
+    assert _rules("(cd a && pytest) && git commit -m x\ngit push") == ["R3 mid-list"]
+    assert _rules("(cd a && pytest) || echo skipped") == ["R2 swallow"]
+    assert _rules("{ pytest; } | tee log") == ["R1 pipe"]
+
+
+def test_redirections_do_not_split_the_statement() -> None:
+    assert _rules("pytest >/dev/null 2>&1 || echo skipped") == ["R2 swallow"]
+    assert _rules("pytest 2>&1 | tee log") == ["R1 pipe"]
+    assert _rules("pytest |& tee log") == ["R1 pipe"]
+
+
+def test_the_wrapper_itself_is_judged_from_outside() -> None:
+    script = 'docker compose exec -T api sh -lc "cd /app && pytest -m unit" || echo skipped'
+    assert "R2 swallow" in _rules(script)
+
+
+def test_or_group_with_exit_is_the_fail_loud_idiom_not_a_swallow() -> None:
+    assert _rules("pytest || { echo 'suite failed'; exit 1; }\necho done") == []
+
+
+def test_a_bare_negated_gate_is_a_swallow() -> None:
+    assert _rules("! pytest\necho done") == ["R2 swallow"]
+    assert _rules("if ! pytest; then exit 1; fi\necho done") == []
+
+
+def test_set_plus_o_pipefail_turns_it_off() -> None:
+    assert _rules("set -o pipefail\nset +o pipefail\npytest | tee log") == ["R1 pipe"]
+
+
+def test_no_errexit_loses_a_gate_that_is_not_last() -> None:
+    assert _unattended("pytest -m unit; echo done") == ["R4 no errexit"]
+    assert _unattended("set -e\npytest -m unit; echo done") == []
+    # The last command of an if-branch is the compound's status.
+    assert _unattended("if up; then pytest; else echo skipped; fi") == []
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "env FOO=1 pytest",
+        "timeout 600 pytest",
+        "time pytest",
+        "docker compose run --rm api pytest",
+        ".venv/bin/pytest",
+        "python3.12 -m pytest",
+        "python -X utf8 scripts/check_x.py",
+        "pnpm format:check",
+    ],
+)
+def test_wrappers_and_spellings_are_looked_through(cmd: str) -> None:
+    assert gate.is_gate(cmd.split()), cmd
+
+
+def test_a_comment_quoting_a_heredoc_does_not_swallow_the_script() -> None:
+    assert _rules("# run it like: python - <<'PY'\npytest || echo skipped") == ["R2 swallow"]
+
+
+def test_an_unterminated_heredoc_is_could_not_look() -> None:
+    with pytest.raises(gate.CouldNotLook, match="never terminated"):
+        gate.statements("cat <<EOF\ntext\n")
+    # No newline after the `<<` at all: only the end-of-input check can catch it.
+    with pytest.raises(gate.CouldNotLook, match="never terminated"):
+        gate.statements("cat <<EOF")
+
+
+def test_a_substitution_inside_double_quotes_is_its_own_quote_context() -> None:
+    script = 'X="$(python - <<\'PY\'\nprint("a")\nPY\n)"\necho "$X"'
+    assert gate.statements(script)[-1] == ["echo", "$X"]
+    # Read naively, the `"` inside the single quotes closes the outer string and
+    # leaves a `'` open. Inside `"$( )"` the single quotes are their own.
+    assert gate.statements('X="$(echo \'a"b\')"\necho ok')[-1] == ["echo", "ok"]
+
+
+def test_an_indented_block_naming_a_gate_that_does_not_parse_is_could_not_look() -> None:
+    with pytest.raises(gate.CouldNotLook):
+        gate._block_has_gate('pytest "unterminated')
+    assert gate._block_has_gate('prose "unterminated') is False

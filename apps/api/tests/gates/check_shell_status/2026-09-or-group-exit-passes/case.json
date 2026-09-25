@@ -1,5 +1,5 @@
 {
- "incident": "The ordinary shape: a gate alone in a step. Its status is the step's status.",
+ "incident": "The fail-loud idiom: `|| { echo msg; exit 1; }` re-raises. The first version flagged it as a swallow.",
  "expect": 0,
  "adversarial": false,
  "stdout_contains": "none of R1-R4 found",

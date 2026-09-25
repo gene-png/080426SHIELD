@@ -2,7 +2,7 @@
  "incident": "The deliberate form: `|| rc=$?` captures the status and the step exits with it. `||` alone must not be flagged; only an `||` that discards the status.",
  "expect": 0,
  "adversarial": false,
- "stdout_contains": "every gate's status reaches the result",
+ "stdout_contains": "none of R1-R4 found",
  "argv": [
   "--root",
   "{dir}/repo"

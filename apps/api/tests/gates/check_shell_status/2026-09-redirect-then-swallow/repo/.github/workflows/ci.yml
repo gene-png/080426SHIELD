@@ -1,0 +1,7 @@
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          pytest -m unit >/dev/null 2>&1 || echo skipped

@@ -2,7 +2,7 @@
  "incident": "`shell: bash` makes GitHub run the step as `bash -eo pipefail`, so the same pipe that loses the status by default keeps it here.",
  "expect": 0,
  "adversarial": false,
- "stdout_contains": "every gate's status reaches the result",
+ "stdout_contains": "none of R1-R4 found",
  "argv": [
   "--root",
   "{dir}/repo"

@@ -58,8 +58,51 @@ design (#224).
   reach the exemption. The case it decides is a gate in the MIDDLE of a
   condition.
 
+## After the adversarial review of `a62f41e`
+
+The review found twelve problems. Five of them (groups, `2>&1`, heredocs,
+`set +o`, `|| { ...; exit 1; }`) had one root cause: a flattening token split
+standing in for a shell parser. Adding patterns would keep losing. My call,
+overturnable: no parser dependency. The gate is now an honest line-level
+FLOOR. Its banner says what it read and what it does not model, and it
+never says "every gate's status reaches the result" again.
+
+Fixed:
+- **Groups:** a `( )`, `{ }` or `$( )` is ONE element with a body, so
+  `(cd x && gate) && git push` is R3. This is #213 instance 1's exact shape,
+  now a fixture.
+- **Redirections:** `2>&1`, `&>` and `|&` no longer split a statement, so
+  #143 with its usual redirect is R2 (a fixture).
+- **Wrappers:** `sh -c "...gate..." || echo` is judged from outside.
+- **R2 exceptions:** `|| { echo; exit 1; }` is not a swallow (a fixture), and
+  a bare `! gate` is.
+- **Heredocs:** comments are stripped before `<<` is read, and an
+  unterminated heredoc is exit 2 (a fixture). `"$( ... )"` gets its own quote
+  context.
+- **`set +o pipefail`** turns pipefail off.
+- **R4, no errexit:** a gate that is not the last statement of an unattended
+  script without `set -e` (a `-c` body, a hook entry, a `.sh` file). The last
+  command of an if/case branch counts as terminal.
+- **Gate spellings:** `env`, `timeout`, `time`, `docker compose run`,
+  `.venv/bin/pytest`, `python3.12`, `python -X` and `pnpm format:check` are
+  looked through.
+- **`.sh` files are scanned** (13 today).
+- **Could-not-look:** an indented CLAUDE.md block that names a gate and does
+  not parse is exit 2, not "prose", and so is a missing CLAUDE.md.
+- **The hook's skip is visible:** `verbose: true`, and "docker is not on
+  PATH" is named. Measured with a stub `docker`: pass 0, **fail 1**, down 0
+  with "SKIPPED, NOT PASSED", no docker 0 with its cause.
+
+Red-on-revert, one mutation per fix, 13 of 13 red. Two tests first stayed
+green under their mutation: one ended in a newline, so a different raise
+fired, and one had inner quotes that balanced naively. Both were
+strengthened, and the second then exposed a real defect (shlex re-reading a
+substitution's quotes), fixed in the same pass. Self-scan: 65 workflow steps,
+2 hook entries, 13 `.sh` files, 1 CLAUDE.md block; none of R1-R4.
+
 ## Limits
 
-It is a quote-aware pass plus `shlex`, not a shell. It follows no functions,
-sourced files or variables holding commands, and a gate behind a wrapper it
-does not know is unseen. So it is a floor, not a census.
+Listed in the gate's docstring and filed as #568: functions, sourced files and
+command variables; loops; code after an if/case compound; a gate inside
+`"$( )"`; keywords used as words; `docker run`; unlisted wrappers; scoped
+`set -e`; and no committed test of the hook itself.

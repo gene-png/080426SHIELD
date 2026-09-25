@@ -1,0 +1,10 @@
+{
+ "incident": "A heredoc with no terminator swallowed the rest of the script, so a swallow after it read as clean. Unreadable is exit 2.",
+ "expect": 2,
+ "adversarial": false,
+ "stdout_contains": "never terminated",
+ "argv": [
+  "--root",
+  "{dir}/repo"
+ ]
+}
