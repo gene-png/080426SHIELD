@@ -9,8 +9,12 @@ compiles to no CSS at all, and typecheck, ESLint and every test passed over
 it. On `main` there were 18 such occurrences across 9 files. What each looked
 like before the fix, per class:
 
-- `bg-surface-muted` (3) and `bg-surface-default` (1): no background, so the
-  panel or code block was transparent over its parent.
+- `bg-surface-muted` (3): no background. Two are panels (the MFA "Setup key"
+  box and the AI-preview result panel), which were transparent over their
+  parent; the third is WorkflowStep's BLOCKED-step number badge, which showed
+  a bare number and now shows a grey disc.
+- `bg-surface-default` (1): the AI-preview `<pre>` code block had no
+  background and is now white (surface-card).
 - `hover:bg-surface-muted` (6): no hover background on six secondary buttons.
 - `border-border-default` (7): no utility, BUT `globals.css`'s `*` rule
   already sets `border-color: var(--border-default)`, so these borders looked
