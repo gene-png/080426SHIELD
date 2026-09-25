@@ -25,9 +25,10 @@ what the widening slice must change first:
   * the release gate, which does not exist yet;
   * `risk/link_scope.py`, which treats any non-NULL status as a consultant's
     judgement ("scored when it is not NULL"), so `unable_to_determine` would
-    become a citable risk link. The PATCH refuses them typed and the AI write-back ignores
-them, until the slice that teaches every surface to report them widens
-`WRITABLE`. My call, overturnable, recorded on #554.
+    become a citable risk link.
+The PATCH refuses them typed, and the AI write-back refuses a suggestion carrying
+one WHOLE and records it (`statuses_rejected`), until the slice that teaches
+every surface to report them widens `WRITABLE`. My call, overturnable, recorded on #554.
 
 REASON CODES. A reason means something only for the status it belongs to:
   * Partial: seven codes, below.
