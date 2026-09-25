@@ -720,6 +720,15 @@ recorded with a real exit code and a real date, and was the minority outcome
   fail-open is a false assurance already delivered to a client, and only one of
   those is recoverable. When fail-closed looks unaffordable, check the blast
   radius rather than assuming — for 0044 it was zero RELEASED assessments.
+- **CHECK, for any new status or deliverable figure: when the state can be true,
+  false or unknown, the vocabulary has three values and the deliverable reports
+  all three.** Each 2026-09-24 miss failed toward flattering the client: Partial
+  carried no reason (#554), N/A had no acceptance disposition (#557), and the
+  coverage percentage had no "unverified" (#554).
+- **Gate the release, not the click.** A judgement a record needs (an owner, a
+  date, a reason) is a readiness finding that blocks RELEASE, never a field forced
+  at the click, where it becomes "TBD" that reads as finished.
+  `unconfirmed_citations` at a count above zero is the model (D-089).
 - **A guard that cannot read its input must FAIL CLOSED, and the tell is a
   positive-sounding message on an empty read.** `check_audit_evidence.py`
   shipped with `is_code_change([])` returning False, so an empty changed-file
@@ -1073,6 +1082,10 @@ recorded with a real exit code and a real date, and was the minority outcome
   parametrised sweeps whose parameters come from somewhere other than the thing
   under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
   it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
+- **Literal names match `\s+`; shape rules match `_HSPACE`, and this is a rule-class
+  difference, not an inconsistency** (D-088). A stored name wrapped across a line
+  is still that name, and a miss leaks it; a shape rule crossing a line joins
+  tokens that were never one thing.
 - **An escape sequence written into prose becomes an invisible control byte, and
   CI now checks for it** (`apps/api/scripts/check_no_control_chars.py`, the
   "control-character sweep" step). `\b` in a non-raw string is a BACKSPACE; `\v`,
@@ -2156,12 +2169,8 @@ Rules of the road:
       git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
       git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
 
-  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08, where it does something
-  worse than fail:** `${sha:0:8}` is read as a variable named `sha:0:8`, which
-  does not exist, so it expands to **nothing** -- `archive/stash--x`, no error,
-  no SHA, and every stash archived that way collides on one name. No PowerShell
-  equivalent is offered, deliberately: a marker covering the FAILURE does not
-  cover a REMEDY (D-071).
+  **Git Bash only:** in PowerShell 5.1 `${sha:0:8}` silently expands to
+  nothing, so every archive collides on one name (D-071).
 
   This repo's archives carry a branch AND a `-tag`-suffixed tag per stash
   because the bare name was taken. **But if EVERY archive collides on one name,
@@ -2212,11 +2221,8 @@ Rules of the road:
 
   Everything else — code, tests, CI, gates, migrations, and any document stating
   a rule or a number someone acts on — is branch + PR.
-- **The merge rule — when an agent may merge unattended — is at the TOP of
-  this file**, under `## The merge rule`. It was here, at byte 192,494 of a
-  210,958-byte file, and every reader with a size limit got the conditions
-  without the path list that decides them (D-079). It is the one rule whose
-  POSITION is load-bearing.
+- **The merge rule is at the TOP of this file**, and its position is
+  load-bearing (D-079).
 - **AN ISSUE IS FILED WITH ITS LABELS OR IT IS NOT FILED. Search first, and the
   search only works because everything else was labelled.** The board is
   `is:issue is:open label:mvp-blocking` ordered by tier. An issue without
@@ -2249,7 +2255,7 @@ Rules of the road:
   reviewer or developer misled by a false gate is not on it, and what the gate
   lets through is tiered on its own merits (D-087). **A label's name is not its
   test:** `mvp-blocking` means "on the board", not "blocks the MVP". The scale
-  has no term yet for compliance-record consequence (#528, D-087).
+  has no term yet for any consequence that is not a wrong number (#528).
 
   Search before filing, knowing the search finds only what earlier filers
   labelled: #184 and #286 are the same defect, filed twice (D-086).
@@ -2285,28 +2291,11 @@ Rules of the road:
 
 ## If you cannot read this section, stop
 
-**Why this section exists, and it is the finding the size gate alone does not
-fix.** The reader limit is a property of the READER, not of this repository. On
-2026-09-22 one session's injected copy carried all 210,958 bytes while another
-reader's was cut at 150,000 — same commit, same file, different rule sets.
-<!-- counted: "one session" names a single observed reader, not a tally of a population -->
-Two agents can examine the same PR, apply the merge rule sincerely, and reach
-opposite verdicts on condition 5, and **neither can tell which one it is**:
-nothing in either agent's output distinguishes "this PR is clear" from "I could
-not see the clause that would have caught it."
-
-That is the exit-2 distinction this repo built its gate philosophy on — "I
-checked and it passes" versus "I could not look" — missing from the governance
-layer itself, in the one artifact that defines what checking means.
-`check_claude_md_size.py` fixes today's instance; it cannot fix the mechanism,
-because the file goes over budget again eventually, or some reader arrives with
-a limit below 150,000, and it recurs silently. The canary converts an invisible
-variance into a declared one — the same move as making a gate exit 2 instead
-of 0 — **but only because the instruction to check for it is stated at the TOP
-of this file and in every `.claude/agents/*.md`.** Stated only here, at the end,
-it would address nobody: a truncated reader never receives this paragraph. The
-first version of the canary did exactly that, and the adversarial reviewer
-called it a necessary precondition that was not yet load-bearing.
+**Why this section exists (D-079):** the reader limit belongs to the READER,
+not the file, so two agents can apply the merge rule to one PR and disagree
+without either knowing. The canary makes that variance declared, but only
+because the instruction to check for it is at the TOP of this file and in every
+`.claude/agents/*.md`. Stated only here, it would address nobody.
 
 **`check_claude_md_size.py --require-canary` asserts the marker is the LAST
 non-empty line**, so a later edit cannot append past it and quietly push it out
@@ -2325,8 +2314,9 @@ it, so moving it loses no rule:
    one sentence each; the stories belong under D-058. (The over-match and
    address-corpus stories already moved, to D-087, on 2026-09-24.)
 2. **The worked examples under `Rules of the road`** — the sweep shape
-   statement, the subagent-citation arithmetic, the stash-archive PowerShell
-   measurements. All have a live D-number or issue already holding them.
+   statement and the subagent-citation arithmetic. **Confirm the cited record
+   holds the text before cutting:** on 2026-09-24 D-079 did not hold that
+   arithmetic, nor D-058 the LEAVE-table percentages.
 3. **The per-instance lists** inside the numbers-in-prose, correction-paragraph
    and twin-sweep rules. Each is a list that grows, which is the defect those
    rules describe; they belong in D-079 and D-074, where a tally is expected to

@@ -5731,3 +5731,38 @@ red under five seeds.
 
 - both mutations also turn the invoke-level test red;
 - removing the gate's new signature turns its 4 detection tests red.
+
+## D-089 — ATT&CK gap dispositions, and the principle that decided them: gate the release, not the click
+
+**Date:** 2026-09-24 · **Decided by:** the owner · **Issue:** #557 (post-mvp)
+
+**Three dispositions for a gap: `not_applicable`, `accepted`, `keep`. There is
+no "close".** `accepted` must not share `not_applicable`, and the reason is
+arithmetic: `not_applicable` leaves the addressable denominator, so an accepted
+risk filed there would shrink the denominator and raise the client's coverage
+percentage. In the owner's example, 597 addressable becomes 547, and 50 real
+gaps leave the arithmetic. The two are different claims with different
+evidence: an asset inventory settles `not_applicable`, and an owner, a basis, a
+date and a re-review trigger settle `accepted`.
+
+**Kentro is the assessor, not the authorizing official.** The client accepts the
+risk, and SHIELD records that they did. The owner field is the client's
+decision-maker, supplied by the client; no agent may populate it (#220's
+constraint).
+
+**Bulk apply is blocked for `accepted`**, because two hundred bulk acceptances
+are one shrug, not two hundred decisions. **It is kept for `not_applicable`**,
+because a scoping fact ("we run no macOS") scales.
+
+**The principle: gate the release, not the click.** Owner and date are required
+before RELEASE, as a readiness finding exactly like `unconfirmed_citations` at a
+count above zero. They are not required at the click: a consultant triaging
+hundreds of gaps cannot type a name per row, and forcing it produces "TBD" and
+"client", junk that reads as finished. The recommendation pass is scoped the
+same way. It runs over `keep` gaps and reports what it excluded and why, so one
+un-triaged row cannot stall it, and the hard requirement is at release: zero
+un-dispositioned gaps before an assessment ships.
+
+**Precondition before any client-facing text:** verify the FedRAMP Moderate
+risk-acceptance vocabulary (artifact names, control references) against the
+FedRAMP and NIST sources, not against this record.
