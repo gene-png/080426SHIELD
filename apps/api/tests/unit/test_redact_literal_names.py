@@ -279,3 +279,42 @@ def test_a_word_edged_hint_still_needs_a_word_boundary(text: str) -> None:
     out, counts = redact_for_ai(text, mode="strict", name_hints=["Dana"])
     assert out == text
     assert "name" not in counts, counts
+
+
+# --- a needle with nothing to match (owner review of #542) -----------------------
+#
+# Unreachable through today's callers: `redact_org_name` returns early on a
+# blank name, and `_redact_names` normalises and drops hints shorter than two
+# characters. So these call the builders DIRECTLY, and say so: there is no
+# client surface that reaches them, which is the point -- the only thing that
+# stood between a blank needle and `tokens[0]` was a sentence in a docstring.
+# The needles are built with chr() so no invisible character is typed.
+_BLANK_NEEDLES = ["", " ", chr(0xA0), chr(0x202F), "\t\n", chr(0x3000) * 3]
+
+
+@pytest.mark.parametrize("needle", _BLANK_NEEDLES, ids=repr)
+@pytest.mark.parametrize("anchored", [True, False], ids=["anchored", "unanchored"])
+def test_a_blank_needle_is_a_typed_error_not_an_index_error(needle: str, anchored: bool) -> None:
+    from starlette.exceptions import HTTPException
+
+    from app.ai.redact import BlankRedactionLiteralError, _literal_pattern
+
+    with pytest.raises(BlankRedactionLiteralError) as caught:
+        _literal_pattern(needle, anchored=anchored)
+    err = caught.value
+    # Typed under D-016: an HTTPException whose detail is {reason, message},
+    # which the global handler renders as the typed envelope.
+    assert isinstance(err, HTTPException)
+    assert err.status_code == 500
+    assert err.detail["reason"] == "redaction_blank_literal"
+    assert "nothing was sent" in err.detail["message"]
+
+
+@pytest.mark.parametrize("needle", _BLANK_NEEDLES, ids=repr)
+def test_a_blank_needle_reaching_the_edge_check_is_the_same_typed_error(needle: str) -> None:
+    # `_hint_patterns` calls `_literal_edges` directly, before any pattern is
+    # built, so it needs the guard as much as `_literal_pattern` does.
+    from app.ai.redact import BlankRedactionLiteralError, _literal_edges
+
+    with pytest.raises(BlankRedactionLiteralError):
+        _literal_edges(needle)
