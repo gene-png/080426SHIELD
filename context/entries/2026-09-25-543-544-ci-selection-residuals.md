@@ -67,8 +67,10 @@ test files on disk collected`.
 ## Verified
 
 - `pytest -p no:cacheprovider -o addopts= tests/unit/test_ci_selection_gate.py tests/unit/test_gate_crash_exit_code.py`:
-  **133 passed**. Run at the round-4 fix head, in `docker run --rm` of
-  `shield-v2-api:latest` with the full worktree mounted.
+  **133 passed** at 00eec79 (the round-4 fix head), in `docker run --rm` of
+  `shield-v2-api:latest` with the full worktree mounted. At 34215ff, where
+  two tests became three parametrized cases, the same command gave **134
+  passed** (track1's run).
 
   An earlier version of this line said "43 tests pass". That was not a
   count. It was the number of progress dots on pytest's LAST `-q` output line,
@@ -109,7 +111,7 @@ test files on disk collected`.
   dropped. Equal TEXT is not equal VALUES once an expression is involved,
   because GitHub evaluates `${{ }}` once per step, so
   `${{ steps.gate.outcome == 'success' && '--deselect ...' || '' }}` gives ''
-  while the gate runs and a deselect afterwards. Both tests use identical text
+  while the gate runs and a deselect afterwards. Both tests used identical text
   on the two steps. The real `ci.yml` python job has no expressions in those
   fields and stays clean.
 
