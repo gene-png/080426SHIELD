@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type {
   AttackCoverageRow,
+  CatalogReasonCode,
   CatalogTechnique,
   UnconfirmedCitation,
 } from "@/lib/attack/types";
@@ -23,6 +24,8 @@ function row(over: Partial<AttackCoverageRow> = {}): AttackCoverageRow {
     assessment_id: "a1",
     technique_code: "T1003",
     status: "covered",
+    reason_code: null,
+    narrative: null,
     notes: null,
     evidence_artifact_id: null,
     detection_tools: ["CrowdStrike Falcon"],
@@ -284,5 +287,111 @@ describe("AttackTechniquePanel — a computed parent (#554, D-094)", () => {
       expect(radio).not.toBeDisabled();
     }
     expect(screen.queryByTestId("computed-parent-status")).toBeNull();
+  });
+});
+
+// What the catalog serves, abridged: two Partial codes, the N/A code, and one
+// for a status no writer may set yet -- the panel must filter by the ROW's
+// status, never offer the whole list.
+const REASONS: CatalogReasonCode[] = [
+  {
+    code: "reach_limited",
+    status: "partial",
+    definition: "Covered on the main estate, not on part of it.",
+  },
+  {
+    code: "missing_control_category",
+    status: "partial",
+    definition: "A named category of control is absent.",
+  },
+  {
+    code: "platform_absent",
+    status: "not_applicable",
+    definition: "The platform the technique targets is not present.",
+  },
+  {
+    code: "adversary_preparation",
+    status: "outside_control_surface",
+    definition: "Activity on the adversary's own infrastructure.",
+  },
+];
+
+function reasonPanel(coverage: AttackCoverageRow, onPatch = vi.fn()) {
+  render(
+    <AttackTechniquePanel
+      technique={TECHNIQUE}
+      coverage={coverage}
+      coverageDefinitions={[]}
+      reasonCodes={REASONS}
+      onPatch={onPatch}
+    />,
+  );
+  return onPatch;
+}
+
+function optionValues(): string[] {
+  const select = screen.getByRole("combobox", { name: "Reason for T1003" });
+  return Array.from(select.querySelectorAll("option")).map((o) => o.value);
+}
+
+describe("AttackTechniquePanel — reason code (#554)", () => {
+  it("offers a Partial row only the Partial codes, and no-reason", () => {
+    reasonPanel(row({ status: "partial" }));
+    expect(optionValues()).toEqual([
+      "",
+      "reach_limited",
+      "missing_control_category",
+    ]);
+    // D-076: the label promises no gate. The release gate is not built yet,
+    // and a label claiming it is would license leaving Partials reasonless.
+    const blank = screen
+      .getByRole("combobox", { name: "Reason for T1003" })
+      .querySelector('option[value=""]');
+    expect(blank?.textContent).toBe("No reason given");
+  });
+
+  it("offers an N/A row only platform_absent -- never a missing control", () => {
+    reasonPanel(row({ status: "not_applicable" }));
+    expect(optionValues()).toEqual(["", "platform_absent"]);
+  });
+
+  it("offers no reason for a status that takes none", () => {
+    reasonPanel(row({ status: "gap" }));
+    expect(
+      screen.queryByRole("combobox", { name: "Reason for T1003" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves the chosen code", () => {
+    const onPatch = reasonPanel(row({ status: "partial" }));
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Reason for T1003" }),
+      {
+        target: { value: "reach_limited" },
+      },
+    );
+    expect(onPatch).toHaveBeenCalledWith({ reason_code: "reach_limited" });
+  });
+
+  it("shows the stored reason's definition", () => {
+    reasonPanel(
+      row({ status: "partial", reason_code: "missing_control_category" }),
+    );
+    expect(screen.getByTestId("reason-definition")).toHaveTextContent(
+      "A named category of control is absent.",
+    );
+  });
+
+  it("clears the reason with the no-reason option, sending null", () => {
+    const onPatch = reasonPanel(
+      row({ status: "partial", reason_code: "reach_limited" }),
+    );
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Reason for T1003" }),
+      {
+        target: { value: "" },
+      },
+    );
+    expect(onPatch).toHaveBeenCalledWith({ reason_code: null });
   });
 });

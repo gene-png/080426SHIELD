@@ -47,13 +47,28 @@ vi.mock("./AttackMatrix", () => ({
     </div>
   ),
 }));
+// ONE mock for the panel, carrying both things the tests read: the reason
+// codes it was HANDED (#603 round 5, the workspace's wiring) and a control that
+// patches a status (#620, the refetch after a sub-technique's write). Two
+// `vi.mock` calls for one module do not compose -- the last one wins.
 vi.mock("./AttackTechniquePanel", () => ({
   AttackTechniquePanel: (props: {
+    reasonCodes?: { code: string }[];
     onPatch: (patch: { status: string }) => void;
   }) => (
-    <button type="button" onClick={() => void props.onPatch({ status: "gap" })}>
-      set gap
-    </button>
+    <div>
+      <div data-testid="panel-reason-codes">
+        {JSON.stringify(
+          (props.reasonCodes ?? null) && props.reasonCodes?.map((r) => r.code),
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => void props.onPatch({ status: "gap" })}
+      >
+        set gap
+      </button>
+    </div>
   ),
 }));
 vi.mock("@/components/messages/MessageThread", () => ({
@@ -108,6 +123,28 @@ function draft(): AttackAssessment {
     catalog_current: true,
   } as unknown as AttackAssessment;
 }
+
+describe("AttackWorkspace hands the catalog's reason codes to the panel (#554)", () => {
+  it("passes catalog.reason_codes through, so the Reason select has codes to offer", async () => {
+    fetchCatalog.mockResolvedValue({
+      ...CATALOG,
+      reason_codes: [
+        { code: "reach_limited", status: "partial", definition: "d" },
+        { code: "platform_absent", status: "not_applicable", definition: "d" },
+      ],
+    } as unknown as AttackCatalog);
+    fetchLatestAssessment.mockResolvedValue(draft());
+    fetchHeatmap.mockResolvedValue(HEATMAP);
+
+    render(
+      <AttackWorkspace serviceId="svc-reasons" serviceTitle="Atlas ATT&CK" />,
+    );
+
+    expect(await screen.findByTestId("panel-reason-codes")).toHaveTextContent(
+      JSON.stringify(["reach_limited", "platform_absent"]),
+    );
+  });
+});
 
 describe("AttackWorkspace reqSeq stale-fetch guard", () => {
   it("discards the slow mount assessment GET after a newer create", async () => {

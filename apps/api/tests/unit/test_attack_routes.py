@@ -120,6 +120,29 @@ def test_catalog_returns_full_matrix(app_client) -> None:
     assert body["total_sub_techniques"] >= 350
     # Six since the #554 vocabulary (2026-09-24): the spec changed, not the rigour.
     assert len(body["coverage_definitions"]) == 6
+    # #554: the codes the workspace may offer, per status -- the owner's decision
+    # typed as literals, never read from `coverage.REASON_CODES`.
+    by_status: dict[str, set[str]] = {}
+    for r in body["reason_codes"]:
+        by_status.setdefault(r["status"], set()).add(r["code"])
+        assert r["definition"].strip(), r
+    assert by_status == {
+        "partial": {
+            "missing_control_category",
+            "reach_limited",
+            "detection_weak",
+            "prevention_limited",
+            "evasive_variant_uncovered",
+            "recovery_absent",
+            "periodic_not_continuous",
+        },
+        "not_applicable": {"platform_absent"},
+        "outside_control_surface": {
+            "adversary_preparation",
+            "external_reconnaissance",
+            "third_party_compromise",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
