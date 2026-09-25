@@ -1,0 +1,11 @@
+{
+ "incident": "Control: every spec on disk is in the listing.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "--root",
+  "{dir}",
+  "--list-file",
+  "{dir}/list.txt"
+ ]
+}

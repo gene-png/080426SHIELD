@@ -24,7 +24,7 @@ fraction of this file.
 | --- | --- |
 | Picking up after a break | `context/<your-name>.md`, then `DELIVERY_PLAN.md`'s MVP completion path |
 | Deciding whether an agent may merge | **The merge rule**, immediately below the core principles. Do not grow it. |
-| Writing or changing code | Core principles, then Real commands, then the gotcha bullets for the subsystem you are touching |
+| Writing or changing code | Core principles, then Real commands, then the gotcha bullets for the subsystem you are touching, and the three-value CHECK (it has no subsystem) |
 | Writing a test | Core principle 3, and the bullets on tests that cannot fail (#72, D-051) |
 | Touching the redactor or any AI path | Core principle 1, the redaction bullets, and D-058 |
 | Adding or changing a gate | The silent-success bullet, and the fail-closed bullet |
@@ -239,12 +239,10 @@ On 2026-09-21 one of the thirteen came back ONLY through the new
 `tests/gates/**` glob, tripping nothing else, so that glob is load-bearing on
 real traffic rather than theoretically.
 
-Dropping the rule was weighed against the same evidence and loses: the four that
-clear are the PRs that recur every round. **D-059** carries the cleared SHAs and
-the two PRs on which a denylist and an allowlist construction disagree; **D-079**
-carries how the first attempt at the September re-derivation selected the wrong
-population and produced a clean-looking "fifteen cleared, zero came back" about
-commits nobody had asked about.
+Dropping the rule was weighed against the same evidence and loses: the PRs that
+clear are the ones that recur every round (D-059). A re-derivation selects PR
+merges with the selector above, never commits: counting commits once reported
+"fifteen cleared, zero came back".
 
 ### Worked examples
 
@@ -722,6 +720,16 @@ recorded with a real exit code and a real date, and was the minority outcome
   fail-open is a false assurance already delivered to a client, and only one of
   those is recoverable. When fail-closed looks unaffordable, check the blast
   radius rather than assuming — for 0044 it was zero RELEASED assessments.
+- **CHECK, for any new status or deliverable figure: when the state can be true,
+  false or unknown, the vocabulary has three values and the deliverable reports
+  all three.** Each 2026-09-24 miss failed toward flattering the client: Partial
+  carried no reason (#554), N/A had no acceptance disposition (#557), and the
+  coverage percentage had no "unverified" (#554).
+- **Gate the release, not the click.** A judgement a record needs (an owner, a
+  date, a reason) is a readiness finding that blocks RELEASE, never a field forced
+  at the click, where it becomes "TBD" that reads as finished. No release gate
+  exists yet: release checks kind and finalization only, and citations are
+  disclosed (`pending_review`), not gated. Building one is new work (D-089).
 - **A guard that cannot read its input must FAIL CLOSED, and the tell is a
   positive-sounding message on an empty read.** `check_audit_evidence.py`
   shipped with `is_code_change([])` returning False, so an empty changed-file
@@ -813,7 +821,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   verified something, that is the sentence to go back and run.** Not because you
   are careless — in the recorded instances the author had run the commands and
   read the output — but because the phrase closes the question for every later
-  reader, and it closed it around a property nobody had tested (D-079).
+  reader, and it closed it around a property nobody had tested.
 
 - **Before reporting a sweep complete, name the SHAPE you searched for and one
   place it could hide that shares no vocabulary with the original.** Keyword
@@ -958,7 +966,7 @@ recorded with a real exit code and a real date, and was the minority outcome
   where the cases came from. Measured on 104 LEAVE rows: tables written before
   their pattern pinned nothing **3.8%** of the time; tables written alongside or
   after their rule, **42.1%** — same corpus, same author, same week, the only
-  variable being whether the table existed before the code did (D-058).
+  variable being whether the table existed before the code did.
 
   **The step**: any LEAVE table written or extended after its rule exists gets
   `leave_row_oracle.py` run before the PR, and rows that pin nothing are
@@ -1075,6 +1083,10 @@ recorded with a real exit code and a real date, and was the minority outcome
   parametrised sweeps whose parameters come from somewhere other than the thing
   under test. Note `[^\S\r\n]`, the idiom everyone reaches for, is also wrong —
   it still crosses `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029.
+- **Literal names match `\s+`; shape rules match `_HSPACE`, and this is a rule-class
+  difference, not an inconsistency** (D-088). A stored name wrapped across a line
+  is still that name, and a miss leaks it; a shape rule crossing a line joins
+  tokens that were never one thing.
 - **An escape sequence written into prose becomes an invisible control byte, and
   CI now checks for it** (`apps/api/scripts/check_no_control_chars.py`, the
   "control-character sweep" step). `\b` in a non-raw string is a BACKSPACE; `\v`,
@@ -1108,8 +1120,8 @@ recorded with a real exit code and a real date, and was the minority outcome
   stale with the number, while still reading as a guarantee. A bare stale count
   invites a check; a stale count under "read live from GitHub, not carried
   forward" ends it. It has happened repeatedly in one week, and most instances
-  are in the files documenting the rule — **D-079** carries the list, kept THERE
-  because a list here acquires a tally that goes stale in turn.
+  are in the files documenting the rule. No record lists them yet, and a list
+  HERE would acquire a tally that goes stale in turn.
 
   The countermeasure is not more care, because in most instances the author was
   actively applying the rule. It is: **when you write a sentence certifying a
@@ -1590,7 +1602,7 @@ Rules of the road:
 
   **This rule is unenforceable and unobservable, and is written down anyway.**
   W8b — the reviewer as a CI job — would bind it and is deferred. Do not read it
-  as a mechanism. D-057 reverses part of D-054; **D-079** carries what the drift
+  as a mechanism. D-057 reverses part of D-054, and carries what the drift
   cost. If running it conflicts with another instruction, **say so out loud
   rather than resolving it quietly** — that silent resolution is the exact
   failure D-054 was written about.
@@ -2037,7 +2049,7 @@ Rules of the road:
   random-draw model. **Sample the citations you have NOT executed**; three from
   that stratum would have been certain rather than 55%. **The wrong ones do not
   look wrong** — one was a bare closing paren, another a real line of code that
-  reads plausibly in context. D-079 carries the arithmetic.
+  reads plausibly in context.
 
 - **A plan entry that carries only a LOCATION is a derived value with a second
   place to be wrong. Name the MECHANISM instead, or as well.** "`clients.py:741`"
@@ -2064,8 +2076,8 @@ Rules of the road:
 
 - **The rules for numbers in prose, and a gate that enforces the first two on
   the shared documents.** Every miss behind them is one pattern: a value written
-  from memory instead of derived. **D-079** carries the instances, several of
-  which are inside the paragraphs correcting earlier instances.
+  from memory instead of derived. Several instances were inside the paragraphs
+  correcting earlier ones; no record lists them yet.
 
   1. **Don't write the count.** If a number describes a list in the same
      document, delete it and let the list be the count. "The blockers:" cannot
@@ -2154,12 +2166,10 @@ Rules of the road:
       git tag "archive/stash-${sha:0:8}-<what-it-holds>" "$sha"
       git push origin "archive/stash-${sha:0:8}-<what-it-holds>"
 
-  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08, where it does something
-  worse than fail:** `${sha:0:8}` is read as a variable named `sha:0:8`, which
-  does not exist, so it expands to **nothing** -- `archive/stash--x`, no error,
-  no SHA, and every stash archived that way collides on one name. No PowerShell
-  equivalent is offered, deliberately: a marker covering the FAILURE does not
-  cover a REMEDY (D-071).
+  **Git Bash only. Run in PowerShell 5.1 on 2026-09-08,** `${sha:0:8}` expands
+  to nothing, with no error, so every archive collides on one name. No
+  PowerShell equivalent is offered, deliberately: a marker covering the FAILURE
+  does not cover a REMEDY (D-071).
 
   This repo's archives carry a branch AND a `-tag`-suffixed tag per stash
   because the bare name was taken. **But if EVERY archive collides on one name,
@@ -2210,11 +2220,8 @@ Rules of the road:
 
   Everything else — code, tests, CI, gates, migrations, and any document stating
   a rule or a number someone acts on — is branch + PR.
-- **The merge rule — when an agent may merge unattended — is at the TOP of
-  this file**, under `## The merge rule`. It was here, at byte 192,494 of a
-  210,958-byte file, and every reader with a size limit got the conditions
-  without the path list that decides them (D-079). It is the one rule whose
-  POSITION is load-bearing.
+- **The merge rule is at the TOP of this file**, and its position is
+  load-bearing (D-079).
 - **AN ISSUE IS FILED WITH ITS LABELS OR IT IS NOT FILED. Search first, and the
   search only works because everything else was labelled.** The board is
   `is:issue is:open label:mvp-blocking` ordered by tier. An issue without
@@ -2247,7 +2254,7 @@ Rules of the road:
   reviewer or developer misled by a false gate is not on it, and what the gate
   lets through is tiered on its own merits (D-087). **A label's name is not its
   test:** `mvp-blocking` means "on the board", not "blocks the MVP". The scale
-  has no term yet for compliance-record consequence (#528, D-087).
+  has no term yet for any consequence that is not a wrong number (#528).
 
   Search before filing, knowing the search finds only what earlier filers
   labelled: #184 and #286 are the same defect, filed twice (D-086).
@@ -2283,28 +2290,11 @@ Rules of the road:
 
 ## If you cannot read this section, stop
 
-**Why this section exists, and it is the finding the size gate alone does not
-fix.** The reader limit is a property of the READER, not of this repository. On
-2026-09-22 one session's injected copy carried all 210,958 bytes while another
-reader's was cut at 150,000 — same commit, same file, different rule sets.
-<!-- counted: "one session" names a single observed reader, not a tally of a population -->
-Two agents can examine the same PR, apply the merge rule sincerely, and reach
-opposite verdicts on condition 5, and **neither can tell which one it is**:
-nothing in either agent's output distinguishes "this PR is clear" from "I could
-not see the clause that would have caught it."
-
-That is the exit-2 distinction this repo built its gate philosophy on — "I
-checked and it passes" versus "I could not look" — missing from the governance
-layer itself, in the one artifact that defines what checking means.
-`check_claude_md_size.py` fixes today's instance; it cannot fix the mechanism,
-because the file goes over budget again eventually, or some reader arrives with
-a limit below 150,000, and it recurs silently. The canary converts an invisible
-variance into a declared one — the same move as making a gate exit 2 instead
-of 0 — **but only because the instruction to check for it is stated at the TOP
-of this file and in every `.claude/agents/*.md`.** Stated only here, at the end,
-it would address nobody: a truncated reader never receives this paragraph. The
-first version of the canary did exactly that, and the adversarial reviewer
-called it a necessary precondition that was not yet load-bearing.
+**Why this section exists (D-079):** the reader limit belongs to the READER,
+not the file, so two agents can apply the merge rule to one PR and disagree
+without either knowing. The canary makes that variance declared, but only
+because the instruction to check for it is at the TOP of this file and in every
+`.claude/agents/*.md`. Stated only here, it would address nobody.
 
 **`check_claude_md_size.py --require-canary` asserts the marker is the LAST
 non-empty line**, so a later edit cannot append past it and quietly push it out
@@ -2323,12 +2313,13 @@ it, so moving it loses no rule:
    one sentence each; the stories belong under D-058. (The over-match and
    address-corpus stories already moved, to D-087, on 2026-09-24.)
 2. **The worked examples under `Rules of the road`** — the sweep shape
-   statement, the subagent-citation arithmetic, the stash-archive PowerShell
-   measurements. All have a live D-number or issue already holding them.
+   statement and the subagent-citation arithmetic. **Confirm the cited record
+   holds the text before cutting:** the pointers found on 2026-09-24 naming text
+   their record did not hold were removed, and more are open on #571.
 3. **The per-instance lists** inside the numbers-in-prose, correction-paragraph
    and twin-sweep rules. Each is a list that grows, which is the defect those
-   rules describe; they belong in D-079 and D-074, where a tally is expected to
-   move.
+   rules describe; they belong in a D-record, where a tally is expected to
+   move, and that record must hold them BEFORE the list here is cut.
 
 Do NOT take the merge rule, the core principles, "verify by running", or the
 gate suite. Those stay at any length, and the size ratchet above says so.
