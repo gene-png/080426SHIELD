@@ -52,3 +52,39 @@ in PowerShell 5.1 on 2026-09-25, and it sets `SKIP` for the following
 hook and would be red on main's `|| echo skipped`. Both PRs edit the same
 `entry:` line. Whichever lands second resolves it by taking THIS PR's
 version.
+
+## After the first review (`2d1da6a`)
+
+- **Three hooks run at push anyway.** At the pinned pre-commit-hooks v4.6.0,
+  the manifest declares `stages: [commit, push, manual]` for
+  `trailing-whitespace`, `end-of-file-fixer` and `check-added-large-files`, and
+  `default_stages` does not override a manifest's own stages. Each now has
+  `stages: [pre-commit]`. Every other hook's manifest was read at its pinned
+  rev and declares none.
+- **Each failure names its own cause.** A compose failure (a missing plugin,
+  an unsupported flag, a compose-file error) and a `docker info` refusal
+  (permission denied) used to read as "container not running" and "daemon
+  unreachable". Each branch now quotes the tool's own first line. The compose
+  call is captured, not piped into grep, so grep cannot mask its status.
+- **Skips exit 2**, the repo's could-not-look code, distinct from pytest's 1.
+- **The PowerShell bypass clears itself**:
+  `$env:SKIP="api-unit-tests"; git push; Remove-Item Env:SKIP`. The earlier
+  form left `SKIP` set for the rest of the session. It was RUN exactly as
+  printed in PowerShell 5.1.26100 on 2026-09-25, with `git push` replaced by a
+  child process that reported `SKIP`: the child saw it, and the session did not
+  keep it.
+- **CLAUDE.md now says** that every push runs the suite in the shared
+  container, with its duration, the meaning of NOT RUN, both bypasses and the
+  reinstall. Agents push with SKIP (my call).
+- The tree notice is still vague: filed as #578.
+
+Stub-measured, running the hook's own entry:
+
+| state | exit | message |
+| --- | --- | --- |
+| suite passes | 0 | the #203 tree notice |
+| **suite fails** | **1** | the #203 tree notice |
+| container down | 2 | NOT RUN - the api container is not running |
+| compose missing | 2 | NOT RUN - docker compose failed - (its error) |
+| `docker info` denied | 2 | NOT RUN - docker info failed ... - (its error) |
+| docker not on PATH | 2 | NOT RUN - docker is not on PATH |

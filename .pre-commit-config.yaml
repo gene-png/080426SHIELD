@@ -4,8 +4,9 @@
 # setting changes new installs only.
 default_install_hook_types: [pre-commit, pre-push]
 # Installing the pre-push hook type must not also run every commit-time hook
-# (formatters, mypy, gitleaks) over the push range: hooks without their own
-# `stages:` stay commit-time only, as they were.
+# (formatters, mypy, gitleaks) over the push range. `default_stages` covers
+# only hooks whose MANIFEST declares no stages; three below declare their own,
+# and are pinned explicitly where they are listed.
 default_stages: [pre-commit]
 
 repos:
@@ -13,10 +14,20 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
+        # Its v4.6.0 manifest declares `stages: [commit, push, manual]`, which
+        # `default_stages` does not override: without this it would rewrite
+        # files, and fail, on every push.
+        stages: [pre-commit]
       - id: end-of-file-fixer
+        # Its v4.6.0 manifest declares `stages: [commit, push, manual]`, which
+        # `default_stages` does not override: without this it would rewrite
+        # files, and fail, on every push.
+        stages: [pre-commit]
       - id: check-yaml
       - id: check-json
       - id: check-added-large-files
+        # Its v4.6.0 manifest declares `stages: [commit, push, manual]` too.
+        stages: [pre-commit]
         args: ["--maxkb=512"]
         exclude: ^reference-docs/
       - id: check-merge-conflict
@@ -107,7 +118,8 @@ repos:
         # suite and let the push through. The container check is now the `if`,
         # and pytest runs unguarded in its branch, so a red suite fails the push.
         #
-        # A SKIP IS NOT A PASS, so it FAILS CLOSED (my call, overturnable):
+        # A SKIP IS NOT A PASS, so it FAILS CLOSED, with exit 2 -- the repo's
+        # could-not-look code, distinct from pytest's own (my call, overturnable):
         # pre-commit prints only "Passed"/"Failed" on the line people read, and
         # a skip that exits 0 reads as Passed there. The message names the cause
         # -- docker absent, the daemon unreachable, or the api container down --
@@ -116,7 +128,7 @@ repos:
         #
         # It tests the tree the SHARED api container mounts, not the ref being
         # pushed (#203), and says so.
-        entry: bash -c 'hint="To push without the API unit tests -- Git Bash, SKIP=api-unit-tests git push; PowerShell, \$env:SKIP=\"api-unit-tests\"; git push"; if ! command -v docker >/dev/null; then echo "NOT RUN - docker is not on PATH. $hint"; exit 1; elif ! docker info >/dev/null 2>&1; then echo "NOT RUN - the Docker daemon is not reachable. $hint"; exit 1; elif docker compose ps --status running --services 2>/dev/null | grep -qx api; then echo "API unit tests run against the tree the api container mounts, which may not be the ref being pushed (#203)."; docker compose exec -T api pytest -m unit; else echo "NOT RUN - the api container is not running. $hint"; exit 1; fi'
+        entry: bash -c 'hint="To push without the API unit tests -- Git Bash, SKIP=api-unit-tests git push; PowerShell, \$env:SKIP=\"api-unit-tests\"; git push; Remove-Item Env:SKIP"; if ! command -v docker >/dev/null; then echo "NOT RUN - docker is not on PATH. $hint"; exit 2; fi; if ! info_err=$(docker info 2>&1 >/dev/null); then echo "NOT RUN - docker info failed, so the daemon is unreachable or permission was denied - $(printf "%s" "$info_err" | head -n 1). $hint"; exit 2; fi; if ! svc=$(docker compose ps --status running --services 2>&1); then echo "NOT RUN - docker compose failed - $(printf "%s" "$svc" | head -n 1). $hint"; exit 2; fi; if ! printf "%s\n" "$svc" | grep -qx api; then echo "NOT RUN - the api container is not running. $hint"; exit 2; fi; echo "API unit tests run against the tree the shared api container mounts, which may not be the ref being pushed (#203)."; exec docker compose exec -T api pytest -m unit'
         language: system
         verbose: true
         pass_filenames: false
